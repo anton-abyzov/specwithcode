@@ -1,7 +1,7 @@
 /**
- * The project Threads pane's machine column and filter: which machines to offer,
- * how many open threads each runs, and how wide the column is so rows line up.
- * Pure rules only; ThreadsPane renders them.
+ * The machine column and filter of the project Threads pane and the sidebar's Chats
+ * list: which machines to offer, how many open threads each runs, and how wide the
+ * column is so rows line up. Pure rules only; those lists render them.
  */
 
 export interface MachineFilterThread {
@@ -45,4 +45,63 @@ export function machineColumnLabel(location: {
   readonly moved: boolean;
 }): string {
   return location.moved ? `→ ${location.label.split(" → ").at(-1)}` : location.label;
+}
+
+/**
+ * The Chats column's width: a row's arrow and offline mark take room from its name, which
+ * matters most when every name is short and the column would otherwise be at its minimum.
+ */
+export function chatMachineColumnCh(
+  rows: readonly { readonly name: string; readonly moved: boolean; readonly offline: boolean }[],
+): number {
+  return machineColumnCh(
+    rows.map((row) =>
+      "x".repeat([...row.name].length + (row.moved ? 3 : 0) + (row.offline ? 3 : 0)),
+    ),
+  );
+}
+
+/**
+ * Whether the Chats list names a machine on each row: not while everything runs on
+ * this machine, because then a name on every row would say nothing.
+ */
+export function chatsShowMachineColumn(input: {
+  readonly machineIds: readonly string[];
+  readonly primaryEnvironmentId: string | null;
+  readonly anyMoved: boolean;
+}): boolean {
+  if (input.anyMoved || input.machineIds.length > 1) return true;
+  const [only] = input.machineIds;
+  return only !== undefined && only !== input.primaryEnvironmentId;
+}
+
+/** What a chat row's tooltip and screen reader text say about its machines, or nothing. */
+export function chatMachineNote(input: {
+  readonly location: {
+    readonly moved: boolean;
+    readonly state: string;
+    readonly description: string;
+  };
+  /** The machine the shell came from, when it can't be reached; null while it answers. */
+  readonly offlineHost: string | null;
+  /** It serves the chat but another machine runs it. */
+  readonly runsElsewhere: boolean;
+  readonly executionName: string;
+  readonly executionOffline: boolean;
+  /** The machine to name on a plain row, when any. */
+  readonly namedMachine: string | null;
+}): string | null {
+  const runnerOffline = `${input.executionName} can't be reached`;
+  if (input.offlineHost !== null) {
+    const host = `${input.offlineHost} can't be reached`;
+    if (!input.runsElsewhere) return host;
+    return `${host} · ${input.executionOffline ? runnerOffline : `runs on ${input.executionName}`}`;
+  }
+  if (input.location.moved || input.location.state !== "running") {
+    // An unknown runner's description already says it stopped answering.
+    return input.executionOffline && input.location.state !== "unknown"
+      ? `${input.location.description} · ${runnerOffline}`
+      : input.location.description;
+  }
+  return input.namedMachine ? `On ${input.namedMachine}` : null;
 }

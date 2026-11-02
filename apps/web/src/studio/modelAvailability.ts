@@ -396,12 +396,13 @@ export function availabilityText(
     }
     case "stale": {
       const ago = agoPhrase(availability.checkedAt, nowMs);
-      if (availability.resetSinceRead) {
+      // Which limit reset is unknown, so a reached limit may still be in force.
+      if (availability.wasExhausted && availability.resetSinceRead) {
         return {
-          short: "Limit reset since last read",
-          label: "limit reset since the last read",
-          long: `A ${provider} limit on ${account} has reset since usage was last read ${ago}; it will be read again before the next turn.`,
-          tone: "muted",
+          short: "Limit may have reset",
+          label: "limit may have reset since the last read",
+          long: `Usage on ${account} was last read ${ago} and showed the limit reached. A limit has reset since, but it may not be that one; the turn may still wait for the reset.`,
+          tone: "warn",
         };
       }
       if (availability.wasExhausted) {
@@ -410,6 +411,14 @@ export function availabilityText(
           label: `limit reached when last read ${ago}`,
           long: `Usage on ${account} was last read ${ago} and showed the limit reached. That read is too old to rely on, so the model stays selectable; the turn may still wait for the reset.`,
           tone: "warn",
+        };
+      }
+      if (availability.resetSinceRead) {
+        return {
+          short: "Limit reset since last read",
+          label: "limit reset since the last read",
+          long: `Limit reset since last read. A ${provider} limit on ${account} has reset since usage was last read ${ago}; it will be read again before the next turn.`,
+          tone: "muted",
         };
       }
       return {

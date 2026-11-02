@@ -54,7 +54,7 @@ struct ConnectWelcomeContent: View {
 
   static let signedInSteps = [
     "Open SpecWithCode on your Mac.",
-    "In Settings > Connections, under Use SpecWithCode on your phone, sign in with the same account and turn it on.",
+    "Open the account button at the bottom of the sidebar and sign in to SpecWithCode Connect. Then turn it on in Settings > Connections, under Use SpecWithCode on your phone.",
     "Your Mac appears here. Tap it to start.",
   ]
 
@@ -76,7 +76,7 @@ struct ConnectWelcomeContent: View {
           Task { await model.engine.connectRefresh() }
         }
       } else {
-        Text(state.wasRemoved ? ConnectState.removedMessage : "Sign in with the account you use in SpecWithCode on your Mac. Your Macs appear here, wherever you are. Every iPhone you sign in on gets the same Macs.")
+        Text(state.wasRemoved ? ConnectState.removedMessage : "Sign in with the same SpecWithCode Connect account as on your Mac. Your Macs appear here, wherever you are. Every iPhone you sign in on gets the same Macs.")
           .weaveFont(.callout)
           .foregroundStyle(Color.weave.muted)
           .multilineTextAlignment(.center)
@@ -115,7 +115,7 @@ struct ConnectAccountCard: View {
         VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
           FieldLabel("Account")
           ConnectSignInButtons(state: state)
-          Text(state.wasRemoved ? ConnectState.removedMessage : "Sign in with the account you use in SpecWithCode on your Mac to reach it from anywhere.")
+          Text(state.wasRemoved ? ConnectState.removedMessage : "Sign in with the same SpecWithCode Connect account as on your Mac to reach it from anywhere.")
             .font(.weave(.caption))
             .foregroundStyle(Color.weave.muted)
             .padding(.horizontal, WeaveSpacing.s4)

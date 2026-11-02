@@ -1,5 +1,5 @@
 import type { ProjectReadFileResult } from "@specweave-studio/contracts";
-import { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId, ProjectReadFileError } from "@specweave-studio/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -189,5 +189,19 @@ describe("project files queries", () => {
     expect(
       confirmProjectFileQueryData(environmentId, "/repo", "convex.json", '{"nodeVersion":"22"}'),
     ).toBe(true);
+  });
+});
+
+describe("isLastingReadFailure", async () => {
+  const { isLastingReadFailure } = await import("./projectFilesQueryState");
+
+  const failure = (failure: "binary_file" | "path_not_file" | "operation_failed") =>
+    new ProjectReadFileError({ cwd: "/work", relativePath: "a.md", failure });
+
+  it("remembers only what a retry cannot change", () => {
+    expect(isLastingReadFailure(failure("binary_file"))).toBe(true);
+    expect(isLastingReadFailure(failure("path_not_file"))).toBe(true);
+    expect(isLastingReadFailure(failure("operation_failed"))).toBe(false);
+    expect(isLastingReadFailure(new Error("socket closed"))).toBe(false);
   });
 });

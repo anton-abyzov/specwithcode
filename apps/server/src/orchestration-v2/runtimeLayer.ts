@@ -45,6 +45,7 @@ import * as ProjectActionRequests from "../project/ProjectActionRequests.ts";
 import * as ProjectFolderChange from "../project/ProjectFolderChange.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as SpecweaveSetup from "../project/SpecweaveSetup.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -211,9 +212,16 @@ const layerProjectEnvironmentProvided = ProjectEnvironmentService.layer.pipe(
 const layerProjectKnowledgeProvided = ProjectKnowledge.layer.pipe(
   Layer.provide(Layer.merge(ProjectStore.layer, layerEventInfrastructure)),
 );
+// Runs `specweave init` only when the person asks for SpecWeave.
+const layerSpecweaveSetupProvided = SpecweaveSetup.layer.pipe(Layer.provide(ProcessRunner.layer));
 const layerProjectWorkspaceProvided = ProjectWorkspaceService.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(ProjectStore.layer, layerProjectKnowledgeProvided, LinkedMemoryHistory.layer),
+    Layer.mergeAll(
+      ProjectStore.layer,
+      layerProjectKnowledgeProvided,
+      LinkedMemoryHistory.layer,
+      layerSpecweaveSetupProvided,
+    ),
   ),
 );
 const layerThreadReportsProvided = ThreadReportService.layer.pipe(
@@ -333,7 +341,7 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
   Layer.provide(layerProjectService),
 );
 const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
-  Layer.provide(layerProjectService),
+  Layer.provide(Layer.merge(layerProjectService, layerSpecweaveSetupProvided)),
 );
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(

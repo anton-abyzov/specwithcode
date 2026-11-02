@@ -166,7 +166,7 @@ const ProjectCloneTool = Tool.make("studio_project_clone", {
 const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
   ...shared,
   description:
-    "Put a repository on another machine in the owner's fleet and register it there as a project, so studio_thread_launch can run work on that machine. Pass projectId to copy a project from here (its fork's clone URL is used), or cloneUrl for any repository. The other machine clones with its own git credentials and needs a worker grant that covers all of its projects; otherwise it refuses and the user widens the grant there. Returns the project's id on that machine: launch with machine and machineProjectId set to it. For a branch, launch with workspaceStrategy {type:\"worktree\",baseRef:branch,startFromOrigin:true}. Only the repository's tracked files arrive; ignored files such as .env stay here.",
+    "Put a repository on another machine in the owner's fleet and register it there as a project, so studio_thread_launch can run work on that machine. Pass projectId to copy a project from here (its fork's clone URL is used), or cloneUrl for any repository. The other machine clones with its own git credentials and needs a worker grant that covers all of its projects; otherwise it refuses and the user widens the grant there. Returns the project's id on that machine: launch with machine and machineProjectId set to it. For a branch, launch with workspaceStrategy {type:\"worktree\",baseRef:branch,startFromOrigin:true}. Only the repository's tracked files arrive; ignored files such as .env stay here, so send any it needs first with studio_file_transfer.",
   parameters: Schema.Struct({
     machine: OrchestratorMcpMachineTarget.annotate({
       description:

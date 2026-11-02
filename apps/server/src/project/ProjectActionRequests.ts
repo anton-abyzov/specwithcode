@@ -43,6 +43,7 @@ import {
 import {
   approvedFolderReaching,
   exposesProtectedRealPath,
+  normalizeProjectEnvironment,
   resolveProjectEnvironment,
 } from "./ProjectEnvironmentPaths.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -58,6 +59,21 @@ export const ProjectAction = Schema.Literals([
   "add_folder",
 ]);
 export type ProjectAction = typeof ProjectAction.Type;
+/** Asked for by studio_file_transfer, never through studio_project_request. */
+export type RequestedAction = ProjectAction | "transfer_secret";
+
+/** What one approval of a secret file's transfer covers: exactly this and nothing else. */
+export interface SecretTransfer {
+  readonly machineId: string;
+  readonly machineLabel: string;
+  readonly direction: "get" | "send";
+  readonly path: string;
+  readonly sizeBytes: number;
+  readonly destinationPath?: string | undefined;
+}
+
+/** An approval is for the transfer in front of the owner, not for later. */
+const SECRET_APPROVAL_MS = 60 * 60 * 1000;
 
 const QUESTION_ID = "approval";
 const APPROVE = "Approve";
@@ -73,8 +89,10 @@ export class ProjectActionRequestError extends Schema.TaggedError<ProjectActionR
 export interface ProjectActionRequestInput {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
-  readonly action: ProjectAction;
+  readonly action: RequestedAction;
   readonly reason: string;
+  /** Required for transfer_secret. */
+  readonly secretTransfer?: SecretTransfer;
   /** Required for change_folder. */
   readonly workspaceRoot?: string;
   /** Required for add_folder: the folder the project's agents should also reach. */
@@ -85,7 +103,7 @@ interface RequestRow {
   readonly requestId: string;
   readonly threadId: string;
   readonly projectId: string;
-  readonly action: ProjectAction;
+  readonly action: RequestedAction;
   readonly paramsJson: string;
   readonly reason: string;
   readonly status: string;
@@ -98,6 +116,17 @@ const Params = Schema.fromJsonString(
     folder: Schema.optional(Schema.String),
     /** add_folder: its real path when the card was shown; approval must still resolve to it. */
     canonicalFolder: Schema.optional(Schema.String),
+    /** transfer_secret: the one transfer the card named. */
+    secretTransfer: Schema.optional(
+      Schema.Struct({
+        machineId: Schema.String,
+        machineLabel: Schema.String,
+        direction: Schema.Literals(["get", "send"]),
+        path: Schema.String,
+        sizeBytes: Schema.Number,
+        destinationPath: Schema.optional(Schema.String),
+      }),
+    ),
     title: Schema.String,
   }),
 );
@@ -119,6 +148,11 @@ export class ProjectActionRequests extends Context.Service<
     ) => Effect.Effect<{ readonly sequence: number }, Orchestrator.OrchestratorV2Error>;
     /** The user dismissed the card without answering. */
     readonly dismissed: (requestId: RuntimeRequestId) => Effect.Effect<void>;
+    /** Spends an approved secret transfer once; what it covers, or undefined when it is not one. */
+    readonly useSecretTransfer: (input: {
+      readonly requestId: string;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<SecretTransfer | undefined>;
   }
 >()("specweave-studio/project/ProjectActionRequests") {}
 
@@ -262,6 +296,19 @@ export const make = Effect.gen(function* () {
       return yield* failure(
         `"${project.title}" already has ${MAX_APPROVED_FOLDERS} approved folders, the limit. The user can remove one in project settings first.`,
       );
+    // Saving would refuse a saved folder that moved, so refuse before asking the user.
+    yield* normalizeProjectEnvironment(
+      project.id,
+      project.workspaceRoot,
+      environment,
+      environment,
+    ).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError((error) =>
+        failure(`${canonical} cannot be approved for "${project.title}" yet. ${error.message}`),
+      ),
+    );
     const resolved = yield* resolveProjectEnvironment(project.id, project.workspaceRoot, {
       ...environment,
       additionalFolders: [...environment.additionalFolders, folder],
@@ -291,6 +338,18 @@ export const make = Effect.gen(function* () {
     const name = `"${project.title}"`;
     const why = `Reason: ${input.reason}`;
     switch (input.action) {
+      case "transfer_secret": {
+        const transfer = input.secretTransfer;
+        if (transfer === undefined) return yield* failure("Use studio_file_transfer for this.");
+        const size = `${Math.ceil(transfer.sizeBytes / 1024)} KB`;
+        const route =
+          transfer.direction === "send"
+            ? `from this machine to ${transfer.machineLabel}`
+            : `from ${transfer.machineLabel} to this machine`;
+        return {
+          question: `Move the secret file ${transfer.path} (${size}) ${route}${transfer.destinationPath === undefined ? "" : `, saving it as ${transfer.destinationPath}`}?\n\nIt travels encrypted, only for this one transfer, and is saved readable only by your account on the receiving machine. The agent is told its saved path and not to read or print it.\n\n${why}`,
+        };
+      }
       case "add_folder": {
         if (input.folder === undefined)
           return yield* failure(
@@ -394,6 +453,7 @@ export const make = Effect.gen(function* () {
           ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
           ...(input.folder === undefined ? {} : { folder: input.folder }),
           ...(canonicalFolder === undefined ? {} : { canonicalFolder }),
+          ...(input.secretTransfer === undefined ? {} : { secretTransfer: input.secretTransfer }),
         })},
         ${input.reason}, ${input.threadId}, 'pending', ${now}
       )`.pipe(Effect.mapError(() => failure("The request could not be recorded.")));
@@ -453,6 +513,8 @@ export const make = Effect.gen(function* () {
     const name = `"${params.title}"`;
     const commandId = CommandId.make(`${row.requestId}:apply`);
     switch (row.action) {
+      case "transfer_secret":
+        return `Nothing has moved yet. Call studio_file_transfer again with the same arguments and approvalId ${row.requestId}; the approval works once.`;
       case "archive":
       case "unarchive": {
         const archived = row.action === "archive";
@@ -596,7 +658,26 @@ export const make = Effect.gen(function* () {
   const dismissed: ProjectActionRequests["Service"]["dismissed"] = (requestId) =>
     record(requestId, "dismissed", "The user dismissed the card. Nothing changed.");
 
-  return ProjectActionRequests.of({ request, answer, dismissed });
+  const useSecretTransfer: ProjectActionRequests["Service"]["useSecretTransfer"] = ({
+    requestId,
+    threadId,
+  }) =>
+    DateTime.now.pipe(
+      Effect.flatMap(
+        (now) =>
+          sql<{ readonly paramsJson: string }>`UPDATE project_action_requests SET status = 'used'
+      WHERE request_id = ${requestId} AND thread_id = ${threadId}
+        AND action = 'transfer_secret' AND status = 'approved'
+        AND decided_at >= ${DateTime.formatIso(DateTime.subtract(now, { milliseconds: SECRET_APPROVAL_MS }))}
+      RETURNING params_json AS "paramsJson"`,
+      ),
+      Effect.map((rows) =>
+        rows[0] === undefined ? undefined : decodeParams(rows[0].paramsJson).secretTransfer,
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+
+  return ProjectActionRequests.of({ request, answer, dismissed, useSecretTransfer });
 });
 
 export const layer = Layer.effect(ProjectActionRequests, make);

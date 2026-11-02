@@ -34,6 +34,7 @@ import { unlinkPhonesFrom } from "../fleet/phoneLinks.ts";
 import { join } from "../nodePath.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the id file is read once, like the fleet file.
 import { readFile } from "node:fs/promises";
+import { fleetProbeFetch, probeFleetList, renderFleetTable } from "../fleet/fleetListTable.ts";
 import { makeFleetLink } from "../fleet/fleetTransport.ts";
 import {
   type FleetUpdateAction,
@@ -47,7 +48,7 @@ import {
   isFleetSkillVersion,
   runFleetSkillInstalls,
 } from "../fleet/fleetSkills.ts";
-import { discoverFleet, FleetError, type FleetTarget, readFleetConfig } from "../studioFleet.ts";
+import { FleetError, type FleetTarget, readFleetConfig } from "../studioFleet.ts";
 import {
   addFleetMachine,
   FleetJoinError,
@@ -95,16 +96,15 @@ const fleetFailure = (error: unknown) =>
 const resolveFleetBaseDir = (explicit: Option.Option<string>) =>
   discoverPairTarget(Option.getOrUndefined(explicit)).pipe(
     Effect.map((target) => target.baseDir),
-    Effect.catchTags({
-      NoRunningServerError: () =>
-        Effect.gen(function* () {
-          const envHome = yield* Config.String("STUDIO_HOME").pipe(Config.option);
-          return yield* resolveBaseDir(
-            Option.getOrUndefined(Option.orElse(explicit, () => envHome)),
-          );
-        }),
-    }),
+    Effect.catchTags({ NoRunningServerError: () => fleetHomeWithoutServer(explicit) }),
   );
+
+/** The explicit or default home, for when no server is running. */
+const fleetHomeWithoutServer = (explicit: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const envHome = yield* Config.String("STUDIO_HOME").pipe(Config.option);
+    return yield* resolveBaseDir(Option.getOrUndefined(Option.orElse(explicit, () => envHome)));
+  });
 
 /**
  * Makes the invitation in the running service, as Settings > Connections >
@@ -292,18 +292,32 @@ const addCommand = Command.make("add", {
   ),
 );
 
+/** This machine's environment id from the file in its home; empty when there is none. */
+const environmentIdFile = (baseDir: string) =>
+  Effect.tryPromise(() => readFile(join(baseDir, "userdata", "environment-id"), "utf8")).pipe(
+    Effect.map((raw) => raw.trim()),
+    Effect.orElseSucceed(() => ""),
+  );
+
 const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
   Command.withDescription("List configured machines and whether this machine reaches them now."),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      const baseDir = yield* resolveFleetBaseDir(flags.baseDir);
+      // One look at the running service: a wedged one costs its probe limit only once.
+      const running = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir)).pipe(
+        Effect.asSome,
+        Effect.catchTags({ NoRunningServerError: () => Effect.succeedNone }),
+      );
+      const baseDir = Option.isSome(running)
+        ? running.value.baseDir
+        : yield* fleetHomeWithoutServer(flags.baseDir);
       const config = yield* Effect.tryPromise({
         try: () => readFleetConfig(baseDir),
         catch: fleetFailure,
       });
       const skipped = (config?.invalidEntries ?? []).map(
         (entry) =>
-          `#${entry.index + 1}${entry.label ? ` ${entry.label}` : ""}\tskipped: ${entry.reason}`,
+          `#${entry.index + 1}${entry.label ? ` ${entry.label}` : ""}  skipped: ${entry.reason}`,
       );
       if (config === null || config.machines.length === 0) {
         if (skipped.length > 0) {
@@ -322,21 +336,20 @@ const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
         );
         return;
       }
-      const snapshot = yield* Effect.promise(() =>
-        discoverFleet(config, undefined, makeFleetLink({ fetch: globalThis.fetch, baseDir })),
+      // The home's own id names this machine: a dev server running under the
+      // same home answers with another one and does not speak for it.
+      const runningId = Option.isSome(running)
+        ? (running.value.descriptor.environmentId as string)
+        : "";
+      const environmentId = (yield* environmentIdFile(baseDir)) || runningId;
+      const rows = yield* Effect.promise(() =>
+        probeFleetList({
+          config,
+          local: { environmentId, answering: runningId === environmentId && runningId !== "" },
+          fetch: fleetProbeFetch,
+        }),
       );
-      const via = (transport: string | undefined) =>
-        transport === "connect" ? "via Connect" : transport === "tailnet" ? "via Tailscale" : "-";
-      yield* Console.log(
-        [
-          ...snapshot.machines.map(
-            (machine) =>
-              `${machine.id}\t${machine.label}\t${machine.url}${machine.connectUrl ? ` ${machine.connectUrl}` : ""}\t${machine.status}\t${via(machine.transport)}${machine.pairingConfigured ? "" : "\tno management token"}`,
-          ),
-          ...skipped,
-          "",
-        ].join("\n"),
-      );
+      yield* Console.log([...renderFleetTable(rows), ...skipped, ""].join("\n"));
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),
 );
@@ -417,12 +430,7 @@ const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const primaryEnvironmentId = (baseDir: string, explicit: Option.Option<string>) =>
   discoverPairTarget(Option.getOrUndefined(explicit)).pipe(
     Effect.map((target) => target.descriptor.environmentId as string),
-    Effect.catch(() =>
-      Effect.tryPromise(() => readFile(join(baseDir, "userdata", "environment-id"), "utf8")).pipe(
-        Effect.map((raw) => raw.trim()),
-        Effect.orElseSucceed(() => ""),
-      ),
-    ),
+    Effect.catch(() => environmentIdFile(baseDir)),
   );
 
 /** Which `fleet update` action the flags ask for, or why they do not make one. */

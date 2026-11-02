@@ -209,8 +209,10 @@ export type ProjectEnvironmentProblem = {
   /** The path as saved, or the default checkout path for a repository saved without one. */
   readonly path: string;
   readonly reason: "missing" | "moved" | "protected" | "duplicate" | "outside";
-  /** Where a moved folder now leads. Never approved by the move. */
+  /** Where a moved folder or an out-of-bounds checkout now leads. Never approved by the move. */
   readonly resolvedPath?: string;
+  /** The saved repository entry, for a repository problem. */
+  readonly repositoryId?: string;
 };
 
 /** A path as one line of text: a folder name can hold control characters such as newlines. */
@@ -330,11 +332,24 @@ const inspectProjectEnvironment = Effect.fn("inspectProjectEnvironment")(functio
     const requested = repo.localPath ?? path.join(main, ".studio-repositories", repo.id);
     const localPath = yield* resolveDestination(requested);
     if (Option.isNone(localPath) || !within(localPath.value)) {
-      problems.push({ kind: "repository", path: requested, reason: "outside" });
+      problems.push({
+        kind: "repository",
+        path: requested,
+        reason: "outside",
+        repositoryId: repo.id,
+        ...(Option.isSome(localPath) && localPath.value !== requested
+          ? { resolvedPath: localPath.value }
+          : {}),
+      });
       continue;
     }
     if (checkouts.has(localPath.value)) {
-      problems.push({ kind: "repository", path: requested, reason: "duplicate" });
+      problems.push({
+        kind: "repository",
+        path: requested,
+        reason: "duplicate",
+        repositoryId: repo.id,
+      });
       continue;
     }
     checkouts.add(localPath.value);
@@ -410,12 +425,38 @@ export const resolveProjectEnvironmentForRun = Effect.fn("resolveProjectEnvironm
   },
 );
 
-/** Settings store canonical explicit approvals. Recheck at each native turn to reject moved symlinks. */
+/**
+ * Settings store canonical explicit approvals. Recheck at each native turn to reject moved symlinks.
+ * A folder kept from `prior` must still be its own real path: resaving the form must not quietly
+ * approve where a moved folder now leads. Typing a new path, or Update path, approves its real
+ * path explicitly. Callers pass `prior` only when the main folder stays the same.
+ */
 export const normalizeProjectEnvironment = Effect.fn("normalizeProjectEnvironment")(function* (
   projectId: ProjectId,
   workspaceRoot: string,
   environment: ProjectEnvironmentSettings,
+  prior?: ProjectEnvironmentSettings,
 ) {
+  if (prior !== undefined) {
+    const fs = yield* FileSystem.FileSystem;
+    // Folders are the grants. A checkout grants nothing and is bounded by the folders below.
+    for (const folder of environment.additionalFolders.filter((value) =>
+      prior.additionalFolders.includes(value),
+    )) {
+      const real = yield* fs.realPath(folder).pipe(Effect.option);
+      if (Option.isSome(real) && real.value !== folder)
+        return yield* new ProjectEnvironmentError({
+          projectId,
+          code: "path_not_approved",
+          detail: describeProjectEnvironmentProblem({
+            kind: "folder",
+            path: folder,
+            reason: "moved",
+            resolvedPath: real.value,
+          }),
+        });
+    }
+  }
   const resolved = yield* resolveProjectEnvironment(projectId, workspaceRoot, environment);
   return {
     additionalFolders: resolved.additionalFolders,

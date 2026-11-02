@@ -15,7 +15,11 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { projectEnvironment } from "~/state/projects";
 import { useProjectPathSearch } from "~/state/queries";
-import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
+import {
+  executeAtomQuery,
+  squashAtomCommandFailure,
+} from "@specweave-studio/client-runtime/state/runtime";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 const EMPTY_PROJECT_FILE_PATH = "";
 const EMPTY_PROJECT_ENTRIES_QUERY_ATOM = Atom.make(
@@ -186,6 +190,46 @@ function errorMessage(cause: unknown): string | null {
 }
 
 const isProjectReadFileError = Schema.is(ProjectReadFileError);
+
+/**
+ * `gone`: this file can never be read as it is. `unavailable`: try again; no
+ * answer, a dropped connection, or a filesystem error that may pass.
+ */
+export type ProjectFileRead =
+  | { readonly _tag: "contents"; readonly contents: string }
+  | { readonly _tag: "gone" }
+  | { readonly _tag: "unavailable" };
+
+export function isLastingReadFailure(cause: unknown): boolean {
+  return (
+    isProjectReadFileError(cause) &&
+    cause.failure !== undefined &&
+    cause.failure !== "operation_failed"
+  );
+}
+
+/** Reads a file fresh, for a caller that keeps only what it derives from it. */
+export function useProjectFileReader(): (
+  environmentId: EnvironmentId,
+  cwd: string,
+  relativePath: string,
+) => Promise<ProjectFileRead> {
+  const read = useAtomQueryRunner(projectEnvironment.readFile, {
+    reportFailure: false,
+    reportDefect: false,
+    refresh: true,
+  });
+  return useCallback(
+    async (environmentId, cwd, relativePath) => {
+      const result = await read({ environmentId, input: { cwd, relativePath } });
+      if (result._tag === "Success") return { _tag: "contents", contents: result.value.contents };
+      return {
+        _tag: isLastingReadFailure(squashAtomCommandFailure(result)) ? "gone" : "unavailable",
+      };
+    },
+    [read],
+  );
+}
 
 export function useProjectEntriesQuery(
   environmentId: EnvironmentId,

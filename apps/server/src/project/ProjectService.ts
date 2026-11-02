@@ -806,6 +806,8 @@ export const make = Effect.gen(function* () {
                 input.projectId,
                 workspaceRoot,
                 requestedEnvironment,
+                // Moving the main folder re-resolves every entry under the new root.
+                workspaceRoot === previousRoot ? priorEnvironment : undefined,
               ).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Path.Path, path),

@@ -1,6 +1,7 @@
 import type {
   ServiceUpdateBlocker,
   StudioServiceUpdateRun,
+  StudioServiceUpdateRunStep,
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 
@@ -38,11 +39,18 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
  * none has one.
  */
 export function nameQuestionThreads(blockers: ReadonlyArray<ServiceUpdateBlocker>): string | null {
+  return nameThreads(blockers.filter((blocker) => blocker.kind === "request"))?.names ?? null;
+}
+
+/** The threads of these blockers, three by name then a count. Null when none has a count. */
+function nameThreads(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+): { readonly names: string; readonly count: number } | null {
   const threads = new Set<string>();
   const titles: string[] = [];
   let others = 0;
   for (const [index, blocker] of blockers.entries()) {
-    if (blocker.kind !== "request" || blocker.count <= 0) continue;
+    if (blocker.count <= 0) continue;
     const title = blocker.threadTitle?.trim();
     const thread = blocker.threadId ?? (title ? `title:${title}` : `blocker:${index}`);
     if (threads.has(thread)) continue;
@@ -54,7 +62,30 @@ export function nameQuestionThreads(blockers: ReadonlyArray<ServiceUpdateBlocker
   const named = titles.slice(0, 3).map((title) => `"${title}"`);
   const more = titles.length - named.length + others;
   const list = more > 0 ? [...named, plural(more, "other thread", "other threads")] : named;
-  return list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+  return {
+    names:
+      list.length <= 1 ? (list[0] ?? "") : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`,
+    count: threads.size,
+  };
+}
+
+/** The work an update waits on or pauses, as opposed to a person's answer. */
+const RUNNING_KINDS: ReadonlySet<ServiceUpdateBlocker["kind"]> = new Set([
+  "run",
+  "queued",
+  "effect",
+  "session",
+]);
+
+/** "2 running threads: "Fix login" and "Docs"", or null when no thread is running. */
+export function describeRunningThreads(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+): string | null {
+  const running = nameThreads(blockers.filter((blocker) => RUNNING_KINDS.has(blocker.kind)));
+  if (running === null) return null;
+  const unnamed = running.names === "" || /^\d+ other threads?$/.test(running.names);
+  const count = plural(running.count, "running thread", "running threads");
+  return unnamed ? count : `${count}: ${running.names}`;
 }
 
 /**
@@ -223,15 +254,6 @@ export function describeAutomaticInstallWait(
   return { line: pauseLine, detail: PAUSE_DETAIL, pauseAt };
 }
 
-/** The helper's phase name (`checkBeforeRestart`) as words (`check before restart`). */
-export function humanizeStep(label: string): string {
-  return label
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[-_]+/g, " ")
-    .toLowerCase()
-    .trim();
-}
-
 export const RUN_NO_PROGRESS_LINE = "No progress for 2 min, still installing.";
 export const RUN_SERVICE_BACK_LINE = "Service is back, finishing checks.";
 export const RUN_ROLLBACK_LINE = "The install did not pass its checks; restoring.";
@@ -241,10 +263,55 @@ export const RUN_NOT_APPLIED_LINE =
 /** The helper's rollback phase (install_progress.py ROLLBACK). */
 const ROLLBACK_STEP = "rollback";
 
+export const RUN_LONG_READ_LINE =
+  "Checking every row of this Mac's history, which takes minutes on a large database.";
+export const RUN_LONG_STEP_LINE = "This is taking longer than usual.";
+
+/** The app half after the service is verified: its download is staged, then it relaunches. */
+const APP_HALF_MS = 15_000;
+/** The bar stops here until the run really ends. */
+const MAX_PROGRESS = 0.97;
+/** A phase counts as long past 1.5 times what it should take, and never under this. */
+const LONG_PHASE_MIN_MS = 20_000;
+
+/**
+ * Time left from what the helper expects of this phase and the ones after it,
+ * or null from a helper that does not say. Elapsed time is never estimated, so
+ * elapsed plus time left can only exceed elapsed.
+ */
+export function estimateInstall(
+  step: StudioServiceUpdateRunStep,
+  elapsedMs: number,
+  nowMs: number,
+  appHalf: boolean,
+): { readonly leftMs: number; readonly progress: number; readonly long: boolean } | null {
+  const started = step.phaseStartedAt ? Date.parse(step.phaseStartedAt) : Number.NaN;
+  if (
+    step.phaseExpectedMs === undefined ||
+    step.remainingAfterMs === undefined ||
+    !Number.isFinite(started)
+  ) {
+    return null;
+  }
+  const inPhaseMs = Math.max(0, nowMs - started);
+  const leftMs =
+    Math.max(0, step.phaseExpectedMs - inPhaseMs) +
+    step.remainingAfterMs +
+    (appHalf ? APP_HALF_MS : 0);
+  const done = Math.max(0, elapsedMs);
+  return {
+    leftMs,
+    progress: Math.min(MAX_PROGRESS, done + leftMs > 0 ? done / (done + leftMs) : 0),
+    long: inPhaseMs > Math.max(LONG_PHASE_MIN_MS, step.phaseExpectedMs * 1.5),
+  };
+}
+
 export interface ServiceUpdateRunViewModel {
   readonly tone: "loading" | "success" | "error" | "info";
   readonly title: string;
   readonly lines: ReadonlyArray<string>;
+  /** 0 to 1 while there is real progress to show; null while waiting on others or at the end. */
+  readonly progress: number | null;
   /** Amber: no sign of life for over 2 minutes. Never comes with a button. */
   readonly warning: string | null;
   /** Only once the run is terminal. */
@@ -265,10 +332,12 @@ export function describeServiceUpdateRun(
     title: string,
     label: string,
     lines: ReadonlyArray<string | null> = [],
+    progress: number | null = null,
   ): ServiceUpdateRunViewModel => ({
     tone: "loading",
     title,
     lines: lines.filter((line): line is string => line !== null),
+    progress,
     warning: run.noProgress ? RUN_NO_PROGRESS_LINE : null,
     action: null,
     label,
@@ -292,6 +361,7 @@ export function describeServiceUpdateRun(
       tone,
       title,
       lines: lines.filter((line): line is string => line !== null),
+      progress: null,
       warning: null,
       action,
       label: title,
@@ -329,16 +399,22 @@ export function describeServiceUpdateRun(
 
   switch (run.phase) {
     case "preparing":
-    case "requested":
+    case "requested": {
+      const running = describeRunningThreads(blockers);
       return live(`Starting the update to ${version}`, "Starting update…", [
+        running === null ? null : `Pausing ${running}. They continue after the update.`,
         elapsed ? `${elapsed} elapsed.` : null,
       ]);
+    }
     case "downloading":
       return live(`Downloading SpecWithCode ${version}`, "Downloading update…");
-    case "waiting":
+    case "waiting": {
+      const running = describeRunningThreads(blockers);
       return live(`Waiting to install SpecWithCode ${version}`, "Waiting to update…", [
-        describeQuestionWait(blockers) ?? "Waiting for running work to stop.",
+        describeQuestionWait(blockers) ??
+          (running === null ? "Waiting for running work to stop." : `Waiting for ${running}.`),
       ]);
+    }
     case "installing": {
       const step = run.step;
       if (step === null) {
@@ -362,19 +438,34 @@ export function describeServiceUpdateRun(
           ],
         );
       }
-      const expected =
-        step.expectedMs !== null ? `, about ${formatRunDuration(step.expectedMs)} expected` : "";
-      // The expected time is the helper's apply only, so it is measured on the
-      // helper's clock, not from the press (stopping work, waiting, download).
+      // The estimate is the helper's apply only, so it is measured on the helper's
+      // clock, not from the press (stopping work, waiting, download).
       const helperStarted = step.startedAt ? Date.parse(step.startedAt) : Number.NaN;
-      const installing = Number.isFinite(helperStarted)
-        ? formatRunDuration(nowMs - helperStarted)
-        : elapsed;
-      return live(`Installing SpecWithCode ${version}`, `Installing ${step.i}/${step.n}…`, [
-        step.serviceBack ? RUN_SERVICE_BACK_LINE : null,
-        `Step ${step.i} of ${step.n}: ${humanizeStep(step.label)}.`,
-        installing ? `${installing} elapsed${expected}.` : null,
-      ]);
+      const elapsedMs = Number.isFinite(helperStarted) ? nowMs - helperStarted : nowMs - started;
+      const installing = Number.isFinite(elapsedMs) ? formatRunDuration(elapsedMs) : null;
+      const estimate = estimateInstall(step, elapsedMs, nowMs, run.appTargetVersion !== null);
+      const left =
+        estimate === null
+          ? null
+          : estimate.leftMs >= 5_000
+            ? `about ${formatRunDuration(estimate.leftMs)} left`
+            : "almost done";
+      return live(
+        `Installing SpecWithCode ${version}`,
+        estimate !== null && estimate.leftMs >= 5_000
+          ? `Installing, ${formatRunDuration(estimate.leftMs)} left…`
+          : "Installing update…",
+        [
+          step.serviceBack ? RUN_SERVICE_BACK_LINE : null,
+          installing ? `${installing} elapsed${left ? `, ${left}` : ""}.` : null,
+          estimate?.long
+            ? step.label === "readiness" || step.label === "beforeRead"
+              ? RUN_LONG_READ_LINE
+              : RUN_LONG_STEP_LINE
+            : null,
+        ],
+        estimate?.progress ?? null,
+      );
     }
     default: {
       // Verified, with the app still to install.

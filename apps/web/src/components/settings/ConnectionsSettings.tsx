@@ -188,6 +188,7 @@ import {
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { RemoveStudioConnectEnvironmentDialog } from "../clerk/RemoveStudioConnectEnvironmentDialog";
+import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
@@ -1835,6 +1836,7 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
     operationError,
     reconcileCloudState,
   } = useCloudLinkController();
+  const { openAuthPrompt } = useStudioConnectAuthPrompt();
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -1914,6 +1916,18 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
 
   return (
     <>
+      {/* On desktop, the phone card signs in and links this machine in one step. */}
+      {isSignedIn === false && !isPhoneConnectShown() ? (
+        <SettingsRow
+          title="SpecWithCode Connect account"
+          description="Optional. Sign in to reach your machines from anywhere and to change the settings below."
+          control={
+            <Button size="sm" variant="outline" onClick={openAuthPrompt}>
+              Sign in
+            </Button>
+          }
+        />
+      ) : null}
       {window.desktopBridge ? (
         <SettingsRow
           title={searchableSetting("studio-connect").title}

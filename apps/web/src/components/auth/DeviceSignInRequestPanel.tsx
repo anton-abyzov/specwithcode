@@ -119,7 +119,7 @@ export function DeviceSignInRequestPanel({
         <>
           <p className="text-muted-foreground text-sm">
             On a computer or phone already signed in to this machine, open the account menu, choose
-            Sign in on another device, and type this code.
+            Add a device with a code, and type this code.
           </p>
           <div
             aria-label="Sign-in code"

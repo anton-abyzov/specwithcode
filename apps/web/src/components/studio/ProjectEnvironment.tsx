@@ -73,6 +73,28 @@ export function ProjectEnvironment({
     onDraftChange(Boolean(url || folder));
   }, [url, folder, onDraftChange]);
   const blocked = disabled || busy !== null;
+  const problems = query.data?.problems ?? [];
+  const folderProblem = (folder: string) =>
+    problems.find((problem) => problem.kind === "folder" && problem.path === folder);
+  /** Re-point a moved folder and every checkout saved inside it. Save still re-checks it. */
+  const repoint = (from: string, to: string) => {
+    const moved = (localPath: string | null) => {
+      if (localPath === null) return null;
+      const rest = localPath.slice(from.length);
+      return localPath === from || (localPath.startsWith(from) && /^[\\/]/.test(rest))
+        ? `${to}${rest}`
+        : localPath;
+    };
+    onChange({
+      additionalFolders: value.additionalFolders.includes(to)
+        ? value.additionalFolders.filter((folder) => folder !== from)
+        : value.additionalFolders.map((folder) => (folder === from ? to : folder)),
+      repositories: value.repositories.map((repository) => ({
+        ...repository,
+        localPath: moved(repository.localPath),
+      })),
+    });
+  };
   const urlIdentity = projectRepositoryIdentity(url.trim());
   async function run(repositoryId: string, mode: "clone" | "match") {
     if (blocked || admissionBlocked || dirty || inFlight.current) return;
@@ -185,24 +207,46 @@ export function ProjectEnvironment({
           Allow new work to access these existing folders on this machine. The execution folder
           remains available. Provider permissions still apply.
         </p>
-        {value.additionalFolders.map((path) => (
-          <div className="project-environment-entry" key={path}>
-            <ProjectLocation path={path} />
-            <button
-              className="project-control"
-              disabled={blocked}
-              aria-label={`Remove folder ${path}`}
-              onClick={() =>
-                onChange({
-                  ...value,
-                  additionalFolders: value.additionalFolders.filter((p) => p !== path),
-                })
-              }
-            >
-              Remove
-            </button>
-          </div>
-        ))}
+        {value.additionalFolders.map((path) => {
+          const problem = folderProblem(path);
+          return (
+            <div key={path}>
+              <div className="project-environment-entry">
+                <ProjectLocation path={path} />
+                {problem?.updatePath !== undefined && (
+                  <button
+                    className="project-control"
+                    disabled={blocked}
+                    aria-label={`Update folder ${path} to ${problem.updatePath}`}
+                    onClick={() => repoint(path, problem.updatePath!)}
+                  >
+                    Update path
+                  </button>
+                )}
+                <button
+                  className="project-control"
+                  disabled={blocked}
+                  aria-label={`Remove folder ${path}`}
+                  onClick={() =>
+                    onChange({
+                      ...value,
+                      additionalFolders: value.additionalFolders.filter((p) => p !== path),
+                    })
+                  }
+                >
+                  Remove
+                </button>
+              </div>
+              {problem && (
+                <p className="project-muted" role="status">
+                  {problem.message}
+                  {problem.updatePath !== undefined &&
+                    " It is a checkout of the same repository, so Update path can point the entry there."}
+                </p>
+              )}
+            </div>
+          );
+        })}
         {value.additionalFolders.length === 0 && (
           <p className="project-muted">No additional folders approved.</p>
         )}
@@ -245,6 +289,12 @@ export function ProjectEnvironment({
               item.url === repository.url &&
               item.localPath === repository.localPath,
           );
+          const problem = problems.find(
+            (item) =>
+              item.kind === "repository" &&
+              item.repositoryId === repository.id &&
+              (item.path === repository.localPath || (repository.localPath === null && !dirty)),
+          );
           return (
             <article className="project-repository-entry" key={repository.id}>
               <div className="project-environment-entry">
@@ -268,11 +318,13 @@ export function ProjectEnvironment({
                   ? "Checking on this machine…"
                   : observed
                     ? `Checkout: ${observed.status}`
-                    : dirty
-                      ? "Unsaved repository settings"
-                      : query.isPending
-                        ? "Checking checkout…"
-                        : "Checkout status unknown"}
+                    : problem && !dirty
+                      ? problem.message
+                      : dirty
+                        ? "Unsaved repository settings"
+                        : query.isPending
+                          ? "Checking checkout…"
+                          : "Checkout status unknown"}
               </p>
               <label>
                 Checkout path
@@ -296,6 +348,22 @@ export function ProjectEnvironment({
                 approved folder.
               </p>
               <div className="project-actions">
+                {problem?.updatePath !== undefined && (
+                  <button
+                    className="project-control"
+                    disabled={blocked}
+                    onClick={() =>
+                      onChange({
+                        ...value,
+                        repositories: value.repositories.map((r) =>
+                          r.id === repository.id ? { ...r, localPath: problem.updatePath! } : r,
+                        ),
+                      })
+                    }
+                  >
+                    Update path
+                  </button>
+                )}
                 <button
                   className="project-control"
                   disabled={blocked || admissionBlocked || dirty || !repository.localPath}

@@ -10,6 +10,8 @@ import {
 } from "../../src/studio/projectArtifacts";
 import { ProjectArtifactShelf } from "../../src/components/studio/shell/ProjectArtifactShelf";
 import { ProjectArtifactsLibrary } from "../../src/components/studio/shell/ProjectArtifactsLibrary";
+import { artifactPreviewCache, artifactPreviewFormat } from "../../src/studio/artifactPreview";
+import { documentPreview, imagePreview } from "../../src/studio/artifactPreviewRaster";
 import "../../src/components/studio/shell/shell.css";
 import "../../src/components/studio/shell/panes.css";
 import "./fixture.css";
@@ -153,13 +155,52 @@ function artifacts(pinned: ReadonlySet<string>) {
   });
 }
 
-function Fixture() {
+interface BenchManifest {
+  readonly outputs: ReadonlyArray<{
+    readonly path: string;
+    readonly byteLength: number;
+    readonly modifiedAt: string;
+  }>;
+  readonly pullRequests: number;
+}
+
+function benchArtifacts(manifest: BenchManifest, pinned: ReadonlySet<string>) {
+  return collectProjectArtifacts({
+    workspaceRoot: "/work/app",
+    library: {
+      workspaceRoot: "/work/app",
+      specweave: true,
+      hub: null,
+      hubProblem: null,
+      artifacts: [],
+      folders: [],
+      outputs: manifest.outputs.map((output) => ({ ...output, increment: null })),
+    },
+    designs: [],
+    pullRequests: Array.from({ length: manifest.pullRequests }, (_, index) => ({
+      key: `pr${index}`,
+      number: 2000 - index,
+      repository: "me/app",
+      url: `https://github.com/me/app/pull/${2000 - index}`,
+      title: `Pull request ${2000 - index} with a title about as long as a real one`,
+      state: (index % 9 === 0 ? "open" : index % 13 === 0 ? "closed" : "merged") as "merged",
+      updatedAt: ago(index * 37),
+      threadId: "t1" as ThreadId,
+      threadTitle: "Build the artifacts shelf",
+    })),
+    threadArtifacts: [],
+    threadOf: (id) => THREADS[id] ?? null,
+    pinned,
+  });
+}
+
+function Fixture(props: { readonly bench: BenchManifest | null }) {
   const [pinned, setPinnedSet] = useState<ReadonlySet<string>>(() => new Set(["design:d1"]));
   const [type, setType] = useState<ArtifactTypeFilter>("all");
   const [view, setView] = useState<"list" | "grid">(
     params.get("view") === "grid" ? "grid" : "list",
   );
-  const list = artifacts(pinned);
+  const list = props.bench ? benchArtifacts(props.bench, pinned) : artifacts(pinned);
   const setPinned = (id: string, on: boolean) =>
     setPinnedSet((current) => {
       const next = new Set(current);
@@ -186,9 +227,17 @@ function Fixture() {
           </p>
         </div>
       </div>
-      <div className="fixture-pane" style={{ width: 760 }} data-testid="library-pane">
+      <div
+        className="fixture-pane"
+        style={{ width: 760, ...(props.bench ? { height: "calc(100vh - 40px)" } : {}) }}
+        data-testid="library-pane"
+      >
         <h2>Library</h2>
-        <div className="sws-threads-body sws-library" style={{ paddingTop: 12 }}>
+        <div
+          className="sws-threads-body sws-library"
+          data-testid="library-scroll"
+          style={{ paddingTop: 12 }}
+        >
           <ProjectArtifactsLibrary
             environmentId={env}
             workspaceRoot="/work/app"
@@ -223,4 +272,43 @@ function Fixture() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<Fixture />);
+// `?bench=1` swaps the fictional artifacts for the ones bench.mjs serves.
+const bench = params.has("bench")
+  ? ((await (await fetch("/bench/manifest.json")).json()) as BenchManifest)
+  : null;
+createRoot(document.getElementById("root")!).render(<Fixture bench={bench} />);
+
+declare global {
+  interface Window {
+    __artifactPreviewCacheStats: () => unknown;
+    __artifactPreviewCost: () => Promise<unknown>;
+  }
+}
+window.__artifactPreviewCacheStats = () => artifactPreviewCache.stats();
+// Builds every preview once, one after another, and reports time and size per format.
+window.__artifactPreviewCost = async () => {
+  const seen: Record<string, { ms: number[]; bytes: number[]; failed: number }> = {};
+  for (const artifact of benchArtifacts(bench!, new Set())) {
+    const format = artifactPreviewFormat(artifact);
+    if (format === null) continue;
+    const url = `/bench/file?path=${encodeURIComponent(artifact.path!)}`;
+    const started = performance.now();
+    const preview =
+      format === "image"
+        ? await imagePreview(url)
+        : await documentPreview(await (await fetch(url)).text(), format);
+    const entry = (seen[format] ??= { ms: [], bytes: [], failed: 0 });
+    entry.ms.push(performance.now() - started);
+    if (preview === null || (preview.type !== "image" && preview.type !== "lines")) {
+      entry.failed += 1;
+    }
+    entry.bytes.push(
+      preview?.type === "image"
+        ? preview.src.length
+        : preview?.type === "lines"
+          ? preview.lines.reduce((sum, line) => sum + line.text.length + 16, 32)
+          : 16,
+    );
+  }
+  return seen;
+};

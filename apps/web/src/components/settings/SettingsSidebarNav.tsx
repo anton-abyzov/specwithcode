@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -40,7 +38,6 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import {
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarMenu,
   SidebarMenuButton,
@@ -71,17 +68,6 @@ const SnapShotIcon = createLucideIcon("snap-shot", [
   ["rect", { width: "10", height: "8", x: "7", y: "8", rx: "2", key: "window" }],
   ["circle", { cx: "12", cy: "12", r: "1.5", key: "lens" }],
 ]);
-
-const StudioConnectSidebarSignIn = lazy(() =>
-  import("../clerk/StudioConnectSidebarSignIn").then((module) => ({
-    default: module.StudioConnectSidebarSignIn,
-  })),
-);
-const StudioConnectSidebarAvatar = lazy(() =>
-  import("../clerk/StudioConnectSidebarSignIn").then((module) => ({
-    default: module.StudioConnectSidebarAvatar,
-  })),
-);
 
 const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
@@ -410,16 +396,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
-        <Suspense fallback={null}>
-          <StudioConnectSidebarSignIn />
-        </Suspense>
-        <div className="flex items-center justify-end gap-1 empty:hidden">
-          <Suspense fallback={null}>
-            <StudioConnectSidebarAvatar />
-          </Suspense>
-        </div>
-      </SidebarFooter>
     </>
   );
 }

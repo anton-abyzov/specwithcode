@@ -15,6 +15,27 @@ import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.t
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
 
+/**
+ * The toolkit records every tool call's raw parameters on its span before the
+ * call is decoded or allowed, and for this tool those are a file's bytes.
+ */
+export const withoutFileBytes = (tracer: Tracer.Tracer): Tracer.Tracer =>
+  Tracer.make({
+    ...tracer,
+    span: (options) => {
+      const span = tracer.span(options);
+      const attribute = span.attribute.bind(span);
+      span.attribute = (key, value) =>
+        attribute(
+          key,
+          key === "parameters" && span.attributes.get("tool") === "studio_file_chunk"
+            ? "[file bytes]"
+            : value,
+        );
+      return span;
+    },
+  });
+
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -69,7 +90,7 @@ export const layer = Layer.unwrap(
         });
 
         return Layer.mergeAll(
-          Layer.succeed(Tracer.Tracer, tracer),
+          Layer.succeed(Tracer.Tracer, withoutFileBytes(tracer)),
           BrowserTraceCollector.layer(sink),
         );
       }),

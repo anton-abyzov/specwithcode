@@ -16,6 +16,7 @@ import {
   type ContextThread,
   SUMMARY_BUDGET,
   fitCoordinatorContext,
+  withUnmergedWorkers,
   workerSummaries,
 } from "./coordinatorContext.ts";
 
@@ -142,7 +143,87 @@ describe("fitCoordinatorContext", () => {
     );
     expect(summary).toMatchObject({ branch: null, worktreePath: null });
   });
-  it("orders workers active first, then newest, then by id, the same way every time", () => {
+  it("names workers that need the person, run or are pinned before newer resolved ones", () => {
+    const threads = [
+      shell(90, { settledAt: at(91) }),
+      shell(80, { settledOverride: "settled", settledAt: at(81) }),
+      shell(70, { archivedAt: at(95) }),
+      shell(60),
+      shell(50, { settledAt: at(51), settledOverride: "active" }),
+      shell(4, { pinnedAt: at(4) }),
+      shell(3, { reportedWait: "Waiting for CI" }),
+      shell(2, { activeRunId: "run-2", heldQueuedCount: 1 }),
+      shell(1, { pendingRuntimeRequest: { requestId: "r1" } }),
+      shell(0, { reportedBlocker: "Needs a token" }),
+    ];
+    expect(workerSummaries(threads, env).map((w) => w.threadId)).toEqual([
+      "w0001",
+      "w0000",
+      "w0002",
+      "w0004",
+      "w0003",
+      "w0060",
+      "w0050",
+      "w0090",
+      "w0080",
+      "w0070",
+    ]);
+    // Past the cap, an old thread that needs the person still travels; newer resolved ones do not.
+    const crowd = Array.from({ length: 400 }, (_, i) =>
+      shell(1000 + i, { settledAt: at(2000 + i) }),
+    );
+    const result = fitCoordinatorContext({
+      base,
+      coordinator: coordinatorOf(3),
+      workers: workerSummaries([...crowd, shell(5, { reportedBlocker: "Stuck" })], env),
+      earlier: null,
+    })!;
+    expect(result.retention!.workers[0]?.threadId).toBe("w0005");
+    expect(result.retention!.totalThreads).toBe(401);
+  });
+  it("ranks held queues as waiting on the person and ignores a resolved thread's old flags", () => {
+    const threads = [
+      shell(9, {
+        settledAt: at(9),
+        reportedBlocker: "Old blocker",
+        hasActionableProposedPlan: true,
+      }),
+      shell(8, {
+        settledAt: at(8),
+        pendingRuntimeRequest: { id: "r8", kind: "approval", createdAt: at(20) },
+      }),
+      shell(7, {
+        settledAt: at(30),
+        pendingRuntimeRequest: { id: "r7", kind: "approval", createdAt: at(1) },
+      }),
+      shell(6, { heldQueuedCount: 2 }),
+      shell(5, { reportedBlocker: "  " }),
+      shell(4, { reportedBlocker: "Waiting for CI", reportedWait: "Waiting for CI" }),
+    ];
+    expect(workerSummaries(threads, env).map((w) => w.threadId)).toEqual([
+      "w0008",
+      "w0006",
+      "w0004",
+      "w0005",
+      "w0009",
+      "w0007",
+    ]);
+  });
+  it("lists unmerged workers most needed first", () => {
+    const context = fitCoordinatorContext({
+      base,
+      coordinator: coordinatorOf(3),
+      workers: [],
+      earlier: null,
+    })!;
+    const listed = withUnmergedWorkers(
+      context,
+      [shell(9, { settledAt: at(9) }), shell(1, { reportedBlocker: "Stuck" }), shell(5)],
+      env,
+    ).retention!.unmergedWorkers!.map((w) => w.threadId);
+    expect(listed).toEqual(["w0001", "w0005", "w0009"]);
+  });
+  it("orders open workers newest first, archived last, then by id, the same way every time", () => {
     const threads = [
       shell(5, { archivedAt: at(9), updatedAt: at(50) }),
       shell(2),

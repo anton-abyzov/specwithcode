@@ -10,6 +10,7 @@ import {
 } from "./projectSettingsSearch.logic";
 const state = vi.hoisted(() => ({
   update: vi.fn(),
+  specweaveSetUp: vi.fn(),
   remove: vi.fn(),
   worktreesRead: vi.fn(),
   worktreesRemove: vi.fn(),
@@ -101,6 +102,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
     connectionSave: "connectionSave",
     connectionCheck: "connectionCheck",
     connectionRevoke: "connectionRevoke",
+    specweaveSetUp: "specweaveSetUp",
   },
 }));
 vi.mock("../../state/use-atom-command", () => ({
@@ -259,6 +261,7 @@ const snapshot = {
     files: [{ name: "MEMORY.md", revision: 3, updatedAt: "2026-10-09T00:00:00Z", byteLength: 40 }],
     totalBytes: 40,
   },
+  specweave: false,
 } as ProjectWorkspaceReadResult;
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -437,6 +440,31 @@ describe("project folder placement", () => {
           : 1,
     );
     expect(rendered.map((index) => rows[index]!.id)).toEqual(rows.map((row) => row.id));
+  });
+  it("sets SpecWeave up only after the person confirms what it adds", async () => {
+    state.specweaveSetUp.mockResolvedValue({ _tag: "Success", value: { alreadySetUp: false } });
+    await render("general", true, { kind: "code" });
+    expect(container.textContent).toContain("Off. SpecWithCode's own plan and memory are used");
+    await click("Set up SpecWeave");
+    expect(state.specweaveSetUp).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("AGENTS.md");
+    await click("Run specweave init");
+    expect(state.specweaveSetUp).toHaveBeenCalledWith({
+      environmentId: project.environmentId,
+      input: { projectId: project.id },
+    });
+    expect(state.saved).toHaveBeenCalled();
+  });
+  it("shows why SpecWeave setup failed and keeps the button", async () => {
+    state.specweaveSetUp.mockResolvedValue({
+      _tag: "Failure",
+      error: new Error("specweave init exited with 1: boom"),
+    });
+    await render("general", true, { kind: "code" });
+    await click("Set up SpecWeave");
+    await click("Run specweave init");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("exited with 1: boom");
+    expect(state.saved).not.toHaveBeenCalled();
   });
   it("names the unsaved edits that block a folder change", async () => {
     await render("general", true, { kind: "code" });
@@ -905,6 +933,62 @@ describe("project settings and memory", () => {
         'input[aria-label="Checkout path for https://github.com/example/atlas.git"]',
       )!.value,
     ).toBe("/scratch/shared/existing");
+  });
+  it("re-points a moved folder and the checkout inside it with Update path", async () => {
+    const observed = state.environment;
+    state.environment = {
+      revision: 7,
+      workspaceRoot: "/scratch/atlas",
+      additionalFolders: [],
+      repositories: [],
+      problems: [
+        {
+          kind: "folder",
+          path: "/scratch/shared",
+          reason: "moved",
+          message: "Approved folder /scratch/shared now leads to /scratch/renamed.",
+          resolvedPath: "/scratch/renamed",
+          updatePath: "/scratch/renamed",
+        },
+        {
+          kind: "repository",
+          path: "/scratch/shared/code",
+          reason: "outside",
+          message: "Repository checkout /scratch/shared/code is outside the project folder.",
+          repositoryId: "repo-one",
+        },
+      ],
+    } as typeof observed;
+    try {
+      await render("environment", true, {
+        environment: {
+          additionalFolders: ["/scratch/shared"],
+          repositories: [
+            {
+              id: "repo-one",
+              url: "https://github.com/example/atlas.git",
+              localPath: "/scratch/shared/code",
+            },
+          ],
+        },
+      });
+      expect(container.textContent).toContain("/scratch/shared now leads to /scratch/renamed");
+      expect(container.textContent).toContain("/scratch/shared/code is outside");
+      await press("Update folder /scratch/shared to /scratch/renamed");
+      await click("Save changes");
+      expect(state.update.mock.calls[0]![0].input.workspaceSettings.environment).toEqual({
+        additionalFolders: ["/scratch/renamed"],
+        repositories: [
+          {
+            id: "repo-one",
+            url: "https://github.com/example/atlas.git",
+            localPath: "/scratch/renamed/code",
+          },
+        ],
+      });
+    } finally {
+      state.environment = observed;
+    }
   });
   it("guards an unadded environment draft on close", async () => {
     await render("environment");

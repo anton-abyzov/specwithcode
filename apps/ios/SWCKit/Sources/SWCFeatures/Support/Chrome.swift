@@ -16,9 +16,6 @@ struct ScreenHeader<Leading: View, Center: View, Trailing: View>: View {
   let center: Center
   let trailing: Trailing
 
-  @State private var leadingWidth: CGFloat = 0
-  @State private var trailingWidth: CGFloat = 0
-
   init(alignment: TitleAlignment = .center, @ViewBuilder leading: () -> Leading, @ViewBuilder center: () -> Center, @ViewBuilder trailing: () -> Trailing) {
     self.alignment = alignment
     self.leading = leading()
@@ -38,19 +35,10 @@ struct ScreenHeader<Leading: View, Center: View, Trailing: View>: View {
   }
 
   private var centered: some View {
-    let side = max(leadingWidth, trailingWidth, WeaveSize.minTap)
-    return HStack(spacing: WeaveSpacing.s2) {
-      leading
-        .fixedSize()
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { leadingWidth = $0 }
-        .frame(minWidth: side, alignment: .leading)
-      Spacer(minLength: 0)
+    CenteredHeaderLayout(spacing: WeaveSpacing.s2) {
+      leading.fixedSize()
       center
-      Spacer(minLength: 0)
-      trailing
-        .fixedSize()
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { trailingWidth = $0 }
-        .frame(minWidth: side, alignment: .trailing)
+      trailing.fixedSize()
     }
   }
 
@@ -60,6 +48,37 @@ struct ScreenHeader<Leading: View, Center: View, Trailing: View>: View {
       center.frame(maxWidth: .infinity, alignment: .leading)
       trailing.fixedSize()
     }
+  }
+}
+
+/// Leading control, title, trailing control. The controls keep their natural
+/// widths and the title takes what is left, centered on the header when that
+/// leaves it room. The header never asks for more than it was offered: a wider
+/// answer would widen the whole screen, which then overflows on both sides.
+/// That is what the iPhone Duo's status rail did to the folded display.
+struct CenteredHeaderLayout: Layout {
+  var spacing: CGFloat
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard subviews.count == 3 else { return .zero }
+    let sides = subviews[0].sizeThatFits(.unspecified).width + subviews[2].sizeThatFits(.unspecified).width + 2 * spacing
+    let title = subviews[1].sizeThatFits(ProposedViewSize(width: proposal.width.map { max(0, $0 - sides) }, height: proposal.height))
+    let height = max(subviews[0].sizeThatFits(.unspecified).height, title.height, subviews[2].sizeThatFits(.unspecified).height)
+    return CGSize(width: proposal.width ?? (sides + title.width), height: height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    guard subviews.count == 3 else { return }
+    let leading = subviews[0].sizeThatFits(.unspecified)
+    let trailing = subviews[2].sizeThatFits(.unspecified)
+    let room = max(0, bounds.width - leading.width - trailing.width - 2 * spacing)
+    let title = subviews[1].sizeThatFits(ProposedViewSize(width: room, height: bounds.height))
+    let earliest = bounds.minX + leading.width + spacing
+    let latest = bounds.maxX - trailing.width - spacing - title.width
+    let x = min(max(bounds.midX - title.width / 2, earliest), max(earliest, latest))
+    subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+    subviews[1].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: room, height: bounds.height))
+    subviews[2].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
   }
 }
 

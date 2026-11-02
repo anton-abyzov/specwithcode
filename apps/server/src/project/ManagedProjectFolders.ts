@@ -39,6 +39,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
+import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
@@ -144,7 +145,10 @@ export class ManagedProjectFolders extends Context.Service<
      * README, an icon, and a first commit, then creates the project. Personal
      * projects return this machine's assistant when it has one; a new one is
      * refused while Settings keeps Aide off, and otherwise claims a private
-     * managed folder without invoking Git. A failed
+     * managed folder without invoking Git. With `specweave`, a new code
+     * project also runs `specweave init` before the first commit, so its
+     * files land in that commit; a failed init keeps the project and returns
+     * why in `specweaveError`. A failed
      * commit (no Git identity, a signing prompt) keeps the project and returns
      * why in `commitError`. The folder is removed when the create fails or is
      * cancelled before the project exists, never once another project owns it.
@@ -153,12 +157,14 @@ export class ManagedProjectFolders extends Context.Service<
       readonly name: string;
       readonly parentPath?: string | undefined;
       readonly kind?: "code" | "personal" | undefined;
+      readonly specweave?: boolean | undefined;
     }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
         readonly workspaceRoot: string;
         readonly commitError?: string;
         readonly existing?: boolean;
+        readonly specweaveError?: string;
       },
       NamedProjectError
     >;
@@ -266,6 +272,9 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
   const assistantLock = yield* Semaphore.make(1);
+  // Optional so hosts without a process runner still create projects; a
+  // request for SpecWeave then says it could not run.
+  const specweaveSetup = yield* Effect.serviceOption(SpecweaveSetup.SpecweaveSetup);
 
   /**
    * Claims the first free folder among `folderFor(1)`, `folderFor(2)`, ...,
@@ -480,11 +489,20 @@ const make = Effect.gen(function* () {
     });
   });
 
-  // git init, the starter files, and the first commit. Only the commit may
-  // fail softly; everything before it fails the create.
+  // `specweave init`, only when asked. Never fails: why it did not run comes back.
+  const setUpSpecweave = (cwd: string) =>
+    Option.match(specweaveSetup, {
+      onNone: () => Effect.succeed("SpecWeave setup is not available on this machine."),
+      onSome: (setup) =>
+        setup.setUp(cwd).pipe(Effect.map((result) => (result.ok ? undefined : result.detail))),
+    });
+
+  // git init, the starter files, SpecWeave when asked, and the first commit.
+  // Only SpecWeave and the commit may fail softly; everything else fails the create.
   const scaffoldRepository = Effect.fn("ManagedProjectFolders.scaffoldRepository")(function* (
     cwd: string,
     name: string,
+    specweave: boolean,
   ) {
     const branch =
       (yield* git
@@ -509,7 +527,32 @@ const make = Effect.gen(function* () {
       args: ["add", "--force", "--", "README.md", "assets/icon.svg"],
       timeoutMs: 10_000,
     });
-    return yield* git
+    const setupError = specweave ? yield* setUpSpecweave(cwd) : undefined;
+    // Everything init wrote, minus what its own .gitignore leaves out. Soft, like
+    // the setup itself: the project is kept and the person is told.
+    const stageError =
+      specweave && setupError === undefined
+        ? yield* git
+            .execute({
+              operation: "ManagedProjectFolders.addSpecweave",
+              cwd,
+              args: ["add", "--all"],
+              allowNonZeroExit: true,
+              timeoutMs: 30_000,
+            })
+            .pipe(
+              Effect.map((result) =>
+                result.exitCode === 0
+                  ? undefined
+                  : "SpecWeave's files could not be added to the first commit.",
+              ),
+              Effect.catch(() =>
+                Effect.succeed("SpecWeave's files could not be added to the first commit."),
+              ),
+            )
+        : undefined;
+    const specweaveError = setupError ?? stageError;
+    const commitError = yield* git
       .execute({
         operation: "ManagedProjectFolders.commit",
         cwd,
@@ -523,6 +566,7 @@ const make = Effect.gen(function* () {
         ),
         Effect.catch((error) => Effect.succeed(error.message)),
       );
+    return { commitError, specweaveError };
   });
 
   const hasProjectMarker = (folder: string) =>
@@ -612,8 +656,8 @@ const make = Effect.gen(function* () {
     // exit but success removes it, an interrupt included.
     const prepared = yield* Effect.all([
       (input.kind === "personal"
-        ? Effect.succeed(undefined)
-        : scaffoldRepository(workspaceRoot, input.name)
+        ? Effect.succeed({ commitError: undefined, specweaveError: undefined })
+        : scaffoldRepository(workspaceRoot, input.name, input.specweave === true)
       ).pipe(
         Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
       ),
@@ -621,7 +665,7 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
       ),
     ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolder)));
-    const [commitError, id] = prepared;
+    const [{ commitError, specweaveError }, id] = prepared;
     const project = yield* projects
       .create({
         commandId: CommandId.make(`named-project:${id}`),
@@ -677,6 +721,7 @@ const make = Effect.gen(function* () {
       projectId: project.id,
       workspaceRoot,
       ...(commitError === undefined ? {} : { commitError }),
+      ...(specweaveError === undefined ? {} : { specweaveError }),
     };
   });
 

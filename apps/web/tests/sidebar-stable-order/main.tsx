@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { SidebarProvider } from "../../src/components/ui/sidebar";
 import StudioSidebar from "../../src/components/studio/shell/StudioSidebar";
+import { UnreachableHostsContext } from "../../src/studio/unreachableHosts";
 import { fixture, publish } from "./mocks";
 import "./fixture.css";
 
@@ -142,6 +143,51 @@ if (params.get("scenario") === "chats") {
   });
 }
 
+// `?scenario=chat-machines`: the November 1 report. One chat lives on this machine, the
+// rest on others, one of them moved and one on a machine that stopped answering.
+if (params.get("scenario") === "chat-machines") {
+  const on = (environmentId: string, overrides: Partial<EnvironmentThreadShell> = {}) => ({
+    environmentId,
+    projectId: `${environmentId}-scratch`,
+    ...overrides,
+  });
+  publish({
+    environments: [
+      { environmentId: "host", label: "m4" },
+      { environmentId: "m1", label: "m1" },
+      { environmentId: "m3", label: "m3" },
+      { environmentId: "ministorm", label: params.has("short") ? "m2" : "ministorm" },
+    ],
+    unreachable: ["m3"],
+    params: { environmentId: "host", threadId: "extension" },
+    shells: [
+      shell("extension", "Chrome extension version check", {
+        ...on("host"),
+        latestUserMessageAt: minutesAgo(1),
+      }),
+      shell("version", "M1 SpecWithCode version check", on("m1", { updatedAt: minutesAgo(4) })),
+      shell("disk", "Disk audit", {
+        ...on("ministorm", { updatedAt: minutesAgo(8) }),
+        runtime: { status: "running" } as EnvironmentThreadShell["runtime"],
+      }),
+      shell("update", "Update desktop app on every machine in the fleet", on("m1")),
+      shell("iphone", "Boot iPhone Duo simulator", on("m3", { updatedAt: minutesAgo(16) })),
+      shell("stranded", "Moved to the silent machine", {
+        ...on("host", { updatedAt: minutesAgo(24) }),
+        source: { ownerMachineId: "host", executionMachineId: "m3", executionState: "running" },
+      } as Partial<EnvironmentThreadShell>),
+      shell("moved", "Moved to the Linux box", {
+        ...on("host", { updatedAt: minutesAgo(20) }),
+        source: {
+          ownerMachineId: "host",
+          executionMachineId: "ministorm",
+          executionState: "running",
+        },
+      } as Partial<EnvironmentThreadShell>),
+    ],
+  });
+}
+
 const LANES = ["lane-0949", "lane-0948", "lane-0951", "prep"];
 let tick = 0;
 /** One server event: a streamed item, a tool call or a status change on one lane. */
@@ -205,8 +251,13 @@ if (params.get("live") !== "off") setInterval(liveEvent, 40);
 
 createRoot(document.getElementById("root")!).render(
   <SidebarProvider>
-    <aside className="h-screen w-[400px] max-w-full overflow-auto border-r border-border bg-sidebar text-sidebar-foreground">
-      <StudioSidebar />
+    <aside
+      className="h-screen w-[400px] max-w-full overflow-auto border-r border-border bg-sidebar text-sidebar-foreground"
+      style={params.has("width") ? { width: `${params.get("width")}px` } : undefined}
+    >
+      <UnreachableHostsContext.Provider value={new Set(fixture.unreachable)}>
+        <StudioSidebar />
+      </UnreachableHostsContext.Provider>
     </aside>
   </SidebarProvider>,
 );

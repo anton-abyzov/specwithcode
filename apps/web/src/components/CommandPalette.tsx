@@ -1011,11 +1011,16 @@ function OpenCommandPaletteDialog(props: {
     readonly kind: NewProjectKind;
   } | null>(null);
   const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
+  const [newProjectUsesSpecweave, setNewProjectUsesSpecweave] = useState(false);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
   const createNewProject = useNewProject();
   const newProjectEnvironmentId = newProjectFlow?.environmentId ?? null;
+  // Older servers drop the `specweave` field without a word, so only offer it where it works.
+  const newProjectSupportsSpecweave =
+    environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
+      ?.serverConfig?.specweaveSetUp === true;
   const folderChoice = useProjectFolderChoice(newProjectEnvironmentId, isCreatingNewProject, {
     remember: true,
     defaultPath:
@@ -1782,6 +1787,7 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId, kind });
       setNewProjectPublishesToGitHub(false);
+      setNewProjectUsesSpecweave(false);
       pushPaletteView({
         addonIcon:
           kind === "personal" ? (
@@ -3126,6 +3132,8 @@ function OpenCommandPaletteDialog(props: {
           newProjectFlow.kind === "code" && newProjectPublishesToGitHub
             ? newProjectGitHubTarget
             : null,
+        specweave:
+          newProjectFlow.kind === "code" && newProjectSupportsSpecweave && newProjectUsesSpecweave,
       });
       if (created) {
         if (newProjectFlow.kind === "code") newProjectDraft.keep("");
@@ -3478,6 +3486,12 @@ function OpenCommandPaletteDialog(props: {
               toggle: () => setNewProjectPublishesToGitHub((value) => !value),
             }
           : null,
+      specweave: newProjectSupportsSpecweave
+        ? {
+            checked: newProjectUsesSpecweave,
+            toggle: () => setNewProjectUsesSpecweave((value) => !value),
+          }
+        : null,
       addExisting: () => showExistingProjectSources(newProjectFlow.environmentId),
     });
   } else if (addProjectCloneFlow?.step === "repository") {

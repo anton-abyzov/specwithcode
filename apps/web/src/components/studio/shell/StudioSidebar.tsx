@@ -41,11 +41,10 @@ import {
   PaletteIcon,
   PlusIcon,
   SearchIcon,
-  SlidersVerticalIcon,
   SquarePenIcon,
   WifiOffIcon,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../../commandPaletteBus";
 import { isElectron } from "../../../env";
@@ -69,10 +68,22 @@ import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
-import { useServerConfigs, useThreadShells } from "../../../state/entities";
+import {
+  useAllEnvironmentProjectSnapshotsReady,
+  useServerConfigs,
+  useThreadShells,
+} from "../../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import { projectEnvironment } from "../../../state/projects";
+import { ChatFilterMenu } from "./ChatFilterMenu";
 import { threadLocation } from "../../../studio/threadLocation";
+import {
+  chatMachineColumnCh,
+  chatMachineNote,
+  chatsShowMachineColumn,
+  machineColumnLabel,
+  machineFilterOptions,
+} from "../../../studio/threadMachineFilter";
 import { primaryServerKeybindingsAtom } from "../../../state/server";
 import { readEnvironmentScope } from "../../../state/session";
 import { threadEnvironment } from "../../../state/threads";
@@ -123,12 +134,10 @@ import {
   buildChatGroups,
   CHAT_ACTIVITY_FILTERS,
   CHAT_GROUPINGS,
-  CHAT_OPTION_LABELS,
   CHAT_PROJECT_THREAD_CHOICES,
   CHAT_SORTS,
   CHAT_STATUS_FILTERS,
   chatListEmptyMessage,
-  chatListOptionsAreDefault,
   compactAge,
   DEFAULT_CHAT_LIST_OPTIONS,
   modelLabel,
@@ -136,30 +145,13 @@ import {
   parseChatListOptions,
   THREAD_TONE_LABELS,
   threadTone,
-  type ChatListOptions,
 } from "../../../studio/shellModel";
 import { resolveThreadRouteTarget } from "../../../threadRoutes";
-import { cn } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
 import { useSettingsProjectGroups } from "../../settings/useSettingsProjectGroups";
 import { SidebarChromeFooter, SidebarChromeHeader } from "../../sidebar/SidebarChrome";
-import {
-  Menu,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuRadioItemIndicator,
-  MenuSeparator,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "../../ui/menu";
+import { MenuItem, MenuSeparator } from "../../ui/menu";
 import { SidebarContent, useSidebar } from "../../ui/sidebar";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { Tip } from "./Tip";
 import { PlanProgressChip } from "../PlanProgressChip";
 import { useSidebarThreadPlans } from "../../sidebar/SidebarPlanProgress";
@@ -186,6 +178,9 @@ const ChatOptionsSchema = Schema.Struct({
   sortBy: Schema.Literals(CHAT_SORTS),
 });
 type StoredChatOptions = typeof ChatOptionsSchema.Type;
+// Apart from the options above: its value is a machine id, not one of a fixed set of choices.
+const CHAT_MACHINE_STORAGE_KEY = "studio:chats-machine:v1";
+const ChatMachineSchema = Schema.NullOr(Schema.String);
 const PROJECT_PAGE = 7;
 const CHAT_PAGE = 30;
 
@@ -307,6 +302,24 @@ export default function StudioSidebar() {
     [isStandaloneChat, threads],
   );
   const unreachable = useUnreachableHosts();
+  // Only live snapshots from every host can show a machine has no chats; cached or
+  // missing ones cannot.
+  const hostsAnswered = useAllEnvironmentProjectSnapshotsReady();
+  const locateChat = useCallback(
+    (thread: EnvironmentThreadShell) =>
+      threadLocation({
+        summary: thread.source,
+        servingEnvironmentId: thread.environmentId,
+        name: (environmentId, fallbackLabel) => {
+          const known = machineLabels.get(environmentId as EnvironmentId);
+          if (known !== undefined) return known;
+          const name = nickname(environmentId, fallbackLabel);
+          return fallbackLabel || name !== environmentId ? name : "another machine";
+        },
+        unreachable,
+      }),
+    [machineLabels, nickname, unreachable],
+  );
   // The checkout each project page shows, as the page itself picks it.
   const displayedCheckouts = useMemo(() => {
     const map = new Map<string, SidebarProjectGroupMember>();
@@ -414,6 +427,10 @@ export default function StudioSidebar() {
       projectLabel: (thread: EnvironmentThreadShell) =>
         projectByMember.get(`${thread.environmentId}:${thread.projectId}`)?.displayName ??
         "No project",
+      machine: (thread: EnvironmentThreadShell) => {
+        const location = locateChat(thread);
+        return { id: location.executionMachineId, label: location.label.split(" → ").at(-1)! };
+      },
       // Threads a project started open from its project row, not from the chat list.
       isProjectThread: (thread: EnvironmentThreadShell) => {
         const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
@@ -423,11 +440,103 @@ export default function StudioSidebar() {
         });
       },
     }),
-    [displayedCheckouts, now, projectByMember, threadByKey],
+    [displayedCheckouts, locateChat, now, projectByMember, threadByKey],
+  );
+  // Every chat the list could show whatever its status and activity filters say, so the
+  // column and the machine choices hold still while those filters change.
+  const chatsAnyState = useMemo(
+    () =>
+      buildChatGroups(
+        listedThreads,
+        { ...options, status: "all", activity: "any", groupBy: "none" },
+        chatGroupInput,
+      ).flatMap((group) => group.threads),
+    [chatGroupInput, listedThreads, options],
+  );
+  const machineOptions = useMemo(
+    () =>
+      machineFilterOptions(chatsAnyState, (thread) => {
+        const location = locateChat(thread);
+        return {
+          machineId: location.executionMachineId,
+          label: location.label.split(" → ").at(-1)!,
+        };
+      }),
+    [chatsAnyState, locateChat],
+  );
+  const [storedMachine, setStoredMachine] = useLocalStorage<string | null, string | null>(
+    CHAT_MACHINE_STORAGE_KEY,
+    null,
+    ChatMachineSchema,
+  );
+  const machineFilter = machineOptions.some((option) => option.machineId === storedMachine)
+    ? storedMachine
+    : null;
+  const machineFilterLabel =
+    machineOptions.find((option) => option.machineId === machineFilter)?.label ?? null;
+  // Once every host has answered, a machine with no chat left lets the filter go for
+  // good, so a chat that comes back there later is not hidden unasked. A machine whose
+  // chats are only hidden by the "Agent threads" choice keeps its filter for later.
+  const staleMachine = useMemo(
+    () =>
+      storedMachine !== null &&
+      machineFilter === null &&
+      hostsAnswered &&
+      !buildChatGroups(
+        listedThreads,
+        { ...options, status: "all", activity: "any", projectThreads: "show", groupBy: "none" },
+        chatGroupInput,
+      ).some((group) =>
+        group.threads.some((thread) => locateChat(thread).executionMachineId === storedMachine),
+      ),
+    [
+      chatGroupInput,
+      hostsAnswered,
+      listedThreads,
+      locateChat,
+      machineFilter,
+      options,
+      storedMachine,
+    ],
+  );
+  useEffect(() => {
+    if (staleMachine) setStoredMachine(null);
+  }, [setStoredMachine, staleMachine]);
+  const machineThreads = useMemo(
+    () =>
+      machineFilter === null
+        ? listedThreads
+        : listedThreads.filter((thread) => locateChat(thread).executionMachineId === machineFilter),
+    [listedThreads, locateChat, machineFilter],
   );
   const chatGroups = useMemo(
-    () => buildChatGroups(listedThreads, options, chatGroupInput),
-    [chatGroupInput, listedThreads, options],
+    () => buildChatGroups(machineThreads, options, chatGroupInput),
+    [chatGroupInput, machineThreads, options],
+  );
+  // Headings already name the machine when the list is grouped by it.
+  const showMachineColumn =
+    options.groupBy !== "machine" &&
+    chatsShowMachineColumn({
+      machineIds: machineOptions.map((option) => option.machineId),
+      primaryEnvironmentId,
+      anyMoved: chatsAnyState.some((thread) => locateChat(thread).moved),
+    });
+  // Sized by what the rows show, so "→ Minis" fits as well as "M4".
+  const machineCh = useMemo(
+    () =>
+      chatMachineColumnCh(
+        chatsAnyState.map((thread) => {
+          const location = locateChat(thread);
+          return {
+            name: location.label.split(" → ").at(-1)!,
+            moved: location.moved,
+            offline:
+              location.executionMachineId !== primaryEnvironmentId &&
+              unreachable.has(location.executionMachineId),
+          };
+        }),
+      ),
+    [chatsAnyState, locateChat, primaryEnvironmentId, unreachable],
   );
   const chatTotal = chatGroups.reduce((sum, group) => sum + group.threads.length, 0);
   // Only worked out for an empty list: whether project threads are all that is left out.
@@ -436,13 +545,21 @@ export default function StudioSidebar() {
       chatTotal > 0 || options.projectThreads === "show"
         ? 0
         : buildChatGroups(
-            listedThreads,
+            machineThreads,
             { ...options, projectThreads: "show" },
             chatGroupInput,
           ).reduce((sum, group) => sum + group.threads.length, 0),
-    [chatGroupInput, chatTotal, listedThreads, options],
+    [chatGroupInput, chatTotal, machineThreads, options],
   );
-  const chatTools = <ChatFilterMenu options={options} onChange={setOptions} />;
+  const chatTools = (
+    <ChatFilterMenu
+      options={options}
+      onChange={setOptions}
+      machines={machineOptions}
+      machine={machineFilter}
+      onMachineChange={setStoredMachine}
+    />
+  );
   // A menu closes on click, so a refused action has to say so somewhere else.
   const reportFailure = async (
     verb: string,
@@ -1033,6 +1150,7 @@ export default function StudioSidebar() {
             className="sws-side-section sws-side-chats"
             role="group"
             aria-labelledby="sws-side-chats"
+            style={{ "--sws-chat-machine-col": `${machineCh}ch` } as CSSProperties}
           >
             {/* Mounted once, apart from the groups: a choice that regroups the list must
                 not take the open menu and the keyboard with it. */}
@@ -1053,9 +1171,24 @@ export default function StudioSidebar() {
                 </Tip>
               </div>
             </div>
+            {machineFilterLabel ? (
+              <span className="sws-unplanned-notice sws-chat-machine-pill" data-chat-machine-pill>
+                <button
+                  type="button"
+                  className="sws-unplanned-filter"
+                  aria-pressed
+                  aria-label={`Showing chats on ${machineFilterLabel}. Show all machines`}
+                  onClick={() => setStoredMachine(null)}
+                >
+                  <LaptopIcon aria-hidden />
+                  On {machineFilterLabel}
+                  <span className="sws-unplanned-clear">Show all</span>
+                </button>
+              </span>
+            ) : null}
             {chatTotal === 0 ? (
               <p className="sws-side-empty" role="status">
-                {chatListEmptyMessage(options, hiddenProjectThreads)}
+                {chatListEmptyMessage(options, hiddenProjectThreads, machineFilterLabel)}
               </p>
             ) : (
               visibleChatGroups.map(({ group, isCollapsed, rows }) => {
@@ -1133,26 +1266,26 @@ export default function StudioSidebar() {
                             : (machineLabels.get(thread.environmentId) ?? null);
                         // Once a chat runs away from the machine it lives on, the note
                         // says both ("Lives on M4 · runs on Minis").
-                        const location = threadLocation({
-                          summary: thread.source,
-                          servingEnvironmentId: thread.environmentId,
-                          name: (environmentId, fallbackLabel) => {
-                            const known = machineLabels.get(environmentId as EnvironmentId);
-                            if (known !== undefined) return known;
-                            const name = nickname(environmentId, fallbackLabel);
-                            return fallbackLabel || name !== environmentId
-                              ? name
-                              : "another machine";
-                          },
-                          unreachable,
+                        const location = locateChat(thread);
+                        const executionName = location.label.split(" → ").at(-1)!;
+                        const namedMachine = showMachineColumn
+                          ? location.label
+                          : options.groupBy === "machine"
+                            ? executionName
+                            : machine;
+                        // The mark follows the machine the column names, which a moved
+                        // chat's serving machine is not.
+                        const executionOffline =
+                          location.executionMachineId !== primaryEnvironmentId &&
+                          unreachable.has(location.executionMachineId);
+                        const machineNote = chatMachineNote({
+                          location,
+                          offlineHost: hostOffline ? (machine ?? "Its machine") : null,
+                          runsElsewhere: location.executionMachineId !== thread.environmentId,
+                          executionName,
+                          executionOffline,
+                          namedMachine,
                         });
-                        const machineNote = hostOffline
-                          ? `${machine ?? "Its machine"} can't be reached`
-                          : location.moved || location.state !== "running"
-                            ? location.description
-                            : machine
-                              ? `On ${machine}`
-                              : null;
                         const title = thread.title || "Untitled chat";
                         const project = projectByMember.get(
                           `${thread.environmentId}:${thread.projectId}`,
@@ -1218,15 +1351,6 @@ export default function StudioSidebar() {
                             }
                           >
                             {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
-                            {hostOffline ? (
-                              <WifiOffIcon
-                                className="sws-row-machine"
-                                data-offline=""
-                                aria-hidden
-                              />
-                            ) : machine || location.moved ? (
-                              <LaptopIcon className="sws-row-machine" aria-hidden />
-                            ) : null}
                             <span className="sr-only">
                               , {label.full}
                               {stateDescription}, {THREAD_TONE_LABELS[tone]}
@@ -1234,6 +1358,22 @@ export default function StudioSidebar() {
                             </span>
                             {tone === "waiting" || tone === "working" || tone === "failed" ? (
                               <span className="sws-dot" data-tone={tone} aria-hidden />
+                            ) : null}
+                            {showMachineColumn ? (
+                              // After the dot, so a dot appearing never moves the column.
+                              <span className="sws-row-machine" aria-hidden>
+                                {executionOffline ? (
+                                  <WifiOffIcon data-offline="" aria-hidden />
+                                ) : null}
+                                {location.moved ? (
+                                  <span className="sws-row-machine-arrow">→</span>
+                                ) : null}
+                                <span className="sws-row-machine-name">
+                                  {machineColumnLabel(location).replace(/^→ /, "")}
+                                </span>
+                              </span>
+                            ) : executionOffline ? (
+                              <WifiOffIcon data-offline="" aria-hidden />
                             ) : null}
                           </SidebarChatRow>
                         );
@@ -1262,110 +1402,4 @@ export default function StudioSidebar() {
 
 function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
   return group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal");
-}
-
-const FILTER_SECTIONS = [
-  { key: "status", title: "Status", values: CHAT_STATUS_FILTERS },
-  { key: "activity", title: "Last activity", values: CHAT_ACTIVITY_FILTERS },
-  { key: "projectThreads", title: "Agent threads", values: CHAT_PROJECT_THREAD_CHOICES },
-  { key: "groupBy", title: "Group by", values: CHAT_GROUPINGS },
-  { key: "sortBy", title: "Sort by", values: CHAT_SORTS },
-] as const;
-/**
- * A chat never resolves, so "Resolved" only means something while agent threads are
- * listed too; a saved pick stays visible so it can be changed.
- */
-function chatFilterValues(
-  section: (typeof FILTER_SECTIONS)[number],
-  options: ChatListOptions,
-): readonly string[] {
-  if (section.key !== "status" || options.projectThreads === "show") return section.values;
-  return section.values.filter((value) => value !== "resolved" || options.status === "resolved");
-}
-/** The first row that chooses how the list is arranged rather than what it lists. */
-const FIRST_ARRANGE_SECTION = FILTER_SECTIONS.findIndex((section) => section.key === "groupBy");
-
-function ChatFilterMenu(props: {
-  options: ChatListOptions;
-  onChange: (options: ChatListOptions) => void;
-}) {
-  const changed = !chatListOptionsAreDefault(props.options);
-  return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <button
-                  type="button"
-                  className={cn("sws-icon-button", changed && "sws-icon-button-on")}
-                  aria-label={
-                    changed ? "Filter and sort chats, filter active" : "Filter and sort chats"
-                  }
-                />
-              }
-            />
-          }
-        >
-          <SlidersVerticalIcon aria-hidden />
-          {changed ? <span className="sws-filter-flag" aria-hidden /> : null}
-        </TooltipTrigger>
-        <TooltipPopup side="bottom">Filter and sort chats</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" side="bottom" className="min-w-60">
-        {FILTER_SECTIONS.map((section, index) => {
-          const labels = CHAT_OPTION_LABELS[section.key] as Record<string, string>;
-          return (
-            <Fragment key={section.key}>
-              {/* The rows above choose what is listed, the rows below how it is arranged. */}
-              {index === FIRST_ARRANGE_SECTION ? <MenuSeparator /> : null}
-              <MenuSub>
-                <MenuSubTrigger>
-                  <span className="flex-1">{section.title}</span>
-                  <span className="text-muted-foreground">
-                    {labels[props.options[section.key]]}
-                  </span>
-                </MenuSubTrigger>
-                <MenuSubPopup className="min-w-44">
-                  <MenuGroup>
-                    <MenuGroupLabel>{section.title}</MenuGroupLabel>
-                    <MenuRadioGroup
-                      value={props.options[section.key]}
-                      onValueChange={(value) =>
-                        props.onChange({
-                          ...props.options,
-                          [section.key]: value,
-                        } as ChatListOptions)
-                      }
-                    >
-                      {chatFilterValues(section, props.options).map((value) => (
-                        <MenuRadioItem key={value} value={value} closeOnClick={false}>
-                          <span className="flex items-center justify-between gap-6">
-                            {labels[value]}
-                            <MenuRadioItemIndicator />
-                          </span>
-                        </MenuRadioItem>
-                      ))}
-                    </MenuRadioGroup>
-                  </MenuGroup>
-                </MenuSubPopup>
-              </MenuSub>
-            </Fragment>
-          );
-        })}
-        <MenuSeparator />
-        {changed ? (
-          <MenuItem onClick={() => props.onChange(DEFAULT_CHAT_LIST_OPTIONS)}>
-            Reset to defaults
-          </MenuItem>
-        ) : null}
-        {/* Rarely needed, so it waits here rather than taking a row in the list. */}
-        <MenuItem render={<Link to="/settings/archived" />}>
-          <ArchiveIcon aria-hidden />
-          Archived chats
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
-  );
 }

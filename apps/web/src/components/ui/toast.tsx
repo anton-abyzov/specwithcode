@@ -39,6 +39,8 @@ export type ThreadToastData = {
   onClose?: (() => void) | undefined;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
+  /** 0 to 1: one progress bar under the description. */
+  progress?: number;
   additionalActions?: ReadonlyArray<{
     id: string;
     props: ComponentPropsWithoutRef<"button">;
@@ -191,7 +193,27 @@ function ToastDescriptionAndExpandable({
   const [open, setOpen] = useState(false);
 
   if (!expandableContent) {
-    return <Toast.Description className={descriptionClassName} data-slot="toast-description" />;
+    return (
+      <>
+        <Toast.Description className={descriptionClassName} data-slot="toast-description" />
+        {toastData?.progress === undefined ? null : (
+          <div
+            aria-label="Update progress"
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={Math.round(toastData.progress * 100)}
+            className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted"
+            data-slot="toast-progress"
+            role="progressbar"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-700 ease-out motion-reduce:transition-none"
+              style={{ width: `${Math.round(toastData.progress * 100)}%` }}
+            />
+          </div>
+        )}
+      </>
+    );
   }
 
   if (!descriptionTrigger) {

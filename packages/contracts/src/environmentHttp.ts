@@ -999,14 +999,14 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     HttpApiEndpoint.post("mintCredential", "/api/connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
-      error: EnvironmentHttpCloudErrors,
+      error: [...EnvironmentHttpCloudErrors, EnvironmentServiceUpdateInProgressError],
     }),
   )
   .add(
     HttpApiEndpoint.post("studioMintCredential", "/api/studio-connect/mint-credential", {
       payload: RelayCloudMintCredentialRequest,
       success: RelayEnvironmentMintResponse,
-      error: EnvironmentHttpCloudErrors,
+      error: [...EnvironmentHttpCloudErrors, EnvironmentServiceUpdateInProgressError],
     }),
     HttpApiEndpoint.post("studioRevokeClientKeys", "/api/studio-connect/revoke-client-keys", {
       payload: RelayRevokeClientKeysRequest,

@@ -97,6 +97,8 @@ export function useNewProject() {
       readonly parentPath?: string;
       readonly kind?: "code" | "personal";
       readonly github: { readonly account: string | null } | null;
+      /** "Use SpecWeave" was ticked: run `specweave init` before the first commit. */
+      readonly specweave?: boolean;
     }): Promise<boolean> => {
       const result = await createNew({
         environmentId: input.environmentId,
@@ -104,6 +106,7 @@ export function useNewProject() {
           name: input.name,
           kind: input.kind ?? "code",
           ...(input.parentPath ? { parentPath: input.parentPath } : {}),
+          ...(input.specweave === true ? { specweave: true } : {}),
         },
       });
       if (result._tag === "Failure") {
@@ -127,7 +130,7 @@ export function useNewProject() {
         return false;
       }
 
-      const { projectId, workspaceRoot, commitError, existing } = result.value;
+      const { projectId, workspaceRoot, commitError, existing, specweaveError } = result.value;
       // Confirm the actual folder, including any collision suffix.
       toastManager.add(
         stackedThreadToast(
@@ -153,6 +156,25 @@ export function useNewProject() {
                 },
         ),
       );
+      if (input.specweave === true && input.kind !== "personal") {
+        if (existing === true) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "SpecWeave was not added to an existing folder",
+              description: "Set it up from Project settings > General when you want it.",
+            }),
+          );
+        } else if (specweaveError !== undefined) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "warning",
+              title: "SpecWeave was not set up",
+              description: `${specweaveError.replace(/[.\s]*$/, ".")} You can retry from Project settings > General.`,
+            }),
+          );
+        }
+      }
       // An existing folder keeps its own remotes; publishing is for new repositories.
       if (input.kind !== "personal" && input.github && existing !== true) {
         void publishToGitHub({

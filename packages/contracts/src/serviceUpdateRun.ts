@@ -45,6 +45,10 @@ export const StudioServiceUpdateRunStepSchema = Schema.Struct({
   startedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** How long the last verified install took in all, or null when none is known. */
   expectedMs: Schema.NullOr(Schema.Number),
+  /** What the current phase should take. Absent from older helpers. */
+  phaseExpectedMs: Schema.optionalKey(Schema.Number),
+  /** What the phases after the current one should take. Absent from older helpers. */
+  remainingAfterMs: Schema.optionalKey(Schema.Number),
   /** The service was restarted: it is back while the helper finishes its checks. */
   serviceBack: Schema.Boolean,
   /**

@@ -312,6 +312,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
       // A handoff's age is its file time against the clock, so the test clock is set to now.
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       yield* fixture.write("README.md", "# Fixture\n");
       yield* fixture.write(
         ".specweave/increments/0001-first/metadata.json",
@@ -339,6 +340,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
   it.effect("finds open increments far older than the newest closed ones", () =>
     Effect.gen(function* () {
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       yield* fixture.write("README.md", "# Fixture\n");
       // Like specweave-umb: hundreds of closed increments after a few left open.
       for (let number = 1; number <= 300; number++) {
@@ -367,6 +369,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       yield* fixture.write("README.md", "# Fixture\n");
       // Seven open increments; the oldest one carries the pending handoff.
       for (let number = 1; number <= 7; number++) {
@@ -388,6 +391,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
   it.effect("reads an open increment whose metadata has grown past 64 KB", () =>
     Effect.gen(function* () {
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       yield* fixture.write("README.md", "# Fixture\n");
       // SpecWeave appends sync events to an active increment's metadata.
       yield* fixture.write(
@@ -410,6 +414,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
   it.effect("orders increments by number past 9999", () =>
     Effect.gen(function* () {
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       yield* fixture.write("README.md", "# Fixture\n");
       for (const [id, title] of [
         ["9999-four-digits", "Four digits"],
@@ -495,6 +500,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fs = yield* FileSystem.FileSystem;
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       const yesterday = DateTime.toDateUtc(
         DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) - 24 * 60 * 60 * 1000),
       );
@@ -586,10 +592,24 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
     }),
   );
 
+  it.effect("ignores a .specweave folder that was never set up", () =>
+    Effect.gen(function* () {
+      const fixture = yield* project();
+      yield* fixture.write("README.md", "# Fixture\n");
+      yield* fixture.write(
+        ".specweave/increments/0002-importer/metadata.json",
+        JSON.stringify({ status: "active", title: "Importer" }),
+      );
+      const result = yield* fixture.read;
+      assert.notInclude(ids(result), "increment");
+    }),
+  );
+
   it.effect("finds a dated handoff note with no index beside it", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       yield* fixture.write("README.md", "# Fixture\n");
       yield* fixture.write(".specweave/handoffs/2026-10-10-INDEX.md", "# Index\n");
       const result = yield* fixture.read;
@@ -601,6 +621,7 @@ it.layer(layer)("ProjectStarterSuggestionsService", (it) => {
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.nowUnsafe()));
       const fixture = yield* project();
+      yield* fixture.write(".specweave/config.json", "{}");
       const minutesAgo = (minutes: number) =>
         DateTime.formatIso(
           DateTime.makeUnsafe(DateTime.toEpochMillis(DateTime.nowUnsafe()) - minutes * 60_000),

@@ -1373,8 +1373,6 @@ export function ProjectWorkspaceSurface({
       prs: { value: openPullRequests, label: "open" },
     },
     onNewThread: askCoordinator,
-    onOpenPlan: () => setPlanOpen(true),
-    onOpenUsage: () => setTab("usage"),
     expanded: paneExpanded,
     onToggleExpanded: () => setPaneExpanded((value) => !value),
     onClose: hideOverview,

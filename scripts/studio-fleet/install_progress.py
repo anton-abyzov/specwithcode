@@ -35,6 +35,15 @@ ROLLBACK = 'rollback'
 RESULTS = {'verified', 'refused', 'rolled-back', 'held', 'failed'}
 # The agent's phase timings before the apply (update_agent_run.Timings, its TIMINGS_ENV).
 AGENT_TIMINGS_ENV = 'STUDIO_UPDATE_AGENT_TIMINGS'
+PAGE_PROOF_MODE = 'stopped-clone-pages-v1'
+# Milliseconds per phase of a page-proof install with no earlier one to go by: M4's 21.5 s applies
+# (1.0.135, 1.0.136, 1.0.140) at their rounded phase times.
+PAGE_PATH_MS = {'beforeRead': 1000, 'verifyAndStage': 1500, 'prestateCheck': 1000, 'gateSettle': 200,
+                'checkBeforeRestart': 500, 'stop': 1000, 'serviceStop': 3000, 'backupClone': 2500, 'restart': 500,
+                'readinessCheap': 5000, 'readiness': 6000, 'guardedComparison': 500, 'cleanup': 2000}
+# One full read of the database: 130 s for M4's 18.8 GB on 1.0.147. The full proof reads it twice
+# when the page proof refuses after the restart, once for the clone and once for the new service.
+FULL_READ_MS_PER_GIB = 7500
 
 
 def agent_timings(environ=None):
@@ -106,6 +115,33 @@ def expected_ms(receipts, current=None):
     return None
 
 
+def expected_phases(receipts, current=None, page=True):
+    """Milliseconds per phase of the newest earlier verified install on the same proof path, else
+    None. A full-read install says nothing about a page-proof one: minutes apart on the same Mac."""
+    try:
+        candidates = sorted((path for path in pathlib.Path(receipts).glob('update-*.json')
+                             if path.is_file() and not path.is_symlink() and path != current),
+                            key=lambda path: path.stat().st_mtime, reverse=True)
+    except OSError:
+        return None
+    for path in candidates[:50]:
+        try:
+            if path.stat().st_size > 16 << 20:
+                continue
+            receipt = json.loads(path.read_text())
+            timings = receipt.get('timings') or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        if receipt.get('phase') != 'verified' or not isinstance(timings, dict):
+            continue
+        if (receipt.get('databaseProofMode') == PAGE_PROOF_MODE) is not page:
+            continue
+        phases = {name: ms for name, ms in timings.items() if name in PHASES and type(ms) is int and ms >= 0}
+        if phases:
+            return phases
+    return None
+
+
 def result_of(failure):
     """The progress result for update._apply's failure receipt."""
     rollback = failure.get('rollback')
@@ -135,6 +171,8 @@ class ProgressWriter:
                        'phase': PHASES[0], 'step': 1, 'steps': len(PHASES), 'phaseStartedAt': now(),
                        'heartbeatAt': now(), 'expectedMs': expected_ms(receipt.parent, receipt) if receipt else None,
                        'timings': {}, 'agentTimings': agent_timings(), 'serviceRestartedAt': None, 'result': None}
+        self.receipt = receipt
+        self.expected = {}
         self.thread = None
 
     def start(self):
@@ -169,6 +207,33 @@ class ProgressWriter:
         if not self.finished:
             self._write(**fields)
 
+    def _estimate(self, phase):
+        """What this phase should take and what follows it. Only the record's own phases count, so
+        a phase running long leaves the rest as it was and the time left stays honest."""
+        if not self.expected or phase not in PHASES:
+            return {}
+        later = PHASES[PHASES.index(phase) + 1:]
+        return {'phaseExpectedMs': self.expected.get(phase, 0),
+                'remainingAfterMs': sum(self.expected.get(name, 0) for name in later)}
+
+    def expect(self, page, database_bytes=0):
+        """Which proof this install takes, known once page mode decided and again if the page proof
+        falls back: the estimate comes from the newest install that took the same one."""
+        if self.finished:
+            return
+        known = expected_phases(self.receipt.parent, self.receipt, page) if self.receipt is not None else None
+        full_read = round(database_bytes / (1 << 30) * FULL_READ_MS_PER_GIB)
+        if known is None:
+            known = dict(PAGE_PATH_MS)
+            if not page:
+                known.update(beforeRead=full_read, readiness=full_read)
+        phase = self.record['phase']
+        if not page and phase in PHASES and PHASES.index(phase) >= PHASES.index('readinessCheap'):
+            # Fell back after the restart: both reads are still ahead.
+            known['readiness'] = 2 * full_read
+        self.expected = known
+        self._write(expectedPhases=dict(known), expectedMs=sum(known.values()), **self._estimate(phase))
+
     def lap(self, ended, timings):
         """The phase `ended` is done: the next one in PHASES begins (update._apply's lap). A lap
         outside PHASES (watermarkSkip, deltaRead) keeps the step but moves
@@ -178,7 +243,7 @@ class ProgressWriter:
         index = PHASES.index(ended) + 1 if ended in PHASES else None
         fields = {'timings': dict(timings), 'phaseStartedAt': now()}
         if index is not None and index < len(PHASES):
-            fields.update(phase=PHASES[index], step=index + 1)
+            fields.update(phase=PHASES[index], step=index + 1, **self._estimate(PHASES[index]))
         self._write(**fields)
 
     def rollback(self):
@@ -218,6 +283,9 @@ class ProgressWriter:
 class Unwritten:
     """A ProgressWriter that writes nothing, for an apply run without one."""
     def set(self, **fields):
+        pass
+
+    def expect(self, page, database_bytes=0):
         pass
 
     def lap(self, ended, timings):

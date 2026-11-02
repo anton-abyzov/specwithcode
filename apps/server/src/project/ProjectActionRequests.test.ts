@@ -11,6 +11,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -568,6 +569,67 @@ it.effect("add_folder approved adds the folder's real path", () => {
       `Approve. Added ${shared} to the approved folders of "easychamp". Threads there can use it from their next turn.`,
     );
     expect(yield* auditRow(requestId)).toMatchObject({ status: "approved", action: "add_folder" });
+  }).pipe(Effect.scoped, Effect.provide(folderLayer(world)));
+});
+
+it.effect("a secret transfer approval names the file and works once, for its thread", () => {
+  const world = newWorld();
+  const secretTransfer = {
+    machineId: "m1",
+    machineLabel: "M1",
+    direction: "send" as const,
+    path: "/project/publisher.json",
+    sizeBytes: 2048,
+  };
+  return Effect.gen(function* () {
+    yield* withFolders(world);
+    const { requestId } = yield* request({
+      projectId,
+      action: "transfer_secret",
+      reason: "The M1 build publishes.",
+      secretTransfer,
+    });
+    const question = card(world).questions[0]?.question ?? "";
+    expect(question.split("\n\n")[0]).toBe(
+      "Move the secret file /project/publisher.json (2 KB) from this machine to M1?",
+    );
+    expect(question).toContain("The agent is told its saved path and not to read or print it.");
+    const requests = yield* ProjectActionRequests.ProjectActionRequests;
+    const use = () => requests.useSecretTransfer({ requestId, threadId });
+    expect(yield* use()).toBeUndefined();
+    yield* answer(requestId, "Approve");
+    expect(lastAnswer(world)).toContain(`approvalId ${requestId}`);
+    expect(
+      yield* requests.useSecretTransfer({ requestId, threadId: ThreadId.make("another-thread") }),
+    ).toBeUndefined();
+    expect(yield* use()).toEqual(secretTransfer);
+    expect(yield* use()).toBeUndefined();
+    expect(yield* auditRow(requestId)).toMatchObject({ status: "used" });
+  }).pipe(Effect.scoped, Effect.provide(folderLayer(world)));
+});
+
+it.effect("a secret transfer approval lapses after an hour", () => {
+  const world = newWorld();
+  return Effect.gen(function* () {
+    yield* withFolders(world);
+    const { requestId } = yield* request({
+      projectId,
+      action: "transfer_secret",
+      reason: "The M1 build publishes.",
+      secretTransfer: {
+        machineId: "m1",
+        machineLabel: "M1",
+        direction: "send",
+        path: "/project/publisher.json",
+        sizeBytes: 2048,
+        destinationPath: "/remote/publisher.json",
+      },
+    });
+    expect(card(world).questions[0]?.question).toContain("saving it as /remote/publisher.json");
+    yield* answer(requestId, "Approve");
+    yield* TestClock.adjust("61 minutes");
+    const requests = yield* ProjectActionRequests.ProjectActionRequests;
+    expect(yield* requests.useSecretTransfer({ requestId, threadId })).toBeUndefined();
   }).pipe(Effect.scoped, Effect.provide(folderLayer(world)));
 });
 

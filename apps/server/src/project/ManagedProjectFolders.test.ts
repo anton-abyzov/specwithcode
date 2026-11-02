@@ -31,6 +31,7 @@ import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
+import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 
 // Real repository detection: the service only asks the Git workflow whether
 // the data dir is inside a checkout.
@@ -71,6 +72,8 @@ interface HarnessOptions {
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
+  /** Stands in for `specweave init`; without it SpecWeave setup is unavailable. */
+  readonly specweave?: Layer.Layer<SpecweaveSetup.SpecweaveSetup>;
 }
 
 /**
@@ -79,6 +82,7 @@ interface HarnessOptions {
  */
 const layer = (baseDir: string, options?: HarnessOptions) =>
   ManagedProjectFolders.layer.pipe(
+    Layer.provide(options?.specweave ?? Layer.empty),
     Layer.provide(
       options?.projects === undefined
         ? Layer.empty
@@ -496,6 +500,107 @@ it.effect("keeps a named project and reports why when Git cannot commit", () =>
         assert.isTrue(yield* fileSystem.exists(path.join(result.workspaceRoot, ".git")));
       }),
     ),
+  ),
+);
+
+// Writes what `specweave init` writes that matters here, as the real CLI would.
+const fakeSpecweaveInit = Layer.effect(
+  SpecweaveSetup.SpecweaveSetup,
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return SpecweaveSetup.SpecweaveSetup.of({
+      setUp: (cwd) =>
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(path.join(cwd, ".specweave", "state"), {
+            recursive: true,
+          });
+          yield* fileSystem.writeFileString(path.join(cwd, ".specweave", "config.json"), "{}\n");
+          yield* fileSystem.writeFileString(path.join(cwd, ".specweave", "state", "x.json"), "{}");
+          yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), ".specweave/state/\n");
+          yield* fileSystem.writeFileString(path.join(cwd, "AGENTS.md"), "# Agents\n");
+          return { ok: true, alreadySetUp: false } as const;
+        }).pipe(Effect.orDie),
+    });
+  }),
+).pipe(Layer.provide(NodeServices.layer));
+
+it.effect("sets a new project up with SpecWeave only when asked, inside the first commit", () =>
+  withScratch(
+    () =>
+      withGitEnv(
+        TEST_IDENTITY,
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+
+          const plain = yield* folders.createNamedProject({ name: "Plain" });
+          assert.isFalse(yield* fileSystem.exists(path.join(plain.workspaceRoot, ".specweave")));
+
+          const tracked = yield* folders.createNamedProject({ name: "Tracked", specweave: true });
+          assert.isUndefined(tracked.specweaveError);
+          assert.isUndefined(tracked.commitError);
+          assert.equal(
+            yield* gitOutput(tracked.workspaceRoot, ["log", "--format=%s"]),
+            "Initial commit",
+          );
+          const committed = (yield* gitOutput(tracked.workspaceRoot, [
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "HEAD",
+          ])).split("\n");
+          assert.includeMembers(committed, [
+            ".gitignore",
+            ".specweave/config.json",
+            "AGENTS.md",
+            "README.md",
+            "assets/icon.svg",
+          ]);
+          assert.notInclude(committed, ".specweave/state/x.json");
+          assert.equal(yield* gitOutput(tracked.workspaceRoot, ["status", "--porcelain"]), "");
+
+          const personal = yield* folders.createNamedProject({
+            name: "Me",
+            kind: "personal",
+            specweave: true,
+          });
+          assert.isFalse(yield* fileSystem.exists(path.join(personal.workspaceRoot, ".specweave")));
+        }),
+      ),
+    { specweave: fakeSpecweaveInit },
+  ),
+);
+
+it.effect("keeps the project and says why when SpecWeave cannot be set up", () =>
+  withScratch(
+    () =>
+      withGitEnv(
+        TEST_IDENTITY,
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const projects = yield* ProjectService.ProjectService;
+          const result = yield* folders.createNamedProject({ name: "No CLI", specweave: true });
+          assert.include(result.specweaveError ?? "", "npm i -g specweave");
+          assert.isTrue(Option.isSome(yield* projects.getById(result.projectId)));
+          assert.equal(
+            yield* gitOutput(result.workspaceRoot, ["log", "--format=%s"]),
+            "Initial commit",
+          );
+        }),
+      ),
+    {
+      specweave: Layer.succeed(SpecweaveSetup.SpecweaveSetup, {
+        setUp: () =>
+          Effect.succeed({
+            ok: false,
+            reason: "unavailable",
+            detail:
+              "SpecWeave is not installed and npx was not found. Install it with npm i -g specweave, then try again.",
+          } as const),
+      }),
+    },
   ),
 );
 

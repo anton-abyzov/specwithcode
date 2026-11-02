@@ -21,7 +21,12 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
-import { resolveCanonicalProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
+import {
+  describeProjectEnvironmentProblem,
+  exposesProtectedRealPath,
+  resolveCanonicalProjectEnvironment,
+  resolveProjectEnvironmentForRun,
+} from "./ProjectEnvironmentPaths.ts";
 import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
 import { repositoryInspectionEnv } from "./ProjectRepositoryInspection.ts";
 
@@ -39,6 +44,9 @@ export class ProjectEnvironmentService extends Context.Service<
     ) => Effect.Effect<ProjectEnvironmentReadResult, ProjectEnvironmentError>;
   }
 >()("specweave-studio/project/ProjectEnvironmentService") {}
+/** Paths the read result can carry: a real path with control characters is only named. */
+// oxlint-disable-next-line no-control-regex -- refusing control characters is the point.
+const isSafePath = (value: string) => value.length <= 4096 && /^[^\x00-\x1f\x7f]+$/u.test(value);
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -110,12 +118,118 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.catch(() => Effect.succeed(false)));
     return match ? ("ready" as const) : ("mismatch" as const);
   });
+  const inside = (root: string, value: string) => {
+    const relative = path.relative(root, value);
+    return (
+      relative === "" ||
+      (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+    );
+  };
+  /**
+   * Settings lists every entry: unusable ones come back as problems instead of failing the
+   * whole read, so the page can name them and offer a fix. A moved entry is offered an
+   * update only when its new real path is a checkout of the same saved repository.
+   */
   const read: ProjectEnvironmentService["Service"]["read"] = Effect.fn(function* ({ projectId }) {
-    const resolved = yield* load(projectId);
+    const found = yield* projects
+      .get(projectId)
+      .pipe(Effect.mapError(() => fail(projectId, "not_found")));
+    if (Option.isNone(found)) return yield* fail(projectId, "not_found");
+    const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+    const environment = settings.environment;
+    const resolved = yield* resolveProjectEnvironmentForRun(
+      projectId,
+      found.value.workspaceRoot,
+      environment,
+    ).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+    if (
+      (environment.additionalFolders.length > 0 || environment.repositories.length > 0) &&
+      resolved.workspaceRoot !== found.value.workspaceRoot
+    )
+      return yield* new ProjectEnvironmentError({
+        projectId,
+        code: "folder_changed",
+        detail: `The project folder ${found.value.workspaceRoot} now leads to ${resolved.workspaceRoot}. Move the project to its new folder before using approved folders.`,
+      });
+    const sameCheckout = (localPath: string, url: string) =>
+      status(projectId, { url, localPath }).pipe(
+        Effect.map((value) => value === "ready"),
+        Effect.orElseSucceed(() => false),
+      );
+    const usable = [resolved.workspaceRoot, ...resolved.additionalFolders];
+    const folderUpdates = new Map<string, string>();
+    const problems = yield* Effect.forEach(resolved.problems, (problem) =>
+      Effect.gen(function* () {
+        const target = problem.resolvedPath;
+        let updatePath: string | undefined;
+        if (problem.kind === "folder" && problem.reason === "moved" && target !== undefined) {
+          // The folder's identity is the repository saved inside it; an unrelated folder
+          // is never re-pointed by a click.
+          const tied = environment.repositories.filter(
+            (repo) => repo.localPath !== null && inside(problem.path, repo.localPath),
+          );
+          // The checkout must really be inside the new folder, not linked into it from elsewhere.
+          const matches = yield* Effect.forEach(tied, (repo) =>
+            Effect.gen(function* () {
+              const probe = path.join(target, path.relative(problem.path, repo.localPath!));
+              const real = yield* fs.realPath(probe).pipe(Effect.option);
+              return (
+                Option.isSome(real) &&
+                real.value === probe &&
+                (yield* sameCheckout(probe, repo.url))
+              );
+            }),
+          );
+          if (
+            matches.some(Boolean) &&
+            isSafePath(target) &&
+            !usable.includes(target) &&
+            ![...folderUpdates.values()].includes(target) &&
+            !(yield* exposesProtectedRealPath(target, path))
+          ) {
+            updatePath = target;
+            folderUpdates.set(problem.path, target);
+          }
+        }
+        return { problem, updatePath };
+      }),
+    );
     return {
-      ...resolved,
+      revision: settings.revision,
+      workspaceRoot: resolved.workspaceRoot,
+      additionalFolders: resolved.additionalFolders,
       repositories: yield* Effect.forEach(resolved.repositories, (repo) =>
         status(projectId, repo).pipe(Effect.map((value) => ({ ...repo, status: value }))),
+      ),
+      problems: yield* Effect.forEach(problems, ({ problem, updatePath }) =>
+        Effect.gen(function* () {
+          let update = updatePath;
+          const repo = environment.repositories.find((value) => value.id === problem.repositoryId);
+          const target = problem.resolvedPath;
+          // A checkout that moved with its folder lands inside a usable or updatable root.
+          if (
+            problem.kind === "repository" &&
+            problem.reason === "outside" &&
+            repo !== undefined &&
+            target !== undefined &&
+            isSafePath(target) &&
+            [...usable, ...folderUpdates.values()].some((root) => inside(root, target)) &&
+            (yield* sameCheckout(target, repo.url))
+          )
+            update = target;
+          return {
+            kind: problem.kind,
+            path: problem.path,
+            reason: problem.reason,
+            message: describeProjectEnvironmentProblem(problem),
+            ...(problem.resolvedPath === undefined ? {} : { resolvedPath: problem.resolvedPath }),
+            ...(problem.repositoryId === undefined ? {} : { repositoryId: problem.repositoryId }),
+            ...(update === undefined ? {} : { updatePath: update }),
+          };
+        }),
       ),
     };
   });

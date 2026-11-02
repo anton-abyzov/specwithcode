@@ -36,7 +36,7 @@ Totals for a Claude thread in a project with the `studio-code` server, concise s
 Subagents of a Claude thread get the system append (everything above except the project
 context), about 4,700 tokens before and 1,440 after. The totals add the October 26 re-measured
 rows to the October 16 figures for the rest; the growth since October 16 is mostly the
-orchestration block (+237) and the presentation block (+218).
+orchestration block (+237) and the presentation block (+218). The file line added on November 1, 2026 (about 80 tokens) gives one route for a file on another machine; `studio_file_transfer` carries the details.
 
 ## Decisions
 

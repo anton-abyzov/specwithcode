@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   keybindings: [] as unknown[],
   primaryEnvironmentId: "host" as string | null,
   aideEnabled: true,
+  hostsAnswered: true,
   environments: [] as Array<{ environmentId: string; label: string }>,
   savedMachines: {} as Record<string, string>,
   scratchRoots: new Map<string, { scratchWorkspaceRoot: string }>(),
@@ -115,6 +116,7 @@ vi.mock("../../../state/server", () => ({
 }));
 vi.mock("../../../state/entities", () => ({
   useThreadShells: () => state.shells,
+  useAllEnvironmentProjectSnapshotsReady: () => state.hostsAnswered,
   readThreadShell: (ref: { environmentId: string; threadId: string }) =>
     state.shells.find(
       (thread) => thread.environmentId === ref.environmentId && thread.id === ref.threadId,
@@ -394,11 +396,161 @@ describe("projects and chats sidebar", () => {
       [...container.querySelectorAll<HTMLElement>(".sws-chat-row")].find((item) =>
         item.textContent?.includes(title),
       )!;
-    expect(row("Here").querySelector(".sws-row-machine")).toBeNull();
-    expect(row("Away").querySelector(".sws-row-machine[data-offline]")).toBeNull();
+    const machine = (title: string) => row(title).querySelector(".sws-row-machine");
+    // This machine's chat is named too, so no row looks like it lost its machine.
+    expect(machine("Here")?.textContent).toBe("M4");
+    expect(row("Here").textContent).toContain("On M4");
+    expect(machine("Away")?.textContent).toBe("M1");
+    expect(machine("Away")?.querySelector("[data-offline]")).toBeNull();
     expect(row("Away").textContent).toContain("On M1");
-    expect(row("Gone").querySelector(".sws-row-machine[data-offline]")).not.toBeNull();
+    expect(machine("Gone")?.textContent).toBe("M3");
+    expect(machine("Gone")?.querySelector("[data-offline]")).not.toBeNull();
     expect(row("Gone").textContent).toContain("M3 can't be reached");
+    // The dot comes before the column, so a dot appearing never moves it.
+    expect(row("Here").querySelector(".sws-side-row")?.lastElementChild).toBe(machine("Here"));
+  });
+
+  it("keeps a machine filter whose chats the Agent threads choice only hides", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m1", label: "M1" },
+    ];
+    state.groups = [
+      {
+        projectKey: "m1:/a",
+        displayName: "Project",
+        memberProjects: [
+          {
+            environmentId: "m1",
+            id: "p1",
+            workspaceSettings: {
+              kind: "code",
+              coordinatorThreadId: "project-coordinator:p1",
+              logicalProject: {},
+            } as never,
+          },
+        ],
+      },
+    ];
+    state.shells = [
+      shell("here", { title: "Here", projectId: "p2" as EnvironmentThreadShell["projectId"] }),
+      shell("thread:mcp:scope:req:0", {
+        title: "Worker",
+        createdBy: "agent",
+        environmentId: "m1" as EnvironmentThreadShell["environmentId"],
+      }),
+    ];
+    localStorage.setItem("studio:chats-machine:v1", JSON.stringify("m1"));
+    await act(async () => root.render(<StudioSidebar />));
+    const titles = [...container.querySelectorAll(".sws-chat-row .sws-side-row-label")].map(
+      (item) => item.textContent,
+    );
+    expect(titles).toEqual(["Here"]);
+    expect(localStorage.getItem("studio:chats-machine:v1")).toBe(JSON.stringify("m1"));
+  });
+
+  it("marks the machine the column names when a moved chat's runner stops answering", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m3", label: "M3" },
+      { environmentId: "minis", label: "Minis" },
+    ];
+    const moved = (machineId: string) =>
+      ({
+        ownerMachineId: machineId === "minis" ? "m3" : "host",
+        executionMachineId: machineId,
+        executionState: "running",
+      }) as unknown as EnvironmentThreadShell["source"];
+    state.shells = [
+      shell("toGone", { title: "To gone", source: moved("m3") }),
+      shell("fromGone", {
+        title: "From gone",
+        environmentId: "m3" as EnvironmentThreadShell["environmentId"],
+        source: moved("minis"),
+      }),
+    ];
+    const unreachable = new Set(["m3"]);
+    await act(async () =>
+      root.render(
+        <UnreachableHostsContext.Provider value={unreachable}>
+          <StudioSidebar />
+        </UnreachableHostsContext.Provider>,
+      ),
+    );
+    const row = (title: string) =>
+      [...container.querySelectorAll<HTMLElement>(".sws-chat-row")].find((item) =>
+        item.textContent?.includes(title),
+      )!;
+    expect(row("To gone").querySelector(".sws-row-machine [data-offline]")).not.toBeNull();
+    expect(row("From gone").querySelector(".sws-row-machine [data-offline]")).toBeNull();
+    expect(row("From gone").textContent).toContain("M3 can't be reached · runs on Minis");
+  });
+
+  it("leaves the machine column out while every chat runs on this machine", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m1", label: "M1" },
+    ];
+    state.shells = [shell("here", { title: "Here" }), shell("there", { title: "There" })];
+    await act(async () => root.render(<StudioSidebar />));
+    expect(container.querySelector(".sws-row-machine")).toBeNull();
+    expect(container.querySelector("[data-chat-machine-pill]")).toBeNull();
+  });
+
+  it("names the machine of a list that lives entirely on another machine", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m1", label: "M1" },
+    ];
+    state.shells = [
+      shell("away", {
+        title: "Away",
+        environmentId: "m1" as EnvironmentThreadShell["environmentId"],
+      }),
+    ];
+    await act(async () => root.render(<StudioSidebar />));
+    expect(container.querySelector(".sws-row-machine")?.textContent).toBe("M1");
+  });
+
+  it("narrows to a saved machine, keeps the filter while hosts load, and drops it after", async () => {
+    state.environments = [
+      { environmentId: "host", label: "M4" },
+      { environmentId: "m1", label: "M1" },
+    ];
+    const away = shell("away", {
+      title: "Away",
+      environmentId: "m1" as EnvironmentThreadShell["environmentId"],
+    });
+    state.shells = [shell("here", { title: "Here" }), away];
+    localStorage.setItem("studio:chats-machine:v1", JSON.stringify("m1"));
+    const titles = () =>
+      [...container.querySelectorAll(".sws-chat-row .sws-side-row-label")].map(
+        (item) => item.textContent,
+      );
+    await act(async () => root.render(<StudioSidebar />));
+    expect(titles()).toEqual(["Away"]);
+    expect(container.querySelector("[data-chat-machine-pill]")?.textContent).toContain("On M1");
+    // The column stays while filtered, so a row does not reflow when the pill goes.
+    expect(container.querySelector(".sws-row-machine")?.textContent).toBe("M1");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("[data-chat-machine-pill] button")?.click();
+    });
+    expect(titles()).toHaveLength(2);
+    expect(localStorage.getItem("studio:chats-machine:v1")).toBeNull();
+
+    // That machine has not answered yet: its filter waits rather than going away.
+    localStorage.setItem("studio:chats-machine:v1", JSON.stringify("m1"));
+    state.hostsAnswered = false;
+    state.shells = [shell("here", { title: "Here" })];
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<StudioSidebar />));
+    expect(titles()).toEqual(["Here"]);
+    expect(localStorage.getItem("studio:chats-machine:v1")).toBe(JSON.stringify("m1"));
+    // Every host answered and that machine has no chats left: the filter goes for good.
+    state.hostsAnswered = true;
+    await act(async () => root.render(<StudioSidebar />));
+    expect(localStorage.getItem("studio:chats-machine:v1")).toBeNull();
   });
   it("never marks this machine's chats offline, even while its server reconnects", async () => {
     state.environments = [
@@ -425,7 +577,7 @@ describe("projects and chats sidebar", () => {
       )!;
     expect(row("Here").querySelector("[data-offline]")).toBeNull();
     expect(row("Here").textContent).not.toContain("can't be reached");
-    expect(row("Gone").querySelector(".sws-row-machine[data-offline]")).not.toBeNull();
+    expect(row("Gone").querySelector(".sws-row-machine [data-offline]")).not.toBeNull();
   });
   it("collapses a date heading without losing the others", async () => {
     await render();

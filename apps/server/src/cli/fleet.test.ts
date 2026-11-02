@@ -34,6 +34,41 @@ describe("specweave-studio fleet", () => {
     }),
   );
 
+  it.effect("lists this machine as a table row without a token note", () =>
+    Effect.gen(function* () {
+      const baseDir = home();
+      NodeFS.mkdirSync(NodePath.join(baseDir, "userdata"));
+      NodeFS.writeFileSync(
+        NodePath.join(baseDir, "userdata", "environment-id"),
+        "environment-m4\n",
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(baseDir, "studio-fleet.json"),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              id: "m4",
+              label: "Mac M4",
+              environmentId: "environment-m4",
+              url: "https://m4.fixture.ts.net",
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      const output = yield* captureStdout(runCli(["fleet", "list", "--base-dir", baseDir]));
+      assert.deepEqual(output.split("\n"), [
+        "MACHINE  STATUS       ROUTE         FALLBACK",
+        "m4       unreachable  this machine  -",
+        "  Name       Mac M4",
+        "  Tailscale  https://m4.fixture.ts.net",
+        "  Note       service not answering",
+        "",
+      ]);
+    }),
+  );
+
   it.effect("removes a machine by name and leaves an owner-only file", () =>
     Effect.gen(function* () {
       const baseDir = home();

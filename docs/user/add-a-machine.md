@@ -286,8 +286,9 @@ worker printed instead:
 specwithcode fleet add swc-machine-…
 ```
 
-`specwithcode fleet list` shows every configured machine and whether the main
-machine reaches it now. To take one off the list, see
+`specwithcode fleet list` shows every configured machine, the route the main
+machine reaches it on now and whether the fallback route answers. The main
+machine's own row says `this machine`. To take one off the list, see
 [Remove a machine](#remove-a-machine).
 
 **Give the worker the project.** Coordinators start work in a project folder

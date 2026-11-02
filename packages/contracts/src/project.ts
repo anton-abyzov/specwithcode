@@ -818,6 +818,12 @@ export const ProjectCreateNewInput = Schema.Struct({
   parentPath: Schema.optional(TrimmedNonEmptyString),
   kind: Schema.optional(Schema.Literals(["code", "personal"])),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  /**
+   * Set the new code project up with `specweave init` before its first
+   * commit. Off unless the person ticks "Use SpecWeave"; ignored for personal
+   * projects and for a folder that already was a project.
+   */
+  specweave: Schema.optional(Schema.Boolean),
 });
 export type ProjectCreateNewInput = typeof ProjectCreateNewInput.Type;
 
@@ -828,6 +834,8 @@ export const ProjectCreateNewResult = Schema.Struct({
   commitError: Schema.optionalKey(TrimmedNonEmptyString),
   /** The chosen folder was already a project and was used as-is. */
   existing: Schema.optionalKey(Schema.Boolean),
+  /** Why `specweave init` did not run or failed. The project exists either way. */
+  specweaveError: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ProjectCreateNewResult = typeof ProjectCreateNewResult.Type;
 

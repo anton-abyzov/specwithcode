@@ -127,6 +127,8 @@ export interface InstallProgress {
   readonly startedAt: string | null;
   readonly heartbeatAt: string | null;
   readonly expectedMs: number | null;
+  readonly phaseExpectedMs?: number | null;
+  readonly remainingAfterMs?: number | null;
   readonly serviceRestartedAt: string | null;
   readonly result: string | null;
 }
@@ -291,6 +293,8 @@ export function parseInstallProgress(text: string | null): InstallProgress | nul
     startedAt: phaseStart === null ? null : isoAt(phaseStart - timed),
     heartbeatAt: stringOrNull(raw.heartbeatAt),
     expectedMs: numberOrNull(raw.expectedMs),
+    phaseExpectedMs: numberOrNull(raw.phaseExpectedMs),
+    remainingAfterMs: numberOrNull(raw.remainingAfterMs),
     serviceRestartedAt: stringOrNull(raw.serviceRestartedAt),
     result: stringOrNull(raw.result),
   };
@@ -490,6 +494,13 @@ export function deriveRunView(input: {
             phaseStartedAt: progress.phaseStartedAt,
             startedAt: progress.startedAt,
             expectedMs: progress.expectedMs,
+            ...(typeof progress.phaseExpectedMs === "number" &&
+            typeof progress.remainingAfterMs === "number"
+              ? {
+                  phaseExpectedMs: progress.phaseExpectedMs,
+                  remainingAfterMs: progress.remainingAfterMs,
+                }
+              : {}),
             serviceBack: progress.serviceRestartedAt !== null,
             result: progress.result,
           },

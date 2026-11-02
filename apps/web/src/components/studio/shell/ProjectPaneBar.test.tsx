@@ -18,8 +18,6 @@ const props = (overrides: Partial<ProjectPaneBarProps> = {}): ProjectPaneBarProp
     designs: { value: 1, label: "designs" },
   },
   onNewThread: vi.fn(),
-  onOpenPlan: vi.fn(),
-  onOpenUsage: vi.fn(),
   expanded: false,
   onToggleExpanded: vi.fn(),
   onClose: vi.fn(),
@@ -48,9 +46,19 @@ describe("the project panel's header row", () => {
     expect([...row.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent?.trim())).toEqual(
       ["Threads2 waiting on you", "Designs1 designs", "Library", "PRs", "Routines"],
     );
-    for (const label of ["New", "Find a thread", "Expand panel", "Hide overview"])
+    for (const label of ["Ask the coordinator for a thread", "Find a thread", "Expand panel", "Hide overview"])
       expect(row.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
     expect(row.classList.contains("drag-region")).toBe(false);
+  });
+  it("asks the coordinator in one click and offers no Plan or Usage items", async () => {
+    const bar = props();
+    await render(bar);
+    const plus = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Ask the coordinator for a thread"]',
+    )!;
+    await act(async () => plus.click());
+    expect(bar.onNewThread).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toMatch(/Plan|Usage/);
   });
   it("drags the window from the title row in the desktop app", async () => {
     env.isElectron = true;

@@ -15,6 +15,7 @@ const input = () => ({
   busy: false,
   machines: [{ item: machine, selected: true }],
   github: { description: "Private repository", checked: true, toggle: vi.fn() },
+  specweave: { checked: false, toggle: vi.fn() },
   addExisting: vi.fn(),
 });
 describe("project creation choices", () => {
@@ -29,6 +30,27 @@ describe("project creation choices", () => {
     const groups = projectCreationGroups({ ...input(), kind: "code", busy: true });
     expect(groups.some((g) => g.value === "new-project-options")).toBe(true);
     expect(groups.flatMap((g) => g.items).every((i) => i.disabled)).toBe(true);
+  });
+  it("offers Use SpecWeave unchecked for code projects only, even without GitHub", () => {
+    const toggle = vi.fn();
+    const groups = projectCreationGroups({
+      ...input(),
+      kind: "code",
+      github: null,
+      specweave: { checked: false, toggle },
+    });
+    const option = groups
+      .find((g) => g.value === "new-project-options")
+      ?.items.find((i) => i.value === "new-project:specweave");
+    expect(option?.title).toBe("Use SpecWeave");
+    expect(option?.description).toContain("specweave init");
+    if (option?.kind === "action") void option.run();
+    expect(toggle).toHaveBeenCalledOnce();
+    expect(
+      projectCreationGroups(input())
+        .flatMap((g) => g.items)
+        .some((i) => i.value === "new-project:specweave"),
+    ).toBe(false);
   });
   it("never offers project types or a second assistant", () => {
     for (const kind of ["code", "personal"] as const) {

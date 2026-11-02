@@ -71,7 +71,7 @@ describe("coordinator handoff of a large project", () => {
       expect(retention.totalThreads).toBe(1628);
       expect(retention.workers).toHaveLength(200);
       expect(retention.omittedThreads).toBe(1428);
-      // Active before archived, most recent first.
+      // Most needed first (all open here), then most recent.
       expect(retention.workers[0]).toMatchObject({
         threadId: "worker-1199",
         environmentId: "source-env",
@@ -119,7 +119,7 @@ describe("coordinator handoff of a large project", () => {
       const first = yield* service.prepare(preview);
       const retention = first.bundle.context.retention!;
       expect(() => checkBundle(first.bundle)).not.toThrow();
-      // Newest first, like the summaries, and each one named in full.
+      // Most needed first, then newest, like the summaries, and each one named in full.
       expect(retention.unmergedWorkers).toEqual([
         expect.objectContaining({
           environmentId: "source-env",

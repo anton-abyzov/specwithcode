@@ -667,13 +667,50 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-side-row > .sws-model-mark {
   width: 18px;
 }
-/* A chat on another machine, or one whose machine can't be reached. */
-.sws-side-row > svg.sws-row-machine {
+/* A column every chat row shares, so machines scan top to bottom. */
+.sws-row-machine {
+  flex: none;
+  /* Capped, because every character here comes off the chat's title. "ch" is a digit's
+     width, wider than most letters, so "→ ministorm" still fits. */
+  width: min(var(--sws-chat-machine-col, 6ch), 9.5ch);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--sidebar-muted-foreground);
+}
+.sws-row-machine-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sws-row-machine svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+/* A machine that can't be reached, with or without the column. */
+.sws-side-row svg[data-offline] {
   width: 13px;
   height: 13px;
-}
-.sws-side-row > svg.sws-row-machine[data-offline] {
   color: var(--warning-foreground, var(--sidebar-muted-foreground));
+}
+/* A narrow sidebar keeps the name's first letters; the tooltip has the rest. */
+@container sidechats (width < 224px) {
+  .sws-row-machine {
+    width: 3ch;
+  }
+  .sws-row-machine:has(svg[data-offline]) {
+    width: calc(3ch + 15px);
+  }
+  .sws-row-machine-name {
+    text-overflow: clip;
+  }
+  .sws-row-machine-arrow {
+    display: none;
+  }
 }
 .sws-side-row:hover {
   background: var(--sidebar-row-hover);
@@ -842,6 +879,13 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   )
   .sws-side-row {
   padding-right: 30px;
+}
+/* The filter's pill above the rows, in the sidebar's tighter spacing. */
+.sws-unplanned-notice.sws-chat-machine-pill {
+  margin: 0 8px 4px;
+}
+.sws-side-chats {
+  container: sidechats / inline-size;
 }
 /* A pinned project carries a small pin before its counts. */
 .sws-side-row > .sws-side-row-pin {

@@ -10,7 +10,10 @@ import {
   describeQuestionWait,
   describeServiceUpdateRun,
   formatRunDuration,
-  humanizeStep,
+  RUN_LONG_READ_LINE,
+  RUN_LONG_STEP_LINE,
+  describeRunningThreads,
+  estimateInstall,
   liveServiceUpdateRun,
   RUN_NO_PROGRESS_LINE,
   RUN_NOT_APPLIED_LINE,
@@ -186,12 +189,83 @@ describe("describeAutomaticInstallWait", () => {
 });
 
 describe("describeServiceUpdateRun", () => {
-  it("shows step i of n with elapsed and expected time while the helper runs", () => {
+  const helperStart = T0 + 6 * 60_000;
+  const estimating = (values: Record<string, unknown> = {}) =>
+    run({
+      step: {
+        label: "readiness",
+        i: 14,
+        n: 17,
+        phaseStartedAt: new Date(helperStart + 10_000).toISOString(),
+        startedAt: new Date(helperStart).toISOString(),
+        expectedMs: 30_000,
+        phaseExpectedMs: 6_000,
+        remainingAfterMs: 3_000,
+        serviceBack: true,
+        ...values,
+      },
+    });
+
+  it("shows one live time left and a progress bar, never a step count", () => {
+    const view = describeServiceUpdateRun(
+      estimating({ phaseExpectedMs: 26_000 }),
+      helperStart + 11_000,
+    );
+    expect(view).toMatchObject({
+      tone: "loading",
+      title: "Installing SpecWithCode 1.0.70",
+      warning: null,
+      action: null,
+      label: "Installing, 0:28 left…",
+    });
+    expect(view.lines).toEqual([RUN_SERVICE_BACK_LINE, "0:11 elapsed, about 0:28 left."]);
+    expect(view.progress).toBeCloseTo(11 / 39, 2);
+    expect(JSON.stringify(view)).not.toMatch(/Step|\d+\/\d+|expected/);
+  });
+
+  it("measures the install on the helper's clock, not from the press", () => {
+    const view = describeServiceUpdateRun(estimating(), helperStart + 12_000);
+    expect(view.lines[1]).toBe("0:12 elapsed, about 0:07 left.");
+  });
+
+  it("says almost done rather than a time it cannot keep", () => {
+    const view = describeServiceUpdateRun(
+      estimating({ remainingAfterMs: 0 }),
+      helperStart + 40_000,
+    );
+    expect(view.lines[1]).toBe("0:40 elapsed, almost done.");
+    expect(view.label).toBe("Installing update…");
+  });
+
+  it("says plainly when a full read or another step runs long", () => {
+    const reading = describeServiceUpdateRun(estimating(), helperStart + 120_000);
+    expect(reading.lines).toContain(RUN_LONG_READ_LINE);
+    expect(reading.warning).toBeNull();
+    const other = describeServiceUpdateRun(
+      estimating({ label: "serviceStop" }),
+      helperStart + 120_000,
+    );
+    expect(other.lines).toContain(RUN_LONG_STEP_LINE);
+  });
+
+  it("keeps the estimate above elapsed and the bar moving forward at every second", () => {
+    const step = estimating().step;
+    let last = 0;
+    for (let at = 0; at <= 300_000; at += 1_000) {
+      const estimate = estimateInstall(step!, at, helperStart + at, true);
+      expect(estimate!.leftMs).toBeGreaterThanOrEqual(0);
+      expect(estimate!.progress).toBeGreaterThanOrEqual(last);
+      expect(estimate!.progress).toBeLessThanOrEqual(0.97);
+      last = estimate!.progress;
+    }
+  });
+
+  it("shows elapsed time alone from a helper with no estimate", () => {
     const view = describeServiceUpdateRun(
       run({
         step: {
-          label: "checkBeforeRestart",
-          i: 7,
+          label: "readiness",
+          i: 14,
           n: 16,
           phaseStartedAt: null,
           expectedMs: 160_000,
@@ -200,37 +274,36 @@ describe("describeServiceUpdateRun", () => {
       }),
       T0 + 95_000,
     );
-    expect(view).toEqual({
-      tone: "loading",
-      title: "Installing SpecWithCode 1.0.70",
-      lines: ["Step 7 of 16: check before restart.", "1:35 elapsed, about 2:40 expected."],
-      warning: null,
-      action: null,
-      label: "Installing 7/16…",
-    });
+    expect(view.lines).toEqual(["1:35 elapsed."]);
+    expect(view.progress).toBeNull();
   });
 
-  it("measures the install on the helper's clock, not from the press", () => {
-    // Six minutes waiting for an answer, then the helper started.
-    const helperStart = T0 + 6 * 60_000;
-    const view = describeServiceUpdateRun(
-      run({
-        step: {
-          label: "beforeRead",
-          i: 1,
-          n: 16,
-          phaseStartedAt: new Date(helperStart).toISOString(),
-          startedAt: new Date(helperStart).toISOString(),
-          expectedMs: 240_000,
-          serviceBack: false,
-        },
-      }),
-      helperStart + 5_000,
+  it("names running threads while it waits on them and while it pauses them", () => {
+    const work = (threadId: string, threadTitle: string | null, kind = "run") =>
+      ({
+        kind,
+        count: 1,
+        threadId,
+        threadTitle,
+        projectId: null,
+        projectTitle: null,
+      }) as never;
+    const blockers = [
+      work("a", "Fix login"),
+      work("a", "Fix login", "session"),
+      work("b", "Docs"),
+      work("c", null),
+    ];
+    expect(describeRunningThreads(blockers)).toBe(
+      '3 running threads: "Fix login", "Docs" and 1 other thread',
     );
-    expect(view.lines).toEqual([
-      "Step 1 of 16: before read.",
-      "0:05 elapsed, about 4:00 expected.",
+    expect(describeRunningThreads([work("c", null)])).toBe("1 running thread");
+    expect(describeServiceUpdateRun(run({ phase: "waiting" }), T0, blockers).lines).toEqual([
+      'Waiting for 3 running threads: "Fix login", "Docs" and 1 other thread.',
     ]);
+    expect(describeServiceUpdateRun(run({ phase: "preparing" }), T0, blockers).lines[0]).toBe(
+      'Pausing 3 running threads: "Fix login", "Docs" and 1 other thread. They continue after the update.',
+    );
   });
 
   it("says the service is back while the helper finishes its checks", () => {
@@ -247,11 +320,7 @@ describe("describeServiceUpdateRun", () => {
       }),
       T0 + 120_000,
     );
-    expect(view.lines).toEqual([
-      RUN_SERVICE_BACK_LINE,
-      "Step 14 of 16: readiness.",
-      "2:00 elapsed.",
-    ]);
+    expect(view.lines).toEqual([RUN_SERVICE_BACK_LINE, "2:00 elapsed."]);
   });
 
   it("says the running release is being put back while the helper rolls back", () => {
@@ -374,11 +443,9 @@ describe("describeServiceUpdateRun", () => {
 });
 
 describe("formatting", () => {
-  it("formats durations and step names", () => {
+  it("formats durations", () => {
     expect(formatRunDuration(0)).toBe("0:00");
     expect(formatRunDuration(161_000)).toBe("2:41");
     expect(formatRunDuration(3_725_000)).toBe("1:02:05");
-    expect(humanizeStep("checkBeforeRestart")).toBe("check before restart");
-    expect(humanizeStep("before_read")).toBe("before read");
   });
 });

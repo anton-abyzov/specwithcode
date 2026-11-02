@@ -200,7 +200,7 @@ Everything above describes a build without Connect (no `STUDIO_CLERK_PUBLISHABLE
 - Account deletion (5.1.1(v)): Settings > Account > Delete account calls `DELETE /v1/client/account` on the relay (`RelayClient.deleteAccount`). The relay unlinks the account's Macs, deletes their tunnels and DNS, its mobile devices and push registrations, then the Clerk user; the app then signs out locally. It needs the relay deployed with that endpoint and `CLERK_SECRET_KEY` set.
 - App Privacy: the answer is no longer Data Not Collected. Declare Contact Info (name, email address) and Identifiers (user ID, device ID: the random Connect device id and the APNs token), all linked to the user, used for App Functionality, not for tracking. Update `App/PrivacyInfo.xcprivacy` to match (`NSPrivacyCollectedDataTypes`) in the same release; the Clerk SDK ships its own privacy manifest. The privacy policy's iPhone section must also describe the account, the relay and push notifications.
 - Capabilities: the App ID needs Sign in with Apple and Push Notifications, and the build must be signed with `Config/Connect.entitlements` (README > Sign in with SpecWithCode Connect).
-- What to Test: replace the Pairing bullet with "Sign in with the account you use in SpecWithCode on your Mac, then open your Mac from the list", keep pairing as "Pair with a link or QR code", and drop push notifications from "Not in this build".
+- What to Test: replace the Pairing bullet with "Sign in with the same SpecWithCode Connect account as on your Mac, then open your Mac from the list", keep pairing as "Pair with a link or QR code", and drop push notifications from "Not in this build".
 
 ## Steps that need the owner's go-ahead
 

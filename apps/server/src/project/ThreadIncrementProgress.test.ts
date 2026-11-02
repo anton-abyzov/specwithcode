@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
 import {
   criteriaWithState,
+  hasSpecweaveConfig,
   isSpecweaveProject,
   linkedIncrementRoot,
   listProjectIncrements,
@@ -803,12 +804,28 @@ describe("launch increments", () => {
 });
 
 describe("unplanned-work inputs", () => {
-  it("knows a SpecWeave project by its increments or an umbrella above it", async () => {
+  it("knows a SpecWeave project by its config or an umbrella above it", async () => {
     const plain = await temp("plan-plain-");
     expect(await isSpecweaveProject(plain)).toBe(false);
     const own = await temp("plan-own-");
     await NodeFSP.mkdir(NodePath.join(own, ".specweave/increments"), { recursive: true });
+    // A bare increments folder is not a set-up project.
+    expect(await isSpecweaveProject(own)).toBe(false);
+    await NodeFSP.writeFile(NodePath.join(own, ".specweave/config.json"), "{}");
     expect(await isSpecweaveProject(own)).toBe(true);
+    // Freshly initialized, before its first increment.
+    const fresh = await temp("plan-fresh-");
+    await NodeFSP.mkdir(NodePath.join(fresh, ".specweave"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(fresh, ".specweave/config.json"), "{}");
+    expect(await isSpecweaveProject(fresh)).toBe(true);
+    // A linked config does not switch SpecWeave on.
+    const linked = await temp("plan-linked-");
+    await NodeFSP.mkdir(NodePath.join(linked, ".specweave"), { recursive: true });
+    await NodeFSP.symlink(
+      NodePath.join(fresh, ".specweave/config.json"),
+      NodePath.join(linked, ".specweave/config.json"),
+    );
+    expect(await hasSpecweaveConfig(linked)).toBe(false);
     const umbrella = await temp("plan-umbrella-");
     await NodeFSP.mkdir(NodePath.join(umbrella, ".specweave/increments"), { recursive: true });
     await NodeFSP.writeFile(NodePath.join(umbrella, ".specweave/config.json"), "{}");

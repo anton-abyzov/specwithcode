@@ -11,6 +11,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as AuthHttp from "../auth/http.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectPhoneRevocation from "./ConnectPhoneRevocation.ts";
 import * as ConnectHttp from "./http.ts";
@@ -27,9 +28,13 @@ const postSignedRelayRequest = async (input: {
   readonly path: string;
   readonly cloudLink?: Partial<CloudLink.CloudLink["Service"]>;
   readonly phoneRevocation?: Partial<ConnectPhoneRevocation.ConnectPhoneRevocation["Service"]>;
+  readonly hold?: ServiceUpdateHold.ServiceUpdateHold["Service"];
 }) => {
   const layerRoutes = HttpApiBuilder.layer(ConnectTestApi).pipe(
     Layer.provide(ConnectHttp.layer),
+    Layer.provide(
+      input.hold ? Layer.succeed(ServiceUpdateHold.ServiceUpdateHold, input.hold) : Layer.empty,
+    ),
     Layer.provide(Layer.mock(CloudLink.CloudLink)(input.cloudLink ?? {})),
     Layer.provide(
       Layer.mock(ConnectPhoneRevocation.ConnectPhoneRevocation)(input.phoneRevocation ?? {}),
@@ -111,6 +116,37 @@ describe("connect routes", () => {
     const response = await answerHealthWith(failure);
     expect(response).toEqual({ status, body });
   });
+
+  it.each(["/api/connect/mint-credential", "/api/studio-connect/mint-credential"])(
+    "waits for the restart instead of minting during a held update: %s",
+    async (path) => {
+      let mints = 0;
+      const { status, body } = await Effect.runPromise(
+        Effect.gen(function* () {
+          const hold = yield* ServiceUpdateHold.makeWithOptions({
+            agentStatePath: "/nonexistent/specweave-studio-test/updates/state.json",
+          });
+          yield* hold.acquire({ reason: "test" });
+          return yield* Effect.promise(() =>
+            postSignedRelayRequest({
+              path,
+              hold,
+              cloudLink: {
+                mintCredential: () =>
+                  Effect.sync(() => {
+                    mints += 1;
+                    return {} as never;
+                  }),
+              },
+            }),
+          );
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+      expect(status).toBe(503);
+      expect(body).toMatchObject({ code: "update_in_progress", retryAfterSeconds: 300 });
+      expect(mints).toBe(0);
+    },
+  );
 
   it("serves the relay's order to end removed phones' sessions", async () => {
     const proofs: Array<string> = [];

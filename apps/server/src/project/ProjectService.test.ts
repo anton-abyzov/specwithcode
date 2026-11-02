@@ -1360,7 +1360,7 @@ it.effect("changes folder access while work runs but waits to move the main fold
     });
     yield* saveNext("active-env-repo-path", {
       additionalFolders: [second, extra],
-      repositories: [{ ...repository, localPath: `${extra}/moved` }],
+      repositories: [{ ...repository, localPath: path.join(extra, "moved") }],
     });
     yield* saveNext("active-env-repo-drop", {
       additionalFolders: [second, extra],
@@ -1420,6 +1420,21 @@ it.effect("changes folder access while work runs but waits to move the main fold
     yield* saveNext("active-env-drop-stale", {
       additionalFolders: [extra],
       repositories: [repository],
+    });
+    // A kept approval that now leads elsewhere is not quietly re-approved by the next save;
+    // pointing the entry at the new real path is the explicit fix.
+    const relocated = path.join(root, "relocated");
+    yield* fs.rename(extra, relocated);
+    yield* fs.symlink(relocated, extra);
+    const keptMoved = yield* save("active-env-kept-moved", {
+      additionalFolders: [extra, elsewhere],
+      repositories: [repository],
+    }).pipe(Effect.flip);
+    assert.equal(keptMoved._tag, "ProjectEnvironmentError");
+    assert.include(keptMoved.message, `${extra} now leads to ${relocated}`);
+    yield* saveNext("active-env-update-path", {
+      additionalFolders: [relocated],
+      repositories: [{ ...repository, localPath: path.join(relocated, "widgets") }],
     });
     // A folder change that leaves the busy thread where it runs does not wait for it,
     // unless the thread moved since the change read it.
@@ -1483,6 +1498,55 @@ it.effect("an explicit environment save canonicalizes a legacy symlink primary f
       });
       assert.equal(saved.workspaceRoot, main);
       assert.equal(saved.workspaceSettings?.revision, 1);
+    }).pipe(Effect.provide(layerTest));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("moves the main folder after it was renamed and linked, with saved checkouts", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs
+      .makeTempDirectoryScoped({ prefix: "project-root-renamed-" })
+      .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
+    const app = path.join(root, "app");
+    yield* fs.makeDirectory(path.join(app, "lib"), { recursive: true });
+    yield* fs.makeDirectory(path.join(app, "docs"));
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("root-renamed");
+      yield* service.create({
+        projectId,
+        commandId: CommandId.make("renamed-create"),
+        title: "Renamed",
+        workspaceRoot: app,
+      });
+      yield* service.update({
+        projectId,
+        commandId: CommandId.make("renamed-approve"),
+        workspaceSettings: {
+          expectedRevision: 0,
+          environment: {
+            additionalFolders: [path.join(app, "docs")],
+            repositories: [
+              {
+                id: "lib",
+                url: "https://github.com/synthetic/lib",
+                localPath: path.join(app, "lib"),
+              },
+            ],
+          },
+        },
+      });
+      const moved = path.join(root, "app-moved");
+      yield* fs.rename(app, moved);
+      yield* fs.symlink(moved, app);
+      const updated = yield* service.update({
+        projectId,
+        commandId: CommandId.make("renamed-move"),
+        workspaceRoot: moved,
+      });
+      assert.equal(updated.workspaceRoot, moved);
     }).pipe(Effect.provide(layerTest));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

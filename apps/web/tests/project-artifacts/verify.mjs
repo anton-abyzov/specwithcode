@@ -62,6 +62,11 @@ try {
   };
   const page = await context.newPage();
   await prepare(page);
+  const outside = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (!url.startsWith(origin) && !url.startsWith("data:")) outside.push(url);
+  });
   const titles = (scope) =>
     page
       .locator(
@@ -85,11 +90,10 @@ try {
     assert.equal(shelf.length, 9, "every artifact once");
     const library = await titles('[data-testid="library-pane"]');
     assert.deepEqual(library, shelf, "the Library lists the shelf's order");
-    assert.equal(
-      await page.locator('[data-testid="threads-pane"] img.sws-artifact-thumb-image').count(),
-      1,
-      "the screenshot shows itself",
-    );
+    await page
+      .locator('[data-testid="threads-pane"] img.sws-artifact-thumb-image')
+      .first()
+      .waitFor();
     // The shelf scrolls inside the pane; the page never scrolls sideways.
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
@@ -103,23 +107,53 @@ try {
     await page.screenshot({ path: join(output, `shelf-library-${theme}.png`) });
     checks.push(`${theme}: pinned first then newest, shelf and Library agree, contained`);
 
-    // Documents show a page preview; the HTML one runs no script.
+    // Documents show a page preview; the HTML one is a small image and no frame.
     const shelfPane = page.locator('[data-testid="threads-pane"]');
+    const row0 = page.locator(".sws-artifact-row");
+    const htmlCard = shelfPane.locator(
+      '.sws-artifact-card:has(.sws-artifact-title:text-is("connect-sign-in-report.html"))',
+    );
+    await htmlCard.scrollIntoViewIfNeeded();
+    const htmlImage = htmlCard.locator("img.sws-artifact-thumb-image");
+    await htmlImage.waitFor();
+    const htmlSrc = await htmlImage.getAttribute("src");
+    assert.match(htmlSrc, /^data:image\/webp/, "the HTML report is a small raster");
+    assert.ok(htmlSrc.length < 60_000, `the raster stays small, got ${htmlSrc.length}`);
+    assert.equal(await page.locator("iframe").count(), 0, "no card holds a frame");
+    assert.deepEqual(outside, [], "a page preview loads nothing");
+    // The fixture's script would paint the page red: the top corner stays as the page drew it.
+    const pixel = await page.evaluate(async (src) => {
+      const image = new Image();
+      image.src = src;
+      await image.decode();
+      const canvas = new OffscreenCanvas(image.width, image.height);
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return [...context.getImageData(image.width - 4, image.height - 4, 1, 1).data];
+    }, htmlSrc);
+    assert.ok(pixel[0] > 230 && pixel[1] > 230 && pixel[2] > 230, `no script ran, got ${pixel}`);
+    await page.screenshot({
+      path: join(output, `shelf-pages-${theme}.png`),
+      clip: { x: 0, y: 0, width: 480, height: 300 },
+    });
+    await row0.evaluate((node) => node.scrollTo({ left: 0 }));
+    const markdownCard = shelfPane.locator(
+      '.sws-artifact-card:has(.sws-artifact-title:text-is("review.md"))',
+    );
+    await markdownCard.scrollIntoViewIfNeeded();
     assert.equal(
-      await shelfPane.locator(".sws-artifact-page-line[data-heading='1']").first().textContent(),
+      await markdownCard.locator(".sws-artifact-page-line[data-heading='1']").textContent(),
       "Review of the artifacts shelf",
     );
-    const frame = shelfPane.locator(".sws-artifact-page-html iframe");
-    assert.equal(await frame.count(), 1, "the HTML report previews itself");
-    assert.equal(await frame.getAttribute("sandbox"), "");
-    assert.notEqual(
-      await frame
-        .contentFrame()
-        .locator("body")
-        .evaluate((body) => body.style.background),
-      "red",
-      "the preview runs no script",
+    // A pull request says its state, number, title and repository, with a small icon.
+    const prCard = shelfPane.locator(
+      '.sws-artifact-card:has(.sws-artifact-title:text-is("Project artifacts shelf and library"))',
     );
+    assert.equal(await prCard.locator(".sws-artifact-facts-label").textContent(), "Open");
+    assert.equal(await prCard.locator(".sws-artifact-facts-detail").textContent(), "#1101");
+    assert.equal(await prCard.locator(".sws-artifact-facts-foot").textContent(), "me/app");
+    const icon = await prCard.locator(".sws-artifact-facts-head svg").boundingBox();
+    assert.ok(icon.width <= 14, "the icon stays small");
     // View all is the row's last card and opens the Library's Artifacts view.
     const last = shelfPane.locator(".sws-artifact-row > li").last();
     assert.equal(await last.locator(".sws-artifact-title").textContent(), "View all");
@@ -129,7 +163,7 @@ try {
       clip: { x: 0, y: 0, width: 520, height: 330 },
     });
     await row.evaluate((node) => node.scrollTo({ left: 0 }));
-    checks.push(`${theme}: page previews for markdown and sandboxed HTML; View all card last`);
+    checks.push(`${theme}: markdown page, HTML raster with no frame, PR facts; View all last`);
 
     // The header folds the row and remembers it.
     const toggle = shelfPane.locator(".sws-artifact-shelf-toggle");

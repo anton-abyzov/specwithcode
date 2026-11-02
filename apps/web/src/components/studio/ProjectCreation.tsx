@@ -8,11 +8,16 @@ import {
   FolderGit2Icon,
   FolderPlusIcon,
   ChevronRightIcon,
+  ListChecksIcon,
 } from "lucide-react";
 import type { CommandPaletteView } from "../CommandPalette.logic";
 import { GitHubIcon } from "../Icons";
 import { Checkbox } from "../ui/checkbox";
 import { newProjectNameNotice, type NewProjectKind } from "../../studio/projectCreation";
+
+/** What "Use SpecWeave" adds, said wherever the person can turn it on. */
+export const SPECWEAVE_SETUP_DESCRIPTION =
+  "Runs specweave init: adds .specweave/, agent skills, .claude/settings.json, .gitignore and .gitattributes rules and a README if there is none, and adds SpecWeave sections to AGENTS.md and CLAUDE.md, for specs, tasks and handoffs";
 
 export function ProjectCreationPreview({
   kind,
@@ -70,32 +75,60 @@ export function projectCreationGroups(input: {
     selected: boolean;
   }[];
   github: { description: string; checked: boolean; toggle: () => void } | null;
+  /** "Use SpecWeave": off unless ticked, so nothing is added to the repository by default. */
+  specweave: { checked: boolean; toggle: () => void } | null;
   addExisting: () => void;
 }): CommandPaletteView["groups"] {
+  const github = input.kind === "code" ? input.github : null;
+  const specweave = input.kind === "code" ? input.specweave : null;
   return [
     projectMachineGroup(input.machines, input.busy),
-    ...(input.kind === "code" && input.github
+    ...(github || specweave
       ? [
           {
             value: "new-project-options",
             label: "Options",
             items: [
-              {
-                kind: "action" as const,
-                value: "new-project:github",
-                searchTerms: [],
-                title: "Create private repository on GitHub",
-                description: input.github.description,
-                icon: <GitHubIcon className="size-4" />,
-                disabled: input.busy,
-                titleTrailingContent: (
-                  <span className="pointer-events-none ms-auto flex">
-                    <Checkbox checked={input.github.checked} tabIndex={-1} aria-hidden />
-                  </span>
-                ),
-                keepOpen: true,
-                run: async () => input.github?.toggle(),
-              },
+              ...(github
+                ? [
+                    {
+                      kind: "action" as const,
+                      value: "new-project:github",
+                      searchTerms: [],
+                      title: "Create private repository on GitHub",
+                      description: github.description,
+                      icon: <GitHubIcon className="size-4" />,
+                      disabled: input.busy,
+                      titleTrailingContent: (
+                        <span className="pointer-events-none ms-auto flex">
+                          <Checkbox checked={github.checked} tabIndex={-1} aria-hidden />
+                        </span>
+                      ),
+                      keepOpen: true,
+                      run: async () => github.toggle(),
+                    },
+                  ]
+                : []),
+              ...(specweave
+                ? [
+                    {
+                      kind: "action" as const,
+                      value: "new-project:specweave",
+                      searchTerms: [],
+                      title: "Use SpecWeave",
+                      description: SPECWEAVE_SETUP_DESCRIPTION,
+                      icon: <ListChecksIcon className="size-4" />,
+                      disabled: input.busy,
+                      titleTrailingContent: (
+                        <span className="pointer-events-none ms-auto flex">
+                          <Checkbox checked={specweave.checked} tabIndex={-1} aria-hidden />
+                        </span>
+                      ),
+                      keepOpen: true,
+                      run: async () => specweave.toggle(),
+                    },
+                  ]
+                : []),
             ],
           },
         ]

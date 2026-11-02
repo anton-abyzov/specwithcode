@@ -1,0 +1,198 @@
+/**
+ * SpecweaveSetup - turns SpecWeave on for a project folder, and only when the
+ * person asks: the "Use SpecWeave" box on a new project, or "Set up
+ * SpecWeave" in Project settings. SpecWithCode never runs it on its own.
+ *
+ * It runs the person's own `specweave` CLI (`specweave init --quick --adapter
+ * claude`), or the current 3.x release through npx when none is installed.
+ * Whether a project uses SpecWeave is then read from disk
+ * (`isSpecweaveProject`), so there is no flag to keep in step.
+ *
+ * @module SpecweaveSetup
+ */
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import { resolveCommandPath } from "@specweave-studio/shared/shell";
+import * as Config from "effect/Config";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+
+import { vskillSearchDirs } from "../fleet/fleetSkills.ts";
+import { expandHomePath } from "../pathExpansion.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import { hasAnySpecweaveConfig, hasSpecweaveConfig } from "./ThreadIncrementProgress.ts";
+
+/** Non-interactive, never `--force`: an existing `.specweave` is left alone. */
+export const SPECWEAVE_INIT_ARGS = ["init", "--quick", "--adapter", "claude"] as const;
+/** Used only when no `specweave` is installed; the major is pinned, not the patch. */
+export const NPX_SPECWEAVE_ARGS = ["--yes", "specweave@3"] as const;
+// npx may download the package first.
+const INIT_TIMEOUT = Duration.minutes(3);
+
+export type SpecweaveSetupResult =
+  | { readonly ok: true; readonly alreadySetUp: boolean }
+  | { readonly ok: false; readonly reason: "unavailable" | "failed"; readonly detail: string };
+
+export class SpecweaveSetup extends Context.Service<
+  SpecweaveSetup,
+  {
+    /**
+     * Runs `specweave init` in `cwd` unless it is already set up. Never fails:
+     * a missing CLI or a failed init comes back as `ok: false` with what to
+     * tell the person.
+     */
+    readonly setUp: (cwd: string) => Effect.Effect<SpecweaveSetupResult>;
+  }
+>()("specweave-studio/project/SpecweaveSetup") {}
+
+/** The last lines of a run, without colour codes. */
+function outputTail(output: { readonly stdout: string; readonly stderr: string }, max = 400) {
+  // oxlint-disable-next-line no-control-regex -- strips terminal colour codes.
+  const plain = `${output.stderr}\n${output.stdout}`.replace(/\u001b\[[0-9;]*m/g, "").trim();
+  return plain.length > max ? `…${plain.slice(-max)}` : plain;
+}
+
+const make = Effect.gen(function* () {
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcessPlatform;
+  const delimiter = platform === "win32" ? ";" : ":";
+  const pathEnv = Option.getOrUndefined(yield* Config.String("PATH").pipe(Config.option));
+  const appData = Option.getOrUndefined(yield* Config.String("APPDATA").pipe(Config.option));
+  const pathExt = Option.getOrUndefined(yield* Config.String("PATHEXT").pipe(Config.option));
+  // The usual user installs, since the server's PATH can be narrower than a login shell's.
+  const searchDirs = vskillSearchDirs({ home: expandHomePath("~"), pathEnv, platform, appData });
+  const find = (name: string) =>
+    resolveCommandPath(name, { env: { PATH: searchDirs.join(delimiter), PATHEXT: pathExt } }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.orElseSucceed(() => null),
+    );
+
+  const setUp: SpecweaveSetup["Service"]["setUp"] = Effect.fn("SpecweaveSetup.setUp")(function* (
+    cwd: string,
+  ) {
+    if (yield* Effect.promise(() => hasSpecweaveConfig(cwd))) {
+      return { ok: true, alreadySetUp: true } as const;
+    }
+    // init rewrites config.json, and a write through a link changes the file it points at.
+    if (yield* Effect.promise(() => hasAnySpecweaveConfig(cwd))) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail:
+          ".specweave/config.json is a link or not a regular file, so SpecWeave was left as it is.",
+      } as const;
+    }
+    // Outside a repository init runs `git init` and commits the whole folder;
+    // in a subfolder it nests a second repository. Only the repository's top runs it.
+    const top = yield* runner
+      .run({
+        command: "git",
+        args: ["rev-parse", "--show-toplevel"],
+        cwd,
+        timeout: Duration.seconds(10),
+        timeoutBehavior: "timedOutResult",
+        maxOutputBytes: 64 * 1024,
+        outputMode: "truncate",
+      })
+      .pipe(Effect.option);
+    const topLevel =
+      Option.isSome(top) && !top.value.timedOut && top.value.code === 0
+        ? top.value.stdout.trim()
+        : "";
+    if (topLevel === "") {
+      return {
+        ok: false,
+        reason: "failed",
+        detail:
+          "SpecWeave needs a Git repository: this folder is not one. Run git init here first, then try again.",
+      } as const;
+    }
+    const [here, root] = yield* Effect.all([
+      fs.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd)),
+      fs.realPath(topLevel).pipe(Effect.orElseSucceed(() => topLevel)),
+    ]);
+    if (here !== root) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: `This folder is inside the Git repository at ${topLevel}. Set SpecWeave up there instead.`,
+      } as const;
+    }
+    // Resolved on each request: the CLI can be installed while the app runs.
+    const specweave = yield* find("specweave");
+    const npx = specweave === null ? yield* find("npx") : null;
+    const command = specweave ?? npx;
+    if (command === null) {
+      return {
+        ok: false,
+        reason: "unavailable",
+        detail:
+          "SpecWeave is not installed and npx was not found. Install it with npm i -g specweave, then try again.",
+      } as const;
+    }
+    const args =
+      specweave === null
+        ? [...NPX_SPECWEAVE_ARGS, ...SPECWEAVE_INIT_ARGS]
+        : [...SPECWEAVE_INIT_ARGS];
+    const output = yield* runner
+      .run({
+        command,
+        args,
+        cwd,
+        timeout: INIT_TIMEOUT,
+        timeoutBehavior: "timedOutResult",
+        maxOutputBytes: 256 * 1024,
+        outputMode: "truncate",
+        // A node script: its own folder first, so its `node` is found.
+        env: {
+          PATH: [path.dirname(command), ...searchDirs].filter(Boolean).join(delimiter),
+          NO_COLOR: "1",
+        },
+      })
+      .pipe(Effect.option);
+    if (Option.isNone(output)) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: "specweave init could not be started.",
+      } as const;
+    }
+    const run = output.value;
+    if (run.timedOut) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: "specweave init did not finish in time.",
+      } as const;
+    }
+    const tail = outputTail(run);
+    if (run.code !== 0) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: `specweave init exited with ${String(run.code)}${tail === "" ? "." : `: ${tail}`}`,
+      } as const;
+    }
+    // Exit 0 without a config is still not a SpecWeave project.
+    if (!(yield* Effect.promise(() => hasSpecweaveConfig(cwd)))) {
+      return {
+        ok: false,
+        reason: "failed",
+        detail: `specweave init finished without writing .specweave/config.json${tail === "" ? "." : `: ${tail}`}`,
+      } as const;
+    }
+    return { ok: true, alreadySetUp: false } as const;
+  });
+
+  return SpecweaveSetup.of({ setUp });
+});
+
+export const layer = Layer.effect(SpecweaveSetup, make);

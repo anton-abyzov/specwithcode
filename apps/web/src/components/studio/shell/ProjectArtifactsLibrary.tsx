@@ -140,6 +140,7 @@ export function ProjectArtifactsLibrary(props: {
               onOpen={() => open(artifact, visible)}
               onPin={(on) => props.onPin(artifact.id, on)}
               onOpenThread={props.onOpenThread}
+              windowed
             />
           ))}
         </ul>

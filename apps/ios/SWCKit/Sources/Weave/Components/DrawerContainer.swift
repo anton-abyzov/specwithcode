@@ -70,10 +70,11 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
           drawer
             .environment(\.isNavigationSidebarVisible, persistent)
             .environment(\.isWideLayout, wide)
+            .environment(\.drawerHorizontalInsets, drawerInsets(width: width, scene: proxy.size.width))
             .safeAreaPadding(EdgeInsets(
               top: sceneInsets.top, leading: sceneInsets.leading,
               bottom: sceneInsets.bottom,
-              trailing: max(0, width - (proxy.size.width - sceneInsets.trailing))
+              trailing: drawerInsets(width: width, scene: proxy.size.width).trailing
             ))
             // The drawer takes only the insets computed here. On iPhone Duo
             // the system reports its rail as a trailing inset to every
@@ -156,6 +157,13 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
         isOpen = false
       }
     }
+  }
+
+  /// The scene's system regions that overlap the drawer, and nothing else:
+  /// the drawer sits at the leading edge, so a trailing region only counts
+  /// where the drawer reaches into it.
+  private func drawerInsets(width: CGFloat, scene: CGFloat) -> EdgeInsets {
+    EdgeInsets(top: 0, leading: sceneInsets.leading, bottom: 0, trailing: max(0, width - (scene - sceneInsets.trailing)))
   }
 
   /// Width bounds of the wide column: wide enough for project names, never
@@ -277,6 +285,10 @@ private nonisolated struct WideLayoutKey: EnvironmentKey {
   static let defaultValue = false
 }
 
+private nonisolated struct DrawerHorizontalInsetsKey: EnvironmentKey {
+  static let defaultValue: EdgeInsets? = nil
+}
+
 extension EnvironmentValues {
   /// Navigation is already visible beside the detail; a menu button is redundant.
   public nonisolated var isNavigationSidebarVisible: Bool {
@@ -290,6 +302,13 @@ extension EnvironmentValues {
     set { self[WideLayoutKey.self] = newValue }
   }
 
+  /// The leading and trailing insets the drawer really overlaps, set only
+  /// inside a drawer. `fillsDrawerWidth()` reads it.
+  public nonisolated var drawerHorizontalInsets: EdgeInsets? {
+    get { self[DrawerHorizontalInsetsKey.self] }
+    set { self[DrawerHorizontalInsetsKey.self] = newValue }
+  }
+
   /// True while an open drawer covers this content.
   public nonisolated var isCoveredByDrawer: Bool {
     get { self[CoveredByDrawerKey.self] }
@@ -298,6 +317,16 @@ extension EnvironmentValues {
 }
 
 extension View {
+  /// Lays a screen hosted inside the drawer, such as the root of a navigation
+  /// stack, across the drawer's whole width. A stack hosts its screens in
+  /// UIKit, which hands them the window's horizontal insets wherever the
+  /// drawer sits. On iPhone Duo that is the status rail at the far edge, and
+  /// it left an empty strip of the rail's width beside the sidebar. This
+  /// drops those insets and applies only the ones the drawer overlaps.
+  public func fillsDrawerWidth() -> some View {
+    modifier(FillsDrawerWidth())
+  }
+
   /// Hides this screen from VoiceOver while an open drawer covers it. A
   /// navigation stack hosts its screens apart from the views around it, so
   /// hiding the drawer's content does not reach them: each screen root takes
@@ -313,6 +342,21 @@ extension View {
   /// state lives elsewhere.
   public func silentUnderDrawer() -> some View {
     modifier(SilentUnderDrawer())
+  }
+}
+
+private struct FillsDrawerWidth: ViewModifier {
+  @Environment(\.drawerHorizontalInsets) private var insets
+
+  func body(content: Content) -> some View {
+    if let insets {
+      content
+        .safeAreaPadding(.leading, insets.leading)
+        .safeAreaPadding(.trailing, insets.trailing)
+        .ignoresSafeArea(.container, edges: .horizontal)
+    } else {
+      content
+    }
   }
 }
 

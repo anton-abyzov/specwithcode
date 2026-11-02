@@ -86,6 +86,47 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
         assert.equal(providerCalls, 0);
       }),
   );
+  it.effect("refuses a project folder that moved or went missing, naming it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs
+        .makeTempDirectoryScoped({ prefix: "environment-root-moved-" })
+        .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
+      const main = path.join(root, "main");
+      const elsewhere = path.join(root, "elsewhere");
+      yield* fs.makeDirectory(elsewhere);
+      yield* fs.symlink(elsewhere, main);
+      const project = {
+        id: ProjectId.make("p"),
+        workspaceRoot: main,
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          kind: "personal",
+          environment: { additionalFolders: [elsewhere], repositories: [] },
+        },
+      } as unknown as Project;
+      let providerCalls = 0;
+      const called = () => Effect.sync(() => providerCalls++);
+      const wrap = yield* makeEnvironmentRuntime;
+      const runtime = wrap(
+        {
+          driver: ProviderDriverKind.make("codex"),
+          startTurn: called,
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        () => Effect.succeed(Option.some(project)),
+      );
+      const input = { ...turn(), runtimePolicy: { ...turn().runtimePolicy, cwd: main } };
+      const moved = yield* runtime.startTurn(input).pipe(Effect.flip);
+      assert.equal((moved.cause as { code: string }).code, "folder_changed");
+      assert.include((moved.cause as Error).message, `now leads to ${elsewhere}`);
+      yield* fs.remove(main);
+      const missing = yield* runtime.startTurn(input).pipe(Effect.flip);
+      assert.equal((missing.cause as { code: string }).code, "folder_changed");
+      assert.include((missing.cause as Error).message, main);
+      assert.equal(providerCalls, 0);
+    }),
+  );
   it.effect(
     "passes canonical approvals to both supported drivers and reflects removed approvals next turn",
     () =>

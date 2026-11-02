@@ -26,6 +26,7 @@ import {
   ProjectMemoryName,
   ProjectKnowledgeError,
   ProjectLibraryError,
+  ProjectSpecweaveSetUpError,
   ProjectWorkspaceError,
   type ProjectId,
   type ProjectKnowledgeDocument,
@@ -40,12 +41,15 @@ import {
   type ProjectMemoryFile,
   type ProjectMemorySummary,
   type ProjectMemoryWriteInput,
+  type ProjectSpecweaveSetUpInput,
+  type ProjectSpecweaveSetUpResult,
   type ProjectWorkspaceReadResult,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -65,6 +69,7 @@ import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
 import { knowledgeSections } from "./knowledge/knowledgeSections.ts";
 import { fenceText } from "./promptFence.ts";
 import { isSpecweaveProject } from "./ThreadIncrementProgress.ts";
+import * as SpecweaveSetup from "./SpecweaveSetup.ts";
 
 export class ProjectWorkspaceService extends Context.Service<
   ProjectWorkspaceService,
@@ -72,6 +77,10 @@ export class ProjectWorkspaceService extends Context.Service<
     readonly readWorkspace: (input: {
       projectId: ProjectId;
     }) => Effect.Effect<ProjectWorkspaceReadResult, ProjectWorkspaceError>;
+    /** Runs `specweave init` in the project's folder; the person asked for it. */
+    readonly setUpSpecweave: (
+      input: ProjectSpecweaveSetUpInput,
+    ) => Effect.Effect<ProjectSpecweaveSetUpResult, ProjectSpecweaveSetUpError>;
     readonly readMemory: (input: {
       projectId: ProjectId;
       name: string;
@@ -212,7 +221,9 @@ export function projectContextText(input: {
             ]),
         "Approvals and questions a worker raises are answered by the user inside that worker. A go-ahead written here never answers them, and you must not answer them for the user.",
         "Save durable facts, decisions and the user's stated preferences (how many workers, when to report, when to open pull requests) with studio_project_memory_write as soon as they are stated, and follow them. Keep MEMORY.md a short index of one line per detail file.",
-        "A turn ending or compaction is not completion: keep acceptance, ownership, blockers and next step in SpecWeave where configured, not memory. Do not poll completed work.",
+        input.specweave === true
+          ? "A turn ending or compaction is not completion: keep acceptance, ownership, blockers and next step in SpecWeave, not memory. Do not poll completed work."
+          : "A turn ending or compaction is not completion: keep acceptance, ownership, blockers and next step with the owning worker, not memory. Do not poll completed work.",
       ].join("\n")
     : [
         "This is shared context for this project. Follow the user's current request and preserve active worker ownership.",
@@ -272,6 +283,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const knowledge = yield* Effect.serviceOption(ProjectKnowledge.ProjectKnowledge);
+  const specweaveSetup = yield* Effect.serviceOption(SpecweaveSetup.SpecweaveSetup);
   const knowledgeView = (projectId: ProjectId) =>
     Option.isSome(knowledge) ? knowledge.value.view(projectId) : Effect.succeed(null);
   /** Knowledge requests on a host built without the index say so instead of failing oddly. */
@@ -310,12 +322,23 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
       const files = yield* summaries(projectId);
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
       return {
-        settings: project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        settings,
         memory: {
           files: files.map((entry) => ({ ...entry })),
           totalBytes: files.reduce((sum, entry) => sum + entry.byteLength, 0),
         },
+        // A personal assistant's folder is never a SpecWeave project.
+        // Bounded: a stalled mount hides the row instead of failing the whole read.
+        ...(settings.kind === "personal"
+          ? { specweave: false }
+          : Option.match(
+              yield* Effect.promise(() => isSpecweaveProject(project.workspaceRoot)).pipe(
+                Effect.timeoutOption(Duration.seconds(3)),
+              ),
+              { onNone: () => ({}), onSome: (specweave) => ({ specweave }) },
+            )),
       };
     }).pipe(mapProjectFailure(projectId, "workspace.read"));
   const readMemory = ({ projectId, name }: { projectId: ProjectId; name: string }) =>
@@ -544,8 +567,36 @@ const make = Effect.gen(function* () {
       ),
       Effect.mapError(libraryFailure(input.projectId)),
     );
+  const setUpSpecweave = ({ projectId }: ProjectSpecweaveSetUpInput) =>
+    Effect.gen(function* () {
+      const setupError = (
+        reason: ProjectSpecweaveSetUpError["reason"],
+        detail?: string,
+      ): ProjectSpecweaveSetUpError =>
+        new ProjectSpecweaveSetUpError({ projectId, reason, ...(detail ? { detail } : {}) });
+      const project = yield* projects.get(projectId).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+        Effect.flatMap((found) =>
+          Option.isSome(found) ? Effect.succeed(found.value) : Effect.fail(setupError("not_found")),
+        ),
+      );
+      if (project.workspaceSettings?.kind === "personal") {
+        return yield* setupError("failed", "A personal assistant does not use SpecWeave.");
+      }
+      if (Option.isNone(specweaveSetup)) {
+        return yield* setupError(
+          "unavailable",
+          "SpecWeave setup is not available on this machine.",
+        );
+      }
+      const result = yield* specweaveSetup.value.setUp(project.workspaceRoot);
+      if (!result.ok) return yield* setupError(result.reason, result.detail);
+      yield* knowledgeChanged(projectId);
+      return { alreadySetUp: result.alreadySetUp };
+    });
   return ProjectWorkspaceService.of({
     readWorkspace,
+    setUpSpecweave,
     readLibrary,
     addLibraryArtifact,
     readMemory,

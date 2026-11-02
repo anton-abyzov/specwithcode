@@ -355,13 +355,7 @@ export function meterParts(
     // A limit that reset since the read is good news, not a state to act on: the
     // chip shows no meter, and the tooltip and picker header say what happened.
     case "stale":
-      if (
-        state.resetSinceRead &&
-        !state.wasExhausted &&
-        (state.leftPercent === null || state.leftPercent >= 100)
-      ) {
-        return null;
-      }
+      if (state.resetSinceRead && !state.wasExhausted) return null;
       return {
         ring: { percent: null, tone: state.wasExhausted ? "warn" : "muted", dashed: true },
         value: state.wasExhausted
@@ -654,8 +648,7 @@ export function ModelPickerUsageBand({
       </header>
       {accountLine ? (
         <p
-          className="mt-0.5 truncate text-muted-foreground select-text"
-          title={accountLine}
+          className="mt-0.5 break-words text-muted-foreground select-text"
           data-model-picker-band-account=""
         >
           {accountLine}

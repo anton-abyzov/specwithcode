@@ -41,8 +41,9 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // native-app requests that tool names alone did not; the machines line
     // separates launching on a machine, moving a running thread and continuing
     // another machine's handoff-ready thread. The increment line (about 55
-    // tokens) asks SpecWeave projects to bind each launched worker.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_910);
+    // tokens) asks SpecWeave projects to bind each launched worker. The file
+    // line (about 70 tokens) stops workers improvising when a file is elsewhere.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_250);
   });
 
   it("asks for an increment on launches in a SpecWeave project and a link to its spec", () => {
@@ -51,6 +52,17 @@ describe("SpecWithCode orchestration provider instructions", () => {
       'In a SpecWeave project, for feature work pass `increment` (NNNN, "new" or "none")',
     );
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "`[NNNN](<specPath>)`");
+  });
+
+  it("gives one route for a file on another machine", () => {
+    for (const phrase of [
+      "rebuild it when its sources and toolchain are here",
+      "`studio_file_transfer`, never SSH, chat or logs",
+      "the only route for secrets",
+      "ahead of a launch or move",
+      "your coordinator sends it",
+    ])
+      assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, phrase);
   });
 
   it("separates launching on a machine from moving an existing thread", () => {

@@ -101,6 +101,13 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["worker machine host remote fleet order fallback"],
   },
   {
+    id: "project-specweave",
+    title: "SpecWeave",
+    tab: "general",
+    anchors: ["SpecWeave"],
+    searchTerms: ["specweave init increments specs tasks handoff planning"],
+  },
+  {
     id: "project-pause",
     title: "Pause or resume",
     tab: "general",

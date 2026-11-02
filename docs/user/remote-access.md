@@ -13,9 +13,11 @@ ways; to let your main machine start work on it, see
 
 SpecWithCode Connect makes an environment available to your other devices (the
 desktop app, a browser or your iPhone) through a Cloudflare tunnel, with no
-Tailscale and no router forwarding. In the desktop app on the host, open
-**Settings → Connections**, sign in, and enable **SpecWithCode Connect** for that
-environment.
+Tailscale and no router forwarding. In the desktop app on the host, open the account button at the bottom of the
+sidebar and choose **Sign in to SpecWithCode Connect**, then enable
+**SpecWithCode Connect** for that environment in **Settings → Connections**.
+The account is optional: without it, SpecWithCode runs the same on this machine
+and you can still pair devices directly.
 
 For a command-line host, run:
 
@@ -76,7 +78,7 @@ Once a machine has an HTTPS address (for example through Tailscale HTTPS below),
 another device can sign in without a pairing token:
 
 1. On a signed-in window, open the account button at the bottom of the sidebar
-   and choose **Sign in on another device**. It shows the address and a QR code.
+   and choose **Add a device with a code**. It shows the address and a QR code.
 2. Open that address on the new device and choose **Ask to sign in**. It shows a
    six-character code.
 3. Type that code into **Code shown on the other device** and choose
@@ -314,8 +316,9 @@ a client's permissions.
 local changes. Add `filesystem:write` to allow editing files or saving plans to
 the workspace. These scopes control direct file access from the client.
 
-To remove an environment from SpecWithCode Connect, open your account menu's **SpecWithCode Connect**
-page, or **Settings → SpecWithCode Connect** on mobile, and choose **Deregister**. This
+To remove an environment from SpecWithCode Connect, open the account menu and choose
+**Manage account**, or **Settings → SpecWithCode Connect** on mobile, then choose
+**Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. Removing an environment from a device's connection
 settings only forgets it on that device; it stays registered to your account.

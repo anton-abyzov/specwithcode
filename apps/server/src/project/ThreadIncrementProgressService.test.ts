@@ -132,10 +132,11 @@ const addRun = Effect.fn("addRun")(function* (
   yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${`${runId}:edit`}, ${threadId}, ${runId}, ${ordinal}, 'file_change', 'completed', '2026-10-22T10:00:00Z', '{}')`;
 });
 
-/** A project folder SpecWeave plans in: it has `.specweave/increments`. */
+/** A project folder SpecWeave plans in: set up by `specweave init`, with `.specweave/increments`. */
 const specweaveRoot = () => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "plan-unplanned-"));
   NodeFS.mkdirSync(NodePath.join(root, ".specweave", "increments"), { recursive: true });
+  NodeFS.writeFileSync(NodePath.join(root, ".specweave", "config.json"), "{}");
   return root;
 };
 

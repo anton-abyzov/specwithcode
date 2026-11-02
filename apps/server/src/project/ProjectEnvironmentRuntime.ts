@@ -65,13 +65,23 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
           project.workspaceRoot,
           environment,
         ).pipe(
+          // A stored folder that no longer resolves is the same event: it moved after approval.
+          Effect.mapError((error) =>
+            error.code === "path_not_approved"
+              ? new ProjectEnvironmentError({
+                  projectId: project.id,
+                  code: "folder_changed",
+                  detail: error.detail,
+                })
+              : error,
+          ),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         );
         if (resolved.workspaceRoot !== project.workspaceRoot)
           return yield* new ProjectEnvironmentError({
             projectId: project.id,
-            code: "path_not_approved",
+            code: "folder_changed",
             detail: `The project folder ${project.workspaceRoot} now leads to ${resolved.workspaceRoot}. Move the project to its new folder in project settings.`,
           });
         const directories = [

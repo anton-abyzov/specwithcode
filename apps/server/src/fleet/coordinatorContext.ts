@@ -124,15 +124,52 @@ const excerpt = (role: "user" | "assistant", text: string, createdAt: string) =>
   truncated: text.length > EXCERPT,
 });
 
-/** Active before archived, most recent first, then by id. */
+/**
+ * How much the destination coordinator needs a worker named, lower first: waiting on
+ * the person, running, pinned or waiting on a dependency, open, resolved, archived.
+ * Like project attention, a resolved thread's old flags do not count; only a request
+ * asked after it was resolved reopens it.
+ */
+export function workerRank(thread: OrchestrationV2ThreadShell): number {
+  if (thread.archivedAt != null) return 5;
+  const running = thread.activeRunId != null || thread.activeWork != null;
+  const request = thread.pendingRuntimeRequest;
+  const askedAt = request?.reopenedFromAskedAt ?? request?.createdAt;
+  const askedMs =
+    typeof askedAt === "string"
+      ? Date.parse(askedAt)
+      : askedAt != null
+        ? DateTime.toEpochMillis(askedAt)
+        : Number.NaN;
+  const resolved =
+    thread.settledOverride === "settled" ||
+    (thread.settledAt != null && thread.settledOverride !== "active");
+  const reopened =
+    request != null &&
+    thread.settledAt != null &&
+    askedMs > DateTime.toEpochMillis(thread.settledAt);
+  if (resolved && !reopened) return 4;
+  if (
+    request != null ||
+    thread.hasActionableProposedPlan === true ||
+    (!running && (thread.heldQueuedCount ?? 0) > 0) ||
+    (!running && thread.reportedWait == null && Boolean(thread.reportedBlocker?.trim()))
+  )
+    return 0;
+  if (running) return 1;
+  if (thread.pinnedAt != null || thread.reportedWait != null) return 2;
+  return 3;
+}
+
+/** Most needed first (workerRank), then most recent, then by id. */
 export const byRecency = (a: OrchestrationV2ThreadShell, b: OrchestrationV2ThreadShell) =>
-  Number(a.archivedAt !== null) - Number(b.archivedAt !== null) ||
+  workerRank(a) - workerRank(b) ||
   DateTime.toEpochMillis(b.updatedAt) - DateTime.toEpochMillis(a.updatedAt) ||
   (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /**
  * The worker chats a large handoff names, from the shell snapshot alone (no
- * transcript is read): active before archived, most recent first, then by id.
+ * transcript is read): most needed first (workerRank), then most recent, then by id.
  */
 export function workerSummaries(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
@@ -527,7 +564,7 @@ export function fitCoordinatorContext(input: {
 /**
  * Names, in a summarized Git handoff, the source's workers whose branch or
  * worktree holds commits or changes the published heads do not include, or could
- * not be checked: newest first, as many as UNMERGED_BUDGET holds, with the count
+ * not be checked: most needed first (workerRank), then newest, as many as UNMERGED_BUDGET holds, with the count
  * of them all and a line in the note.
  */
 export function withUnmergedWorkers(

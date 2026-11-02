@@ -48,6 +48,7 @@ import { unreachableMachines } from "../../cloud/connectRoutePlan";
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
+import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
 import { ProvisionMachineButton } from "./ProvisionMachineSheet";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -586,6 +587,8 @@ export function StudioFleetRoster({
   banner?: ReactNode;
 }) {
   const [readinessFor, setReadinessFor] = useState<string | null>(null);
+  const [terminalFor, setTerminalFor] = useState<string | null>(null);
+  const closeMachineTerminal = useCloseMachineTerminal();
   return (
     <SettingsSection
       id="private-machines"
@@ -632,7 +635,9 @@ export function StudioFleetRoster({
               fleetMachineAddress(machine, snapshot.machines),
               fleetMachineTransport(machine),
             ].filter(Boolean);
-            const ready = canCheckReadiness && (current || (saved && own?.connected));
+            const connected = current || (saved && own?.connected === true);
+            const ready = canCheckReadiness && connected;
+            const terminalOpen = connected && terminalFor === machine.id;
             const workersView = machine.workers ? fleetWorkersView(machine.workers) : null;
             const busy = pending !== null || failed;
             const canStop = !current && onWorkers !== undefined && workersView?.action === "stop";
@@ -763,21 +768,47 @@ export function StudioFleetRoster({
                     />
                   </div>
                 ) : null}
-                {ready ? (
-                  <div className="flex flex-wrap items-center gap-1.5 pl-7">
-                    <ProvisionMachineButton
+                {connected ? (
+                  <div className="flex flex-wrap items-center gap-1.5 pl-7 empty:hidden">
+                    {ready ? (
+                      <>
+                        <ProvisionMachineButton
+                          environmentId={machine.environmentId}
+                          environmentLabel={machine.label}
+                        />
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          aria-expanded={readinessOpen}
+                          onClick={() => setReadinessFor(readinessOpen ? null : machine.id)}
+                        >
+                          <ListChecksIcon aria-hidden />
+                          {readinessOpen ? "Hide readiness" : "Check readiness"}
+                        </Button>
+                      </>
+                    ) : null}
+                    <MachineTerminalButton
                       environmentId={machine.environmentId}
                       environmentLabel={machine.label}
+                      open={terminalOpen}
+                      onOpenChange={(next) => {
+                        if (!next) closeMachineTerminal(machine.environmentId);
+                        setTerminalFor(next ? machine.id : null);
+                      }}
                     />
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      aria-expanded={readinessOpen}
-                      onClick={() => setReadinessFor(readinessOpen ? null : machine.id)}
-                    >
-                      <ListChecksIcon aria-hidden />
-                      {readinessOpen ? "Hide readiness" : "Check readiness"}
-                    </Button>
+                  </div>
+                ) : null}
+                {terminalOpen ? (
+                  <div className="ms-7">
+                    <MachineTerminal
+                      key={machine.environmentId}
+                      environmentId={machine.environmentId}
+                      environmentLabel={machine.label}
+                      onClose={() => {
+                        closeMachineTerminal(machine.environmentId);
+                        setTerminalFor(null);
+                      }}
+                    />
                   </div>
                 ) : null}
                 {ready && readinessOpen ? (

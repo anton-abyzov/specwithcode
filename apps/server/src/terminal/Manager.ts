@@ -78,6 +78,7 @@ import {
 } from "../observability/Metrics.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { launchctlGetenvSshAuthSock, makeSshAgentSocketLookup } from "./sshAgentSocket.ts";
 import { withGitHubSpawnEnvironment } from "../sourceControl/gitHubSpawnEnvironment.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
@@ -1414,6 +1415,8 @@ interface TerminalManagerOptions {
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
   shellResolver?: () => string;
   env?: NodeJS.ProcessEnv;
+  /** Test seam for the macOS `launchctl getenv SSH_AUTH_SOCK` lookup. */
+  launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
   /**
    * Catalog cache and tool directories for managed ACP Registry installs. Their
    * install directories are appended to the terminal PATH so users can run
@@ -1543,6 +1546,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const sshAgentSocket = makeSshAgentSocketLookup({
+    env: baseEnv,
+    platform,
+    socketExists: (socketPath) =>
+      fileSystem.exists(socketPath).pipe(Effect.orElseSucceed(() => false)),
+    launchctlGetenv:
+      options.launchctlGetenvSshAuthSock ??
+      launchctlGetenvSshAuthSock.pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+      ),
+    runFork: (effect) => {
+      runFork(effect);
+    },
+  });
   const isDirectory = (candidate: string) =>
     fileSystem.stat(candidate).pipe(
       Effect.map((stats) => stats.type === "Directory"),
@@ -1557,8 +1574,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     input: Input,
   ): Effect.Effect<Input> =>
     Effect.gen(function* () {
-      if (input.cwd === undefined || input.fallbackCwd === undefined) return input;
       const home = baseEnv.HOME?.trim() || NodeOS.homedir();
+      // "~" asks for this machine's home folder (machine terminals opened from
+      // another machine do not know its path).
+      if (input.cwd === "~") return { ...input, cwd: home };
+      if (input.cwd === undefined || input.fallbackCwd === undefined) return input;
       for (const candidate of [input.cwd, input.fallbackCwd, home]) {
         if (yield* isDirectory(candidate)) {
           return candidate === input.cwd ? input : { ...input, cwd: candidate };
@@ -2356,6 +2376,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             const terminalEnv = withGitHubSpawnEnvironment(
               createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform),
             );
+            // A launchd-started server has no SSH_AUTH_SOCK of its own; give
+            // the shell the user's agent unless the runtime env chose one.
+            if (session.runtimeEnv?.SSH_AUTH_SOCK === undefined) {
+              const agentSocket = yield* sshAgentSocket.current;
+              if (agentSocket !== undefined) terminalEnv.SSH_AUTH_SOCK = agentSocket;
+            }
             // Append (never prepend) managed ACP agent install directories so
             // `kimi login` and friends resolve by name without shadowing any
             // system or user tool of the same name.

@@ -166,7 +166,7 @@ export function SignInAnotherDeviceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-md" data-testid="sign-in-another-device">
         <DialogHeader>
-          <DialogTitle>Sign in on another device</DialogTitle>
+          <DialogTitle>Add a device with a code</DialogTitle>
           <DialogDescription>
             Use {machine} from your phone or another computer. Its projects and agents keep running
             here.

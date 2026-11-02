@@ -174,13 +174,34 @@ export async function incrementRootFor(
 }
 
 /**
- * Whether the project plans with SpecWeave: it has increments of its own, or
- * an umbrella workspace above it does.
+ * Whether `folder` itself was set up with `specweave init`: it holds
+ * `.specweave/config.json` as a regular file, not a link. A bare `.specweave`
+ * folder (a stale copy, a report folder) does not count.
+ */
+export async function hasSpecweaveConfig(folder: string): Promise<boolean> {
+  const config = await NodeFSP.lstat(NodePath.join(folder, ".specweave", "config.json")).catch(
+    () => null,
+  );
+  return config?.isFile() ?? false;
+}
+
+/** Whether anything sits at `.specweave/config.json`, a link included. */
+export async function hasAnySpecweaveConfig(folder: string): Promise<boolean> {
+  return NodeFSP.lstat(NodePath.join(folder, ".specweave", "config.json")).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Whether the project plans with SpecWeave, the one switch every SpecWeave
+ * feature follows: the project was set up with `specweave init`, or an
+ * umbrella workspace above it plans its increments. There is no stored flag;
+ * the files decide, so turning SpecWeave on is running `specweave init`.
  */
 export async function isSpecweaveProject(workspaceRoot: string): Promise<boolean> {
   return (
-    (await isDirectory(NodePath.join(workspaceRoot, INCREMENTS_DIR))) ||
-    (await planningRootAbove(workspaceRoot)) !== null
+    (await hasSpecweaveConfig(workspaceRoot)) || (await planningRootAbove(workspaceRoot)) !== null
   );
 }
 

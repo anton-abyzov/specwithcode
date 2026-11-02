@@ -1,16 +1,15 @@
 /**
  * The project panel's top bar, as in the Claude desktop app: Threads, Designs,
- * Library, PRs and Routines tabs, a + menu, then the tab's own tools, expand and close.
+ * Library, PRs and Routines tabs, a + button that asks the coordinator for a thread,
+ * then the tab's own tools, expand and close. Plan and Usage open existing views, so
+ * they live in the project header's More menu, not here.
  * The panel runs the full window height, so this bar shares the title row with
  * the coordinator's top bar and drags the window like it.
  */
 import {
   CalendarClockIcon,
   FolderOpenIcon,
-  GaugeIcon,
-  ListChecksIcon,
   Maximize2Icon,
-  MessageSquarePlusIcon,
   MessagesSquareIcon,
   Minimize2Icon,
   PaletteIcon,
@@ -29,8 +28,6 @@ import {
   type ProjectPaneTab,
 } from "../../../studio/projectPaneModel";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 import { Tip } from "./Tip";
 
 const TAB_ICONS: Record<ProjectPaneTab, LucideIcon> = {
@@ -47,9 +44,8 @@ export interface ProjectPaneBarProps {
   onTabChange: (tab: ProjectPaneTab) => void;
   /** Badges: threads waiting on the person, open pull requests, enabled routines. */
   counts: Partial<Record<ProjectPaneTab, { value: number; label: string; tone?: "waiting" }>>;
+  /** Points the person at the coordinator, which starts threads. */
   onNewThread: () => void;
-  onOpenPlan: () => void;
-  onOpenUsage: () => void;
   expanded: boolean;
   onToggleExpanded: () => void;
   onClose: () => void;
@@ -125,34 +121,16 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
           );
         })}
       </div>
-      <Menu>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <MenuTrigger
-                render={<button type="button" className="sws-icon-button" aria-label="New" />}
-              />
-            }
-          >
-            <PlusIcon aria-hidden />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">New</TooltipPopup>
-        </Tooltip>
-        <MenuPopup align="start" side="bottom" className="min-w-52">
-          <MenuItem onClick={props.onNewThread}>
-            <MessageSquarePlusIcon aria-hidden />
-            New thread
-          </MenuItem>
-          <MenuItem onClick={props.onOpenPlan}>
-            <ListChecksIcon aria-hidden />
-            Plan
-          </MenuItem>
-          <MenuItem onClick={props.onOpenUsage}>
-            <GaugeIcon aria-hidden />
-            Usage
-          </MenuItem>
-        </MenuPopup>
-      </Menu>
+      <Tip label="Ask the coordinator for a thread">
+        <button
+          type="button"
+          className="sws-icon-button"
+          aria-label="Ask the coordinator for a thread"
+          onClick={props.onNewThread}
+        >
+          <PlusIcon aria-hidden />
+        </button>
+      </Tip>
       <div className="sws-threads-tools">
         {tools}
         <Tip label={props.expanded ? "Restore panel" : "Expand panel"}>

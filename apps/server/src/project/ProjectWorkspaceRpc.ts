@@ -61,6 +61,7 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsUsageRead]: usage.read,
     [WS_METHODS.projectsSkillsRead]: skills.read,
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,
+    [WS_METHODS.projectsSpecweaveSetUp]: workspace.setUpSpecweave,
     [WS_METHODS.projectsStarterSuggestions]: starters.read,
     [WS_METHODS.projectsMemoryRead]: workspace.readMemory,
     // People edit memory here; while the project moves, the move's copy must stay the last word.

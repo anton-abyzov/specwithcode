@@ -765,6 +765,11 @@ export const ServerConfig = Schema.Struct({
    * fields to servers that don't advertise this.
    */
   threadSnapshotPagination: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Whether projects.createNew accepts `specweave` and projects.specweaveSetUp
+   * exists. Older servers drop the field silently, so clients hide the option.
+   */
+  specweaveSetUp: Schema.optionalKey(Schema.Boolean),
   /** Whether thread reads accept the reasoningMessages opt-in. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**

@@ -82,6 +82,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsMemoryRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsLibraryRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
+  // Runs `specweave init`, which writes SpecWeave's files into the project folder.
+  [WS_METHODS.projectsSpecweaveSetUp]: AuthFilesystemWriteScope,
   // Search results quote Library files, so reading knowledge is a file read.
   [WS_METHODS.projectsKnowledgeRead]: AuthFilesystemReadScope,
   [WS_METHODS.designExport]: AuthFilesystemReadScope,

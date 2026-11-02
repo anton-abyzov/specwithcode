@@ -219,6 +219,10 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:library-add-artifact",
       tag: WS_METHODS.projectsLibraryAddArtifact,
     }),
+    specweaveSetUp: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:specweave-set-up",
+      tag: WS_METHODS.projectsSpecweaveSetUp,
+    }),
     threadReports: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-workspace:thread-reports",
       tag: WS_METHODS.projectsThreadReportsRead,

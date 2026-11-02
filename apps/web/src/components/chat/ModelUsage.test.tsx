@@ -8,7 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { AvailabilityText, ModelAvailability } from "../../studio/modelAvailability";
-import { ModelPickerUsageBand, type ModelPickerUsage } from "./ModelUsage";
+import { meterParts, ModelPickerUsageBand, type ModelPickerUsage } from "./ModelUsage";
 
 const now = Date.parse("2026-10-21T15:00:00Z");
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -53,6 +53,31 @@ const usageIn = (state: ModelAvailability, long: string): ModelPickerUsage => ({
   text: (): AvailabilityText => ({ short: "", label: "", long, tone: "muted" }),
   warningReason: () => null,
   formatAt: (ms) => new Date(ms).toISOString(),
+});
+
+describe("meterParts", () => {
+  const stale = (over: { leftPercent: number | null; wasExhausted: boolean; reset: boolean }) =>
+    meterParts(
+      {
+        kind: "stale",
+        leftPercent: over.leftPercent,
+        wasExhausted: over.wasExhausted,
+        checkedAt: now,
+        resetSinceRead: over.reset,
+      },
+      { short: "", label: "", long: "", tone: "muted" },
+      { nowMs: now },
+    );
+
+  it("draws no meter for a limit that reset since the read, with or without a partial reading", () => {
+    expect(stale({ leftPercent: null, wasExhausted: false, reset: true })).toBeNull();
+    expect(stale({ leftPercent: 46, wasExhausted: false, reset: true })).toBeNull();
+  });
+
+  it("still warns when a live window is spent, and keeps an old reading approximate", () => {
+    expect(stale({ leftPercent: 0, wasExhausted: true, reset: true })?.value).toBe("Limit?");
+    expect(stale({ leftPercent: 46, wasExhausted: false, reset: false })?.value).toBe("~46%");
+  });
 });
 
 describe("ModelPickerUsageBand", () => {

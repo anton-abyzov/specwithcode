@@ -63,6 +63,8 @@ export interface ProjectArtifact {
   readonly increment: string | null;
   readonly design: DesignSummary | null;
   readonly pullRequestState: ProjectPullRequest["state"] | null;
+  readonly pullRequestNumber: number | null;
+  readonly pullRequestRepository: string | null;
   /** A registered file that is gone, or a link the hub must not open. */
   readonly missing: boolean;
   readonly pinned: boolean;
@@ -200,6 +202,8 @@ const BLANK = {
   increment: null,
   design: null,
   pullRequestState: null,
+  pullRequestNumber: null,
+  pullRequestRepository: null,
   missing: false,
   root: null,
 } as const;
@@ -268,6 +272,8 @@ export function collectProjectArtifacts(input: ProjectArtifactsInput): ProjectAr
       updatedAt: time(pullRequest.updatedAt),
       url: pullRequest.url,
       pullRequestState: pullRequest.state,
+      pullRequestNumber: pullRequest.number,
+      pullRequestRepository: pullRequest.repository,
       thread: input.threadOf?.(pullRequest.threadId) ?? null,
     });
   }
@@ -457,7 +463,7 @@ export const ARTIFACT_KIND_LABELS: Record<ProjectArtifactKind, string> = {
   link: "Link",
 };
 
-const PULL_REQUEST_STATE_WORDS: Record<ProjectPullRequest["state"], string> = {
+export const PULL_REQUEST_STATE_WORDS: Record<ProjectPullRequest["state"], string> = {
   open: "Open",
   draft: "Draft",
   merged: "Merged",

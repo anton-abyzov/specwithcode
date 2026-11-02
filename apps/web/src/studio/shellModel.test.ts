@@ -840,3 +840,41 @@ it("keeps resolved parents resolved despite stale own runtime or live child coun
   expect(threadStatusWord(resolved)).toBeNull();
   expect(threadsSummary([resolved], 0, undefined, children)).not.toContain("working");
 });
+
+describe("chat list by machine", () => {
+  it("groups chats under one heading per machine, sorted by name", () => {
+    const threads = [
+      thread({ id: "a" as EnvironmentThreadShell["id"], title: "A", updatedAt: at(0, 10) }),
+      thread({ id: "b" as EnvironmentThreadShell["id"], title: "B", updatedAt: at(0, 9) }),
+      thread({ id: "c" as EnvironmentThreadShell["id"], title: "C", updatedAt: at(0, 8) }),
+      thread({ id: "d" as EnvironmentThreadShell["id"], title: "D", updatedAt: at(0, 7) }),
+    ];
+    const machines: Record<string, string> = { a: "ministorm", b: "m1", c: "ministorm", d: "m1" };
+    const groups = buildChatGroups(
+      threads,
+      { ...DEFAULT_CHAT_LIST_OPTIONS, groupBy: "machine" },
+      {
+        now,
+        projectLabel,
+        // Two machines can share a name; "d" runs on the second "m1".
+        machine: (row) => ({
+          id: row.id === "d" ? "other-m1" : machines[row.id]!,
+          label: machines[row.id]!,
+        }),
+      },
+    );
+    expect(groups.map((group) => [group.label, group.threads.map((row) => row.id)])).toEqual([
+      ["m1", ["b"]],
+      ["m1", ["d"]],
+      ["ministorm", ["a", "c"]],
+    ]);
+    expect(new Set(groups.map((group) => group.key)).size).toBe(3);
+    expect(groups.every((group) => group.key.startsWith("machine:"))).toBe(true);
+  });
+
+  it("says which machine a filtered empty list is on", () => {
+    expect(chatListEmptyMessage(DEFAULT_CHAT_LIST_OPTIONS, 3, "m1")).toBe(
+      "No chats on m1 match this filter.",
+    );
+  });
+});

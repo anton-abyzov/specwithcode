@@ -73,9 +73,13 @@ import sqlite3
 import time
 import urllib.parse
 
-PAGE_VERIFY_ATTEMPTS = 3
+PAGE_VERIFY_ATTEMPTS = 5  # Each costs seconds; giving up costs minutes of full reads.
 PAGE_VERIFY_QUIET_SECONDS = 1.0
 PAGE_VERIFY_QUIET_WAIT_SECONDS = 15
+# Rows of one authority table or identity set. M4's 48,000 auth sessions and 54,000 pairing links
+# (October 31, 2026) cost about 2 s a read, and past the old 20,000 every held install silently
+# took three full reads of the database.
+AUTHORITY_ROW_BUDGET = 500000
 
 
 class DatabaseChangedDuringVerification(AssertionError):
@@ -108,14 +112,18 @@ class PageMode:
         self.started = None
 
     @classmethod
-    def prepare(cls, names, identity, expected, heartbeat):
+    def prepare(cls, names, identity, expected, heartbeat, report=None):
+        """The mode, or None and the reason in `report['pageModeRefused']` when a held install takes
+        the full path instead."""
         if expected.get('snapshotMode') != 'held-service':
             return None
         mode = cls(names, identity, expected, heartbeat)
         try:
             _, auth = mode.read()  # Unsupported/moving snapshots take the old path before any write.
             assert auth is not None, 'Page mode requires an existing auth table'
-        except (read_cache.Unavailable, OSError, sqlite3.Error, AssertionError, ValueError):
+        except (read_cache.Unavailable, OSError, sqlite3.Error, AssertionError, ValueError) as error:
+            if report is not None:
+                report['pageModeRefused'] = type(error).__name__ + ':' + str(error)[:160]
             return None
         return mode
 
@@ -127,8 +135,8 @@ class PageMode:
         rows = {'nativeWorkIdle': True, 'counts': {}, 'hashes': {},
                 'schemaSha256': continuity.digest(continuity.encoded(continuity.schema(db)))}
         for table in selected:
-            values = list(db.execute('SELECT * FROM ' + table + ' NOT INDEXED LIMIT 20001'))
-            assert len(values) <= 20000, 'Authority capture budget exceeded'
+            values = list(db.execute('SELECT * FROM ' + table + ' NOT INDEXED LIMIT ' + str(AUTHORITY_ROW_BUDGET + 1)))
+            assert len(values) <= AUTHORITY_ROW_BUDGET, 'Authority capture budget exceeded'
             rows['counts'][table] = len(values)
             rows['hashes'][table] = continuity.legacy_rows_hash(values)
             if table != 'auth_sessions':
@@ -139,8 +147,8 @@ class PageMode:
             ids = set()
             for table in sources:
                 if table in tables:
-                    values = [row[0] for row in db.execute('SELECT ' + column + ' FROM ' + table + ' NOT INDEXED LIMIT 20001')]
-                    assert len(values) <= 20000 and all(type(value) is str for value in values), 'Identity capture budget or type'
+                    values = [row[0] for row in db.execute('SELECT ' + column + ' FROM ' + table + ' NOT INDEXED LIMIT ' + str(AUTHORITY_ROW_BUDGET + 1))]
+                    assert len(values) <= AUTHORITY_ROW_BUDGET and all(type(value) is str for value in values), 'Identity capture budget or type'
                     ids.update(values)
             rows[key] = sorted(ids)
         auth = None

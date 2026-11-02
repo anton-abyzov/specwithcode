@@ -193,6 +193,64 @@ class ProgressFile(unittest.TestCase):
         self.assertIsNone(install_progress.expected_ms(self.updates / 'absent'))
 
 
+class Estimates(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.updates = pathlib.Path(folder.name) / 'updates'
+        self.receipts = self.updates / 'receipts'
+        self.receipts.mkdir(parents=True)
+        self.current = self.receipts / 'update-current.json'
+
+    def write(self, name, receipt, age):
+        path = self.receipts / name
+        path.write_text(json.dumps({'phase': 'verified', **receipt}))
+        os.utime(path, (time.time() - age, time.time() - age))
+
+    def read(self):
+        return json.loads((self.updates / install_progress.FILE).read_text())
+
+    def test_the_estimate_comes_from_the_same_proof_path(self):
+        self.write('update-page.json', {'databaseProofMode': install_progress.PAGE_PROOF_MODE,
+                                        'timings': {'beforeRead': 900, 'readiness': 6000, 'total': 22000}}, 200)
+        self.write('update-full.json', {'timings': {'beforeRead': 143000, 'readiness': 130000, 'total': 499000}}, 100)
+        self.assertEqual(install_progress.expected_phases(self.receipts, self.current, True),
+                         {'beforeRead': 900, 'readiness': 6000})
+        self.assertEqual(install_progress.expected_phases(self.receipts, self.current, False),
+                         {'beforeRead': 143000, 'readiness': 130000})
+
+    def test_the_first_page_install_uses_the_measured_path(self):
+        self.write('update-full.json', {'timings': {'beforeRead': 143000, 'total': 499000}}, 100)
+        with install_progress.ProgressWriter(self.updates, receipt=self.current) as progress:
+            progress.expect(True)
+            record = self.read()
+        self.assertEqual(record['expectedMs'], sum(install_progress.PAGE_PATH_MS.values()))
+        self.assertLess(record['expectedMs'], 30000)
+        self.assertEqual(record['phaseExpectedMs'], install_progress.PAGE_PATH_MS['beforeRead'])
+
+    def test_each_lap_moves_the_time_left_and_a_fallback_adds_both_reads(self):
+        with install_progress.ProgressWriter(self.updates, receipt=self.current) as progress:
+            progress.expect(True)
+            first = self.read()
+            for phase in install_progress.PHASES[:install_progress.PHASES.index('readinessCheap') + 1]:
+                progress.lap(phase, {})
+            at_readiness = self.read()
+            self.assertEqual(at_readiness['phase'], 'readiness')
+            self.assertLess(at_readiness['remainingAfterMs'], first['remainingAfterMs'])
+            progress.expect(False, 20 << 30)
+            self.assertEqual(self.read()['phaseExpectedMs'], 2 * 20 * install_progress.FULL_READ_MS_PER_GIB)
+
+    def test_an_apply_without_a_writer_takes_an_estimate_too(self):
+        install_progress.UNWRITTEN.expect(True, 0)
+        install_progress.UNWRITTEN.lap('beforeRead', {})
+
+    def test_a_finished_record_ignores_a_late_estimate(self):
+        with install_progress.ProgressWriter(self.updates, receipt=self.current) as progress:
+            progress.finish('verified', {})
+            progress.expect(True)
+        self.assertNotIn('expectedPhases', self.read())
+
+
 class ApplyWritesProgress(unittest.TestCase):
     """update.apply through the ApplyRecovery harness: the file it leaves for each outcome."""
 

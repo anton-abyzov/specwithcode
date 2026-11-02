@@ -25,6 +25,10 @@ export const fixture = {
   configs: new Map() as Map<string, unknown>,
   /** Chats the person asked to move into a project. */
   moves: [] as string[],
+  /** Machines the sidebar knows by name. */
+  environments: [] as Array<{ environmentId: string; label: string }>,
+  /** Machines this device can't reach. */
+  unreachable: [] as string[],
 };
 export function publish(change: Partial<typeof fixture>): void {
   Object.assign(fixture, change);
@@ -96,6 +100,7 @@ export const useRouter = () => ({ navigate, routesById: {} });
 
 // state/entities, state/environments, state/projects, state/use-atom-command
 export const useThreadShells = () => useFixture(() => fixture.shells);
+export const useAllEnvironmentProjectSnapshotsReady = () => true;
 export const readThreadShell = (ref: { environmentId: string; threadId: string }) =>
   fixture.shells.find((t) => t.environmentId === ref.environmentId && t.id === ref.threadId) ??
   null;
@@ -106,11 +111,10 @@ export const requestThreadMove = async (ref: { threadId: string }) => {
   fixture.moves.push(ref.threadId);
 };
 export const usePrimaryEnvironmentId = () => "host";
-const NO_ENVIRONMENTS = { environments: [] };
-export const useEnvironments = () => NO_ENVIRONMENTS;
-export const unreachableEnvironmentIds = () => [];
-const NO_IDS: string[] = [];
-export const useUnreachableEnvironmentIds = () => NO_IDS;
+const useFixtureEnvironments = () => useFixture(() => fixture.environments);
+export const useEnvironments = () => ({ environments: useFixtureEnvironments() });
+export const unreachableEnvironmentIds = () => fixture.unreachable;
+export const useUnreachableEnvironmentIds = () => useFixture(() => fixture.unreachable);
 export const projectEnvironment = { update: {} };
 export const useAtomCommand =
   () =>
@@ -172,6 +176,9 @@ export const useOrchestrationCommand =
 // hooks
 const NO_MACHINES = { projectCoordinatorMachines: {} };
 export const useClientSettings = <T,>(select: (s: typeof NO_MACHINES) => T) => select(NO_MACHINES);
+export const useAideEnabled = () => true;
+export const useProjects = () => [];
+export const useEnvironmentsWithScope = () => ({ environments: [] });
 export const usePrimarySettingsAvailable = () => false;
 export const useUpdatePrimarySettings = () => () => {};
 export const useScratchProject = () => ({

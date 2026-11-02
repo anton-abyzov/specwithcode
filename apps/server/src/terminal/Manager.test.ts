@@ -249,6 +249,7 @@ interface CreateManagerOptions {
   >[0]["resolveProviderInstanceEnvironment"];
   managedBinaryCacheDir?: string;
   managedBinaryToolsDir?: string;
+  launchctlGetenvSshAuthSock?: Effect.Effect<string | undefined>;
 }
 
 interface ManagerFixture {
@@ -283,6 +284,8 @@ const createManager = (
           : {}),
         ...(options.shellResolver !== undefined ? { shellResolver: options.shellResolver } : {}),
         ...(options.env !== undefined ? { env: options.env } : {}),
+        // Never the real launchctl: it would hand tests this Mac's agent socket.
+        launchctlGetenvSshAuthSock: options.launchctlGetenvSshAuthSock ?? Effect.succeed(undefined),
         ...(options.subprocessInspector !== undefined
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
@@ -2228,6 +2231,51 @@ it.layer(
       expect(environment?.CLAUDE_CONFIG_DIR).toMatch(/[\\/][.]claude-work$/);
       expect(environment?.CUSTOM_ACCOUNT).toBe("~/leave-this-value-alone");
     }),
+  );
+
+  it.effect("starts a terminal opened at ~ in this machine's home folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-home-" });
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { HOME: home, PATH: "/usr/bin:/bin" },
+      });
+      yield* manager.open(openInput({ terminalId: "machine", cwd: "~" }));
+      expect(ptyAdapter.spawnInputs.at(-1)?.cwd).toBe(home);
+      // A missing folder whose fallback is "~" also lands in home.
+      yield* manager.open(
+        openInput({ terminalId: "machine-2", cwd: `${home}/missing`, fallbackCwd: "~" }),
+      );
+      expect(ptyAdapter.spawnInputs.at(-1)?.cwd).toBe(home);
+    }),
+  );
+
+  it.effect("gives macOS terminals the launchd ssh-agent socket when the server has none", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const socketDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-ssh-agent-" });
+      const agentSocket = `${socketDir}/Listeners`;
+      yield* fs.writeFileString(agentSocket, "");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { PATH: "/usr/bin:/bin", SHELL: "/bin/zsh" },
+        launchctlGetenvSshAuthSock: Effect.succeed(agentSocket),
+      });
+      // The lookup runs in the background; each poll opens a new terminal.
+      let attempt = 0;
+      yield* waitFor(
+        Effect.gen(function* () {
+          attempt += 1;
+          yield* manager.open(openInput({ terminalId: `agent-${attempt}` }));
+          return ptyAdapter.spawnInputs.at(-1)?.env.SSH_AUTH_SOCK === agentSocket;
+        }),
+        "2 seconds",
+      );
+      // An explicit runtime value still wins.
+      yield* manager.open(
+        openInput({ terminalId: "agent-explicit", env: { SSH_AUTH_SOCK: "/tmp/explicit.sock" } }),
+      );
+      expect(ptyAdapter.spawnInputs.at(-1)?.env.SSH_AUTH_SOCK).toBe("/tmp/explicit.sock");
+    }).pipe(Effect.provide(layerWithHostPlatform("darwin"))),
   );
 
   it.effect("strips AppImage runtime env from terminal sessions", () =>

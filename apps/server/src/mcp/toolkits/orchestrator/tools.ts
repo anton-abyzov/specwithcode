@@ -335,7 +335,7 @@ const ThreadsContinueAllTool = Tool.make("studio_threads_continue_all", {
 
 const ThreadMigrateTool = Tool.make("studio_thread_migrate", {
   description:
-    "Move threads this coordinator owns to another machine through handoff. Each thread keeps its owner, the coordinator that started it; only where it runs moves. Pass threadIds, or omit them to move every running handoff-mode thread of this project. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
+    "Move threads this coordinator owns to another machine through handoff. Each thread keeps its owner, the coordinator that started it; only where it runs moves. A file the thread needs that Git does not carry (a build, a .env) goes first with studio_file_transfer. Pass threadIds, or omit them to move every running handoff-mode thread of this project. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
   parameters: OrchestratorMcpThreadMigrateInput,
   success: OrchestratorMcpThreadMigrateResult,
   failure: OrchestratorMcpFailure,

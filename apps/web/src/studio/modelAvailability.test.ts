@@ -148,6 +148,19 @@ describe("modelAvailability", () => {
     expect(state).toMatchObject({ kind: "stale", resetSinceRead: true, leftPercent: null });
     expect(isAvailabilityBlocking(state)).toBe(false);
     expect(text(provider, "claude-opus-5-5").short).toBe("Limit reset since last read");
+    expect(text(provider, "claude-opus-5-5").long).toMatch(/^Limit reset since last read\. /);
+    // A denial doesn't say which limit it was, so a reset can't clear it: it may still be in force.
+    const denied = claude(null, {
+      usageLimits: {
+        checkedAt: iso(now - 60_000),
+        rateLimitReachedType: "five_hour",
+        windows: [session(100, -5 * 60_000)],
+      },
+    });
+    expect(
+      modelAvailability({ provider: denied, model: "claude-opus-5-5", nowMs: now }),
+    ).toMatchObject({ kind: "stale", resetSinceRead: true, wasExhausted: true });
+    expect(text(denied, "claude-opus-5-5").short).toBe("Limit may have reset");
     // Another window's room is no proof either: the reset one could hold anything now.
     const mixed = claude([session(100, -5 * 60_000), weekly(54)]);
     expect(

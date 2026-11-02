@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import Weave
+@testable import SWCFeatures
 
 /// Native component resizing is not a substitute for Duo pose acceptance.
 nonisolated final class AdaptiveDrawerTests: XCTestCase {
@@ -146,6 +147,71 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
         XCTAssertEqual(detail.bounds.width, 680, accuracy: 1)
       }
     }
+  }
+
+  /// iPhone Duo reports its trailing status rail as a safe-area inset to the
+  /// whole window. The column sits far from the rail, so a navigation stack
+  /// inside it must still fill the column: the rail once left an empty strip
+  /// of its own width between the sidebar and the chat.
+  @MainActor func testTrailingRailDoesNotNarrowTheColumnStack() throws {
+    let width = 951.0
+    let host = UIHostingController(rootView: GeometryReader { proxy in
+      DrawerContainer(isOpen: .constant(false), sceneInsets: proxy.safeAreaInsets) {
+        NavigationStack {
+          List { Text("Projects"); Text("EasyChamp") }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .toolbar(.hidden, for: .navigationBar)
+            .safeAreaInset(edge: .top, spacing: 0) { Text("Header") }
+            .background(DraftProbe(name: "navigation"))
+            .fillsDrawerWidth()
+        }
+      } content: {
+        NavigationStack { DraftProbe(name: "detail") }
+      }
+      .ignoresSafeArea()
+    })
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let container = UIViewController()
+    window.rootViewController = container
+    container.addChild(host)
+    container.view.addSubview(host.view)
+    host.didMove(toParent: container)
+    host.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 84)
+    window.makeKeyAndVisible()
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      previous?.makeKey()
+    }
+    host.view.frame = CGRect(x: 0, y: 0, width: width, height: 669)
+    host.view.layoutIfNeeded()
+    XCTAssertTrue(waitUntil { self.findField(in: host.view, name: "navigation") != nil })
+    let navigation = try XCTUnwrap(findField(in: host.view, name: "navigation"))
+    let detail = try XCTUnwrap(findField(in: host.view, name: "detail"))
+    XCTAssertTrue(waitUntil { abs(navigation.bounds.width - Self.columnWidth(width)) < 1 }, "column stack is \(navigation.bounds.width) wide, column is \(Self.columnWidth(width))")
+    XCTAssertEqual(detail.bounds.width, width - Self.columnWidth(width) - 84, accuracy: 1)
+  }
+
+  /// The folded Duo leaves 358 points beside its rail. A header that asks for
+  /// more widens the whole screen, which then overflows on both sides.
+  @MainActor func testCenteredHeaderNeverAsksForMoreThanItIsOffered() {
+    let host = UIHostingController(rootView: ScreenHeader {
+      Text("Back")
+    } center: {
+      Text("A coordinator title long enough to need truncating here")
+    } trailing: {
+      Text("m1 and a long set of thread controls")
+    })
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 358, height: 100))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true }
+    host.view.layoutIfNeeded()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    XCTAssertLessThanOrEqual(host.sizeThatFits(in: CGSize(width: 358, height: 100)).width, 358)
   }
 
   /// The column's width at a scene width, or 0 below the breakpoint.

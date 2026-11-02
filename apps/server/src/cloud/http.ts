@@ -8,6 +8,7 @@ import {
   EnvironmentHttpForbiddenError,
   EnvironmentHttpInternalServerError,
   EnvironmentHttpUnauthorizedError,
+  EnvironmentServiceUpdateInProgressError,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -16,6 +17,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectPhoneRevocation from "./ConnectPhoneRevocation.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
@@ -112,6 +114,24 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const cloudLink = yield* CloudLink.CloudLink;
     const phoneRevocation = yield* ConnectPhoneRevocation.ConnectPhoneRevocation;
+    const updateHold = yield* ServiceUpdateHold.optional;
+    // A mint writes an auth_pairing_links row, which the update helper's prestate compares
+    // exactly: mints during the hold refused seven 1.0.145 attempts on M4 and ended two runs at
+    // Try again. The relay's client retries after the restart.
+    const mintUnlessHeld = (payload: Parameters<typeof cloudLink.mintCredential>[0]) =>
+      updateHold
+        .admit("connect.mintCredential", toHttpError(cloudLink.mintCredential(payload)))
+        .pipe(
+          Effect.catchTag("ServiceUpdateInProgressError", (error) =>
+            Effect.fail(
+              new EnvironmentServiceUpdateInProgressError({
+                code: "update_in_progress",
+                message: error.message,
+                retryAfterSeconds: error.verifying === true ? 60 : 300,
+              }),
+            ),
+          ),
+        );
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
@@ -150,15 +170,11 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle("mintCredential", ({ payload }) =>
-        toHttpError(cloudLink.mintCredential(payload)).pipe(
-          Effect.tap(() => appendCloudCredentialResponseHeaders),
-        ),
+        mintUnlessHeld(payload).pipe(Effect.tap(() => appendCloudCredentialResponseHeaders)),
       )
       .handle("studioMintCredential", ({ payload }) =>
         traceRelayRequest(
-          toHttpError(cloudLink.mintCredential(payload)).pipe(
-            Effect.tap(() => appendCloudCredentialResponseHeaders),
-          ),
+          mintUnlessHeld(payload).pipe(Effect.tap(() => appendCloudCredentialResponseHeaders)),
         ),
       )
       .handle("studioRevokeClientKeys", ({ payload }) =>

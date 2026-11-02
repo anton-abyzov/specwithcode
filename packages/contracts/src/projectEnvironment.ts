@@ -124,6 +124,21 @@ export function fullAccessAcpProjectFolders(policy: {
   );
 }
 export const ProjectEnvironmentReadInput = Schema.Struct({ projectId: ProjectId });
+/**
+ * A saved folder or repository checkout that runs skip, with the server's sentence naming
+ * it and the fix. `updatePath` is offered only when a moved folder (or checkout) now
+ * resolves to a checkout of the same repository; saving it is still an explicit approval.
+ */
+export const ProjectEnvironmentProblem = Schema.Struct({
+  kind: Schema.Literals(["folder", "repository"]),
+  path: Schema.String,
+  reason: Schema.Literals(["missing", "moved", "protected", "duplicate", "outside"]),
+  message: Schema.String,
+  resolvedPath: Schema.optionalKey(Schema.String),
+  repositoryId: Schema.optionalKey(ProjectRepositoryId),
+  updatePath: Schema.optionalKey(SafePath),
+});
+export type ProjectEnvironmentProblem = typeof ProjectEnvironmentProblem.Type;
 export const ProjectEnvironmentReadResult = Schema.Struct({
   revision: NonNegativeInt,
   workspaceRoot: SafePath,
@@ -134,6 +149,8 @@ export const ProjectEnvironmentReadResult = Schema.Struct({
       status: Schema.Literals(["unprepared", "ready", "missing", "mismatch"]),
     }),
   ),
+  /** Entries left out above because they cannot be used as saved. Older servers omit it. */
+  problems: Schema.optionalKey(Schema.Array(ProjectEnvironmentProblem)),
 });
 export type ProjectEnvironmentReadResult = typeof ProjectEnvironmentReadResult.Type;
 export const ProjectEnvironmentPrepareInput = Schema.Struct({
@@ -184,6 +201,7 @@ export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironme
       "conflict",
       "invalid",
       "path_not_approved",
+      "folder_changed",
       "destination_exists",
       "repository_mismatch",
       "outcome_unknown",
@@ -204,6 +222,8 @@ export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironme
       conflict: "Project settings changed. Reload before preparing a repository.",
       invalid: "Use a credential-free HTTPS or SSH Git URL and valid approved folders.",
       path_not_approved: "The repository path must stay inside an approved project folder.",
+      folder_changed:
+        "A folder this project is approved to use was moved, renamed or replaced by a link, so the agent did not start. Put the folder back, or update it in Project settings > Environment.",
       destination_exists:
         "The destination already exists. Match its repository or choose an unused path.",
       repository_mismatch: "The existing checkout does not match this repository URL.",

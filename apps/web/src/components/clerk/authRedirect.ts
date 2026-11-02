@@ -3,6 +3,11 @@ export interface ClerkSignInProps {
   signUpForceRedirectUrl?: string;
 }
 
+/** Where to land after signing out: this same page, as after signing in. */
+export function resolveClerkSignOutRedirectUrl(href: string, isElectron: boolean): string {
+  return resolveClerkSignInProps(href, isElectron).forceRedirectUrl ?? href;
+}
+
 export function resolveClerkSignInProps(href: string, isElectron: boolean): ClerkSignInProps {
   if (isElectron) {
     // Electron routes through the hash, so reset any Clerk virtual pathname without losing the Studio page.

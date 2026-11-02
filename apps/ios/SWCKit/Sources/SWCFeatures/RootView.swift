@@ -116,7 +116,7 @@ private struct NavigationColumn: View {
 
   var body: some View {
     if persistent {
-      NavigationStack { SidebarView() }
+      NavigationStack { SidebarView().fillsDrawerWidth() }
     } else {
       DrawerView()
     }

@@ -357,6 +357,110 @@ it.layer(layer, { excludeTestServices: true })("project environment real Git", (
       assert.equal(missingRoot.code, "path_not_approved");
     }),
   );
+  it.effect("offers Update path only for a moved folder that is still the same checkout", () =>
+    Effect.gen(function* () {
+      const x = yield* setup;
+      const path = yield* Path.Path;
+      // The shared checkout was renamed and a link left at the old, approved path.
+      // Update path is the resolved folder, so it carries native separators.
+      const renamed = path.join(x.root, "renamed");
+      const old = `${x.root}/old`;
+      yield* x.fixture(["clone", `${x.root}/remote.git`, renamed], x.root);
+      yield* x.fixture(["remote", "set-url", "origin", url], renamed);
+      yield* x.fs.symlink(renamed, old);
+      // An unrelated folder that also became a link is named but never re-pointed by a click.
+      const other = `${x.root}/other`;
+      yield* x.fs.symlink(x.external, other);
+      yield* x.seed({
+        additionalFolders: [old, other],
+        repositories: [{ id: "code", url, localPath: old }],
+      });
+      const read = yield* x.service.read({ projectId: x.projectId });
+      assert.deepEqual(read.additionalFolders, []);
+      assert.deepEqual(read.repositories, []);
+      assert.deepEqual(
+        read.problems?.map(({ kind, path, reason, updatePath }) => ({
+          kind,
+          path,
+          reason,
+          updatePath,
+        })),
+        [
+          { kind: "folder", path: old, reason: "moved", updatePath: renamed },
+          { kind: "folder", path: other, reason: "moved", updatePath: undefined },
+          { kind: "repository", path: old, reason: "outside", updatePath: renamed },
+        ],
+      );
+      assert.include(read.problems?.[0]?.message, `${old} now leads to ${renamed}`);
+      // Applying the update is an ordinary save, checked as strictly as any other.
+      const saved = yield* normalizeProjectEnvironment(x.projectId, x.main, {
+        additionalFolders: [renamed],
+        repositories: [{ id: "code", url, localPath: renamed }],
+      });
+      assert.deepEqual(saved.additionalFolders, [renamed]);
+      // A checkout linked into an unrelated folder does not make that folder the same checkout.
+      const unrelated = `${x.root}/unrelated`;
+      yield* x.fs.makeDirectory(unrelated);
+      yield* x.fs.symlink(renamed, `${unrelated}/code`);
+      yield* x.fs.remove(other);
+      yield* x.fs.symlink(unrelated, other);
+      yield* x.seed({
+        additionalFolders: [other],
+        repositories: [{ id: "code", url, localPath: `${other}/code` }],
+      });
+      const linked = yield* x.service.read({ projectId: x.projectId });
+      assert.deepEqual(
+        linked.problems?.map(({ path, updatePath }) => [path, updatePath]),
+        [
+          [other, undefined],
+          [`${other}/code`, undefined],
+        ],
+      );
+      yield* x.seed({
+        additionalFolders: [old, other],
+        repositories: [{ id: "code", url, localPath: old }],
+      });
+      // A different repository at the new path is not the same checkout.
+      yield* x.fixture(
+        ["remote", "set-url", "origin", "https://github.com/synthetic/other"],
+        renamed,
+      );
+      const mismatch = yield* x.service.read({ projectId: x.projectId });
+      assert.isUndefined(mismatch.problems?.[0]?.updatePath);
+      assert.isUndefined(mismatch.problems?.[2]?.updatePath);
+    }),
+  );
+  it.effect("reads an environment-free project whose folder is reached through a link", () =>
+    Effect.gen(function* () {
+      const x = yield* setup;
+      const linkedRoot = `${x.root}/linked-main`;
+      yield* x.fs.symlink(x.main, linkedRoot);
+      yield* x.projects.apply({
+        sequence: counter,
+        eventId: EventId.make(`linked-root-${counter}`),
+        aggregateKind: "project",
+        aggregateId: x.projectId,
+        occurredAt: "2026-10-09T00:00:00.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId: x.projectId,
+          title: "Linked",
+          workspaceRoot: linkedRoot,
+          defaultModelSelection: null,
+          scripts: [],
+          workspaceSettings: DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          createdAt: "2026-10-09T00:00:00.000Z",
+          updatedAt: "2026-10-09T00:00:00.000Z",
+        },
+      });
+      const read = yield* x.service.read({ projectId: x.projectId });
+      assert.deepEqual(read.problems, []);
+    }),
+  );
   it.effect("rejects concurrent preparation replay and purges receipts on project deletion", () =>
     Effect.gen(function* () {
       const x = yield* setup;
@@ -471,10 +575,10 @@ it.layer(layer, { excludeTestServices: true })("project environment real Git", (
       });
       yield* x.fs.rename(x.main, `${x.root}/retained-main`);
       yield* x.fs.symlink(x.external, x.main);
-      assert.equal(
-        (yield* x.service.read({ projectId: x.projectId }).pipe(Effect.flip)).code,
-        "path_not_approved",
-      );
+      const moved = yield* x.service.read({ projectId: x.projectId }).pipe(Effect.flip);
+      assert.equal(moved.code, "folder_changed");
+      // The resolver names which folder moved; the generic wording would not.
+      assert.notInclude(moved.message, "did not start");
       assert.equal(
         (yield* x.service
           .prepare({

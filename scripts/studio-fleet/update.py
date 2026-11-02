@@ -690,6 +690,13 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         finally:
             clear_database_snapshot(identity, own, owner['home'])
 
+def _database_bytes(own):
+    """The database's size from its directory entry, for the install estimate; never opened."""
+    try:
+        return os.stat(own / 'userdata' / 'statev2.sqlite').st_size
+    except OSError:
+        return 0
+
 def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_browser_heartbeat=False,
           allow_project_migrations=False, progress_file=None, watermark=None):
     """`progress_file` (install_progress.ProgressWriter) is told each lap and the result. `watermark`
@@ -738,7 +745,9 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     assert expected.get('snapshotMode') in (None, 'held-service'), 'Unknown snapshot mode'
     if held_snapshot:
         assert_held(_service(identity), expected.get('installRequestedAt'))
-    page_mode = update_apply.PageMode.prepare(database_restart.Names(globals()), identity, expected, allow_existing_browser_heartbeat)
+    page_report = {}
+    page_mode = update_apply.PageMode.prepare(database_restart.Names(globals()), identity, expected, allow_existing_browser_heartbeat, report=page_report)
+    progress_file.expect(page_mode is not None, _database_bytes(own))
     position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
     # Its lines, for the proof after the restart, kept on disk only while the backup's space is left.
     with after_proof.keeping(own / 'userdata' / 'statev2.sqlite', backup_space_needed(own, home, _clonefile())[0]) as kept:
@@ -935,7 +944,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'readyBySecondsFromStart': READY_BY_SECONDS_FROM_START,
                 'expectedNewHashes': {name: digest(value) for name, value in new_bytes.items()},
                 'prunedStateBackups': pruned_state_backups, 'agentTimings': install_progress.agent_timings(),
-                'diskIoPolicy': install_progress.disk_io_policy(), 'releaseStagedAhead': staged_ahead}
+                'diskIoPolicy': install_progress.disk_io_policy(), 'releaseStagedAhead': staged_ahead, **page_report}
     if prune_error:
         progress['stateBackupPruneError'] = prune_error
     progress['readDeltaMisses'] = delta_misses  # The same list: later receipts carry later misses.
@@ -1122,6 +1131,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # is re-read as any touched table is.
         page_after = page_mode.after(held, restart_started_at, policy) if page_mode else None
         if page_mode and page_after is None:
+            progress_file.expect(False, _database_bytes(own))  # Before the clone's full read, not after it.
             before, original_auth = page_mode.full_baseline(held, before)
             progress['pageFallback'] = page_mode.fallback_reason
             widen = ({'widen_from': before['databaseCapture']['schema']['columns']} if allow_project_migrations else {})
@@ -1195,7 +1205,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
         result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy', 'readDeltaMisses',
-                                                      'serviceRestartBeganAt', 'releaseStagedAhead', 'gateAcknowledged')
+                                                      'serviceRestartBeganAt', 'releaseStagedAhead', 'gateAcknowledged', 'pageModeRefused')
                        if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.

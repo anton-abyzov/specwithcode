@@ -51,6 +51,9 @@ export const REMOTE_TOOL_ALLOWLIST = [
   "studio_thread_interrupt",
   // chrome_* calls for a thread here, run in the Chrome paired on that machine.
   "chrome_peer",
+  // studio_file_transfer: this machine drives each file through these two.
+  "studio_file_offer",
+  "studio_file_chunk",
   // After an automatic takeover: claims the project's coordinator epoch there.
   "studio_coordinator_claim_epoch",
 ] as const;

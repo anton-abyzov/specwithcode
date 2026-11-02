@@ -3,6 +3,8 @@
 import datetime
 import json
 import random
+import sqlite3
+import time
 import state_backup
 import importlib.util
 import pathlib
@@ -71,6 +73,41 @@ class Pipeline(unittest.TestCase):
         mode.receipt(receipt)
         self.assertNotIn('rowsByteIdentical', receipt)
         self.assertEqual(receipt['rowPreservation'], 'verified-stopped-clone-pages')
+
+    def grow_auth(self, sessions, links):
+        """M4 after the October 31 Connect storm: old rows only, none of them in use."""
+        db = sqlite3.connect('file:%s?mode=ro' % self.flow.database, uri=True)
+        names = [row[1] for row in db.execute('PRAGMA table_info(auth_sessions)')]
+        columns = [row[1] for row in db.execute('PRAGMA table_info(auth_pairing_links)')]
+        db.close()
+        select = ', '.join("'grown-' || value" if name == 'session_id' else name for name in names)
+        counting = 'WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM n WHERE value < ?) '
+        self.flow.old.commit(
+            ('INSERT INTO auth_sessions(' + ', '.join(names) + ') ' + counting + 'SELECT ' + select +
+             ' FROM n, (SELECT * FROM auth_sessions LIMIT 1)', [sessions]),
+            ('INSERT INTO auth_pairing_links(' + ', '.join(columns) + ') ' + counting + 'SELECT ' +
+             ', '.join("'link-' || value" for _ in columns) + ' FROM n', [links]))
+
+    def test_large_auth_tables_keep_the_page_path(self):
+        self.grow_auth(48000, 55000)
+        report = {}
+        started = time.monotonic()
+        mode = update_apply.PageMode.prepare(self.n, 'm4', self.expected, True, report=report)
+        self.assertIsNotNone(mode, report)
+        before, auth, _ = mode.snapshot()
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(report, {})
+        self.assertEqual(before['rows']['counts']['auth_pairing_links'], 55001)
+        after, _, _ = self.restart(mode, before, auth)
+        self.assertIsNone(mode.fallback_reason)
+        self.assertIsNotNone(mode.verdict)
+        self.assertEqual(after['rows']['counts']['auth_pairing_links'], 55001)
+
+    def test_a_refused_page_mode_says_why(self):
+        report = {}
+        with patch.object(update_apply, 'AUTHORITY_ROW_BUDGET', 0):
+            self.assertIsNone(update_apply.PageMode.prepare(self.n, 'm4', self.expected, True, report=report))
+        self.assertEqual(report['pageModeRefused'], 'AssertionError:Authority capture budget exceeded')
 
     def test_write_during_verification_retries_instead_of_full_fallback(self):
         mode, before, auth = self.prepare()

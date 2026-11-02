@@ -1,6 +1,6 @@
 /**
- * The project's artifacts above its Threads list, as a row of cards: a
- * thumbnail or kind tile, the title and its age, a pin, a ... menu and View
+ * The project's artifacts above its Threads list, as a row of cards: a small
+ * page of the document or a sheet of facts, the title and its age, a pin, a ... menu and View
  * all into the Library's Artifacts view. The pieces here (thumbnail, menu,
  * opener) are shared with that view.
  */
@@ -24,21 +24,43 @@ import {
   PinIcon,
   PresentationIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
-import { useAssetUrlState } from "../../../assets/assetUrls";
+import { useAssetUrlRefresh, useAssetUrlState } from "../../../assets/assetUrls";
 import { isWebUrl } from "../../../browser/browserLinkTarget";
 import { useOpenLink } from "../../../browser/useOpenLink";
 import { useCopyToClipboard } from "../../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import {
+  artifactPreviewCache,
+  artifactPreviewFormat,
+  artifactPreviewKey,
+  artifactPreviewSlots,
+  type ArtifactPreview,
+  type ArtifactPreviewFormat,
+} from "../../../studio/artifactPreview";
+import { documentPreview, imagePreview } from "../../../studio/artifactPreviewRaster";
+import {
   artifactAge,
   artifactKindLabel,
+  ARTIFACT_KIND_LABELS,
   ARTIFACT_SHELF_LIMIT,
+  PULL_REQUEST_STATE_WORDS,
   type ProjectArtifact,
   type ProjectArtifactKind,
 } from "../../../studio/projectArtifacts";
-import { useProjectFileQuery } from "../../files/projectFilesQueryState";
+import { useProjectFileReader } from "../../files/projectFilesQueryState";
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { designRoute } from "../../design/gallery/designLinks";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
@@ -74,161 +96,337 @@ export function ArtifactKindIcon({ artifact }: { artifact: ProjectArtifact }) {
   return <Icon aria-hidden />;
 }
 
-/** Documents small enough to read for a page preview on their card. */
-const PREVIEW_MAX_BYTES = 512 * 1024;
-const PREVIEW_CHARS = 1600;
-// A preview shows the page's own text and styles, nothing it would fetch.
-const PREVIEW_CSP =
-  "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:\">";
+/** Shared by every card: one observer, and a margin so a preview is ready before it shows. */
+const NEAR_VIEW_MARGIN = "400px";
+const PreviewAnchorContext = createContext<RefObject<HTMLSpanElement | null> | null>(null);
+const nearViewCallbacks = new WeakMap<Element, (near: boolean) => void>();
+let nearViewObserver: IntersectionObserver | null = null;
 
-function previewFormat(artifact: ProjectArtifact): "markdown" | "html" | null {
-  if (artifact.kind !== "document" && artifact.kind !== "page") return null;
-  if (artifact.path === null || artifact.missing) return null;
-  // Files only the thread's own worktree has are read where they open, not here.
-  if (artifact.path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(artifact.path)) return null;
-  if (artifact.byteLength !== null && artifact.byteLength > PREVIEW_MAX_BYTES) return null;
-  if (/\.(md|markdown|mdx|txt)$/i.test(artifact.path)) return "markdown";
-  if (/\.html?$/i.test(artifact.path)) return "html";
+function observeNearView(element: Element, onChange: (near: boolean) => void): () => void {
+  if (typeof IntersectionObserver === "undefined") {
+    onChange(true);
+    return () => undefined;
+  }
+  nearViewObserver ??= new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) nearViewCallbacks.get(entry.target)?.(entry.isIntersecting);
+    },
+    // scrollMargin carries the margin through the pane's own scrolling, which
+    // rootMargin stops at.
+    {
+      rootMargin: NEAR_VIEW_MARGIN,
+      scrollMargin: NEAR_VIEW_MARGIN,
+    } as IntersectionObserverInit,
+  );
+  nearViewCallbacks.set(element, onChange);
+  nearViewObserver.observe(element);
+  return () => {
+    nearViewObserver?.unobserve(element);
+    nearViewCallbacks.delete(element);
+  };
+}
+
+/** How long scrolling must rest before a card reads, so a fast scroll reads nothing. */
+const PREVIEW_REST_MS = 120;
+/** A read with no answer by now gives its slot back, so it cannot hold up other cards. */
+const PREVIEW_STALL_MS = 10_000;
+/** Images download whole, so a slow link gets longer. */
+const IMAGE_STALL_MS = 60_000;
+const IMAGE_READ_TRIES = 2;
+const PREVIEW_RETRY_MS = 15_000;
+const PREVIEW_RETRY_MAX_MS = 120_000;
+
+/**
+ * A number for each try at building a preview, null while waiting for its turn.
+ * `retry` gives the slot back and tries again later, as does a try that stalls.
+ */
+function usePreviewAttempt(stallMs = PREVIEW_STALL_MS): {
+  readonly attempt: number | null;
+  readonly retry: () => void;
+} {
+  const anchor = useContext(PreviewAnchorContext);
+  const [state, setState] = useState<{ round: number; granted: boolean }>({
+    round: 0,
+    granted: false,
+  });
+  const retry = useCallback(
+    () => setState((current) => ({ round: current.round + 1, granted: false })),
+    [],
+  );
+  const { round } = state;
+  useEffect(() => {
+    let release: (() => void) | null = null;
+    let timer: ReturnType<typeof setTimeout>;
+    let stall: ReturnType<typeof setTimeout>;
+    const delay =
+      round === 0
+        ? PREVIEW_REST_MS
+        : Math.min(PREVIEW_RETRY_MS * 2 ** (round - 1), PREVIEW_RETRY_MAX_MS);
+    const wait = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        document.removeEventListener("scroll", onScroll, true);
+        release = artifactPreviewSlots.acquire(() => {
+          setState({ round, granted: true });
+          stall = setTimeout(retry, stallMs);
+        });
+      }, delay);
+    };
+    // Only what scrolls this card counts: a streaming chat beside it does not.
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && target.contains(anchor?.current ?? null)) wait();
+    };
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    wait();
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(stall);
+      document.removeEventListener("scroll", onScroll, true);
+      release?.();
+    };
+  }, [anchor, retry, round, stallMs]);
+  return { attempt: state.granted ? round : null, retry };
+}
+
+/** Reads one document while it holds a slot; only the finished preview is kept. */
+function DocumentPreviewBuilder(props: {
+  readonly cacheKey: string;
+  readonly format: "markdown" | "html" | "text";
+  readonly path: string;
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+}) {
+  const { cacheKey, format, path, environmentId, root } = props;
+  const { attempt, retry } = usePreviewAttempt();
+  const read = useProjectFileReader();
+  useEffect(() => {
+    if (attempt === null) return;
+    let live = true;
+    void read(environmentId, root, path).then(async (result) => {
+      if (!live) return;
+      if (result._tag === "unavailable") return retry();
+      const preview =
+        result._tag === "gone"
+          ? ({ type: "none" } as const)
+          : await documentPreview(result.contents, format);
+      if (live) artifactPreviewCache.set(cacheKey, preview);
+    });
+    return () => {
+      live = false;
+    };
+  }, [attempt, cacheKey, environmentId, format, path, read, retry, root]);
   return null;
 }
 
-/** The first lines of a markdown file as a small page: its heading, then text. */
-function MarkdownPage({ text }: { text: string }) {
-  const lines = text
-    .slice(0, PREVIEW_CHARS)
-    .replace(/^---\n[\s\S]*?\n---\n/, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "" && !/^(```|<!--|\|?\s*-{3,})/.test(line))
-    .slice(0, 14);
+function ImagePreviewBuilder(props: {
+  readonly cacheKey: string;
+  readonly path: string;
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+}) {
+  const { cacheKey } = props;
+  const { attempt, retry } = usePreviewAttempt(IMAGE_STALL_MS);
+  const resource = useImageResource(props.path, props.root);
+  // A new URL each try: a cached failure would never let the card recover.
+  const createUrl = useAssetUrlRefresh(props.environmentId, resource);
+  useEffect(() => {
+    if (attempt === null) return;
+    const controller = new AbortController();
+    void (async () => {
+      const url = await createUrl().catch(() => null);
+      if (controller.signal.aborted) return;
+      if (url === null) return retry();
+      const preview = await imagePreview(url, controller.signal);
+      if (controller.signal.aborted) return;
+      // Reads still failing after two tries: likely another origin, so show the file.
+      if (preview === null && attempt < IMAGE_READ_TRIES - 1) return retry();
+      artifactPreviewCache.set(cacheKey, preview ?? { type: "original" });
+    })();
+    return () => controller.abort();
+  }, [attempt, cacheKey, createUrl, retry]);
+  return null;
+}
+
+function useImageResource(path: string | null, root: string): AssetResource | null {
+  return useMemo(
+    () => (path === null ? null : { _tag: "draft-workspace-file", cwd: root, path }),
+    [path, root],
+  );
+}
+
+/** An image that could not be scaled, from a URL that is live while the card shows it. */
+function OriginalImage(props: {
+  readonly path: string;
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly fallback: ReactNode;
+}) {
+  const resource = useImageResource(props.path, props.root);
+  const asset = useAssetUrlState(props.environmentId, resource);
+  const [broken, setBroken] = useState(false);
+  if (asset._tag !== "Success" || broken) return props.fallback;
   return (
-    <span className="sws-artifact-page" aria-hidden>
-      {lines.map((line, index) => {
-        const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-        const plain = (heading ? heading[2]! : line)
-          .replace(/^[-*+]\s+|^\d+\.\s+|^>\s*/, "")
-          .replace(/[*_`]|\[([^\]]*)\]\([^)]*\)/g, (match, label?: string) => label ?? "");
-        return (
-          <span
-            key={index}
-            className="sws-artifact-page-line"
-            data-heading={heading ? Math.min(heading[1]!.length, 3) : undefined}
-          >
-            {plain}
-          </span>
-        );
-      })}
+    <span className="sws-artifact-sheet" data-page>
+      <img
+        src={asset.url}
+        alt=""
+        className="sws-artifact-thumb-image"
+        decoding="async"
+        onError={() => setBroken(true)}
+      />
     </span>
   );
 }
 
-function DocumentPreview(props: {
+function PreviewPage({ preview }: { preview: ArtifactPreview }) {
+  if (preview.type === "image") {
+    return <img src={preview.src} alt="" className="sws-artifact-thumb-image" decoding="async" />;
+  }
+  if (preview.type !== "lines") return null;
+  return (
+    <span className="sws-artifact-page" data-mono={preview.mono || undefined} aria-hidden>
+      {preview.lines.map((line, index) => (
+        <span key={index} className="sws-artifact-page-line" data-heading={line.heading}>
+          {line.text}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** A card's preview: nothing happens until it nears the view, and leaving drops it from the page. */
+function LazyPreview(props: {
   readonly artifact: ProjectArtifact;
-  readonly format: "markdown" | "html";
+  readonly format: ArtifactPreviewFormat;
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string;
 }) {
-  const file = useProjectFileQuery(
-    props.environmentId,
-    props.artifact.root ?? props.workspaceRoot,
-    props.artifact.path,
+  const { artifact, format } = props;
+  const ref = useRef<HTMLSpanElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => observeNearView(ref.current!, setNear), []);
+  const root = artifact.root ?? props.workspaceRoot;
+  const key = artifactPreviewKey(artifact, `${props.environmentId}\u0000${props.workspaceRoot}`);
+  const preview = useSyncExternalStore(
+    useCallback((listener) => artifactPreviewCache.subscribe(key, listener), [key]),
+    () => artifactPreviewCache.peek(key),
   );
-  const text = file.data?.contents;
-  if (typeof text !== "string" || text.trim() === "") return null;
-  if (props.format === "html") {
-    return (
-      <span className="sws-artifact-page sws-artifact-page-html" aria-hidden>
-        <iframe
-          title=""
-          tabIndex={-1}
-          sandbox=""
-          loading="lazy"
-          srcDoc={PREVIEW_CSP + text.slice(0, 64 * 1024)}
+  useEffect(() => {
+    if (near) artifactPreviewCache.touch(key);
+  }, [key, near]);
+  // Scroll away and the page goes; the cache still has it for coming back.
+  const shown = near && (preview?.type === "image" || preview?.type === "lines");
+  return (
+    <span ref={ref} className="sws-artifact-preview" data-ready={shown || undefined}>
+      {shown ? (
+        <span className="sws-artifact-sheet" data-page>
+          <PreviewPage preview={preview} />
+        </span>
+      ) : near && preview?.type === "original" && artifact.path !== null ? (
+        <OriginalImage
+          path={artifact.path}
+          environmentId={props.environmentId}
+          root={root}
+          fallback={<FactSheet artifact={artifact} />}
         />
-      </span>
-    );
-  }
-  return <MarkdownPage text={text} />;
+      ) : (
+        <FactSheet artifact={artifact} />
+      )}
+      {near && preview === undefined && artifact.path !== null ? (
+        <PreviewAnchorContext value={ref}>
+          {format === "image" ? (
+            <ImagePreviewBuilder
+              cacheKey={key}
+              path={artifact.path}
+              environmentId={props.environmentId}
+              root={root}
+            />
+          ) : (
+            <DocumentPreviewBuilder
+              cacheKey={key}
+              format={format}
+              path={artifact.path}
+              environmentId={props.environmentId}
+              root={root}
+            />
+          )}
+        </PreviewAnchorContext>
+      ) : null}
+    </span>
+  );
 }
 
-/** An image shows itself; everything else a tile with its kind and extension. */
+function hostOf(url: string | null): string | null {
+  if (url === null) return null;
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+/** What a card says when there is no page to show: its kind, its name, where it is from. */
+function factSheetContent(artifact: ProjectArtifact): {
+  readonly label: string;
+  readonly detail: string | null;
+  readonly footer: string | null;
+} {
+  if (artifact.kind === "pullRequest") {
+    return {
+      label: artifact.pullRequestState
+        ? PULL_REQUEST_STATE_WORDS[artifact.pullRequestState]
+        : "Pull request",
+      detail: artifact.pullRequestNumber === null ? null : `#${artifact.pullRequestNumber}`,
+      footer: artifact.pullRequestRepository,
+    };
+  }
+  if (artifact.design) {
+    const pages = artifact.design.pageCount;
+    return {
+      label: ARTIFACT_KIND_LABELS[artifact.kind],
+      detail: pages > 0 ? (pages === 1 ? "1 page" : `${pages} pages`) : null,
+      footer: artifact.design.ownerLabel,
+    };
+  }
+  return {
+    label: ARTIFACT_KIND_LABELS[artifact.kind],
+    detail: extensionOf(artifact),
+    footer: hostOf(artifact.url),
+  };
+}
+
+function FactSheet({ artifact }: { artifact: ProjectArtifact }) {
+  const { label, detail, footer } = factSheetContent(artifact);
+  return (
+    <span className="sws-artifact-sheet sws-artifact-facts" data-kind={artifact.kind}>
+      <span className="sws-artifact-facts-head">
+        <ArtifactKindIcon artifact={artifact} />
+        <span className="sws-artifact-facts-label">{label}</span>
+        {detail ? <span className="sws-artifact-facts-detail">{detail}</span> : null}
+      </span>
+      <span className="sws-artifact-facts-title">{artifact.title}</span>
+      {footer ? <span className="sws-artifact-facts-foot">{footer}</span> : null}
+    </span>
+  );
+}
+
+/** A document or image shows a small page of itself; everything else, its facts. */
 export function ArtifactThumbnail(props: {
   readonly artifact: ProjectArtifact;
   readonly environmentId: EnvironmentId;
   readonly workspaceRoot: string;
 }) {
-  const { artifact } = props;
-  const resource = useMemo<AssetResource | null>(
-    () =>
-      artifact.kind === "image" && artifact.path !== null && !artifact.missing
-        ? {
-            _tag: "draft-workspace-file",
-            cwd: artifact.root ?? props.workspaceRoot,
-            path: artifact.path,
-          }
-        : null,
-    [artifact.kind, artifact.missing, artifact.path, artifact.root, props.workspaceRoot],
-  );
-  const asset = useAssetUrlState(resource === null ? null : props.environmentId, resource);
-  const [broken, setBroken] = useState(false);
-  if (asset._tag === "Success" && !broken) {
-    return (
-      <img
-        src={asset.url}
-        alt=""
-        className="sws-artifact-thumb-image"
-        loading="lazy"
-        onError={() => setBroken(true)}
-      />
-    );
-  }
-  const extension = extensionOf(artifact);
-  const format = previewFormat(artifact);
-  if (format !== null) {
-    return (
-      <DocumentPreviewOrTile
-        artifact={artifact}
-        format={format}
-        environmentId={props.environmentId}
-        workspaceRoot={props.workspaceRoot}
-        extension={extension}
-      />
-    );
-  }
-  return <KindTile artifact={artifact} extension={extension} />;
-}
-
-function KindTile(props: {
-  readonly artifact: ProjectArtifact;
-  readonly extension: string | null;
-}) {
-  const { artifact, extension } = props;
-  return (
-    <span className="sws-artifact-thumb-tile" data-kind={artifact.kind}>
-      <ArtifactKindIcon artifact={artifact} />
-      {extension ? <span className="sws-artifact-thumb-ext">{extension}</span> : null}
-    </span>
-  );
-}
-
-function DocumentPreviewOrTile(props: {
-  readonly artifact: ProjectArtifact;
-  readonly format: "markdown" | "html";
-  readonly environmentId: EnvironmentId;
-  readonly workspaceRoot: string;
-  readonly extension: string | null;
-}) {
-  // The tile stays underneath until, or unless, the page can be read.
-  return (
-    <>
-      <KindTile artifact={props.artifact} extension={props.extension} />
-      <DocumentPreview
-        artifact={props.artifact}
-        format={props.format}
-        environmentId={props.environmentId}
-        workspaceRoot={props.workspaceRoot}
-      />
-    </>
+  const format = artifactPreviewFormat(props.artifact);
+  return format === null ? (
+    <FactSheet artifact={props.artifact} />
+  ) : (
+    <LazyPreview
+      artifact={props.artifact}
+      format={format}
+      environmentId={props.environmentId}
+      workspaceRoot={props.workspaceRoot}
+    />
   );
 }
 
@@ -497,51 +695,82 @@ export function ArtifactCard(props: {
   readonly onPin: (on: boolean) => void;
   readonly onOpenThread?: ((threadId: ThreadId, environmentId: EnvironmentId) => void) | undefined;
   readonly onShowInLibrary?: (() => void) | undefined;
+  /** Hundreds of cards: one far from the view keeps its size and name, and nothing else. */
+  readonly windowed?: boolean | undefined;
 }) {
-  const { artifact } = props;
+  const { artifact, windowed = false } = props;
   const openable = canOpenArtifact(artifact);
+  const ref = useRef<HTMLLIElement>(null);
+  const [inView, setInView] = useState(!windowed);
+  // Focus stays where it is: a pinned card moves away, a menu opens from it.
+  const [focused, setFocused] = useState(false);
+  const near = inView || focused;
+  useEffect(() => {
+    if (windowed) return observeNearView(ref.current!, setInView);
+  }, [windowed]);
   return (
     <li
+      ref={ref}
       className="sws-artifact-card"
       data-kind={artifact.kind}
       data-pinned={artifact.pinned || undefined}
       data-missing={artifact.missing || undefined}
+      data-far={near ? undefined : true}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}
     >
       <button
         type="button"
         className="sws-artifact-open"
         disabled={!openable}
         onClick={props.onOpen}
+        aria-label={near ? undefined : artifact.title}
         aria-description={artifact.path ?? artifact.url ?? undefined}
       >
-        <span className="sws-artifact-thumb">
-          <ArtifactThumbnail
-            artifact={artifact}
-            environmentId={props.environmentId}
-            workspaceRoot={props.workspaceRoot}
-          />
-        </span>
-        <span className="sws-artifact-title" title={artifact.title}>
-          {artifact.title}
-        </span>
-        <span className="sws-artifact-meta">
-          {artifact.missing ? "Missing" : props.meta}
-          {artifact.thread ? (
-            <span className="sws-artifact-thread"> · {artifact.thread.title}</span>
+        <span
+          className="sws-artifact-thumb"
+          data-kind={artifact.kind}
+          data-state={artifact.pullRequestState ?? undefined}
+        >
+          {near ? (
+            <ArtifactThumbnail
+              artifact={artifact}
+              environmentId={props.environmentId}
+              workspaceRoot={props.workspaceRoot}
+            />
           ) : null}
         </span>
+        {near ? (
+          <>
+            <span className="sws-artifact-title" title={artifact.title}>
+              {artifact.title}
+            </span>
+            <span className="sws-artifact-meta">
+              {artifact.missing ? "Missing" : props.meta}
+              {artifact.thread ? (
+                <span className="sws-artifact-thread"> · {artifact.thread.title}</span>
+              ) : null}
+            </span>
+          </>
+        ) : (
+          <span className="sws-artifact-far-lines" />
+        )}
       </button>
-      <span className="sws-artifact-actions">
-        <ArtifactPinButton artifact={artifact} onPin={props.onPin} />
-        <ArtifactMenu
-          artifact={artifact}
-          className="sws-artifact-more"
-          onOpen={props.onOpen}
-          onPin={props.onPin}
-          onOpenThread={props.onOpenThread}
-          onShowInLibrary={props.onShowInLibrary}
-        />
-      </span>
+      {near ? (
+        <span className="sws-artifact-actions">
+          <ArtifactPinButton artifact={artifact} onPin={props.onPin} />
+          <ArtifactMenu
+            artifact={artifact}
+            className="sws-artifact-more"
+            onOpen={props.onOpen}
+            onPin={props.onPin}
+            onOpenThread={props.onOpenThread}
+            onShowInLibrary={props.onShowInLibrary}
+          />
+        </span>
+      ) : null}
     </li>
   );
 }

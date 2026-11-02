@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, createElement, type ComponentType } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   params: { environmentId: "m4", threadId: "t1" } as Record<string, string>,
@@ -64,13 +64,16 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
 import { Route } from "./_chat";
 
 let root: ReturnType<typeof createRoot>;
+const component = (
+  Route as unknown as { component: ComponentType & { preload?: () => Promise<unknown> } }
+).component;
 const render = async () => {
-  const component = (
-    Route as unknown as { component: ComponentType & { preload?: () => Promise<unknown> } }
-  ).component;
-  await component.preload?.();
   await act(async () => root.render(createElement(component)));
 };
+// Importing the route takes far longer than one test's timeout on a loaded release machine.
+beforeAll(async () => {
+  await component.preload?.();
+}, 180_000);
 beforeEach(() => {
   root = createRoot(document.createElement("div"));
   state.navigate.mockReset();

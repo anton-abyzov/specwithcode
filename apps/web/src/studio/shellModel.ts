@@ -180,7 +180,7 @@ export const CHAT_STATUS_FILTERS = ["all", "active", "waiting", "resolved"] as c
 export type ChatStatusFilter = (typeof CHAT_STATUS_FILTERS)[number];
 export const CHAT_ACTIVITY_FILTERS = ["any", "1d", "7d", "30d"] as const;
 export type ChatActivityFilter = (typeof CHAT_ACTIVITY_FILTERS)[number];
-export const CHAT_GROUPINGS = ["date", "project", "status", "none"] as const;
+export const CHAT_GROUPINGS = ["date", "project", "machine", "status", "none"] as const;
 export type ChatGrouping = (typeof CHAT_GROUPINGS)[number];
 export const CHAT_SORTS = ["activity", "created", "title"] as const;
 export type ChatSort = (typeof CHAT_SORTS)[number];
@@ -208,7 +208,7 @@ export const CHAT_OPTION_LABELS = {
   status: { all: "All", active: "Active", waiting: "Waiting on you", resolved: "Resolved" },
   activity: { any: "Any time", "1d": "Last day", "7d": "Last 7 days", "30d": "Last 30 days" },
   projectThreads: { hide: "Hide", show: "Show" },
-  groupBy: { date: "Date", project: "Project", status: "Status", none: "None" },
+  groupBy: { date: "Date", project: "Project", machine: "Machine", status: "Status", none: "None" },
   sortBy: { activity: "Last activity", created: "Date created", title: "Name" },
 } as const satisfies { [K in keyof ChatListOptions]: Record<ChatListOptions[K], string> };
 
@@ -251,7 +251,9 @@ export function chatListOptionsAreDefault(options: ChatListOptions): boolean {
 export function chatListEmptyMessage(
   options: ChatListOptions,
   hiddenProjectThreads: number,
+  machineLabel: string | null = null,
 ): string {
+  if (machineLabel !== null) return `No chats on ${machineLabel} match this filter.`;
   if (options.projectThreads === "hide" && hiddenProjectThreads > 0)
     return "No chats yet. Threads agents started are on their project page.";
   return chatListOptionsAreDefault(options) ? "No chats yet." : "No chats match this filter.";
@@ -351,6 +353,11 @@ export function buildChatGroups(
     readonly now: number;
     readonly query?: string;
     readonly projectLabel: (thread: EnvironmentThreadShell) => string;
+    /** The machine a chat runs on; headings separate machines that share a name. */
+    readonly machine?: (thread: EnvironmentThreadShell) => {
+      readonly id: string;
+      readonly label: string;
+    };
     readonly isProjectThread?: (thread: EnvironmentThreadShell) => boolean;
   },
 ): ChatGroup[] {
@@ -375,6 +382,7 @@ export function buildChatGroups(
     return rows.length ? [{ key: "all", label: "All chats", threads: rows }] : [];
   const buckets = new Map<string, EnvironmentThreadShell[]>();
   const order: string[] = [];
+  const labels = new Map<string, string>();
   const keyOf = (thread: EnvironmentThreadShell): string =>
     options.groupBy === "date"
       ? dateBucket(
@@ -383,7 +391,9 @@ export function buildChatGroups(
         )
       : options.groupBy === "status"
         ? projectThreadGroup(thread)
-        : input.projectLabel(thread);
+        : options.groupBy === "machine"
+          ? `machine:${input.machine?.(thread).id ?? thread.environmentId}`
+          : input.projectLabel(thread);
   for (const thread of rows) {
     const key = keyOf(thread);
     const bucket = buckets.get(key);
@@ -391,8 +401,11 @@ export function buildChatGroups(
     else {
       buckets.set(key, [thread]);
       order.push(key);
+      if (options.groupBy === "machine")
+        labels.set(key, input.machine?.(thread).label ?? thread.environmentId);
     }
   }
+  const labelOf = (key: string) => labels.get(key) ?? key;
   const fixed: readonly string[] | null =
     options.groupBy === "date"
       ? DATE_BUCKETS
@@ -401,8 +414,13 @@ export function buildChatGroups(
         : null;
   const keys = fixed
     ? fixed.filter((key) => buckets.has(key))
-    : [...order].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  return keys.map((key) => ({ key, label: key, threads: buckets.get(key)! }));
+    : [...order].sort(
+        (a, b) =>
+          // Two machines can share a name; the key keeps their order from swapping.
+          labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base" }) ||
+          a.localeCompare(b),
+      );
+  return keys.map((key) => ({ key, label: labelOf(key), threads: buckets.get(key)! }));
 }
 
 // ── Threads pane: a project's workers ────────────────────────────────────────

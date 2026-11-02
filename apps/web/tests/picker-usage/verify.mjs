@@ -312,6 +312,21 @@ try {
         0,
         "a reset limit reads as a button-like Reset",
       );
+      await page.goto(`${origin}/?case=reset&theme=${theme}`);
+      const resetChip = page.locator("[data-chat-provider-model-picker]");
+      await resetChip.waitFor();
+      assert.equal(
+        await resetChip.locator("[data-model-usage-meter]").count(),
+        0,
+        "a limit reset since the read still draws a meter on the chip",
+      );
+      await resetChip.hover();
+      assert.match(
+        await page.locator("[data-slot=tooltip-popup]").last().innerText(),
+        /Limit reset since last read/,
+      );
+      await page.mouse.move(0, 0);
+      checks.push(`${width}px ${theme}: reset state has no chip meter and says so in the tooltip`);
 
       // Taller than the room on either side of the chip, the picker still opens
       // above it, aligned to it, and never beside it.

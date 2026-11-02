@@ -112,6 +112,8 @@ const liveRun = (values: Partial<StudioServiceUpdateRun> = {}): StudioServiceUpd
     // The helper began 20 seconds after the press: its clock times the install.
     startedAt: new Date(T0 + 20_000).toISOString(),
     expectedMs: 160_000,
+    phaseExpectedMs: 60_000,
+    remainingAfterMs: 90_000,
     serviceBack: false,
   },
   app: null,
@@ -283,18 +285,19 @@ describe("Update now as one run", () => {
     ]);
   });
 
-  it("offers no button while the run is live and shows its step and times", async () => {
+  it("offers no button while the run is live and shows one estimate", async () => {
     state.service = { ...serviceWaiting, status: "installing", run: liveRun() };
     render();
     expect(button()?.props.disabled).toBe(true);
-    expect(label()).toBe("Installing 7/16…");
+    expect(label()).toBe("Installing, 2:05 left…");
     expect(lastToast()).toMatchObject({
       type: "loading",
       title: "Installing SpecWithCode 1.0.70",
       actionProps: { children: null },
     });
-    expect(lastToast().description).toContain("Step 7 of 16: check before restart.");
-    expect(lastToast().description).toContain("1:10 elapsed, about 2:40 expected.");
+    expect(lastToast().description).toBe("1:10 elapsed, about 2:05 left.");
+    const progress = (lastToast() as { data?: { progress?: number } }).data?.progress;
+    expect(progress).toBeCloseTo(70 / 195, 2);
     // Settings and the header pill press too: the run is followed, nothing asked.
     expect(requestRestartToUpdate()).toBe(true);
     expect(requestRestartToUpdate({ requireService: true })).toBe(true);

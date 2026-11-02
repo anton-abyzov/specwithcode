@@ -14,6 +14,7 @@ const runtime = vi.hoisted(() => ({
   addMachine: vi.fn(),
   environments: [] as Array<{ readonly entry: unknown }>,
   removeSupported: true,
+  closeTerminal: vi.fn(),
 }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -39,6 +40,15 @@ vi.mock("../../studio/fleet", () => ({
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
 vi.mock("./ProvisionMachineSheet", () => ({ ProvisionMachineButton: () => null }));
+vi.mock("./MachineTerminal", () => ({
+  MachineTerminalButton: function MachineTerminalButton() {
+    return null;
+  },
+  MachineTerminal: function MachineTerminal() {
+    return null;
+  },
+  useCloseMachineTerminal: () => runtime.closeTerminal,
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
 }));
@@ -55,6 +65,7 @@ vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => runtime.c
 vi.mock("../../connection/onboarding", () => ({ connectPairing: {} }));
 vi.mock("../../studio/machineHandoff", () => ({ machineHandoff: { sentSecrets: {} } }));
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: () => null }));
+import { MachineTerminal, MachineTerminalButton } from "./MachineTerminal";
 import {
   FleetWorkersRow,
   fleetMachineAddress,
@@ -264,6 +275,48 @@ describe("private machine roster", () => {
     expect(
       visitElements(tree, (element) => element.props.children === "Connection failed"),
     ).not.toBeNull();
+  });
+  it("offers a terminal on each connected machine and opens it in that row", () => {
+    const connectedM1 = {
+      [m1]: { text: "Connected", connected: true, lastSeen: null, reason: null },
+    } as unknown as NonNullable<Parameters<typeof StudioFleetRoster>[0]["machineStatuses"]>;
+    const terminalButtons = (tree: unknown) => {
+      const found: Array<{ props: Record<string, unknown> }> = [];
+      visitElements(tree, (element) => {
+        if (element.type === MachineTerminalButton) found.push(element);
+        return false;
+      });
+      return found;
+    };
+    hooks.reset();
+    hooks.beginRender();
+    const tree = render({ savedEnvironmentIds: [m1], machineStatuses: connectedM1 });
+    // This machine and the connected M1; an unsaved or offline machine gets none.
+    expect(terminalButtons(tree).map((button) => button.props.environmentId)).toEqual([m4, m1]);
+    expect(terminalButtons(tree)[1]?.props.environmentLabel).toBe("Mac M1");
+    expect(visitElements(tree, (element) => element.type === MachineTerminal)).toBeNull();
+    hooks.beginRender();
+    expect(
+      terminalButtons(render({ environmentId: EnvironmentId.make("env-other") })),
+    ).toHaveLength(0);
+
+    hooks.reset();
+    hooks.beginRender();
+    const first = render({ savedEnvironmentIds: [m1], machineStatuses: connectedM1 });
+    (terminalButtons(first)[1]?.props.onOpenChange as (open: boolean) => void)(true);
+    hooks.beginRender();
+    const opened = render({ savedEnvironmentIds: [m1], machineStatuses: connectedM1 });
+    expect(
+      visitElements(opened, (element) => element.type === MachineTerminal)?.props.environmentId,
+    ).toBe(m1);
+    expect(terminalButtons(opened)[1]?.props.open).toBe(true);
+    expect(runtime.closeTerminal).not.toHaveBeenCalled();
+    // Close ends that machine's shell; only an explicit close does.
+    (
+      visitElements(opened, (element) => element.type === MachineTerminal)?.props
+        .onClose as () => void
+    )();
+    expect(runtime.closeTerminal).toHaveBeenCalledWith(m1);
   });
   it("shows a saved machine's status as this browser sees it, like the picker and sidebar", () => {
     const tree = render({

@@ -45,6 +45,7 @@ import {
   Clock3Icon,
 } from "lucide-react";
 import { ProjectFolderChange } from "./ProjectFolderChange";
+import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
 import { useProjectDeletionWorktrees } from "./ProjectDeletionWorktrees";
 import { ProjectThreadsDeletion } from "./ProjectThreadsDeletion";
 import { ProjectEnvironment } from "./ProjectEnvironment";
@@ -524,6 +525,14 @@ export function ProjectWorkspaceSettings({
                     disabled={disabled}
                     onChange={(list) => change(setWorkerMachines, list)}
                   />
+                  {snapshot.settings.kind !== "personal" ? (
+                    <ProjectSpecweaveSetting
+                      project={project}
+                      specweave={snapshot.specweave}
+                      disabled={disabled || dirty}
+                      onChanged={onSaved}
+                    />
+                  ) : null}
                   <div className="project-setting-row">
                     <div>
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>

@@ -59,6 +59,12 @@ const managedAuthShellModule =
       : import("./components/clerk/BrowserManagedAuthShell")
     : null;
 
+// The account button renders on every route. Fetching its Connect chunk here
+// lets a failure reach the reload guard below, before the guard is cleared.
+const connectAccountMenuModule = managedAuthShellModule
+  ? import("./components/clerk/ConnectSidebarAccountMenu").catch(() => null)
+  : null;
+
 // The index.html boot splash lives inside #root, and React's first commit
 // clears it. Resolve everything that first commit needs, the selected
 // managed-auth runtime and the initial route's split chunks, before
@@ -67,6 +73,7 @@ const managedAuthShellModule =
 export const startup = Promise.all([
   managedAuthShellModule?.then((module) => module.default) ?? null,
   router.load(),
+  connectAccountMenuModule,
 ])
   .then(([ManagedAuthShell]) => {
     // A route chunk failure still resolves router.load(): the error is parked in

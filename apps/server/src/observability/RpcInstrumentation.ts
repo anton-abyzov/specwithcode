@@ -138,6 +138,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsMemoryRead]: "projects",
   [WS_METHODS.projectsLibraryRead]: "projects",
   [WS_METHODS.projectsLibraryAddArtifact]: "projects",
+  [WS_METHODS.projectsSpecweaveSetUp]: "projects",
   [WS_METHODS.projectsKnowledgeRead]: "projects",
   [WS_METHODS.projectsKnowledgeSearch]: "projects",
   [WS_METHODS.projectsKnowledgeReindex]: "projects",

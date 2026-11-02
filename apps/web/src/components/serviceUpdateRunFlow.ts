@@ -159,6 +159,8 @@ export function acknowledgeRun(run: StudioServiceUpdateRun): void {
 let toastId: ReturnType<typeof toastManager.add> | null = null;
 let toastRunId: string | null = null;
 let closedRunId: string | null = null;
+let progressRunId: string | null = null;
+let progressMark = 0;
 const seenLive = new Set<string>();
 
 /**
@@ -184,6 +186,13 @@ export function syncServiceUpdateRunToast(
   if (!run.terminal) seenLive.add(run.runId);
   if (closedRunId === run.runId && !run.terminal) return;
   const view = describeServiceUpdateRun(run, nowMs, blockers);
+  // A fallback to the full proof adds minutes to the estimate; the bar waits instead of moving back.
+  if (progressRunId !== run.runId) {
+    progressRunId = run.runId;
+    progressMark = 0;
+  }
+  const progress = view.progress === null ? null : Math.max(progressMark, view.progress);
+  if (progress !== null) progressMark = progress;
   const options = stackedThreadToast({
     type: view.tone === "info" ? "info" : view.warning !== null ? "warning" : view.tone,
     title: view.title,
@@ -199,6 +208,7 @@ export function syncServiceUpdateRunToast(
           },
     data: {
       hideCopyButton: view.tone !== "error",
+      ...(progress === null ? {} : { progress }),
       onClose: () => {
         closedRunId = run.runId;
         toastId = null;
@@ -218,6 +228,8 @@ export function resetServiceUpdateRunFlowForTests(): void {
   toastId = null;
   toastRunId = null;
   closedRunId = null;
+  progressRunId = null;
+  progressMark = 0;
   seenLive.clear();
   try {
     window.localStorage.removeItem(REPORTED_KEY);

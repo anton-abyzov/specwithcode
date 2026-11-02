@@ -197,8 +197,38 @@ export type ProjectMemoryFile = typeof ProjectMemoryFile.Type;
 export const ProjectWorkspaceReadResult = Schema.Struct({
   settings: ProjectWorkspaceSettings,
   memory: Schema.Struct({ files: Schema.Array(ProjectMemorySummary), totalBytes: NonNegativeInt }),
+  /**
+   * The project uses SpecWeave: its folder was set up with `specweave init`
+   * (or an umbrella above it plans its increments). Read from disk on every
+   * request; older servers leave it out.
+   */
+  specweave: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectWorkspaceReadResult = typeof ProjectWorkspaceReadResult.Type;
+/** Runs `specweave init` in the project's folder, on the person's request. */
+export const ProjectSpecweaveSetUpInput = Schema.Struct({ projectId: ProjectId });
+export type ProjectSpecweaveSetUpInput = typeof ProjectSpecweaveSetUpInput.Type;
+export const ProjectSpecweaveSetUpResult = Schema.Struct({
+  /** The folder already had `.specweave/config.json`; nothing was run. */
+  alreadySetUp: Schema.Boolean,
+});
+export type ProjectSpecweaveSetUpResult = typeof ProjectSpecweaveSetUpResult.Type;
+export class ProjectSpecweaveSetUpError extends Schema.TaggedError<ProjectSpecweaveSetUpError>()(
+  "ProjectSpecweaveSetUpError",
+  {
+    projectId: ProjectId,
+    reason: Schema.Literals(["not_found", "unavailable", "failed"]),
+    /** What to tell the person: the CLI's own last lines when init failed. */
+    detail: Schema.optional(Schema.String),
+  },
+) {
+  override get message(): string {
+    if (this.detail) return this.detail;
+    return this.reason === "not_found"
+      ? "This project or its folder is no longer available."
+      : "SpecWeave could not be set up in this folder.";
+  }
+}
 export const ProjectMemoryReadInput = Schema.Struct({
   projectId: ProjectId,
   name: ProjectMemoryName,

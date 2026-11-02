@@ -26,6 +26,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { isSpecweaveProject } from "./ThreadIncrementProgress.ts";
 
 export class ProjectStarterSuggestionsService extends Context.Service<
   ProjectStarterSuggestionsService,
@@ -471,8 +472,12 @@ const make = Effect.gen(function* () {
             todoCountIsFloor: false,
             frequentlyChangedFiles: [],
           };
+      // A folder set up with `specweave init`, or planned by an umbrella above
+      // it; a stray `.specweave` is not enough.
       const specweave =
-        readable && entries.has(".specweave")
+        readable &&
+        entries.has(".specweave") &&
+        (yield* Effect.promise(() => isSpecweaveProject(root)))
           ? yield* specweaveSignals(root)
           : { openIncrements: [], hasRecentHandoff: false, handoffIncrement: null };
       const checks =
