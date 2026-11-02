@@ -329,7 +329,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   }
 
   yield* Stream.runForEach(input.streamSettings, (nextSettings) =>
-    Effect.asVoid(applySnapshot(nextSettings)),
+    // One failed check must not end the loop and drop later settings changes.
+    Effect.asVoid(applySnapshot(nextSettings)).pipe(Effect.ignoreCause({ log: true })),
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(

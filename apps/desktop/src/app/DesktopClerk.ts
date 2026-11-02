@@ -7,7 +7,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@specweave-studio/shared/codexAuthHandoff";
+import {
+  codexAuthDeliveryUrl,
+  readCodexAuthHandoff,
+} from "@specweave-studio/shared/codexAuthHandoff";
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@specweave-studio/shared/providerAuthReturnUrl";
@@ -17,6 +20,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { clerkTokenFilePath, withOwnerOnlyTokenFile } from "./DesktopClerkTokenStorage.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
@@ -83,7 +87,7 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
 
 function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
   return createClerkBridge({
-    storage: storage({ path: stateDir }),
+    storage: withOwnerOnlyTokenFile(storage({ path: stateDir }), clerkTokenFilePath(stateDir)),
     passkeys: true,
     renderer: {
       scheme: ElectronProtocol.getDesktopScheme(isDevelopment),

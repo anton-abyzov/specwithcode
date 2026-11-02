@@ -2332,9 +2332,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { env },
         );
       } else {
-        yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset"]).pipe(
-          Effect.catchTags({ GitCommandError: () => Effect.void }),
-        );
+        // Reset clears a merge, cherry-pick or revert in progress, and a commit
+        // after a failed reset would carry whatever else was staged.
+        for (const ref of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"]) {
+          const operation = "GitVcsDriver.commit.inProgressHead";
+          const args = ["rev-parse", "--verify", "--quiet", ref];
+          const found = yield* executeGit(operation, cwd, args, { allowNonZeroExit: true });
+          if (found.exitCode === 0) {
+            return yield* new GitCommandError({
+              operation,
+              command: "git",
+              cwd,
+              detail:
+                "A merge, cherry-pick or revert is in progress. Commit all files to finish it.",
+            });
+          }
+        }
+        yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
       }
       yield* runGit(
         "GitVcsDriver.commit.addSelected",

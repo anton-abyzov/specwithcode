@@ -170,6 +170,31 @@ it.effect("checks capability through the production registration", () =>
   ),
 );
 
+it.effect("refuses an organize call with an argument it does not know", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const error = yield* server
+      .callTool({
+        name: "studio_thread_organize",
+        arguments: { action: "archive", threadIds: ["thread-other"] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.flip,
+      );
+    expect(error._tag).toBe("InvalidParams");
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+      ),
+    ),
+  ),
+);
+
 it.effect("returns a bounded public failure without serializing storage causes", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

@@ -117,6 +117,12 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           snoozedAt: null,
           lastVisitedAt: null,
           deletedAt: null,
+          // A job on the source's title or the source's place in the list is not the fork's.
+          titleRegeneration: null,
+          pinnedAt: null,
+          pinOrderKey: null,
+          activeOrderKey: null,
+          autoSettleDisabledAt: null,
         };
         const transfer: OrchestrationV2ContextTransfer = {
           id: input.transferId,

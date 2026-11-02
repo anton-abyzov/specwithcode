@@ -1,4 +1,9 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
@@ -45,6 +50,15 @@ describe("getOrphanedWorktreePathForThread", () => {
     const threads = [makeThread()];
     const result = getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"));
     expect(result).toBeNull();
+  });
+
+  it("sees a shared worktree through a trailing separator", () => {
+    const threads = [
+      makeThread({ worktreePath: "/repo/wt" }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: "/repo/wt/" }),
+    ];
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"))).toBeNull();
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-2"))).toBeNull();
   });
 
   it("returns the path when no other thread links to that worktree", () => {

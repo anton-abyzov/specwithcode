@@ -205,6 +205,11 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     ...baseSshArgs(target, {
       batchMode: input.batchMode ?? (input.interactiveAuth ? "no" : "yes"),
     }),
+    // Without these a command on a dropped link waits for its timeout.
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
     ...(input.preHostArgs ?? []),
     hostSpec,
     ...(input.remoteCommandArgs ?? []),

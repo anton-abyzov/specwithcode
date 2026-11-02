@@ -171,14 +171,27 @@ describe("previewWindowOpenAction", () => {
     // A popup skips the `will-attach-webview` hardening, so it only gets a window
     // when its preferences can be overridden. Chromium copies the guest's
     // preferences for `about:blank` and forbids overriding them.
+    expect(
+      PreviewManager.previewWindowOpenAction(
+        details({ url: "vscode://vscode-remote/ssh-remote+box/tmp" }),
+      ),
+    ).toBe("navigate");
+  });
+
+  it("loads nothing for local and inline schemes, whatever the disposition", () => {
     for (const url of [
       "about:blank",
+      "data:text/html,<h1>hi</h1>",
       "javascript:alert(1)",
       "file:///etc/passwd",
-      "vscode://vscode-remote/ssh-remote+box/tmp",
+      "view-source:https://example.com",
       "not a url",
+      "",
     ]) {
-      expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+      expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("deny");
+      expect(
+        PreviewManager.previewWindowOpenAction(details({ url, disposition: "foreground-tab" })),
+      ).toBe("deny");
     }
   });
 });

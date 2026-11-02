@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
 import {
+  CONTINUE_PROMPT,
   restartContinuationRun,
   continueRestartedRun,
   resumeQueueAfterRestart,
@@ -722,7 +723,7 @@ it.effect("continues a cut run past queued follow-ups, which stay held", () =>
       ...cut,
       runs: [...cut.runs, queuedFollowUp],
     } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(texts, ["Continue where you left off."]);
+    assert.deepEqual(texts, [CONTINUE_PROMPT]);
   }),
 );
 
@@ -751,7 +752,7 @@ it.effect("continues a resumed queued run that ran after an earlier continuation
       ...cut,
       runs: [...cut.runs, finishedContinuation],
     } as unknown as OrchestrationV2ThreadProjection);
-    assert.deepEqual(texts, ["Continue where you left off."]);
+    assert.deepEqual(texts, [CONTINUE_PROMPT]);
   }),
 );
 
@@ -991,7 +992,7 @@ it.effect("tells a turn cut mid-way about the background work it lost", () =>
     );
     assert.lengthOf(texts, 1);
     assert.include(texts[0]!, "Background reviewer");
-    assert.isTrue(texts[0]!.endsWith("Continue where you left off."));
+    assert.isTrue(texts[0]!.endsWith(CONTINUE_PROMPT));
   }),
 );
 
@@ -1236,7 +1237,7 @@ it.effect("tells the agent to ask again a question the update closed", () =>
     assert.include(text, "Ask it again");
     assert.notInclude(text, "Which region?");
     assert.notInclude(text, "Which port?");
-    assert.isTrue(text.endsWith("Continue where you left off."));
+    assert.isTrue(text.endsWith(CONTINUE_PROMPT));
   }),
 );
 

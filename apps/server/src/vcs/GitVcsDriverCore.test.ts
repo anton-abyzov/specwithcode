@@ -4442,6 +4442,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("refuses a selected-file commit during a merge and keeps the merge", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["checkout", "-b", "feature"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "Feature"]);
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* git(cwd, ["merge", "--no-commit", "--no-ff", "feature"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const result = yield* Effect.result(
+          driver.commit(cwd, "Partial", "", { stage: { filePaths: ["feature.txt"] } }),
+        );
+        assert.isTrue(Result.isFailure(result));
+        assert.isTrue(NodeFS.existsSync(`${cwd}/.git/MERGE_HEAD`));
+      }),
+    );
+
+    it.effect("does not commit stale staged files when the selected-file reset fails", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "staged.txt", "staged\n");
+        yield* git(cwd, ["add", "staged.txt"]);
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        NodeFS.writeFileSync(`${cwd}/.git/index.lock`, "");
+        const before = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const result = yield* Effect.result(
+          driver.commit(cwd, "Add a", "", { stage: { filePaths: ["a.txt"] } }),
+        );
+        NodeFS.rmSync(`${cwd}/.git/index.lock`);
+        assert.isTrue(Result.isFailure(result));
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), before);
+      }),
+    );
+
     it.effect("treats selected file paths literally", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

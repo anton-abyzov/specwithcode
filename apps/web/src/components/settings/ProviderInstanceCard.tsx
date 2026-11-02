@@ -404,6 +404,8 @@ export function ProviderEnvironmentSection(props: {
                 className="w-full min-w-0 sm:w-44 sm:shrink-0"
                 value={variable.name}
                 onCommit={(name) => updateVariable(variable.id, { name: name.trim() })}
+                // A stored secret is found by its name, and the client never holds its value.
+                disabled={variable.valueRedacted === true}
                 placeholder="VARIABLE_NAME"
                 spellCheck={false}
                 aria-label={`Environment variable name ${index + 1}`}
@@ -432,6 +434,7 @@ export function ProviderEnvironmentSection(props: {
                       type="button"
                       size="icon-micro"
                       variant="ghost-muted"
+                      disabled={variable.valueRedacted === true}
                       onClick={() => {
                         const sensitive = !variable.sensitive;
                         updateVariable(variable.id, {

@@ -377,10 +377,12 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
   ),
 );
 
-// The Google sign-in callback carries a one-time authorization code in its query.
+// The Google sign-in callback carries a one-time authorization code in its query,
+// and the socket upgrade a connection ticket.
 const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([
   OTLP_TRACES_PROXY_PATH,
   GOOGLE_CALLBACK_PATH,
+  "/ws",
 ]);
 
 // Skips the HTTP server span for UNTRACED_REQUEST_PATHS. That span starts

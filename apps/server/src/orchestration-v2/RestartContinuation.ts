@@ -34,7 +34,8 @@ import {
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
 
-const CONTINUE_PROMPT = "Continue where you left off.";
+export const CONTINUE_PROMPT =
+  "Continue where you left off. A restart cut off the previous turn, so a command it started may have finished or may still be running. Check the current state before repeating anything with side effects.";
 
 /**
  * Resume only an unfinished root turn. Leftover background work is cleaned up

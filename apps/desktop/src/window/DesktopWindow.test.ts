@@ -640,6 +640,33 @@ describe("DesktopWindow", () => {
         navigationUrl: "not a url",
       }),
     );
+    for (const navigationUrl of [
+      "file:///etc/passwd",
+      "data:text/html,hello",
+      "javascript:alert(1)",
+      "other://app/",
+      "studio://other/",
+    ]) {
+      assert.isFalse(
+        DesktopWindow.isSameOriginRendererNavigation({
+          applicationUrl: "studio://app/",
+          navigationUrl,
+        }),
+        navigationUrl,
+      );
+    }
+    assert.isTrue(
+      DesktopWindow.isSameOriginRendererNavigation({
+        applicationUrl: "http://127.0.0.1:5733/",
+        navigationUrl: "http://127.0.0.1:5733/settings",
+      }),
+    );
+    assert.isFalse(
+      DesktopWindow.isSameOriginRendererNavigation({
+        applicationUrl: "http://127.0.0.1:5733/",
+        navigationUrl: "http://127.0.0.1:5734/",
+      }),
+    );
   });
 
   it.effect("does not open a development window until the backend is ready", () =>

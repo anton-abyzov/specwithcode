@@ -65,7 +65,10 @@ const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
-  .annotate(Tool.Destructive, true);
+  .annotate(Tool.Destructive, true)
+  // threadId is optional and means the caller, so an ignored misspelled argument
+  // would archive the thread that made the call.
+  .annotate(Tool.Strict, true);
 
 const ThreadRecordDeliveryTool = Tool.make("studio_thread_record_delivery", {
   description:

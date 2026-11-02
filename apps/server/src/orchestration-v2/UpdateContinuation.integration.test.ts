@@ -1,3 +1,4 @@
+import { CONTINUE_PROMPT } from "./RestartContinuation.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -410,7 +411,7 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
         after.messages
           .filter((message) => message.id === `message:update-continuation:${runId}`)
           .map((message) => message.text),
-        ["Continue where you left off."],
+        [CONTINUE_PROMPT],
       );
       assert.lengthOf(after.runs, 2);
       assert.equal(after.runs[1]!.restartContinuationOfRunId, runId);
@@ -1343,7 +1344,7 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
         after.messages
           .filter((message) => message.id === `message:update-continuation:${first}`)
           .map((message) => message.text),
-        ["Continue where you left off."],
+        [CONTINUE_PROMPT],
       );
       const textOf = (messageId: string) =>
         after.messages.find((message) => message.id === messageId)?.text;

@@ -283,7 +283,8 @@ const runCommandOutput = Effect.fn("desktop.shellEnvironment.runCommandOutput")(
         shell: input.shell ?? false,
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "pipe",
+        // Nothing reads stderr here, so a piped one blocks a chatty shell profile.
+        stderr: "ignore",
         killSignal: "SIGTERM",
         forceKillAfter: PROCESS_TERMINATE_GRACE,
         ...(input.env === undefined ? {} : { env: input.env, extendEnv: false }),

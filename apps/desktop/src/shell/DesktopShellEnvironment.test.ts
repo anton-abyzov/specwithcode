@@ -123,6 +123,11 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(commands.length, 1);
       assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
+      // Nothing reads stderr, so a chatty profile must not be able to fill a pipe.
+      assert.equal(
+        commands[0]?._tag === "StandardCommand" ? commands[0].options.stderr : "",
+        "ignore",
+      );
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");

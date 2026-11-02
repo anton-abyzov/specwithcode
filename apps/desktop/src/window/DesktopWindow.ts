@@ -299,8 +299,16 @@ export function isSameOriginRendererNavigation(input: {
   readonly applicationUrl: string;
   readonly navigationUrl: string;
 }): boolean {
+  // Not `.origin`: it is the string "null" for custom, file:, data: and
+  // javascript: URLs, so comparing it would let all of them through.
   try {
-    return new URL(input.applicationUrl).origin === new URL(input.navigationUrl).origin;
+    const application = new URL(input.applicationUrl);
+    const navigation = new URL(input.navigationUrl);
+    return (
+      application.host !== "" &&
+      application.protocol === navigation.protocol &&
+      application.host === navigation.host
+    );
   } catch {
     return false;
   }

@@ -1,10 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Hosted handoff test uses a real localhost listener without an OpenAI account.
 import * as NodeHttp from "node:http";
 import * as NodePath from "@effect/platform-node/NodePath";
-import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@specweave-studio/shared/codexAuthHandoff";
+import {
+  codexAuthHandoffUrl,
+  readCodexAuthDelivery,
+} from "@specweave-studio/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { HostProcessArguments } from "@specweave-studio/shared/hostProcess";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, expect } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -98,10 +101,14 @@ describe("DesktopClerk", () => {
     return Effect.gen(function* () {
       yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
 
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
+      expect(createClerkBridgeMock.mock.calls).toEqual([
         [
           {
-            storage: storageAdapter,
+            storage: {
+              getItem: expect.any(Function),
+              setItem: expect.any(Function),
+              removeItem: expect.any(Function),
+            },
             passkeys: true,
             renderer: { scheme: "studio-dev", host: "app" },
           },
@@ -450,7 +457,10 @@ it.effect.each(["startup", "open-url"] as const)(
         assert.strictEqual(delivery?.returnUrl, request.returnUrl);
       }).pipe(
         Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell)),
-        Effect.provideService(HostProcessArguments, entry === "startup" ? ["specweave-studio", link] : ["specweave-studio"]),
+        Effect.provideService(
+          HostProcessArguments,
+          entry === "startup" ? ["specweave-studio", link] : ["specweave-studio"],
+        ),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(
           ElectronWindow.ElectronWindow,

@@ -33,6 +33,37 @@ import {
 import * as ServerHttp from "./http.ts";
 
 describe("untraced requests", () => {
+  it.effect("keeps the socket upgrade and its ticket out of HTTP server spans", () => {
+    const spanNames: Array<string> = [];
+    return Effect.gen(function* () {
+      const layerRoutes = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const router = yield* HttpRouter.HttpRouter;
+          yield* router.add("GET", "/ws", HttpServerResponse.empty());
+        }),
+      );
+      const services = yield* Layer.build(
+        withUntracedRequests(HttpRouter.serve(layerRoutes, { disableListenLog: true })).pipe(
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        ),
+      );
+      const client = Context.get(services, HttpClient.HttpClient);
+      yield* client.get("/ws?wsTicket=secret");
+      expect(spanNames).toEqual([]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(
+        Tracer.Tracer,
+        Tracer.make({
+          span: (options) => {
+            if (options.kind === "server") spanNames.push(options.name);
+            return new Tracer.NativeSpan(options);
+          },
+        }),
+      ),
+    );
+  });
+
   it.effect("drops the HTTP server span for browser trace exports, query string included", () => {
     const spanNames: Array<string> = [];
     return Effect.gen(function* () {

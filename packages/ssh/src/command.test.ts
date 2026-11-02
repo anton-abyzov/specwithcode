@@ -212,6 +212,27 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("gives one-shot commands a keepalive so a dropped link fails fast", () => {
+    const commands: Array<ChildProcess.Command> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      commands.push(command);
+      return Effect.succeed(makeFailedProcess({ stdout: "failed\n" }));
+    });
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    return Effect.gen(function* () {
+      yield* Effect.result(
+        runSshCommand(
+          { alias: "devbox", hostname: "devbox.example.com", username: "dev", port: 22 },
+          { remoteCommandArgs: ["true"] },
+        ),
+      );
+      const command = commands[0];
+      const args = command?._tag === "StandardCommand" ? command.args : [];
+      assert.include(args, "ServerAliveInterval=15");
+      assert.include(args, "ServerAliveCountMax=3");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, layerSpawner)));
+  });
+
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),

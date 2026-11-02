@@ -1,11 +1,9 @@
+import { normalizeProjectPathForComparison } from "@specweave-studio/shared/path";
+
 import type { ThreadShell } from "./types";
 
-function normalizeWorktreePath(path: string | null): string | null {
-  const trimmed = path?.trim();
-  if (!trimmed) {
-    return null;
-  }
-  return trimmed;
+function worktreePathKey(path: string | null): string | null {
+  return path?.trim() ? normalizeProjectPathForComparison(path) : null;
 }
 
 export function getOrphanedWorktreePathForThread(
@@ -17,8 +15,8 @@ export function getOrphanedWorktreePathForThread(
     return null;
   }
 
-  const targetWorktreePath = normalizeWorktreePath(targetThread.worktreePath);
-  if (!targetWorktreePath) {
+  const targetKey = worktreePathKey(targetThread.worktreePath);
+  if (!targetKey) {
     return null;
   }
 
@@ -26,10 +24,10 @@ export function getOrphanedWorktreePathForThread(
     if (thread.id === threadId) {
       return false;
     }
-    return normalizeWorktreePath(thread.worktreePath) === targetWorktreePath;
+    return worktreePathKey(thread.worktreePath) === targetKey;
   });
 
-  return isShared ? null : targetWorktreePath;
+  return isShared ? null : (targetThread.worktreePath?.trim() ?? null);
 }
 
 export function formatWorktreePathForDisplay(worktreePath: string): string {

@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -269,6 +270,43 @@ const exhaustedClaudeLimits: ServerProviderUsageLimits = {
 };
 
 describe("makeManagedServerProvider", () => {
+  it.live("keeps reacting to settings after a provider check fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const failNextCheck = yield* Ref.make(false);
+        const settings = yield* Queue.unbounded<TestSettings>();
+        const driver = ProviderDriverKind.make("codex");
+        const identity = { driver, instanceId: ProviderInstanceId.make(driver) };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.fromQueue(settings),
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed({ ...initialSnapshot, ...identity }),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.andThen(Ref.getAndSet(failNextCheck, false)),
+            Effect.flatMap((fail) =>
+              fail
+                ? Effect.die("check failed")
+                : Effect.succeed({ ...refreshedSnapshot, ...identity }),
+            ),
+          ),
+          refreshInterval: 0,
+        });
+        yield* provider.refresh;
+        yield* Ref.set(failNextCheck, true);
+        yield* Queue.offer(settings, { enabled: false });
+        yield* Effect.sleep("20 millis");
+        const afterFailure = yield* Ref.get(checkCalls);
+        // A failed check leaves the old settings in place, so this is still a change.
+        yield* Queue.offer(settings, { enabled: false });
+        yield* Effect.sleep("20 millis");
+        assert.isAbove(yield* Ref.get(checkCalls), afterFailure);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
   it.effect("shows only the new Claude account's usage after a login switch", () => {
     // No allowance witness: one of the new account's buckets is full, which
     // alone would keep the old account's denial on screen.
