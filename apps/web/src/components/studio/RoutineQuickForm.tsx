@@ -4,6 +4,8 @@
  * when asked unless the person picks the template's cadence (a monthly day, or
  * a daily time); nothing is saved until they press Save.
  */
+import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { useId, useRef, useState } from "react";
 import {
   CommandId,
@@ -34,6 +36,7 @@ export function RoutineQuickForm({
   template: RoutineTemplate;
   onDone: (saved: boolean) => void;
 }) {
+  const teamRules = useTeamRules(environmentId);
   const id = useId();
   const upsert = useAtomCommand(serverEnvironment.upsertScheduledTask);
   const [title, setTitle] = useState(template.title);
@@ -85,7 +88,7 @@ export function RoutineQuickForm({
           threadId: null,
           workspaceStrategy: { type: "root" },
           modelSelection,
-          runtimeMode: "full-access",
+          runtimeMode: teamRulesClampRoutineMode(teamRules.state, "full-access"),
           interactionMode: "default",
           ownThread: true,
           brief: {

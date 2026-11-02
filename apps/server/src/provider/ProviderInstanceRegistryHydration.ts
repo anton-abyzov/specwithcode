@@ -41,6 +41,8 @@
  *
  * @module provider/ProviderInstanceRegistryHydration
  */
+import { teamRulesInstanceConfig, type TeamRulesState } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import {
   defaultInstanceIdForDriver,
   type ProviderInstanceConfig,
@@ -154,6 +156,25 @@ const withoutBlockedStarts = (
     return { configMap: withoutIds(configMap, blocked), blocked };
   });
 
+/**
+ * What rules let each instance start with. Stored settings stay as they are.
+ * Starting on a hold, nothing is known to be approved, so nothing starts.
+ */
+export const withTeamRules = (
+  rules: TeamRulesState,
+  configMap: ProviderInstanceConfigMap,
+): ProviderInstanceConfigMap =>
+  rules.status === "none"
+    ? configMap
+    : (Object.fromEntries(
+        Object.entries(configMap).map(([id, entry]) => [
+          id,
+          rules.status === "hold"
+            ? { ...entry, enabled: false }
+            : teamRulesInstanceConfig(rules, entry),
+        ]),
+      ) as ProviderInstanceConfigMap);
+
 const withoutIds = (configMap: ProviderInstanceConfigMap, ids: ReadonlySet<string>) =>
   Object.fromEntries(
     Object.entries(configMap).filter(([id]) => !ids.has(id)),
@@ -204,7 +225,11 @@ export const layerSettingsWatcher = (
       const sync = (settings: ServerSettings) =>
         syncLock.withPermits(1)(
           Effect.gen(function* () {
-            const desired = deriveProviderInstanceConfigMap(settings);
+            const rules = yield* currentTeamRules;
+            // A hold leaves providers as the last good rules set them: running turns
+            // finish, and a typo revives nothing those rules blocked.
+            if (rules.status === "hold") return new Set<string>();
+            const desired = withTeamRules(rules, deriveProviderInstanceConfigMap(settings));
             // A re-added id the registry still runs from before (a reconcile
             // that would have stopped it failed) is stopped first, so its old
             // sign-in is deleted before the new instance starts and never later.
@@ -272,6 +297,13 @@ export const layerSettingsWatcher = (
         Stream.runForEach((next) => syncOrLog(next).pipe(Effect.flatMap(retryIfBlocked))),
         Effect.forkScoped,
       );
+      // New rules change what instances start with, with no settings change to say so.
+      yield* watchTeamRules(() =>
+        serverSettings.getSettings.pipe(
+          Effect.flatMap((latest) => syncOrLog(latest).pipe(Effect.flatMap(retryIfBlocked))),
+          Effect.ignoreCause({ log: true }),
+        ),
+      ).pipe(Effect.forkScoped);
     }),
   );
 
@@ -307,7 +339,10 @@ export const layer: Layer.Layer<
         ? { configMap: {} as ProviderInstanceConfigMap, blocked: new Set<string>() }
         : yield* withoutBlockedStarts(
             serverSettings,
-            deriveProviderInstanceConfigMap(initialSettings),
+            withTeamRules(
+              yield* currentTeamRules,
+              deriveProviderInstanceConfigMap(initialSettings),
+            ),
             new Set(),
           );
     const initialConfigMap = initial.configMap;

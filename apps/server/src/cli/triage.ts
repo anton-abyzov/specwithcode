@@ -10,6 +10,8 @@
  * to paste into whatever agent they do have.
  */
 // @effect-diagnostics nodeBuiltinImport:off
+import { teamRulesTurnRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodeReadlinePromises from "node:readline/promises";
@@ -284,6 +286,11 @@ const modelFlag = Flag.String("model").pipe(
   Flag.optional,
 );
 
+export class TriageTeamRulesError extends Schema.TaggedError<TriageTeamRulesError>()(
+  "TriageTeamRulesError",
+  { message: Schema.String },
+) {}
+
 export const triageCommand = Command.make("triage", {
   baseDir: baseDirFlag,
   agent: agentFlag,
@@ -403,6 +410,15 @@ export const triageCommand = Command.make("triage", {
       }
 
       const model = Option.getOrUndefined(flags.model);
+      const refused = teamRulesTurnRefusal(yield* currentTeamRules, {
+        runtimeMode: "approval-required",
+        driver: selected.id === "claude" ? "claudeAgent" : "codex",
+        model: model ?? "",
+      });
+      // An unnamed model is the agent's default, which only the provider list can judge.
+      if (refused !== null && !(model === undefined && refused.reason === "model")) {
+        return yield* new TriageTeamRulesError({ message: refused.message });
+      }
       const settingsArgs = yield* triageAgentSettingsArgs({
         agentId: selected.id,
         scratchDir,

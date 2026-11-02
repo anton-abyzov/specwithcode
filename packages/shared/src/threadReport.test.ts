@@ -156,6 +156,11 @@ describe("words the title came from", () => {
     }
   });
 
+  it("keeps a labeled opening when the report names nothing", () => {
+    const labeled = "**Report:** Fixed it.\n\nMore.";
+    expect(reportBodyAfterTitle(labeled)).toBe(labeled);
+  });
+
   it("does not split a wrapped opening paragraph", () => {
     const wrapped = "The deploy finished on all three\nplatforms today.\n\nNext step: tag it.";
     expect(reportBodyAfterTitle(wrapped)).toBe(wrapped);

@@ -26,7 +26,7 @@ final class MobileReadabilityUITests: SWCUITestCase {
     revealOlder(link)
     attachScreenshot("Sample Markdown table lists code and internal thread link")
     tap(link)
-    waitForHittable(button(startingWith: "Release 3.1 checklist"))
+    waitFor(button(startingWith: "Release 3.1 checklist"))
     attachScreenshot("Internal link opens release thread on its original machine")
 
     tap(app.buttons["chat.increment"])
@@ -38,6 +38,20 @@ final class MobileReadabilityUITests: SWCUITestCase {
     attachScreenshot("Ledger acceptance criteria verification and remote source")
     revealNewer(element(containing: "Remote source path"))
     attachScreenshot("Increment source is an honest remote machine path")
+  }
+
+  func testComposerOffersAttachInCoordinatorAndThread() throws {
+    launch(fixture: "readability")
+    waitForHome()
+    let attach = app.buttons["Attach"].firstMatch
+    waitFor(attach)
+    attachScreenshot("Coordinator composer offers Attach")
+    let link = app.links.matching(identifier: "studio://thread/t-release").firstMatch
+    revealOlder(link)
+    tap(link)
+    waitFor(button("Thread actions"))
+    waitFor(app.buttons["Attach"].firstMatch)
+    attachScreenshot("Thread composer offers Attach")
   }
 
   func testUnknownThreadLinkReportsWhyItCannotOpen() throws {
@@ -100,12 +114,16 @@ final class MobileReadabilityUITests: SWCUITestCase {
   }
 
   private func reveal(_ element: XCUIElement, older: Bool, file: StaticString, line: UInt) {
+    // Content under the glass top bar reports hittable, but a tap lands on the bar.
+    let menu = button("Menu")
+    let topBar = menu.exists ? menu.frame.maxY : 0
+    func reachable() -> Bool { element.exists && element.isHittable && element.frame.minY >= topBar }
     for _ in 0..<12 {
-      if element.exists && element.isHittable { return }
+      if reachable() { return }
       let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: older ? 0.3 : 0.7))
       let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: older ? 0.72 : 0.3))
       start.press(forDuration: 0.05, thenDragTo: end)
     }
-    XCTAssertTrue(element.exists && element.isHittable, "Expected content should be reachable by scrolling", file: file, line: line)
+    XCTAssertTrue(reachable(), "Expected content should be reachable by scrolling", file: file, line: line)
   }
 }

@@ -1,3 +1,6 @@
+import { teamRulesClampMode, teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
+import { TEAM_RULES_ABOVE_LIMIT } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { useRef, useState, type ReactNode } from "react";
 import {
   AuthSettingsWriteScope,
@@ -35,9 +38,12 @@ export function CoordinatorAccessPicker({
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const writeMode = useProjectOverrideWriteMode(environmentId);
-  const value =
+  const teamRules = useTeamRules(environmentId);
+  const value = teamRulesClampMode(
+    teamRules.state,
     coordinatorRuntimeMode ??
-    resolveProjectSettings(settings, projectId).settings.defaultRuntimeMode;
+      resolveProjectSettings(settings, projectId).settings.defaultRuntimeMode,
+  );
   const allowed = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const save = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [pending, setPending] = useState(false);
@@ -82,11 +88,16 @@ export function CoordinatorAccessPicker({
           aria-busy={pending}
           onChange={(event) => void change(event.target.value as RuntimeMode)}
         >
-          {runtimeModeOptions.map((mode) => (
-            <option key={mode} value={mode}>
-              {runtimeModeConfig[mode].label}
-            </option>
-          ))}
+          {runtimeModeOptions.map((mode) => {
+            const permitted = teamRulesModeAllowed(teamRules.state, mode);
+            return (
+              <option key={mode} value={mode} disabled={!permitted}>
+                {permitted
+                  ? runtimeModeConfig[mode].label
+                  : `${runtimeModeConfig[mode].label}: ${TEAM_RULES_ABOVE_LIMIT}`}
+              </option>
+            );
+          })}
         </select>
       </Tip>
       {error ? (

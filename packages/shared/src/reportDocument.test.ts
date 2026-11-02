@@ -53,6 +53,17 @@ describe("reportDocument", () => {
     expect(document.sections).toEqual([{ label: "Fixed", markdown: "- A\n- B" }]);
   });
 
+  it("shows a title with markup once, keeping the lead", () => {
+    const document = reportDocument("# Fixed `my_file.ts`\n\nThe lead.\n\n**Blockers:** none.");
+    expect(document?.lead).toBe("The lead.");
+    expect(document?.sections).toEqual([]);
+  });
+
+  it("drops only the heading used as the title", () => {
+    const document = reportDocument("# One\n\n# Two\n\nBody.\n\n**Blockers:** none.");
+    expect(document?.sections.map((section) => section.label)).toEqual(["Two"]);
+  });
+
   it("returns null for a report with no labeled parts", () => {
     expect(reportDocument("Just a long answer.\n\nWith two paragraphs.")).toBeNull();
   });

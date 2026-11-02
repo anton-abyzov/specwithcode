@@ -25,6 +25,8 @@ import {
 } from "@specweave-studio/client-runtime/state/runtime";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { teamRulesClampRoutineMode } from "@specweave-studio/shared/teamRules";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -399,6 +401,7 @@ function ScheduledTaskEditorDialog({
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
+  const teamRules = useTeamRules(environmentId);
   const connected =
     environment?.connection.phase === "connected" && environment.serverConfig !== null;
   const tasksQuery = useEnvironmentQuery(
@@ -589,7 +592,8 @@ function ScheduledTaskEditorDialog({
       workspaceStrategy,
       modelSelection,
       modelPinned: draft.modelPinned,
-      runtimeMode: draft.runtimeMode,
+      // The form has no permission picker, so its default starts inside the rules.
+      runtimeMode: teamRulesClampRoutineMode(teamRules.state, draft.runtimeMode),
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };

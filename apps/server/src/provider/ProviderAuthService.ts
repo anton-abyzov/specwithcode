@@ -15,13 +15,17 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
+import { teamRulesDriverRefusal } from "@specweave-studio/shared/teamRules";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 
 export interface ProviderAuthController {
   /** Equal keys mean these instances share credentials on this environment. */
-  readonly credentialBinding?: { readonly owner: "provider" | "specweave-studio"; readonly key: string;
+  readonly credentialBinding?: {
+    readonly owner: "provider" | "specweave-studio";
+    readonly key: string;
   };
   readonly reconnectProfile?: (
     methodId: string,
@@ -272,6 +276,18 @@ export const makeProviderAuthService = Effect.gen(function* () {
     start: Effect.fn("ProviderAuthService.start")(function* (input, ownerSessionId) {
       return yield* credentialChanges.withPermit(
         Effect.gen(function* () {
+          const instance = yield* registry.getInstance(input.instanceId);
+          const rules = yield* currentTeamRules;
+          const refusal = instance
+            ? teamRulesDriverRefusal(rules, String(instance.driverKind))
+            : null;
+          if (refusal !== null) {
+            return yield* new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "start",
+              detail: refusal.message,
+            });
+          }
           const auth = yield* getController(input.instanceId, "start");
           yield* checkSharedBinding(input.instanceId, "start", auth);
           return yield* auth.start(

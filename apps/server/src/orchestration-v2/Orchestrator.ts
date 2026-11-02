@@ -106,6 +106,7 @@ import {
   type ProviderSessionId,
   RunId,
   RuntimeMode,
+  TeamRulesRefusal,
   ThreadExecutionRecord,
   ThreadLinkedPullRequest,
   ThreadId,
@@ -113,6 +114,14 @@ import {
   type TurnItemId,
 } from "@specweave-studio/contracts";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
+import {
+  teamRulesClampMode,
+  teamRulesHoldRefusal,
+  teamRulesInstanceDriver,
+  teamRulesModeRefusal,
+  teamRulesSelectionRefusal,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
 import {
@@ -159,6 +168,7 @@ import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from 
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   applyToProjection,
   emptyProjection,
@@ -309,6 +319,20 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+/** Team rules refuse the command; the message names who set them. */
+export class OrchestratorTeamRulesRefusedError extends Schema.TaggedError<OrchestratorTeamRulesRefusedError>()(
+  "OrchestratorTeamRulesRefusedError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    refusal: TeamRulesRefusal,
+  },
+) {
+  override get message(): string {
+    return this.refusal.message;
+  }
+}
+
 export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestratorCommandPreviouslyRejectedError>()(
   "OrchestratorCommandPreviouslyRejectedError",
   {
@@ -359,6 +383,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
+  OrchestratorTeamRulesRefusedError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -2927,6 +2952,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runtimeMode,
       interactionMode: command.interactionMode,
     });
+    yield* refuseNewThreadByTeamRules(
+      command,
+      command.threadId,
+      runtimeMode,
+      command.modelSelection,
+    );
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
     const thread: OrchestrationV2AppThread = {
@@ -4402,6 +4433,103 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  const refuseByTeamRules = (
+    command: OrchestrationV2ServerCommand,
+    threadId: ThreadId,
+    refusal: TeamRulesRefusal | null,
+  ) =>
+    refusal === null
+      ? Effect.void
+      : Effect.fail(
+          new OrchestratorTeamRulesRefusedError({
+            commandId: command.commandId,
+            threadId,
+            refusal,
+          }),
+        );
+
+  /** The final provider and model a command would run on, judged by the Team rules. */
+  const teamRulesSelectionRefusalOf = Effect.fn("orchestrationV2.dispatch.teamRulesSelection")(
+    function* (state: TeamRulesState, selection: ModelSelection) {
+      if (state.status !== "active") return null;
+      const settings = Option.isNone(serverSettings)
+        ? undefined
+        : yield* serverSettings.value.getSettings.pipe(Effect.orElseSucceed(() => undefined));
+      return teamRulesSelectionRefusal(state, {
+        driver:
+          settings === undefined
+            ? selection.instanceId
+            : teamRulesInstanceDriver(settings, selection.instanceId),
+        model: selection.model,
+      });
+    },
+  );
+
+  /** A new thread's mode and model. People and agents get the same answer. */
+  const refuseNewThreadByTeamRules = Effect.fn("orchestrationV2.dispatch.teamRulesNewThread")(
+    function* (
+      command: OrchestrationV2ServerCommand,
+      threadId: ThreadId,
+      runtimeMode: RuntimeMode,
+      selection: ModelSelection,
+    ) {
+      const state = yield* currentTeamRules;
+      yield* refuseByTeamRules(command, threadId, teamRulesModeRefusal(state, runtimeMode));
+      yield* refuseByTeamRules(
+        command,
+        threadId,
+        yield* teamRulesSelectionRefusalOf(state, selection),
+      );
+    },
+  );
+
+  /**
+   * Commands that change an existing thread's limits or start work on it. Other
+   * commands pass, so a thread above a new ceiling can still be read, lowered,
+   * stopped or archived.
+   */
+  const refuseCommandByTeamRules = Effect.fn("orchestrationV2.dispatch.teamRules")(function* (
+    command: OrchestrationV2ServerCommand,
+  ) {
+    const state = yield* currentTeamRules;
+    if (state.status === "none") return;
+    const threadId = commandThreadId(command);
+    switch (command.type) {
+      case "thread.runtime-mode.set":
+        return yield* refuseByTeamRules(
+          command,
+          threadId,
+          teamRulesModeRefusal(state, command.runtimeMode),
+        );
+      case "thread.model-selection.set":
+      case "provider.switch":
+        return yield* refuseByTeamRules(
+          command,
+          threadId,
+          yield* teamRulesSelectionRefusalOf(state, command.modelSelection),
+        );
+      case "message.dispatch":
+      case "queued-message.promote-to-steer": {
+        yield* refuseByTeamRules(command, threadId, teamRulesHoldRefusal(state));
+        const shell = yield* projectionStore
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        if (shell === null) return;
+        yield* refuseByTeamRules(command, threadId, teamRulesModeRefusal(state, shell.runtimeMode));
+        const selection =
+          (command.type === "message.dispatch" ? command.modelSelection : undefined) ??
+          shell.modelSelection;
+        return yield* refuseByTeamRules(
+          command,
+          threadId,
+          yield* teamRulesSelectionRefusalOf(state, selection),
+        );
+      }
+      default:
+        return;
+    }
+  });
+
   /** Fails when a limited sender's command would touch a thread running above its limit. */
   const refuseAboveDispatchModeLimit = Effect.fn("orchestrationV2.dispatch.refuseAboveModeLimit")(
     function* (
@@ -4443,7 +4571,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     if (command.createdBy === "agent" || Option.isNone(serverSettings)) return commandMode;
     const settings = yield* serverSettings.value.getSettings.pipe(mapDispatchError(command));
-    return settings.projectSettingsOverrides[projectId]?.defaultRuntimeMode ?? commandMode;
+    const saved = settings.projectSettingsOverrides[projectId]?.defaultRuntimeMode;
+    // A saved default from before the rules is nobody's request, so it lowers.
+    return saved === undefined ? commandMode : teamRulesClampMode(yield* currentTeamRules, saved);
   });
 
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
@@ -4530,6 +4660,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runtimeMode,
       interactionMode: targetThread.interactionMode,
     });
+    yield* refuseNewThreadByTeamRules(
+      command,
+      command.targetThreadId,
+      runtimeMode,
+      targetThread.modelSelection,
+    );
     yield* emitEvent({
       type: "thread.created",
       threadId: command.targetThreadId,
@@ -7862,6 +7998,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runtimeMode,
         interactionMode: command.interactionMode,
       });
+      yield* refuseNewThreadByTeamRules(
+        command,
+        childThreadId,
+        runtimeMode,
+        command.modelSelection,
+      );
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
           parentThread: parentProjection.thread,
@@ -12757,6 +12899,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
     }
+    yield* refuseCommandByTeamRules(command);
 
     const expectedThreadSequence =
       command.type === "thread.deferred-resolution.request" ||
@@ -12793,7 +12936,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.gen(function* () {
           // Refused like the check above: nothing recorded, so the same command
           // can go through once the thread's user lowers it again.
-          if (cause._tag === "OrchestratorThreadAboveModeLimitError") return yield* cause;
+          if (
+            cause._tag === "OrchestratorThreadAboveModeLimitError" ||
+            cause._tag === "OrchestratorTeamRulesRefusedError"
+          )
+            return yield* cause;
           // An answer's id is stable per request and answer, so a retry after a
           // refusal that has since cleared (a handoff fence, a session not yet
           // projected) must be judged again, not replay that refusal.

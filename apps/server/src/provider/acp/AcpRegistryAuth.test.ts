@@ -19,6 +19,8 @@ import type * as AcpSchema from "@specweave-studio/effect-acp/compat";
 import { AcpRequestError } from "@specweave-studio/effect-acp/errors";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
+import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
+import { TeamRules, teamRulesOf } from "../../teamRules/TeamRules.ts";
 import { makeAcpRegistryAuth, type AcpRegistryCredential } from "./AcpRegistryAuth.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import type { AcpSessionRuntime } from "./AcpSessionRuntime.ts";
@@ -483,6 +485,30 @@ it.effect("refreshes advertised methods after a registry version change without 
     assert.deepEqual(h.authenticated, []);
     assert.deepEqual(h.started, []);
     assert.deepEqual(h.closed, [1, 2]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("starts no ACP agent during a hold or when the list omits it", () =>
+  Effect.gen(function* () {
+    const offList = parseTeamRulesText(
+      JSON.stringify({ version: 1, owner: "Acme", ai: { providers: ["codex"] } }),
+    );
+    if (!offList.ok) throw new Error(offList.issues.join());
+    const states: ReadonlyArray<TeamRulesState> = [
+      { status: "hold", issues: ["version: expected 1"] },
+      { status: "active", rules: offList.rules, fingerprint: "3a9f", warnings: [] },
+    ];
+    for (const state of states) {
+      const h = yield* makeHarness(browserMethod);
+      const count = h.runtimes();
+      h.setVersion(`refused-${state.status}`);
+      const refused = yield* Effect.gen(function* () {
+        yield* h.controller.refreshMethods!;
+        return yield* Effect.exit(h.controller.logout(Effect.void));
+      }).pipe(Effect.provideService(TeamRules, teamRulesOf(state)));
+      assert.isTrue(Exit.isFailure(refused));
+      assert.strictEqual(h.runtimes(), count);
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

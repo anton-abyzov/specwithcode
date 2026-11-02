@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "./teamRules/TeamRules.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -240,8 +242,10 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
           resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
           threadModelSelection,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: resolveProjectSettings(settings, project.id, project).settings
-          .defaultRuntimeMode,
+        runtimeMode: teamRulesClampMode(
+          yield* currentTeamRules,
+          resolveProjectSettings(settings, project.id, project).settings.defaultRuntimeMode,
+        ),
         workspaceStrategy: { type: "root" },
         createdBy: "system",
         creationSource: "server",

@@ -298,7 +298,7 @@ public enum UserMessageState: String, Hashable, Sendable {
 
 public struct TranscriptRow: Identifiable, Hashable, Sendable {
   public enum Kind: Hashable, Sendable {
-    case user(text: String, state: UserMessageState = .sent)
+    case user(text: String, state: UserMessageState = .sent, attachments: [TranscriptAttachment] = [])
     case assistant(markdown: String, streaming: Bool)
     /// `seconds` is how long a settled thought took; nil when it was not measured.
     case reasoning(text: String, streaming: Bool, seconds: Int? = nil)
@@ -464,7 +464,12 @@ public protocol AppEngine: AnyObject {
   func close(_ session: ChatSession)
   /// Loads an open conversation again after `loadError`.
   func reload(_ session: ChatSession)
-  func send(_ text: String, to target: ChatTarget) async throws
+  func send(_ text: String, images: [OutgoingImage], to target: ChatTarget) async throws
+  /// Where to fetch an attachment shown in the transcript. Nil when it cannot be shown.
+  func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL?
+  /// Every thread each machine holds, for resolving links. Nil to use the model's lists.
+  func threadLinkMachines() -> [ThreadLinkResolver.Machine]?
+  func archivedThreadLinkMachines() async -> [ThreadLinkResolver.Machine]
   /// Stops the active run and holds the queue.
   func stop(_ target: ChatTarget) async throws
   func respond(to requestId: String, in target: ChatTarget, decision: ApprovalDecision) async throws
@@ -502,6 +507,15 @@ public protocol AppEngine: AnyObject {
 }
 
 extension AppEngine {
+  public func send(_ text: String, to target: ChatTarget) async throws {
+    try await send(text, images: [], to: target)
+  }
+
+  public func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL? { nil }
+
+  public func threadLinkMachines() -> [ThreadLinkResolver.Machine]? { nil }
+  public func archivedThreadLinkMachines() async -> [ThreadLinkResolver.Machine] { [] }
+
   public func incrementProgress(for target: ChatTarget) async throws -> IncrementRead {
     .unavailable("SpecWeave increment progress is unavailable in this connection.")
   }

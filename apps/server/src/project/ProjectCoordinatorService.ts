@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -145,7 +147,7 @@ const make = Effect.gen(function* () {
           ).settings;
           const providers = yield* providerRegistry.getProviders;
           const runtimePolicy = {
-            runtimeMode: defaults.defaultRuntimeMode,
+            runtimeMode: teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
             interactionMode: "default",
           };
           // Nobody chose a model: start on the project's defaults or this host's best
@@ -213,7 +215,7 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
             title: `${project.title} coordinator`,
             modelSelection,
-            runtimeMode: defaults.defaultRuntimeMode,
+            runtimeMode: teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
             interactionMode: "default",
             workspaceStrategy: { type: "root" },
             createdBy: "user",

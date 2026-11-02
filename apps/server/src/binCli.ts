@@ -13,6 +13,7 @@ import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { connectCommand } from "./cli/connect.ts";
 import { dbCommand } from "./cli/db.ts";
+import { rulesCommand } from "./cli/rules.ts";
 import { modsCommand } from "./cli/mods.ts";
 import { fleetCommand } from "./cli/fleet.ts";
 import { pairCommand } from "./cli/pair.ts";
@@ -106,6 +107,7 @@ export const makeCli = <const Name extends StudioCliName = "specweave-studio">({
       doctorCommand,
       triageCommand,
       dbCommand,
+      rulesCommand,
       worktreeCommand,
       scratchCommand,
       provisionCommand,

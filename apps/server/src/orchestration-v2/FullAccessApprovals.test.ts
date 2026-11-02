@@ -17,6 +17,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as FullAccessApprovals from "./FullAccessApprovals.ts";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -262,6 +264,32 @@ describe("FullAccessApprovals", () => {
         decision: "accept",
       } as never);
       assert.match(command!.commandId, /^server:full-access-accept:runtime-request:exec-1:/);
+    }),
+  );
+
+  it.effect("answers nothing and raises nobody under a ceiling below Full access", () =>
+    Effect.gen(function* () {
+      const prompt = request("runtime-request:exec-ceiling");
+      const { dispatched, process } = harness({
+        [workerId]: { thread: thread("full-access"), runtimeRequests: [prompt] },
+      });
+      const parsed = parseTeamRulesText('{"version":1,"owner":"Acme","agents":{"ceiling":"auto"}}');
+      if (!parsed.ok) throw new Error(parsed.issues.join());
+      const under = Effect.provideService(
+        TeamRules,
+        teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+      );
+      yield* process(pendingEvent(workerId, prompt)).pipe(under);
+      yield* process({
+        type: "thread.runtime-mode-updated",
+        threadId: workerId,
+        payload: { runtimeMode: "full-access" },
+      } as unknown as Partial<OrchestrationV2DomainEvent>).pipe(under);
+      assert.lengthOf(dispatched, 0);
+
+      // The rules go and the same prompt is answered.
+      yield* process(pendingEvent(workerId, prompt));
+      assert.lengthOf(dispatched, 1);
     }),
   );
 

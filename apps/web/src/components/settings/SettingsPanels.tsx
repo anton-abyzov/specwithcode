@@ -1,5 +1,6 @@
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { SettingsGroup } from "./SettingsGroup";
+import { TeamRulesSection } from "./TeamRulesSection";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
@@ -2311,6 +2312,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <TeamRulesSection environmentId={environmentId} />
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow

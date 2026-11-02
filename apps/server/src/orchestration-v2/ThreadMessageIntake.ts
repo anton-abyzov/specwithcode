@@ -24,6 +24,7 @@ function dispatchWasNotAccepted(
     case "OrchestratorCommandIdConflictError":
     case "OrchestratorSubagentThreadReadOnlyError":
     case "OrchestratorThreadAboveModeLimitError":
+    case "OrchestratorTeamRulesRefusedError":
       return true;
     default:
       return false;
@@ -62,7 +63,8 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     // rollback boundary: any failure before dispatch removes every new copy.
     const claimedPaths: string[] = [];
     const prepared = yield* Effect.gen(function* () {
-      const attachmentsByQuestionId: import("@specweave-studio/contracts").UserInputAttachments = {};
+      const attachmentsByQuestionId: import("@specweave-studio/contracts").UserInputAttachments =
+        {};
       for (const [questionId, attachments] of Object.entries(incomingByQuestionId)) {
         const claimed = yield* AttachmentClaims.claimPendingAttachments({
           threadId: command.threadId,

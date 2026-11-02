@@ -1,3 +1,8 @@
+import {
+  teamRulesOwnsProviderLaunch,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
+import { readMachineTeamRules } from "../teamRules/TeamRules.ts";
 import { tokenizeCliArgs } from "@specweave-studio/shared/cliArgs";
 
 const STUDIO_CODEX_LAUNCH_ARGS_ENV = "STUDIO_CODEX_LAUNCH_ARGS";
@@ -5,7 +10,14 @@ const STUDIO_CODEX_LAUNCH_ARGS_ENV = "STUDIO_CODEX_LAUNCH_ARGS";
 export const resolveCodexLaunchArgs = (
   launchArgs?: string,
   environment: NodeJS.ProcessEnv = process.env,
-) => environment[STUDIO_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
+  rules: TeamRulesState = readMachineTeamRules(),
+) =>
+  // Rules that own the launch leave no back door through the environment.
+  (teamRulesOwnsProviderLaunch(rules, "codex")
+    ? undefined
+    : environment[STUDIO_CODEX_LAUNCH_ARGS_ENV]?.trim()) ||
+  launchArgs?.trim() ||
+  "";
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 

@@ -203,7 +203,8 @@ export function reportTitle(text: string, fallback: string): string {
  */
 export function reportBodyAfterTitle(text: string): string {
   const { body } = reportFrontmatter(text);
-  const title = reportTitle(text, "");
+  // A fallback with no words: a report that names nothing has no opening to remove.
+  const title = reportTitle(text, "-");
   if (!/[\p{L}\p{N}]/u.test(title)) return body;
   const end = body.indexOf("\n");
   const firstLine = end === -1 ? body : body.slice(0, end);

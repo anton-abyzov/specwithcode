@@ -2,7 +2,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
-import { InfoIcon, Undo2Icon } from "lucide-react";
+import { InfoIcon, ShieldIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@specweave-studio/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -166,6 +166,19 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
       />
       <TooltipPopup side="top">{children}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+/** Names who set a limit the row cannot go past. */
+export function TeamRulesLabel({ children }: { readonly children: string }) {
+  return (
+    <span
+      data-slot="team-rules-set-by"
+      className="inline-flex items-center gap-1 text-xs font-normal leading-5 text-muted-foreground"
+    >
+      <ShieldIcon aria-hidden className="size-3 shrink-0" />
+      {children}
+    </span>
   );
 }
 

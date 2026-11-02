@@ -21,6 +21,8 @@
  *
  * @module FullAccessApprovals
  */
+import { teamRulesAllowsFullAccessApprovals } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   isProviderNativeSubagentThread,
@@ -258,6 +260,8 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
     /** Accepts every pending prompt of a thread whose prompts now run on Full access. */
     const acceptPending = (threadId: ThreadId, runtimeMode?: RuntimeMode) =>
       Effect.gen(function* () {
+        // Under a ceiling below Full access a person answers, whatever a stored mode says.
+        if (!teamRulesAllowsFullAccessApprovals(yield* currentTeamRules)) return;
         const records = yield* threads.getThreadRecords(threadId, ["runtimeRequests"]);
         const candidates = records.runtimeRequests.filter(isFullAccessPrompt);
         if (candidates.length === 0) return;
@@ -286,6 +290,7 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
      */
     const raised = (threadId: ThreadId): Effect.Effect<void> =>
       Effect.gen(function* () {
+        if (!teamRulesAllowsFullAccessApprovals(yield* currentTeamRules)) return;
         yield* acceptPending(threadId, "full-access").pipe(
           reportFailure("Full access prompt check failed", threadId),
         );

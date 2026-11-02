@@ -1,4 +1,6 @@
 /** Project permission saves update current chats and the default for new chats. */
+import { teamRulesClampMode, teamRulesModeRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeCrypto from "node:crypto";
 import {
   CommandId,
@@ -31,6 +33,25 @@ export const make = Effect.gen(function* () {
     updateSettings: (patch, mutation) =>
       orchestrator.withProjectPermissionUpdate(
         Effect.gen(function* () {
+          // A save names a mode even when it is the one already stored, so it is
+          // judged here too: the settings check only sees what changed.
+          const rules = yield* currentTeamRules;
+          for (const value of [
+            ...Object.values(patch.projectSettingsOverrides ?? {}),
+            ...Object.values(patch.projectSettingsOverrideChanges ?? {}).map(
+              (change) => change.set,
+            ),
+          ]) {
+            const mode = value?.defaultRuntimeMode;
+            const refused = mode === undefined ? null : teamRulesModeRefusal(rules, mode);
+            if (refused !== null) {
+              return yield* new ServerSettingsError({
+                settingsPath: "project chat permissions",
+                operation: "write-file",
+                teamRulesRefusal: refused,
+              });
+            }
+          }
           const saved = yield* mutation === undefined
             ? settings.updateSettings(patch)
             : settings.updateProviderInstance(mutation, patch);
@@ -67,9 +88,11 @@ export const make = Effect.gen(function* () {
                 isProviderNativeSubagentThread(thread)
               )
                 continue;
-              const runtimeMode =
+              const runtimeMode = teamRulesClampMode(
+                rules,
                 saved.projectSettingsOverrides[thread.projectId]?.defaultRuntimeMode ??
-                saved.defaultRuntimeMode;
+                  saved.defaultRuntimeMode,
+              );
               if (thread.runtimeMode === runtimeMode) continue;
               yield* orchestrator
                 .dispatch({

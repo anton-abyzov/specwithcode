@@ -1,3 +1,5 @@
+import { teamRulesProviderAllowed } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { VoiceSpeechError, WS_METHODS, WsVoiceRpcGroup } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 
@@ -33,6 +35,12 @@ export const synthesizeVoiceReply = (
     if (config === null) {
       return yield* new VoiceSpeechError({
         detail: "ElevenLabs is not selected in Voice settings.",
+      });
+    }
+    const rules = yield* currentTeamRules;
+    if (!teamRulesProviderAllowed(rules, "elevenLabs")) {
+      return yield* new VoiceSpeechError({
+        detail: "Your team's rules do not approve ElevenLabs for spoken replies.",
       });
     }
     const audio = yield* Effect.tryPromise({

@@ -20,6 +20,8 @@ import type * as AcpSchema from "@specweave-studio/effect-acp/compat";
 
 import * as PtyAdapter from "../../terminal/PtyAdapter.ts";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
+import { teamRulesDriverRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
 import {
   acpApiKeyCredential,
@@ -87,6 +89,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+  // Discovery, sign-in and sign-out each start the agent, which rules can forbid.
+  const refuseByTeamRules = (operation: string) =>
+    Effect.gen(function* () {
+      const refusal = teamRulesDriverRefusal(yield* currentTeamRules, "acpRegistry");
+      if (refusal !== null) return yield* failure(operation, refusal.message);
+    });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(
@@ -133,6 +141,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     | undefined;
   const discoverMethods = Effect.scoped(
     Effect.gen(function* () {
+      yield* refuseByTeamRules("methods");
       const inspected = yield* catalog
         .inspect(options.settings, options.environment)
         .pipe(
@@ -364,6 +373,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
 
   const authenticate = (methodId: string, context: ProviderAuthFlow.ProviderAuthFlowContext) =>
     Effect.gen(function* () {
+      yield* refuseByTeamRules("start");
       if (!options.settings.enabled)
         return yield* failure("start", "Enable this provider before signing in.");
       let savedCredential: AcpRegistryCredential | undefined;
@@ -558,6 +568,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     });
   const logout = Effect.scoped(
     Effect.gen(function* () {
+      yield* refuseByTeamRules("logout");
       const resolved = yield* resolve;
       const runtime = yield* makeRuntime(resolved.spawn);
       yield* runtime.logout.pipe(

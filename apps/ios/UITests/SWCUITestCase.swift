@@ -135,7 +135,10 @@ class SWCUITestCase: XCTestCase {
 
   /// Waits for the root chat after launch.
   func waitForHome(file: StaticString = #filePath, line: UInt = #line) {
-    waitForHittable(button("Menu"), "The root chat did not load", file: file, line: line)
+    // isHittable can stay false on SDK 27 while a native tap works; see openDrawer.
+    let menu = button("Menu")
+    waitFor(menu, "The root chat did not load", file: file, line: line)
+    XCTAssertTrue(menu.isEnabled, "The root chat did not load", file: file, line: line)
   }
 
   /// Opens the drawer from the menu button of the root chat and waits for

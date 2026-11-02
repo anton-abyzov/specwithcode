@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
   upsert: vi.fn(),
   tasks: [] as Array<Record<string, unknown> & { id: string; enabled: boolean }>,
 }));
+vi.mock("../../teamRules/useTeamRules", async () => {
+  const { teamRulesFromSummary } = await import("../../teamRules/teamRulesView");
+  return { useTeamRules: () => teamRulesFromSummary(undefined) };
+});
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     scheduledTasksLive: () => ({}),

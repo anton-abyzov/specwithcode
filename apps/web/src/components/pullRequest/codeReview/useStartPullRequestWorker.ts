@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { useTeamRules } from "../../../teamRules/useTeamRules";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type {
@@ -80,6 +82,7 @@ export function useStartPullRequestWorker(input: {
       (candidate) => candidate.environmentId === environmentId && candidate.id === projectId,
     ) ?? null;
   const settings = useEnvironmentSettings(environmentId);
+  const teamRules = useTeamRules(environmentId);
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const entries = useMemo(
@@ -137,7 +140,10 @@ export function useStartPullRequestWorker(input: {
           worktreePath = prepared.value.worktreePath;
         }
         const projectSettings = resolveProjectSettings(settings, projectId, project).settings;
-        const runtimeMode = projectSettings.defaultRuntimeMode ?? "full-access";
+        const runtimeMode = teamRulesClampMode(
+          teamRules.state,
+          projectSettings.defaultRuntimeMode ?? "full-access",
+        );
         const threadId = newThreadId();
         const result = await startTurn({
           environmentId,
@@ -219,6 +225,7 @@ export function useStartPullRequestWorker(input: {
       projectId,
       settings,
       startTurn,
+      teamRules.state,
     ],
   );
 

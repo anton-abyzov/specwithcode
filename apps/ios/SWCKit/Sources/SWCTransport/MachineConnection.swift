@@ -256,6 +256,12 @@ public actor MachineConnection {
     halt(.needsRepair, error: .needsRepair)
   }
 
+  /// Posts bytes to a signed URL this machine issued, on the route in use.
+  public func uploadSigned(_ body: Data, contentType: String, relativeURL: String) async throws {
+    guard status.state == .connected, let route = status.route else { throw TransportError.unreachable("Offline") }
+    try await http.uploadSigned(body, contentType: contentType, relativeURL: relativeURL, at: route.httpBase)
+  }
+
   /// A fresh ticket for the device hub, bought on the route in use with that
   /// route's own credential: DPoP for Connect, the bearer token otherwise.
   /// Returns the route's origin with it, since the hub lives on the same origin.

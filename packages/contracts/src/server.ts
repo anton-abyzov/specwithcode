@@ -1,3 +1,4 @@
+import { TeamRulesSummary } from "./teamRules.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
@@ -268,6 +269,9 @@ export const ServerProviderUpdateState = Schema.Struct({
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
 export const ServerProvider = Schema.Struct({
+  // The model patterns Team rules allow, so a client can hold custom models it
+  // merges from settings to the same list the server enforces.
+  teamRulesModels: Schema.optionalKey(Schema.Array(Schema.String)),
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
   instanceId: ProviderInstanceId,
@@ -750,6 +754,8 @@ export const ServerConfig = Schema.Struct({
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
+  /** The machine's Team rules. Absent with no rules, and on servers that predate them. */
+  teamRules: Schema.optionalKey(TeamRulesSummary),
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Whether shell.openInEditor honors `LaunchEditorInput.reveal` for the
@@ -867,6 +873,8 @@ export type ServerConfigKeybindingsUpdatedPayload =
 
 export const ServerConfigProviderStatusesPayload = Schema.Struct({
   providers: ServerProviders,
+  /** Rules change what providers offer, so they travel with the list. */
+  teamRules: Schema.optionalKey(TeamRulesSummary),
 });
 export type ServerConfigProviderStatusesPayload = typeof ServerConfigProviderStatusesPayload.Type;
 

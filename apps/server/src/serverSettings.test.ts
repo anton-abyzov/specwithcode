@@ -30,6 +30,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { TeamRules, teamRulesOf } from "./teamRules/TeamRules.ts";
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 import { BUILT_IN_DRIVERS } from "./provider/builtInDrivers.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as ProviderInstanceRegistryMutator from "./provider/ProviderInstanceRegistryMutator.ts";
@@ -244,6 +246,41 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
       assert.equal(persisted.responseStreamingMode, "turn");
       assert.deepEqual(persisted.projectSettingsOverrides, settings.projectSettingsOverrides);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("refuses a write above the Team rules and keeps what was stored", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const parsed = parseTeamRulesText(
+        '{"version":1,"owner":"Acme","agents":{"ceiling":"auto-accept-edits"}}',
+      );
+      if (!parsed.ok) throw new Error(parsed.issues.join());
+      const under = Effect.provideService(
+        TeamRules,
+        teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+      );
+      yield* service.updateSettings({ defaultRuntimeMode: "approval-required" });
+      const refused = yield* service
+        .updateSettings({ defaultRuntimeMode: "full-access" })
+        .pipe(under, Effect.flip);
+      assert.equal(refused.operation, "write-file");
+      assert.include(refused.message, "Acme");
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.equal(persisted.defaultRuntimeMode, "approval-required");
+
+      const project = yield* service
+        .updateSettings({
+          projectSettingsOverrides: { p1: { defaultRuntimeMode: "full-access" } },
+        } as never)
+        .pipe(under, Effect.flip);
+      assert.equal(project.operation, "write-file");
+
+      yield* service.updateSettings({ defaultRuntimeMode: "auto-accept-edits" }).pipe(under);
     }).pipe(Effect.provide(layerServerSettings())),
   );
 

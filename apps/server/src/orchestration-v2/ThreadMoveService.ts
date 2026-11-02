@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   isProjectCoordinatorThreadId,
@@ -125,6 +127,11 @@ const make = Effect.gen(function* () {
       target.id,
       target,
     ).settings;
+    // A saved default from before the rules lowers to what they allow.
+    const targetRuntimeMode = teamRulesClampMode(
+      yield* currentTeamRules,
+      defaults.defaultRuntimeMode,
+    );
 
     if (yield* folders.isScratch(source.projectId)) {
       const adopted = yield* threads
@@ -137,13 +144,13 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(failed(`This chat could not be moved to ${target.title}.`)));
       // From its next turn it works with the project's access, like the project's other chats.
-      if (source.runtimeMode !== defaults.defaultRuntimeMode) {
+      if (source.runtimeMode !== targetRuntimeMode) {
         yield* threads
           .dispatch({
             type: "thread.runtime-mode.set",
             commandId: step("runtime-mode"),
             threadId: command.threadId,
-            runtimeMode: defaults.defaultRuntimeMode,
+            runtimeMode: targetRuntimeMode,
             applyOnNextTurn: true,
           })
           .pipe(
@@ -163,7 +170,7 @@ const make = Effect.gen(function* () {
         projectId: target.id,
         title: source.title,
         modelSelection: defaults.defaultModelSelection ?? source.modelSelection,
-        runtimeMode: defaults.defaultRuntimeMode,
+        runtimeMode: targetRuntimeMode,
         interactionMode: "default",
         workspaceStrategy: { type: "root" },
         createdBy: "user",

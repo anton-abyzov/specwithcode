@@ -1,3 +1,8 @@
+import {
+  teamRulesHoldRefusal,
+  teamRulesSelectionRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -168,11 +173,32 @@ export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const capacity = yield* StudioCapacity.Capacity;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  /** Titles, commit text and notes send code to a model too, so rules apply. */
+  const refuseByTeamRules = (
+    operation: TextGenerationOp,
+    input: { modelSelection: ModelSelection },
+  ) =>
+    Effect.gen(function* () {
+      const rules = yield* currentTeamRules;
+      if (rules.status === "none") return;
+      const refused =
+        teamRulesHoldRefusal(rules) ??
+        teamRulesSelectionRefusal(rules, {
+          driver:
+            (yield* registry.getInstance(input.modelSelection.instanceId))?.driverKind ??
+            input.modelSelection.instanceId,
+          model: input.modelSelection.model,
+        });
+      if (refused !== null) {
+        return yield* new TextGenerationError({ operation, detail: refused.message });
+      }
+    });
   const admittedInstance = (
     operation: TextGenerationOp,
     input: { modelSelection: ModelSelection; cwd: string },
   ) =>
-    capacity.assertNativeStart(input.modelSelection.instanceId, input.cwd).pipe(
+    refuseByTeamRules(operation, input).pipe(
+      Effect.andThen(capacity.assertNativeStart(input.modelSelection.instanceId, input.cwd)),
       Effect.mapError((error) => new TextGenerationError({ operation, detail: error.detail })),
       Effect.flatMap(() => resolveInstance(registry, operation, input.modelSelection.instanceId)),
     );

@@ -273,6 +273,9 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useAtomValue } from "@effect/atom-react";
+import { teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
+import { TEAM_RULES_ABOVE_LIMIT, teamRulesFromSummary } from "~/teamRules/teamRulesView";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { ModelChipFitContext, type ModelChipFit } from "./modelChipFit";
@@ -1274,7 +1277,10 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
   };
 }
 
-type RuntimeModeOption = { mode: RuntimeMode } & (typeof runtimeModeConfig)[RuntimeMode];
+type RuntimeModeOption = {
+  mode: RuntimeMode;
+  aboveTeamLimit?: boolean;
+} & (typeof runtimeModeConfig)[RuntimeMode];
 const runtimeModeOptions = runtimeModes.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 const supervisedRuntimeModeOption = {
   mode: "approval-required" as const,
@@ -1379,6 +1385,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                   key={option.mode}
                   value={option.mode}
                   hideIndicator
+                  disabled={option.aboveTeamLimit === true}
                   className="min-w-64"
                 >
                   <div className="flex min-w-0 items-center gap-3">
@@ -1388,7 +1395,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                         {option.label}
                       </span>
                       <span className="text-muted-foreground text-xs leading-4">
-                        {option.description}
+                        {option.aboveTeamLimit === true
+                          ? TEAM_RULES_ABOVE_LIMIT
+                          : option.description}
                       </span>
                     </div>
                   </div>
@@ -2233,6 +2242,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   )
     ? runtimeMode
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
+  const teamRulesSummary = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+  )?.teamRules;
+  const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
+  const runtimeModeMenuOptions = useMemo(
+    () =>
+      compatibleRuntimeModeOptions.map((option) => ({
+        ...option,
+        aboveTeamLimit: !teamRulesModeAllowed(teamRules.state, option.mode),
+      })),
+    [compatibleRuntimeModeOptions, teamRules.state],
+  );
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,
@@ -3122,6 +3143,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     canOperateThread &&
     compatibleRuntimeMode !== "full-access" &&
     compatibleRuntimeModeOptions.some((option) => option.mode === "full-access") &&
+    teamRulesModeAllowed(teamRules.state, "full-access") &&
     (activePendingApproval.requestKind !== "mcp-elicitation" ||
       (activePendingApproval.options ?? []).some((option) => option.decision === "accept"));
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
@@ -5674,7 +5696,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           showInteractionModeToggle={planModeUiEnabled}
           interactionMode={interactionMode}
           runtimeMode={compatibleRuntimeMode}
-          runtimeModeOptions={compatibleRuntimeModeOptions}
+          runtimeModeOptions={runtimeModeMenuOptions}
           size={composerControlsCollapsed ? "xs" : "sm"}
           hidden={
             composerControlsHidden || restingHiddenBlockCount > (providerTraitsPicker ? 1 : 0)
@@ -5888,7 +5910,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           <CompactComposerControlsMenu
             interactionMode={interactionMode}
             runtimeMode={compatibleRuntimeMode}
-            runtimeModeOptions={compatibleRuntimeModeOptions}
+            runtimeModeOptions={runtimeModeMenuOptions}
             size={composerControlsCollapsed ? "xs" : "sm"}
             hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
             showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}

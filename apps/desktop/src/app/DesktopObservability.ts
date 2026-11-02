@@ -7,6 +7,10 @@ import {
 import * as SharedObservability from "@specweave-studio/shared/observability";
 import * as OtelEnvironment from "@specweave-studio/shared/otelEnvironment";
 import {
+  teamRulesExportAllowedByText,
+  teamRulesMachinePath,
+} from "@specweave-studio/shared/teamRules";
+import {
   parsePersistedServerObservabilitySettings,
   type PersistedServerObservabilitySettings,
 } from "@specweave-studio/shared/serverSettings";
@@ -350,6 +354,17 @@ const readPersistedObservabilitySettings: Effect.Effect<
     : parsePersistedServerObservabilitySettings(raw.value);
 });
 
+/** A file that exists but cannot be read counts as broken, as it does on the server. */
+const teamRulesAllowExport: Effect.Effect<boolean, never, FileSystem.FileSystem> = Effect.gen(
+  function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = teamRulesMachinePath(process.platform);
+    const raw = yield* fileSystem.readFileString(path).pipe(Effect.option);
+    if (Option.isSome(raw)) return teamRulesExportAllowedByText(raw.value);
+    return !(yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false)));
+  },
+);
+
 /**
  * Resolved as the server resolves them, with persisted Settings as the
  * fallback. Settings is read once for every signal, so the main process
@@ -358,7 +373,7 @@ const readPersistedObservabilitySettings: Effect.Effect<
  */
 const resolveOtlpEndpoints = Effect.gen(function* () {
   const otel = yield* OtelEnvironment.load;
-  if (otel.disabled) {
+  if (otel.disabled || !(yield* teamRulesAllowExport)) {
     return {
       traces: undefined,
       metrics: undefined,

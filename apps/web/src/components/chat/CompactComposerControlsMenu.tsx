@@ -10,6 +10,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { cn } from "~/lib/utils";
+import { TEAM_RULES_ABOVE_LIMIT } from "~/teamRules/teamRulesView";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -18,6 +19,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<{
+    readonly aboveTeamLimit?: boolean;
     readonly mode: RuntimeMode;
     readonly label: string;
   }>;
@@ -87,8 +89,14 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
           }}
         >
           {props.runtimeModeOptions.map((option) => (
-            <MenuRadioItem key={option.mode} value={option.mode}>
-              {option.label}
+            <MenuRadioItem
+              key={option.mode}
+              value={option.mode}
+              disabled={option.aboveTeamLimit === true}
+            >
+              {option.aboveTeamLimit === true
+                ? `${option.label}: ${TEAM_RULES_ABOVE_LIMIT}`
+                : option.label}
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>

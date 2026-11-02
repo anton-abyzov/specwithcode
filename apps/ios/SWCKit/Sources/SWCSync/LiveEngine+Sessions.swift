@@ -18,6 +18,7 @@ final class SessionController {
     /// Matched against the echoed user message on thread sends.
     let messageId: String?
     let text: String
+    let attachments: [TranscriptAttachment]
     /// User items present when a coordinator message was sent; a new one with the same text is its echo.
     let knownUserItems: Set<String>
   }
@@ -434,7 +435,7 @@ extension LiveEngine {
       assign(session, \.isLoaded, true)
       assign(session, \.loadError, nil)
     }
-    rows += controller.pending.map { TranscriptRow(id: $0.rowId, kind: .user(text: $0.text, state: .sending)) }
+    rows += controller.pending.map { TranscriptRow(id: $0.rowId, kind: .user(text: $0.text, state: .sending, attachments: $0.attachments)) }
     if !rows.isEmpty { assign(session, \.isLoaded, true) }
     assign(session, \.rows, rows)
     refreshMeta(controller)
@@ -514,13 +515,17 @@ extension LiveEngine {
 
   // MARK: - Commands
 
-  public func send(_ text: String, to target: ChatTarget) async throws {
+  public func send(_ text: String, images: [OutgoingImage], to target: ChatTarget) async throws {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { throw SyncError.emptyMessage }
+    guard !text.isEmpty || !images.isEmpty else { throw SyncError.emptyMessage }
+    guard images.reduce(0, { $0 + $1.data.count }) <= PhotoAttachmentEncoder.maximumTotalBytes else {
+      throw SyncError.sendBlocked("These photos are too large to send together. Send fewer at once.")
+    }
     guard let entry = machines[target.environmentId] else { throw SyncError.unknownMachine }
     guard entry.canOperate else { throw SyncError.sendBlocked(Self.readOnlyReason) }
     let controller = controllers[target]
     controller?.session.lastError = nil
+    let previews = images.map(\.transcriptAttachment)
 
     do {
       switch target {
@@ -530,15 +535,16 @@ extension LiveEngine {
         if controller?.projection?.thread.deletedAt != nil { throw SyncError.sendBlocked(Self.deletedReason) }
         let messageId = Self.newId()
         let running = controller?.projection.map(TranscriptMapper.isRunning) ?? (entry.thread(ref.threadId)?.activeRunId != nil)
-        let command = OrchestrationCommand.messageDispatch(MessageDispatchCommand(
-          commandId: Self.newId(),
-          threadId: ref.threadId,
-          messageId: messageId,
-          text: text,
-          dispatchMode: running ? .queueAfterActive : .startImmediately
-        ))
-        addPending(controller, text: text, messageId: messageId)
+        addPending(controller, text: text, messageId: messageId, attachments: previews)
         do {
+          let command = OrchestrationCommand.messageDispatch(MessageDispatchCommand(
+            commandId: Self.newId(),
+            threadId: ref.threadId,
+            messageId: messageId,
+            text: text,
+            dispatchMode: running ? .queueAfterActive : .startImmediately,
+            attachments: try await upload(images, to: entry)
+          ))
           try await dispatch(command, on: ref.environmentId)
         } catch {
           removePending(controller, messageId: messageId)
@@ -550,10 +556,11 @@ extension LiveEngine {
           if shell.isArchived { throw SyncError.sendBlocked("This project is archived.") }
           if shell.isPaused { throw SyncError.sendBlocked("This project is paused. Resume it to send messages.") }
         }
-        let rowId = addPending(controller, text: text, messageId: nil)
-        let input = CoordinatorSendInput(projectId: project.projectId, commandId: Self.newId(), prompt: text)
+        let rowId = addPending(controller, text: text, messageId: nil, attachments: previews)
         let result: CoordinatorResult
         do {
+          let attachments = try await upload(images, to: entry)
+          let input = CoordinatorSendInput(projectId: project.projectId, commandId: Self.newId(), prompt: text, attachments: attachments.isEmpty ? nil : attachments)
           result = try await withRetry(project.environmentId) { socket in
             try await Self.decode(CoordinatorResult.self, from: socket.call(tag: RpcMethod.coordinatorSend.rawValue, payload: JSONValue.from(input)))
           }
@@ -571,12 +578,72 @@ extension LiveEngine {
     }
   }
 
+  /// Stages each image on the machine. A send claims the pending IDs into its thread;
+  /// abandoned uploads expire on the machine.
+  func upload(_ images: [OutgoingImage], to entry: MachineEntry) async throws -> [ChatAttachment] {
+    var attachments: [ChatAttachment] = []
+    for image in images {
+      let payload: JSONValue = .object([
+        "type": .string("image"),
+        "name": .string(image.name),
+        "mimeType": .string(image.mimeType),
+        "sizeBytes": .number(Double(image.data.count)),
+      ])
+      let ticket = try await withRetry(entry.environmentId) { socket in
+        try await Self.decode(AttachmentUploadTicket.self, from: socket.call(tag: RpcMethod.attachmentsCreateUploadUrl.rawValue, payload: payload))
+      }
+      try await entry.connection.uploadSigned(image.data, contentType: image.mimeType, relativeURL: ticket.relativeUrl)
+      attachments.append(ChatAttachment(type: "image", id: ticket.attachmentId, name: image.name, mimeType: image.mimeType, sizeBytes: image.data.count))
+    }
+    return attachments
+  }
+
+  public func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL? {
+    guard let base = machines[environmentId]?.status.route?.httpBase else { return nil }
+    let payload: JSONValue = .object(["resource": .object([
+      "_tag": .string("attachment"),
+      "attachmentId": .string(attachment.id),
+      "fileName": .string(attachment.name),
+      "mimeType": .string(attachment.mimeType),
+      "disposition": .string("inline"),
+    ])])
+    let result = try await withRetry(environmentId) { socket in
+      try await Self.decode(AssetURLResult.self, from: socket.call(tag: RpcMethod.assetsCreateUrl.rawValue, payload: payload))
+    }
+    return URL(string: result.relativeUrl, relativeTo: base)?.absoluteURL
+  }
+
+  public func threadLinkMachines() -> [ThreadLinkResolver.Machine]? {
+    machineOrder.compactMap { machines[$0] }.map { entry in
+      let threads = (entry.snapshot ?? entry.cachedSnapshot)?.threads.map {
+        ThreadLinkResolver.Thread(id: $0.id, title: $0.title, isDeleted: $0.deletedAt != nil)
+      }
+      return ThreadLinkResolver.Machine(environmentId: entry.environmentId, threads: threads)
+    }
+  }
+
+  /// Best effort per machine: one that cannot answer keeps the link's message honest.
+  public func archivedThreadLinkMachines() async -> [ThreadLinkResolver.Machine] {
+    struct Archived: Decodable, Sendable { let threads: [ThreadShell] }
+    var result: [ThreadLinkResolver.Machine] = []
+    for entry in machineOrder.compactMap({ machines[$0] }) where entry.isOnline {
+      let environmentId = entry.environmentId
+      guard let archived = try? await withRetry(environmentId, { socket in
+        try await Self.decode(Archived.self, from: socket.call(tag: RpcMethod.orchestrationGetArchivedShellSnapshot.rawValue, payload: .object([:])))
+      }) else { continue }
+      result.append(.init(environmentId: environmentId, threads: archived.threads.map {
+        .init(id: $0.id, title: $0.title, isDeleted: $0.deletedAt != nil)
+      }))
+    }
+    return result
+  }
+
   @discardableResult
-  func addPending(_ controller: SessionController?, text: String, messageId: String?) -> String {
+  func addPending(_ controller: SessionController?, text: String, messageId: String?, attachments: [TranscriptAttachment] = []) -> String {
     let rowId = "pending:\(messageId ?? Self.newId())"
     guard let controller else { return rowId }
     let known = Set(controller.projection.map { TranscriptMapper.receivedUserMessages($0).map(\.id) } ?? [])
-    controller.pending.append(.init(rowId: rowId, messageId: messageId, text: text, knownUserItems: known))
+    controller.pending.append(.init(rowId: rowId, messageId: messageId, text: text, attachments: attachments, knownUserItems: known))
     renderRows(controller)
     return rowId
   }

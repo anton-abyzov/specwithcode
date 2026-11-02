@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import {
   previewMetadata,
@@ -1324,13 +1326,19 @@ const make = Effect.gen(function* () {
           if (!saved?.configured) {
             const settings = yield* guarded(serverSettings.getSettings, "storage_failed");
             const resolved = resolveProjectSettings(settings, input.projectId, current).settings;
-            const carriedMode = input.bundle.context.runtimeMode;
+            // Carried from another machine; this machine's rules decide here.
+            const carriedMode =
+              input.bundle.context.runtimeMode === undefined
+                ? undefined
+                : teamRulesClampMode(yield* currentTeamRules, input.bundle.context.runtimeMode);
             const patch = {
               projectSettingsOverrides: {
                 [projectId]: destinationModelPolicy(
                   resolved,
                   settings.projectSettingsOverrides[projectId],
-                  carriedMode,
+                  // An older bundle carries no mode, and the write must still fit the rules.
+                  carriedMode ??
+                    teamRulesClampMode(yield* currentTeamRules, resolved.defaultRuntimeMode),
                 ),
               },
             };

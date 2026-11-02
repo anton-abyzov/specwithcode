@@ -65,6 +65,8 @@ final class AppRouter {
   var toast: WeaveToastMessage?
   /// Unsent composer text per conversation.
   var drafts: [ChatTarget: String] = [:]
+  /// Pictures waiting in each chat's composer. They survive leaving the chat, as text does.
+  var attachmentDrafts: [ChatTarget: [OutgoingImage]] = [:]
   /// A pairing link from a deep link, picked up by the pairing screen.
   var pairPrefill: String?
   /// Set by a launch argument; cleared when the person picks an appearance.

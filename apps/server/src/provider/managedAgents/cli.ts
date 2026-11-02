@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- this module is the CLI boundary.
+import { teamRulesTurnRefusal } from "@specweave-studio/shared/teamRules";
+import { readMachineTeamRules } from "../../teamRules/TeamRules.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -79,6 +81,15 @@ export async function runManagedAgentsCli(args: readonly string[]): Promise<void
       throw new ManagedAgentsCliArgumentError(
         "Managed Agents run requires --config and --prompt-file.",
       );
+    if (command === "run" && config) {
+      // These runs bill and reach the provider directly, so the machine's rules apply.
+      const refused = teamRulesTurnRefusal(readMachineTeamRules(), {
+        runtimeMode: "approval-required",
+        driver: "claudeAgent",
+        model: config.model,
+      });
+      if (refused !== null) throw new ManagedAgentsCliArgumentError(refused.message);
+    }
     const key = process.env.ANTHROPIC_API_KEY?.trim();
     const services = ManagedAgents.layer.pipe(
       Layer.provide(

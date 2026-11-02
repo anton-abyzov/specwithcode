@@ -24,6 +24,8 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Service from "./ScheduledTaskService.ts";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
+import { TEAM_RULES_NONE, parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 import { DEFAULT_PROJECT_WORKSPACE_SETTINGS } from "../../../../packages/contracts/src/projectWorkspace.ts";
 import { routineProject } from "./ScheduledTaskService.test-fixtures.ts";
 
@@ -305,6 +307,62 @@ it.effect("requires the bound thread to belong to the routine project and still 
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
+it.effect("judges a routine against the Team rules at save and at every run", () =>
+  Effect.gen(function* () {
+    const { run, state } = yield* harness;
+    const rules = (body: Record<string, unknown>) => {
+      const parsed = parseTeamRulesText(JSON.stringify({ version: 1, owner: "Acme", ...body }));
+      if (!parsed.ok) throw new Error(parsed.issues.join());
+      return Effect.provideService(
+        TeamRules,
+        teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+      );
+    };
+    const tight = rules({ agents: { ceiling: "auto", routines: "approval-required" } });
+    yield* run((service) =>
+      Effect.gen(function* () {
+        // A form that hardcodes Full access is refused with the owner's name.
+        const refused = yield* service.upsert(taskInput({ id: "above" })).pipe(tight, Effect.flip);
+        assert.include(refused.message, "Acme's rules allow routines up to Supervised");
+        // Saved before the rules: switching it off is still possible.
+        const { task } = yield* service.upsert(taskInput({ id: "saved" }));
+        yield* service.upsert(taskInput({ id: "saved", enabled: false })).pipe(tight);
+        yield* service.upsert(taskInput({ id: "saved" }));
+
+        // Turning a routine above the limit back on is a save too.
+        yield* service.setEnabled({ id: task.id, enabled: false });
+        const reEnabled = yield* service
+          .setEnabled({ id: task.id, enabled: true })
+          .pipe(tight, Effect.flip);
+        assert.include(reEnabled.message, "allow routines up to Supervised");
+        yield* service.setEnabled({ id: task.id, enabled: true });
+
+        // The run re-checks, starts nothing and records why.
+        const result = yield* service.runNow({ id: task.id }).pipe(tight, Effect.exit);
+        assert.equal(state.launches, 0);
+        assert.equal(state.sends, 0);
+        assert.isDefined(result);
+        const { tasks } = yield* service.list();
+        const after = tasks.find((candidate) => candidate.id === task.id);
+        assert.equal(after?.lastRunStatus, "failed");
+        assert.include(after?.lastRunError ?? "", "allow routines up to Supervised");
+
+        // Pinned to a model off the list.
+        const model = yield* service
+          .upsert(
+            taskInput({
+              id: "pinned-off-list",
+              modelPinned: true,
+              runtimeMode: "approval-required",
+            }),
+          )
+          .pipe(rules({ ai: { models: ["claude-*"] } }), Effect.flip);
+        assert.include(model.message, "fixture");
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
 it.effect("runs in a bound thread on the coordinator's next model, not the one saved with it", () =>
   Effect.gen(function* () {
     const { run, state, seedThread } = yield* harness;
@@ -570,4 +628,56 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it("judges a person's first run by the project's saved mode, not the routine's", () => {
+  const settings = {
+    projectSettingsOverrides: { "project-a": { defaultRuntimeMode: "full-access" as const } },
+  };
+  const routine = { projectId: "project-a", runtimeMode: "approval-required" as const };
+  const none = TEAM_RULES_NONE;
+  assert.equal(
+    Service.routineFirstRunMode({ ...routine, createdBy: "user" }, settings, none),
+    "full-access",
+  );
+  assert.equal(
+    Service.routineFirstRunMode({ ...routine, createdBy: "agent" }, settings, none),
+    "approval-required",
+  );
+  assert.equal(
+    Service.routineFirstRunMode(
+      { projectId: "project-b", runtimeMode: "full-access" },
+      settings,
+      none,
+    ),
+    "full-access",
+  );
+});
+
+it.effect("runs no routine check unless the rules allow full access", () =>
+  Effect.gen(function* () {
+    const { run, state } = yield* harness;
+    const parsed = parseTeamRulesText(
+      JSON.stringify({ version: 1, owner: "Acme", agents: { ceiling: "auto" } }),
+    );
+    if (!parsed.ok) throw new Error(parsed.issues.join());
+    const tight = Effect.provideService(
+      TeamRules,
+      teamRulesOf({ status: "active", rules: parsed.rules, fingerprint: "3a9f", warnings: [] }),
+    );
+    yield* run((service) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(
+          taskInput({ id: "checked", check: { command: "true" } }),
+        );
+        yield* service.runNow({ id: task.id }).pipe(tight, Effect.exit);
+        assert.deepEqual(state.checks, []);
+        assert.equal(state.launches, 0);
+        const { tasks } = yield* service.list();
+        const after = tasks.find((candidate) => candidate.id === task.id);
+        assert.equal(after?.lastRunStatus, "failed");
+        assert.include(after?.lastRunError ?? "", "Acme");
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

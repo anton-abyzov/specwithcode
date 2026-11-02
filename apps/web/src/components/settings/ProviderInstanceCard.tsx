@@ -59,7 +59,11 @@ import {
   SettingsDisclosure,
   SettingsReachLabel,
   type SettingsReach,
+  TeamRulesLabel,
 } from "./settingsLayout";
+import { teamRulesProviderAllowed } from "@specweave-studio/shared/teamRules";
+import { teamRulesProviderLock } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -613,6 +617,10 @@ export function ProviderInstanceCard({
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
   const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
+  const teamRules = useTeamRules(environmentId);
+  const teamLock = teamRulesProviderLock(teamRules.summary, String(instance.driver));
+  const providerAllowed = teamRulesProviderAllowed(teamRules.state, String(instance.driver));
+  const launchReadOnly = readOnly || teamLock !== null;
   const onRunVersionAction = readOnly
     ? undefined
     : versionAdvisory?.targetVersion
@@ -980,7 +988,7 @@ export function ProviderInstanceCard({
         <span className="flex h-5 shrink-0 items-center">
           <Switch
             checked={enabled}
-            disabled={readOnly}
+            disabled={readOnly || (!providerAllowed && !enabled)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />
@@ -1026,6 +1034,7 @@ export function ProviderInstanceCard({
       value={instance.config}
       idPrefix={`provider-instance-${instanceId}`}
       variant="settings"
+      launchLockedBy={teamLock}
       onChange={updateConfig}
     />
   ) : (
@@ -1141,9 +1150,9 @@ export function ProviderInstanceCard({
           ) : null}
           {setup}
           <div
-            inert={readOnly}
-            aria-disabled={readOnly || undefined}
-            className={readOnly ? "opacity-50 select-none" : undefined}
+            inert={launchReadOnly}
+            aria-disabled={launchReadOnly || undefined}
+            className={launchReadOnly ? "opacity-50 select-none" : undefined}
           >
             {environmentFields.length > 0 ? (
               <>
@@ -1187,10 +1196,15 @@ export function ProviderInstanceCard({
         title="Environment variables"
         reach={machineReach}
       >
+        {teamLock !== null ? (
+          <div className="px-3 pt-3 sm:px-4">
+            <TeamRulesLabel>{teamLock}</TeamRulesLabel>
+          </div>
+        ) : null}
         <div
-          inert={readOnly}
-          aria-disabled={readOnly || undefined}
-          className={readOnly ? "opacity-50 select-none" : undefined}
+          inert={launchReadOnly}
+          aria-disabled={launchReadOnly || undefined}
+          className={launchReadOnly ? "opacity-50 select-none" : undefined}
         >
           <ProviderEnvironmentSection
             environment={genericEnvironment}

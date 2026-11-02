@@ -1,4 +1,12 @@
 import {
+  teamRulesInstanceDriver,
+  teamRulesClampMode,
+  teamRulesRoutineRefusal,
+  teamRulesSelectionRefusal,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import {
   CommandId,
   MessageId,
   ScheduledTask,
@@ -18,6 +26,8 @@ import {
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
+  DEFAULT_SERVER_SETTINGS,
+  type RuntimeMode,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -110,6 +120,29 @@ export type {
   WebhookTriggerResult,
   WebhookDeliveryOutcome,
 } from "./ScheduledTaskTypes.ts";
+
+/**
+ * The mode a routine's new thread will get. An agent's routine keeps its own;
+ * a person's takes the project's saved mode, lowered as any new chat's is.
+ */
+export const routineFirstRunMode = (
+  routine: {
+    readonly createdBy?: string | null | undefined;
+    readonly projectId: string;
+    readonly runtimeMode: RuntimeMode;
+  },
+  settings: {
+    readonly projectSettingsOverrides: Readonly<
+      Record<string, { readonly defaultRuntimeMode?: RuntimeMode | undefined } | undefined>
+    >;
+  },
+  rules: TeamRulesState,
+): RuntimeMode => {
+  const saved = settings.projectSettingsOverrides[routine.projectId]?.defaultRuntimeMode;
+  return routine.createdBy === "agent" || saved === undefined
+    ? routine.runtimeMode
+    : teamRulesClampMode(rules, saved);
+};
 
 export class ScheduledTaskService extends Context.Service<
   ScheduledTaskService,
@@ -762,7 +795,36 @@ export const layer = Layer.effect(
         }
         // A command routine wakes the thread only when its check passes; a
         // quiet check ends the run here, without any agent or provider.
-        const check = active.check ?? null;
+        // Judged at every run, webhook fires included: a routine keeps the mode it
+        // was saved with, and the rules may have tightened since. A refused run
+        // starts nothing, and its check's unattended command does not run either.
+        const teamRules = yield* currentTeamRules;
+        const boundThread =
+          teamRules.status !== "active" || active.threadId === null
+            ? null
+            : yield* threadManagement
+                .getThreadShell(ThreadId.make(active.threadId))
+                .pipe(Effect.orElseSucceed(() => null));
+        // A first run has no thread yet: a person's routine takes the project's saved
+        // mode at creation, so that is the mode to judge.
+        const firstRunMode =
+          boundThread !== null || teamRules.status !== "active" || serverSettings === undefined
+            ? active.runtimeMode
+            : routineFirstRunMode(
+                active,
+                yield* serverSettings.getSettings.pipe(
+                  Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+                ),
+                teamRules,
+              );
+        // A check runs a shell command with no approval, so it needs full access
+        // whatever mode the thread runs in.
+        const teamRulesRefusal =
+          teamRulesRoutineRefusal(teamRules, boundThread?.runtimeMode ?? firstRunMode) ??
+          (active.check === null || active.check === undefined
+            ? null
+            : teamRulesRoutineRefusal(teamRules, "full-access"));
+        const check = teamRulesRefusal === null ? (active.check ?? null) : null;
         const checked =
           check === null
             ? null
@@ -963,15 +1025,17 @@ export const layer = Layer.effect(
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
         const result =
-          checked !== null && checked._tag === "Failure"
-            ? checked
-            : route?.type === "defer" || (checked !== null && !checked.value.passed)
-              ? Exit.void
-              : active.threadId !== null
-                ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
-                : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
-                  // replacing whatever thread the stored row still names.
-                  yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
+          teamRulesRefusal !== null
+            ? Exit.fail(taskError(teamRulesRefusal.message, { taskId: active.id }))
+            : checked !== null && checked._tag === "Failure"
+              ? checked
+              : route?.type === "defer" || (checked !== null && !checked.value.passed)
+                ? Exit.void
+                : active.threadId !== null
+                  ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
+                  : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
+                    // replacing whatever thread the stored row still names.
+                    yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success" && route?.type !== "defer";
@@ -1272,6 +1336,28 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = (input) =>
       Effect.gen(function* () {
+        // A turned-off routine runs nothing, so one saved before the rules can
+        // still be edited or switched off. Every enabled save is judged.
+        const rules = yield* currentTeamRules;
+        const refused =
+          rules.status !== "active" || !input.enabled
+            ? null
+            : (teamRulesRoutineRefusal(rules, input.runtimeMode) ??
+              (input.modelPinned === true
+                ? teamRulesSelectionRefusal(rules, {
+                    driver:
+                      serverSettings === undefined
+                        ? input.modelSelection.instanceId
+                        : teamRulesInstanceDriver(
+                            yield* serverSettings.getSettings.pipe(
+                              Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+                            ),
+                            input.modelSelection.instanceId,
+                          ),
+                    model: input.modelSelection.model,
+                  })
+                : null));
+        if (refused !== null) return yield* taskError(refused.message);
         const now = yield* localNow;
         const uuid =
           input.commandId === undefined
@@ -1412,6 +1498,10 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const existing = yield* loadTask(input.id);
         if (existing.enabled === input.enabled) return { task: existing };
+        if (input.enabled) {
+          const refused = teamRulesRoutineRefusal(yield* currentTeamRules, existing.runtimeMode);
+          if (refused !== null) return yield* taskError(refused.message);
+        }
         const now = yield* localNow;
         const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
         // A one-time task is armed anew, so it fires under a new key.

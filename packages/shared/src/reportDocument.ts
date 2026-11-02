@@ -136,7 +136,12 @@ function asValue(body: string): string {
  */
 export function reportDocument(text: string): ReportDocument | null {
   const frontmatter = reportFrontmatter(text);
-  const all = blocks(reportBodyAfterTitle(text));
+  const body = reportBodyAfterTitle(text);
+  const all = blocks(body);
+  // A `# Title` with markup stays in the body, but the reader shows it as the title all the same.
+  if (body === frontmatter.body && /^\s{0,3}#\s/.test(all[0] ?? "") && !all[0]!.includes("\n")) {
+    all.shift();
+  }
 
   const leadBlocks: string[] = [];
   const parts: Array<{ label: string; body: string[]; heading: boolean }> = [];

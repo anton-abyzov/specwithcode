@@ -78,17 +78,56 @@ extension LiveEngine {
 }
 
 extension AppModel {
-  /// The UI passes the shared Markdown route parser's decoded identities. Legacy
-  /// links without a machine stay local; canonical links name a paired machine.
-  public func threadLink(threadId: String, environmentId: String?, from origin: String) throws -> ThreadRef {
-    let environmentId = environmentId ?? origin
-    guard machine(environmentId) != nil else {
-      throw SyncError.sendBlocked("This thread belongs to a machine that is not paired with this phone.")
+  /// The UI passes the shared Markdown route parser's decoded identities. A link
+  /// naming a machine stays on it; a bare link may name another machine's worker.
+  public func threadLink(threadId: String, environmentId: String?, threadIds: [String] = [], title: String? = nil, from origin: String) throws -> ThreadRef {
+    try threadLinkResult(threadId: threadId, environmentId: environmentId, threadIds: threadIds, title: title, label: nil, from: origin, machines: threadLinkMachines()).get()
+  }
+
+  /// `threadLink`, then the machines' archived threads, which the live lists leave
+  /// out. Only then the label: a valid ID outranks a live thread with the same title.
+  public func openThreadLink(threadId: String, environmentId: String?, threadIds: [String] = [], title: String? = nil, label: String? = nil, from origin: String) async throws -> ThreadRef {
+    let machines = threadLinkMachines()
+    let live = threadLinkResult(threadId: threadId, environmentId: environmentId, threadIds: threadIds, title: title, label: nil, from: origin, machines: machines)
+    switch live {
+    case .failure(.missing), .failure(.stillLoading): break
+    default: return try live.get()
     }
-    let ref = ThreadRef(environmentId: environmentId, threadId: threadId)
-    guard thread(ref) != nil else {
-      throw SyncError.sendBlocked("This thread is not available on this machine. Open its project and refresh the connection, or open the link on its original machine.")
+    let archived = await engine.archivedThreadLinkMachines()
+    return try threadLinkResult(threadId: threadId, environmentId: environmentId, threadIds: threadIds, title: title, label: label, from: origin, machines: ThreadLinkResolver.merging(archived, into: machines)).get()
+  }
+
+  private func threadLinkMachines() -> [ThreadLinkResolver.Machine] {
+    engine.threadLinkMachines() ?? machines.map { machine in
+      ThreadLinkResolver.Machine(environmentId: machine.id, threads: (threadsByProject.values.flatMap { $0 } + recentThreads)
+        .filter { $0.ref.environmentId == machine.id }
+        .map { ThreadLinkResolver.Thread(id: $0.ref.threadId, title: $0.title, isDeleted: false) })
     }
-    return ref
+  }
+
+  private func threadLinkResult(threadId: String, environmentId: String?, threadIds: [String], title: String?, label: String?, from origin: String, machines: [ThreadLinkResolver.Machine]) -> Result<ThreadRef, ThreadLinkError> {
+    let candidates = threadIds.isEmpty ? [threadId] : threadIds
+    let titles = [title].compactMap { $0 } + candidates + [label].compactMap { $0 }
+    switch ThreadLinkResolver.resolve(candidates: candidates, environmentId: environmentId, titles: titles, origin: origin, machines: machines) {
+    case let .thread(ref): return .success(ref)
+    case .deleted: return .failure(.deleted)
+    case .unpairedMachine: return .failure(.unpairedMachine)
+    case .stillLoading: return .failure(.stillLoading)
+    case .missing: return .failure(.missing)
+    }
+  }
+}
+
+enum ThreadLinkError: LocalizedError, Equatable {
+  case deleted, unpairedMachine, stillLoading, missing
+
+  var errorDescription: String? {
+    switch self {
+    case .deleted: "This thread was deleted."
+    case .unpairedMachine: "This thread belongs to a machine that is not paired with this phone."
+    case .stillLoading: "This thread may be on a machine that has not loaded yet. Try again once that machine connects."
+    // The server drops deleted threads from its lists, so a deleted one lands here too.
+    case .missing: "This thread is not available on this machine. It may have been deleted. Otherwise open its project and refresh the connection, or open the link on its original machine."
+    }
   }
 }

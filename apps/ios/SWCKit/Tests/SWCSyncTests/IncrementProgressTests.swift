@@ -71,7 +71,8 @@ import SWCWire
     copy = ThreadSummary(ref: slashRef, title: "Remote thread", activity: .idle, updatedAt: Date(), machineLabel: "Remote", machineOnline: true)
     model.recentThreads.append(copy)
     #expect(try model.threadLink(threadId: slashRef.threadId, environmentId: remote, from: origin) == slashRef)
-    #expect(throws: (any Error).self) { try model.threadLink(threadId: slashRef.threadId, environmentId: nil, from: origin) }
+    // A bare link may name a worker on another paired machine, as on desktop.
+    #expect(try model.threadLink(threadId: slashRef.threadId, environmentId: nil, from: origin) == slashRef)
     #expect(throws: (any Error).self) { try model.threadLink(threadId: known.ref.threadId, environmentId: remote, from: origin) }
     #expect(throws: (any Error).self) { try model.threadLink(threadId: slashRef.threadId, environmentId: "unpaired", from: origin) }
     #expect(throws: (any Error).self) { try model.threadLink(threadId: "unknown", environmentId: remote, from: origin) }

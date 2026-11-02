@@ -27,6 +27,8 @@
  *
  * @module ProviderRegistry
  */
+import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, watchTeamRules } from "../teamRules/TeamRules.ts";
 import {
   defaultInstanceIdForDriver,
   ProviderDriverKind,
@@ -1135,8 +1137,22 @@ export const layer = Layer.effect(
       );
     });
 
+    // Rules narrow what every consumer sees, not what is stored, so removing
+    // them brings the models back. A change republishes the list to clients.
+    const ruledProviders = Effect.gen(function* () {
+      return teamRulesFilterProviders(yield* currentTeamRules, yield* Ref.get(providersRef));
+    });
+    yield* watchTeamRules(() =>
+      ruledProviders.pipe(
+        Effect.flatMap((providers) => PubSub.publish(changesPubSub, providers)),
+        // A probe skipped during a hold runs again as soon as the file is fixed.
+        Effect.andThen(refreshAll().pipe(Effect.ignore, Effect.forkScoped)),
+        Effect.asVoid,
+      ),
+    ).pipe(Effect.forkScoped);
+
     return {
-      getProviders: Ref.get(providersRef),
+      getProviders: ruledProviders,
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId, options?: { readonly fresh?: boolean }) =>
@@ -1146,7 +1162,11 @@ export const layer = Layer.effect(
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
-        return Stream.fromPubSub(changesPubSub);
+        return Stream.fromPubSub(changesPubSub).pipe(
+          Stream.mapEffect((providers) =>
+            Effect.map(currentTeamRules, (rules) => teamRulesFilterProviders(rules, providers)),
+          ),
+        );
       },
     } satisfies ProviderRegistry["Service"];
   }),

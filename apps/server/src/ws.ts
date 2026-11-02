@@ -1775,12 +1775,14 @@ const layerWsRpc = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+          const teamRules = yield* ServerSettings.currentTeamRulesSummary;
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
           );
 
           return {
+            ...(teamRules === undefined ? {} : { teamRules }),
             environment,
             auth,
             cwd: config.cwd,
@@ -3100,14 +3102,21 @@ const layerWsRpc = (
                 // snapshot rather than dropping blindly: a refresh that landed between
                 // the snapshot and the subscription still goes out.
                 (updates) => Stream.concat(rpcInitialItems([config.providers]), updates),
+                // Rules can change with the provider list unchanged, so they count here.
+                Stream.mapEffect((providers) =>
+                  Effect.map(ServerSettings.currentTeamRulesSummary, (teamRules) => ({
+                    providers,
+                    ...(teamRules === undefined ? {} : { teamRules }),
+                  })),
+                ),
                 Stream.changesWith(
                   (previous, next) => JSON.stringify(previous) === JSON.stringify(next),
                 ),
                 Stream.drop(1),
-                Stream.map((providers) => ({
+                Stream.map((payload) => ({
                   version: 1 as const,
                   type: "providerStatuses" as const,
-                  payload: { providers },
+                  payload,
                 })),
                 Stream.debounce(Duration.millis(PROVIDER_STATUS_DEBOUNCE_MS)),
               );

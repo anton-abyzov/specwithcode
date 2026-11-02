@@ -8,6 +8,7 @@ public struct ComposerBar: View {
   let isRunning: Bool
   let placeholder: String?
   let blockedReason: String?
+  let hasAttachments: Bool
   let focus: FocusState<Bool>.Binding?
   let onSend: () -> Void
   let onStop: (() -> Void)?
@@ -20,6 +21,7 @@ public struct ComposerBar: View {
   /// - Parameters:
   ///   - placeholder: Overrides "Message…" (idle) and "Queue a message…" (running).
   ///   - blockedReason: When set, the composer is disabled and shows this line above it.
+  ///   - hasAttachments: Something to send even with no text.
   ///   - focus: Lets the caller move focus into the field.
   ///   - onStop: Hides the stop button when nil.
   ///   - onAttach: Hides the attach button when nil.
@@ -29,6 +31,7 @@ public struct ComposerBar: View {
     isRunning: Bool = false,
     placeholder: String? = nil,
     blockedReason: String? = nil,
+    hasAttachments: Bool = false,
     focus: FocusState<Bool>.Binding? = nil,
     onSend: @escaping () -> Void,
     onStop: (() -> Void)? = nil,
@@ -39,6 +42,7 @@ public struct ComposerBar: View {
     self.isRunning = isRunning
     self.placeholder = placeholder
     self.blockedReason = blockedReason
+    self.hasAttachments = hasAttachments
     self.focus = focus
     self.onSend = onSend
     self.onStop = onStop
@@ -51,7 +55,7 @@ public struct ComposerBar: View {
   static let stopGlyphScale: CGFloat = 0.55
 
   private var isBlocked: Bool { blockedReason != nil }
-  private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+  private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !hasAttachments }
   private var canSend: Bool { !isEmpty && !isBlocked }
   private var showsStop: Bool { isRunning && isEmpty && onStop != nil }
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { TEAM_RULES_LAUNCH_CONFIG_KEYS } from "@specweave-studio/shared/teamRules";
+import { TeamRulesLabel } from "./settingsLayout";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -282,6 +284,8 @@ export function nextProviderConfigWithFieldValue(
 
 interface ProviderSettingsFormProps {
   readonly definition: ProviderClientDefinition;
+  /** "Set by <owner>" when team rules own this provider's launch rows. */
+  readonly launchLockedBy?: string | null | undefined;
   readonly value: unknown;
   readonly idPrefix: string;
   /**
@@ -649,7 +653,28 @@ function ProviderSettingsFieldRow({
   );
 }
 
+/** Team rules decide this row; everything else in the form stays editable. */
+function TeamRulesLaunchLock({
+  lockedBy,
+  children,
+}: {
+  readonly lockedBy: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <div data-team-rules-locked>
+      <div className="px-3 pt-3 sm:px-4">
+        <TeamRulesLabel>{lockedBy}</TeamRulesLabel>
+      </div>
+      <div inert aria-disabled className="opacity-50 select-none">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function ProviderSettingsForm({
+  launchLockedBy = null,
   definition,
   value,
   idPrefix,
@@ -669,17 +694,35 @@ export function ProviderSettingsForm({
 
   return (
     <>
-      {fields.map((field) => (
-        <ProviderSettingsFieldRow
-          key={field.key}
-          field={field}
-          value={value}
-          idPrefix={idPrefix}
-          variant={variant}
-          onChange={onChange}
-        />
-      ))}
-      {isLocalAcp ? <ProviderCommandArguments value={value} onChange={onChange} /> : null}
+      {fields.map((field) => {
+        const row = (
+          <ProviderSettingsFieldRow
+            key={field.key}
+            field={field}
+            value={value}
+            idPrefix={idPrefix}
+            variant={variant}
+            onChange={onChange}
+          />
+        );
+        return launchLockedBy !== null &&
+          (TEAM_RULES_LAUNCH_CONFIG_KEYS as readonly string[]).includes(String(field.key)) ? (
+          <TeamRulesLaunchLock key={field.key} lockedBy={launchLockedBy}>
+            {row}
+          </TeamRulesLaunchLock>
+        ) : (
+          row
+        );
+      })}
+      {isLocalAcp ? (
+        launchLockedBy !== null ? (
+          <TeamRulesLaunchLock lockedBy={launchLockedBy}>
+            <ProviderCommandArguments value={value} onChange={onChange} />
+          </TeamRulesLaunchLock>
+        ) : (
+          <ProviderCommandArguments value={value} onChange={onChange} />
+        )
+      ) : null}
     </>
   );
 }

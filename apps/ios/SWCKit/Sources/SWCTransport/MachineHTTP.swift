@@ -150,6 +150,17 @@ public struct MachineHTTP: Sendable {
     ])
   }
 
+  /// Posts bytes to a signed URL the machine issued. The token in the path is the
+  /// credential, so this works on any route: LAN, Tailscale or a Connect tunnel.
+  public func uploadSigned(_ body: Data, contentType: String, relativeURL: String, at httpBase: URL, timeout: Duration = .seconds(120)) async throws {
+    guard relativeURL.hasPrefix("/"), !relativeURL.hasPrefix("//") else { throw TransportError.invalidAddress(relativeURL) }
+    var request = try makeRequest(httpBase, relativeURL, timeout: timeout)
+    request.httpMethod = "POST"
+    request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+    request.httpBody = body
+    _ = try await perform(request, timeout: timeout, authenticated: false)
+  }
+
   public func websocketTicket(token: String, at httpBase: URL) async throws -> WebSocketTicket {
     var request = try makeRequest(httpBase, "/api/auth/websocket-ticket", timeout: requestTimeout)
     request.httpMethod = "POST"

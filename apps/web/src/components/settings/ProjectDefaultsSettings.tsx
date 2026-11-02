@@ -43,7 +43,11 @@ import {
   SettingResetButton,
   SettingsRow,
   SettingsSection,
+  TeamRulesLabel,
 } from "./settingsLayout";
+import { teamRulesClampMode, teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
+import { TEAM_RULES_ABOVE_LIMIT, teamRulesFromSummary } from "../../teamRules/teamRulesView";
+import { useMemo } from "react";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -78,6 +82,10 @@ export function ProjectDefaultsSettings({
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const teamRulesSummary = representative?.serverConfig?.teamRules;
+  const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
+  // What a new thread would get: a default from before the rules is lowered at use, never rewritten.
+  const effectiveRuntimeMode = teamRulesClampMode(teamRules.state, settings.defaultRuntimeMode);
   const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
@@ -398,8 +406,14 @@ export function ProjectDefaultsSettings({
                 ? "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate."
                 : "Default permissions for new threads. Projects can override them."
             }
+            status={
+              teamRules.summary?.ceiling !== undefined ? (
+                <TeamRulesLabel>{teamRules.setBy}</TeamRulesLabel>
+              ) : undefined
+            }
             resetAction={
-              settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
+              settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode &&
+              teamRulesModeAllowed(teamRules.state, DEFAULT_SERVER_SETTINGS.defaultRuntimeMode) ? (
                 <SettingResetButton
                   label="default permissions"
                   onClick={() =>
@@ -412,7 +426,7 @@ export function ProjectDefaultsSettings({
             }
             control={
               <Select
-                value={mixedPermissions ? null : settings.defaultRuntimeMode}
+                value={mixedPermissions ? null : effectiveRuntimeMode}
                 onValueChange={(value) => {
                   if (value) updateSettings({ defaultRuntimeMode: value });
                 }}
@@ -422,24 +436,23 @@ export function ProjectDefaultsSettings({
                     <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
                   )}
                   <SelectValue>
-                    {mixedPermissions
-                      ? "Mixed"
-                      : runtimeModeConfig[settings.defaultRuntimeMode].label}
+                    {mixedPermissions ? "Mixed" : runtimeModeConfig[effectiveRuntimeMode].label}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {runtimeModeOptions.map((mode) => {
                     const option = runtimeModeConfig[mode];
                     const Icon = option.icon;
+                    const allowed = teamRulesModeAllowed(teamRules.state, mode);
                     return (
-                      <SelectItem key={mode} value={mode} className="min-w-64">
+                      <SelectItem key={mode} value={mode} disabled={!allowed} className="min-w-64">
                         <div className="grid gap-0.5">
                           <span className="inline-flex items-center gap-1.5 font-medium">
                             <Icon className="size-3.5 shrink-0 text-muted-foreground" />
                             {option.label}
                           </span>
                           <span className="text-xs leading-4 text-muted-foreground">
-                            {option.description}
+                            {allowed ? option.description : TEAM_RULES_ABOVE_LIMIT}
                           </span>
                         </div>
                       </SelectItem>

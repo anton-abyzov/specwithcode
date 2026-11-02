@@ -436,9 +436,12 @@ import {
   TargetIcon,
   HourglassIcon,
   FolderInputIcon,
+  ShieldAlertIcon,
   WifiOffIcon,
 } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
+import { teamRulesClampMode, teamRulesStateFromSummary } from "@specweave-studio/shared/teamRules";
+import { teamRulesThreadNotice } from "~/teamRules/teamRulesView";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { resolveDraftDefaultRuntimeMode } from "./chat/draftRuntimeMode";
@@ -2662,20 +2665,32 @@ function useChatViewState(props: ChatViewProps) {
   const primarySettings = useEnvironmentSettings(
     primaryEnvironment?.environmentId ?? environmentId,
   );
-  const defaultRuntimeMode = resolveDraftDefaultRuntimeMode({
-    environmentSettings: settings,
-    projectId: activeThread?.projectId ?? null,
-    primarySettings:
-      primaryEnvironment != null && primaryEnvironment.environmentId !== environmentId
-        ? primarySettings
-        : null,
-  });
+  const teamRulesState = teamRulesStateFromSummary(
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.teamRules,
+  );
+  // A stored default from before the rules lowers at use; nobody asked for it.
+  const defaultRuntimeMode = teamRulesClampMode(
+    teamRulesState,
+    resolveDraftDefaultRuntimeMode({
+      environmentSettings: settings,
+      projectId: activeThread?.projectId ?? null,
+      primarySettings:
+        primaryEnvironment != null && primaryEnvironment.environmentId !== environmentId
+          ? primarySettings
+          : null,
+    }),
+  );
   // Implicit drafts follow their current project/environment, including retargets.
   // Explicit composer choices and existing server threads retain their permissions.
-  const runtimeMode =
+  const requestedRuntimeMode =
     composerRuntimeMode ??
     (isServerThread ? activeThread?.runtimeMode : undefined) ??
     defaultRuntimeMode;
+  // A draft has nothing to repair, so it starts inside the rules. A started chat
+  // keeps its mode and gets the notice below with a one-click switch down.
+  const runtimeMode = isServerThread
+    ? requestedRuntimeMode
+    : teamRulesClampMode(teamRulesState, requestedRuntimeMode);
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -10967,7 +10982,40 @@ export default function ChatView(props: ChatViewProps) {
         }
       : null,
   );
+  const teamRulesSummary = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+  )?.teamRules;
+  const teamRulesNotice = useMemo(
+    () => teamRulesThreadNotice(teamRulesSummary, runtimeMode),
+    [runtimeMode, teamRulesSummary],
+  );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
+    const teamRulesItems: ComposerBannerStackItem[] =
+      teamRulesNotice === null
+        ? []
+        : [
+            {
+              id: `team-rules:${teamRulesNotice.kind}`,
+              variant: "warning",
+              priority: "urgent",
+              icon: <ShieldAlertIcon />,
+              title: teamRulesNotice.title,
+              description: teamRulesNotice.description,
+              ...(teamRulesNotice.kind === "above-ceiling"
+                ? {
+                    actions: (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => handleRuntimeModeChange(teamRulesNotice.switchTo)}
+                      >
+                        {teamRulesNotice.switchLabel}
+                      </Button>
+                    ),
+                  }
+                : {}),
+            },
+          ];
     // A handed-off thread is read-only: its move banner leads, not the limit it left behind.
     // A limit the previous account hit gives way to the account change that lifts it.
     const limitRecoveryItems = movedAwayBanner(threadMoveBannerItem?.id)
@@ -10997,6 +11045,7 @@ export default function ChatView(props: ChatViewProps) {
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...teamRulesItems,
         ...feedbackBannerItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
@@ -11010,6 +11059,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...teamRulesItems,
       ...feedbackBannerItems,
       ...limitRecoveryItems,
       ...usageLimitsItems,
@@ -11060,6 +11110,8 @@ export default function ChatView(props: ChatViewProps) {
       ...parkedThreadItems,
     ];
   }, [
+    handleRuntimeModeChange,
+    teamRulesNotice,
     activeBranchMismatchKey,
     activeThreadShell,
     serverRuntime?.usageLimitResetAt,

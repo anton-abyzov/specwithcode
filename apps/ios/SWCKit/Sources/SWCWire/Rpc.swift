@@ -2,6 +2,8 @@ import Foundation
 
 /// RPC method tags the app calls. Payload and result types are noted on each case.
 public enum RpcMethod: String, Sendable, CaseIterable {
+  /// `EmptyInput` -> the machine's archived threads.
+  case orchestrationGetArchivedShellSnapshot = "orchestration.getArchivedShellSnapshot"
   /// `EmptyInput` -> `{}`.
   case serverProbe = "server.probe"
   /// `EmptyInput` -> `ServerConfig`.
@@ -26,6 +28,10 @@ public enum RpcMethod: String, Sendable, CaseIterable {
   case launchThread = "orchestration.launchThread"
   /// `CoordinatorSendInput` -> `CoordinatorResult`.
   case coordinatorSend = "projects.coordinatorSend"
+  /// `{type, name, mimeType, sizeBytes}` -> `AttachmentUploadTicket`.
+  case attachmentsCreateUploadUrl = "attachments.createUploadUrl"
+  /// `{resource}` -> `{relativeUrl}`.
+  case assetsCreateUrl = "assets.createUrl"
   /// `CoordinatorStartInput` -> `CoordinatorResult`.
   case coordinatorStart = "projects.coordinatorStart"
   /// `WorkspaceReadInput` -> `WorkspaceReadResult`.

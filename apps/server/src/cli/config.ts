@@ -24,6 +24,8 @@ import * as CliError from "effect/cli/CliError";
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
+import { teamRulesExportAllowed } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
 /**
@@ -443,27 +445,35 @@ export const resolveServerConfig = (
       headers: env.otlpHeaders,
       exportIntervalMs: env.otlpExportIntervalMs,
     };
-    const traces = OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "traces",
-      { url: env.otlpTracesUrl, export: signalExport },
-      bootstrap?.otlpTracesUrl,
-      persistedObservabilitySettings.otlpTracesUrl,
-    );
-    const metrics = OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "metrics",
-      { url: env.otlpMetricsUrl, export: signalExport },
-      bootstrap?.otlpMetricsUrl,
-      persistedObservabilitySettings.otlpMetricsUrl,
-    );
-    const logs = OtelEnvironment.resolveSignalEndpoint(
-      otel,
-      "logs",
-      { url: env.otlpLogsUrl, export: signalExport },
-      bootstrap?.otlpLogsUrl,
-      persistedObservabilitySettings.otlpLogsUrl,
-    );
+    // Rules that turn export off beat every source below, the environment too.
+    const exportAllowed = yield* Effect.map(currentTeamRules, teamRulesExportAllowed);
+    const traces = !exportAllowed
+      ? undefined
+      : OtelEnvironment.resolveSignalEndpoint(
+          otel,
+          "traces",
+          { url: env.otlpTracesUrl, export: signalExport },
+          bootstrap?.otlpTracesUrl,
+          persistedObservabilitySettings.otlpTracesUrl,
+        );
+    const metrics = !exportAllowed
+      ? undefined
+      : OtelEnvironment.resolveSignalEndpoint(
+          otel,
+          "metrics",
+          { url: env.otlpMetricsUrl, export: signalExport },
+          bootstrap?.otlpMetricsUrl,
+          persistedObservabilitySettings.otlpMetricsUrl,
+        );
+    const logs = !exportAllowed
+      ? undefined
+      : OtelEnvironment.resolveSignalEndpoint(
+          otel,
+          "logs",
+          { url: env.otlpLogsUrl, export: signalExport },
+          bootstrap?.otlpLogsUrl,
+          persistedObservabilitySettings.otlpLogsUrl,
+        );
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,

@@ -10,6 +10,7 @@ struct TranscriptRowView: View {
   let onDecision: (String, ApprovalDecision) -> Void
   let onOpenThread: (ThreadRef) -> Void
   var onOpenLink: ((URL) -> Void)? = nil
+  var environmentId: String = ""
 
   /// Replies longer than this collapse behind "Show more".
   static let collapseThreshold = 1_200
@@ -18,8 +19,19 @@ struct TranscriptRowView: View {
 
   var body: some View {
     switch row.kind {
-    case let .user(text, state):
-      MessageBubble(text, footnote: state.footnote, isPending: state != .sent, onOpenLink: onOpenLink)
+    case let .user(text, state, attachments):
+      VStack(alignment: .trailing, spacing: WeaveSpacing.s2) {
+        if !attachments.isEmpty {
+          MessageAttachments(attachments: attachments, environmentId: environmentId)
+        }
+        if !text.isEmpty || attachments.isEmpty {
+          MessageBubble(text, footnote: state.footnote, isPending: state != .sent, onOpenLink: onOpenLink)
+        } else if let footnote = state.footnote {
+          Text(footnote)
+            .font(.weave(.callout))
+            .foregroundStyle(Color.weave.muted)
+        }
+      }
 
     case let .assistant(markdown, streaming):
       if markdown.isEmpty, streaming {

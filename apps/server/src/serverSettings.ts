@@ -10,6 +10,8 @@
  *
  * @module ServerSettings
  */
+import { summarizeTeamRules, teamRulesSettingsRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "./teamRules/TeamRules.ts";
 import {
   AcpRegistrySettings,
   AntigravitySettings,
@@ -2207,6 +2209,19 @@ const make = Effect.gen(function* () {
           yield* update(current),
           patch,
         );
+        // Every write lands here: the client, the project save and MCP tools.
+        const teamRulesRefusal = teamRulesSettingsRefusal(
+          yield* currentTeamRules,
+          current,
+          updated,
+        );
+        if (teamRulesRefusal !== null) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "write-file",
+            teamRulesRefusal,
+          });
+        }
         const tombstones = yield* readSignInTombstonesOrEmpty;
         const { clear: leftovers, stale } = classifySignInTombstones(current, updated, tombstones);
         // Cleared outside the settings lock: Codex removal waits on its sign-in lock.
@@ -2642,3 +2657,6 @@ const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ServerSettingsService, make);
+
+/** The summary clients show, reachable from `ws.ts` without another import there. */
+export const currentTeamRulesSummary = Effect.map(currentTeamRules, summarizeTeamRules);

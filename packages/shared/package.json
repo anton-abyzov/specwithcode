@@ -243,6 +243,10 @@
       "types": "./src/decisionModel.ts",
       "import": "./src/decisionModel.ts"
     },
+    "./teamRules": {
+      "types": "./src/teamRules.ts",
+      "import": "./src/teamRules.ts"
+    },
     "./modelLanes": {
       "types": "./src/modelLanes.ts",
       "import": "./src/modelLanes.ts"

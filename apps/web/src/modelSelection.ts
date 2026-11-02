@@ -1,3 +1,4 @@
+import { teamRulesModelMatches } from "@specweave-studio/shared/teamRules";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -204,7 +205,9 @@ function getAppModelOptions(
   // see the user's authored custom models.
   const defaultInstanceId = defaultInstanceIdForDriver(provider);
   const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
+  const teamRulesModels = providers.find((item) => item.driver === provider)?.teamRulesModels;
   for (const entry of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
+    if (!teamRulesModelMatches(teamRulesModels, entry.slug)) continue;
     if (seen.has(entry.slug)) {
       continue;
     }
@@ -253,7 +256,10 @@ export function getAppModelOptionsForInstance(
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const custom of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
-    if (seen.has(custom.slug)) {
+    if (
+      seen.has(custom.slug) ||
+      !teamRulesModelMatches(entry.snapshot.teamRulesModels, custom.slug)
+    ) {
       continue;
     }
 

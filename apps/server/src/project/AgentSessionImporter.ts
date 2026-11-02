@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   DEFAULT_MODEL,
@@ -269,10 +271,13 @@ const make = Effect.gen(function* () {
                 return true;
               }
 
-              const runtimeMode = Option.isSome(settings)
-                ? ((yield* settings.value.getSettings).projectSettingsOverrides[input.projectId]
-                    ?.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE)
-                : DEFAULT_RUNTIME_MODE;
+              const runtimeMode = teamRulesClampMode(
+                yield* currentTeamRules,
+                Option.isSome(settings)
+                  ? ((yield* settings.value.getSettings).projectSettingsOverrides[input.projectId]
+                      ?.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE)
+                  : DEFAULT_RUNTIME_MODE,
+              );
               const driver = ProviderDriverKind.make(thread.source);
               const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
               const providerThreadId = idAllocator.derive.providerThread({

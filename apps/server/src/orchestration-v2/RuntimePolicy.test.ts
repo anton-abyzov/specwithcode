@@ -20,6 +20,8 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 
 const projectId = ProjectId.make("project:runtime-policy");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -121,6 +123,42 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
 );
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
+  it.effect("refuses a turn outside the Team rules instead of lowering it", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const rules = (body: Record<string, unknown>) => {
+        const parsed = parseTeamRulesText(JSON.stringify({ version: 1, owner: "Acme", ...body }));
+        if (!parsed.ok) throw new Error(parsed.issues.join());
+        return teamRulesOf({
+          status: "active",
+          rules: parsed.rules,
+          fingerprint: "3a9f",
+          warnings: [],
+        });
+      };
+      const thread = makeThread({ now, worktreePath: "/w", runtimeMode: "full-access" });
+      const resolve = (state: Parameters<typeof Effect.provideService>[2]) =>
+        policy
+          .resolve({ thread, modelSelection })
+          .pipe(Effect.provideService(TeamRules, state as never));
+
+      const above = yield* resolve(rules({ agents: { ceiling: "auto" } })).pipe(Effect.flip);
+      assert.include(String(above.cause), "Acme's rules allow up to Auto");
+      const model = yield* resolve(rules({ ai: { models: ["claude-*"] } })).pipe(Effect.flip);
+      assert.include(String(model.cause), "gpt-5.5");
+      const held = yield* resolve(teamRulesOf({ status: "hold", issues: ["broken"] })).pipe(
+        Effect.flip,
+      );
+      assert.include(String(held.cause), "paused");
+
+      const allowed = yield* resolve(
+        rules({ agents: { ceiling: "full-access" }, ai: { models: ["gpt-*"] } }),
+      );
+      assert.equal(allowed.runtimeMode, "full-access");
+    }),
+  );
+
   it.effect("refreshes shared instructions and policy on each resumed turn", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

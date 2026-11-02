@@ -4,7 +4,10 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@specweave-studio/contracts";
-import { DEFAULT_UNIFIED_SETTINGS, type UnifiedSettings } from "@specweave-studio/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  type UnifiedSettings,
+} from "@specweave-studio/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "@specweave-studio/shared/model";
 import { deriveEffectiveComposerModelState } from "./composerDraftStore";
@@ -902,5 +905,38 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
     expect(resolveAppModelSelectionState(settings, [opencode])).toEqual(
       createModelSelection(instanceId, model, [{ id: "agent", value: "plan" }]),
     );
+  });
+});
+
+describe("Team rules and custom models", () => {
+  it("keeps a stored custom model off the list out of the picker", () => {
+    const providers = [
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-11-02T00:00:00.000Z",
+        version: null,
+        slashCommands: [],
+        skills: [],
+        models: [{ slug: "gpt-5", name: "GPT-5", isCustom: false, capabilities: null }],
+        teamRulesModels: ["gpt-*"],
+      },
+    ] as unknown as ReadonlyArray<ServerProvider>;
+    const settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        codex: { driver: "codex", config: { customModels: ["gpt-mine", "unapproved"] } },
+      },
+    } as unknown as UnifiedSettings;
+    const slugs = getAppModelOptionsForInstance(
+      settings,
+      deriveProviderInstanceEntries(providers)[0]!,
+    ).map((option) => option.slug);
+    expect(slugs).toContain("gpt-mine");
+    expect(slugs).not.toContain("unapproved");
   });
 });

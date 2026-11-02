@@ -1,3 +1,5 @@
+import { teamRulesInstanceDriver, teamRulesTurnRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   ModelSelection,
   OrchestrationV2AppThread,
@@ -116,6 +118,23 @@ export const layerFromProjectStore: Layer.Layer<
         );
         const projectOverrides = settings.projectSettingsOverrides[input.thread.projectId];
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
+        // Every provider turn passes here, whichever entry point started it, so
+        // this is where Team rules hold. Refused, never lowered silently: the
+        // message says what to change and the stored mode stays as it was.
+        const teamRulesRefusal = teamRulesTurnRefusal(yield* currentTeamRules, {
+          runtimeMode: input.thread.runtimeMode,
+          driver:
+            instance?.driverKind ??
+            teamRulesInstanceDriver(settings, input.modelSelection.instanceId),
+          model: input.modelSelection.model,
+        });
+        if (teamRulesRefusal !== null) {
+          return yield* new RuntimePolicyResolveError({
+            projectId: input.thread.projectId,
+            providerInstanceId: input.modelSelection.instanceId,
+            cause: teamRulesRefusal.message,
+          });
+        }
         const supportedRuntimeModes =
           instance === undefined
             ? undefined

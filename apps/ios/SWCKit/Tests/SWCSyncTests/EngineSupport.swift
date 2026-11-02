@@ -108,6 +108,7 @@ final class FakeMachine: Sendable {
   static let environmentId = "env-1"
 
   let requests = Recorder<JSONValue>()
+  let uploads = Recorder<URLRequest>()
   private let failures = Mutex<[String: String]>([:])
   private let answers = Mutex<[String: String]>([:])
   func answer(_ tag: String, with json: String) { answers.withLock { $0[tag] = json } }
@@ -206,8 +207,13 @@ final class FakeMachine: Sendable {
   static let session = #"{"authenticated":true,"permissions":["orchestration:read","orchestration:operate"],"expiresAt":"2026-11-17T06:18:32.514Z"}"#
 
   func http() -> FakeHTTP {
-    FakeHTTP { request in
-      switch request.url?.path {
+    let uploads = uploads
+    return FakeHTTP { request in
+      if request.url?.path.hasPrefix("/api/attachments/upload/") == true {
+        uploads.append(request)
+        return (204, "")
+      }
+      return switch request.url?.path {
       case "/.well-known/studio/environment": (200, Self.descriptor())
       case "/api/auth/websocket-ticket": (200, #"{"ticket":"tk.sig","expiresAt":"2099-01-01T00:00:00.000Z"}"#)
       case "/api/auth/session": (200, Self.session)

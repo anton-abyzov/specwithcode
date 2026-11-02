@@ -1,3 +1,8 @@
+import {
+  teamRulesHoldRefusal,
+  teamRulesSelectionRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { DEFAULT_SERVER_SETTINGS, type DecisionModelSettings } from "@specweave-studio/contracts";
 import type { DecisionRequest, DecisionResponse } from "@specweave-studio/shared/decisionModel";
 import * as Data from "effect/Data";
@@ -58,6 +63,20 @@ export const askDecisionModel = Effect.fn("decisions.ask")(function* (
       )
     : DEFAULT_SERVER_SETTINGS;
   const config = jevConfigFromSettings(settings.decisionModel);
+  // A hosted router is a provider like any other, so it must be on the list.
+  const rules = yield* currentTeamRules;
+  const teamRulesRefusal =
+    config === null
+      ? null
+      : (teamRulesHoldRefusal(rules) ??
+        teamRulesSelectionRefusal(rules, {
+          driver: settings.decisionModel.provider,
+          // Left empty, the router's default model is on the rules' list or nothing is.
+          model: settings.decisionModel.model,
+        }));
+  if (teamRulesRefusal !== null) {
+    return yield* new DecisionModelError({ kind: "off", message: teamRulesRefusal.message });
+  }
   if (config === null)
     return yield* new DecisionModelError({
       kind: "off",

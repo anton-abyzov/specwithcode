@@ -335,7 +335,7 @@ public final class FixtureEngine: AppEngine {
     openSessions[session.id] = nil
   }
 
-  public func send(_ text: String, to target: ChatTarget) async throws {
+  public func send(_ text: String, images: [OutgoingImage], to target: ChatTarget) async throws {
     guard let model else { throw FixtureFailure("SpecWithCode isn't ready yet. Try again in a moment.") }
     if case let .thread(ref) = target, continuedThreads[ref] != nil { throw FixtureFailure(LiveEngine.handedOffReason) }
     let machine = model.machine(target.environmentId)
@@ -344,7 +344,7 @@ public final class FixtureEngine: AppEngine {
     }
     if transcripts[target] == nil { transcripts[target] = initialTranscript(for: target) }
     let queues = running.contains(target)
-    transcripts[target, default: []].append(row("u", .user(text: text, state: queues ? .queued : .sent)))
+    transcripts[target, default: []].append(row("u", .user(text: text, state: queues ? .queued : .sent, attachments: images.map(\.transcriptAttachment))))
     touch(target, preview: text, activity: .working)
     if queues {
       queued[target, default: 0] += 1
@@ -684,9 +684,9 @@ public final class FixtureEngine: AppEngine {
   /// The oldest queued message's run starts.
   private func startQueuedMessage(in target: ChatTarget) {
     guard let index = transcripts[target]?.firstIndex(where: {
-      if case let .user(_, state) = $0.kind { state == .queued || state == .held } else { false }
-    }), case let .user(text, _)? = transcripts[target]?[index].kind else { return }
-    transcripts[target]?[index].kind = .user(text: text, state: .sent)
+      if case let .user(_, state, _) = $0.kind { state == .queued || state == .held } else { false }
+    }), case let .user(text, _, attachments)? = transcripts[target]?[index].kind else { return }
+    transcripts[target]?[index].kind = .user(text: text, state: .sent, attachments: attachments)
   }
 
   private func setAssistant(_ id: String, in target: ChatTarget, markdown: String, streaming: Bool) {
@@ -820,7 +820,7 @@ public final class FixtureEngine: AppEngine {
   /// Stop holds the queue: queued messages wait until it is resumed.
   private static func held(_ row: TranscriptRow) -> TranscriptRow {
     var row = row
-    if case let .user(text, .queued) = row.kind { row.kind = .user(text: text, state: .held) }
+    if case let .user(text, .queued, attachments) = row.kind { row.kind = .user(text: text, state: .held, attachments: attachments) }
     return row
   }
 

@@ -1,3 +1,5 @@
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { teamRulesFromSummary } from "../../../teamRules/teamRulesView";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
@@ -145,7 +147,10 @@ export function useAppDesignBackend(input: {
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   // What the design's machine supports; absent flags mean an older server.
-  const capabilities = useServerConfigs().get(environmentId)?.environment.capabilities;
+  const serverConfig = useServerConfigs().get(environmentId);
+  const capabilities = serverConfig?.environment.capabilities;
+  const teamRulesSummary = serverConfig?.teamRules;
+  const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
   const { openScratchProject } = useScratchProject();
   // The design's own machine, so a design opened from another machine offers that machine's systems.
   const systemList = useEnvironmentQuery(
@@ -270,8 +275,11 @@ export function useAppDesignBackend(input: {
           },
           runtimeMode: designTurnRuntimeMode(
             shell?.runtimeMode,
-            resolveProjectSettings(settings, shell?.projectId ?? projectId, project).settings
-              .defaultRuntimeMode,
+            teamRulesClampMode(
+              teamRules.state,
+              resolveProjectSettings(settings, shell?.projectId ?? projectId, project).settings
+                .defaultRuntimeMode,
+            ),
           ),
           interactionMode: shell?.interactionMode ?? "default",
           dispatchMode: "queue",
@@ -280,7 +288,7 @@ export function useAppDesignBackend(input: {
       });
       if (result._tag === "Failure") throw new Error(failureText(squashAtomCommandFailure(result)));
     },
-    [project, projectId, settings, startTurn, threads],
+    [project, projectId, settings, startTurn, threads, teamRules.state],
   );
 
   const createThread = useCallback(
@@ -295,7 +303,10 @@ export function useAppDesignBackend(input: {
           "No provider is ready. Sign in to a provider in Settings > Providers, then try again.",
         );
       const projectSettings = resolveProjectSettings(settings, owningProjectId, project).settings;
-      const runtimeMode = designTurnRuntimeMode(undefined, projectSettings.defaultRuntimeMode);
+      const runtimeMode = teamRulesClampMode(
+        teamRules.state,
+        designTurnRuntimeMode(undefined, projectSettings.defaultRuntimeMode),
+      );
       const result = await startTurn({
         environmentId,
         input: {
@@ -328,7 +339,7 @@ export function useAppDesignBackend(input: {
       if (result._tag === "Failure") throw new Error(failureText(squashAtomCommandFailure(result)));
       return { environmentId, threadId };
     },
-    [defaultModel, environmentId, project, settings, startTurn],
+    [defaultModel, environmentId, project, settings, startTurn, teamRules.state],
   );
 
   /**
@@ -346,14 +357,17 @@ export function useAppDesignBackend(input: {
         threadId,
         title,
         message,
-        runtimeMode: designTurnRuntimeMode(undefined, projectSettings.defaultRuntimeMode),
+        runtimeMode: teamRulesClampMode(
+          teamRules.state,
+          designTurnRuntimeMode(undefined, projectSettings.defaultRuntimeMode),
+        ),
         model: defaultModel,
         waitingModel: defaultModel === null ? waitingThreadModel(settings, project, entries) : null,
       });
       if (!result.ok) throw new Error(result.message);
       return { environmentId, threadId, waiting: !result.started };
     },
-    [defaultModel, entries, environmentId, project, settings, startProjectThread],
+    [defaultModel, entries, environmentId, project, settings, startProjectThread, teamRules.state],
   );
 
   const designBrief = useCallback(

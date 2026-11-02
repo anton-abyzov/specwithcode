@@ -28,7 +28,7 @@ public enum TranscriptMapper {
         let message = messages[run.userMessageId]
         if message?.notification != nil { return nil }
         let text = message?.text ?? "Queued message"
-        return TranscriptRow(id: "queued:\(run.id)", kind: .user(text: text, state: run.queueHeld == true ? .held : .queued))
+        return TranscriptRow(id: "queued:\(run.id)", kind: .user(text: text, state: run.queueHeld == true ? .held : .queued, attachments: (message?.attachments ?? []).map(TranscriptAttachment.init)))
       }
   }
 
@@ -42,7 +42,7 @@ public enum TranscriptMapper {
   public static func kind(for item: TurnItem, requests: [String: RuntimeRequest] = [:], environmentId: String) -> TranscriptRow.Kind? {
     switch item.content {
     case let .userMessage(message):
-      return .user(text: message.text)
+      return .user(text: message.text, attachments: message.attachments.map(TranscriptAttachment.init))
 
     case let .assistantMessage(message):
       return .assistant(markdown: message.text, streaming: message.streaming)

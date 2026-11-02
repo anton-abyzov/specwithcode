@@ -1,3 +1,5 @@
+import { teamRulesDriverRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import {
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
@@ -1878,6 +1880,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const prepare: AcpRegistryCatalog["Service"]["prepare"] = (input) =>
     Effect.gen(function* () {
+      // Installing runs the package's own scripts, which rules can forbid.
+      const refusal = teamRulesDriverRefusal(yield* currentTeamRules, "acpRegistry");
+      if (refusal !== null) {
+        return yield* new AcpRegistryError({
+          reason: "provider_configuration_failed",
+          detail: refusal.message,
+        });
+      }
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");

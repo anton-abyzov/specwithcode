@@ -9,7 +9,10 @@ import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hook
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { SettingsRow } from "./settingsLayout";
+import { teamRulesProviderAllowed } from "@specweave-studio/shared/teamRules";
+import { teamRulesDecisionModelLock } from "../../teamRules/teamRulesView";
+import { useTeamRules } from "../../teamRules/useTeamRules";
+import { SettingsRow, TeamRulesLabel } from "./settingsLayout";
 
 export const DECISION_PROVIDER_OPTIONS: ReadonlyArray<{
   readonly value: DecisionModelProvider;
@@ -61,6 +64,8 @@ export function DecisionModelSettings(props: {
   const saved = useEnvironmentSettings(props.environmentId, (settings) => settings.decisionModel);
   const updateSettings = useUpdateEnvironmentSettings(props.environmentId);
   const [key, setKey] = useState("");
+  const teamRules = useTeamRules(props.environmentId);
+  const teamLock = teamRulesDecisionModelLock(teamRules.summary, saved.provider, saved.model);
   const hasKey = saved.apiKey.length > 0;
   const provider = DECISION_PROVIDER_OPTIONS.find((option) => option.value === saved.provider);
   const apply = (input: Omit<Parameters<typeof decisionModelPatch>[0], "saved">) => {
@@ -72,6 +77,7 @@ export function DecisionModelSettings(props: {
       <SettingsRow
         id="decision-model-provider"
         title="Use Jev for decisions"
+        status={teamLock !== null ? <TeamRulesLabel>{teamLock}</TeamRulesLabel> : undefined}
         description={
           <>
             Jev, from TypeSafe, picks one option from a fixed list in well under a second and costs
@@ -94,7 +100,14 @@ export function DecisionModelSettings(props: {
             </SelectTrigger>
             <SelectPopup>
               {DECISION_PROVIDER_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
+                <SelectItem
+                  key={option.value}
+                  value={option.value}
+                  disabled={
+                    option.value !== "off" &&
+                    !teamRulesProviderAllowed(teamRules.state, option.value)
+                  }
+                >
                   {option.label}
                 </SelectItem>
               ))}

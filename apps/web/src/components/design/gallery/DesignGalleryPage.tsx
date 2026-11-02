@@ -2,6 +2,8 @@
  * The `/design` page: wires the design RPCs of this machine into the gallery
  * view, and starts "Design from code" threads.
  */
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { useTeamRules } from "../../../teamRules/useTeamRules";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -184,6 +186,7 @@ function ConnectedGallery({
   onSearchChange: (next: DesignGallerySearch) => void;
 }) {
   const now = useNow(30_000);
+  const teamRules = useTeamRules(environmentId);
   const navigateTo = useNavigate();
   const router = useRouter();
   const list = useEnvironmentQuery(
@@ -565,9 +568,11 @@ function ConnectedGallery({
     // Queue behind the connection: without a session the create is refused unsent.
     const connection = await whenConnected(environmentId);
     if (!connection.ok) return connectionMessage(connection);
-    const runtimeMode =
+    const runtimeMode = teamRulesClampMode(
+      teamRules.state,
       resolveProjectSettings(settings, project.id, project).settings.defaultRuntimeMode ??
-      "full-access";
+        "full-access",
+    );
     const outcome = <A,>(
       result: { _tag: "Success"; value: A } | { _tag: "Failure" },
       fallback: string,

@@ -17,6 +17,11 @@
  * @module MachineLimitHandoff
  */
 import {
+  teamRulesInstanceDriver,
+  teamRulesSelectionRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import {
   isPersonalAssistantProject,
   PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
 } from "@specweave-studio/shared/personalAssistant";
@@ -392,7 +397,15 @@ export const make = Effect.gen(function* () {
     readonly refusals: ReadonlyMap<string, Refusal> | undefined;
   }) =>
     Effect.gen(function* () {
-      const targets = input.rule.providerLimitMachineTargets;
+      // A machine target is a fallback too, so it stays inside this machine's list.
+      const teamRules = yield* currentTeamRules;
+      const targets = input.rule.providerLimitMachineTargets.filter(
+        (target) =>
+          teamRulesSelectionRefusal(teamRules, {
+            driver: teamRulesInstanceDriver(input.rule, target.modelSelection.instanceId),
+            model: target.modelSelection.model,
+          }) === null,
+      );
       if (targets.length === 0) return [] as ReadonlyArray<MachineCandidateVerdict>;
       const list = yield* machinesFor(input.thread.projectId, input.nowMs);
       if (typeof list === "string")

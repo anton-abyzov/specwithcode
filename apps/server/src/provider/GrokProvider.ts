@@ -1,3 +1,5 @@
+import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import {
   type CustomModelSetting,
   type GrokSettings,
@@ -503,10 +505,15 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     Effect.orElseSucceed(() => []),
   );
 
-  const acpExit = yield* discoverGrokMetadataViaAcpInitialize(grokSettings, environment).pipe(
-    Effect.timeoutOption(GROK_ACP_INITIALIZE_TIMEOUT_MS),
-    Effect.exit,
-  );
+  // This probe starts the agent, and a hold must not revive one the rules blocked.
+  const onHold = teamRulesHoldRefusal(yield* currentTeamRules) !== null;
+  const acpExit = yield* (
+    onHold
+      ? Effect.succeedNone
+      : discoverGrokMetadataViaAcpInitialize(grokSettings, environment).pipe(
+          Effect.timeoutOption(GROK_ACP_INITIALIZE_TIMEOUT_MS),
+        )
+  ).pipe(Effect.exit);
   const acpMetadata = Exit.isSuccess(acpExit) ? Option.getOrUndefined(acpExit.value) : undefined;
   const acpModels = acpMetadata?.models ?? [];
   const acpFailed = Exit.isFailure(acpExit) || Option.isNone(acpExit.value);

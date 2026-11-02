@@ -10,6 +10,8 @@
  * Every request names its source; a remote request arrives with the source's
  * work grant, and a project joins only through an explicit link (0948).
  */
+import { teamRulesClampMode } from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -626,8 +628,16 @@ export const make = Effect.gen(function* () {
         ceiling === null
           ? null
           : clampRuntimeMode({ started: detail.runtimeMode, requested: undefined, ceiling });
-      const runtimeMode = clamped?.ok === true ? clamped.mode : detail.runtimeMode;
-      const loweredFrom = clamped?.ok === true ? clamped.loweredFrom : undefined;
+      const grantedMode = clamped?.ok === true ? clamped.mode : detail.runtimeMode;
+      // The thread must exist here to be repaired, so this machine's ceiling
+      // lowers it on arrival and records that it did.
+      const runtimeMode = teamRulesClampMode(yield* currentTeamRules, grantedMode);
+      const loweredFrom =
+        runtimeMode !== detail.runtimeMode
+          ? detail.runtimeMode
+          : clamped?.ok === true
+            ? clamped.loweredFrom
+            : undefined;
       if (caller.grant !== null) {
         // The route checked the grant before the move began; a revoke since then wins.
         const current = yield* grants

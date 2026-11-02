@@ -8,6 +8,7 @@
  *
  * @module AnalyticsService
  */
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import type { ClientOs } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -127,8 +128,10 @@ export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
   const destinationConfigured =
     telemetryConfig.posthogKey.trim().length > 0 && telemetryConfig.posthogHost.trim().length > 0;
+  const rules = yield* currentTeamRules;
+  const exportRefused = rules.status === "active" && rules.rules.telemetry?.export === false;
   const configuration = {
-    productUsageEnabled: telemetryConfig.enabled && destinationConfigured,
+    productUsageEnabled: telemetryConfig.enabled && destinationConfigured && !exportRefused,
     productUsageDestinationConfigured: destinationConfigured,
   };
   // Disabled collection must not read native-provider account files, create an

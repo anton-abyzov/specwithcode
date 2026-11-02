@@ -66,6 +66,25 @@ struct MarkdownLinkTests {
     }
   }
 
+  private func threadRoute(_ raw: String) throws -> MarkdownThreadLink.Route {
+    let url = try #require(URL(string: raw))
+    return try #require(MarkdownThreadLink.route(url))
+  }
+
+  @Test func threadLinksCarryEveryIdTheyMayName() throws {
+    // Canonical: the stored ID itself contains `%3A`, encoded once more in the link.
+    let canonical = try threadRoute("studio://thread/thread%3Adelegated-task%3Acommand%253Amcp")
+    #expect(canonical.threadIds == ["thread:delegated-task:command%3Amcp", "thread%3Adelegated-task%3Acommand%253Amcp"])
+    // An agent pasted the raw ID: decoding once breaks it, as written still matches.
+    let raw = try threadRoute("studio://thread/thread:delegated-task:command%3Amcp")
+    #expect(raw.threadIds == ["thread:delegated-task:command:mcp", "thread:delegated-task:command%3Amcp"])
+    let title = try threadRoute("studio://thread/Fix%20the%20login")
+    #expect(title.title == "Fix the login")
+    let slash = try threadRoute("studio://thread/CI/CD")
+    #expect(slash.environmentId == "CI")
+    #expect(slash.title == "CI/CD")
+  }
+
   @Test func fleetThreadLinksKeepMachineAndEncodedIdentifiers() throws {
     let url = try #require(URL(string: "studio://thread/env%2Fminis/thread%3Adelegated%2Fchild"))
     let route = try #require(MarkdownThreadLink.route(url))

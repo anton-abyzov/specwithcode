@@ -44,6 +44,7 @@ import { ModelSelection } from "./modelSelection.ts";
 import { LearnedModelPreferences, ModelLanes, TaskRoutingSettings } from "./taskRouting.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
+import { TeamRulesRefusal } from "./teamRules.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -2161,12 +2162,15 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     operation: ServerSettingsOperation,
     providerInstanceId: Schema.optional(Schema.String),
     environmentVariable: Schema.optional(Schema.String),
+    /** Set when Team rules refused the write; its message is what the person reads. */
+    teamRulesRefusal: Schema.optional(TeamRulesRefusal),
     // Validation failures (e.g. a create colliding with an existing
     // instance) originate without an upstream defect.
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.teamRulesRefusal !== undefined) return this.teamRulesRefusal.message;
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
     const variable =

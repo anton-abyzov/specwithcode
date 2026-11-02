@@ -33,12 +33,15 @@ private struct ChatScreen: View {
   @State private var renaming = false
   @State private var renameText = ""
   @State private var confirmArchive = false
+  @State private var openingLink: Task<Void, Never>?
   @State private var confirmDelete = false
   @State private var showingHandoff = false
   @State private var showingIncrement = false
   @State private var deviceViewer: DeviceViewerRoute?
   @State private var headerWidth: CGFloat = 0
   @State private var increment: IncrementProgress?
+  @State private var choosingAttachment = false
+  @State private var preparingPhotos = 0
 
   /// A thread's thinking rows carry its provider's mark; a coordinator chat has no single provider.
   private var thinkingBrand: String? {
@@ -57,6 +60,7 @@ private struct ChatScreen: View {
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
       .deviceViewer($deviceViewer)
+      .attachmentPickers(isChoosing: $choosingAttachment) { addPhotos($0, failed: $1) }
       .task(id: router.pendingDeviceViewer) {
         // A launch route opens the viewer once this thread is on screen.
         guard let pending = router.pendingDeviceViewer, pending.machineId == target.threadRef?.environmentId else { return }
@@ -66,6 +70,7 @@ private struct ChatScreen: View {
       .task(id: incrementKey) { await loadIncrement() }
       .onAppear { model.openSession(session) }
       .onDisappear {
+        openingLink?.cancel()
         // Navigation must not restore a keyboard over a hidden safe-area bar.
         // The draft belongs to the router and survives losing focus.
         composerFocused = false
@@ -130,14 +135,8 @@ private struct ChatScreen: View {
             thinkingBrand: thinkingBrand,
             onDecision: { requestId, decision in respond(requestId, decision) },
             onOpenThread: { nav.push(.chat(.thread($0))) },
-            onOpenLink: { url in
-              do {
-                guard let route = MarkdownThreadLink.route(url) else { throw SyncError.sendBlocked("This thread link is invalid.") }
-                let thread = try model.threadLink(threadId: route.threadId, environmentId: route.environmentId, from: target.environmentId)
-                nav.push(.chat(.thread(thread)))
-              }
-              catch { router.showError(error) }
-            }
+            onOpenLink: { openThreadLink($0, in: row) },
+            environmentId: target.environmentId
           )
           .id(row.id)
         }
@@ -535,14 +534,21 @@ private struct ChatScreen: View {
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
       }
+      if !pendingImages.isEmpty || preparingPhotos > 0 {
+        ComposerAttachmentStrip(images: pendingImages, isLoading: preparingPhotos > 0) { image in
+          router.attachmentDrafts[target]?.removeAll { $0.id == image.id }
+        }
+      }
       ComposerBar(
         text: draft,
         isRunning: session.isRunning && !session.isStale,
         placeholder: session.isRunning ? nil : placeholder,
         blockedReason: session.machineOnline ? session.sendBlockedReason : "Machine unavailable. Your draft is kept.",
+        hasAttachments: !pendingImages.isEmpty,
         focus: $composerFocused,
         onSend: { send() },
-        onStop: session.isStale ? nil : { stop() }
+        onStop: session.isStale ? nil : { stop() },
+        onAttach: { choosingAttachment = true }
       )
     }
     .frame(maxWidth: WeaveSize.readableColumn)
@@ -621,19 +627,70 @@ private struct ChatScreen: View {
 
   // MARK: Actions
 
+  private var pendingImages: [OutgoingImage] { router.attachmentDrafts[target] ?? [] }
+
+  private func openThreadLink(_ url: URL, in row: TranscriptRow) {
+    guard let route = MarkdownThreadLink.route(url) else {
+      router.showError(SyncError.sendBlocked("This thread link is invalid."))
+      return
+    }
+    let markdown: String? = switch row.kind {
+    case let .user(text, _, _): text
+    case let .assistant(text, _): text
+    default: nil
+    }
+    let label = markdown.flatMap { MarkdownThreadLink.label(of: url, in: $0) }
+    let origin = target.environmentId
+    // The archived read can take a while: a new tap or leaving this chat replaces it.
+    openingLink?.cancel()
+    openingLink = Task {
+      do {
+        let thread = try await model.openThreadLink(threadId: route.threadId, environmentId: route.environmentId, threadIds: route.threadIds, title: route.title, label: label, from: origin)
+        if !Task.isCancelled { nav.push(.chat(.thread(thread))) }
+      } catch {
+        if !Task.isCancelled { router.showError(error) }
+      }
+    }
+  }
+
+  private func addPhotos(_ photos: [Data], failed: Int) {
+    if failed > 0 { session.lastError = failed == 1 ? "A photo could not be loaded. Try again." : "\(failed) photos could not be loaded. Try again." }
+    guard !photos.isEmpty else { return }
+    preparingPhotos += 1
+    let target = target
+    Task {
+      defer { preparingPhotos -= 1 }
+      let first = pendingImages.count
+      let encoded = await Task.detached(priority: .userInitiated) {
+        photos.enumerated().map { index, data in Result { try PhotoAttachmentEncoder.encode(data, index: first + index + 1) } }
+      }.value
+      for result in encoded {
+        switch result {
+        case let .success(image): router.attachmentDrafts[target, default: []].append(image)
+        case let .failure(error): session.lastError = error.localizedDescription
+        }
+      }
+    }
+  }
+
   private func send() {
     let original = router.drafts[target] ?? ""
     let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return }
+    let images = pendingImages
+    guard !text.isEmpty || !images.isEmpty else { return }
     router.drafts[target] = ""
+    router.attachmentDrafts[target] = nil
     session.lastError = nil
     isNearBottom = true
     let target = target
     Task {
       do {
-        try await model.engine.send(text, to: target)
+        try await model.engine.send(text, images: images, to: target)
       } catch {
-        if (router.drafts[target] ?? "").isEmpty { router.drafts[target] = original }
+        // Whatever was added while the upload ran stays, after what failed to send.
+        let added = router.drafts[target] ?? ""
+        router.drafts[target] = added.isEmpty ? original : "\(original)\n\(added)"
+        router.attachmentDrafts[target] = images + (router.attachmentDrafts[target] ?? [])
         session.lastError = error.localizedDescription
       }
     }

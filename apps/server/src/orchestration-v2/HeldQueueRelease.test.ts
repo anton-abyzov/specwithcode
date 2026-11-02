@@ -163,9 +163,13 @@ it.effect("a handoff that starts a held thread delivers the held queue after it,
     assert.deepEqual((yield* runs(threadId)).slice(3), ["queued", "queued"]);
     assert.isFalse(yield* projections.canStartQueuedRun(threadId));
 
-    // When the turn finishes, nothing in the queue is held, so it drains.
+    // When the turn finishes, nothing in the queue is held, so it drains oldest first.
+    // A dispatch's background queue check may already have started the oldest run.
     yield* completeActiveRun(threadId);
-    assert.isTrue(yield* projections.canStartQueuedRun(threadId));
+    const drained = yield* runs(threadId);
+    assert.isFalse(drained.some((run) => run.endsWith(":held")));
+    assert.isTrue((yield* projections.canStartQueuedRun(threadId)) || drained[1] !== "queued");
+    assert.deepEqual(drained.slice(3), ["queued", "queued"]);
     const shell = yield* projections.getThreadShell(threadId);
     assert.isUndefined(shell?.heldQueuedCount);
   }).pipe(Effect.provide(layerTest)),
