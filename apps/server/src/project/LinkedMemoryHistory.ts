@@ -31,6 +31,22 @@ export class LinkedMemoryHistory extends Context.Service<
     ) => Effect.Effect<MemoryHistoryState, LinkedMemoryHistoryError>;
     /** Forgets a deleted project's versions; a missing file is already forgotten. */
     readonly remove: (projectId: ProjectId) => Effect.Effect<void, LinkedMemoryHistoryError>;
+    /** Keeps one version's content as a later merge's base; true when it was new here. */
+    readonly saveVersion: (
+      projectId: ProjectId,
+      hash: string,
+      content: string,
+    ) => Effect.Effect<boolean, LinkedMemoryHistoryError>;
+    /** A kept version's content, when this machine still has it. */
+    readonly readVersion: (
+      projectId: ProjectId,
+      hash: string,
+    ) => Effect.Effect<string | undefined, LinkedMemoryHistoryError>;
+    /** Drops every kept version not in `keep`. */
+    readonly pruneVersions: (
+      projectId: ProjectId,
+      keep: ReadonlySet<string>,
+    ) => Effect.Effect<void, LinkedMemoryHistoryError>;
   }
 >()("specweave-studio/project/LinkedMemoryHistory") {}
 
@@ -43,11 +59,16 @@ export class LinkedMemoryHistoryError extends Schema.TaggedError<LinkedMemoryHis
 export const memoryContentHash = (content: string) => sha256([content], "hex");
 
 const DIRECTORY = "linked-memory";
+const isVersionHash = (hash: string) => /^[0-9a-f]{64}$/.test(hash);
 const Hashes = Schema.Array(Schema.String);
 const StoredState = Schema.Struct({
   files: Schema.Record(
     Schema.String,
-    Schema.Struct({ history: Hashes, authoredAt: Schema.optionalKey(Schema.String) }),
+    Schema.Struct({
+      history: Hashes,
+      authoredAt: Schema.optionalKey(Schema.String),
+      clash: Schema.optionalKey(Schema.Boolean),
+    }),
   ),
   tombstones: Schema.Record(
     Schema.String,
@@ -69,6 +90,10 @@ export const layer = Layer.effect(
     const fileOf = (projectId: ProjectId) =>
       path.join(directory, `${sha256([projectId], "hex").slice(0, 32)}.json`);
     const failed = (cause: unknown) => new LinkedMemoryHistoryError({ cause });
+    // A merge's base, one owner-only file per version; memory is private like its history.
+    const versionsOf = (projectId: ProjectId) =>
+      path.join(directory, `${sha256([projectId], "hex").slice(0, 32)}.versions`);
+    const savedVersions = new Set<string>();
     const read = (projectId: ProjectId) =>
       Effect.gen(function* () {
         const file = fileOf(projectId);
@@ -101,9 +126,44 @@ export const layer = Layer.effect(
           return next;
         }).pipe(lock.withPermits(1)),
       remove: (projectId) =>
-        fileSystem
-          .remove(fileOf(projectId), { force: true })
-          .pipe(Effect.mapError(failed), lock.withPermits(1)),
+        Effect.gen(function* () {
+          yield* fileSystem.remove(fileOf(projectId), { force: true });
+          yield* fileSystem.remove(versionsOf(projectId), { force: true, recursive: true });
+        }).pipe(Effect.mapError(failed), lock.withPermits(1)),
+      saveVersion: (projectId, hash, content) =>
+        Effect.gen(function* () {
+          const key = `${projectId}:${hash}`;
+          if (!isVersionHash(hash) || savedVersions.has(key)) return false;
+          const folder = versionsOf(projectId);
+          const file = path.join(folder, hash);
+          if (yield* fileSystem.exists(file)) {
+            savedVersions.add(key);
+            return false;
+          }
+          yield* fileSystem.makeDirectory(folder, { recursive: true, mode: 0o700 });
+          const temporary = `${file}.${randomBytes(4).toString("hex")}.tmp`;
+          yield* fileSystem.writeFileString(temporary, content, { mode: 0o600 });
+          yield* fileSystem.rename(temporary, file);
+          savedVersions.add(key);
+          return true;
+        }).pipe(Effect.mapError(failed), lock.withPermits(1)),
+      readVersion: (projectId, hash) =>
+        Effect.gen(function* () {
+          if (!isVersionHash(hash)) return undefined;
+          const file = path.join(versionsOf(projectId), hash);
+          if (!(yield* fileSystem.exists(file))) return undefined;
+          return yield* fileSystem.readFileString(file);
+        }).pipe(Effect.mapError(failed)),
+      pruneVersions: (projectId, keep) =>
+        Effect.gen(function* () {
+          const folder = versionsOf(projectId);
+          if (!(yield* fileSystem.exists(folder))) return;
+          for (const name of yield* fileSystem.readDirectory(folder)) {
+            if (keep.has(name)) continue;
+            yield* fileSystem.remove(path.join(folder, name), { force: true });
+            savedVersions.delete(`${projectId}:${name}`);
+          }
+        }).pipe(Effect.mapError(failed), lock.withPermits(1)),
     });
   }),
 );
@@ -111,6 +171,7 @@ export const layer = Layer.effect(
 /** For tests: histories kept in memory. */
 export const layerMemory = Layer.sync(LinkedMemoryHistory, () => {
   const states = new Map<string, MemoryHistoryState>();
+  const versions = new Map<string, string>();
   const read = (projectId: ProjectId) => states.get(projectId) ?? emptyMemoryHistory;
   return LinkedMemoryHistory.of({
     read: (projectId) => Effect.sync(() => read(projectId)),
@@ -121,5 +182,14 @@ export const layerMemory = Layer.sync(LinkedMemoryHistory, () => {
         return next;
       }),
     remove: (projectId) => Effect.sync(() => void states.delete(projectId)),
+    saveVersion: (projectId, hash, content) =>
+      Effect.sync(() => {
+        const key = `${projectId}:${hash}`;
+        const fresh = !versions.has(key);
+        versions.set(key, content);
+        return fresh;
+      }),
+    readVersion: (projectId, hash) => Effect.sync(() => versions.get(`${projectId}:${hash}`)),
+    pruneVersions: () => Effect.void,
   });
 });

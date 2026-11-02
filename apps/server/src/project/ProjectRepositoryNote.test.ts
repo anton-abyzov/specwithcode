@@ -5,6 +5,7 @@ import { describe, expect } from "vite-plus/test";
 
 import { repositoryBrief } from "../fleet/remoteRepositories.ts";
 import {
+  mergeRepositoryNotes,
   parseRepositoryNote,
   renderRepositoryNote,
   REPOSITORY_NOTE,
@@ -45,6 +46,15 @@ const notes = () => {
   };
   return { files, service };
 };
+
+describe("mergeRepositoryNotes with a broken list", () => {
+  it("merges nothing rather than treating the entries as removed", () => {
+    const note = renderRepositoryNote([]);
+    const broken = note.replace("\n[]\n", "\n{not json\n");
+    expect(broken).not.toBe(note);
+    expect(mergeRepositoryNotes(note, broken, note)).toBeNull();
+  });
+});
 
 describe("the repositories note", () => {
   it("reads back the list it was written with", () => {
@@ -134,4 +144,34 @@ describe("a remote worker's brief", () => {
     expect(brief).toContain("acme/api: git@github.com:acme/api.git");
     expect(brief).toContain("clone it from its remote, wherever suits this machine");
   });
+});
+
+describe("mergeRepositoryNotes", () => {
+  const repo = (key: string) =>
+    ({
+      key,
+      name: key,
+      path: `repos/${key}`,
+      remoteUrl: `https://github.com/acme/${key}.git`,
+    }) as unknown as ProjectNestedRepository;
+  const note = (...keys: ReadonlyArray<string>) => renderRepositoryNote(keys.map(repo));
+  const keys = (content: string | null) =>
+    parseRepositoryNote(content ?? "").map((entry) => entry.key);
+
+  it.effect("keeps what either side added and drops what either side removed", () =>
+    Effect.sync(() => {
+      expect(
+        keys(mergeRepositoryNotes(note("a", "b"), note("a", "b", "c"), note("b", "d"))),
+      ).toEqual(["b", "c", "d"]);
+    }),
+  );
+
+  it.effect(
+    "merges two lists with no shared base, and leaves unreadable notes to the text merge",
+    () =>
+      Effect.sync(() => {
+        expect(keys(mergeRepositoryNotes(null, note("a"), note("b")))).toEqual(["a", "b"]);
+        expect(mergeRepositoryNotes(null, "hand written", note("b"))).toBeNull();
+      }),
+  );
 });

@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
   MACHINE_HANDOFF_BUNDLE_MAX_BYTES,
@@ -12,11 +13,14 @@ import {
   type MachineHandoffPreviewMetadata,
   type MachineNicknames,
   type ProjectId,
+  type RuntimeMode,
+  type ServerSettings,
 } from "@specweave-studio/contracts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import { conflictCopyName, machineSlug } from "../project/linkedMemoryMerge.ts";
+import type { LinkedMemorySync } from "../project/LinkedMemorySync.ts";
 import type * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 
 /** Only the metadata fields: a preview request carries them without the bundle. */
@@ -67,8 +71,13 @@ export function comparableContext(
   retained: MachineHandoffContext,
   saved: MachineHandoffContext,
 ): MachineHandoffContext {
+  // Note versions follow merges on the linked copies, and travel as the preview saved them.
+  const { noteVersions: _noteVersions, ...moved } = retained;
+  const versioned = saved.noteVersions ? { ...moved, noteVersions: saved.noteVersions } : moved;
   const current =
-    retained.retention && saved.retention ? { ...retained, retention: saved.retention } : retained;
+    versioned.retention && saved.retention
+      ? { ...versioned, retention: saved.retention }
+      : versioned;
   if (saved.runtimeMode !== undefined) return current;
   const { runtimeMode: _runtimeMode, ...rest } = current;
   return rest;
@@ -139,6 +148,103 @@ export function planNoteImport(
   }
   return { steps, bytes, files: steps.filter((step) => step.write).length };
 }
+
+/**
+ * The destination's model policy for a moved coordinator. A project this machine has
+ * no limit policy for gets one that never spends or switches on its own; one it
+ * already has, such as a copy the coordinator moves back to, keeps what was chosen here.
+ */
+export const destinationModelPolicy = (
+  resolved: Pick<
+    ServerSettings,
+    | "defaultModelSelection"
+    | "defaultRuntimeMode"
+    | "providerLimitExcludedModels"
+    | "providerLimitSwitchAtPercent"
+    | "providerLimitWaitUnderMinutes"
+  >,
+  own: ServerSettings["projectSettingsOverrides"][ProjectId] | undefined,
+  carriedMode: RuntimeMode | undefined,
+) => ({
+  defaultModelSelection: resolved.defaultModelSelection,
+  defaultRuntimeMode: carriedMode ?? resolved.defaultRuntimeMode,
+  ...(own?.providerLimitAction !== undefined
+    ? {}
+    : {
+        providerLimitAction: "ask" as const,
+        providerLimitFallbackModelSelection: null,
+        providerLimitFallbackModels: [],
+        providerLimitExcludedModels: resolved.providerLimitExcludedModels,
+        providerLimitSwitchAtPercent: resolved.providerLimitSwitchAtPercent,
+        providerLimitWaitUnderMinutes: resolved.providerLimitWaitUnderMinutes,
+        providerLimitRedeemResets: false,
+        providerLimitSpendCredits: false,
+        providerLimitUseApiCredits: false,
+        providerLimitMachineTargets: [],
+      }),
+});
+
+/** How many versions of each note travel when all of them do not fit. */
+const SHORT_NOTE_HISTORY = 12;
+/**
+ * The notes' versions, on a bundle whose destination can merge with them. A
+ * conversation that leaves them no room moves with fewer, or without them as an
+ * ordinary import.
+ */
+export const carryNoteVersions = (
+  memory: Option.Option<LinkedMemorySync["Service"]>,
+  input: { readonly noteVersions?: 1 | undefined; readonly projectId: ProjectId },
+  context: MachineHandoffContext,
+) =>
+  Option.isSome(memory) && input.noteVersions === 1
+    ? memory.value.noteVersions(input.projectId).pipe(
+        Effect.map((noteVersions): MachineHandoffContext => {
+          const carried = { ...context, noteVersions };
+          if (contextWithinLimits(carried)) return carried;
+          const short = {
+            ...context,
+            noteVersions: Object.fromEntries(
+              Object.entries(noteVersions).map(([name, note]) => [
+                name,
+                { ...note, history: note.history.slice(-SHORT_NOTE_HISTORY) },
+              ]),
+            ),
+          };
+          return contextWithinLimits(short) ? short : context;
+        }),
+        Effect.orElseSucceed(() => context),
+      )
+    : Effect.succeed(context);
+
+/**
+ * Merges a moved coordinator's notes with this linked copy's memory and returns
+ * the ones still to import. A destination it cannot merge into imports them all.
+ */
+export const notesLeftToImport = (
+  memory: Option.Option<LinkedMemorySync["Service"]>,
+  input: {
+    readonly projectId: ProjectId;
+    readonly logicalProjectId: string;
+    readonly sourceEnvironmentId: string;
+    readonly sourceLabel: string | undefined;
+    readonly context: MachineHandoffContext;
+  },
+) =>
+  Option.isSome(memory) && input.context.noteVersions
+    ? memory.value
+        .mergeMovedNotes({
+          projectId: input.projectId,
+          logicalProjectId: input.logicalProjectId,
+          sourceEnvironmentId: input.sourceEnvironmentId,
+          sourceLabel: input.sourceLabel,
+          notes: input.context.notes,
+          versions: input.context.noteVersions,
+        })
+        .pipe(
+          Effect.map((settled) => input.context.notes.filter((note) => !settled.has(note.name))),
+          Effect.orElseSucceed(() => input.context.notes),
+        )
+    : Effect.succeed(input.context.notes);
 
 type Workspace = ProjectWorkspaceService.ProjectWorkspaceService["Service"];
 const storageFailed = () => new MachineHandoffError({ code: "storage_failed" });

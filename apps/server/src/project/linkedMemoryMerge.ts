@@ -4,13 +4,16 @@ import {
   type LinkedMemoryExport,
 } from "@specweave-studio/contracts";
 
+import { hasClashMarkers } from "./linkedMemoryThreeWay.ts";
+
 /**
  * Two-way merge of linked project memory, decided per file from content hashes:
  * every machine remembers which versions a file has had, so a version the other
  * side has already seen is older, and two versions neither has seen are
- * concurrent edits that go to the last writer. Pure, so both sides of a pair
- * reach the same winner from the same two exports, and a pass that fails on one
- * side converges on the next.
+ * concurrent edits that merge line by line (`linkedMemoryThreeWay.ts`), or go to
+ * the last writer when no merge is offered. Pure, so both sides of a pair reach
+ * the same result from the same two exports, and a pass that fails on one side
+ * converges on the next.
  */
 export const MEMORY_INDEX_NAME = "MEMORY.md";
 
@@ -19,6 +22,8 @@ export interface MemoryFileHistory {
   readonly history: ReadonlyArray<string>;
   /** When the last hash was written, on the machine that wrote it. */
   readonly authoredAt?: string;
+  /** The content holds conflict markers for the coordinator to tidy. */
+  readonly clash?: boolean;
 }
 export interface MemoryTombstone {
   readonly deletedAt: string;
@@ -123,6 +128,12 @@ export interface LocalMemory {
   readonly machineSlug: string;
   readonly files: ReadonlyMap<string, LocalMemoryFile>;
   readonly tombstones: Readonly<Record<string, MemoryTombstone>>;
+  /** The merged text of two concurrent versions of a file; nothing leaves it to the last writer. */
+  readonly threeWay?: (
+    name: string,
+    mine: string,
+    theirs: string,
+  ) => { readonly content: string; readonly sha: string } | undefined;
 }
 
 export type MemoryMergeStep =
@@ -270,6 +281,25 @@ export const planMemoryMerge = (
         write(name, theirs, mine.revision, unionHistory(theirs.history, mine.history));
         continue;
       }
+      const merged = local.threeWay?.(name, mine.content, theirs.content);
+      if (merged) {
+        const history = appendHistory(unionHistory(theirs.history, mine.history), merged.sha);
+        const authoredAt = later(mine.updatedAt, theirs.updatedAt);
+        if (merged.sha === mine.sha) steps.push({ kind: "history", name, history, authoredAt });
+        else
+          write(
+            name,
+            {
+              ...theirs,
+              content: merged.content,
+              contentSha256: merged.sha,
+              updatedAt: authoredAt,
+            },
+            mine.revision,
+            history,
+          );
+        continue;
+      }
       // Concurrent edits. A winning local version does not learn the remote hash,
       // so the peer still sees a concurrent edit and keeps its own copy.
       if (!remoteFirst) {
@@ -352,7 +382,15 @@ export const applyMergeStepToHistory = (
       return {
         files: {
           ...state.files,
-          [step.name]: { history: step.history, authoredAt: step.authoredAt },
+          [step.name]: {
+            history: step.history,
+            authoredAt: step.authoredAt,
+            ...((
+              step.kind === "write" ? hasClashMarkers(step.content) : state.files[step.name]?.clash
+            )
+              ? { clash: true }
+              : {}),
+          },
         },
         tombstones: withoutKey(state.tombstones, step.name),
       };

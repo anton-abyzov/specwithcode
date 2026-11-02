@@ -222,6 +222,7 @@ import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
+import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
 import * as HandoffRoute from "./handoff/handoffRoute.ts";
 import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
@@ -688,6 +689,17 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   HandoffMoves.layerFleet.pipe(
     Layer.provideMerge(HandoffReceiver.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+  ),
+  // Linked project memory between machines: the peer route's side, and the
+  // coordinator's loop that drives it without an open app window.
+  LinkedMemoryPeers.layerReceiver,
+  Layer.effectDiscard(Effect.forkScoped(LinkedMemoryPeers.runLoop)).pipe(
+    Layer.provide(
+      LinkedMemoryPeers.layerSync.pipe(
+        Layer.provide(HandoffPeers.layer),
+        Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+      ),
+    ),
   ),
   // Ends runs a provider finished but never reported ended (stuck Working),
   // and runs nothing drives any more (their session ended or nobody reads

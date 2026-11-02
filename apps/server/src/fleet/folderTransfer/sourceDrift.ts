@@ -15,6 +15,7 @@ import {
 } from "./manifest.ts";
 import type { CapturedStat } from "./sourceSnapshot.ts";
 import { sha256Hex } from "./wire.ts";
+import { isHomeSecretPath } from "./secretLocations.ts";
 
 export type DriftKind = "changed" | "added" | "removed" | "unreadable" | "repository";
 
@@ -376,6 +377,7 @@ export async function computeDrift(input: {
   readonly manifestFile: string;
   readonly basisFile: string;
   readonly servedSecretsFile?: string;
+  readonly secretPattern?: (relative: string) => boolean;
   readonly now: () => number;
 }): Promise<SourceDrift> {
   const copied = await readManifestFile(input.manifestFile);
@@ -384,6 +386,7 @@ export async function computeDrift(input: {
   const selection = new Set(copied.header.selection);
   const current = await scanFolder(input.folder, {
     expandRebuildable: selection.has("rebuildable"),
+    secretPattern: input.secretPattern,
   });
   const prefixes = [...copied.header.repositories, ...current.repositories].map((repo) =>
     gitPrefix(repo.path),
@@ -506,6 +509,8 @@ export async function computeDrift(input: {
       await readServedSecrets(input.servedSecretsFile),
       STAT_CONCURRENCY,
       async (secret) => {
+        // A `~/` file lives in the home folder, which a coordinator move never compares.
+        if (isHomeSecretPath(secret.path)) return;
         const absolute = NodePath.join(input.folder, secret.path);
         let stat: Awaited<ReturnType<typeof NodeFSP.lstat>> | null;
         let sha256: string | null;

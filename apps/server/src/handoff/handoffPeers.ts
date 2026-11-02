@@ -17,10 +17,14 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
-import type {
-  EnvironmentId,
-  HandoffModeErrorCode,
-  HandoffPreflightCheck,
+import {
+  type EnvironmentId,
+  type HandoffModeErrorCode,
+  type HandoffPreflightCheck,
+  LinkedMemoryExport,
+  LinkedMemoryExportInput,
+  LinkedMemoryMergeInput,
+  LinkedMemoryMergeResult,
 } from "@specweave-studio/contracts";
 
 import * as FleetTargets from "../fleet/FleetTargets.ts";
@@ -44,6 +48,7 @@ import {
   HANDOFF_PEER_PREFIX,
   HeartbeatRequest,
   HeartbeatResponse,
+  LINKED_MEMORY_PEER_MAX_BYTES,
   NegotiateRequest,
   NegotiateResponse,
   PeerErrorBody,
@@ -65,7 +70,12 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   heartbeat: 10_000,
   "coordinator-lease": 10_000,
   "coordinator-replica": 10_000,
+  "memory-export": 60_000,
+  "memory-merge": 60_000,
 };
+/** A memory page answers with up to the link cap; every other answer is small. */
+const answerLimit = (path: PeerPath) =>
+  path === "memory-export" ? LINKED_MEMORY_PEER_MAX_BYTES : HANDOFF_JSON_MAX_BYTES;
 
 export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly code: HandoffModeErrorCode;
@@ -135,6 +145,16 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: CoordinatorReplicaRequest,
     ) => Effect.Effect<CoordinatorReplicaResponse, HandoffPeerError>;
+    /** One page of the linked copy's memory there. */
+    readonly memoryExport: (
+      environmentId: EnvironmentId,
+      request: LinkedMemoryExportInput,
+    ) => Effect.Effect<LinkedMemoryExport, HandoffPeerError>;
+    /** Merges another copy's page into the linked copy there. */
+    readonly memoryMerge: (
+      environmentId: EnvironmentId,
+      request: LinkedMemoryMergeInput,
+    ) => Effect.Effect<LinkedMemoryMergeResult, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
@@ -145,6 +165,10 @@ const encodeTakeover = Schema.encodeSync(TakeoverRequest);
 const encodeHeartbeat = Schema.encodeSync(HeartbeatRequest);
 const encodeCoordinatorLease = Schema.encodeSync(CoordinatorLeaseRequest);
 const encodeCoordinatorReplica = Schema.encodeSync(CoordinatorReplicaRequest);
+const encodeMemoryExport = Schema.encodeSync(LinkedMemoryExportInput);
+const encodeMemoryMerge = Schema.encodeSync(LinkedMemoryMergeInput);
+const decodeMemoryExport = Schema.decodeUnknownOption(LinkedMemoryExport);
+const decodeMemoryMerge = Schema.decodeUnknownOption(LinkedMemoryMergeResult);
 const decodeError = Schema.decodeUnknownOption(PeerErrorBody);
 const decodeNegotiate = Schema.decodeUnknownOption(NegotiateResponse);
 const decodeReplicate = Schema.decodeUnknownOption(ReplicateResponse);
@@ -311,7 +335,7 @@ export const make = Effect.gen(function* () {
         });
       }
       const json = yield* Effect.tryPromise({
-        try: () => readBoundedJson(answer, HANDOFF_JSON_MAX_BYTES),
+        try: () => readBoundedJson(answer, answerLimit(path)),
         catch: () => null,
       }).pipe(Effect.orElseSucceed(() => undefined));
       if (!answer.ok) {
@@ -390,6 +414,10 @@ export const make = Effect.gen(function* () {
         encodeCoordinatorReplica(request),
         decodeCoordinatorReplica,
       ),
+    memoryExport: (environmentId, request) =>
+      postJson(environmentId, "memory-export", encodeMemoryExport(request), decodeMemoryExport),
+    memoryMerge: (environmentId, request) =>
+      postJson(environmentId, "memory-merge", encodeMemoryMerge(request), decodeMemoryMerge),
   });
 });
 

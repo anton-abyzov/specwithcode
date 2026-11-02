@@ -49,14 +49,18 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
       });
 
     case "project.update": {
-      // Which list a project sits in and how loudly it alerts are the person's
-      // choices; a temporary agent token cannot change either.
+      // Which list a project sits in, how loudly it alerts and which files a copy
+      // treats as secrets are the person's choices; a temporary agent token cannot
+      // change them.
       const workspaceSettings =
         temporarySessionId === undefined || mutation.workspaceSettings === undefined
           ? mutation.workspaceSettings
-          : (({ origin: _origin, notifications: _notifications, ...rest }) => rest)(
-              mutation.workspaceSettings,
-            );
+          : (({
+              origin: _origin,
+              notifications: _notifications,
+              secretFiles: _secretFiles,
+              ...rest
+            }) => rest)(mutation.workspaceSettings);
       // Moving the folder keeps threads in place, confirms a different repository or
       // planning root, and relocates sessions; a plain update would skip all of that.
       // The same folder is a no-op and stays allowed for older clients that send it, so

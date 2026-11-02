@@ -275,6 +275,14 @@ export const CoordinatorReplicaResponse = Schema.Struct({
 });
 export type CoordinatorReplicaResponse = typeof CoordinatorReplicaResponse.Type;
 
+/**
+ * Linked project memory, driven by the coordinator's server: `memory-export`
+ * reads one page of a copy's memory, `memory-merge` merges another copy's page
+ * into it (`LinkedMemoryPeers`). A page is at most the link cap, which JSON
+ * escaping can at most double.
+ */
+export const LINKED_MEMORY_PEER_MAX_BYTES = COORDINATOR_REPLICA_MAX_BYTES;
+
 export type PeerPath =
   | "negotiate"
   | "replicate"
@@ -282,7 +290,9 @@ export type PeerPath =
   | "takeover"
   | "heartbeat"
   | "coordinator-lease"
-  | "coordinator-replica";
+  | "coordinator-replica"
+  | "memory-export"
+  | "memory-merge";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -291,6 +301,8 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "heartbeat",
   "coordinator-lease",
   "coordinator-replica",
+  "memory-export",
+  "memory-merge",
 ]);
 
 export class FrameError extends Error {}

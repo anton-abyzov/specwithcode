@@ -113,6 +113,11 @@ export const isLocalWorkerMachine = (machine: Pick<ProjectWorkerMachine, "machin
 export const ProjectNotificationLevel = Schema.Literals(["all", "coordinator", "requests", "none"]);
 export type ProjectNotificationLevel = typeof ProjectNotificationLevel.Type;
 
+export const MAX_PROJECT_SECRET_FILES = 100;
+export const ProjectSecretFiles = Schema.Array(Schema.String.check(Schema.isMaxLength(512))).check(
+  Schema.isMaxLength(MAX_PROJECT_SECRET_FILES),
+);
+
 export const ProjectWorkspaceSettings = Schema.Struct({
   /** Server-managed identity and transfer fence; absent on legacy independent projects. */
   logicalProject: Schema.optional(LogicalProject),
@@ -151,6 +156,12 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    * as absent instead of failing the whole project.
    */
   notifications: Schema.optionalKey(Schema.String),
+  /**
+   * Settings > Project > Secret files: extra files a folder copy treats as secrets.
+   * A pattern like a `.gitignore` line inside the folder (`config/*.local.json`), or
+   * a `~/` path in the home folder (`~/.config/acme/token.json`). Absent: none.
+   */
+  secretFiles: Schema.optionalKey(ProjectSecretFiles),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -179,6 +190,7 @@ export const ProjectWorkspacePatch = Schema.Struct({
   workerMachines: Schema.optional(Schema.NullOr(ProjectWorkerMachines)),
   origin: Schema.optional(ProjectOrigin),
   notifications: Schema.optional(ProjectNotificationLevel),
+  secretFiles: Schema.optional(ProjectSecretFiles),
 });
 export type ProjectWorkspacePatch = typeof ProjectWorkspacePatch.Type;
 export const ProjectWorkspaceReadInput = Schema.Struct({ projectId: ProjectId });

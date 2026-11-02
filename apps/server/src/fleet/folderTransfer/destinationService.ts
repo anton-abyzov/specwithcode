@@ -31,6 +31,12 @@ import {
 } from "./sourceClient.ts";
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
 import { type ReceivedSecret, removeReceivedSecrets, writeSecretFile } from "./secrets.ts";
+import {
+  homeSecretRelative,
+  isDotnetUserSecretsFile,
+  isHomeSecretPath,
+  platformHomePath,
+} from "./secretLocations.ts";
 
 export type CopyState =
   | "planned"
@@ -167,6 +173,8 @@ export interface DestinationHooks {
   readonly keepaliveMs?: number;
   /** The origin address this machine can read, or null; `git ls-remote` by default. */
   readonly reachableOrigin?: (origin: string, signal: AbortSignal) => Promise<string | null>;
+  /** Where `~/` secret files land; the user's home by default. */
+  readonly home?: () => string;
 }
 
 export const BACKUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
@@ -707,7 +715,11 @@ export class DestinationCopies {
     // Persist before restoring anything: a crash or partial failure must not let
     // retention discard an original that still needs restoring.
     await this.update(operationId, { undoIncomplete: true });
-    const keptSecrets = await removeReceivedSecrets(record.targetFolder, record.secrets ?? []);
+    const keptSecrets = await removeReceivedSecrets(
+      record.targetFolder,
+      record.secrets ?? [],
+      this.hooks.home?.() ?? NodeOS.homedir(),
+    );
     const result = await undoApply({
       targetRoot: record.targetFolder,
       backupRoot: paths.backups,
@@ -1232,15 +1244,27 @@ export class DestinationCopies {
     const machine = machineSlug(record.sourceMachine);
     for (const file of offered) {
       if ((current.secrets ?? []).some((item) => item.path === file.path)) continue;
-      if (!isSafeRelativePath(file.path))
+      // A `~/` file is only ever .NET user secrets, written to the same place in this
+      // machine's home; anything else must stay inside the folder.
+      const home = isHomeSecretPath(file.path) ? homeSecretRelative(file.path) : null;
+      if (
+        isHomeSecretPath(file.path)
+          ? home === null || !isDotnetUserSecretsFile(home)
+          : !isSafeRelativePath(file.path)
+      )
         throw new CopyError("refused", "The source offered a secret file outside the folder.");
       const bytes = await client.secretFile(file.path);
-      const received = await writeSecretFile({
-        targetRoot: current.targetFolder,
-        path: file.path,
+      const written = await writeSecretFile({
+        targetRoot:
+          home === null ? current.targetFolder : (this.hooks.home?.() ?? NodeOS.homedir()),
+        path: home === null ? file.path : platformHomePath(home, process.platform),
         bytes,
         sourceMachine: machine,
       });
+      const received =
+        home === null
+          ? written
+          : { ...written, path: file.path, writtenAs: `~/${written.writtenAs}` };
       current = await this.update(current.operationId, {
         secrets: [...(current.secrets ?? []), received],
       });

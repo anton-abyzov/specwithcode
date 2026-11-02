@@ -166,6 +166,15 @@ export function sourceStatus(record: SourceOperationRecord): FolderCopySourceSta
             path: text(file.path, 4096),
             size: file.size,
           })),
+          ...(record.summary.secretHints
+            ? {
+                secretHints: record.summary.secretHints.slice(0, 50).map((item) => ({
+                  path: text(item.path, 4096),
+                  source: text(item.source, 100),
+                  hint: text(item.hint, 500),
+                })),
+              }
+            : {}),
           linksOutside: record.summary.linksOutside,
           warnings: record.summary.warnings.map((warning) => text(warning, 2000)),
           ...(record.summary.skipped

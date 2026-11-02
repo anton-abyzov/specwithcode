@@ -67,6 +67,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("~/connection/runtime", () => ({ connectionAtomRuntime: undefined }));
 vi.mock("./ProjectHandoffModeSettings", () => ({ ProjectHandoffModeSettings: () => null }));
+vi.mock("./ProjectSecretFilesSettings", () => ({ ProjectSecretFilesSettings: () => null }));
 vi.mock("@specweave-studio/client-runtime/state/session", () => ({
   createEnvironmentSessionAtoms: () => ({
     sessionStateAtom: (id: EnvironmentId) => state.sessions.get(id)!,

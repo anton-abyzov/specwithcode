@@ -244,6 +244,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       its own credentials) and `sourceControl.inspectDestination`. Absent on
       older servers; clients then don't offer Add to another machine there. */
   cloneDestinationChecks: Schema.optionalKey(Schema.Boolean),
+  /** A folder copy here receives `~/` secret files (.NET user secrets, the
+      project's home "Secret files") into this machine's home. Absent on older
+      servers, which would write them inside the folder, so clients hide them. */
+  homeSecretFiles: Schema.optionalKey(Schema.Boolean),
+  /** Merges concurrent memory edits line by line, including a moved coordinator's notes. */
+  memoryThreeWay: Schema.optionalKey(Schema.Boolean),
   /** Server keeps the `machineNicknames` setting and swaps it with paired
       machines. Older servers drop the key, so clients write renames only to
       servers that report this. */
@@ -305,6 +311,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Replicates project memory both ways between linked members
       (`projectLink.memoryExport`, `memoryMerge`). Absent on older servers. */
   linkedMemorySync: Schema.optionalKey(Schema.Boolean),
+  /** The coordinator's server syncs its linked copies' memory itself, over the handoff peer route. */
+  linkedMemoryPeerSync: Schema.optionalKey(Schema.Boolean),
   /** Can be armed as a linked project's standby coordinator and take over
       automatically (`projectLink.acceptStandby`, `coordinator-lease`). Absent
       on older servers, which cannot be chosen as a standby. */

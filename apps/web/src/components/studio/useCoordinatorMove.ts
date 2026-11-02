@@ -25,6 +25,7 @@ export function useCoordinatorMove({
   project,
   coordinatorId,
   knownProject,
+  mergesNotes,
   sourceLabel,
   targetLabel,
   copy,
@@ -40,6 +41,7 @@ export function useCoordinatorMove({
     environmentId: EnvironmentId,
     targetFolder: string,
   ) => EnvironmentProject | null;
+  readonly mergesNotes: (environmentId: EnvironmentId) => boolean;
   readonly sourceLabel: string;
   readonly targetLabel: string;
   readonly copy: FolderCopyStatus | null;
@@ -53,6 +55,7 @@ export function useCoordinatorMove({
     project,
     coordinatorId,
     knownProject,
+    mergesNotes,
   });
   const copyDrift = useAtomCommand(machineHandoff.copyDrift, { reportFailure: false });
   const release = useAtomCommand(machineHandoff.copyRelease, { reportFailure: false });

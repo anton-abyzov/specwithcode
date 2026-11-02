@@ -49,6 +49,8 @@ import { HandoffLeftBehind } from "./HandoffLeftBehind";
 import type { MachineOption } from "../handoff/MachineOptionRows";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
+import { AddToMachineDialog } from "../chat/AddToMachineDialog";
+import { HandoffShare } from "./HandoffShare";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import {
   copyActivityKey,
@@ -183,6 +185,12 @@ export function ProjectMachineHandoff({
   const [copyDone, setCopyDone] = useState(false);
   const [copyBusy, setCopyBusyState] = useState(false);
   const [copyLocked, setCopyLocked] = useState(false);
+  // Sharing is what the dialog opens on; moving and copying files start from it.
+  const [shareView, setShareView] = useState(true);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [addFolderOn, setAddFolderOn] = useState<EnvironmentId | null>(null);
+  // The move "Hand off to X" asked for, reviewed once that machine's folder is selected.
+  const queuedMove = useRef<EnvironmentId | null>(null);
   // Read when the dialog closes: a measure or copy still running is watched until it is ready.
   const copyRunning = useRef(false);
   const setCopyBusy = useCallback((value: boolean) => {
@@ -288,6 +296,11 @@ export function ProjectMachineHandoff({
   const sourceReady = blockedReason === null;
   const blockedReasonId = useId();
   const target = candidates.find((item) => `${item.environmentId}:${item.id}` === selected);
+  // A destination that merges memory gets each note's versions, so its own edits survive.
+  const noteVersionsInput =
+    target && configs.get(target.environmentId)?.environment.capabilities?.memoryThreeWay === true
+      ? { noteVersions: 1 as const }
+      : {};
   const destinationPlan = target
     ? {
         environmentId: target.environmentId,
@@ -393,15 +406,17 @@ export function ProjectMachineHandoff({
   latestChangeOpen.current = changeOpen;
   useEffect(
     () =>
-      registerCopyOpener(copyActivityKey(project.environmentId, project.id), () =>
-        latestChangeOpen.current(true),
-      ),
+      registerCopyOpener(copyActivityKey(project.environmentId, project.id), () => {
+        setShareView(false);
+        latestChangeOpen.current(true);
+      }),
     [project.environmentId, project.id],
   );
   useEffect(() => {
     if (!requestedTarget) return;
     // "Move coordinator to X": move, with X chosen whichever way the files travel.
     setIntent("move");
+    setShareView(false);
     setSelected(requestedTarget);
     setPickerMachine(null);
     setSnapshot(null);
@@ -497,6 +512,7 @@ export function ProjectMachineHandoff({
           sourceThreadId: coordinatorId!,
           operationId,
           publish: false,
+          ...noteVersionsInput,
           ...(pending?.targetKey === selected ? {} : { destination: destinationPlan! }),
         },
       });
@@ -517,12 +533,26 @@ export function ProjectMachineHandoff({
               sourceThreadId: coordinatorId!,
               operationId,
               publish: false,
+              ...noteVersionsInput,
               destination: destinationPlan!,
             },
           });
         }
       }
-      if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
+      if (prepared._tag === "Failure") {
+        const failure = squashAtomCommandFailure(prepared);
+        // A pointer naming an operation this project has since left behind: start a new one.
+        if (
+          pending &&
+          !pending.publishing &&
+          failure &&
+          typeof failure === "object" &&
+          "code" in failure &&
+          failure.code === "conflict"
+        )
+          setCanRestart(true);
+        throw failure;
+      }
       // After a publish attempt, even before a reload, the source may already be fenced.
       markUnpublished(
         prepared.value.publication === "unpublished" &&
@@ -611,6 +641,7 @@ export function ProjectMachineHandoff({
           sourceThreadId: coordinatorId!,
           operationId,
           publish: true,
+          ...noteVersionsInput,
           destination: snapshot.bundle.destination ?? destinationPlan!,
           expectedDigest: snapshot.bundle.digest,
           // The preview checked that the destination reads the summary.
@@ -688,6 +719,19 @@ export function ProjectMachineHandoff({
     setSelected(saved?.key ?? "");
     setPickerMachine(saved ? null : environmentId);
   };
+  useEffect(() => {
+    if (!queuedMove.current || target?.environmentId !== queuedMove.current) return;
+    queuedMove.current = null;
+    void review();
+  });
+  // A handoff begun in another window leaves no pointer here, only the fence.
+  const sharing =
+    open &&
+    shareView &&
+    !snapshot &&
+    phase === "choose" &&
+    project.workspaceSettings?.coordinatorBinding?.state !== "transferring";
+  const shareConfig = gitMachine ? configs.get(gitMachine)?.environment.capabilities : undefined;
 
   return (
     <>
@@ -716,6 +760,7 @@ export function ProjectMachineHandoff({
                     localStorage.getItem(
                       folderCopyStorageKey(project.environmentId, project.id),
                     ) !== null;
+                  setShareView(!pending && !copyPending);
                   if (pending) setMethod("folder");
                   else if (!copyPending) setMethod("copy");
                   const saved = readHandoffMachinePreference(preferenceKey);
@@ -759,6 +804,7 @@ export function ProjectMachineHandoff({
                   setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
                   setError(null);
                 } catch (cause) {
+                  setShareView(false);
                   setSelected("");
                   showError(cause);
                 }
@@ -813,16 +859,64 @@ export function ProjectMachineHandoff({
         method={method}
         onMethodChange={(next) => {
           if (discardPreview() === "failed") return;
+          setShareView(false);
           if (next === "folder") {
             setIntent("move");
             if (method !== "folder" && copyMachine) chooseGitMachine(copyMachine);
           }
           setMethod(next);
         }}
-        copyBusy={copyBusy}
-        copyLocked={copyLocked}
+        copyBusy={sharing ? shareBusy : copyBusy}
+        copyLocked={sharing ? shareBusy : copyLocked}
         copyDoneOn={
           copyDone ? (machines.find((item) => item.id === copyMachine)?.label ?? null) : null
+        }
+        shareFlow={
+          sharing ? (
+            <HandoffShare
+              project={project}
+              sourceLabel={source?.label ?? "this machine"}
+              machines={machineOptions}
+              machine={gitMachine}
+              machineLabel={machines.find((item) => item.id === gitMachine)?.label ?? null}
+              linked={destinations.some(
+                (item) => item.environmentId === gitMachine && !item.unavailable,
+              )}
+              joined={candidates.some(
+                (item) =>
+                  item.environmentId === gitMachine &&
+                  item.workspaceSettings?.logicalProject !== undefined &&
+                  item.workspaceSettings.logicalProject?.id ===
+                    project.workspaceSettings?.logicalProject?.id,
+              )}
+              uncommittedFiles={sourceChanges?.state === "dirty" ? sourceChanges.fileCount : 0}
+              loading={machinesLoading}
+              canClone={
+                shareConfig?.cloneDestinationChecks === true &&
+                shareConfig.projectCloneTracking === true
+              }
+              onMachineChange={chooseGitMachine}
+              onMove={() => {
+                if (!gitMachine) return;
+                queuedMove.current = gitMachine;
+                setShareView(false);
+                setIntent("move");
+                setMethod("folder");
+                chooseGitMachine(gitMachine);
+              }}
+              onCopyInstead={() => {
+                setShareView(false);
+                setIntent("copy");
+                setMethod("copy");
+              }}
+              onNeedsFolderChoice={() => {
+                setAddFolderOn(gitMachine);
+                changeOpen(false);
+              }}
+              onBusyChange={setShareBusy}
+              onClose={() => changeOpen(false)}
+            />
+          ) : undefined
         }
         copyFlow={
           method === "folder" ? undefined : (
@@ -839,6 +933,10 @@ export function ProjectMachineHandoff({
                 worktreeStorage: destinationDefaultWorktreeStorage(
                   configs.get(item.id)?.environment,
                 ),
+                homeSecretFiles:
+                  configs.get(item.id)?.environment.capabilities?.homeSecretFiles === true,
+                memoryThreeWay:
+                  configs.get(item.id)?.environment.capabilities?.memoryThreeWay === true,
               }))}
               savedFolder={(environmentId) =>
                 candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??
@@ -969,6 +1067,17 @@ export function ProjectMachineHandoff({
             : undefined
         }
       />
+      {addFolderOn && (
+        <AddToMachineDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setAddFolderOn(null);
+          }}
+          source={project}
+          destinationEnvironmentId={addFolderOn}
+          onAdded={() => setAddFolderOn(null)}
+        />
+      )}
     </>
   );
 }

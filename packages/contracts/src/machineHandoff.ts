@@ -184,6 +184,13 @@ export const MachineHandoffContext = Schema.Struct({
   notes: Schema.Array(
     Schema.Struct({ name: bounded(128), content: bounded(PROJECT_MEMORY_FILE_BYTES) }),
   ).check(Schema.isMaxLength(PROJECT_MEMORY_MAX_FILES)),
+  /** The versions each note has had, so it merges with the destination's copy. */
+  noteVersions: Schema.optional(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ history: Schema.Array(bounded(64)), updatedAt: bounded(64) }),
+    ),
+  ),
   threads: Schema.Array(
     Schema.Struct({
       environmentId: Schema.optional(EnvironmentId),
@@ -307,6 +314,8 @@ export const MachineHandoffPrepareInput = Schema.Struct({
    * source refuses, before fencing, to publish a bundle whose context has a retention.
    */
   contextRetention: Schema.optional(Schema.Literal(1)),
+  /** The destination merges moved notes (`memoryThreeWay`), so the bundle may carry their versions. */
+  noteVersions: Schema.optional(Schema.Literal(1)),
 });
 export type MachineHandoffPrepareInput = typeof MachineHandoffPrepareInput.Type;
 export const MachineHandoffPrepareResult = Schema.Struct({
@@ -397,7 +406,8 @@ export class MachineHandoffError extends Schema.TaggedError<MachineHandoffError>
         ? `${this.busy.total === 1 ? "A thread is" : `${this.busy.total} threads are`} still working or waiting for you. Answer or close what each one asks, or stop its work, then try again.`
         : "Finish active work in this project before handing it off.",
       invalid: "The handoff is invalid or belongs to a different project or machine.",
-      too_large: "The retained context exceeds the handoff limit. Select a smaller source chat.",
+      too_large:
+        "This project's conversation is too large to hand off, even summarized. Start a new coordinator chat here, then try again.",
       conflict: "This handoff ID already belongs to different work. Start a new handoff.",
       source_changed: this.changes
         ? "Files changed on the source after the copy. Review them before moving the coordinator."

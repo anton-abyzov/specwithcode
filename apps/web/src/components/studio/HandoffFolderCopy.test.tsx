@@ -191,10 +191,15 @@ it("sends no secret file unless it is ticked and confirmed for that machine", as
   ];
   await mount();
   await click("Copy to M3");
-  const box = container.querySelector<HTMLElement>('[aria-label="Send .env"]')!;
-  expect(box.getAttribute("aria-checked")).toBe("false");
+  expect(container.querySelector('[aria-label="Send .env"]')).toBeNull();
+  const include = container.querySelector<HTMLElement>(
+    '[data-slot="copy-secrets-include"] [data-slot="checkbox"]',
+  )!;
+  expect(include.getAttribute("aria-checked")).toBe("false");
   expect(container.textContent).not.toContain("API_TOKEN");
-  await act(async () => box.click());
+  await act(async () => include.click());
+  const box = container.querySelector<HTMLElement>('[aria-label="Send .env"]')!;
+  expect(box.getAttribute("aria-checked")).toBe("true");
   expect(button("Copy to M3").disabled).toBe(true);
   expect(container.textContent).toContain(
     "Send 1 secret file to M3. Only your user can read it there.",

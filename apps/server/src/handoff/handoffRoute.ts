@@ -15,6 +15,7 @@ import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { parseJson } from "../json.ts";
 import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
+import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
@@ -26,6 +27,7 @@ import {
   HANDOFF_JSON_MAX_BYTES,
   HANDOFF_PEER_PREFIX,
   HeartbeatRequest,
+  LINKED_MEMORY_PEER_MAX_BYTES,
   NegotiateRequest,
   PEER_PATHS,
   PeerPreflightRequest,
@@ -33,7 +35,11 @@ import {
   ReplicateMeta,
   TakeoverRequest,
 } from "./handoffWire.ts";
-import { HANDOFF_MAX_BUNDLE_BYTES } from "@specweave-studio/contracts";
+import {
+  HANDOFF_MAX_BUNDLE_BYTES,
+  LinkedMemoryExportInput,
+  LinkedMemoryMergeInput,
+} from "@specweave-studio/contracts";
 
 const decodeMeta = Schema.decodeUnknownOption(ReplicateMeta);
 const MAX_BODY_BYTES = HANDOFF_MAX_BUNDLE_BYTES + HANDOFF_FRAME_META_MAX_BYTES + 4;
@@ -109,7 +115,9 @@ export const layer = HttpRouter.add(
         ? MAX_BODY_BYTES
         : path === "coordinator-replica"
           ? COORDINATOR_REPLICA_MAX_BYTES
-          : HANDOFF_JSON_MAX_BYTES;
+          : path === "memory-merge"
+            ? LINKED_MEMORY_PEER_MAX_BYTES
+            : HANDOFF_JSON_MAX_BYTES;
     const contentLength = Number(request.headers["content-length"] ?? "0");
     if (!Number.isFinite(contentLength) || contentLength > limit) {
       return refusal(413, "The request is too large.", { code: "too_large" });
@@ -166,6 +174,18 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* CoordinatorLeaseReceiver).replica(caller, input.value));
+      }
+      case "memory-export": {
+        const input = decodeJson(LinkedMemoryExportInput, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedMemoryPeerReceiver).memoryExport(caller, input.value));
+      }
+      case "memory-merge": {
+        const input = decodeJson(LinkedMemoryMergeInput, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedMemoryPeerReceiver).memoryMerge(caller, input.value));
       }
       case "replicate": {
         let frame: { meta: unknown; bundle: Uint8Array };

@@ -543,6 +543,10 @@
       "types": "./src/providerPermissions.ts",
       "import": "./src/providerPermissions.ts"
     },
+    "./linkedMemorySync": {
+      "types": "./src/linkedMemorySync.ts",
+      "import": "./src/linkedMemorySync.ts"
+    },
     "./personalAssistant": {
       "types": "./src/personalAssistant.ts",
       "import": "./src/personalAssistant.ts"

@@ -41,10 +41,13 @@ export function useCoordinatorTransfer({
   project,
   coordinatorId,
   knownProject,
+  mergesNotes,
 }: {
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
   readonly knownProject: KnownProject;
+  /** The destination merges moved notes with its own, so it gets their versions. */
+  readonly mergesNotes: (environmentId: EnvironmentId) => boolean;
 }) {
   const prepare = useAtomCommand(machineHandoff.prepare, { reportFailure: false });
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
@@ -97,6 +100,8 @@ export function useCoordinatorTransfer({
       sourceThreadId: coordinatorId,
       operationId: operationId,
       destination: destinationPlan(environmentId, projectId, targetFolder),
+      // A destination that merges memory gets each note's versions, so its own edits survive.
+      ...(mergesNotes(environmentId) ? { noteVersions: 1 as const } : {}),
       ...(acceptedSourceChanges ? { acceptedSourceChanges } : {}),
     };
     const prepared = unwrap(

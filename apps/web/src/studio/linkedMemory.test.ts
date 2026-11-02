@@ -177,7 +177,9 @@ describe("linked memory sync", () => {
       "merge b into c from b",
     ]);
     // Neither side changes in this stub, so every pair is retried once and then reported.
-    expect(calls.slice(0, 4)).toEqual([
+    expect(calls.slice(0, 6)).toEqual([
+      "export a digest",
+      "export b digest",
       "export a",
       "export b",
       "merge b into a from b",
@@ -189,7 +191,7 @@ describe("linked memory sync", () => {
     const same = { "MEMORY.md": "1", "notes.md": "2" };
     const { calls, driver } = recorder({ a: memory("a", same), b: memory("b", same) });
     await syncLinkedMemory([[member("a"), member("b")]], driver);
-    expect(calls).toEqual(["export a", "export b"]);
+    expect(calls).toEqual(["export a digest", "export b digest", "export a", "export b"]);
   });
 
   it("still merges matching copies when an export was cut short", async () => {
@@ -229,9 +231,11 @@ describe("linked memory sync", () => {
       ],
       driver,
     );
-    expect(calls.slice(0, 6)).toEqual([
-      "export a",
-      "export b",
+    expect(calls.slice(0, 8)).toEqual([
+      "export a digest",
+      "export b digest",
+      "export c digest",
+      "export d digest",
       "export c",
       "export d",
       "merge d into c from d",
@@ -285,6 +289,8 @@ describe("linked memory sync", () => {
     });
     await syncLinkedMemory([[member("a"), member("b")]], machines.driver);
     expect(machines.calls).toEqual([
+      "export a digest",
+      "export b digest",
       "export a",
       "export b",
       "export a @2",
@@ -299,11 +305,11 @@ describe("linked memory sync", () => {
     expect(machines.mismatches).toEqual([]);
   });
 
-  it("stops after the first pages when both whole-memory digests already match", async () => {
+  it("moves no memory when both whole-memory digests already match", async () => {
     const same = { "MEMORY.md": "1", "a1.md": "1", "a2.md": "1", "a3.md": "1" };
     const machines = pagingMachines({ a: { ...same }, b: { ...same } });
     await syncLinkedMemory([[member("a"), member("b")]], machines.driver);
-    expect(machines.calls).toEqual(["export a", "export b"]);
+    expect(machines.calls).toEqual(["export a digest", "export b digest"]);
   });
 
   it("retries a pair whose digests differ once, then reports it", async () => {
@@ -312,7 +318,7 @@ describe("linked memory sync", () => {
       { stubborn: "a" },
     );
     await syncLinkedMemory([[member("a"), member("b")]], machines.driver);
-    expect(machines.calls.filter((call) => call.endsWith("digest"))).toHaveLength(4);
+    expect(machines.calls.filter((call) => call.endsWith("digest"))).toHaveLength(8);
     expect(machines.calls.filter((call) => call.startsWith("merge"))).toHaveLength(4);
     expect(machines.mismatches).toEqual(["a/b"]);
   });

@@ -22,6 +22,7 @@ import { ServerAuthInvalidCredentialError } from "../auth/EnvironmentAuthErrors.
 import { type EffectiveWorkGrant, unscopedGrant } from "../fleet/workGrantPolicy.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
+import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
 import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
 import { HANDOFF_PEER_PREFIX } from "./handoffWire.ts";
@@ -74,6 +75,7 @@ function api() {
             ),
         }),
         Layer.mock(CoordinatorLeaseReceiver)({ grantRefused: () => Effect.void }),
+        Layer.mock(LinkedMemoryPeerReceiver)({}),
         Layer.mock(HandoffReceiver)({
           negotiate: (caller) =>
             Effect.sync(() => {

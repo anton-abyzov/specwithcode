@@ -25,6 +25,10 @@ const MANAGED_REPOSITORIES = ".studio-repositories";
 const MAX_REPOSITORIES = 50;
 /** Threads started together share one fetch. */
 const FETCH_FRESH_MS = 60_000;
+/** A repository too large to fetch within a turn gets this long, away from any turn. */
+const CATCH_UP_MS = 30 * 60_000;
+/** A failed catch-up waits this long, so an origin that is down isn't asked at every start. */
+const CATCH_UP_RETRY_MS = 10 * 60_000;
 
 /** Coordinators that just moved here: their next turn on this machine syncs even if not its first. */
 const moved = new Set<string>();
@@ -51,6 +55,7 @@ export interface RepositorySyncResult {
 
 interface GitOptions {
   readonly signal?: AbortSignal | undefined;
+  readonly timeoutMs?: number | undefined;
 }
 
 const local = async (cwd: string, args: ReadonlyArray<string>, options: GitOptions) => {
@@ -67,7 +72,7 @@ const local = async (cwd: string, args: ReadonlyArray<string>, options: GitOptio
 const remote = (cwd: string, args: ReadonlyArray<string>, options: GitOptions) =>
   runGit(cwd, args, {
     allowFailure: true,
-    timeoutMs: FETCH_MS,
+    timeoutMs: options.timeoutMs ?? FETCH_MS,
     env: { ...remoteEnv(), GIT_TERMINAL_PROMPT: "0" },
     ...(options.signal ? { signal: options.signal } : {}),
     // A killed fetch is an origin that didn't answer: the next address still gets its try.
@@ -279,6 +284,37 @@ export const projectRepositories = (
 
 const fetchedAt = new Map<string, { readonly at: number; readonly address: string }>();
 
+const catchingUp = new Set<string>();
+const catchUpFailedAt = new Map<string, number>();
+
+/**
+ * Git keeps nothing from a killed fetch, so a repository that needs longer than a turn allows
+ * would never get current. This fetch has no turn to hold up. A few run at a time; the rest
+ * start from a later thread.
+ */
+export function startCatchUp(
+  path: string,
+  now: () => number = Date.now,
+  fetch: (path: string) => Promise<string | null> = (cwd) =>
+    fetchOrigin(cwd, { timeoutMs: CATCH_UP_MS }),
+): void {
+  const failedAt = catchUpFailedAt.get(path);
+  if (
+    catchingUp.has(path) ||
+    catchingUp.size >= PARALLEL ||
+    (failedAt !== undefined && now() - failedAt < CATCH_UP_RETRY_MS)
+  )
+    return;
+  catchingUp.add(path);
+  void fetch(path)
+    .catch(() => null)
+    .then((address) => {
+      catchingUp.delete(path);
+      if (address === null) catchUpFailedAt.set(path, now());
+      else catchUpFailedAt.delete(path);
+    });
+}
+
 /** Syncs the repositories a few at a time. One that throws is reported, the rest carry on. */
 export async function syncRepositories(input: {
   readonly paths: ReadonlyArray<string>;
@@ -297,9 +333,12 @@ export async function syncRepositories(input: {
       try {
         let address: string | null;
         if (fresh && now() - fresh.at < FETCH_FRESH_MS) address = fresh.address;
+        // A catch-up already running will answer for the next thread; this one doesn't wait.
+        else if (catchingUp.has(path)) address = null;
         else {
           address = await fetchOrigin(path, { signal: input.signal });
           if (address !== null) fetchedAt.set(path, { at: now(), address });
+          else if (!input.signal?.aborted) startCatchUp(path, now);
         }
         outcome = await syncRepository({
           path,

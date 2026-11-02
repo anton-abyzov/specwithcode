@@ -112,6 +112,8 @@ export interface ScanProgress {
 
 export interface ScanOptions {
   readonly expandRebuildable?: boolean;
+  /** The project's own "Secret files" patterns: matching untracked files are secrets. */
+  readonly secretPattern?: ((relative: string) => boolean) | undefined;
   readonly maxEntries?: number;
   /** Files and bytes listed so far, at most every 250 ms. */
   readonly onProgress?: (progress: ScanProgress) => void;
@@ -657,7 +659,12 @@ export async function scanFolder(root: string, options: ScanOptions = {}): Promi
         : innermost && inner !== null
           ? gitStateIn(innermost, inner)
           : "outside";
-      const fileClass = classifyFile({ relative, insideGitData: gitData, gitState });
+      const fileClass = classifyFile({
+        relative,
+        insideGitData: gitData,
+        gitState,
+        secretPattern: options.secretPattern,
+      });
       const base = {
         path: relative,
         mode: stat.mode & 0o7777,

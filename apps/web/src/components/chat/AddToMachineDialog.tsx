@@ -510,9 +510,11 @@ function AddToMachineBody({
           {!blocker && !extrasBlocked && (
             <HandoffSecretsStep
               files={secretFiles}
+              hints={scan.state === "ready" ? scan.summary.secretHints : undefined}
               selected={secrets}
               confirmed={secretsConfirmed}
               targetLabel={destName}
+              homeSupported={capabilities?.homeSecretFiles === true}
               disabled={locked}
               onSelectedChange={setSecrets}
               onConfirmedChange={setSecretsConfirmed}

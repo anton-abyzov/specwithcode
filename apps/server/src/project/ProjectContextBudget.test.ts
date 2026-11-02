@@ -65,3 +65,16 @@ it("lists whole memory file names and counts the ones that do not fit", () => {
   assert.strictEqual(lines.length - 1 + Number(hidden.match(/\d+/)![0]), files.length);
   assert.strictEqual(memoryInventoryLines(files.slice(0, 2)).split("\n").length, 2);
 });
+
+it("puts a memory file with a merge clash first and says to resolve it", () => {
+  const lines = memoryInventoryLines(
+    [
+      { name: "a.md", revision: 1 },
+      { name: "b.md", revision: 2 },
+    ],
+    undefined,
+    new Set(["b.md"]),
+  ).split("\n");
+  assert.match(lines[0]!, /^b\.md \(revision 2; holds conflict markers/);
+  assert.strictEqual(lines[1], "a.md (revision 1)");
+});

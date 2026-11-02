@@ -6,7 +6,10 @@ import {
   comparableContext,
   checkBundle,
   contextWithinLimits,
+  carryNoteVersions,
+  destinationModelPolicy,
   importDestinationNotes,
+  notesLeftToImport,
   planDestinationNotes,
 } from "./handoffBundle.ts";
 export { machineHandoffDigest } from "./handoffBundle.ts";
@@ -55,6 +58,7 @@ import {
   type FolderCopySentSecretsInput,
   type MachineReadiness,
   type MachineReadinessInput,
+  type MachineNicknames,
 } from "@specweave-studio/contracts";
 import { busyHandoffError } from "./handoffBusyThreads.ts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
@@ -81,6 +85,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
+import { LinkedMemorySync } from "../project/LinkedMemorySync.ts";
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
 import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as HandoffGit from "./handoffGit.ts";
@@ -246,6 +251,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const locks = yield* KeyedLock.make<string>();
+  const linkedMemory = yield* Effect.serviceOption(LinkedMemorySync);
   const guarded = <A, E, R>(effect: Effect.Effect<A, E, R>, code: MachineHandoffError["code"]) =>
     effect.pipe(
       Effect.mapError((cause) =>
@@ -518,6 +524,7 @@ const make = Effect.gen(function* () {
             mode: input.mode,
             warnings,
             destinationEnvironmentId: input.destinationEnvironmentId,
+            secretPatterns: current.workspaceSettings?.secretFiles,
           }),
         );
         return offerResult({
@@ -815,9 +822,12 @@ const make = Effect.gen(function* () {
                   "worker_checkpoint",
                 )
               : null;
-          const retained = unmerged
+          const unversioned = unmerged
             ? withUnmergedWorkers(read, unmerged, sourceEnvironmentId)
             : read;
+          const retained = resumed
+            ? unversioned
+            : yield* carryNoteVersions(linkedMemory, input, unversioned);
           const worktreePaths = [
             ...new Set(
               retained.threads.flatMap((thread) =>
@@ -1212,16 +1222,23 @@ const make = Effect.gen(function* () {
               contextPath: null,
               replayed: false,
             };
+          const nicknames = yield* serverSettings.getSettings.pipe(
+            Effect.map((settings) => settings.machineNicknames),
+            Effect.orElseSucceed(() => ({}) as MachineNicknames),
+          );
           const noteSteps = saved?.configured
             ? null
             : yield* planDestinationNotes(workspace, {
                 projectId: executionProjectId,
-                notes: input.bundle.context.notes,
+                notes: yield* notesLeftToImport(linkedMemory, {
+                  projectId: executionProjectId,
+                  logicalProjectId: metadata.logicalProject.id,
+                  sourceEnvironmentId: metadata.sourceEnvironmentId,
+                  sourceLabel: nicknames[metadata.sourceEnvironmentId]?.name,
+                  context: input.bundle.context,
+                }),
                 sourceEnvironmentId: metadata.sourceEnvironmentId,
-                nicknames: yield* serverSettings.getSettings.pipe(
-                  Effect.map((settings) => settings.machineNicknames),
-                  Effect.orElseSucceed(() => ({})),
-                ),
+                nicknames,
               });
           if (!saved)
             yield* store.write(`destination-${input.operationId}`, {
@@ -1310,20 +1327,11 @@ const make = Effect.gen(function* () {
             const carriedMode = input.bundle.context.runtimeMode;
             const patch = {
               projectSettingsOverrides: {
-                [projectId]: {
-                  defaultModelSelection: resolved.defaultModelSelection,
-                  defaultRuntimeMode: carriedMode ?? resolved.defaultRuntimeMode,
-                  providerLimitAction: "ask" as const,
-                  providerLimitFallbackModelSelection: null,
-                  providerLimitFallbackModels: [],
-                  providerLimitExcludedModels: resolved.providerLimitExcludedModels,
-                  providerLimitSwitchAtPercent: resolved.providerLimitSwitchAtPercent,
-                  providerLimitWaitUnderMinutes: resolved.providerLimitWaitUnderMinutes,
-                  providerLimitRedeemResets: false,
-                  providerLimitSpendCredits: false,
-                  providerLimitUseApiCredits: false,
-                  providerLimitMachineTargets: [],
-                },
+                [projectId]: destinationModelPolicy(
+                  resolved,
+                  settings.projectSettingsOverrides[projectId],
+                  carriedMode,
+                ),
               },
             };
             // A carried mode is a project access save: an already configured project's
@@ -1345,8 +1353,9 @@ const make = Effect.gen(function* () {
                   coordinatorModelSelection:
                     current.workspaceSettings?.coordinatorModelSelection ??
                     current.defaultModelSelection,
-                  workerMachine: null,
-                  workerMachines: null,
+                  // A copy moving back keeps the worker machines it chose; a new one starts with none.
+                  workerMachine: settingsNow?.workerMachine ?? null,
+                  workerMachines: settingsNow?.workerMachines ?? null,
                   goal: input.bundle.context.goal,
                   instructions: input.bundle.context.instructions,
                 },

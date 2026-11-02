@@ -1,211 +1,19 @@
 import { assert, it } from "@effect/vitest";
 import {
-  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
-  EventId,
-  type LinkedMemoryExport,
   PROJECT_LINK_MAX_BYTES,
   PROJECT_MEMORY_FILE_BYTES,
-  type ProjectCoordinatorBinding,
   ProjectId,
   type ProjectLinkError,
-  ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 
-import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
-import * as LinkedMemorySync from "./LinkedMemorySync.ts";
-import { projectFixture } from "./ProjectWorkspace.testkit.ts";
-import * as ProjectService from "./ProjectService.ts";
-import * as Workspace from "./ProjectWorkspaceService.ts";
+import { alpha, beta, LOGICAL_ID, machine, members, pass } from "./LinkedMemorySync.testkit.ts";
 
-const LOGICAL_ID = "logical:memory";
-const alpha = {
-  environmentId: EnvironmentId.make("env-alpha"),
-  projectId: ProjectId.make("alpha-copy"),
-};
-const beta = {
-  environmentId: EnvironmentId.make("env-beta"),
-  projectId: ProjectId.make("beta-copy"),
-};
-const members = [alpha, beta].map((member) => ({
-  ...member,
-  coordinatorThreadId: ThreadId.make(`coordinator:${member.projectId}`),
-}));
-
-/** One machine: its own database, memory, version history and sync service. */
-const machine = (
-  self: typeof alpha,
-  label: string,
-  logicalProject: { id: string; members: typeof members } | null = {
-    id: LOGICAL_ID,
-    members,
-  },
-  kind: "code" | "personal" = "code",
-  coordinatorBinding?: ProjectCoordinatorBinding,
-) =>
-  Effect.gen(function* () {
-    const project = projectFixture(self.projectId, {
-      workspaceSettings: {
-        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-        kind,
-        ...(coordinatorBinding ? { coordinatorBinding } : {}),
-        ...(logicalProject
-          ? {
-              logicalProject: {
-                ...logicalProject,
-                title: "Shared",
-                coordinatorId: "coordinator",
-              },
-            }
-          : {}),
-      },
-    });
-    const storage = ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
-    const workspace = Workspace.layer.pipe(
-      Layer.provideMerge(Layer.merge(storage, LinkedMemoryHistory.layerMemory)),
-    );
-    const layer = LinkedMemorySync.layer.pipe(
-      Layer.provideMerge(
-        Layer.mergeAll(
-          workspace,
-          Layer.succeed(ServerEnvironment.ServerEnvironment, {
-            getEnvironmentId: Effect.succeed(self.environmentId),
-            getDescriptor: Effect.succeed({ label }),
-          } as unknown as ServerEnvironment.ServerEnvironment["Service"]),
-          Layer.succeed(ProjectService.ProjectService, {
-            getById: (projectId: ProjectId) =>
-              Effect.succeed(projectId === project.id ? Option.some(project) : Option.none()),
-          } as unknown as ProjectService.ProjectService["Service"]),
-        ),
-      ),
-    );
-    const context = yield* Layer.buildWithMemoMap(
-      layer,
-      yield* Layer.makeMemoMap,
-      yield* Effect.scope,
-    );
-    const run = <A, E>(
-      effect: Effect.Effect<
-        A,
-        E,
-        | LinkedMemorySync.LinkedMemorySync
-        | Workspace.ProjectWorkspaceService
-        | LinkedMemoryHistory.LinkedMemoryHistory
-        | ProjectStore.ProjectStoreV2
-      >,
-    ) => Effect.provide(effect, context);
-    yield* run(
-      Effect.gen(function* () {
-        const projects = yield* ProjectStore.ProjectStoreV2;
-        yield* projects.apply({
-          sequence: 1,
-          eventId: EventId.make(`event:${self.projectId}`),
-          aggregateKind: "project",
-          aggregateId: self.projectId,
-          occurredAt: "2026-10-09T00:00:00.000Z",
-          commandId: null,
-          causationEventId: null,
-          correlationId: null,
-          metadata: {},
-          type: "project.created",
-          payload: {
-            projectId: self.projectId,
-            title: "Shared",
-            workspaceRoot: `/tmp/${self.projectId}`,
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: "2026-10-09T00:00:00.000Z",
-            updatedAt: "2026-10-09T00:00:00.000Z",
-          },
-        });
-      }),
-    );
-    const write = (name: string, content: string) =>
-      run(
-        Effect.gen(function* () {
-          const service = yield* Workspace.ProjectWorkspaceService;
-          const current = yield* service
-            .readMemory({ projectId: self.projectId, name })
-            .pipe(Effect.option);
-          return yield* service.writeMemory({
-            projectId: self.projectId,
-            name,
-            content,
-            expectedRevision: Option.isSome(current) ? current.value.revision : null,
-          });
-        }),
-      );
-    const remove = (name: string) =>
-      run(
-        Effect.gen(function* () {
-          const service = yield* Workspace.ProjectWorkspaceService;
-          const current = yield* service.readMemory({ projectId: self.projectId, name });
-          yield* service.deleteMemory({
-            projectId: self.projectId,
-            name,
-            expectedRevision: current.revision,
-          });
-        }),
-      );
-    const contents = run(
-      Effect.gen(function* () {
-        const service = yield* Workspace.ProjectWorkspaceService;
-        const read = yield* service.readWorkspace({ projectId: self.projectId });
-        const result: Record<string, string> = {};
-        for (const file of read.memory.files)
-          result[file.name] = (yield* service.readMemory({
-            projectId: self.projectId,
-            name: file.name,
-          })).content;
-        return result;
-      }),
-    );
-    const sync = run(Effect.service(LinkedMemorySync.LinkedMemorySync));
-    const exported = sync.pipe(
-      Effect.flatMap((service) => service.memoryExport({ projectId: self.projectId })),
-    );
-    const exportPage = (options: { cursor?: string; digestOnly?: boolean }) =>
-      sync.pipe(
-        Effect.flatMap((service) =>
-          service.memoryExport({ projectId: self.projectId, ...options }),
-        ),
-      );
-    const merge = (peer: typeof alpha, memory: LinkedMemoryExport, peerLabel = "Peer") =>
-      sync.pipe(
-        Effect.flatMap((service) =>
-          service.memoryMerge({
-            projectId: self.projectId,
-            peer: { ...peer, label: peerLabel },
-            export: memory,
-          }),
-        ),
-      );
-    const history = run(
-      Effect.service(LinkedMemoryHistory.LinkedMemoryHistory).pipe(
-        Effect.flatMap((service) => service.read(self.projectId)),
-      ),
-    );
-    return { self, write, remove, contents, exported, exportPage, merge, history };
-  });
-
-type Machine = Effect.Success<ReturnType<typeof machine>>;
-/** Both exports first, then each side merges the other's, as the client does. */
-const pass = (left: Machine, right: Machine) =>
-  Effect.gen(function* () {
-    const fromLeft = yield* left.exported;
-    const fromRight = yield* right.exported;
-    const onLeft = yield* left.merge(right.self, fromRight);
-    const onRight = yield* right.merge(left.self, fromLeft);
-    return { onLeft, onRight };
-  });
 const refusal = (exit: Exit.Exit<unknown, ProjectLinkError>) =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Exit.findErrorOption(exit))?.code : "succeeded";
 
@@ -316,32 +124,25 @@ it.live("pages memory beyond one message so the whole store reaches the peer", (
   ),
 );
 
-it.live("replicates memory both ways and keeps the losing edit as a conflict copy", () =>
+it.live("replicates memory both ways and merges edits made on each machine", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const a = yield* machine(alpha, "Alpha");
       const b = yield* machine(beta, "Beta");
       yield* a.write("MEMORY.md", "# index");
-      yield* a.write("notes.md", "base");
+      yield* a.write("notes.md", "one\ntwo\nthree\n");
       yield* b.write("plan.md", "from beta");
       const first = yield* pass(a, b);
       assert.deepStrictEqual(first.onLeft.applied, ["plan.md"]);
       assert.deepStrictEqual(first.onRight.applied, ["MEMORY.md", "notes.md"]);
       assert.deepStrictEqual(yield* a.contents, yield* b.contents);
 
-      yield* a.write("notes.md", "alpha edit");
-      yield* Effect.sleep("5 millis");
-      yield* b.write("notes.md", "beta edit");
-      const second = yield* pass(a, b);
-      assert.deepStrictEqual(second.onLeft.conflicts, [
-        { name: "notes.md", copy: "notes.conflict-alpha.md" },
-      ]);
-      assert.deepStrictEqual(second.onRight.kept, ["notes.md"]);
+      yield* a.write("notes.md", "ONE\ntwo\nthree\n");
+      yield* b.write("notes.md", "one\ntwo\nTHREE\n");
       yield* pass(a, b);
       const expected = {
         "MEMORY.md": "# index",
-        "notes.md": "beta edit",
-        "notes.conflict-alpha.md": "alpha edit",
+        "notes.md": "ONE\ntwo\nTHREE\n",
         "plan.md": "from beta",
       };
       assert.deepStrictEqual(yield* a.contents, expected);
@@ -354,6 +155,109 @@ it.live("replicates memory both ways and keeps the losing edit as a conflict cop
         kept: [],
         skipped: [],
       });
+    }),
+  ),
+);
+
+it.live("keeps a real clash in the one file on both machines, flagged, with no copy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta");
+      yield* a.write("notes.md", "base\n");
+      yield* pass(a, b);
+      yield* a.write("notes.md", "alpha edit\n");
+      yield* b.write("notes.md", "beta edit\n");
+      yield* pass(a, b);
+      const expected = {
+        "notes.md": "<<<<<<< alpha\nalpha edit\n=======\nbeta edit\n>>>>>>> beta\n",
+      };
+      assert.deepStrictEqual(yield* a.contents, expected);
+      assert.deepStrictEqual(yield* b.contents, expected);
+      const history = yield* a.history;
+      assert.strictEqual(history.files["notes.md"]?.clash, true);
+      const settled = yield* pass(a, b);
+      assert.deepStrictEqual(settled.onLeft.applied, []);
+      assert.deepStrictEqual(settled.onRight.applied, []);
+      // Tidying it clears the flag and reaches the other machine.
+      yield* a.write("notes.md", "tidied\n");
+      assert.isUndefined((yield* a.history).files["notes.md"]?.clash);
+      yield* pass(a, b);
+      assert.deepStrictEqual(yield* b.contents, { "notes.md": "tidied\n" });
+    }),
+  ),
+);
+
+it.live("merges a moved coordinator's notes into this copy, and never revives a deletion", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta");
+      yield* a.write("notes.md", "one\ntwo\n");
+      yield* a.write("old.md", "stale\n");
+      yield* pass(a, b);
+      yield* b.remove("old.md");
+      yield* pass(a, b);
+      yield* a.write("old.md", "stale\n");
+      yield* a.write("notes.md", "ONE\ntwo\n");
+      yield* b.write("notes.md", "one\nTWO\n");
+      const versions = yield* a.noteVersions;
+      const settled = yield* b.mergeMovedNotes({
+        notes: [
+          { name: "notes.md", content: "ONE\ntwo\n" },
+          { name: "old.md", content: "stale\n" },
+          { name: "fresh.md", content: "new\n" },
+        ],
+        versions: {
+          ...versions,
+          "fresh.md": { history: [], updatedAt: "2026-11-02T00:00:00.000Z" },
+        },
+        sourceEnvironmentId: alpha.environmentId,
+      });
+      assert.deepStrictEqual([...settled].toSorted(), ["fresh.md", "notes.md", "old.md"]);
+      assert.deepStrictEqual(yield* b.contents, {
+        "fresh.md": "new\n",
+        "notes.md": "ONE\nTWO\n",
+      });
+    }),
+  ),
+);
+
+it.live("settles a moved note whose merge matches this copy, with no conflict copy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta");
+      yield* a.write("notes.md", "one\ntwo\n");
+      yield* pass(a, b);
+      yield* a.write("notes.md", "ONE\ntwo\n");
+      yield* pass(a, b);
+      yield* b.write("notes.md", "ONE\nTWO\n");
+      const settled = yield* b.mergeMovedNotes({
+        notes: [{ name: "notes.md", content: "ONE\ntwo\n" }],
+        versions: yield* a.noteVersions,
+        sourceEnvironmentId: alpha.environmentId,
+      });
+      assert.deepStrictEqual([...settled], ["notes.md"]);
+      assert.deepStrictEqual(yield* b.contents, { "notes.md": "ONE\nTWO\n" });
+    }),
+  ),
+);
+
+it.live("merges cleanly in one pass after one machine made many edits apart", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta");
+      yield* a.write("notes.md", "top\nmiddle\nbottom\n");
+      yield* pass(a, b);
+      for (let edit = 0; edit < 20; edit += 1)
+        yield* a.write("notes.md", `top ${edit}\nmiddle\nbottom\n`);
+      yield* b.write("notes.md", "top\nmiddle\nbottom from b\n");
+      yield* pass(a, b);
+      const merged = { "notes.md": "top 19\nmiddle\nbottom from b\n" };
+      assert.deepStrictEqual(yield* a.contents, merged);
+      assert.deepStrictEqual(yield* b.contents, merged);
     }),
   ),
 );

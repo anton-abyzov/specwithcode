@@ -55,20 +55,27 @@ export function renderRepositoryNote(repositories: ReadonlyArray<ProjectNestedRe
   ].join("\n");
 }
 
-/** The list a note holds, or none when it was edited past reading; a deleted table row drops its entry. */
-export function parseRepositoryNote(content: string): ReadonlyArray<ProjectNestedRepository> {
+function readableList(content: string) {
   const start = content.indexOf(LIST_START);
-  if (start < 0) return [];
+  if (start < 0) return null;
   const body = content.slice(start + LIST_START.length);
   const end = body.indexOf(LIST_END);
-  if (end < 0) return [];
-  let parsed: unknown;
+  if (end < 0) return null;
   try {
-    parsed = JSON.parse(body.slice(0, end));
+    return Option.map(decodeList(JSON.parse(body.slice(0, end))), (entries) => ({
+      entries,
+      start,
+    })).pipe(Option.getOrNull);
   } catch {
-    return [];
+    return null;
   }
-  const entries = Option.getOrElse(decodeList(parsed), () => []);
+}
+
+/** The list a note holds, or none when it was edited past reading; a deleted table row drops its entry. */
+export function parseRepositoryNote(content: string): ReadonlyArray<ProjectNestedRepository> {
+  const list = readableList(content);
+  if (!list) return [];
+  const { entries, start } = list;
   // A row someone deleted from the table is dropped from the list too.
   const table = content.slice(0, start);
   // The note may come from another machine: only a network remote and a
@@ -78,6 +85,29 @@ export function parseRepositoryNote(content: string): ReadonlyArray<ProjectNeste
       table.includes(`\`${entry.path}\``) &&
       projectRepositoryIdentity(entry.remoteUrl) !== null &&
       !/[\u0000-\u001f\u007f`|]/u.test(entry.name),
+  );
+}
+
+/**
+ * Two copies of the note merged by repository: an entry either side added stays,
+ * one either side removed since `base` goes. Null when a side has no list to read.
+ */
+export function mergeRepositoryNotes(
+  base: string | null,
+  left: string,
+  right: string,
+): string | null {
+  if (!readableList(left) || !readableList(right)) return null;
+  const was = new Set(parseRepositoryNote(base ?? "").map((entry) => entry.key));
+  const fromLeft = parseRepositoryNote(left);
+  const fromRight = parseRepositoryNote(right);
+  const onLeft = new Set(fromLeft.map((entry) => entry.key));
+  const onRight = new Set(fromRight.map((entry) => entry.key));
+  return renderRepositoryNote(
+    [
+      ...fromLeft.filter((entry) => onRight.has(entry.key) || !was.has(entry.key)),
+      ...fromRight.filter((entry) => !onLeft.has(entry.key) && !was.has(entry.key)),
+    ].slice(0, PROJECT_NESTED_REPOSITORY_LIMIT),
   );
 }
 

@@ -3,7 +3,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, beforeEach, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   fetchOrigin,
@@ -14,6 +14,7 @@ import {
   repositorySyncNotice,
   syncRepositories,
   syncRepository,
+  startCatchUp,
 } from "./repositorySync.ts";
 
 let base: string;
@@ -312,4 +313,25 @@ it("falls back to the HTTPS address when an SSH origin fails, without changing t
   }
   expect(git(clone, "rev-parse", "origin/main")).not.toBe(before);
   expect(git(clone, "remote", "get-url", "origin")).toBe(ssh);
+});
+
+describe("startCatchUp", () => {
+  const path = "/repositories/too-large";
+  it("runs one fetch at a time, and waits after a failure before another", async () => {
+    let at = 1_000;
+    const now = () => at;
+    const finish: Array<(address: string | null) => void> = [];
+    const fetch = vi.fn(() => new Promise<string | null>((resolve) => void finish.push(resolve)));
+    startCatchUp(path, now, fetch);
+    startCatchUp(path, now, fetch);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    finish[0]!(null);
+    for (let turn = 0; turn < 3; turn += 1) await Promise.resolve();
+    startCatchUp(path, now, fetch);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    at += 11 * 60_000;
+    startCatchUp(path, now, fetch);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    finish[1]!("origin");
+  });
 });

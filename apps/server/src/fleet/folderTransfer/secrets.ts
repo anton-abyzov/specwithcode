@@ -121,8 +121,12 @@ export class SentSecretsLedger {
 }
 
 export interface ReceivedSecret {
+  /** As the source listed it: a folder path, or `~/<path>` for a file in the home folder. */
   readonly path: string;
-  /** Where the file landed: the same path, or `<path>.from-<machine>` beside a different one. */
+  /**
+   * Where the file landed: the same path, or `<path>.from-<machine>` beside a different
+   * one; `~/` and the path in this machine's home for a home file.
+   */
   readonly writtenAs: string;
   readonly size: number;
   readonly state: "written" | "unchanged" | "beside";
@@ -241,16 +245,19 @@ export async function writeSecretFile(input: {
 
 /**
  * Removes the secret files a copy created, unless they changed since. Returns
- * the paths kept because they were edited.
+ * the paths kept because they were edited. `~/` files are removed from `home`.
  */
 export async function removeReceivedSecrets(
   targetRoot: string,
   received: ReadonlyArray<ReceivedSecret>,
+  home?: string,
 ): Promise<Array<string>> {
   const kept: Array<string> = [];
   for (const file of received) {
-    if (!file.created || !isSafeRelativePath(file.writtenAs)) continue;
-    const absolute = NodePath.join(targetRoot, file.writtenAs);
+    const inHome = file.writtenAs.startsWith("~/");
+    const relative = inHome ? file.writtenAs.slice(2) : file.writtenAs;
+    if (!file.created || !isSafeRelativePath(relative) || (inHome && home === undefined)) continue;
+    const absolute = NodePath.join(inHome ? home! : targetRoot, relative);
     const stat = await lstatOrNull(absolute);
     if (!stat) continue;
     if (

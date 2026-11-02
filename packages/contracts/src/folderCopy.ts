@@ -95,7 +95,16 @@ export const FolderCopySourceSummary = Schema.Struct({
       changedFiles: count,
     }),
   ),
+  /** Secret files in the folder, then `~/` files from the home folder. */
   secretFiles: Schema.Array(Schema.Struct({ path: bounded(4096), size: count })),
+  /**
+   * Secrets a vault or keychain holds (1Password references, Doppler, SOPS, .NET
+   * user secrets not saved here): never copied, listed with what to do on the other
+   * machine. Older sources omit it.
+   */
+  secretHints: Schema.optional(
+    Schema.Array(Schema.Struct({ path: bounded(4096), source: bounded(100), hint: bounded(500) })),
+  ),
   linksOutside: count,
   warnings: Schema.Array(bounded(2000)),
   /**

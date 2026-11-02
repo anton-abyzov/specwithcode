@@ -488,6 +488,12 @@ const layerProjectLinkProvided = ProjectLink.layer.pipe(
   ),
 );
 
+const layerLinkedMemorySyncProvided = LinkedMemorySync.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(layerProjectService, layerProjectWorkspaceProvided, LinkedMemoryHistory.layer),
+  ),
+);
+
 export const layerProduction = Layer.mergeAll(
   ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
   MachineHandoff.layer.pipe(
@@ -501,6 +507,7 @@ export const layerProduction = Layer.mergeAll(
         layerProjectWorkspaceProvided,
         layerProjectCoordinatorProvided,
         ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
+        layerLinkedMemorySyncProvided,
       ),
     ),
   ),
@@ -511,11 +518,7 @@ export const layerProduction = Layer.mergeAll(
       Layer.mergeAll(layerProjectLinkProvided, layerProjectService, CoordinatorStandbyStore.layer),
     ),
   ),
-  LinkedMemorySync.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(layerProjectService, layerProjectWorkspaceProvided, LinkedMemoryHistory.layer),
-    ),
-  ),
+  layerLinkedMemorySyncProvided,
   ProjectLinkStateCleanup.layer.pipe(
     Layer.provide(
       Layer.mergeAll(

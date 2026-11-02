@@ -85,10 +85,16 @@ export function classifyFile(input: {
   readonly relative: string;
   readonly insideGitData: boolean;
   readonly gitState: "tracked" | "untracked" | "ignored" | "outside";
+  /** The project's own "Secret files" patterns (`secretPatternMatcher`). */
+  readonly secretPattern?: ((relative: string) => boolean) | undefined;
 }): FileClass {
   if (input.insideGitData) return "repository";
   if (input.gitState === "tracked") return "tracked";
-  if (isSecretLikeProjectPath(input.relative) || isUntrackedSecretConfigPath(input.relative))
+  if (
+    isSecretLikeProjectPath(input.relative) ||
+    isUntrackedSecretConfigPath(input.relative) ||
+    input.secretPattern?.(input.relative) === true
+  )
     return "secret";
   // Finder metadata is recreated locally and may only be hidden by the source
   // user's global ignore file, which deliberately does not move to another host.

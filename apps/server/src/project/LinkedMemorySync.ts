@@ -9,6 +9,7 @@ import {
   PROJECT_LINK_MAX_BYTES,
   ProjectLinkError,
   type ProjectId,
+  PROJECT_MEMORY_FILE_BYTES,
   ProjectMemoryName,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
@@ -28,6 +29,8 @@ import {
   type MemoryMergeStep,
   planMemoryMerge,
 } from "./linkedMemoryMerge.ts";
+import { canonicalSides, commonAncestors, mergeThreeWay } from "./linkedMemoryThreeWay.ts";
+import { mergeRepositoryNotes, REPOSITORY_NOTE } from "./ProjectRepositoryNote.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
@@ -47,8 +50,28 @@ export class LinkedMemorySync extends Context.Service<
     readonly memoryMerge: (
       input: LinkedMemoryMergeInput,
     ) => Effect.Effect<LinkedMemoryMergeResult, ProjectLinkError>;
+    /** What a coordinator move carries so its notes can merge on the other machine. */
+    readonly noteVersions: (
+      projectId: ProjectId,
+    ) => Effect.Effect<MovedNoteVersions, ProjectLinkError>;
+    /**
+     * Merges a moved coordinator's notes here, inside the receive's own lock, and
+     * returns the names that are settled: only the rest still need importing.
+     */
+    readonly mergeMovedNotes: (input: {
+      readonly projectId: ProjectId;
+      readonly logicalProjectId: string;
+      readonly sourceEnvironmentId: string;
+      readonly sourceLabel: string | undefined;
+      readonly notes: ReadonlyArray<{ readonly name: string; readonly content: string }>;
+      readonly versions: MovedNoteVersions;
+    }) => Effect.Effect<ReadonlySet<string>, ProjectLinkError>;
   }
 >()("specweave-studio/project/LinkedMemorySync") {}
+
+export type MovedNoteVersions = Readonly<
+  Record<string, { readonly history: ReadonlyArray<string>; readonly updatedAt: string }>
+>;
 
 const fail = (code: ProjectLinkError["code"], detail?: string) =>
   Effect.fail(new ProjectLinkError({ code, ...(detail ? { detail } : {}) }));
@@ -56,6 +79,9 @@ const storageFailed = () => new ProjectLinkError({ code: "storage_failed" });
 const byteLength = (content: string) => new TextEncoder().encode(content).length;
 const isSha256 = (value: string) => /^[0-9a-f]{64}$/.test(value);
 const isMemoryName = Schema.is(ProjectMemoryName);
+interface LocalRead {
+  readonly files: ReadonlyMap<string, LocalMemoryFile>;
+}
 type ExportEntry = readonly [name: string, file: { readonly updatedAt: string }];
 /** `MEMORY.md` first, then the most recently written, so a cut-short export keeps what matters. */
 const exportOrder = ([leftName, left]: ExportEntry, [rightName, right]: ExportEntry) =>
@@ -127,6 +153,7 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(storageFailed));
       const state = yield* histories.read(projectId).pipe(Effect.mapError(storageFailed));
       const files = new Map<string, LocalMemoryFile>();
+      let savedVersion = false;
       for (const summary of read.memory.files) {
         const found = yield* workspace
           .readMemory({ projectId, name: summary.name })
@@ -144,8 +171,77 @@ const make = Effect.gen(function* () {
           updatedAt: view.updatedAt,
           history: view.history.filter(isSha256),
         });
+        // Every version a peer can see stays readable here as a later merge's base.
+        savedVersion =
+          (yield* histories
+            .saveVersion(projectId, sha, found.value.content)
+            .pipe(Effect.orElseSucceed(() => false))) || savedVersion;
       }
+      if (savedVersion)
+        yield* histories
+          .pruneVersions(
+            projectId,
+            new Set(
+              [...files.values(), ...Object.values(state.tombstones)].flatMap(
+                (file) => file.history,
+              ),
+            ),
+          )
+          .pipe(Effect.ignore);
       return { files, state };
+    });
+
+  /** The text merge of each file this export edited alongside this copy. */
+  const threeWayFor = (projectId: ProjectId, local: LocalRead, remote: LinkedMemoryExport) =>
+    Effect.gen(function* () {
+      const environmentId = yield* environment.getEnvironmentId;
+      const here = {
+        environmentId,
+        label: machineSlug(yield* machineLabel, environmentId),
+      };
+      const there = {
+        environmentId: remote.environmentId,
+        label: machineSlug(remote.machineLabel, remote.environmentId),
+      };
+      const bases = new Map<string, string | null>();
+      for (const file of remote.files) {
+        const mine = local.files.get(file.name);
+        if (!mine || mine.sha === file.contentSha256) continue;
+        // Kept for a later merge: this machine may never hold the peer's version as its own.
+        yield* histories
+          .saveVersion(projectId, file.contentSha256, file.content)
+          .pipe(Effect.ignore);
+        const [first, second] = canonicalSides(
+          { environmentId: here.environmentId, history: mine.history },
+          {
+            environmentId: there.environmentId,
+            history: [...file.history, file.contentSha256],
+          },
+        );
+        // Only the newest shared version: an older base would drop a line re-added since.
+        const [ancestor] = commonAncestors(first.history, second.history);
+        const base = ancestor
+          ? yield* histories
+              .readVersion(projectId, ancestor)
+              .pipe(Effect.orElseSucceed(() => undefined))
+          : undefined;
+        bases.set(file.name, base ?? null);
+      }
+      return (name: string, mine: string, theirs: string) => {
+        const base = bases.get(name);
+        if (base === undefined) return undefined;
+        const [left, right] = canonicalSides(
+          { ...here, content: mine },
+          { ...there, content: theirs },
+        );
+        const content =
+          (name === REPOSITORY_NOTE
+            ? mergeRepositoryNotes(base, left.content, right.content)
+            : null) ?? mergeThreeWay(base, left, right);
+        return byteLength(content) > PROJECT_MEMORY_FILE_BYTES
+          ? undefined
+          : { content, sha: LinkedMemoryHistory.memoryContentHash(content) };
+      };
     });
 
   /**
@@ -190,7 +286,8 @@ const make = Effect.gen(function* () {
       let filesLeft = false;
       for (const [name, file] of [...local.files].toSorted(exportOrder)) {
         if (after && exportOrder(after, [name, file]) >= 0) continue;
-        const size = byteLength(file.content);
+        // Each history hash also takes room in the answer.
+        const size = byteLength(file.content) + file.history.length * 67;
         if (bytes + size > PROJECT_LINK_MAX_BYTES) {
           // A file larger than a page is skipped, as before; anything else waits for the next page.
           if (files.length === 0) continue;
@@ -259,6 +356,99 @@ const make = Effect.gen(function* () {
       }
     });
 
+  /** Applies a peer's files here. The caller holds the project's lock. */
+  const mergeHere = (projectId: ProjectId, remote: LinkedMemoryExport) =>
+    Effect.gen(function* () {
+      const environmentId = yield* environment.getEnvironmentId;
+      const local = yield* readLocal(projectId);
+      const plan = planMemoryMerge(
+        {
+          environmentId,
+          machineSlug: machineSlug(yield* machineLabel, environmentId),
+          files: local.files,
+          tombstones: local.state.tombstones,
+          threeWay: yield* threeWayFor(projectId, local, remote),
+        },
+        remote,
+      );
+      const applied: string[] = [];
+      const conflicts: Array<{ name: string; copy: string }> = [];
+      const skipped: string[] = [];
+      const done: MemoryMergeStep[] = [];
+      for (const step of plan.steps) {
+        if (!(yield* applyStep(projectId, step))) {
+          skipped.push(step.name);
+          continue;
+        }
+        done.push(step);
+        if (step.kind === "write")
+          yield* histories.saveVersion(projectId, step.sha, step.content).pipe(Effect.ignore);
+        if (step.kind === "write" && step.conflictCopy)
+          conflicts.push({ name: step.name, copy: step.conflictCopy.name });
+        else if (step.kind === "write" || step.kind === "delete") applied.push(step.name);
+      }
+      // The writes above already recorded their versions; this sets the merged ones.
+      if (done.length > 0)
+        yield* histories
+          .modify(projectId, (state) => done.reduce(applyMergeStepToHistory, state))
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not record merged project memory versions", {
+                projectId,
+                cause,
+              }),
+            ),
+          );
+      return { applied, conflicts, kept: [...plan.kept], skipped };
+    });
+
+  const noteVersions: LinkedMemorySync["Service"]["noteVersions"] = (projectId) =>
+    readLocal(projectId).pipe(
+      Effect.map(({ files }) =>
+        Object.fromEntries(
+          [...files].map(([name, file]) => [
+            name,
+            {
+              history: file.history,
+              updatedAt: file.updatedAt,
+            },
+          ]),
+        ),
+      ),
+    );
+
+  const mergeMovedNotes: LinkedMemorySync["Service"]["mergeMovedNotes"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* load(input.projectId);
+      if (project.workspaceSettings?.logicalProject?.id !== input.logicalProjectId)
+        return new Set<string>();
+      const files = input.notes.flatMap((note) => {
+        const versions = input.versions[note.name];
+        return versions
+          ? [
+              {
+                name: note.name,
+                content: note.content,
+                contentSha256: LinkedMemoryHistory.memoryContentHash(note.content),
+                updatedAt: versions.updatedAt,
+                history: versions.history.filter(isSha256),
+              },
+            ]
+          : [];
+      });
+      const result = yield* mergeHere(input.projectId, {
+        logicalProjectId: input.logicalProjectId,
+        environmentId: input.sourceEnvironmentId as LinkedMemoryExport["environmentId"],
+        ...(input.sourceLabel ? { machineLabel: input.sourceLabel.slice(0, 200) } : {}),
+        files,
+        tombstones: [],
+        truncated: false,
+      });
+      // A note whose merge matched what is here changed only its history, and is settled too.
+      const open = new Set([...result.skipped, ...result.conflicts.map(({ name }) => name)]);
+      return new Set(files.map((file) => file.name).filter((name) => !open.has(name)));
+    });
+
   const memoryMerge: LinkedMemorySync["Service"]["memoryMerge"] = (input) =>
     admission.withLock(
       input.projectId,
@@ -299,47 +489,11 @@ const make = Effect.gen(function* () {
         )
           return yield* fail("invalid", "A memory file does not match its hash.");
 
-        const local = yield* readLocal(project.id);
-        const plan = planMemoryMerge(
-          {
-            environmentId,
-            machineSlug: machineSlug(yield* machineLabel, environmentId),
-            files: local.files,
-            tombstones: local.state.tombstones,
-          },
-          input.export,
-        );
-        const applied: string[] = [];
-        const conflicts: Array<{ name: string; copy: string }> = [];
-        const skipped: string[] = [];
-        const done: MemoryMergeStep[] = [];
-        for (const step of plan.steps) {
-          if (!(yield* applyStep(project.id, step))) {
-            skipped.push(step.name);
-            continue;
-          }
-          done.push(step);
-          if (step.kind === "write" && step.conflictCopy)
-            conflicts.push({ name: step.name, copy: step.conflictCopy.name });
-          else if (step.kind === "write" || step.kind === "delete") applied.push(step.name);
-        }
-        // The writes above already recorded their versions; this sets the merged ones.
-        if (done.length > 0)
-          yield* histories
-            .modify(project.id, (state) => done.reduce(applyMergeStepToHistory, state))
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("Could not record merged project memory versions", {
-                  projectId: project.id,
-                  cause,
-                }),
-              ),
-            );
-        return { applied, conflicts, kept: [...plan.kept], skipped };
+        return yield* mergeHere(project.id, input.export);
       }),
     );
 
-  return LinkedMemorySync.of({ memoryExport, memoryMerge });
+  return LinkedMemorySync.of({ memoryExport, memoryMerge, noteVersions, mergeMovedNotes });
 });
 
 export const layer = Layer.effect(LinkedMemorySync, make).pipe(

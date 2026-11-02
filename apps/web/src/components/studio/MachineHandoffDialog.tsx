@@ -109,6 +109,7 @@ export function MachineHandoffDialog({
   method = "folder",
   onMethodChange,
   copyFlow,
+  shareFlow,
   copyBusy = false,
   copyLocked,
   copyDoneOn = null,
@@ -122,6 +123,8 @@ export function MachineHandoffDialog({
   readonly leftBehind?: ReactNode;
   readonly onMethodChange?: (method: HandoffFolderMethod) => void;
   readonly copyFlow?: ReactNode;
+  /** The default screen, sharing the project with another machine; replaces every other view. */
+  readonly shareFlow?: ReactNode;
   readonly copyBusy?: boolean;
   /**
    * Whether the copy flow must keep the dialog open. Measuring, comparing and copying
@@ -166,7 +169,8 @@ export function MachineHandoffDialog({
   readonly onBack?: (() => void) | undefined;
 }) {
   const target = destinations.find((item) => item.key === selected);
-  const copying = copyFlow !== undefined && method !== "folder";
+  const sharing = shareFlow !== undefined;
+  const copying = sharing || (copyFlow !== undefined && method !== "folder");
   const busy = copying ? copyBusy : phase === "checking" || phase === "transferring";
   const locked = copying ? (copyLocked ?? copyBusy) : busy;
   const complete = !copying && phase === "complete";
@@ -211,9 +215,11 @@ export function MachineHandoffDialog({
               <DialogDescription className="wrap-anywhere">
                 {complete
                   ? `The coordinator now runs on ${targetLabel}.`
-                  : intent === "copy"
-                    ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
-                    : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
+                  : sharing
+                    ? "Share this project with another machine. Its code moves only through Git."
+                    : intent === "copy"
+                      ? `From ${sourceLabel}, for first setup and what Git can't carry: .env, untracked and unpushed work. Repositories already there update from Git when a thread starts. Nothing there is replaced without asking.`
+                      : `From ${sourceLabel} to another machine. Nothing there is replaced without asking.`}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -226,10 +232,10 @@ export function MachineHandoffDialog({
                 destinationWorktreeStorage={destinationWorktreeStorage}
               />
             )}
-            {intent === "move" && !complete && leftBehind}
+            {intent === "move" && !complete && !sharing && leftBehind}
             {copying ? (
               <HandoffCopyActionsTarget.Provider value={copyActionsTarget}>
-                {copyFlow}
+                {sharing ? shareFlow : copyFlow}
               </HandoffCopyActionsTarget.Provider>
             ) : complete ? (
               <div

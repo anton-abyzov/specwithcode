@@ -1,12 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - the source serves file ranges through no-follow descriptors; close bounds shutdown with a timer.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import {
-  isSecretLikeProjectPath,
-  isUntrackedSecretConfigPath,
-} from "../../workspace/WorkspaceSensitivePaths.ts";
+import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
 import { FILE_CLASSES, type FileClass } from "./classify.ts";
 import { privateDirectory, readJson, writeJson } from "./durable.ts";
 import { runGit } from "./git.ts";
@@ -45,8 +43,9 @@ import {
 } from "./sourceSummary.ts";
 import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 import { checkPortableGit, preparePortableGit, sourceEntryRoot } from "./portableGit.ts";
+import { findSecretLocations, secretPatternMatcher } from "./secretLocations.ts";
+import { liveSecretFiles, readSecretBytes, type SecretRoots } from "./sourceSecrets.ts";
 import {
-  MAX_SECRET_FILE_BYTES,
   type SecretApproval,
   SecretStepError,
   selectSecretFiles,
@@ -135,6 +134,8 @@ export interface SourceOperationRecord {
   readonly warnings?: ReadonlyArray<string>;
   /** Secret files the person ticked for this destination; absent until they approve any. */
   readonly secrets?: SecretApproval | null;
+  /** The project's "Secret files" setting when the copy was offered. */
+  readonly secretPatterns?: ReadonlyArray<string>;
   /** The reviewed change list a coordinator move went ahead with. */
   readonly acceptedDrift?: {
     readonly digest: string;
@@ -167,6 +168,8 @@ interface Hooks {
   readonly verifyCaptureFilesystem?: (root: string, mode: CopyMode) => Promise<void>;
   /** The wall clock a capture compares file stamps with; tests move it past fresh files. */
   readonly stampClock?: () => number;
+  /** The home folder `~/` secret files are read from; tests use a temp folder. */
+  readonly home?: () => string;
 }
 
 interface ChunkPlace {
@@ -394,6 +397,7 @@ export class SourceTransfers {
     readonly mode: CopyMode;
     readonly destinationEnvironmentId: string;
     readonly warnings?: ReadonlyArray<string>;
+    readonly secretPatterns?: ReadonlyArray<string> | undefined;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
     this.assertOpen();
     const folder = await NodeFSP.realpath(input.folder);
@@ -446,6 +450,7 @@ export class SourceTransfers {
       error: null,
       releaseReason: null,
       warnings: input.warnings ?? [],
+      ...(input.secretPatterns?.length ? { secretPatterns: [...input.secretPatterns] } : {}),
     });
     this.operations.set(input.operationId, loaded);
     await this.save(loaded, {});
@@ -465,6 +470,7 @@ export class SourceTransfers {
       const scanned = await scanFolder(loaded.record.folder, {
         shouldStop: () => this.closed || stop.signal.aborted,
         onProgress: this.progressReporter(loaded, stop, "listing"),
+        secretPattern: secretPatternMatcher(loaded.record.secretPatterns),
       });
       await checkPortableGit(scanned);
       this.assertOpen();
@@ -477,7 +483,11 @@ export class SourceTransfers {
         scanCompletedAt: this.now(),
         sourceFingerprint: inventoryFingerprint(scanned),
         progress: null,
-        summary: summarize(withGitNotice(scanned), loaded.record.warnings),
+        summary: summarize(
+          withGitNotice(scanned),
+          loaded.record.warnings,
+          await this.secretLocations(loaded.record, scanned),
+        ),
       });
     } catch (cause) {
       await this.clearSnapshot(loaded);
@@ -570,6 +580,7 @@ export class SourceTransfers {
     const scan = await scanFolder(original.folder, {
       expandRebuildable: original.selection?.includes("rebuildable") ?? false,
       shouldStop: () => this.closed,
+      secretPattern: secretPatternMatcher(original.secretPatterns),
     });
     if (loaded.record !== original || loaded.building)
       throw new SourceTransferError(
@@ -581,7 +592,11 @@ export class SourceTransfers {
       ...original,
       freshness: {
         checkedAt: this.now(),
-        summary: summarize(withGitNotice(scan), original.warnings),
+        summary: summarize(
+          withGitNotice(scan),
+          original.warnings,
+          await this.secretLocations(original, scan),
+        ),
         current:
           !!original.sourceFingerprint && original.sourceFingerprint === inventoryFingerprint(scan),
       },
@@ -692,6 +707,7 @@ export class SourceTransfers {
       const listing = () => ({
         shouldStop,
         onProgress: this.progressReporter(loaded, stop, "listing"),
+        secretPattern: secretPatternMatcher(loaded.record.secretPatterns),
       });
       let scan = measured ?? (await scanFolder(loaded.record.folder, listing()));
       // A prepared scan carries an earlier Git snapshot. Re-read the live
@@ -819,7 +835,11 @@ export class SourceTransfers {
         ...(capturedSource ? { capturedSource } : {}),
         sourceFingerprint,
         scanCompletedAt,
-        summary: summarize(scan, loaded.record.warnings),
+        summary: summarize(
+          scan,
+          loaded.record.warnings,
+          await this.secretLocations(loaded.record, scan),
+        ),
       });
       if (capturedSource) await syncCapturedDirectory(this.directory(loaded.record.operationId));
     } catch (cause) {
@@ -1166,6 +1186,7 @@ export class SourceTransfers {
       manifestFile: this.manifestFile(operationId),
       basisFile: driftBasisFile(directory),
       servedSecretsFile: servedSecretsFile(directory),
+      secretPattern: secretPatternMatcher(loaded.record.secretPatterns),
       now: () => this.now(),
     });
   }
@@ -1254,10 +1275,11 @@ export class SourceTransfers {
     if (!loaded.record.summary) throw new SourceTransferError(409, "scanning");
     let files;
     try {
-      const offered = await this.withLiveSecretFiles(
-        loaded.record.folder,
+      const offered = await liveSecretFiles(
+        this.secretRoots(loaded.record),
         loaded.record.summary.secretFiles,
         input.paths,
+        secretPatternMatcher(loaded.record.secretPatterns),
       );
       files = selectSecretFiles(offered, input.paths);
     } catch (cause) {
@@ -1278,35 +1300,19 @@ export class SourceTransfers {
     return loaded.record;
   }
 
-  /**
-   * The measured secret files plus any ticked path the summary lacks that is still
-   * a secret-like regular file in the folder. The dialog can list a file from a later
-   * scan (a refreshed check, a build that listed the folder again) than the one this
-   * record kept; refusing it would fail the whole copy for a file the person may send.
-   */
-  private async withLiveSecretFiles(
-    folder: string,
-    offered: ReadonlyArray<{ readonly path: string; readonly size: number }>,
-    paths: ReadonlyArray<string>,
-  ): Promise<Array<{ path: string; size: number }>> {
-    const known = new Set(offered.map((file) => file.path));
-    const result = [...offered];
-    for (const path of new Set(paths)) {
-      if (known.has(path) || !isSafeRelativePath(path)) continue;
-      if (!isSecretLikeProjectPath(path) && !isUntrackedSecretConfigPath(path)) continue;
-      if (path.split("/").includes(".git")) continue;
-      let handle: NodeFSP.FileHandle | null = null;
-      try {
-        handle = await openInside(folder, path);
-        const stat = await handle.stat();
-        if (stat.isFile()) result.push({ path, size: stat.size });
-      } catch {
-        // Gone, a link, or behind a link: it stays refused below.
-      } finally {
-        await handle?.close();
-      }
-    }
-    return result;
+  /** Where this copy's secret files are read: the folder, and the home for `~/` files. */
+  private secretRoots(record: SourceOperationRecord): SecretRoots {
+    return { folder: record.folder, home: this.hooks.home?.() ?? NodeOS.homedir() };
+  }
+
+  /** `~/` secret files and vault hints for a finished listing of this copy's folder. */
+  private secretLocations(record: SourceOperationRecord, scan: FolderScan) {
+    return findSecretLocations({
+      root: scan.root,
+      entries: scan.entries,
+      patterns: record.secretPatterns,
+      home: this.secretRoots(record).home,
+    });
   }
 
   /** The secret files the destination may pull: paths and sizes only. */
@@ -1322,22 +1328,8 @@ export class SourceTransfers {
     if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);
     const approved = loaded.record.secrets?.files.find((file) => file.path === path);
     if (!approved) throw new SourceTransferError(403, "not_approved");
-    let bytes: Buffer;
-    try {
-      const handle = await openInside(loaded.record.folder, path);
-      try {
-        const stat = await handle.stat();
-        if (!stat.isFile() || stat.size > MAX_SECRET_FILE_BYTES)
-          throw new SourceTransferError(409, "changed");
-        bytes = await handle.readFile();
-      } finally {
-        await handle.close();
-      }
-    } catch (cause) {
-      if (cause instanceof SourceTransferError) throw cause;
-      throw new SourceTransferError(409, "changed");
-    }
-    if (bytes.byteLength > MAX_SECRET_FILE_BYTES) throw new SourceTransferError(409, "changed");
+    const bytes = await readSecretBytes(this.secretRoots(loaded.record), path);
+    if (!bytes) throw new SourceTransferError(409, "changed");
     // The drift check compares the live secret with these bytes before a move.
     await recordServedSecret(servedSecretsFile(this.directory(loaded.record.operationId)), {
       path,

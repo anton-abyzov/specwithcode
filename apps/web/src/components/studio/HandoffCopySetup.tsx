@@ -18,6 +18,9 @@ export interface CopyMachine {
   readonly label: string;
   readonly unavailable: string | null;
   readonly worktreeStorage?: string | null;
+  /** The machine writes `~/` secret files (.NET user secrets) into its home folder. */
+  readonly homeSecretFiles?: boolean;
+  readonly memoryThreeWay?: boolean;
 }
 
 export const copyMachineOptions = (machines: ReadonlyArray<CopyMachine>): MachineOption[] =>

@@ -316,9 +316,13 @@ export function HandoffCopyStepPanels({
                 copy,
                 (repositoryChoices ?? planRepositoryChoices(copy.rows)).skip,
               )}
+              hints={summary.secretHints}
               selected={secretPaths}
               confirmed={secretsConfirmed}
               targetLabel={targetLabel}
+              homeSupported={
+                machines.find((entry) => entry.id === machine)?.homeSecretFiles === true
+              }
               disabled={busy}
               onSelectedChange={onSecretPathsChange}
               onConfirmedChange={onSecretsConfirmedChange}

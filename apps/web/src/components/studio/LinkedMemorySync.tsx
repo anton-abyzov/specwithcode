@@ -16,8 +16,9 @@ import { linkedMemory, linkedMemoryGroups, syncLinkedMemory } from "../../studio
 const SYNC_EVERY_MS = 60_000;
 
 /**
- * Keeps project memory the same on every reachable copy of a linked project,
- * in both directions: the last writer wins per file and the other version is
+ * Keeps project memory the same on every reachable copy of a linked project
+ * whose coordinator's server cannot sync it itself (an older version), in both
+ * directions: the last writer wins per file and the other version is
  * kept beside it. Memory larger than one message goes over in pages, and each
  * pass ends by checking both copies agree. Machines too old for two-way memory
  * are left out.

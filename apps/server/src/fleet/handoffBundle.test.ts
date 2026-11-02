@@ -1,18 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import {
   EnvironmentId,
   MACHINE_HANDOFF_BUNDLE_MAX_BYTES,
   MACHINE_HANDOFF_MAX_BYTES,
   type MachineHandoffBundle,
+  type MachineHandoffContext,
   ProjectId,
+  ProjectLinkError,
   ProjectWorkspaceError,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { stringifyJson } from "../json.ts";
+import type { LinkedMemorySync } from "../project/LinkedMemorySync.ts";
 import type * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
 import {
+  carryNoteVersions,
+  destinationModelPolicy,
+  notesLeftToImport,
   checkBundle,
   comparableContext,
   contextWithinLimits,
@@ -276,4 +283,89 @@ describe("comparing a retained context with its preview", () => {
     expect(comparableContext(context, saved)).toEqual(context);
     expect(comparableContext(later, context)).toEqual(later);
   });
+  it("does not call a change in note versions alone a changed source", () => {
+    const versions = (hash: string) => ({ "MEMORY.md": { history: [hash], updatedAt: "now" } });
+    const saved = { ...context, noteVersions: versions("a") };
+    expect(comparableContext({ ...context, noteVersions: versions("b") }, saved)).toEqual(saved);
+    expect(comparableContext(saved, context)).toEqual(context);
+  });
+  it.effect("moves without note versions when the conversation leaves them no room", () =>
+    Effect.gen(function* () {
+      const noteVersions = { "MEMORY.md": { history: ["a".repeat(64)], updatedAt: "now" } };
+      const memory = Option.some({
+        noteVersions: () => Effect.succeed(noteVersions),
+      } as unknown as LinkedMemorySync["Service"]);
+      const carried = yield* carryNoteVersions(memory, { noteVersions: 1, projectId }, context);
+      expect(carried.noteVersions).toEqual(noteVersions);
+      const full = { ...context, goal: "x".repeat(MACHINE_HANDOFF_MAX_BYTES - 200) };
+      expect(contextWithinLimits(full)).toBe(true);
+      const left = yield* carryNoteVersions(memory, { noteVersions: 1, projectId }, full);
+      expect(left.noteVersions).toBeUndefined();
+    }),
+  );
+});
+
+describe("a coordinator moving to a copy that already has its own setup", () => {
+  const resolved = {
+    defaultModelSelection: { instanceId: "claudeAgent", model: "opus" },
+    defaultRuntimeMode: "approval-required",
+    providerLimitExcludedModels: [],
+    providerLimitSwitchAtPercent: 90,
+    providerLimitWaitUnderMinutes: 5,
+  } as unknown as Parameters<typeof destinationModelPolicy>[0];
+
+  it("pins a safe limit policy only where this machine has none", () => {
+    expect(destinationModelPolicy(resolved, undefined, undefined)).toMatchObject({
+      providerLimitAction: "ask",
+      providerLimitSpendCredits: false,
+      providerLimitFallbackModels: [],
+    });
+    const kept = destinationModelPolicy(
+      resolved,
+      { providerLimitAction: "switch" } as Parameters<typeof destinationModelPolicy>[1],
+      "full-access",
+    );
+    expect(kept).toEqual({
+      defaultModelSelection: resolved.defaultModelSelection,
+      defaultRuntimeMode: "full-access",
+    });
+  });
+
+  const notes = [
+    { name: "merged.md", content: "merged" },
+    { name: "copied.md", content: "copied" },
+  ];
+  const context = (noteVersions?: object) =>
+    ({ notes, ...(noteVersions ? { noteVersions } : {}) }) as unknown as MachineHandoffContext;
+  const input = (noteVersions?: object) => ({
+    projectId: ProjectId.make("project"),
+    logicalProjectId: "logical",
+    sourceEnvironmentId: "source",
+    sourceLabel: "M4",
+    context: context(noteVersions),
+  });
+  const service = (result: Effect.Effect<ReadonlySet<string>, ProjectLinkError>) =>
+    Option.some({ mergeMovedNotes: () => result } as unknown as LinkedMemorySync["Service"]);
+
+  it.effect("imports only the notes the merge did not settle", () =>
+    Effect.gen(function* () {
+      const left = yield* notesLeftToImport(
+        service(Effect.succeed(new Set(["merged.md"]))),
+        input({}),
+      );
+      expect(left.map((note) => note.name)).toEqual(["copied.md"]);
+    }),
+  );
+
+  it.effect("imports every note when the merge cannot run or the bundle has no versions", () =>
+    Effect.gen(function* () {
+      const failed = yield* notesLeftToImport(
+        service(Effect.fail(new ProjectLinkError({ code: "storage_failed" }))),
+        input({}),
+      );
+      expect(failed).toEqual(notes);
+      expect(yield* notesLeftToImport(service(Effect.succeed(new Set())), input())).toEqual(notes);
+      expect(yield* notesLeftToImport(Option.none(), input({}))).toEqual(notes);
+    }),
+  );
 });

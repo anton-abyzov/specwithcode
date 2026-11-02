@@ -283,6 +283,8 @@ export function HandoffFolderCopy({
     project,
     coordinatorId,
     knownProject,
+    mergesNotes: (environmentId) =>
+      machines.find((entry) => entry.id === environmentId)?.memoryThreeWay === true,
     sourceLabel,
     targetLabel,
     copy,

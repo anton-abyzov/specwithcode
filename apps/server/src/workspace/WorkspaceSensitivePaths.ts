@@ -302,10 +302,20 @@ const STACK_SECRET_FILE = new RegExp(
     String.raw`connectionstrings\.config`,
     String.raw`.+\.publishsettings`,
     String.raw`.+\.pubxml\.user`,
+    // Azure Functions local settings.
+    String.raw`local\.settings\.json`,
     // Java, Kotlin and Spring: profile overrides and signing properties.
     String.raw`application-(?:local|dev|development|prod|production|secret|secrets)\.(?:properties|ya?ml)`,
     String.raw`(?:keystore|key|signing|secrets?)\.properties`,
     String.raw`local\.properties`,
+    String.raw`gradle\.properties`,
+    // Firebase app config, Django and Elixir local secrets, R and rbenv variables.
+    String.raw`google-services\.json`,
+    String.raw`GoogleService-Info\.plist`,
+    String.raw`local_settings\.py`,
+    String.raw`.+\.secret\.exs`,
+    String.raw`\.Renviron`,
+    String.raw`\.rbenv-vars`,
     // Cloudflare Workers, Rails, Streamlit, Terraform, Kubernetes, Google and Firebase.
     String.raw`\.dev\.vars(?:\..+)?`,
     String.raw`master\.key`,
@@ -354,13 +364,41 @@ export function isSecretLikeProjectPath(relativePath: string): boolean {
 
 /**
  * True for a per-stack config file that usually holds secrets when Git does not
- * track it: .NET `appsettings*.json` and `secrets.json`, Spring profile overrides,
- * signing properties, Cloudflare `.dev.vars`, Rails `master.key`, Terraform
- * variables and state, kubeconfig and service-account JSON. Callers apply it only
+ * track it: .NET `appsettings*.json` and `secrets.json`, Azure Functions
+ * `local.settings.json`, Spring profile overrides, `gradle.properties` and signing
+ * properties, Cloudflare `.dev.vars`, Rails `master.key`, Django `local_settings.py`,
+ * Firebase app config, Terraform variables and state, kubeconfig and service-account JSON. Callers apply it only
  * to untracked or ignored files: a tracked `appsettings.json` is ordinary work.
  */
 export function isUntrackedSecretConfigPath(relativePath: string): boolean {
   return STACK_SECRET_FILE.test(relativePath.split("/").at(-1) ?? "");
+}
+
+/**
+ * True when a home-relative path (`.config/app/token.json`) must never be read for
+ * or written by a copied secret: sign-in folders and files, shell start-up files,
+ * login items, provider homes, the app's own homes and CLI wrappers, Git data.
+ * Both machines check it, so a custom secret location cannot reach these.
+ */
+export function isHomeSecretPathRefused(homeRelative: string): boolean {
+  // macOS and Windows home folders ignore case: `.SSH` is `.ssh` there.
+  const fold = (path: string) => path.normalize("NFC").toLowerCase();
+  const key = fold(homeRelative);
+  const parts = key.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) return true;
+  const appSegments = new Set([...APP_HOME_SEGMENTS].map(fold));
+  if (parts.some((part) => appSegments.has(part) || part === ".git")) return true;
+  const within = (folder: string) => key === fold(folder) || key.startsWith(`${fold(folder)}/`);
+  return (
+    [...HOME_DENIED_FILES, ...HOME_WRITE_DENIED_FILES].some((file) => key === fold(file)) ||
+    [
+      ...HOME_DENIED_DIRECTORIES,
+      ...HOME_WRITE_DENIED_DIRECTORIES,
+      ...DEFAULT_PROVIDER_HOMES,
+      CLI_WRAPPER_DIRECTORY,
+      ACCOUNT_PROFILES_DIRECTORY,
+    ].some(within)
+  );
 }
 
 /** A provider config file in its home that changes what the agent runs (hooks, MCP servers). */

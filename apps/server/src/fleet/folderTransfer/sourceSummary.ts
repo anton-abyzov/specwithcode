@@ -8,6 +8,7 @@ import {
   type RepositoryInfo,
 } from "./manifest.ts";
 import { PORTABLE_GIT_NOTICE } from "./portableGit.ts";
+import type { SecretHint, SecretLocations } from "./secretLocations.ts";
 import { sha256Hex } from "./wire.ts";
 
 /** Skipped worktree paths kept per list; the counts stay true. */
@@ -24,7 +25,10 @@ export interface SourceSummary {
     readonly stashCount: number;
     readonly changedFiles: number;
   }>;
+  /** Secret files in the folder, then `~/` files in the home folder. */
   readonly secretFiles: ReadonlyArray<{ readonly path: string; readonly size: number }>;
+  /** Secrets a vault or keychain holds: never copied, listed so none is missed. */
+  readonly secretHints?: ReadonlyArray<SecretHint>;
   readonly linksOutside: number;
   readonly warnings: ReadonlyArray<string>;
   /** What measuring left out: rebuildable folders not opened, worktrees inside the folder not copied. */
@@ -75,7 +79,11 @@ export function inventoryFingerprint(scan: FolderScan): string {
   );
 }
 
-export function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): SourceSummary {
+export function summarize(
+  scan: FolderScan,
+  warnings: ReadonlyArray<string> = [],
+  locations?: SecretLocations,
+): SourceSummary {
   return {
     totals: scan.totals,
     repositories: scan.repositories.map((repo) => ({
@@ -87,10 +95,18 @@ export function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []
       stashCount: repo.stashCount,
       changedFiles: repo.status.length,
     })),
-    secretFiles: scan.entries
-      .filter((entry) => entry.class === "secret" && entry.type === "file")
-      .slice(0, 500)
-      .map((entry) => ({ path: entry.path, size: entry.size })),
+    // Home files lead, so a folder full of secrets never pushes them out. A folder
+    // path starting with `~/` would read as one, so such a folder's files are left here.
+    secretFiles: [
+      ...(locations?.homeFiles ?? []),
+      ...scan.entries
+        .filter(
+          (entry) =>
+            entry.class === "secret" && entry.type === "file" && !entry.path.startsWith("~/"),
+        )
+        .map((entry) => ({ path: entry.path, size: entry.size })),
+    ].slice(0, 500),
+    ...(locations && locations.hints.length > 0 ? { secretHints: locations.hints } : {}),
     linksOutside: scan.entries.filter(
       (entry) =>
         entry.type === "symlink" &&

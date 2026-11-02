@@ -61,6 +61,7 @@ afterEach(async () => {
 async function committed(
   options: {
     readonly before?: (loaded: Awaited<ReturnType<SourceTransfers["authorize"]>>) => Promise<void>;
+    readonly secretPatterns?: ReadonlyArray<string>;
   } = {},
 ) {
   const offer = await sources.offer({
@@ -69,6 +70,7 @@ async function committed(
     folder,
     mode: "copy-and-move",
     destinationEnvironmentId: "destination-env",
+    secretPatterns: options.secretPatterns,
   });
   const loaded = await sources.authorize(id, offer.token);
   await loaded.building;
@@ -91,6 +93,13 @@ it("reports nothing and reads no file when nothing changed", async () => {
   const drift = await sources.driftSince(id);
   expect(drift).toMatchObject({ total: 0, rows: [], truncated: false });
   expect(hashed()).toEqual([]);
+});
+
+it("does not report a project's own secret file as added on every later move", async () => {
+  await FSP.mkdir(Path.join(folder, "config"), { recursive: true });
+  await FSP.writeFile(Path.join(folder, "config", "app.local.json"), "{}");
+  await committed({ secretPatterns: ["config/*.local.json"] });
+  expect(await sources.driftSince(id)).toMatchObject({ total: 0, rows: [] });
 });
 
 it("lists an edited ledger as one changed row, keyed by path only", async () => {

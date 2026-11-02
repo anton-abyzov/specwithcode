@@ -11,6 +11,7 @@ import type { ComponentProps } from "react";
 import type { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { machineHandoffStorageKey } from "../../studio/machineHandoffPending";
 import { buildProjectGroups } from "../../logicalProject";
+import type { HandoffShareProps } from "./HandoffShare";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { handoffMachinePreferenceKey } from "../../studio/handoffMachinePreference";
 import { MoveDialogHold } from "../../studio/moveDialogHold";
@@ -23,6 +24,8 @@ vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({ data: null, isPending: false }),
 }));
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
+vi.mock("./HandoffShare", () => ({ HandoffShare: () => null }));
+vi.mock("../chat/AddToMachineDialog", () => ({ AddToMachineDialog: () => null }));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
 vi.mock("../../studio/fleet", () => ({
   useStudioFleet: () => ({ snapshot: state.fleet }),
@@ -806,6 +809,40 @@ it("opens on a copy where the project has no saved folder", async () => {
   state.projects = [source];
   await mount();
   expect(props().method).toBe("copy");
+});
+
+it("opens on sharing, and Hand off goes to the Git review of that machine's folder", async () => {
+  state.environments = machineEnvironments;
+  await mount();
+  const share = () =>
+    (props().shareFlow as React.ReactElement<HandoffShareProps> | undefined)?.props;
+  expect(share()).toMatchObject({ machine: "m1", linked: true });
+  await act(async () => share()!.onMove());
+  expect(share()).toBeUndefined();
+  expect(props().method).toBe("folder");
+  expect(state.prepare.mock.calls.at(-1)?.[0]?.input.destination).toMatchObject({
+    environmentId: "m1",
+    transport: "git-sync",
+  });
+});
+
+it("Copy files instead leaves sharing for the files-only copy", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source];
+  await mount();
+  const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
+  expect(share.linked).toBe(false);
+  await act(async () => share.onCopyInstead());
+  expect(props().shareFlow).toBeUndefined();
+  expect(props().intent).toBe("copy");
+  expect(props().method).toBe("copy");
+});
+
+it("resumes an unfinished handoff instead of opening on sharing", async () => {
+  localStorage.setItem(key, JSON.stringify({ operationId, targetKey: "m1:target" }));
+  await mount();
+  expect(props().shareFlow).toBeUndefined();
+  expect(props().method).toBe("folder");
 });
 
 it("asks a saved folder to update from Git, so uncommitted work never stops the move", async () => {

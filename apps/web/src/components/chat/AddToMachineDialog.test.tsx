@@ -88,7 +88,11 @@ const source = {
 const summary = {
   totals: {},
   repositories: [],
-  secretFiles: [{ path: ".env", size: 10 }],
+  secretFiles: [
+    { path: ".env", size: 10 },
+    { path: "~/.microsoft/usersecrets/api-1/secrets.json", size: 12 },
+  ],
+  secretHints: [{ path: "doppler.yaml", source: "Doppler", hint: "Run doppler login there." }],
   linksOutside: 0,
   warnings: [],
 };
@@ -184,10 +188,30 @@ it("shows the source, the destination folder and the clone URL", async () => {
   expect(button("Clone to Mini")?.disabled).toBe(false);
 });
 
-it("lists secret-like files unticked", async () => {
+const includeSecrets = () =>
+  document.body.querySelector<HTMLElement>(
+    '[data-slot="copy-secrets-include"] [data-slot="checkbox"]',
+  );
+
+it("keeps secrets out until Include secrets is ticked", async () => {
   await render();
+  expect(document.body.querySelector('[aria-label="Send .env"]')).toBeNull();
+  expect(includeSecrets()?.getAttribute("aria-checked")).toBe("false");
+  expect(text()).toContain("Include secrets (.env and similar)");
+  expect(text()).toContain("Doppler");
+  await act(async () => includeSecrets()!.click());
   const box = document.body.querySelector<HTMLElement>('[aria-label="Send .env"]');
-  expect(box?.getAttribute("aria-checked")).toBe("false");
+  expect(box?.getAttribute("aria-checked")).toBe("true");
+  // This destination cannot write into its home folder, so the .NET file is not offered.
+  expect(text()).not.toContain("usersecrets");
+});
+
+it("offers home-folder secrets to a destination that writes them", async () => {
+  state.environments.mini = machine("Mini", { ...capabilities, homeSecretFiles: true });
+  await render();
+  await act(async () => includeSecrets()!.click());
+  expect(text()).toContain("~/.microsoft/usersecrets/api-1/secrets.json");
+  expect(text()).toContain("in your home folder");
 });
 
 it("blocks the clone when the destination can't read the repository", async () => {
@@ -265,9 +289,7 @@ it("clones, stores the follow-up job and hands the new project to the menu", asy
 
 it("carries ticked secrets and ignored files into the follow-up job", async () => {
   await render();
-  await act(async () =>
-    document.body.querySelector<HTMLElement>('[aria-label="Send .env"]')!.click(),
-  );
+  await act(async () => includeSecrets()!.click());
   expect(button("Clone to Mini")?.disabled).toBe(true);
   await act(async () =>
     document.body

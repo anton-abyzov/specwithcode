@@ -108,7 +108,8 @@ export const layer = HttpApiBuilder.group(
             args.payload.type === "project.create" ||
               (args.payload.type === "project.update" &&
                 (args.payload.workspaceSettings?.origin !== undefined ||
-                  args.payload.workspaceSettings?.notifications !== undefined))
+                  args.payload.workspaceSettings?.notifications !== undefined ||
+                  args.payload.workspaceSettings?.secretFiles !== undefined))
               ? yield* temporarySessionIdFor(session.sessionId)
               : undefined,
           );
