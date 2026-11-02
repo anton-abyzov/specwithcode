@@ -39,7 +39,7 @@ describe("summarizeAgentReadiness", () => {
     const readiness = summarizeAgentReadiness([{ label: "Mac", providers: [signedOut, missing] }]);
     expect(readiness).toEqual({ kind: "none" });
     expect(agentReadinessMessage(readiness)).toContain("chats will not start");
-    expect(agentReadinessMessage(readiness)).toContain("Settings > Providers");
+    expect(agentReadinessMessage(readiness)).toContain("Sign in or install one above");
   });
 
   it("counts a provider setup does not list and names it", () => {

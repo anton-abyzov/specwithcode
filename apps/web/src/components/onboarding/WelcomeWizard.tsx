@@ -868,12 +868,8 @@ function AgentsStep({
       >
         {agentReadinessMessage(readiness)}
       </p>
-      <div className="mt-4 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          Cursor, OpenCode, Grok and others can be added after setup in Settings &gt; Providers.
-        </p>
+      <div className="mt-4 flex justify-end">
         <Button
-          className="shrink-0 self-end"
           autoFocus
           variant={readiness.kind === "none" ? "outline" : "default"}
           onClick={onContinue}

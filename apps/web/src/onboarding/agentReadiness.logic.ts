@@ -77,7 +77,7 @@ export function agentReadinessMessage(readiness: AgentReadiness): string {
     case "checking":
       return "Checking which agents can run…";
     case "none":
-      return "No agent is ready yet, so chats will not start. Sign in above, or add one later in Settings > Providers.";
+      return "No agent is ready yet, so chats will not start. Sign in or install one above.";
     case "ready":
     case "unconfirmed": {
       const agents = readiness.agents.join(", ");
