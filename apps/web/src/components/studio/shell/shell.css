@@ -2955,19 +2955,23 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   display: none;
 }
 /* Narrow: the chat's panel toggles fold into the action menu (the slot stays
-   mounted for the chat's portal) and Resolve keeps only its icon. */
+   mounted for the chat's portal). */
 @container (max-width: 600px) {
   .sws-thread-head-tools {
     display: none;
   }
+}
+/* Resolve keeps only its icon next; its tooltip still names it. */
+@container (max-width: 760px) {
   .sws-thread-resolve-label {
     display: none;
   }
 }
-/* The replies menu keeps only its icon before anything else gives way; its name and
+/* The replies menu keeps only its icon before anything else gives way: its label costs
+   more than the thread name can spare at the panel's usual width, and its name and
    tooltip still say what it shows. On Linux and Windows the native window buttons take
    the right end of this row, so the container is already that much narrower. */
-@container (max-width: 640px) {
+@container (max-width: 1040px) {
   .sws-thread-head [data-timeline-detail-label] {
     display: none;
   }

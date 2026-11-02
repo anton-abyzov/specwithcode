@@ -206,6 +206,20 @@ export const RELAY_REQUEST_DEADLINE_MS = 9_000;
  * call; cutting it off before the hold would drop a request it should keep.
  */
 export const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
+/**
+ * Provisioning makes several Cloudflare calls, each allowed 8 seconds, so 9
+ * seconds turned one slow call into an unexplained 504. Stays under the client's
+ * link timeout, so the client still reads the relay's answer.
+ */
+export const RELAY_LINK_REQUEST_DEADLINE_MS = 25_000;
+
+// The routes that provision a tunnel: linking a machine and recovering its tunnel.
+const RELAY_PROVISIONING_PATH = /\/v1\/(client\/environment-links|environments\/[^/]+\/tunnel)$/u;
+
+const relayRequestDeadlineMs = (request: HttpServerRequest.HttpServerRequest) =>
+  request.method === "POST" && RELAY_PROVISIONING_PATH.test(request.url.split("?")[0] ?? "")
+    ? RELAY_LINK_REQUEST_DEADLINE_MS
+    : RELAY_REQUEST_DEADLINE_MS;
 
 const relayRequestDeadline = <E, R>(
   httpEffect: Effect.Effect<
@@ -253,7 +267,7 @@ export const traceRelayHttpRequest = <E, R>(
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const traced = appendRelayTraceContextResponseHeader.pipe(
-      Effect.andThen(relayRequestDeadline(httpEffect)),
+      Effect.andThen(relayRequestDeadline(httpEffect, relayRequestDeadlineMs(request))),
     );
     if (!isRelayHookPath(request.url)) {
       return yield* HttpMiddleware.tracer(traced).pipe(

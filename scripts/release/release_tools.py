@@ -254,8 +254,6 @@ def notes(repo, to, release, base=None):
         if subject.startswith('Prepare SpecWithCode ') or not subject.strip():
             continue
         lines.append('- ' + re.sub(r'\s*\(#\d+\)$', '', subject.strip()))
-    lines += ['', '<!-- Draft from commit subjects. Rewrite for people who use the app, then rerun',
-              '     release.sh --resume; the published release takes this file as it is then. -->']
     return '\n'.join(lines) + '\n'
 
 

@@ -75,6 +75,26 @@ export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesC
 );
 
 /**
+ * What the app itself read: a terminal can be signed in elsewhere (WSL, another
+ * user, another config folder), so name the CLI and folder that said signed out.
+ */
+export const claudeNotSignedInMessage = (input: {
+  readonly executablePath: string;
+  readonly configDir: string;
+  readonly customConfigDir: boolean;
+  readonly platform: NodeJS.Platform;
+}): string => {
+  const login = input.customConfigDir
+    ? `Run \`claude auth login\` in a terminal on this machine with CLAUDE_CONFIG_DIR set to that folder`
+    : "Run `claude auth login` in a terminal on this machine";
+  const elsewhere =
+    input.platform === "win32"
+      ? " A sign-in inside WSL or under another Windows user does not count here."
+      : "";
+  return `Claude Code is not signed in for this app. It ran ${input.executablePath} with the config folder ${input.configDir}. ${login}, then refresh provider status.${elsewhere}`;
+};
+
+/**
  * Describe the spawned CLI's environment separately from the login command so
  * paths remain literal on every shell, including relative inherited values.
  */

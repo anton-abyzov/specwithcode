@@ -22,7 +22,7 @@ import {
 import { EnvironmentRegistry } from "@specweave-studio/client-runtime/connection";
 import { request, runStream } from "@specweave-studio/client-runtime/rpc";
 import { makeEnvironmentHttpApiClient } from "@specweave-studio/client-runtime/rpc";
-import { ManagedRelay, relayProtectedErrorMessage } from "@specweave-studio/client-runtime/relay";
+import { ManagedRelay } from "@specweave-studio/client-runtime/relay";
 
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { resolveCloudPublicConfig } from "./publicConfig";
@@ -115,12 +115,9 @@ const isEnvironmentCloudApiError = Schema.is(
 
 function decodedRelayClientError(message: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
-    const relayError =
-      cause._tag === "ManagedRelayRequestFailedError" ? cause.relayError : undefined;
-    const traceId = cause._tag === "ManagedRelayRequestFailedError" ? cause.traceId : undefined;
-    const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
+    const { detail, traceId } = ManagedRelay.managedRelayFailureDetail(cause);
     return new CloudEnvironmentLinkError({
-      message: detail ? `${message}: ${detail}` : message,
+      message: `${message}: ${detail}`,
       cause,
       ...(traceId ? { traceId } : {}),
     });

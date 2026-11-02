@@ -16,6 +16,7 @@ import {
   CLOSE_REASON_UNPAIRED,
   CLOSE_REJECTED,
   CLOSE_REPLACED,
+  OTHER_BROWSERS_LAST,
   TAB_IDLE_MS,
 } from "./relayHub.ts";
 import {
@@ -132,13 +133,14 @@ describe("ChromeTools", () => {
     expect(tools.profiles("t1").profiles).toEqual([]);
     await expect(tools.open("t1", { url: "https://example.com" })).rejects.toMatchObject({
       code: "not_connected",
+      message: expect.stringContaining(OTHER_BROWSERS_LAST),
     });
   });
 
   it("says which profile went away, when and why, once one has connected", () => {
     const { extension, token } = setup();
     const tools = new ChromeTools(extension.hub);
-    expect(tools.profiles("t1").hint).toMatch(/install the SpecWithCode Browser extension/);
+    expect(tools.profiles("t1").hint).toMatch(/installing the extension first/);
     const fake = connectFake(extension, token, "m4-specwithcode");
     fake.session.closed();
     const { profiles, hint } = tools.profiles("t1");
@@ -146,10 +148,12 @@ describe("ChromeTools", () => {
     expect(hint).toMatch(/"m4-specwithcode" disconnected 0 min ago \(\d{4}-\d\d-\d\dT/);
     expect(hint).toContain("The extension disconnected.");
     expect(hint).toContain("reconnects on its own");
-    expect(hint).toContain("ask the user before using one instead");
+    expect(hint).toContain(OTHER_BROWSERS_LAST);
     connectFake(extension, token, "m4-specwithcode");
     extension.pairing(true);
     expect(tools.profiles("t1").hint).toContain("The pairing code was reset");
+    expect(noProfileHint(null, 0)).toContain("Stop and ask the user to pair");
+    expect(noProfileHint(null, 0)).toContain(OTHER_BROWSERS_LAST);
     expect(noProfileHint({ label: "Work", at: 0, reason: "x" }, 5 * 60_000)).toContain(
       '"Work" disconnected 5 min ago (1970-01-01T00:00:00.000Z): x.',
     );

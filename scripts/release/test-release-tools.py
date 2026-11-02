@@ -213,6 +213,7 @@ class Notes(Temporary):
         commit('Show usage per project (#250)')
         head = commit('Prepare SpecWithCode 1.2.0 release')
         text = release_tools.notes(repo, head, '1.2.0', base)
+        self.assertNotIn('<!--', text)
         self.assertIn('- Show usage per project\n', text)
         self.assertNotIn('Prepare SpecWithCode', text)
         self.assertNotIn('Previous release', text)

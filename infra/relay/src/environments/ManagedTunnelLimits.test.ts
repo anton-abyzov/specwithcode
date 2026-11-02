@@ -112,6 +112,15 @@ describe("ManagedTunnelLimits", () => {
     }).pipe(Effect.provide(layer())),
   );
 
+  it.effect("keeps founders on their limit when seats exceed a lowered cap", () =>
+    Effect.gen(function* () {
+      yield* ensure("founder");
+      yield* setPromo({ seatCap: 300, seatsGranted: 400 });
+      expect(yield* resolve("founder")).toEqual({ maxTunnels: 10, source: "founder" });
+      expect(yield* resolve("new-user")).toEqual({ maxTunnels: 3, source: "free" });
+    }).pipe(Effect.provide(layer())),
+  );
+
   it.effect("gives founders the promo's founder limit", () =>
     Effect.gen(function* () {
       yield* ensure("founder");

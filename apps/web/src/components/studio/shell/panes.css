@@ -401,7 +401,9 @@
    focus scroll the line. */
 .sws-thread-head-chips {
   container: headchips / inline-size;
-  flex: 0 1 440px;
+  /* Containment hides the chips' own width, so the row is reserved up front; the large
+     shrink factor gives all of it back before the thread name loses a letter. */
+  flex: 0 1000 440px;
   /* Never narrower than the model chip's leanest fit (rowModelFit.ts sets it), so the
      clip below never cuts the provider mark or the fallback glyph. */
   min-width: var(--sws-model-floor, 0px);
@@ -448,7 +450,8 @@ button.sws-chip:hover {
   height: 17px;
 }
 .sws-thread-rename {
-  flex: 1;
+  /* While typing, the field takes the row the name would have: the chips give way first. */
+  flex: 1 1 100%;
   min-width: 0;
   height: 26px;
   padding: 0 6px;

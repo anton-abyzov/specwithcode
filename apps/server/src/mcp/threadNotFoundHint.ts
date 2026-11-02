@@ -22,6 +22,19 @@ const foreignSessionMessage = (threadId: string) =>
   `${threadId} is a Claude projects or Claude Code session or message ID, not a SpecWithCode thread. SpecWithCode has no transport to those sessions, and signing in to Claude in a browser will not connect one. Get what you need from the work's own record instead (the pull request, commits, CI or a saved receipt), or ask the user once to relay it. Do not open a browser or start another worker to reach it.`;
 
 /**
+ * A project lists `project-coordinator:<project>` for each linked copy before
+ * that copy's coordinator has run, and the thread is created on its first run.
+ * Copying that ID exactly still finds nothing, so the answer says why as well
+ * as asking for an exact copy. Nothing here checks the project part, so it
+ * stays conditional: a typo has the same shape. It confirms no project, so work
+ * under a grant gets the same answer.
+ */
+const COORDINATOR_ID = /^project-coordinator:./;
+
+const coordinatorNotStartedMessage = (threadId: string) =>
+  `Thread ${threadId} was not found on this machine. If you copied it exactly from a project's record, the ID is fine: a coordinator thread is created on its first run, so no coordinator has run under this ID here. A linked copy usually leaves coordinating to another machine: read that machine's coordinator, or list this project's threads with studio_thread_list. If you typed it, ${COPY_EXACTLY}`;
+
+/**
  * A `thread_not_found` an agent can act on. When the ID it passed is a
  * near miss of a thread that exists (see threadIdNearMisses), the answer names
  * that thread; the tool still acts only on the ID it was given, so access
@@ -51,8 +64,10 @@ export const explainThreadNotFound = (threadId: string, failure: OrchestratorMcp
     return new OrchestratorMcpFailure({
       code: "thread_not_found",
       message:
-        meant === undefined
-          ? `Thread ${threadId} was not found. ${COPY_EXACTLY} Find the thread with studio_thread_search or studio_thread_list.`
-          : `Thread ${threadId} was not found. Did you mean ${meant}? ${COPY_EXACTLY}`,
+        meant !== undefined
+          ? `Thread ${threadId} was not found. Did you mean ${meant}? ${COPY_EXACTLY}`
+          : COORDINATOR_ID.test(threadId)
+            ? coordinatorNotStartedMessage(threadId)
+            : `Thread ${threadId} was not found. ${COPY_EXACTLY} Find the thread with studio_thread_search or studio_thread_list.`,
     });
   }).pipe(Effect.orElseSucceed(() => failure));

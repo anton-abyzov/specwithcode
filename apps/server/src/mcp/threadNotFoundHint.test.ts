@@ -19,6 +19,7 @@ const AUDIT = ThreadId.make(
   "thread:delegated-task:command%3Amcp%3Ad25698a7-ed07-4574-a0b9-f1d8a6122b58%3Adelegate-task%3Aeasychamp-full-handoff-audit-20261022",
 );
 const GONE = ThreadId.make("thread:gone");
+const COORDINATOR = ThreadId.make("project-coordinator:project");
 const LOCAL_SESSION_NAMED = ThreadId.make("session_0123456789abcdef");
 const callerId = ThreadId.make("caller");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -51,7 +52,7 @@ const explain = (threadId: string, options: { readonly granted?: boolean } = {})
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) =>
             Effect.succeed(
-              id === callerId || id === AUDIT || id === LOCAL_SESSION_NAMED
+              id === callerId || id === AUDIT || id === LOCAL_SESSION_NAMED || id === COORDINATOR
                 ? shell(id)
                 : id === GONE
                   ? shell(id, "2026-10-23T00:00:00.000Z")
@@ -115,5 +116,35 @@ it.effect("keeps the original answer when a thread with that ID exists here", ()
   Effect.gen(function* () {
     const answer = yield* explain(LOCAL_SESSION_NAMED);
     expect(answer.message).toBe(`Thread ${LOCAL_SESSION_NAMED} was not found.`);
+  }),
+);
+
+it.effect("explains a coordinator ID with no thread here, without claiming it is right", () =>
+  Effect.gen(function* () {
+    const id = "project-coordinator:9ce25d03-eb07-42ab-a343-c298a6051f30";
+    for (const granted of [false, true]) {
+      const answer = yield* explain(id, { granted });
+      expect(answer.code).toBe("thread_not_found");
+      expect(answer.message).toContain("was not found");
+      expect(answer.message).toContain("If you copied it exactly");
+      expect(answer.message).toContain("no coordinator has run under this ID here");
+      expect(answer.message).toContain("copy threadId");
+    }
+  }),
+);
+
+it.effect("suggests the coordinator thread that a stray character hid", () =>
+  Effect.gen(function* () {
+    const answer = yield* explain(`${COORDINATOR})`);
+    expect(answer.message).toContain(`Did you mean ${COORDINATOR}?`);
+    expect(answer.message).not.toContain("no coordinator has run");
+  }),
+);
+
+it.effect("a mangled coordinator ID gets the plain copy-exactly answer", () =>
+  Effect.gen(function* () {
+    const answer = yield* explain("project-coordinator%3Aproject");
+    expect(answer.message).toContain("copy threadId");
+    expect(answer.message).not.toContain("no coordinator has run");
   }),
 );

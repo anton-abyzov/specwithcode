@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import * as RelayDb from "../db.ts";
 import { relayConnectPromos } from "../persistence/schema.ts";
 
-/** The "Founding 1,000" promo row, seeded by the connect_founders migration. */
+/** The "Founding 300" promo row, seeded by the connect_founders migration. */
 export const FOUNDERS_PROMO_ID = "founders";
 
 export interface ConnectAccount {

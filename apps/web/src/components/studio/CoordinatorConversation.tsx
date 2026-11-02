@@ -1,6 +1,6 @@
 import { isMetadataOnlyAssistantMessage } from "../../studio/messagePresentation";
 import { ArtifactCards } from "../chat/ThreadArtifacts";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestExecutionLabel } from "../../studio/projectDomain";
 import { limitContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
@@ -289,6 +289,7 @@ export function CoordinatorConversation({
     [runs, turnItems],
   );
   const machineLabel = useMachineNickname(project.environmentId, executionEnvironment?.label);
+  const machineNames = useMachineNicknames();
   const hasRoutineRuns = messages.some((message) => message.scheduledTaskId !== undefined);
   const routines = useKnownRoutines(project.environmentId, hasRoutineRuns);
   const prepared = useMemo(() => {
@@ -304,7 +305,7 @@ export function CoordinatorConversation({
         message.createdBy === "user"
           ? limitContinuationNote(message, runs ?? [], describeRun)
           : projectSystemNotice(message);
-      const display = projectCoordinatorMessageDisplay(message, project, linkWorkers);
+      const display = projectCoordinatorMessageDisplay(message, project, linkWorkers, machineNames);
       const text = prepareProjectMarkdown(notice ?? display.text, linkWorkers, environmentThreads);
       const executionLabel =
         message.createdBy === "user" || message.role === "assistant"
@@ -329,6 +330,7 @@ export function CoordinatorConversation({
     linkWorkers,
     environmentThreads,
     machineLabel,
+    machineNames,
     routines,
   ]);
   const timelineDetail = useTimelineDetail(scopedThreadKey(ref));

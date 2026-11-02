@@ -15,7 +15,7 @@ const [Effect, Layer, FileSystem, Path, Option] = await Promise.all([
   load("Option"),
 ]);
 const app = (file) => import(NodeURL.pathToFileURL(root + "/apps/server/src/" + file + ".ts"));
-const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth] =
+const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project, Auth, Config] =
   await Promise.all([
     app("orchestration-v2/ProviderTurnStartService"),
     app("orchestration-v2/ProjectionStore"),
@@ -28,6 +28,7 @@ const [Start, Projection, Run, Sessions, Policy, Id, Sink, Handoff, Git, Project
     app("git/GitWorkflowService"),
     app("project/ProjectService"),
     app("provider/ProviderAuthService"),
+    app("config"),
   ]);
 let current;
 let fullReads = 0;
@@ -55,6 +56,7 @@ const session = {
   compactThread: () => Effect.void,
 };
 const dependencies = Layer.mergeAll(
+  Layer.succeed(Config.ServerConfig, { baseDir: "/synthetic-data" }),
   Layer.mock(Handoff.ContextHandoffServiceV2)({}),
   Id.layer,
   FileSystem.layerNoop({}),

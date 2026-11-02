@@ -2,8 +2,12 @@ import { assert, describe, it } from "vite-plus/test";
 
 import {
   decideModRequest,
+  MAX_MOD_STATS,
   MAX_TREE_NODES,
+  MOD_STAT_DETAIL_LENGTH,
+  MOD_STAT_LABEL_LENGTH,
   parseFrameMessage,
+  parseModStats,
   parseModTree,
   ToastBudget,
   USER_ACTION_WINDOW_MS,
@@ -27,7 +31,61 @@ describe("parseFrameMessage", () => {
     assert.deepEqual(parseFrameMessage({ type: "ui.status", text: "" }), {
       type: "ui.status",
       text: null,
+      stats: null,
     });
+  });
+
+  it("carries a mod's stats on its status message", () => {
+    assert.deepEqual(
+      parseFrameMessage({
+        type: "ui.status",
+        text: null,
+        stats: [{ glyph: "blocked", count: 8, label: "Blocked", onPress: 4 }],
+      }),
+      {
+        type: "ui.status",
+        text: null,
+        stats: [{ glyph: "blocked", count: 8, label: "Blocked", detail: null, handler: 4 }],
+      },
+    );
+  });
+});
+
+describe("parseModStats", () => {
+  it("drops anything it cannot show", () => {
+    assert.deepEqual(
+      parseModStats([
+        null,
+        { glyph: "<svg>", count: 1, label: "Art" },
+        { glyph: "stale", count: 0, label: "Zero" },
+        { glyph: "stale", count: -1, label: "Negative" },
+        { glyph: "stale", count: 1.5, label: "Fraction" },
+        { glyph: "stale", count: "3", label: "Text" },
+        { glyph: "stale", count: 3 },
+        { glyph: "stale", count: 3, label: "Kept", onPress: "x", style: "position:fixed" },
+      ]),
+      [{ glyph: "stale", count: 3, label: "Kept", detail: null, handler: null }],
+    );
+  });
+
+  it("clears the status when every count is zero", () => {
+    assert.isNull(parseModStats([{ glyph: "blocked", count: 0, label: "Blocked" }]));
+    assert.isNull(parseModStats([]));
+    assert.isNull(parseModStats("8 blocked"));
+  });
+
+  it("bounds the text and the list", () => {
+    const stats = parseModStats(
+      Array.from({ length: 40 }, () => ({
+        glyph: "gap",
+        count: 1,
+        label: "l".repeat(200),
+        detail: "d".repeat(400),
+      })),
+    );
+    assert.equal(stats?.length, MAX_MOD_STATS);
+    assert.equal(stats?.[0]?.label.length, MOD_STAT_LABEL_LENGTH);
+    assert.equal(stats?.[0]?.detail?.length, MOD_STAT_DETAIL_LENGTH);
   });
 });
 

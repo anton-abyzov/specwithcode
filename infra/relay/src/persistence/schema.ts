@@ -184,7 +184,7 @@ export const relayManagedTunnelLimits = sqliteTable("relay_managed_tunnel_limits
 });
 
 /**
- * A Connect promo such as the "Founding 1,000". `seatsGranted` only grows:
+ * A Connect promo such as the "Founding 300". `seatsGranted` only grows:
  * deleting a founder's account never returns the seat. `grantsOpen` is the
  * kill switch for new founder numbers; existing founders keep theirs.
  */

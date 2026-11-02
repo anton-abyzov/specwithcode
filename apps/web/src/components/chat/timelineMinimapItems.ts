@@ -1,3 +1,5 @@
+import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
+
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 export interface TimelineMinimapItem {
@@ -10,6 +12,7 @@ export interface TimelineMinimapItem {
 /** Keep full source text untouched until a minimap preview is opened. */
 export function deriveTimelineMinimapItems(
   rows: ReadonlyArray<MessagesTimelineRow>,
+  machineLabel?: (environmentId: string) => string,
 ): TimelineMinimapItem[] {
   const items: TimelineMinimapItem[] = [];
   for (let index = 0; index < rows.length; index += 1) {
@@ -21,7 +24,10 @@ export function deriveTimelineMinimapItems(
     items.push({
       id: row.id,
       rowIndex: index,
-      userText: row.message.text,
+      userText:
+        machineLabel && row.message.createdBy === "user"
+          ? routedThreadReplyDisplayText(row.message.text, machineLabel)
+          : row.message.text,
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
     });
   }

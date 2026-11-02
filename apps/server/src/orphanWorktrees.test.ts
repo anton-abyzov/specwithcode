@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  dependencyInstallPaths,
   linkedWorktreeGitDir,
   newestReflogEntryMs,
   onlyDependencyIgnores,
   onlyRebuildableUntracked,
+  ORPHAN_MERGED_IDLE_MS,
   ORPHAN_WORKTREE_IDLE_MS,
+  orphanDependenciesPrunable,
   orphanWorktreeRemovable,
   type OrphanWorktreeFacts,
 } from "./orphanWorktrees.ts";
@@ -17,26 +20,46 @@ const finished: OrphanWorktreeFacts = {
   unpushedCommits: 0,
   pullRequestState: "merged",
   integratedInDefault: false,
-  idleMs: ORPHAN_WORKTREE_IDLE_MS,
+  idleMs: ORPHAN_MERGED_IDLE_MS,
 };
 
 describe("orphan worktree removal", () => {
-  it("removes a clean, pushed worktree whose PR merged and that sat idle a day", () => {
+  it("removes a clean, pushed worktree whose PR merged and that sat idle six hours", () => {
     expect(orphanWorktreeRemovable(finished)).toBe(true);
   });
 
   it("removes a closed PR's worktree only when nothing is unpushed", () => {
-    expect(orphanWorktreeRemovable({ ...finished, pullRequestState: "closed" })).toBe(true);
     expect(
-      orphanWorktreeRemovable({ ...finished, pullRequestState: "closed", unpushedCommits: 1 }),
+      orphanWorktreeRemovable({
+        ...finished,
+        pullRequestState: "closed",
+        idleMs: ORPHAN_WORKTREE_IDLE_MS,
+      }),
+    ).toBe(true);
+    expect(orphanWorktreeRemovable({ ...finished, pullRequestState: "closed" })).toBe(false);
+    expect(
+      orphanWorktreeRemovable({
+        ...finished,
+        pullRequestState: "closed",
+        unpushedCommits: 1,
+        idleMs: ORPHAN_WORKTREE_IDLE_MS,
+      }),
     ).toBe(false);
   });
 
   it("removes a squash-merged branch with local commits only when its content is on main", () => {
     expect(orphanWorktreeRemovable({ ...finished, unpushedCommits: 2 })).toBe(false);
     expect(
-      orphanWorktreeRemovable({ ...finished, unpushedCommits: 2, integratedInDefault: true }),
+      orphanWorktreeRemovable({
+        ...finished,
+        unpushedCommits: 2,
+        integratedInDefault: true,
+        idleMs: ORPHAN_WORKTREE_IDLE_MS,
+      }),
     ).toBe(true);
+    expect(
+      orphanWorktreeRemovable({ ...finished, unpushedCommits: 2, integratedInDefault: true }),
+    ).toBe(false);
   });
 
   it("keeps work that may still be in progress", () => {
@@ -46,15 +69,43 @@ describe("orphan worktree removal", () => {
     expect(orphanWorktreeRemovable({ ...finished, onlyDependencyIgnores: false })).toBe(false);
     expect(orphanWorktreeRemovable({ ...finished, idleMs: Number.NaN })).toBe(false);
     expect(orphanWorktreeRemovable({ ...finished, idleMs: Infinity })).toBe(false);
-    expect(orphanWorktreeRemovable({ ...finished, idleMs: ORPHAN_WORKTREE_IDLE_MS - 1 })).toBe(
-      false,
-    );
+    expect(orphanWorktreeRemovable({ ...finished, idleMs: ORPHAN_MERGED_IDLE_MS - 1 })).toBe(false);
   });
 
   it("removes a detached review checkout only when its commit is on a remote", () => {
-    const detached = { ...finished, branch: null, pullRequestState: null };
+    const detached = {
+      ...finished,
+      branch: null,
+      pullRequestState: null,
+      idleMs: ORPHAN_WORKTREE_IDLE_MS,
+    };
     expect(orphanWorktreeRemovable(detached)).toBe(true);
     expect(orphanWorktreeRemovable({ ...detached, unpushedCommits: 1 })).toBe(false);
+  });
+
+  it("prunes dependencies of finished work when other ignored files keep the folder", () => {
+    const keptFolder = {
+      ...finished,
+      onlyDependencyIgnores: false,
+      idleMs: ORPHAN_WORKTREE_IDLE_MS,
+    };
+    expect(orphanWorktreeRemovable(keptFolder)).toBe(false);
+    expect(orphanDependenciesPrunable(keptFolder)).toBe(true);
+    expect(orphanDependenciesPrunable({ ...keptFolder, idleMs: ORPHAN_MERGED_IDLE_MS })).toBe(
+      false,
+    );
+    expect(orphanDependenciesPrunable({ ...keptFolder, pullRequestState: "open" })).toBe(false);
+    expect(orphanDependenciesPrunable({ ...keptFolder, hasWorkingTreeChanges: true })).toBe(false);
+    expect(orphanDependenciesPrunable({ ...keptFolder, unpushedCommits: 1 })).toBe(false);
+    expect(orphanDependenciesPrunable({ ...keptFolder, idleMs: 0 })).toBe(false);
+  });
+
+  it("lists only dependency installs for pruning", () => {
+    expect(
+      dependencyInstallPaths(
+        "node_modules/\0apps/web/node_modules/\0packages/x/node_modules\0.artifacts/\0.env\0not_node_modules/\0",
+      ),
+    ).toEqual(["node_modules", "apps/web/node_modules", "packages/x/node_modules"]);
   });
 
   it("treats only dependency installs as safe ignored files", () => {

@@ -159,6 +159,26 @@ const make = Effect.gen(function* () {
       return yield* blocked(stage, "unsafe-path");
     return real;
   });
+  /**
+   * A project folder may sit under a linked parent (`~/Projects` linked to `/srv/work`). Git
+   * reports real paths, so every check runs from the real one; the folder itself is no link.
+   */
+  const realRoot = Effect.fn("HandoffGit.realRoot")(function* (root: string, stage: Stage) {
+    if (!path.isAbsolute(root) || path.resolve(root) !== root)
+      return yield* blocked(stage, "unsafe-path");
+    if ((yield* fs.readLink(root).pipe(Effect.option))._tag === "Some")
+      return yield* blocked(stage, "unsafe-path");
+    return yield* io(fs.realPath(root), stage);
+  });
+  const atRealRoot =
+    <I extends { readonly workspaceRoot: string }, A, E, R>(
+      method: (input: I) => Effect.Effect<A, E, R>,
+      stage: Stage,
+    ) =>
+    (input: I) =>
+      realRoot(input.workspaceRoot, stage).pipe(
+        Effect.flatMap((workspaceRoot) => method({ ...input, workspaceRoot })),
+      );
   const resolveRepository = Effect.fn("HandoffGit.resolveRepository")(function* (
     root: string,
     relative: string,
@@ -400,18 +420,20 @@ const make = Effect.gen(function* () {
   /** A worker's checkout, if it still exists, holds only commits the source workspace includes. */
   const checkWorktree = Effect.fn("HandoffGit.checkWorktree")(function* (
     input: ManifestInput,
-    workspaceRoot: string,
+    worktreePath: string,
     branch: string | null,
   ) {
     const stage = "inspect" as const;
-    if (!path.isAbsolute(workspaceRoot) || path.normalize(workspaceRoot) !== workspaceRoot)
+    if (!path.isAbsolute(worktreePath) || path.resolve(worktreePath) !== worktreePath)
       return yield* blocked(stage, "worker-checkpoint");
-    if ((yield* fs.readLink(workspaceRoot).pipe(Effect.option))._tag === "Some")
+    if ((yield* fs.readLink(worktreePath).pipe(Effect.option))._tag === "Some")
       return yield* blocked(stage, "worker-checkpoint");
-    if (!(yield* io(fs.exists(workspaceRoot), stage))) {
+    if (!(yield* io(fs.exists(worktreePath), stage))) {
       if (branch === null) return yield* blocked(stage, "worker-checkpoint");
       return;
     }
+    // Like the project folder, a worker's checkout may sit under a linked parent.
+    const workspaceRoot = yield* io(fs.realPath(worktreePath), stage);
     for (const relativePath of yield* discover(workspaceRoot, stage)) {
       const worker = yield* resolveRepository(workspaceRoot, relativePath, stage);
       yield* clean(worker, stage);
@@ -839,13 +861,22 @@ const make = Effect.gen(function* () {
     );
 
   return HandoffGit.of({
-    inspect,
-    verifyRootIdentity,
-    preflight,
-    verifyWorkerCheckpoints,
-    reportWorkerCheckpoints,
-    publish,
-    materialize,
+    inspect: atRealRoot(inspect, "inspect"),
+    verifyRootIdentity: atRealRoot(verifyRootIdentity, "preflight"),
+    preflight: atRealRoot(preflight, "preflight"),
+    verifyWorkerCheckpoints: atRealRoot(verifyWorkerCheckpoints, "inspect"),
+    reportWorkerCheckpoints: atRealRoot(reportWorkerCheckpoints, "inspect"),
+    publish: atRealRoot(publish, "publish"),
+    // The project keeps its registered path; only the checks use the real one.
+    materialize: (input) =>
+      atRealRoot(
+        materialize,
+        "materialize",
+      )(input).pipe(
+        Effect.map((result) =>
+          input.useProjectFolder ? { ...result, workspaceRoot: input.workspaceRoot } : result,
+        ),
+      ),
   });
 });
 

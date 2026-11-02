@@ -7,6 +7,7 @@ import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
+import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
 import { ProjectMessageBody } from "./ProjectMessageBody";
 import { useProviderEntries } from "./shell/ModelBadge";
@@ -90,6 +91,7 @@ function HistorySegment({ scope }: { scope: ProjectExecutionScope }) {
 }
 function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; label: string }) {
   const machine = useMachineNickname(scope.environmentId, label);
+  const machineNames = useMachineNicknames();
   const ref = useMemo(
     () => scopeThreadRef(scope.environmentId, scope.coordinatorThreadId!),
     [scope.environmentId, scope.coordinatorThreadId],
@@ -115,17 +117,23 @@ function RetainedMessages({ scope, label }: { scope: ProjectExecutionScope; labe
         </button>
       )}
       {history.error && <p role="alert">{history.error}</p>}
-      {thread.projection.messages.map((message) => (
-        <article key={message.id} className="project-message">
-          <h3>{message.role === "user" ? "You" : "Coordinator"}</h3>
-          <p className="project-muted">
-            {requestExecutionLabel(message, thread.projection.runs, machine, providers)}
-          </p>
-          <ProjectMessageBody text={message.text} collapsible>
-            <p className="whitespace-pre-wrap break-words">{message.text}</p>
-          </ProjectMessageBody>
-        </article>
-      ))}
+      {thread.projection.messages.map((message) => {
+        const text =
+          message.role === "user" && message.createdBy === "user"
+            ? routedThreadReplyDisplayText(message.text, machineNames)
+            : message.text;
+        return (
+          <article key={message.id} className="project-message">
+            <h3>{message.role === "user" ? "You" : "Coordinator"}</h3>
+            <p className="project-muted">
+              {requestExecutionLabel(message, thread.projection.runs, machine, providers)}
+            </p>
+            <ProjectMessageBody text={text} collapsible>
+              <p className="whitespace-pre-wrap break-words">{text}</p>
+            </ProjectMessageBody>
+          </article>
+        );
+      })}
     </div>
   );
 }

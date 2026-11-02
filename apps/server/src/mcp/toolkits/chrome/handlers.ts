@@ -28,7 +28,7 @@ import * as Schema from "effect/Schema";
 
 import * as BrowserExtension from "../../../browserExtension/BrowserExtension.ts";
 import { ChromeTools } from "../../../browserExtension/chromeTools.ts";
-import { BrowserRelayError } from "../../../browserExtension/relayHub.ts";
+import { BrowserRelayError, OTHER_BROWSERS_LAST } from "../../../browserExtension/relayHub.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import { workerClientName } from "../../../fleet/workerGrantMint.ts";
@@ -324,7 +324,7 @@ const listProfiles = (threadId: string, named: string | undefined) =>
           profiles: result.profiles.map((profile) => ({ ...profile, machine: target.machine.id })),
           hint:
             result.profiles.length === 0
-              ? `No Chrome profile is paired on ${target.machine.label}.`
+              ? `No Chrome profile is paired on ${target.machine.label}. Call chrome_profiles without machine to see every machine, or ask the user to pair one in Settings › Chrome on ${target.machine.label}. ${OTHER_BROWSERS_LAST}`
               : `These profiles are on ${target.machine.label}: pass machine "${target.machine.id}" to the other chrome_* tools, with profile when there are several. Without machine they use this machine's Chrome when one is paired here.`,
         };
       }

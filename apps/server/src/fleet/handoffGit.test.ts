@@ -733,6 +733,49 @@ describe("HandoffGit real repositories", () => {
     }),
   );
 
+  it.effect("works from a project folder under a linked parent, but not a linked folder", () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const linkedBase = NodePath.join(f.outputs, "linked-parent");
+      NodeFS.symlinkSync(f.base, linkedBase);
+      const linked = (folder: string) =>
+        NodePath.join(linkedBase, NodePath.relative(f.base, folder));
+      const manifest = yield* inspect(linked(f.source));
+      expect(manifest).toEqual(yield* inspect(f.source));
+      yield* publish(linked(f.source), manifest);
+      yield* run((service) =>
+        service.preflight({ workspaceRoot: linked(f.destination), manifest }),
+      );
+      const worker = NodePath.join(f.base, "linked-parent-worker");
+      git(f.source, "worktree", "add", "--detach", worker);
+      yield* run((service) =>
+        service.verifyWorkerCheckpoints({
+          workspaceRoot: linked(f.source),
+          manifest,
+          workers: [{ worktreePath: linked(worker), branch: null }],
+        }),
+      );
+      const linkedFolder = NodePath.join(f.outputs, "linked-folder");
+      NodeFS.symlinkSync(f.destination, linkedFolder);
+      const linkedWorker = NodePath.join(f.outputs, "linked-worker");
+      NodeFS.symlinkSync(worker, linkedWorker);
+      expect(
+        yield* run((service) =>
+          service.verifyWorkerCheckpoints({
+            workspaceRoot: f.source,
+            manifest,
+            workers: [{ worktreePath: `${linkedWorker}/`, branch: null }],
+          }),
+        ).pipe(Effect.flip),
+      ).toMatchObject({ reason: "worker-checkpoint" });
+      expect(
+        yield* run((service) => service.preflight({ workspaceRoot: linkedFolder, manifest })).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({ reason: "unsafe-path" });
+    }),
+  );
+
   it.effect("rejects a different manifest at an existing isolated operation path", () =>
     Effect.gen(function* () {
       const f = fixture();

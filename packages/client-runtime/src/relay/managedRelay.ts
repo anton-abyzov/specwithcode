@@ -49,6 +49,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { relayProtectedErrorMessage } from "./errorPresentation.ts";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
@@ -235,6 +236,8 @@ export class ManagedRelayDpopSigner extends Context.Service<
 >()("@specweave-studio/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
 
 export const MANAGED_RELAY_REQUEST_TIMEOUT_MS = 10_000;
+/** Linking provisions a tunnel; longer than the relay's 25s deadline for this route. */
+export const MANAGED_RELAY_LINK_REQUEST_TIMEOUT_MS = 30_000;
 
 export interface ManagedRelayAccessTokenCacheEntry {
   readonly accountId: string;
@@ -352,6 +355,39 @@ function proofCreationErrorFields(error: ManagedRelayDpopProofCreationError) {
   };
 }
 
+const responseOf = (cause: unknown) =>
+  HttpClientError.isHttpClientError(cause) ? cause.response : undefined;
+
+/**
+ * What to tell a person when a relay call fails with no decoded relay error: a
+ * status, a timeout or a network failure, and a trace id to find it in the logs.
+ */
+export function managedRelayFailureDetail(error: ManagedRelayClientError): {
+  readonly detail: string;
+  readonly traceId?: string;
+} {
+  if (error._tag !== "ManagedRelayRequestFailedError") {
+    const traceId = error._tag === "ManagedRelayRequestTimeoutError" ? error.traceId : null;
+    return { detail: error.message, ...(traceId ? { traceId } : {}) };
+  }
+  if (error.relayError) {
+    return {
+      detail: relayProtectedErrorMessage(error.relayError),
+      ...(error.traceId ? { traceId: error.traceId } : {}),
+    };
+  }
+  const response = responseOf(error.cause);
+  if (response === undefined) return { detail: error.message };
+  const traceId = response.headers.traceparent?.split("-")[1];
+  return {
+    detail:
+      response.status === 504
+        ? "Relay ran out of time (HTTP 504). Try again."
+        : `Relay sent an unexpected response (HTTP ${response.status}).`,
+    ...(traceId ? { traceId } : {}),
+  };
+}
+
 function isRejectedDpopAccessToken(error: ManagedRelayClientError): boolean {
   return (
     error._tag === "ManagedRelayRequestFailedError" &&
@@ -360,12 +396,15 @@ function isRejectedDpopAccessToken(error: ManagedRelayClientError): boolean {
   );
 }
 
-function timeoutRelayRequest(activity: ManagedRelayRequestActivity) {
+function timeoutRelayRequest(
+  activity: ManagedRelayRequestActivity,
+  timeoutMs: number = MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+) {
   return <A, E, R>(
     effect: Effect.Effect<A, E, R>,
   ): Effect.Effect<A, E | ManagedRelayClientError, R> =>
     effect.pipe(
-      Effect.timeoutOption(Duration.millis(MANAGED_RELAY_REQUEST_TIMEOUT_MS)),
+      Effect.timeoutOption(Duration.millis(timeoutMs)),
       Effect.flatMap(
         Option.match({
           onNone: () =>
@@ -376,7 +415,7 @@ function timeoutRelayRequest(activity: ManagedRelayRequestActivity) {
                 Effect.fail(
                   new ManagedRelayRequestTimeoutError({
                     activity,
-                    timeoutMs: MANAGED_RELAY_REQUEST_TIMEOUT_MS,
+                    timeoutMs,
                     traceId,
                   }),
                 ),
@@ -825,7 +864,7 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           })
           .pipe(
             Effect.mapError(relayRequestError("link relay environment")),
-            timeoutRelayRequest("Relay environment linking"),
+            timeoutRelayRequest("Relay environment linking", MANAGED_RELAY_LINK_REQUEST_TIMEOUT_MS),
           );
       },
       Effect.withSpan("clientRuntime.managedRelay.linkEnvironment"),

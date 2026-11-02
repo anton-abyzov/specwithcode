@@ -14,6 +14,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { createModelCapabilities } from "@specweave-studio/shared/model";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import {
@@ -40,7 +41,11 @@ import {
   type ServerProviderDraft,
 } from "./providerSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "./Drivers/ClaudeExecutable.ts";
-import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
+import {
+  claudeNotSignedInMessage,
+  makeClaudeEnvironment,
+  resolveClaudeHomePath,
+} from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
 import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
@@ -76,6 +81,9 @@ const decodeNativeSubscriptionAuthStatus = Schema.decodeUnknownOption(
       email: Schema.optionalKey(Schema.NullOr(Schema.String)),
     }),
   ),
+);
+const decodeSignedOutAuthStatus = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ loggedIn: Schema.Literals([false]) })),
 );
 const decodeConsoleProfileAuthStatus = Schema.decodeUnknownOption(
   Schema.fromJsonString(
@@ -561,6 +569,25 @@ const probeClaudeCapabilities = (
   );
 };
 
+/**
+ * A failed probe or a signed-out read must not outlive the check that made it:
+ * a sign-in in a terminal has to count on the next one. A read with no login
+ * but its own key stays cached, since the key pays.
+ */
+export const keepClaudeCapabilitiesProbe = (
+  probe:
+    | {
+        readonly tokenSource?: string | undefined;
+        readonly apiKeySource?: string | undefined;
+        readonly subscriptionType?: string | undefined;
+      }
+    | undefined,
+): boolean =>
+  probe !== undefined &&
+  (probe.tokenSource !== "none" ||
+    probe.subscriptionType !== undefined ||
+    (probe.apiKeySource !== undefined && probe.apiKeySource !== "none"));
+
 const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   claudeSettings: ClaudeSettings,
   args: ReadonlyArray<string>,
@@ -757,6 +784,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     capabilities.apiKeySource !== "none";
   let authMethod = billedToApiKey ? "apiKey" : capabilities.tokenSource;
   let authStatusCheckFailed = false;
+  // The CLI's own answer that this home has no login. It exits nonzero on Windows.
+  let signedOut = false;
   // Native Claude subscription initialization intentionally omits tokenSource
   // when it reports a plan. Corroborate that case through the same CLI/profile;
   // a plan alone and copied bearer-token sources still cannot authorize it.
@@ -777,6 +806,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     if (Result.isSuccess(nativeAuth) && Option.isSome(nativeAuth.success)) {
       const result = nativeAuth.success.value;
       const decoded = decodeNativeSubscriptionAuthStatus(result.stdout);
+      signedOut = Option.isSome(decodeSignedOutAuthStatus(result.stdout));
       if (
         result.code === 0 &&
         Option.isSome(decoded) &&
@@ -795,7 +825,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   let consoleBilling = false;
   let consoleProfile: ClaudeConsoleProfile | undefined;
   if (
-    (authMethod === undefined || authMethod === "profile") &&
+    (authMethod === undefined || authMethod === "profile" || authMethod === "none") &&
     !capabilities.subscriptionType &&
     capabilities.apiProvider === "firstParty" &&
     !overridesClaudeToken(resolvedEnvironment)
@@ -807,6 +837,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       );
     const json = yield* readStatus(["auth", "status"]);
     authStatusCheckFailed = Result.isFailure(json) || Option.isNone(json.success);
+    signedOut =
+      Result.isSuccess(json) &&
+      Option.isSome(json.success) &&
+      Option.isSome(decodeSignedOutAuthStatus(json.success.value.stdout));
     if (
       Result.isSuccess(json) &&
       Option.isSome(json.success) &&
@@ -824,6 +858,39 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         consoleProfile = parseClaudeConsoleProfile(text.success.value.stdout);
       }
     }
+  }
+  if (signedOut && !overridesClaudeToken(resolvedEnvironment)) {
+    return buildServerProvider({
+      presentation: CLAUDE_PRESENTATION,
+      enabled: claudeSettings.enabled,
+      checkedAt,
+      models,
+      slashCommands: dedupedSlashCommands,
+      skills,
+      probe: {
+        installed: true,
+        version: parsedVersion,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: claudeNotSignedInMessage({
+          executablePath: yield* resolveClaudeSdkExecutablePath(
+            claudeSettings.binaryPath,
+            resolvedEnvironment,
+          ),
+          configDir: yield* resolveClaudeHomePath(claudeSettings, resolvedEnvironment),
+          customConfigDir:
+            claudeSettings.homePath.trim().length > 0 ||
+            (resolvedEnvironment.CLAUDE_CONFIG_DIR?.trim() ?? "").length > 0,
+          platform: yield* HostProcessPlatform,
+        }),
+        // Keeps the denial history but stops showing the old account's meter as current.
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: "Not signed in, so there are no limits to show.",
+        }),
+      },
+    });
   }
   // The profile outranks a claude.ai login in the same home, which stays
   // signed in but unused. Naming it is how the user finds the missing plan.

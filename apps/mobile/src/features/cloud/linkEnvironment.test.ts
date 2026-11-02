@@ -252,6 +252,45 @@ describe("mobile cloud link environment client", () => {
     }),
   );
 
+  it.effect("says why when the relay answers with an error outside its schema", () =>
+    Effect.gen(function* () {
+      const fetchMock = vi.fn((url: string | URL) => {
+        if (String(url).endsWith("/v1/client/environment-link-challenges")) {
+          return Promise.resolve(Response.json(validLinkChallengeResponse()));
+        }
+        if (String(url).endsWith("/api/connect/link-proof")) {
+          return Promise.resolve(Response.json(validLinkProof()));
+        }
+        return Promise.resolve(
+          Response.json(
+            { error: "relay_request_deadline_exceeded" },
+            {
+              status: 504,
+              headers: {
+                traceparent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+              },
+            },
+          ),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const error = yield* withCloudServices(
+        linkEnvironmentToCloudWithPreference({
+          clerkToken: "clerk-token",
+          connection: savedConnection,
+          liveActivitiesEnabled: true,
+        }),
+      ).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "CloudEnvironmentLinkError",
+        message:
+          "https://relay.example.test/v1/client/environment-links failed: Relay ran out of time (HTTP 504). Try again.",
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+      });
+    }),
+  );
+
   it.effect("rejects relay link credentials for a different managed endpoint provider", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn((url: string | URL) => {

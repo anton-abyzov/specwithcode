@@ -11,8 +11,15 @@ export function register(on) {
 
   on("threads.changed", ($, e, next) => {
     threads = e.threads;
-    const count = waiting().length;
-    $.ui.status(count === 0 ? undefined : `${count} waiting`);
+    $.ui.status([
+      {
+        glyph: "waiting",
+        count: waiting().length,
+        label: "Waiting on you",
+        detail: "Sessions waiting for an approval, an answer or a plan review. Press to see them.",
+        onPress: () => $.ui.open({ id: "queue", title: "Waiting on you" }),
+      },
+    ]);
     return next(e);
   });
 
@@ -26,15 +33,19 @@ export function register(on) {
     return h(
       "Box",
       { gap: 2 },
-      rows.map((thread) =>
-        h(
-          "Box",
-          { direction: "row", gap: 2 },
-          h("Text", { tone: "strong" }, thread.title),
-          h("Text", { tone: "muted" }, `${thread.project ?? "No project"} · ${thread.state}`),
-          h("Button", { onPress: () => $.threads.open(thread.id) }, "Open"),
+      // The host draws at most 400 nodes and 8000 characters per pane.
+      rows
+        .slice(0, 40)
+        .map((thread) =>
+          h(
+            "Box",
+            { direction: "row", gap: 2 },
+            h("Text", { tone: "strong" }, thread.title.slice(0, 80)),
+            h("Text", { tone: "muted" }, `${thread.project ?? "No project"} · ${thread.state}`),
+            h("Button", { onPress: () => $.threads.open(thread.id) }, "Open"),
+          ),
         ),
-      ),
+      rows.length > 40 ? h("Text", { tone: "muted" }, `${rows.length - 40} more waiting.`) : null,
     );
   });
 }

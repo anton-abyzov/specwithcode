@@ -51,6 +51,18 @@ export function isAppUpdateReady(state: DesktopUpdateState | null): boolean {
 }
 
 /**
+ * Why installing the downloaded update last failed. A refused package relaunches
+ * the old version, so the reason then comes from the recorded attempt.
+ */
+export function appInstallFailureReason(state: DesktopUpdateState | null): string | null {
+  if (state === null || state.downloadedVersion === null) return null;
+  if (state.errorContext === "install") return state.message?.trim() || null;
+  return state.lastInstallFailure?.targetVersion === state.downloadedVersion
+    ? state.lastInstallFailure.reason
+    : null;
+}
+
+/**
  * The service update agent has the release on disk and only waits to install it,
  * including while it restarts a service that lost its database locks.
  */
@@ -278,8 +290,13 @@ export function getRestartToUpdateView(
 
   const serviceVersion = service ? candidate : null;
   const version = appVersion ?? serviceVersion;
-  const installFailed = app && appState.errorContext === "install";
-  const failure = installFailed ? appState.message?.trim() : undefined;
+  const installFailed = app && appInstallFailureReason(appState) !== null;
+  // A relaunch that still runs the old version keeps the reason across later checks.
+  const failure = installFailed
+    ? appInstallFailureReason(appState)
+    : app
+      ? appState.lastInstallFailure?.reason
+      : undefined;
   // The agent's own words for the failure Update now gets past stay beside the action.
   const serviceFailure =
     service && isServiceErrorWithRelease(serviceState)

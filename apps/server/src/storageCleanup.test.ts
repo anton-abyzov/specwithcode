@@ -550,4 +550,46 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
         for (const kept of owned) expect(yield* f.fs.exists(kept)).toBe(true);
       }).pipe(Effect.provide(cleanupLayer)),
   );
+
+  EffectVitest.it.effect(
+    "prunes only the dependencies of a finished worktree that holds other ignored files",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const worktree = yield* f.addWorktree("agent-with-evidence");
+        yield* f.fs.writeFileString(
+          f.path.join(f.repo, ".git", "info", "exclude"),
+          "node_modules/\n.artifacts/\n",
+        );
+        for (const relative of ["node_modules", ".artifacts"]) {
+          yield* f.fs.makeDirectory(f.path.join(worktree, relative));
+          yield* f.fs.writeFileString(f.path.join(worktree, relative, "kept.txt"), "x");
+        }
+        yield* age(f, [worktree]);
+        yield* f.sweep;
+        expect(f.removed).toEqual([]);
+        expect(yield* f.fs.exists(f.path.join(worktree, "node_modules"))).toBe(false);
+        expect(yield* f.fs.exists(f.path.join(worktree, ".artifacts", "kept.txt"))).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect("leaves a locked finished worktree's dependencies alone", () =>
+    Effect.gen(function* () {
+      const f = yield* cleanupFixture;
+      const worktree = yield* f.addWorktree("agent-locked");
+      yield* f.fs.writeFileString(
+        f.path.join(f.repo, ".git", "info", "exclude"),
+        "node_modules/\n.artifacts/\n",
+      );
+      for (const relative of ["node_modules", ".artifacts"]) {
+        yield* f.fs.makeDirectory(f.path.join(worktree, relative));
+        yield* f.fs.writeFileString(f.path.join(worktree, relative, "kept.txt"), "x");
+      }
+      yield* f.run(f.repo, ["worktree", "lock", worktree]);
+      yield* age(f, [worktree]);
+      yield* f.sweep;
+      expect(f.removed).toEqual([]);
+      expect(yield* f.fs.exists(f.path.join(worktree, "node_modules", "kept.txt"))).toBe(true);
+    }).pipe(Effect.provide(cleanupLayer)),
+  );
 });

@@ -179,9 +179,9 @@ it("writes one short plain line per thing it did", () => {
   expect(notice?.message).toBe(
     [
       "Updated from origin: a.",
-      "Skipped b: 2 uncommitted changes, left as they are.",
-      "Skipped c: on fix/x, not main.",
-      "Skipped d: can't reach origin from this machine.",
+      "Didn't update b: it has 2 uncommitted changes.",
+      "Didn't update c: it's on fix/x, not main.",
+      "Didn't update d: this machine can't reach its origin.",
     ].join("\n"),
   );
 });

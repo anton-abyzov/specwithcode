@@ -858,7 +858,26 @@ describe("release-windows-linux.yml", () => {
       expect(text).not.toContain("continue-on-error");
       expect(text).toContain("fail-fast: false");
     }
-    expect(workflow).toContain("needs: [plan, windows, linux]");
+    expect(workflow).toContain("needs: [plan, windows, linux, linux-update-proof]");
+  });
+
+  it("will not publish unless the update proof passed on the oldest and newest Ubuntu", () => {
+    const proof = NodeFS.readFileSync(
+      NodePath.join(
+        NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+        "../.github/workflows/linux-update-proof.yml",
+      ),
+      "utf8",
+    );
+    expect(proof).toContain("- os: ubuntu-22.04");
+    expect(proof).toContain("- os: ubuntu-24.04");
+    expect(proof).toContain("fail-fast: false");
+    expect(proof).not.toContain("continue-on-error");
+    const publish = workflow.slice(workflow.indexOf("\n  publish:\n"));
+    const header = publish.slice(0, publish.indexOf("\n    steps:"));
+    expect(header).toContain("needs: [plan, windows, linux, linux-update-proof]");
+    expect(header).not.toMatch(/^ {4}if:/m);
+    expect(header).not.toContain("continue-on-error");
   });
 
   it("defaults to a dry run and builds both installers for each arch", () => {

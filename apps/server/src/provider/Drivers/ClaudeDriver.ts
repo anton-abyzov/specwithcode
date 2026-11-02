@@ -41,6 +41,7 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
+  keepClaudeCapabilitiesProbe,
   probeClaudeCapabilities,
   probeClaudeWorkspaceSnapshot,
 } from "../ClaudeProvider.ts";
@@ -225,6 +226,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       // account-specific probes never share auth metadata across instances.
       // A failed probe resolves to undefined. Never keep it: one timeout on a
       // busy host would otherwise report Claude as unverified for the whole TTL.
+      // Nor a signed-out read: a sign-in in a terminal must count on the next check.
       const capabilitiesProbeCache = yield* Cache.makeWith(
         () =>
           probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
@@ -238,7 +240,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         {
           capacity: 1,
           timeToLive: (exit) =>
-            Exit.isSuccess(exit) && exit.value !== undefined
+            Exit.isSuccess(exit) && keepClaudeCapabilitiesProbe(exit.value)
               ? CAPABILITIES_PROBE_TTL
               : Duration.zero,
         },

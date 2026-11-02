@@ -317,6 +317,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     writeFileString: (path, data) =>
       Effect.sync(() => {
         if (path.endsWith("update-notices.json")) files.set(key(path), data);
+        else if (path.includes("update-install-")) files.set(key(path), data);
         else updateRestartMarkers.add(path);
       }),
     remove: (path) =>

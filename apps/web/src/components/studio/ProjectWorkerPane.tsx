@@ -13,6 +13,7 @@ import ChatView from "../ChatView";
 import type { SubagentEntry } from "../../studio/threadSubagents";
 import { ProjectThreadHeader } from "./shell/ProjectThreadHeader";
 import { SubagentPeek } from "./shell/SubagentPeek";
+import { routedThreadReplyText } from "@specweave-studio/shared/routedMessage";
 import { useRoutedThreadMessages } from "./ProjectRoutedReplies";
 
 export function ProjectWorkerPane({
@@ -76,7 +77,14 @@ export function ProjectWorkerPane({
                 ),
               );
             return send(
-              `Regarding thread ${thread.id} on machine ${thread.environmentId} (${thread.title}):\n\n${text}`,
+              routedThreadReplyText(
+                {
+                  threadId: thread.id,
+                  environmentId: thread.environmentId,
+                  title: thread.title,
+                },
+                text,
+              ),
             );
           },
         }}

@@ -1,3 +1,4 @@
+import * as CloudflareRetry from "@distilled.cloud/cloudflare/Retry";
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Arr from "effect/Array";
@@ -8,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import type {
@@ -435,6 +437,26 @@ const ignoreNotFound = <A>(
         isManagedEndpointNotFound(error.cause) ? Effect.void : Effect.fail(error),
     }),
   );
+
+/** The chain of tagged errors under a provisioning failure, for the Worker log. */
+function failureChain(cause: unknown, depth = 0): string {
+  if (cause === undefined) return "none";
+  if (typeof cause !== "object" || cause === null || depth > 5) return typeof cause;
+  const tag = "_tag" in cause && typeof cause._tag === "string" ? cause._tag : "Error";
+  const message = "message" in cause && typeof cause.message === "string" ? cause.message : "";
+  const inner = "cause" in cause && cause.cause ? ` <- ${failureChain(cause.cause, depth + 1)}` : "";
+  return `${tag}: ${message}${inner}`.slice(0, 1_000);
+}
+
+const logProvisioningFailure = (error: ManagedEndpointProviderError) =>
+  error._tag === "ManagedEndpointProvisioningFailed"
+    ? Effect.logError("managed endpoint provisioning failed", {
+        "relay.environment_id": error.environmentId,
+        "relay.managed_endpoint.stage": error.stage,
+        "relay.managed_endpoint.reason": error.reason ?? "none",
+        "relay.managed_endpoint.failure": failureChain(error.cause),
+      })
+    : Effect.void;
 
 export const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
@@ -1360,11 +1382,25 @@ export const make = Effect.gen(function* () {
           tunnelName: tunnel.name,
         },
       } satisfies ManagedEndpointProvisioningResult;
-    }),
+    }, Effect.tapError(logProvisioningFailure)),
   });
 });
 
 export const layer = Layer.effect(ManagedEndpointProvider, make);
+
+// The client's default policy retries transient errors, including "Authentication
+// error", 8 times with up to 5s between tries, which outlasts the call limit. A
+// persistent failure then surfaced only as a timeout, hiding the real error. Four
+// retries over 3.75s still ride out a short auth blip and leave room for its error.
+export const CLOUDFLARE_CALL_RETRY: CloudflareRetry.Options = {
+  ...(CloudflareRetry.transientOptions.while === undefined
+    ? {}
+    : { while: CloudflareRetry.transientOptions.while }),
+  schedule: Schedule.max([Schedule.exponential(250, 2), Schedule.recurs(4)]),
+};
+
+export const limitCloudflareCall = <A, E, R>(call: Effect.Effect<A, E, R>) =>
+  call.pipe(CloudflareRetry.policy(CLOUDFLARE_CALL_RETRY), Effect.timeout("8 seconds"));
 
 export const layerCloudflareBindings = (
   tunnelClient: Cloudflare.Tunnel.ReadWriteTunnelClient,
@@ -1376,8 +1412,7 @@ export const layerCloudflareBindings = (
       Layer.mergeAll(
         layerTunnelClient({
           get: (tunnelId) =>
-            tunnelClient.get(tunnelId).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(tunnelClient.get(tunnelId)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
@@ -1389,8 +1424,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           list: (request) =>
-            tunnelClient.list(request).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(tunnelClient.list(request)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
@@ -1402,8 +1436,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           create: (request) =>
-            tunnelClient.create(request).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(tunnelClient.create(request)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
@@ -1415,8 +1448,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           putConfiguration: (tunnelId, config) =>
-            tunnelClient.putConfiguration(tunnelId, config).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(tunnelClient.putConfiguration(tunnelId, config)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
@@ -1428,8 +1460,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           getToken: (tunnelId) =>
-            tunnelClient.getToken(tunnelId).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(tunnelClient.getToken(tunnelId)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
@@ -1441,8 +1472,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           delete: (tunnelId) =>
-            tunnelClient.delete(tunnelId).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(tunnelClient.delete(tunnelId)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointTunnelClientError({
@@ -1456,8 +1486,7 @@ export const layerCloudflareBindings = (
         }),
         layerDnsClient({
           listRecords: (hostname) =>
-            dnsClient.listDnsRecords({ search: hostname }).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(dnsClient.listDnsRecords({ search: hostname })).pipe(
               Effect.map((response) =>
                 response.result.filter(
                   (record): record is typeof record & { readonly id: string } =>
@@ -1476,8 +1505,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           createRecord: (request) =>
-            dnsClient.createDnsRecord(request).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(dnsClient.createDnsRecord(request)).pipe(
               Effect.map((response) => ({ id: response.id })),
               Effect.mapError(
                 (cause) =>
@@ -1490,8 +1518,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           updateRecord: (dnsRecordId, request) =>
-            dnsClient.updateDnsRecord(dnsRecordId, request).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(dnsClient.updateDnsRecord(dnsRecordId, request)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointDnsClientError({
@@ -1504,8 +1531,7 @@ export const layerCloudflareBindings = (
               Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
             ),
           deleteRecord: (dnsRecordId) =>
-            dnsClient.deleteDnsRecord(dnsRecordId).pipe(
-              Effect.timeout("8 seconds"),
+            limitCloudflareCall(dnsClient.deleteDnsRecord(dnsRecordId)).pipe(
               Effect.mapError(
                 (cause) =>
                   new ManagedEndpointDnsClientError({

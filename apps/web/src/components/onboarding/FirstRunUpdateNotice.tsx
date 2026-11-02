@@ -11,7 +11,7 @@ import {
 } from "../desktopUpdate.logic";
 import { liveServiceUpdateRun } from "../serviceUpdateRunView";
 import { requestRestartToUpdate } from "../sidebar/restartToUpdateRequests";
-import { isAppUpdateReady } from "../sidebar/SidebarRestartToUpdate.logic";
+import { appInstallFailureReason, isAppUpdateReady } from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 
@@ -32,6 +32,8 @@ export type FirstRunUpdateView =
       readonly version: string | null;
       /** A check (background, or the one a restart starts) is still running. */
       readonly checking: boolean;
+      /** Why the last install of this version failed; null when it has not. */
+      readonly failure: string | null;
     };
 
 /** What setup offers for the app's own update; null when there is nothing to do. */
@@ -50,6 +52,7 @@ export function firstRunUpdateView(
       kind: "install",
       version: getDesktopUpdateDownloadedVersion(state),
       checking: state.status === "checking",
+      failure: appInstallFailureReason(state),
     };
   }
   if (resolveDesktopUpdateButtonAction(state) === "download")
@@ -131,7 +134,9 @@ export function FirstRunUpdateNoticeView({
       ? `${product(view.version)} is available. Update before you set up.`
       : view.kind === "downloading"
         ? `Downloading the update${view.percent === null ? "…" : ` (${Math.floor(view.percent)}%)…`}`
-        : `${product(view.version)} is ready to install.`;
+        : view.failure !== null
+          ? `The last install failed: ${view.failure}`
+          : `${product(view.version)} is ready to install.`;
 
   return (
     <div
@@ -146,7 +151,11 @@ export function FirstRunUpdateNoticeView({
         </Button>
       ) : view.kind === "install" ? (
         <Button size="xs" disabled={view.checking} aria-busy={view.checking} onClick={onInstall}>
-          {view.checking ? "Checking…" : "Restart to update"}
+          {view.checking
+            ? "Checking…"
+            : view.failure !== null
+              ? "Retry update"
+              : "Restart to update"}
         </Button>
       ) : null}
     </div>

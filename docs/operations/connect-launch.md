@@ -240,9 +240,9 @@ first and falls back to its Connect address. Tailscale on both machines is optio
 - Each linked Mac holds one Cloudflare Tunnel. Check Zero Trust > Networks > Tunnels against
   Cloudflare's per-account tunnel limit once sign-ups grow.
 
-## Founding 1,000 seats
+## Founding 300 seats
 
-The first 1,000 accounts to link a managed machine get a founder number and 10 machines; everyone
+The first 300 accounts to link a managed machine get a founder number and 10 machines; everyone
 else gets `RELAY_CONNECT_FREE_TUNNEL_LIMIT` (3). A row in `relay_managed_tunnel_limits` overrides
 both for one account. A seat is granted atomically only after a managed link succeeds, so a link
 refused at a cap or failing in Cloudflare never takes one. Seats are never resold when an account
@@ -263,7 +263,12 @@ npx wrangler d1 execute <prod D1 database name> --remote \
 
 Raise the cap the same way with `SET seat_cap = <n>`. After grants reopen or the cap is raised,
 an account without a seat (including one first linked while grants were closed) takes the next
-seat on its next successful managed link.
+seat on its next successful managed link. Lowering the cap never takes a seat back: at or above the
+cap, `seatsLeft` reads 0, new accounts get the free limit and every founder keeps a number and 10
+machines.
+
+The `connect_founders` migration seeded the cap at 1,000. The `founders_seat_cap_300` migration sets
+it to 300 and leaves seats, founder numbers and the machine limit alone.
 
 A machine counts toward the account and global caps while its link is live with managed tunnels
 on, and for 15 minutes after its allocation was reserved or last re-claimed, so concurrent links

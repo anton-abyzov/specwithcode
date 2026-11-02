@@ -46,6 +46,7 @@ import { RELAY_MANAGED_TUNNEL_RECOVERY_TYP, signRelayJwt } from "@specweave-stud
 
 import {
   RELAY_HTTP_ROUTER_CONFIG,
+  RELAY_LINK_REQUEST_DEADLINE_MS,
   RELAY_REQUEST_DEADLINE_MS,
   recoverEnvironmentTunnelRecord,
   registerEnvironmentTunnelRecovery,
@@ -1623,6 +1624,56 @@ describe("relay CORS", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("gives tunnel recovery the provisioning deadline too", () =>
+    Effect.gen(function* () {
+      const httpEffect = yield* HttpRouter.toHttpEffect(
+        Layer.mergeAll(
+          HttpRouter.add("POST", "/v1/environments/env_1/tunnel", Effect.never),
+          RelayHttpApi.layerNotFoundRoute,
+          RelayHttpApi.layerCors,
+        ),
+      );
+      const fiber = yield* sendRelayRequest(
+        traceRelayHttpRequestWith(httpEffect, Layer.empty),
+        new Request("https://relay.test/v1/environments/env_1/tunnel", {
+          method: "POST",
+          headers: { origin },
+        }),
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS));
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust(
+        Duration.millis(RELAY_LINK_REQUEST_DEADLINE_MS - RELAY_REQUEST_DEADLINE_MS),
+      );
+      expect((yield* Fiber.join(fiber)).status).toBe(504);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("gives linking a new machine longer than other routes", () =>
+    Effect.gen(function* () {
+      const httpEffect = yield* HttpRouter.toHttpEffect(
+        Layer.mergeAll(
+          HttpRouter.add("POST", "/v1/client/environment-links", Effect.never),
+          RelayHttpApi.layerNotFoundRoute,
+          RelayHttpApi.layerCors,
+        ),
+      );
+      const fiber = yield* sendRelayRequest(
+        traceRelayHttpRequestWith(httpEffect, Layer.empty),
+        new Request("https://relay.test/v1/client/environment-links", {
+          method: "POST",
+          headers: { origin },
+        }),
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.millis(RELAY_REQUEST_DEADLINE_MS));
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust(
+        Duration.millis(RELAY_LINK_REQUEST_DEADLINE_MS - RELAY_REQUEST_DEADLINE_MS),
+      );
+      expect((yield* Fiber.join(fiber)).status).toBe(504);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("adds CORS headers to the request deadline response", () =>
     Effect.gen(function* () {
       const httpEffect = yield* HttpRouter.toHttpEffect(
@@ -1708,9 +1759,9 @@ describe("relay founders counter", () => {
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control")).toBe("public, max-age=60, s-maxage=60");
       expect(yield* Effect.promise(() => response.json())).toEqual({
-        seatCap: 1000,
+        seatCap: 300,
         seatsGranted: 2,
-        seatsLeft: 998,
+        seatsLeft: 298,
         grantsOpen: true,
       });
     }).pipe(Effect.scoped),

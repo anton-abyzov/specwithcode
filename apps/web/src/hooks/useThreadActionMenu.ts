@@ -210,6 +210,7 @@ export function useThreadActionMenu(input: {
           canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
           isRegeneratingTitle,
           titleLocked: isCoordinatorNamedThread(thread),
+          renameFromHeading: true,
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           canOpenProjectWindow: canOpenProjectWindowFor(menuProjectKey),
           moveToProjectBlockedReason: threadMoveBlockedReason(thread, menuProject),
@@ -340,7 +341,7 @@ export function useThreadActionMenu(input: {
             );
             return;
           case "rename":
-            if (!isCoordinatorNamedThread(thread)) onStartRename();
+            onStartRename();
             return;
           case "regenerate-title":
             if (isRegeneratingTitle || isCoordinatorNamedThread(thread)) return;

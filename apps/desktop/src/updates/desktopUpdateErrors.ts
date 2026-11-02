@@ -51,6 +51,29 @@ export class DesktopUpdateEventHandlingError extends Schema.TaggedError<DesktopU
   }
 }
 
+/** Removes tokens and URL credentials from text that reaches the UI, logs and telemetry. */
+export function scrubUpdateText(text: string): string {
+  return text
+    .replace(/\/\/[^/\s@]+@/g, "//[credentials]@")
+    .replace(/\b(gh[a-z]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g, "[token]")
+    .replace(/\b(Bearer|token)\s+\S+/gi, "$1 [token]")
+    .replace(/([?&](?:[a-z_]*token|key|secret|password|sig)=)[^&\s]+/gi, "$1[removed]");
+}
+
+/**
+ * The first line of a failed install's error, so it says why instead of only that it happened.
+ * Other update failures keep their generic text, whose raw HTTP errors stay out of the UI.
+ */
+export function updaterFailureReason(cause: unknown): string | null {
+  const text = cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  const line = text.split("\n").find((candidate) => candidate.trim().length > 0);
+  if (line === undefined) return null;
+  const reason = scrubUpdateText(line.trim()).slice(0, 400);
+  return /^Command pkexec exited with code 127\b/.test(reason)
+    ? `${reason}. If no password prompt appeared, quit SpecWithCode completely, reopen it and retry. If that does not help, check that this desktop has a polkit agent running.`
+    : reason;
+}
+
 export class DesktopUpdaterReportedError extends Schema.TaggedError<DesktopUpdaterReportedError>()(
   "DesktopUpdaterReportedError",
   {

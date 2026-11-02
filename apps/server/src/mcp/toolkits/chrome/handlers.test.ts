@@ -17,6 +17,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as BrowserExtension from "../../../browserExtension/BrowserExtension.ts";
 import { ChromeTools } from "../../../browserExtension/chromeTools.ts";
 import { connectFake, setup } from "../../../browserExtension/fakeChrome.testkit.ts";
+import { OTHER_BROWSERS_LAST } from "../../../browserExtension/relayHub.ts";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import { workerClientName } from "../../../fleet/workerGrantMint.ts";
@@ -219,6 +220,21 @@ describe("Chrome on another machine", () => {
         ["Home", undefined],
         ["Work", "b"],
       ]);
+    }),
+  );
+
+  it.effect("leads to pairing when no profile answers, here or on a named machine", () =>
+    Effect.gen(function* () {
+      const here = yield* machineA(null).call("t1", "chrome_profiles");
+      expect(here.hint).toContain("ask the user to pair");
+      expect(here.hint).toContain(OTHER_BROWSERS_LAST);
+
+      const b = machineB();
+      b.extension.pairing(true);
+      const there = yield* machineA(b).call("t-named", "chrome_profiles", { machine: "b" });
+      expect(there.profiles).toEqual([]);
+      expect(there.hint).toContain("Settings › Chrome on Studio B");
+      expect(there.hint).toContain(OTHER_BROWSERS_LAST);
     }),
   );
 

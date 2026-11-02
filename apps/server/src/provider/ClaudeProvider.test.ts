@@ -14,9 +14,31 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
-import { checkClaudeProviderStatus, claudeAuthMetadata } from "./ClaudeProvider.ts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import {
+  checkClaudeProviderStatus,
+  claudeAuthMetadata,
+  keepClaudeCapabilitiesProbe,
+} from "./ClaudeProvider.ts";
 import { mergeClaudeNativeModels } from "./ClaudeNativeModels.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG, type ClaudeModelCatalog } from "./ClaudeModelCatalog.ts";
+
+describe("the Claude capabilities cache", () => {
+  it.each([
+    ["a failed probe", undefined, false],
+    ["a signed-out read", { tokenSource: "none" }, false],
+    [
+      "a signed-out read with key source none",
+      { tokenSource: "none", apiKeySource: "none" },
+      false,
+    ],
+    ["a subscription", { subscriptionType: "Claude Ultra" }, true],
+    ["a key that pays", { tokenSource: "none", apiKeySource: "ANTHROPIC_API_KEY" }, true],
+    ["a Console sign-in", {}, true],
+  ] as const)("for %s", (_, probe, kept) => {
+    expect(keepClaudeCapabilitiesProbe(probe)).toBe(kept);
+  });
+});
 
 describe("native Claude authorization metadata", () => {
   it.each(["oauth_token", "oauth-token", "oauth token", undefined, "unknown"])(
@@ -214,7 +236,6 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
   );
 
   it.effect.each([
-    ["signed out", JSON.stringify({ ...nativeAuth, loggedIn: false })],
     ["copied OAuth", JSON.stringify({ ...nativeAuth, authMethod: "oauth_token" })],
     ["API key", JSON.stringify({ ...nativeAuth, authMethod: "api_key" })],
     ["another backend", JSON.stringify({ ...nativeAuth, apiProvider: "bedrock" })],
@@ -229,6 +250,78 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
         status: "unknown",
         type: "subscription-auth-unverified",
       });
+    }),
+  );
+
+  // Actual output of a signed-out CLI on Windows: `auth status` exits 1.
+  const signedOutStatus = JSON.stringify({ loggedIn: false, authMethod: "none" });
+  it.effect.each([
+    ["token source none", { subscriptionType: undefined, tokenSource: "none" }, 1],
+    ["token source none, exit 0", { subscriptionType: undefined, tokenSource: "none" }, 0],
+    ["no token source", { subscriptionType: undefined, tokenSource: undefined }, 1],
+    ["a stale plan", {}, 1],
+  ] as const)("reads a signed-out CLI with %s as unauthenticated", ([, capabilities, code]) =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({ capabilities, stdout: signedOutStatus, code }).pipe(
+        Effect.provideService(HostProcessPlatform, "linux"),
+      );
+      expect(status.status).toBe("error");
+      expect(status.auth.status).toBe("unauthenticated");
+      expect(status.auth.type).toBeUndefined();
+      expect(status.message).toContain("/synthetic/provider/claude");
+      expect(status.message).toContain("claude auth login");
+      expect(status.message).not.toContain("WSL");
+      // The fixture's instance has its own config folder, so plain login would miss it.
+      expect(status.message).toContain("with CLAUDE_CONFIG_DIR set to that folder");
+      expect(status.usageLimits?.unavailable?.reason).toBe("unsupported");
+    }),
+  );
+
+  it.effect("tells a Windows user that a sign-in in WSL does not count", () =>
+    checkNative({
+      capabilities: { subscriptionType: undefined, tokenSource: "none" },
+      stdout: signedOutStatus,
+      code: 1,
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.map((status) => {
+        expect(status.auth.status).toBe("unauthenticated");
+        expect(status.message).toContain("inside WSL");
+      }),
+    ),
+  );
+
+  it.effect("keeps a token-source none read unverified when the status says signed in", () =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({
+        capabilities: { subscriptionType: undefined, tokenSource: "none" },
+      });
+      expect(status.auth).toMatchObject({
+        status: "unknown",
+        type: "subscription-auth-unverified",
+      });
+    }),
+  );
+
+  it.effect("does not call a token override signed out", () =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({
+        capabilities: { subscriptionType: undefined, tokenSource: "none" },
+        stdout: signedOutStatus,
+        code: 1,
+        environment: { CLAUDE_CODE_OAUTH_TOKEN: "synthetic" },
+      });
+      expect(status.auth.status).toBe("unknown");
+    }),
+  );
+
+  it.effect("keeps an unreadable status for a token-source none read unchecked", () =>
+    Effect.gen(function* () {
+      const status = yield* checkNative({
+        capabilities: { subscriptionType: undefined, tokenSource: "none" },
+        failure: "spawn",
+      });
+      expect(status.auth).toMatchObject({ status: "unknown", type: "status-check-failed" });
     }),
   );
 
@@ -410,7 +503,6 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
       JSON.stringify({ ...nativeAuth, subscriptionType: undefined }),
       consoleText,
     ],
-    ["signed out", JSON.stringify({ loggedIn: false, authMethod: "none" }), consoleText],
   ] as const)("keeps %s without a plan unverified", ([, stdout, textStdout]) =>
     Effect.gen(function* () {
       const status = yield* checkNative({ capabilities: consoleCapabilities, stdout, textStdout });

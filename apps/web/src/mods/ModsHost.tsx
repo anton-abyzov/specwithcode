@@ -158,6 +158,10 @@ function ModFrame({ environmentId, mod }: { environmentId: EnvironmentId; mod: M
         userActed();
         post({ type: "press", id: paneId, handler });
       },
+      pressStat: (handler) => {
+        userActed();
+        post({ type: "press", id: "$status", handler });
+      },
       closePane: (paneId) => {
         useModsStore.getState().closePane(name, paneId);
         post({ type: "pane.closed", id: paneId });
@@ -206,7 +210,7 @@ function ModFrame({ environmentId, mod }: { environmentId: EnvironmentId; mod: M
           }
           return;
         case "ui.status":
-          state.setStatus(name, message.text);
+          state.setStatus(name, message.text, message.stats);
           return;
         case "ui.open":
           state.openPane(name, message.id, message.title);

@@ -457,6 +457,9 @@ const make = Effect.gen(function* () {
           return yield* deny(
             "The native sign-in status check did not finish, often because this machine is busy. You are not signed out. Refresh Providers on this machine and try again.",
           );
+        // The driver's own message names what it checked and how to sign in.
+        if (native?.auth.status === "unauthenticated" && native.message)
+          return yield* deny(native.message);
         return yield* deny(
           "Native subscription authorization is unverified. Sign in with the official native CLI on this machine and refresh provider status.",
         );

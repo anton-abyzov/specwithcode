@@ -31,8 +31,7 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { readThreadShell, useThreadShell } from "../../state/entities";
-import { isCoordinatorNamedThread } from "../../studio/threadTitles";
+import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { RoutingDecisionChip } from "../studio/shell/RoutingDecisionChip";
@@ -140,9 +139,7 @@ export const ChatHeader = memo(function ChatHeader({
   const startRename = useCallback(() => {
     if (
       !isServerThread ||
-      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope) ||
-      // Its coordinator names a worker thread; the title is read-only here.
-      isCoordinatorNamedThread(readThreadShell(activeThreadRef))
+      !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)
     )
       return;
     renameCommittedRef.current = false;
@@ -151,13 +148,7 @@ export const ChatHeader = memo(function ChatHeader({
       threadId: activeThreadId,
       title: activeThreadTitle,
     });
-  }, [
-    activeThreadEnvironmentId,
-    activeThreadId,
-    activeThreadRef,
-    activeThreadTitle,
-    isServerThread,
-  ]);
+  }, [activeThreadEnvironmentId, activeThreadId, activeThreadTitle, isServerThread]);
   const commitRename = useCallback(
     (title: string) => {
       setRenaming(null);

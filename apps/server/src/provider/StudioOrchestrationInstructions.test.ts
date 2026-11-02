@@ -22,6 +22,14 @@ describe("SpecWithCode orchestration provider instructions", () => {
     );
   });
 
+  it("puts the paired Chrome ahead of a skill's browser on every provider", () => {
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "`chrome_*` tools, also where a skill names Claude in Chrome",
+    );
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "ask the user to pair");
+  });
+
   it("leaves how to call each tool to that tool's description", () => {
     // Moved out of the per-turn prose; the tool carries it to whoever calls it.
     assert.include(
@@ -43,7 +51,8 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // another machine's handoff-ready thread. The increment line (about 55
     // tokens) asks SpecWeave projects to bind each launched worker. The file
     // line (about 70 tokens) stops workers improvising when a file is elsewhere.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_250);
+    // The Chrome line (about 35 tokens) outranks a skill that names another browser.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_400);
   });
 
   it("asks for an increment on launches in a SpecWeave project and a link to its spec", () => {

@@ -58,3 +58,50 @@ export function parseRoutedMessage(
     words: text.slice(match[0].length),
   };
 }
+
+/**
+ * A reply typed in a worker on another machine reaches the coordinator with this header:
+ * the coordinator routes by its IDs, and the person sees only the title and machine name.
+ */
+export interface RoutedThreadReplyTarget {
+  readonly threadId: string;
+  readonly environmentId: string;
+  readonly title: string;
+}
+
+export function routedThreadReplyText(target: RoutedThreadReplyTarget, words: string): string {
+  return `Regarding thread ${target.threadId} on machine ${target.environmentId} (${target.title}):\n\n${words}`;
+}
+
+const THREAD_REPLY_HEADER = /^Regarding thread (\S+) on machine (\S+) \((.*)\):\n\n/;
+
+/** The target and the user's words, or null when the text carries no such header. */
+export function parseRoutedThreadReply(
+  text: string,
+): (RoutedThreadReplyTarget & { readonly words: string }) | null {
+  const match = THREAD_REPLY_HEADER.exec(text);
+  if (!match) return null;
+  return {
+    threadId: match[1]!,
+    environmentId: match[2]!,
+    title: match[3]!,
+    words: text.slice(match[0].length),
+  };
+}
+
+/** The text to show for a routed reply, without its IDs; other text comes back unchanged. */
+export function routedThreadReplyDisplayText(
+  text: string,
+  machineLabel: (environmentId: string) => string,
+): string {
+  const reply = parseRoutedThreadReply(text);
+  if (!reply) return text;
+  const title = reply.title.trim() || "another thread";
+  // A machine this device has no name for resolves to its ID, which stays out of sight too.
+  // An unnamed one without an ID's shape is a person's own "Regarding thread x on machine y".
+  const label = machineLabel(reply.environmentId);
+  const unnamed = label === reply.environmentId;
+  if (unnamed && !/^[0-9a-f-]{8,}$/i.test(label)) return text;
+  const machine = unnamed ? "another machine" : label;
+  return `Regarding ${title} on ${machine}:\n\n${reply.words}`;
+}

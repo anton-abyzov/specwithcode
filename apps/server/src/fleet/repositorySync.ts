@@ -385,25 +385,28 @@ const plural = (count: number, one: string) => `${count} ${one}${count === 1 ? "
 function skipReason(outcome: RepositorySyncOutcome): string | null {
   switch (outcome.kind) {
     case "uncommitted":
-      return `${plural(outcome.changes, "uncommitted change")}, left as they are`;
+      return `it has ${plural(outcome.changes, "uncommitted change")}`;
     case "other-branch":
       return outcome.branch
-        ? `on ${outcome.branch}, not ${outcome.main}`
-        : `not on a branch, origin uses ${outcome.main}`;
+        ? `it's on ${outcome.branch}, not ${outcome.main}`
+        : `it isn't on a branch, and origin uses ${outcome.main}`;
     case "diverged":
-      return `${plural(outcome.ahead, "local commit")} and ${plural(outcome.behind, "origin commit")} differ, nothing merged`;
+      return `it has ${plural(outcome.ahead, "local commit")} and origin has ${plural(outcome.behind, "other commit")}`;
     case "in-use":
-      return "another thread is working there";
+      return "another thread is working in it";
     case "late":
-      return "origin answered too slowly, left as it is";
+      return "origin answered too slowly";
     case "unreachable":
-      return "can't reach origin from this machine";
+      return "this machine can't reach its origin";
     case "failed":
-      return "Git could not update it";
+      return "Git couldn't update it";
     default:
       return null;
   }
 }
+
+/** Starts every line about a repository left alone. */
+export const NOT_UPDATED = "Didn't update";
 
 export interface RepositorySyncNotice {
   readonly title: string;
@@ -419,7 +422,7 @@ export function repositorySyncNotice(
   const updated = results.filter((result) => result.outcome.kind === "updated");
   const skipped = results.flatMap((result) => {
     const reason = skipReason(result.outcome);
-    return reason === null ? [] : [`Skipped ${result.name}: ${reason}.`];
+    return reason === null ? [] : [`${NOT_UPDATED} ${result.name}: ${reason}.`];
   });
   if (updated.length === 0 && skipped.length === 0) return null;
   const lines = [
@@ -429,7 +432,7 @@ export function repositorySyncNotice(
     ...skipped,
   ];
   return {
-    title: updated.length > 0 ? "Updated repositories" : "Skipped repositories",
+    title: updated.length > 0 ? "Updated repositories" : "Repositories not updated",
     message: lines.join("\n"),
     skipped: skipped.join("\n"),
   };

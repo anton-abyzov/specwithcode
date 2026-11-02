@@ -19,6 +19,7 @@ it("links to the thread machine's Chrome settings", async () => {
     renderer = create(<ChromeConnectCard environmentId={environmentId} />);
   });
   expect(JSON.stringify(renderer.toJSON())).toMatch(/Chrome is not connected on ","M4 Max/);
+  expect(JSON.stringify(renderer.toJSON())).toContain("Copy the pairing code");
   const link = renderer.root.findAll((node) => node.props.to === "/settings/chrome")[0]!;
   expect(link.props.search).toEqual({ machine: environmentId });
   await act(() => renderer.unmount());

@@ -11,6 +11,12 @@
 /** A day without a commit or checkout change, so an agent still finishing up keeps its folder. */
 export const ORPHAN_WORKTREE_IDLE_MS = 86_400_000;
 
+/**
+ * A merged PR is finished work, so six hours is enough for a post-merge check.
+ * Waiting a full day at about 6 GB per worktree held tens of GB at all times.
+ */
+export const ORPHAN_MERGED_IDLE_MS = 21_600_000;
+
 /** The orphan pass runs at most hourly: each candidate can cost a pull request lookup. */
 export const ORPHAN_SWEEP_INTERVAL_MS = 3_600_000;
 
@@ -35,7 +41,9 @@ export type OrphanWorktreeFacts = {
  */
 export function orphanWorktreeRemovable(
   facts: OrphanWorktreeFacts,
-  idleMs: number = ORPHAN_WORKTREE_IDLE_MS,
+  idleMs: number = facts.pullRequestState === "merged" && facts.unpushedCommits === 0
+    ? ORPHAN_MERGED_IDLE_MS
+    : ORPHAN_WORKTREE_IDLE_MS,
 ): boolean {
   // An unknown idle time (NaN) is never idle enough.
   if (
@@ -49,6 +57,27 @@ export function orphanWorktreeRemovable(
   if (facts.pullRequestState === "merged")
     return facts.unpushedCommits === 0 || facts.integratedInDefault;
   return facts.pullRequestState === "closed" && facts.unpushedCommits === 0;
+}
+
+/**
+ * True when the work is finished but something else keeps the folder: ignored
+ * files that may hold evidence or secrets, or commits only its reflog reaches.
+ * Its dependency install, nearly all of its size, can still go. Always after a
+ * full day: a detached build writing only to ignored folders shows no activity.
+ */
+export function orphanDependenciesPrunable(facts: OrphanWorktreeFacts): boolean {
+  return orphanWorktreeRemovable(
+    { ...facts, onlyDependencyIgnores: true },
+    ORPHAN_WORKTREE_IDLE_MS,
+  );
+}
+
+/** Dependency installs in `git ls-files --others --ignored --directory -z` output, without a trailing slash. */
+export function dependencyInstallPaths(stdout: string): ReadonlyArray<string> {
+  return stdout
+    .split("\0")
+    .filter((entry) => REBUILDABLE_DIRECTORY.test(entry) || /(^|\/)node_modules$/.test(entry))
+    .map((entry) => entry.replace(/\/$/, ""));
 }
 
 /**

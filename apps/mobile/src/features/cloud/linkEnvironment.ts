@@ -15,7 +15,7 @@ import {
   type RelayManagedEndpointProviderKind,
 } from "@specweave-studio/contracts/relay";
 import { findErrorTraceId } from "@specweave-studio/client-runtime/errors";
-import { ManagedRelay, relayProtectedErrorMessage } from "@specweave-studio/client-runtime/relay";
+import { ManagedRelay } from "@specweave-studio/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@specweave-studio/client-runtime/rpc";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
@@ -89,12 +89,9 @@ function withDevCause(message: string, cause: unknown): string {
 
 function decodedRelayClientError(message: string) {
   return (cause: ManagedRelay.ManagedRelayClientError) => {
-    const relayError =
-      cause._tag === "ManagedRelayRequestFailedError" ? cause.relayError : undefined;
-    const traceId = cause._tag === "ManagedRelayRequestFailedError" ? cause.traceId : undefined;
-    const detail = relayError ? relayProtectedErrorMessage(relayError) : null;
+    const { detail, traceId } = ManagedRelay.managedRelayFailureDetail(cause);
     return new CloudEnvironmentLinkError({
-      message: detail ? `${message}: ${detail}` : message,
+      message: `${message}: ${detail}`,
       cause,
       ...(traceId ? { traceId } : {}),
     });

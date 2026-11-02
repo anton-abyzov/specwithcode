@@ -1,5 +1,8 @@
 import type { ThreadId } from "@specweave-studio/contracts";
-import { parseRoutedMessage } from "@specweave-studio/shared/routedMessage";
+import {
+  parseRoutedMessage,
+  routedThreadReplyDisplayText,
+} from "@specweave-studio/shared/routedMessage";
 import { resolveStudioMcpToolId } from "@specweave-studio/shared/studioMcpToolPresentation";
 
 type Message = {
@@ -27,8 +30,17 @@ export function projectCoordinatorMessageDisplay(
   message: Message,
   project: { readonly id: string; readonly environmentId: string },
   workers: readonly Worker[],
+  machineLabel?: (environmentId: string) => string,
 ): { text: string; sourceThread: Worker | null; routedFrom: RoutedFrom | null } {
-  const unchanged = { text: message.text, sourceThread: null, routedFrom: null };
+  // A reply from a worker on another machine: its IDs stay in the stored text for routing.
+  const unchanged = {
+    text:
+      machineLabel && message.role === "user" && message.createdBy === "user"
+        ? routedThreadReplyDisplayText(message.text, machineLabel)
+        : message.text,
+    sourceThread: null,
+    routedFrom: null,
+  };
   const idPrefix = `coordinator-send:${project.id}:`;
   // A request the personal assistant routed here: the user's words, and who routed them.
   const routed =

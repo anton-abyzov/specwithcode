@@ -167,9 +167,13 @@ async function harness(
             Effect.sync(() => {
               calls.routes.push({ cwd: path, config: entry.config });
               return input.routeVerified !== false;
-            }).pipe(Effect.flatMap((verified) => input.routeFailure
-              ? Effect.fail(new CodexNativeRouteCheckError({ reason: input.routeFailure }))
-              : Effect.succeed(verified))),
+            }).pipe(
+              Effect.flatMap((verified) =>
+                input.routeFailure
+                  ? Effect.fail(new CodexNativeRouteCheckError({ reason: input.routeFailure }))
+                  : Effect.succeed(verified),
+              ),
+            ),
         }),
         Layer.succeed(HostProcessEnvironment, {}),
         Layer.succeed(SwitchFetch, (() =>
@@ -404,7 +408,7 @@ it("actual deferred title generation keeps the seed and temporary branch without
           commandId: CommandId.make("owned-aux-create"),
           threadId,
           projectId,
-          title: "Original title",
+          title: "New thread",
           modelSelection: h.modelSelection,
           runtimeMode: "approval-required",
           interactionMode: "default",

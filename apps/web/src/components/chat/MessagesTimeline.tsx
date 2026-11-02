@@ -91,6 +91,8 @@ import { modelLabel } from "../../studio/shellModel";
 import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/state/thread-workflows";
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@specweave-studio/shared/composerContextReferences";
+import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   filesChangedOutsideEditItems,
   resolveWorkEntryToolPresentation,
@@ -1164,7 +1166,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       ? null
       : turnDiffUnavailableReason(resolvedSubagentDiffTarget.runId, subagentParent?.runs ?? []);
   const threadProviderInstanceId = timelineShell?.providerInstanceId ?? null;
-  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const minimapMachineNames = useMachineNicknames();
+  const minimapItems = useMemo(
+    () => deriveTimelineMinimapItems(rows, minimapMachineNames),
+    [rows, minimapMachineNames],
+  );
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -2462,6 +2468,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const resolvedContext = useMemo(() => resolveUserMessageContext(row.message), [row.message]);
+  const machineNames = useMachineNicknames();
+  // A routed reply keeps its IDs in the stored text for the coordinator; people read names.
+  const displayedText =
+    row.message.createdBy === "user"
+      ? routedThreadReplyDisplayText(resolvedContext.text, machineNames)
+      : resolvedContext.text;
   const previewImages = useMemo(
     () => userImages.filter((image) => image.name.startsWith("preview-annotation-")),
     [userImages],
@@ -2865,7 +2877,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           {attachmentBlocks}
           <div onCopyCapture={onBodyCopyCapture}>
             <CollapsibleUserMessageBody
-              text={resolvedContext.text}
+              text={displayedText}
               renderContextReference={renderContextReference}
               skills={ctx.skills}
               markdownCwd={ctx.markdownCwd}
@@ -2908,9 +2920,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 // Structured paste needs the canonical links to retain their positions.
                 text={
                   contextClipboardFragment
-                    ? resolvedContext.text
+                    ? displayedText
                     : replaceComposerContextReferences(
-                        resolvedContext.text,
+                        displayedText,
                         (reference) => reference.label,
                       )
                 }

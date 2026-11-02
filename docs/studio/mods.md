@@ -85,12 +85,31 @@ Open panes redraw after every event and after a button press.
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `$.command.register({ name, description })`                      | Adds a palette entry (up to 16)                                          |
 | `$.ui.status(text)`                                              | Short sidebar status (40 characters); `undefined` clears it              |
+| `$.ui.status(stats)`                                             | Counts for the sidebar's attention chip; see Stats                       |
 | `$.ui.toast(text)`                                               | A toast; at most three per ten seconds                                   |
 | `$.ui.open({ id, title })`, `$.ui.close(id)`, `$.ui.redraw(id?)` | Panes (up to four per mod)                                               |
 | `$.threads.list()`                                               | Needs `threads:read`                                                     |
 | `$.threads.open(id)`                                             | Needs `threads:open`; only within five seconds of the user using the mod |
 | `$.specweave.list()`                                             | Needs `specweave:read`; the same summary `specweave.changed` carries     |
 | `$.mod()`                                                        | The mod's name, surface and permissions                                  |
+
+### Stats
+
+Report counts as a list instead of text. Every mod's counts share one sidebar chip, which opens a popover with one row per stat. The chip exists only while a count is above zero.
+
+```js
+$.ui.status([
+  {
+    glyph: "blocked", // blocked, stale, verify, gap, waiting or ready
+    count: 8,
+    label: "Blocked", // 40 characters
+    detail: "Tasks in open increments marked blocked.", // the row's tooltip, 160 characters
+    onPress: () => $.ui.open({ id: "blocked", title: "Blocked tasks" }), // optional
+  },
+]);
+```
+
+A mod names a glyph and never ships artwork; the host picks its color and order. A mod sends up to eight stats, and one with an unknown glyph, no label or a count that is not a positive whole number is dropped. A list with nothing left clears the status.
 
 ### UI trees
 

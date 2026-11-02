@@ -5,7 +5,12 @@
  * fake extension. Threads share a profile and each drives only its own tabs;
  * every action lands in the audit list Settings › Chrome shows.
  */
-import { BrowserRelayError, type BrowserRelayHub, type RelayProfile } from "./relayHub.ts";
+import {
+  BrowserRelayError,
+  type BrowserRelayHub,
+  OTHER_BROWSERS_LAST,
+  type RelayProfile,
+} from "./relayHub.ts";
 import {
   type ElementTarget,
   domClickScript,
@@ -40,17 +45,13 @@ export function noProfileHint(
   now: number,
 ): string {
   if (!last)
-    return "No Chrome profile is connected. Ask the user to install the SpecWithCode Browser extension and pair it in Settings › Chrome.";
+    return `No Chrome profile is connected. Stop and ask the user to pair: Settings › Chrome has the pairing code, which they paste into the SpecWithCode Browser popup in the Chrome profile they want agents to use (installing the extension first if it is missing). Then call chrome_profiles again. ${OTHER_BROWSERS_LAST}`;
   const minutes = Math.max(0, Math.round((now - last.at) / 60_000));
   const gone = `No Chrome profile is connected. "${last.label}" disconnected ${minutes} min ago (${new Date(last.at).toISOString()}): ${last.reason.replace(/\.$/, "")}.`;
   const next = last.reason.startsWith("pairing code reset")
     ? " The pairing code was reset: ask the user to paste the new code from Settings › Chrome into that profile's SpecWithCode Browser popup."
-    : " Its extension reconnects on its own; try again in a minute. If it is still missing, ask the user to click the SpecWithCode Browser icon in that Chrome profile (it shows OFF or !) and press Reconnect.";
-  return (
-    gone +
-    next +
-    " Another browser tool reaches a different browser that may be signed in to other accounts: ask the user before using one instead."
-  );
+    : " Its extension reconnects on its own; try again in a minute. If it is still missing, ask the user to click the SpecWithCode Browser icon in that Chrome profile (it shows OFF or !) and press Reconnect, or paste the code from Settings › Chrome if it says Not paired.";
+  return `${gone}${next} ${OTHER_BROWSERS_LAST}`;
 }
 
 export function checkUrl(url: string): string {

@@ -274,9 +274,17 @@ try {
   await page.waitForTimeout(1500);
   // SpecWeave mods read the seeded increments through specweave:read.
   const modStatus = page.getByLabel("Mod status");
-  await modStatus.getByText("1 needs verify").waitFor({ timeout: 15000 });
-  await modStatus.getByText("1 trace gap in 1 increment").waitFor({ timeout: 15000 });
+  const chip = modStatus.getByRole("button", { name: /Needs attention/ });
+  await chip.waitFor({ timeout: 15000 });
+  await chip.and(page.getByLabel(/1 Need verify/)).waitFor({ timeout: 15000 });
+  await chip.and(page.getByLabel(/1 Trace gaps/)).waitFor({ timeout: 15000 });
   check("SpecWeave mods report the close queue and the trace gap", true);
+  await chip.click();
+  await page.getByRole("button", { name: /^Need verify/ }).click();
+  const verifyList = page.getByRole("dialog", { name: "Need verify" });
+  await verifyList.getByText("0001-retry-worker").waitFor({ timeout: 10000 });
+  check("a stat row opens its own list", true);
+  await page.keyboard.press("Escape");
   await page.keyboard.press("ControlOrMeta+k");
   await page.keyboard.type("waiting to be closed");
   await page.getByText("Show increments waiting to be closed").first().click();

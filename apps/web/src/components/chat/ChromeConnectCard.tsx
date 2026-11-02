@@ -18,7 +18,8 @@ export function ChromeConnectCard({ environmentId }: { environmentId: Environmen
         <div className="min-w-0 text-sm">
           <p className="font-medium">Chrome is not connected on {machine}</p>
           <p className="text-muted-foreground">
-            Test the connection or reconnect the extension, then ask the agent to try again.
+            Copy the pairing code from Settings › Chrome and paste it into the SpecWithCode Browser
+            popup in the Chrome profile agents should use, then ask the agent to try again.
           </p>
         </div>
       </div>

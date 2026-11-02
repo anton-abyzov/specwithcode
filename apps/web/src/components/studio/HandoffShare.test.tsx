@@ -114,6 +114,17 @@ it("offers one Add button, and cloning copies no files and no secrets", async ()
   expect(container.textContent).toContain("Ministorm is cloning this project");
 });
 
+it("keeps waiting for the link after a finished clone clears its job", async () => {
+  await show();
+  await act(async () => button("Add Ministorm")!.click());
+  state.listed.mockReturnValue([]);
+  await act(async () => {
+    window.dispatchEvent(new Event("jobs"));
+  });
+  expect(container.textContent).toContain("Ministorm is cloning this project");
+  expect(button("Add Ministorm")).toBeUndefined();
+});
+
 it("tells the reader when the other machine cannot read the repository", async () => {
   state.checkRemote.mockResolvedValue({ value: { status: "denied" } });
   await show();
@@ -188,7 +199,11 @@ it("offers Add again and says so when the clone failed", async () => {
 it("offers Add again once the job ended with no link", async () => {
   await show();
   await act(async () => button("Add Ministorm")!.click());
+  vi.useFakeTimers();
   state.listed.mockReturnValue([]);
   await act(async () => window.dispatchEvent(new Event("jobs")));
+  expect(button("Add Ministorm")).toBeUndefined();
+  await act(async () => vi.advanceTimersByTime(120_000));
+  vi.useRealTimers();
   expect(button("Add Ministorm")).toBeDefined();
 });

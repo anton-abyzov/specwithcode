@@ -60,6 +60,72 @@ describe("DesktopUpdates", () => {
     );
   });
 
+  describe("the install attempt", () => {
+    const runtime = `/tmp/studio-desktop-updates-test-${process.pid}/runtime`;
+    const attemptFile = `${runtime}/update-install-attempt.json`;
+    const failureFile = `${runtime}/update-install-failure.json`;
+    const review = (seed: (harness: ReturnType<typeof makeHarness>) => void) => {
+      const harness = makeHarness();
+      seed(harness);
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          return { state: yield* updates.getState, harness };
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    };
+
+    it.effect("says why a relaunch still runs the old version, across launches", () =>
+      Effect.gen(function* () {
+        const { state, harness } = yield* review((harness) =>
+          harness.files.set(
+            attemptFile,
+            JSON.stringify({
+              targetVersion: "1.2.4",
+              fromVersion: "1.2.3",
+              at: "2026-11-02T06:40:54Z",
+            }),
+          ),
+        );
+        assert.equal(
+          state.lastInstallFailure?.reason,
+          "1.2.4 did not install, this app still runs 1.2.3. The installer ended without installing it and left no error on this machine.",
+        );
+        assert.isFalse(harness.files.has(attemptFile));
+        assert.isTrue(harness.files.has(failureFile));
+      }),
+    );
+
+    it.effect("reports nothing when the attempted version runs", () =>
+      Effect.gen(function* () {
+        const { state, harness } = yield* review((harness) =>
+          harness.files.set(
+            attemptFile,
+            JSON.stringify({
+              targetVersion: "1.2.3",
+              fromVersion: "1.2.2",
+              at: "2026-11-02T06:40:54Z",
+            }),
+          ),
+        );
+        assert.isUndefined(state.lastInstallFailure);
+        assert.isFalse(harness.files.has(attemptFile));
+      }),
+    );
+
+    it.effect("drops a stored failure once its version is reached", () =>
+      Effect.gen(function* () {
+        const failure = { targetVersion: "1.2.3", reason: "refused", at: "2026-11-02T06:40:54Z" };
+        const { state, harness } = yield* review((harness) =>
+          harness.files.set(failureFile, JSON.stringify(failure)),
+        );
+        assert.isUndefined(state.lastInstallFailure);
+        assert.isFalse(harness.files.has(failureFile));
+      }),
+    );
+  });
+
   it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();
 
@@ -849,6 +915,8 @@ describe("DesktopUpdates", () => {
         assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
         // The restarted old backend must release its tunnel on a later quit.
         assert.equal(harness.updateRestartMarkers.size, 0);
+        // The failure outlives the next check, which clears the state's message.
+        assert.equal((yield* updates.getState).lastInstallFailure?.targetVersion, "1.2.4");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

@@ -5,8 +5,19 @@ import {
   type DesktopUpdateRefusalReason,
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
+  type DesktopUpdateInstallFailure,
   type DesktopUpdateState,
 } from "@specweave-studio/contracts";
+import {
+  diagnoseInstallAttempt,
+  INSTALL_ATTEMPT_FILE,
+  INSTALL_FAILURE_FILE,
+  investigateInstallAttempt,
+  parseInstallAttempt,
+  parseInstallFailure,
+  serializeInstallRecord,
+  versionReached,
+} from "./installAttempt.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -44,6 +55,7 @@ import {
   DesktopUpdateEventHandlingError,
   DesktopUpdatePollerError,
   DesktopUpdaterReportedError,
+  updaterFailureReason,
   type DesktopUpdateSetChannelError,
   DesktopUpdateUnexpectedActionError,
 } from "./desktopUpdateErrors.ts";
@@ -57,6 +69,7 @@ import {
 import { resolveUpdateFeed } from "./platformFeed.ts";
 import { getAutoUpdateDisabledReason, isUpstreamUpdateFeed } from "./updateFeedGate.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
+import { runningInstallReplaced } from "./replacedInstall.ts";
 import { markRestartStep, markRestartStepFromNow } from "./restartTrace.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import {
@@ -733,6 +746,66 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const installAttemptPath = environment.path.join(updateRestartMarkerDir, INSTALL_ATTEMPT_FILE);
+  const installFailurePath = environment.path.join(updateRestartMarkerDir, INSTALL_FAILURE_FILE);
+  const readRuntimeFile = (path: string) =>
+    fileSystem.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
+  const removeInstallAttempt = fileSystem
+    .remove(installAttemptPath, { force: true })
+    .pipe(Effect.ignore);
+  const writeInstallAttempt = Effect.gen(function* () {
+    const targetVersion = (yield* Ref.get(updateStateRef)).downloadedVersion;
+    if (targetVersion === null) return;
+    const at = yield* currentIsoTimestamp;
+    yield* fileSystem.makeDirectory(updateRestartMarkerDir, { recursive: true });
+    yield* fileSystem.writeFileString(
+      installAttemptPath,
+      serializeInstallRecord({ targetVersion, fromVersion: environment.appVersion, at }),
+    );
+  }).pipe(Effect.ignore);
+  const recordInstallFailure = (failure: DesktopUpdateInstallFailure) =>
+    Effect.gen(function* () {
+      yield* updateState((current) => ({ ...current, lastInstallFailure: failure }));
+      yield* logUpdaterError("Desktop update did not install.", {
+        targetVersion: failure.targetVersion,
+        reason: failure.reason,
+      });
+      yield* fileSystem
+        .makeDirectory(updateRestartMarkerDir, { recursive: true })
+        .pipe(
+          Effect.andThen(
+            fileSystem.writeFileString(installFailurePath, serializeInstallRecord(failure)),
+          ),
+          Effect.ignore,
+        );
+    });
+
+  // The updater quits even when the package manager refused its file, so the relaunch checks
+  // whether the attempt took, and looks on this machine for why not.
+  const reviewInstallAttempt = Effect.gen(function* () {
+    const stored = parseInstallFailure(yield* readRuntimeFile(installFailurePath));
+    if (stored !== null) {
+      if (versionReached(environment.appVersion, stored.targetVersion)) {
+        yield* fileSystem.remove(installFailurePath, { force: true }).pipe(Effect.ignore);
+      } else {
+        yield* updateState((current) => ({ ...current, lastInstallFailure: stored }));
+      }
+    }
+    const attempt = parseInstallAttempt(yield* readRuntimeFile(installAttemptPath));
+    yield* removeInstallAttempt;
+    if (attempt === null) return;
+    if (versionReached(environment.appVersion, attempt.targetVersion)) return;
+    const installerError = yield* Effect.tryPromise(() =>
+      investigateInstallAttempt(attempt, environment.platform),
+    ).pipe(Effect.orElseSucceed(() => null));
+    const failure = diagnoseInstallAttempt({
+      attempt,
+      runningVersion: environment.appVersion,
+      installerError,
+    });
+    if (failure !== null) yield* recordInstallFailure(failure);
+  });
+
   // A failed or interrupted install brings no updated backend, so a later
   // quit must release the tunnel.
   const removeUpdateRestartMarker = fileSystem
@@ -744,6 +817,7 @@ export const make = Effect.gen(function* () {
       finishUpdateAction("install"),
       Ref.set(desktopState.quitting, false),
       removeUpdateRestartMarker,
+      removeInstallAttempt,
     ],
     { discard: true },
   );
@@ -811,6 +885,15 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(desktopState.shutdownBegun, false);
     yield* Ref.set(desktopState.updaterQuitAllowed, false);
     yield* removeUpdateRestartMarker;
+    yield* removeInstallAttempt;
+    const failedVersion = (yield* Ref.get(updateStateRef)).downloadedVersion;
+    if (failedVersion !== null) {
+      yield* recordInstallFailure({
+        targetVersion: failedVersion,
+        reason: message,
+        at: yield* currentIsoTimestamp,
+      });
+    }
     yield* Effect.gen(function* () {
       const instances = yield* pool.list;
       const restartExit = yield* Effect.forEach(instances, (instance) => instance.start, {
@@ -954,6 +1037,8 @@ export const make = Effect.gen(function* () {
           // last move, monitor and full-screen state are saved here first.
           yield* desktopWindow.flushMainWindowBounds;
           yield* writeUpdateRestartMarker;
+          // The relaunch into a replaced install runs no installer to report on.
+          if (!runningInstallReplaced()) yield* writeInstallAttempt;
           // Stop every backend in the pool, not just the primary. With
           // parallel WSL + Windows backends, leaving the WSL instance up
           // means quitAndInstall's app.quit() exits before the pool's
@@ -1099,6 +1184,7 @@ export const make = Effect.gen(function* () {
   });
 
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
+    yield* reviewInstallAttempt;
     // Counts as an attempt so the first window focus at launch leaves the
     // check to the startup pass instead of skipping its delay.
     yield* markCheckAttempted;
@@ -1250,10 +1336,12 @@ export const make = Effect.gen(function* () {
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install" && !stagingForInstall) {
-      yield* recoverFailedInstall(error.message);
+      const reason = updaterFailureReason(cause);
+      yield* recoverFailedInstall(reason ?? error.message);
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
         operation: error.operation,
+        reason,
       });
       return;
     }

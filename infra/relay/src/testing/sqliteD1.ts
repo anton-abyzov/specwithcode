@@ -64,14 +64,18 @@ class BoundStatement {
   }
 }
 
+export const applyMigration = (database: DatabaseSync, entry: string) => {
+  const sql = readFileSync(join(migrationsDir, entry, "migration.sql"), "utf8");
+  for (const statement of sql.split("--> statement-breakpoint")) {
+    if (statement.trim() !== "") database.exec(statement);
+  }
+};
+
 /** A D1Database over in-memory `node:sqlite`, with the relay's D1 migrations applied. */
 export const makeSqliteD1 = () => {
   const database = new DatabaseSync(":memory:");
   for (const entry of readdirSync(migrationsDir).sort()) {
-    const sql = readFileSync(join(migrationsDir, entry, "migration.sql"), "utf8");
-    for (const statement of sql.split("--> statement-breakpoint")) {
-      if (statement.trim() !== "") database.exec(statement);
-    }
+    applyMigration(database, entry);
   }
   const d1 = {
     prepare: (sql: string) => new BoundStatement(database, sql),

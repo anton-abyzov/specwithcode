@@ -216,7 +216,7 @@ describe("Connect founders end to end", () => {
         const error = yield* Effect.flip(linkManaged(userId, "env-1"));
         expect(error).toMatchObject({ reason: "service_capacity" });
       }
-      expect(yield* summary).toMatchObject({ seatsGranted: 2, seatsLeft: 998 });
+      expect(yield* summary).toMatchObject({ seatsGranted: 2, seatsLeft: 298 });
     }).pipe(Effect.provide(layer({ globalManagedTunnelCap: 2 }))),
   );
 

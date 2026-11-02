@@ -30,6 +30,12 @@ export const DesktopUpdateStatusSchema = Schema.Literals([
 export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 
+export interface DesktopUpdateInstallFailure {
+  readonly targetVersion: string;
+  readonly reason: string;
+  readonly at: string;
+}
+
 export interface DesktopUpdateState {
   enabled: boolean;
   status: DesktopUpdateStatus;
@@ -51,6 +57,11 @@ export interface DesktopUpdateState {
    */
   feedCheckedAt?: string | null;
   message: string | null;
+  /**
+   * Why the last install of a newer version failed. Unlike `message` it survives later checks, so
+   * the relaunched app can still say why it runs the old version. Absent from older desktops.
+   */
+  lastInstallFailure?: DesktopUpdateInstallFailure | null;
   errorContext: "check" | "download" | "install" | null;
   canRetry: boolean;
   /**
@@ -103,6 +114,12 @@ export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
   totalItems: Schema.Number,
 });
 
+const DesktopUpdateInstallFailureSchema = Schema.Struct({
+  targetVersion: Schema.String,
+  reason: Schema.String,
+  at: Schema.String,
+});
+
 export const DesktopUpdateStateSchema = Schema.Struct({
   enabled: Schema.Boolean,
   status: DesktopUpdateStatusSchema,
@@ -119,6 +136,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   checkedAt: Schema.NullOr(Schema.String),
   feedCheckedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   message: Schema.NullOr(Schema.String),
+  lastInstallFailure: Schema.optionalKey(Schema.NullOr(DesktopUpdateInstallFailureSchema)),
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
   productionBuild: Schema.optionalKey(Schema.Boolean),

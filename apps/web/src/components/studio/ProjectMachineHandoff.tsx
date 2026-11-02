@@ -101,6 +101,9 @@ function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
   };
 }
 
+/** An interrupted request has nothing to tell a person beyond trying again. */
+const isInterruptedMessage = (message: string) => message.includes("fibers interrupted");
+
 export function ProjectMachineHandoff({
   project,
   coordinatorId,
@@ -323,7 +326,9 @@ export function ProjectMachineHandoff({
   /** `at` is the machine the failed call went to: a busy refusal's threads open there. */
   const showError = (cause: unknown, at?: EnvironmentId) => {
     setError(
-      cause instanceof Error ? cause.message : "The handoff could not finish. Try it again.",
+      cause instanceof Error && !isInterruptedMessage(cause.message)
+        ? cause.message
+        : "The handoff could not finish. Try it again.",
     );
     const busy = at ? refusedBusyOf(cause) : null;
     if (busy && at) setBusyRefusal({ environmentId: at, busy });

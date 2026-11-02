@@ -44,6 +44,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   ProviderAdapterEventStreamError,
@@ -109,6 +110,9 @@ it("does not commit running state when inherited background routing cannot be re
     Layer.provide(NodePath.layer),
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(ServerConfig.ServerConfig, {
+          baseDir: "/tmp/provider-turn-start-data",
+        } as never),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -241,6 +245,9 @@ function deletedBranchHarness(
     Layer.provide(NodePath.layerPosix),
     Layer.provide(
       Layer.mergeAll(
+        Layer.succeed(ServerConfig.ServerConfig, {
+          baseDir: "/tmp/provider-turn-start-data",
+        } as never),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -821,6 +828,9 @@ function makeLocalCommandHarness(input: {
         input.projectContext
           ? Layer.succeed(ProjectContextDelivery.ProjectContextDelivery, input.projectContext)
           : Layer.empty,
+        Layer.succeed(ServerConfig.ServerConfig, {
+          baseDir: "/tmp/provider-turn-start-data",
+        } as never),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),

@@ -5734,8 +5734,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const userMessages = projection.messages.filter((message) => message.role === "user");
       const onlyMaintenanceHistory =
         userMessages.length > 0 && userMessages.every(isNativeMaintenanceCommand);
+      // A name someone gave the thread before its first real message stays. Generation only
+      // replaces the default, this message's seed, a maintenance command's text or a fork's name.
+      const currentTitle = projection.thread.title.trim();
+      const titleIsAutomatic =
+        currentTitle === "New thread" ||
+        currentTitle === command.titleSeed?.trim() ||
+        currentTitle.endsWith(" fork") ||
+        userMessages.some((message) => message.text.trim() === currentTitle);
       if (
         !isNativeMaintenanceCommand(command) &&
+        titleIsAutomatic &&
         ((command.titleSeed !== undefined &&
           (yield* projectionStore
             .getMessageCount(command.threadId)

@@ -82,7 +82,26 @@ it("offers the download, its progress and the install in turn", () => {
     kind: "install",
     version: "1.0.136",
     checking: false,
+    failure: null,
   });
+});
+
+it("offers Retry update with the reason after this version failed to install", async () => {
+  const failed = {
+    ...downloaded,
+    lastInstallFailure: {
+      targetVersion: "1.0.136",
+      reason: "dpkg-deb: error: not a Debian format archive",
+      at: "2026-11-02T06:40:54Z",
+    },
+  };
+  mocks.state = failed;
+  await act(async () => root.render(<FirstRunUpdateNotice />));
+  expect(document.body.textContent).toContain(
+    "The last install failed: dpkg-deb: error: not a Debian format archive",
+  );
+  await act(async () => button("Retry update")!.click());
+  expect(mocks.restart).toHaveBeenCalledTimes(1);
 });
 
 it("keeps a downloaded update offered, but not pressable, while a check runs", async () => {
@@ -91,6 +110,7 @@ it("keeps a downloaded update offered, but not pressable, while a check runs", a
     kind: "install",
     version: "1.0.136",
     checking: true,
+    failure: null,
   });
   mocks.state = checking;
   await act(async () => root.render(<FirstRunUpdateNotice />));

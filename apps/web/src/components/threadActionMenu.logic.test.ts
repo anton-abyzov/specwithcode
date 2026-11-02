@@ -123,6 +123,12 @@ describe("buildThreadActionMenuItems", () => {
     expect(markUnread?.separatorBefore).toBe(true);
   });
 
+  it("offers rename, not regenerate, from a coordinator-named thread's heading", () => {
+    const state = { ...baseState, titleLocked: true, renameFromHeading: true };
+    expect(ids(state)).toContain("rename");
+    expect(ids(state)).not.toContain("regenerate-title");
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

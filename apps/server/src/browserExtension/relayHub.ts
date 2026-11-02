@@ -40,6 +40,10 @@ export type BrowserRelayErrorCode =
   | "timeout"
   | "invalid_request";
 
+/** Every "no profile" answer ends with this, so agents pair before they reach for another browser. */
+export const OTHER_BROWSERS_LAST =
+  "Do not switch to another browser tool (Claude in Chrome, `claude --chrome`, or computer use driving a browser): it reaches a different, unnamed browser. Use one only when the user asks for it or says pairing is not possible, or the extension has a fault they cannot clear.";
+
 export class BrowserRelayError extends Error {
   readonly code: BrowserRelayErrorCode;
   constructor(code: BrowserRelayErrorCode, message: string) {
@@ -495,7 +499,7 @@ export class BrowserRelayHub {
     if (profiles.length === 0)
       throw new BrowserRelayError(
         "not_connected",
-        "The SpecWithCode Browser extension is not connected on this machine. Ask the user to open Chrome, then pair the extension in Settings › Chrome (it shows a Connect Chrome card in this thread).",
+        `The SpecWithCode Browser extension is not connected on this machine. Ask the user to open Chrome, then pair the extension in Settings › Chrome (it shows a Connect Chrome card in this thread). ${OTHER_BROWSERS_LAST}`,
       );
     const wanted = name?.trim().toLowerCase();
     if (wanted) {

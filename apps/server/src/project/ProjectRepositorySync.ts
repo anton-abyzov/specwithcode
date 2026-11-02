@@ -3,10 +3,13 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import type { Project, ProjectId, ProviderInstanceId } from "@specweave-studio/contracts";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 
 import {
   foldersOverlap,
+  NOT_UPDATED,
   projectRepositories,
   repositorySyncNotice,
   syncRepositories,
@@ -14,6 +17,8 @@ import {
   takeProjectMoved,
   type RepositorySyncNotice,
 } from "../fleet/repositorySync.ts";
+import * as ServerConfig from "../config.ts";
+import { isScratchWorkspace } from "./ManagedProjectFolders.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -45,7 +50,7 @@ export function quietRepeatedSkips(
   }
   const rest = notice.message
     .split("\n")
-    .filter((line) => !line.startsWith("Skipped "))
+    .filter((line) => !line.startsWith(`${NOT_UPDATED} `))
     .join("\n");
   return rest === "" ? null : { ...notice, message: rest, skipped: "" };
 }
@@ -95,6 +100,8 @@ export const makeRepositorySyncRuntime = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const config = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
   const firstPassOfRun = makeFirstPassOfRun();
 
   /** Folders other running threads work in; null when they cannot be read. */
@@ -179,7 +186,7 @@ export const makeRepositorySyncRuntime = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const notice = Option.isNone(results)
         ? {
-            title: "Skipped repositories",
+            title: "Repositories not updated",
             message:
               "Repositories were still updating after 30 seconds; the thread started anyway.",
             skipped: "",
@@ -201,7 +208,12 @@ export const makeRepositorySyncRuntime = Effect.gen(function* () {
         const project = yield* read(projectId).pipe(
           Effect.orElseSucceed(() => Option.none<Project>()),
         );
-        if (Option.isSome(project)) yield* sync(turn, project.value, providerInstanceId, read);
+        if (Option.isNone(project)) return;
+        // "No project" and assistants hold no project repositories. What is in their folder
+        // belongs to other chats, which this thread has nothing to do with.
+        if (isPersonalAssistantProject(project.value)) return;
+        if (isScratchWorkspace(path, config.baseDir, project.value.workspaceRoot)) return;
+        yield* sync(turn, project.value, providerInstanceId, read);
       });
     return {
       ...session,

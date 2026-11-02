@@ -5,8 +5,14 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { autoUpdater as nativeUpdater } from "electron";
+import { app as electronApp, autoUpdater as nativeUpdater } from "electron";
 import { autoUpdater } from "electron-updater";
+
+import {
+  pathExists,
+  readRunningExecutableLink,
+  relaunchIntoReplacedInstall,
+} from "../updates/replacedInstall.ts";
 
 type AutoUpdater = typeof autoUpdater;
 
@@ -204,7 +210,24 @@ const makeService = (trackStaging: () => void, installReady: () => boolean) =>
       Effect.suspend(() => {
         const channel = autoUpdater.channel;
         return Effect.try({
-          try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+          try: () => {
+            const relaunched = relaunchIntoReplacedInstall({
+              executableLink: readRunningExecutableLink(),
+              execPath: process.execPath,
+              fileExists: pathExists,
+              relaunch: () => {
+                // Without this the quit below would run the updater's install anyway.
+                autoUpdater.autoInstallOnAppQuit = false;
+                electronApp.relaunch({
+                  execPath: process.execPath,
+                  args: process.argv.slice(1),
+                });
+                nativeUpdater.emit("before-quit-for-update");
+                electronApp.quit();
+              },
+            });
+            if (!relaunched) autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+          },
           catch: (cause) =>
             new ElectronUpdaterQuitAndInstallError({
               channel,

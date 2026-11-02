@@ -1114,7 +1114,7 @@ const RelayHealthGroup = HttpApiGroup.make("health")
   )
   .annotate(OpenApi.Description, "Service health and readiness.");
 
-/** The public "Founding 1,000" counter. */
+/** The public "Founding 300" counter. */
 export const RelayFoundersResponse = Schema.Struct({
   seatCap: Schema.Number,
   seatsGranted: Schema.Number,

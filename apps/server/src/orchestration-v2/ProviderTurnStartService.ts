@@ -10,6 +10,7 @@ import {
 } from "./ChildContinuationContext.ts";
 import * as Path from "effect/Path";
 import { makeEnvironmentSkipNotice } from "../project/ProjectEnvironmentNotice.ts";
+import * as ServerConfig from "../config.ts";
 import { makeRepositorySyncRuntime } from "../project/ProjectRepositorySync.ts";
 import { makeEnvironmentRuntime } from "../project/ProjectEnvironmentRuntime.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
@@ -242,6 +243,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
+  | ServerConfig.ServerConfig
   | FileSystem.FileSystem
   | Path.Path
   | GitWorkflowService.GitWorkflowService

@@ -1,9 +1,10 @@
 /**
  * Who names a thread. A coordinator or agent names the threads it starts
- * (delegated tasks, workers, subagents) and keeps renaming them as the work
- * moves, so the UI shows those titles read-only: a hand edit would be
- * overwritten and would break the coordinator's references to the thread.
- * Chats a person starts stay renameable, as in Claude Code, Codex and Cursor.
+ * (delegated tasks, workers, subagents), so sidebar rows keep those titles
+ * read-only and only chats a person starts rename there, as in Claude Code,
+ * Codex and Cursor. A thread's own heading renames any thread, and the
+ * coordinator still finds it by id; automatic titles never replace that name,
+ * though a coordinator may still rename the thread on purpose.
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/models";
 
@@ -14,12 +15,6 @@ type TitleOwnerFields = Partial<Pick<EnvironmentThreadShell, "createdBy" | "line
 export function isCoordinatorNamedThread(thread: TitleOwnerFields | null | undefined): boolean {
   if (!thread) return false;
   return thread.createdBy === "agent" || thread.lineage?.relationshipToParent === "subagent";
-}
-
-/** The hover label of a clipped title: the whole title, plus who controls it. */
-export function threadTitleTip(thread: TitleOwnerFields & { readonly title: string }): string {
-  const title = thread.title || "Untitled thread";
-  return isCoordinatorNamedThread(thread) ? `${title} (named by its coordinator)` : title;
 }
 
 /** Whether a chat renames by hand: the person may operate its machine and no coordinator names it. */

@@ -1148,6 +1148,17 @@ describe("native session admission", () => {
       expect(refreshed).toEqual(["claudeAgent"]);
     });
 
+    it("refuses a signed-out CLI with the message naming what it checked", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const message = 'Claude Code is not signed in for this app. It ran "claude".';
+      const native = [
+        { ...consoleSignIn(now, { status: "unauthenticated" }), status: "error" as const, message },
+      ];
+      await expect(
+        run(start("claudeAgent"), rawSnapshot(now), native, settings, false, true, native),
+      ).rejects.toThrow(message);
+    });
+
     it("still refuses a CLI that is not signed in", async () => {
       const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
       const native = [consoleSignIn(now, { status: "unauthenticated" })];

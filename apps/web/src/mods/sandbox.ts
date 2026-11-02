@@ -48,6 +48,8 @@ const RUNTIME = String.raw`(() => {
   const hooks = [];
   const handlers = new Map();
   const openPanes = new Set();
+  // Pane ids start with a letter, so this key can never be a pane's.
+  const STATUS_HANDLERS = "$status";
   const pending = new Map();
   let nextRequest = 1;
   let info = null;
@@ -97,6 +99,23 @@ const RUNTIME = String.raw`(() => {
     return { type: node.type, props, children: (node.children || []).map((c) => serialize(paneHandlers, c)) };
   };
 
+  // Numbers only ever grow, so a press from a status already replaced finds nothing.
+  let nextStatHandler = 1;
+  const reportStats = (stats) => {
+    const statHandlers = new Map();
+    const serialized = stats.map((stat) => {
+      if (stat === null || typeof stat !== "object") return stat;
+      const { onPress, ...rest } = stat;
+      if (typeof onPress !== "function") return rest;
+      const id = nextStatHandler++;
+      statHandlers.set(id, onPress);
+      return { ...rest, onPress: id };
+    });
+    // A stat the host cannot receive throws here, leaving the last rows working.
+    send({ type: "ui.status", text: null, stats: serialized });
+    handlers.set(STATUS_HANDLERS, statHandlers);
+  };
+
   const draw = async (id) => {
     if (!openPanes.has(id)) return;
     const tree = await dispatch("ui.render", { component: "Pane", requestId: id });
@@ -114,7 +133,11 @@ const RUNTIME = String.raw`(() => {
     }),
     ui: Object.freeze({
       toast: (text) => send({ type: "ui.toast", text }),
-      status: (text) => send({ type: "ui.status", text: text ?? null }),
+      status: (value) => {
+        if (Array.isArray(value)) return reportStats(value);
+        send({ type: "ui.status", text: value ?? null });
+        handlers.delete(STATUS_HANDLERS);
+      },
       open: ({ id, title }) => { openPanes.add(id); send({ type: "ui.open", id, title }); return draw(id); },
       close: (id) => { openPanes.delete(id); handlers.delete(id); send({ type: "ui.close", id }); },
       redraw: (id) => (id === undefined ? Promise.all([...openPanes].map(draw)) : draw(id)),

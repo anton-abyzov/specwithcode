@@ -115,6 +115,16 @@ export type NamedProjectError =
   | NamedProjectCreateError
   | PersonalAssistantDisabledError;
 
+const SCRATCH_FOLDER = "scratch";
+
+/**
+ * Whether a project root is the data folder's Scratch ("No project") folder, also under a
+ * since-migrated legacy root. It holds every project-less chat's own folder.
+ */
+export const isScratchWorkspace = (path: Path.Path, baseDir: string, workspaceRoot: string) =>
+  canonicalStudioPath(path.resolve(workspaceRoot), homedir()) ===
+  path.resolve(baseDir, SCRATCH_FOLDER);
+
 export class ManagedProjectFolders extends Context.Service<
   ManagedProjectFolders,
   {
@@ -331,7 +341,9 @@ const make = Effect.gen(function* () {
             ),
       ),
       Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
+        isRepository
+          ? Option.none<string>()
+          : Option.some(path.resolve(config.baseDir, SCRATCH_FOLDER)),
       ),
     ),
     Duration.infinity,

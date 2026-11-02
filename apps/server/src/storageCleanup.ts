@@ -44,12 +44,14 @@ import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import {
+  dependencyInstallPaths,
   linkedWorktreeGitDir,
   newestReflogEntryMs,
   onlyDependencyIgnores,
   onlyRebuildableUntracked,
   ORPHAN_SWEEP_INTERVAL_MS,
-  ORPHAN_WORKTREE_IDLE_MS,
+  ORPHAN_MERGED_IDLE_MS,
+  orphanDependenciesPrunable,
   orphanWorktreeRemovable,
 } from "./orphanWorktrees.ts";
 import {
@@ -496,6 +498,21 @@ export const make = Effect.gen(function* () {
         Effect.map((result) => !result.stdoutTruncated && onlyDependencyIgnores(result.stdout)),
       );
 
+  // Null when the listing is too long to trust.
+  const dependencyInstalls = (cwd: string) =>
+    git
+      .execute({
+        operation: "StorageCleanup.orphanDependencies",
+        cwd,
+        args: ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+        maxOutputBytes: 1024 * 1024,
+      })
+      .pipe(
+        Effect.map((result) =>
+          result.stdoutTruncated ? null : dependencyInstallPaths(result.stdout),
+        ),
+      );
+
   // A live terminal or provider session in the folder, compared by real path:
   // candidates are canonical, recorded cwds may be a symlinked spelling.
   // Untracked files, whatever status.showUntrackedFiles says: `git status` and
@@ -711,13 +728,20 @@ export const make = Effect.gen(function* () {
     for (const { worktreePath, gitDir } of candidates) {
       yield* Effect.gen(function* () {
         if (yield* orphanOwned(worktreePath)) return;
-        if (!olderThan(yield* lastActivityAt(worktreePath, gitDir), ORPHAN_WORKTREE_IDLE_MS, now))
+        if (!olderThan(yield* lastActivityAt(worktreePath, gitDir), ORPHAN_MERGED_IDLE_MS, now))
           return;
         const status = yield* git.statusDetailsLocal(worktreePath);
         if (!status.isRepo || status.hasWorkingTreeChanges) return;
         if (!(yield* untrackedNone(worktreePath))) return;
-        if (!(yield* ignoredOnlyDependencies(worktreePath))) return;
-        if ((yield* reflogOnlyCommits(worktreePath)) > 0) return;
+        // `git worktree lock` keeps the whole folder, dependencies included.
+        if (yield* fs.exists(path.join(gitDir, "locked"))) return;
+        // A folder that stays and has nothing left to prune needs no PR lookup.
+        if (
+          (!(yield* ignoredOnlyDependencies(worktreePath)) ||
+            (yield* reflogOnlyCommits(worktreePath)) > 0) &&
+          ((yield* dependencyInstalls(worktreePath))?.length ?? 0) === 0
+        )
+          return;
         const commonDir = yield* git.execute({
           operation: "StorageCleanup.orphanCommonDir",
           cwd: worktreePath,
@@ -793,18 +817,16 @@ export const make = Effect.gen(function* () {
         }
         const idleMs = elapsedMs(yield* lastActivityAt(worktreePath, gitDir), now);
         if (idleMs === null) return;
-        if (
-          !orphanWorktreeRemovable({
-            branch: status.branch,
-            hasWorkingTreeChanges: status.hasWorkingTreeChanges,
-            onlyDependencyIgnores: true,
-            unpushedCommits,
-            pullRequestState: pullRequest?.state ?? null,
-            integratedInDefault,
-            idleMs,
-          })
-        )
-          return;
+        const facts = {
+          branch: status.branch,
+          hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+          onlyDependencyIgnores: true,
+          unpushedCommits,
+          pullRequestState: pullRequest?.state ?? null,
+          integratedInDefault,
+          idleMs,
+        };
+        if (!orphanWorktreeRemovable(facts)) return;
         // Re-check after Git/host calls: any new change or commit cancels the removal.
         const finalStatus = yield* git.statusDetailsLocal(worktreePath);
         if (
@@ -819,12 +841,26 @@ export const make = Effect.gen(function* () {
         )
           return;
         if (!(yield* untrackedNone(worktreePath))) return;
-        if (!(yield* ignoredOnlyDependencies(worktreePath))) return;
-        if ((yield* reflogOnlyCommits(worktreePath)) > 0) return;
+        const keepFolder =
+          !(yield* ignoredOnlyDependencies(worktreePath)) ||
+          (yield* reflogOnlyCommits(worktreePath)) > 0;
         if (!allowed(yield* settingsService.getSettings)) return;
         // Owners last, right before removal: a thread, project, terminal or session
         // that moved in meanwhile keeps the folder.
         if (yield* orphanOwned(worktreePath)) return;
+        if (yield* fs.exists(path.join(gitDir, "locked"))) return;
+        if (keepFolder) {
+          if (!orphanDependenciesPrunable(facts)) return;
+          const installs = (yield* dependencyInstalls(worktreePath)) ?? [];
+          for (const install of installs)
+            yield* fs.remove(path.join(worktreePath, install), { recursive: true, force: true });
+          if (installs.length > 0)
+            yield* Effect.logInfo("storage cleanup removed a finished worktree's dependencies", {
+              worktreePath,
+              branch: status.branch,
+            });
+          return;
+        }
         yield* git.removeWorktree({ cwd: mainCheckout, path: worktreePath, force: false });
         yield* gitManager.invalidateStatus(mainCheckout);
         // The branch ref stays, so the work can be checked out again.

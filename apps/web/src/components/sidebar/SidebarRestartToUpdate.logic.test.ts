@@ -350,6 +350,39 @@ describe("restart to update", () => {
     );
   });
 
+  it("keeps the reason after a later check cleared the install context", () => {
+    const view = getRestartToUpdateView(
+      {
+        ...appDownloaded,
+        lastInstallFailure: {
+          targetVersion: "0.2.5",
+          reason: "dpkg-deb: error: not a Debian format archive",
+          at: "2026-11-02T06:40:54Z",
+        },
+      },
+      null,
+    );
+    expect(view?.label).toBe("Retry update");
+    expect(view?.description).toMatch(
+      /^The last install failed: dpkg-deb: error: not a Debian format archive/,
+    );
+  });
+
+  it("offers a plain restart when the failure was for another version", () => {
+    const view = getRestartToUpdateView(
+      {
+        ...appDownloaded,
+        lastInstallFailure: {
+          targetVersion: "0.2.4",
+          reason: "dpkg-deb: error: not a Debian format archive",
+          at: "2026-11-02T06:40:54Z",
+        },
+      },
+      null,
+    );
+    expect(view?.label).toBe("Restart to update");
+  });
+
   it("stays visible while a background check runs", () => {
     const checking = { ...appDownloaded, status: "checking" as const };
     expect(isAppUpdateReady(checking)).toBe(true);

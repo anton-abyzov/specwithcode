@@ -7,8 +7,8 @@
  * The title outranks the controls: as the panel narrows, the chips give way
  * first, then the chat's panel toggles fold into the action menu and Resolve
  * drops its label, so the title stays readable; hovering it shows it whole.
- * Double-clicking the title renames the thread, a coordinator's worker too:
- * the person's title wins here, and the coordinator still finds it by id.
+ * Double-clicking the title renames the thread, a coordinator's worker too;
+ * the coordinator still finds it by id.
  */
 import { ThreadArtifactsMenu } from "../../chat/ThreadArtifacts";
 import { TimelineDetailMenu } from "../../chat/TimelineDetailMenu";
@@ -44,7 +44,6 @@ import { useOrchestrationCommand } from "../../../state/use-orchestration-comman
 import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIcons";
 import { toastManager } from "../../ui/toast";
 import type { SubagentEntry } from "../../../studio/threadSubagents";
-import { threadTitleTip } from "../../../studio/threadTitles";
 import { ModelBadge, ThreadModelBadge, useProviderEntries } from "./ModelBadge";
 import { RoutingDecisionChip } from "./RoutingDecisionChip";
 import { ThreadOriginBadge } from "../../chat/ThreadOriginBadge";
@@ -227,7 +226,7 @@ export function ProjectThreadHeader(props: {
             }}
           />
         ) : (
-          <Tip label={threadTitleTip(thread)}>
+          <Tip label={thread.title || "Untitled thread"}>
             <h2 onDoubleClick={canRename ? startRename : undefined}>
               {thread.title || "Untitled thread"}
             </h2>

@@ -100,6 +100,56 @@ describe("coordinator follow-up presentation", () => {
   });
 });
 
+describe("a reply routed from a worker on another machine", () => {
+  const stored =
+    "Regarding thread mcp:9b46915b on machine dd2fc230 (Read Ministorm update error (screen)):\n\nTry again";
+  const reply = {
+    id: "command",
+    role: "user",
+    createdBy: "user",
+    senderThreadId: null,
+    text: stored,
+  };
+
+  it("shows the title and machine name, and keeps the IDs in the stored text", () => {
+    const display = projectCoordinatorMessageDisplay(reply as never, project, [], (id) =>
+      id === "dd2fc230" ? "Ministorm" : id,
+    );
+    expect(display.text).toBe(
+      "Regarding Read Ministorm update error (screen) on Ministorm:\n\nTry again",
+    );
+    expect(reply.text).toContain("mcp:9b46915b");
+  });
+
+  it("never shows the ID of a machine this device has no name for", () => {
+    const display = projectCoordinatorMessageDisplay(reply as never, project, [], (id) => id);
+    expect(display.text).toContain("on another machine:");
+    expect(display.text).not.toContain("dd2fc230");
+  });
+
+  it("leaves a person's own sentence of the same shape alone", () => {
+    const own = {
+      ...reply,
+      text: "Regarding thread pricing on machine learning (ML):\n\nWhat's the plan?",
+    };
+    expect(projectCoordinatorMessageDisplay(own as never, project, [], (id) => id).text).toBe(
+      own.text,
+    );
+  });
+
+  it("leaves an agent's message and other text as written", () => {
+    const label = () => "Ministorm";
+    const fromAgent = { ...reply, createdBy: "agent" };
+    expect(projectCoordinatorMessageDisplay(fromAgent as never, project, [], label).text).toBe(
+      stored,
+    );
+    const plain = { ...reply, text: "Regarding thread pricing, one more thing" };
+    expect(projectCoordinatorMessageDisplay(plain as never, project, [], label).text).toBe(
+      plain.text,
+    );
+  });
+});
+
 describe("coordinator message author", () => {
   it("labels the coordinator's own replies as the coordinator, not a worker", () => {
     expect(projectMessageAuthor({ role: "assistant", createdBy: "agent" })).toBe("Coordinator");

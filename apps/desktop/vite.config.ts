@@ -86,16 +86,17 @@ export default defineConfig({
       },
     },
     {
-      // boot.cjs requires the other two at runtime, so all three stay separate files.
+      // boot.cjs requires the others at runtime, so they all stay separate files.
       format: "cjs",
       outDir: "dist-electron",
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
-      entry: ["src/boot.ts", "src/compileCache.ts"],
+      entry: ["src/boot.ts", "src/compileCache.ts", "src/linuxCleanRestart.ts"],
       clean: false,
       deps: {
-        neverBundle: (id) => id === "./main.cjs" || id === "./compileCache.cjs",
+        neverBundle: (id) =>
+          id === "./main.cjs" || id === "./compileCache.cjs" || id === "./linuxCleanRestart.cjs",
       },
     },
     {

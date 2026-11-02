@@ -32,6 +32,9 @@ import { Checkbox } from "../ui/checkbox";
 import { HandoffCopyActions } from "./HandoffCopyActions";
 import { MoreOptions } from "./ProjectMoveOptions";
 
+/** How long a finished clone waits for its link before Add is offered again. */
+const LINK_WAIT_MS = 120_000;
+
 /** What the share screen needs from the handoff dialog around it. */
 export interface HandoffShareProps {
   readonly project: EnvironmentProject;
@@ -120,7 +123,14 @@ export function HandoffShare({
   );
   const cloneStopped = clone?.phase === "failed" || clone?.phase === "cancelled";
   const cloning = job !== undefined && !cloneStopped && !joined;
-  const justAdded = cloning || (joined && added !== null && added === machine);
+  // A finished clone clears its job before the link shows here, so the add waits for it.
+  const justAdded = cloning || (added !== null && added === machine && !cloneStopped);
+  const jobEnded = job === undefined;
+  useEffect(() => {
+    if (added === null || added !== machine || !jobEnded || joined) return;
+    const giveUp = window.setTimeout(() => setAdded(null), LINK_WAIT_MS);
+    return () => window.clearTimeout(giveUp);
+  }, [added, machine, jobEnded, joined]);
 
   // The link lands after the clone, in the background; the move waits for it.
   useEffect(() => {

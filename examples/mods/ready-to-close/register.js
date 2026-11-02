@@ -50,10 +50,22 @@ export function register(on) {
     const rows = queue();
     const closable = rows.filter((row) => row.state === "Ready");
     const blocked = rows.length - closable.length;
-    const parts = [];
-    if (closable.length > 0) parts.push(`${closable.length} ready to close`);
-    if (blocked > 0) parts.push(`${blocked} ${blocked === 1 ? "needs" : "need"} verify`);
-    $.ui.status(parts.length === 0 ? undefined : parts.join(" · "));
+    $.ui.status([
+      {
+        glyph: "verify",
+        count: blocked,
+        label: "Need verify",
+        detail: "Increments with every task done but no passing verify since. Press to see them.",
+        onPress: () => $.ui.open({ id: "queue-verify", title: "Need verify" }),
+      },
+      {
+        glyph: "ready",
+        count: closable.length,
+        label: "Ready to close",
+        detail: "Increments with every task done and a passing verify. Press to see them.",
+        onPress: () => $.ui.open({ id: "queue-ready", title: "Ready to close" }),
+      },
+    ]);
     const ids = new Set(closable.map((row) => row.increment.id));
     if (ready !== null) {
       const fresh = [...ids].filter((id) => !ready.has(id));
@@ -80,41 +92,53 @@ export function register(on) {
     $.ui.open({ id: "queue", title: "Ready to close" }),
   );
 
-  on("ui.render", { component: "Pane", requestId: "queue" }, () => {
-    const rows = queue();
-    if (rows.length === 0) {
-      return h("Text", { tone: "muted" }, "No open increment has all its tasks done yet.");
-    }
+  const drawRows = (rows, empty) => {
+    if (rows.length === 0) return h("Text", { tone: "muted" }, empty);
     return h(
       "Box",
       { gap: 3 },
-      rows
-        .slice(0, 20)
-        .map((row) =>
+      rows.slice(0, 20).map((row) =>
+        h(
+          "Box",
+          { gap: 1 },
           h(
             "Box",
-            { gap: 1 },
-            h(
-              "Box",
-              { direction: "row", gap: 2 },
-              h("Text", { tone: "strong" }, row.increment.id),
-              h("Text", { tone: row.tone }, row.state),
-            ),
-            h(
-              "Text",
-              { tone: "muted" },
-              `${row.increment.project} · ${row.increment.tasks.length} ${row.increment.tasks.length === 1 ? "task" : "tasks"} done${
-                row.increment.verify
-                  ? ` · last verify ${new Date(row.increment.verify.ranAt).toLocaleString([], {
-                      dateStyle: "short",
-                      timeStyle: "short",
-                    })}`
-                  : ""
-              }`,
-            ),
-            h("Text", { mono: true }, row.next),
+            { direction: "row", gap: 2 },
+            h("Text", { tone: "strong" }, row.increment.id),
+            h("Text", { tone: row.tone }, row.state),
           ),
+          h(
+            "Text",
+            { tone: "muted" },
+            `${row.increment.project} · ${row.increment.tasks.length} ${row.increment.tasks.length === 1 ? "task" : "tasks"} done${
+              row.increment.verify
+                ? ` · last verify ${new Date(row.increment.verify.ranAt).toLocaleString([], {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}`
+                : ""
+            }`,
+          ),
+          h("Text", { mono: true }, row.next),
         ),
+      ),
+      rows.length > 20 ? h("Text", { tone: "muted" }, `${rows.length - 20} more not shown.`) : null,
     );
-  });
+  };
+
+  on("ui.render", { component: "Pane", requestId: "queue" }, () =>
+    drawRows(queue(), "No open increment has all its tasks done yet."),
+  );
+  on("ui.render", { component: "Pane", requestId: "queue-verify" }, () =>
+    drawRows(
+      queue().filter((row) => row.state !== "Ready"),
+      "No increment is waiting on verify.",
+    ),
+  );
+  on("ui.render", { component: "Pane", requestId: "queue-ready" }, () =>
+    drawRows(
+      queue().filter((row) => row.state === "Ready"),
+      "No increment is ready to close.",
+    ),
+  );
 }

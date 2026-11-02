@@ -1,11 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+import * as CloudflareRetry from "@distilled.cloud/cloudflare/Retry";
 import { describe, expect, it } from "@effect/vitest";
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -1956,4 +1960,33 @@ describe("ManagedEndpointProvider", () => {
       }
     }).pipe(Effect.provide(layerProvider(makeTunnelClient(), dnsClient)));
   });
+});
+
+describe("CLOUDFLARE_CALL_RETRY", () => {
+  it.effect("reaches the Cloudflare client through its retry service", () =>
+    Effect.gen(function* () {
+      const policy = yield* ManagedEndpointProvider.limitCloudflareCall(
+        Effect.serviceOption(CloudflareRetry.Retry),
+      );
+      expect(Option.getOrNull(policy)).toBe(ManagedEndpointProvider.CLOUDFLARE_CALL_RETRY);
+    }),
+  );
+
+  it.effect("gives up well inside the 8 second call limit", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const fiber = yield* Effect.sync(() => {
+        attempts += 1;
+      }).pipe(
+        Effect.andThen(Effect.fail("still failing")),
+        Effect.retry({ schedule: ManagedEndpointProvider.CLOUDFLARE_CALL_RETRY.schedule! }),
+        Effect.exit,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("4 seconds");
+      const exit = yield* Fiber.join(fiber);
+      expect(exit._tag).toBe("Failure");
+      expect(attempts).toBe(5);
+    }),
+  );
 });

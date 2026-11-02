@@ -15,6 +15,22 @@ export const MAX_MOD_PANES = 4;
 export const MAX_TREE_NODES = 400;
 export const MAX_TREE_DEPTH = 12;
 export const MAX_TEXT_LENGTH = 2000;
+export const MAX_MOD_STATS = 8;
+export const MOD_STAT_LABEL_LENGTH = 40;
+export const MOD_STAT_DETAIL_LENGTH = 160;
+
+/** The glyphs a stat can use, most urgent first. A mod names one; it never ships artwork. */
+export const MOD_STAT_GLYPHS = ["blocked", "stale", "verify", "gap", "waiting", "ready"] as const;
+export type ModStatGlyphName = (typeof MOD_STAT_GLYPHS)[number];
+
+/** One count a mod reports; zero never reaches the host's state. */
+export interface ModStat {
+  readonly glyph: ModStatGlyphName;
+  readonly count: number;
+  readonly label: string;
+  readonly detail: string | null;
+  readonly handler: number | null;
+}
 
 /** A request a mod makes of the host; each needs a declared permission. */
 export const MOD_REQUEST_PERMISSIONS = {
@@ -55,7 +71,11 @@ export type FrameMessage =
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "command.register"; readonly name: string; readonly description: string }
   | { readonly type: "ui.toast"; readonly text: string }
-  | { readonly type: "ui.status"; readonly text: string | null }
+  | {
+      readonly type: "ui.status";
+      readonly text: string | null;
+      readonly stats: ReadonlyArray<ModStat> | null;
+    }
   | { readonly type: "ui.open"; readonly id: string; readonly title: string }
   | { readonly type: "ui.close"; readonly id: string }
   | { readonly type: "ui.tree"; readonly id: string; readonly tree: ModNode | null }
@@ -149,6 +169,35 @@ export function parseModTree(value: unknown): ModNode | null {
   return visit(value, 0);
 }
 
+/** Rebuilds a mod's stats, dropping any it cannot show; null when none remain. */
+export function parseModStats(value: unknown): ReadonlyArray<ModStat> | null {
+  if (!Array.isArray(value)) return null;
+  const stats: ModStat[] = [];
+  for (const raw of value.slice(0, MAX_MOD_STATS)) {
+    if (!isRecord(raw)) continue;
+    const glyph = MOD_STAT_GLYPHS.find((name) => name === raw.glyph);
+    const label = boundedText(raw.label, MOD_STAT_LABEL_LENGTH);
+    if (
+      glyph === undefined ||
+      label === null ||
+      typeof raw.count !== "number" ||
+      !Number.isSafeInteger(raw.count) ||
+      raw.count <= 0
+    ) {
+      continue;
+    }
+    stats.push({
+      glyph,
+      count: raw.count,
+      label,
+      detail: boundedText(raw.detail, MOD_STAT_DETAIL_LENGTH),
+      handler:
+        typeof raw.onPress === "number" && Number.isSafeInteger(raw.onPress) ? raw.onPress : null,
+    });
+  }
+  return stats.length === 0 ? null : stats;
+}
+
 /** Checks one message from a mod's frame; anything unexpected is null. */
 export function parseFrameMessage(data: unknown): FrameMessage | null {
   if (!isRecord(data) || typeof data.type !== "string") return null;
@@ -171,7 +220,11 @@ export function parseFrameMessage(data: unknown): FrameMessage | null {
       return text === null ? null : { type: "ui.toast", text };
     }
     case "ui.status":
-      return { type: "ui.status", text: boundedText(data.text, 40) };
+      return {
+        type: "ui.status",
+        text: boundedText(data.text, 40),
+        stats: parseModStats(data.stats),
+      };
     case "ui.open": {
       if (typeof data.id !== "string" || !MOD_PANE_PATTERN.test(data.id)) return null;
       return { type: "ui.open", id: data.id, title: boundedText(data.title, 80) ?? data.id };

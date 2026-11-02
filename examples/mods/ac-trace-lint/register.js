@@ -55,11 +55,15 @@ export function register(on) {
     const list = findings();
     const total = list.reduce((sum, entry) => sum + entry.issues.length, 0);
     const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
-    $.ui.status(
-      total === 0
-        ? undefined
-        : `${plural(total, "trace gap")} in ${plural(list.length, "increment")}`,
-    );
+    $.ui.status([
+      {
+        glyph: "gap",
+        count: total,
+        label: "Trace gaps",
+        detail: `Mismatches between acceptance criteria and tasks, in ${plural(list.length, "increment")}. Press to see them.`,
+        onPress: () => $.ui.open({ id: "gaps", title: "Trace gaps" }),
+      },
+    ]);
     // Toast only for gaps that appear after the first read.
     const keys = new Set(
       list.flatMap((entry) => entry.issues.map((issue) => `${entry.increment.id} ${issue.text}`)),

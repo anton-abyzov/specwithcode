@@ -159,6 +159,8 @@ export interface ThreadActionMenuState {
    * subagent): rename and regenerate stay out of the menu.
    */
   readonly titleLocked?: boolean;
+  /** A thread heading's own menu: it renames any thread, so Rename stays on a locked title. */
+  readonly renameFromHeading?: boolean;
   /** Archive rejects a thread with an attached provider, so disable it here rather than let the action fail. */
   readonly isRunning: boolean;
   /**
@@ -221,6 +223,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
+  const offersRename = !state.titleLocked || state.renameFromHeading === true;
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.branch
       ? [
@@ -275,9 +278,9 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    ...(state.titleLocked
-      ? []
-      : [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]),
+    ...(offersRename
+      ? [{ id: "rename" as const, label: "Rename thread", icon: "pencil", separatorBefore: true }]
+      : []),
     ...(state.supports.titleRegeneration && !state.titleLocked
       ? [
           {
@@ -292,7 +295,7 @@ export function buildThreadActionMenuItems(
       id: "mark-unread",
       label: "Mark unread",
       icon: "mail-open",
-      ...(state.titleLocked ? { separatorBefore: true } : {}),
+      ...(offersRename ? {} : { separatorBefore: true }),
     },
     ...(state.projectFilter
       ? [

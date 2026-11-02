@@ -958,6 +958,104 @@ it.effect("arms durable title generation after accepting the first message", () 
   }),
 );
 
+it.effect("keeps a title a person typed before the thread's first message", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      generateTitle: () => Effect.succeed({ title: "Generated title" }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:launch:typed-title");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("command:launch:typed-title:create"),
+        threadId,
+        projectId,
+        title: "New thread",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("command:launch:typed-title:rename"),
+        threadId,
+        title: "My own name",
+      });
+
+      yield* launches.launch({
+        ...launchInput({
+          command: "command:launch:typed-title",
+          thread: threadId,
+          message: "First real message",
+        }),
+        reuseExistingThread: true,
+        title: "First real message",
+        generateTitle: true,
+      });
+
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, "My own name");
+      assert.isNull(projection.thread.titleRegeneration);
+      const effects = yield* outbox.listByCommandId(
+        CommandId.make("command:launch:typed-title:initial-message"),
+      );
+      assert.isFalse(effects.some((effect) => effect.request.type === "thread-title.generate"));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("still generates a title for a fork's first message", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      generateTitle: () => Effect.succeed({ title: "Generated title" }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const threadId = ThreadId.make("thread:launch:fork-title");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("command:launch:fork-title:create"),
+        threadId,
+        projectId,
+        title: "Fix parser fork",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+
+      yield* launches.launch({
+        ...launchInput({
+          command: "command:launch:fork-title",
+          thread: threadId,
+          message: "First real message",
+        }),
+        reuseExistingThread: true,
+        title: "First real message",
+        generateTitle: true,
+      });
+
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.title, "First real message");
+      assert.equal(
+        projection.thread.titleRegeneration?.requestId,
+        CommandId.make("command:launch:fork-title:initial-message"),
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("does not update a reused thread title when the initial message is rejected", () =>
   Effect.gen(function* () {
     const harness = makeHarness();

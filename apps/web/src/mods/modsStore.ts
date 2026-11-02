@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { MAX_MOD_COMMANDS, MAX_MOD_PANES, type ModNode } from "./protocol";
+import { MAX_MOD_COMMANDS, MAX_MOD_PANES, type ModNode, type ModStat } from "./protocol";
 
 export interface ModCommand {
   readonly mod: string;
@@ -19,12 +19,14 @@ export interface ModPane {
 export interface ModChannel {
   readonly runCommand: (name: string) => void;
   readonly press: (paneId: string, handler: number) => void;
+  readonly pressStat: (handler: number) => void;
   readonly closePane: (paneId: string) => void;
 }
 
 interface ModsState {
   readonly commands: ReadonlyArray<ModCommand>;
   readonly status: Readonly<Record<string, string>>;
+  readonly stats: Readonly<Record<string, ReadonlyArray<ModStat>>>;
   readonly panes: ReadonlyArray<ModPane>;
   readonly errors: Readonly<Record<string, string>>;
   readonly channels: Readonly<Record<string, ModChannel>>;
@@ -32,7 +34,11 @@ interface ModsState {
   /** Drops everything a mod contributed, when it stops or reloads. */
   readonly detach: (mod: string) => void;
   readonly addCommand: (command: ModCommand) => void;
-  readonly setStatus: (mod: string, text: string | null) => void;
+  readonly setStatus: (
+    mod: string,
+    text: string | null,
+    stats: ReadonlyArray<ModStat> | null,
+  ) => void;
   readonly openPane: (mod: string, id: string, title: string) => void;
   readonly setPaneTree: (mod: string, id: string, tree: ModNode | null) => void;
   readonly closePane: (mod: string, id: string) => void;
@@ -47,6 +53,7 @@ const without = <T>(record: Readonly<Record<string, T>>, key: string): Record<st
 export const useModsStore = create<ModsState>()((set) => ({
   commands: [],
   status: {},
+  stats: {},
   panes: [],
   errors: {},
   channels: {},
@@ -59,6 +66,7 @@ export const useModsStore = create<ModsState>()((set) => ({
     set((state) => ({
       commands: state.commands.filter((command) => command.mod !== mod),
       status: without(state.status, mod),
+      stats: without(state.stats, mod),
       panes: state.panes.filter((pane) => pane.mod !== mod),
       channels: without(state.channels, mod),
     })),
@@ -73,9 +81,10 @@ export const useModsStore = create<ModsState>()((set) => ({
       }
       return { commands: [...others, command] };
     }),
-  setStatus: (mod, text) =>
+  setStatus: (mod, text, stats) =>
     set((state) => ({
       status: text === null ? without(state.status, mod) : { ...state.status, [mod]: text },
+      stats: stats === null ? without(state.stats, mod) : { ...state.stats, [mod]: stats },
     })),
   openPane: (mod, id, title) =>
     set((state) => {

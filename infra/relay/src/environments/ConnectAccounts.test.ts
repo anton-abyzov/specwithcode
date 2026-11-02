@@ -11,12 +11,12 @@ import {
   relayConnectPromos,
   relayEnvironmentLinks,
 } from "../persistence/schema.ts";
-import { layerSqliteRelayDb } from "../testing/sqliteD1.ts";
+import { applyMigration, layerSqliteRelayDb, makeSqliteD1 } from "../testing/sqliteD1.ts";
 import * as ConnectAccounts from "./ConnectAccounts.ts";
 
-const layer = () =>
+const layer = (d1?: D1Database) =>
   Layer.mergeAll(ConnectAccounts.layer, AccountDeletion.layerAccountRecords).pipe(
-    Layer.provideMerge(layerSqliteRelayDb()),
+    Layer.provideMerge(layerSqliteRelayDb(d1)),
   );
 
 const setPromo = (values: Partial<typeof relayConnectPromos.$inferInsert>) =>
@@ -64,21 +64,21 @@ const summary = Effect.gen(function* () {
 });
 
 describe("ConnectAccounts", () => {
-  it.effect("seeds the Founding 1,000 promo with 10 machines and open grants", () =>
+  it.effect("seeds the Founding 300 promo with 10 machines and open grants", () =>
     Effect.gen(function* () {
       const db = yield* RelayDb.RelayDb;
       const [promo] = yield* db.select().from(relayConnectPromos);
       expect(promo).toMatchObject({
         id: "founders",
-        seatCap: 1000,
+        seatCap: 300,
         seatsGranted: 0,
         founderTunnelLimit: 10,
         grantsOpen: true,
       });
       expect(yield* summary).toEqual({
-        seatCap: 1000,
+        seatCap: 300,
         seatsGranted: 0,
-        seatsLeft: 1000,
+        seatsLeft: 300,
         grantsOpen: true,
       });
     }).pipe(Effect.provide(layer())),
@@ -93,7 +93,7 @@ describe("ConnectAccounts", () => {
 
       const again = yield* ensure("user-a");
       expect(again).toEqual(first);
-      expect(yield* summary).toMatchObject({ seatsGranted: 2, seatsLeft: 998 });
+      expect(yield* summary).toMatchObject({ seatsGranted: 2, seatsLeft: 298 });
     }).pipe(Effect.provide(layer())),
   );
 
@@ -111,6 +111,36 @@ describe("ConnectAccounts", () => {
       });
     }).pipe(Effect.provide(layer())),
   );
+
+  it.effect("the 300 seat migration keeps founders when seats already exceed the cap", () => {
+    const { database, d1 } = makeSqliteD1();
+    return Effect.gen(function* () {
+      const db = yield* RelayDb.RelayDb;
+      yield* setPromo({ seatCap: 1000 });
+      const founder = yield* ensure("user-a");
+      expect(founder.founderNumber).toBe(1);
+      yield* setPromo({ seatsGranted: 400 });
+
+      applyMigration(database, "20261102120000_founders_seat_cap_300");
+
+      const [promo] = yield* db.select().from(relayConnectPromos);
+      expect(promo).toMatchObject({
+        seatCap: 300,
+        seatsGranted: 400,
+        founderTunnelLimit: 10,
+        grantsOpen: true,
+      });
+      expect(yield* summary).toEqual({
+        seatCap: 300,
+        seatsGranted: 400,
+        seatsLeft: 0,
+        grantsOpen: false,
+      });
+      expect(yield* ensure("user-a")).toEqual(founder);
+      expect(yield* ensure("user-b")).toMatchObject({ promoId: null, founderNumber: null });
+      expect(yield* summary).toMatchObject({ seatsGranted: 400 });
+    }).pipe(Effect.provide(layer(d1)));
+  });
 
   it.effect("never exceeds the seat cap or shares a number under concurrent first links", () =>
     Effect.gen(function* () {
@@ -162,7 +192,7 @@ describe("ConnectAccounts", () => {
         .select({ userId: relayConnectAccounts.userId })
         .from(relayConnectAccounts);
       expect(remaining).toEqual([{ userId: "user-b" }]);
-      expect(yield* summary).toMatchObject({ seatsGranted: 2, seatsLeft: 998 });
+      expect(yield* summary).toMatchObject({ seatsGranted: 2, seatsLeft: 298 });
       expect((yield* ensure("user-c")).founderNumber).toBe(3);
     }).pipe(Effect.provide(layer())),
   );
