@@ -233,7 +233,7 @@ async function mountImport(remote = false) {
     );
   });
   await click("Continue");
-  await click("Continue");
+  await click("Continue without an agent");
   expect(text(renderer!.root)).toContain("Choose your projects");
 }
 

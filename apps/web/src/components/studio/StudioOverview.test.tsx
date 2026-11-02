@@ -329,6 +329,18 @@ describe("deliberate native session entry", () => {
     await render();
     expect(state.createDraft).not.toHaveBeenCalled();
   });
+  it("does not claim partial observations for an empty workspace", async () => {
+    const projects = state.projects;
+    state.projects = [];
+    state.shells = [];
+    try {
+      await render();
+      expect(container.textContent).not.toContain("Partial observations");
+      expect(container.textContent).toContain("Nothing needs you right now.");
+    } finally {
+      state.projects = projects;
+    }
+  });
   it("renders actual title-shaped project, session and attention labels", async () => {
     state.shells = [shell("needs-review", { hasPendingApprovals: true })];
     await render();

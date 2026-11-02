@@ -176,8 +176,10 @@ export function StudioOverview() {
     () => threadsVisibleWithAide(catalogShells, catalogProjects, aideEnabled),
     [catalogShells, catalogProjects, aideEnabled],
   );
+  // With no projects and no sessions there is nothing left unobserved.
   const attentionComplete = useMemo(
     () =>
+      (attentionMembers.length === 0 && allShells.length === 0) ||
       aggregateProjectAttention({
         members: attentionMembers,
         roots: projectAttentionRoots(allShells, attentionMembers),

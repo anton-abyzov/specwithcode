@@ -107,14 +107,17 @@ vi.mock("../../onboarding/useProjectScans", () => ({
 }));
 vi.mock("../../connection/onboarding", () => ({ connectPairing: vi.fn() }));
 vi.mock("../../state/terminal", () => ({ terminalEnvironment: {} }));
-const cloud = vi.hoisted(() => ({ configured: false, signedIn: false }));
+const cloud = vi.hoisted(() => ({ configured: false, signedIn: false, loaded: true }));
 vi.mock("../clerk/useStudioConnectAuthPrompt", () => ({
   useStudioConnectAuthPrompt: () => ({ authPrompt: null, openAuthPrompt: vi.fn() }),
 }));
 vi.mock("@clerk/react", () => ({
-  useAuth: () => ({ isLoaded: true, isSignedIn: cloud.signedIn }),
+  useAuth: () => ({ isLoaded: cloud.loaded, isSignedIn: cloud.signedIn }),
 }));
 vi.mock("../../cloud/publicConfig", () => ({ hasCloudPublicConfig: () => cloud.configured }));
+vi.mock("../../onboarding/targetEnvironment.logic", () => ({
+  isOnboardingRelayEnvironment: () => false,
+}));
 vi.mock("../ThreadTerminalDrawer", () => ({ TerminalViewport: () => null }));
 vi.mock("../settings/ChatGptWelcomeCoordinator", () => ({ ChatGptWelcomeCoordinator: () => null }));
 vi.mock("../settings/CodexSetupSection", () => ({
@@ -531,5 +534,45 @@ it("tells a signed-in person to turn on Connect for this machine in Settings", a
   } finally {
     cloud.configured = false;
     cloud.signedIn = false;
+  }
+});
+
+it("names Connect optional and reports a sign-in that never loads, without blocking setup", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  cloud.configured = true;
+  cloud.loaded = false;
+  try {
+    await act(async () =>
+      root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
+    );
+    await choose("Start as a main machine");
+    expect(document.body.textContent).toContain("Optional.");
+    expect(document.body.textContent).toContain("Loading sign-in…");
+    expect(document.querySelector("[role=alert]")).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(document.body.textContent).toContain("Sign-in did not load");
+    expect(document.querySelector("[role=alert]")?.textContent).toContain(
+      "Setup works without Connect",
+    );
+    const buttons = [...document.querySelectorAll("button")];
+    expect(buttons.find((button) => button.textContent?.trim() === "Retry")).toBeDefined();
+    expect(buttons.find((button) => button.textContent?.trim() === "Continue")?.disabled).toBe(
+      false,
+    );
+  } finally {
+    cloud.configured = false;
+    cloud.loaded = true;
+    vi.useRealTimers();
+  }
+});
+
+it("does not call Connect optional with no server here", async () => {
+  cloud.configured = true;
+  try {
+    await act(async () => root.render(<WelcomeWizard localAvailable={false} onDone={vi.fn()} />));
+    expect(document.body.textContent).toContain("SpecWithCode Connect");
+    expect(document.body.textContent).not.toContain("Optional.");
+  } finally {
+    cloud.configured = false;
   }
 });
