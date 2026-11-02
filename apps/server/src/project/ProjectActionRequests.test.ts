@@ -40,7 +40,6 @@ interface World {
   /** What the folder change reports it did. */
   changeCounts: { readonly reboundWorktrees: number; readonly keptInPlace: number };
   /** Another thread in the project is running: the service denies non-additive folder edits. */
-  otherThreadActive: boolean;
 }
 
 function newWorld(): World {
@@ -59,7 +58,6 @@ function newWorld(): World {
     failFolderChange: false,
     checkOverride: {},
     changeCounts: { reboundWorktrees: 0, keptInPlace: 0 },
-    otherThreadActive: false,
   };
 }
 
@@ -90,21 +88,6 @@ const layerFor = (world: World) =>
           update: (input) => {
             const project = world.projects.get(input.projectId)!;
             const environment = input.workspaceSettings?.environment;
-            const prior = project.workspaceSettings?.environment ?? {
-              additionalFolders: [],
-              repositories: [],
-            };
-            if (
-              environment !== undefined &&
-              world.otherThreadActive &&
-              !ProjectService.isAdditiveEnvironmentChange(prior, environment)
-            )
-              return Effect.fail(
-                new ProjectService.ProjectRequestDeniedError({
-                  projectId: input.projectId,
-                  reason: "environment_active",
-                }),
-              );
             world.updates.push(input);
             const next = {
               ...project,
@@ -546,9 +529,8 @@ const setApprovedFolders = (world: World, additionalFolders: ReadonlyArray<strin
 
 const folderLayer = (world: World) => Layer.mergeAll(layerFor(world), NodeServices.layer);
 
-it.effect("add_folder approved while another thread runs adds the folder's real path", () => {
+it.effect("add_folder approved adds the folder's real path", () => {
   const world = newWorld();
-  world.otherThreadActive = true;
   return Effect.gen(function* () {
     const { dir, link } = yield* withFolders(world);
     const shared = yield* dir("shared");

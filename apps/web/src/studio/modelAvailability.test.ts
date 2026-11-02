@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  accountEmailLine,
   availabilityDisabledReason,
   availabilityText,
   isAvailabilityBlocking,
@@ -405,5 +406,32 @@ describe("modelAvailability", () => {
         previousAccountReadAt: readAt - 1,
       }).kind,
     ).toBe("room");
+  });
+});
+
+describe("accountEmailLine", () => {
+  const snapshot = (auth: ServerProvider["auth"]) =>
+    ({ instanceId: "claudeAgent", driver: "claudeAgent", auth }) as unknown as ServerProvider;
+  it("names the reported email", () => {
+    expect(
+      accountEmailLine("Claude", snapshot({ status: "authenticated", email: " pat@example.com " })),
+    ).toBe("Signed in as pat@example.com");
+  });
+  it("says so when a signed-in provider reports none, and never guesses", () => {
+    expect(accountEmailLine("Grok", snapshot({ status: "authenticated" }))).toBe(
+      "Grok does not report an account email",
+    );
+  });
+  it("is silent without a confirmed sign-in to an account", () => {
+    for (const auth of [
+      { status: "unauthenticated" },
+      { status: "unknown" },
+      { status: "authenticated", type: "apiKey" },
+      { status: "authenticated", type: "api_key" },
+      { status: "authenticated", type: "bedrock" },
+      { status: "authenticated", apiKeyBilling: true },
+    ] as Array<ServerProvider["auth"]>) {
+      expect(accountEmailLine("Claude", snapshot(auth))).toBeNull();
+    }
   });
 });

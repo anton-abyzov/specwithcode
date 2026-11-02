@@ -9,6 +9,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOs from "node:os";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -200,68 +201,214 @@ export function exposesProtectedLocation(
   });
 }
 
-/** Resolve existing ancestors as well as the final component; lexical containment alone is unsafe. */
-export const resolveProjectEnvironment = Effect.fn("resolveProjectEnvironment")(function* (
+const isProjectEnvironmentSettings = Schema.is(ProjectEnvironmentSettings);
+
+/** Why one approved folder or repository checkout cannot be used as saved. */
+export type ProjectEnvironmentProblem = {
+  readonly kind: "folder" | "repository";
+  /** The path as saved, or the default checkout path for a repository saved without one. */
+  readonly path: string;
+  readonly reason: "missing" | "moved" | "protected" | "duplicate" | "outside";
+  /** Where a moved folder now leads. Never approved by the move. */
+  readonly resolvedPath?: string;
+};
+
+/** A path as one line of text: a folder name can hold control characters such as newlines. */
+const shown = (path: string) =>
+  path.replace(
+    // oxlint-disable-next-line no-control-regex -- matching control characters is the point.
+    /[\u0000-\u001f\u007f]/gu,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+
+/** One sentence naming the entry and what to do about it. */
+export const describeProjectEnvironmentProblem = (input: ProjectEnvironmentProblem): string => {
+  const problem = {
+    ...input,
+    path: shown(input.path),
+    ...(input.resolvedPath === undefined ? {} : { resolvedPath: shown(input.resolvedPath) }),
+  };
+  const what = problem.kind === "folder" ? "Approved folder" : "Repository checkout";
+  const fix = "Update or remove it in the project's Environment settings.";
+  switch (problem.reason) {
+    case "missing":
+      return `${what} ${problem.path} is missing or is not a folder. ${fix}`;
+    case "moved":
+      return `${what} ${problem.path} now leads to ${problem.resolvedPath ?? "another folder"}, which was never approved. ${fix}`;
+    case "protected":
+      return `${what} ${problem.path} exposes a protected location. ${fix}`;
+    case "duplicate":
+      return `${what} ${problem.path} is the same folder as another entry. ${fix}`;
+    case "outside":
+      return `${what} ${problem.path} is outside the project folder and its approved folders. ${fix}`;
+  }
+};
+
+/**
+ * Resolve the execution folder, every approved folder and every repository checkout.
+ * Existing ancestors are resolved as well as the final component, since lexical
+ * containment alone is unsafe. Each entry is checked on its own and reported as a
+ * problem instead of failing the rest; only an unusable execution folder fails.
+ * `canonical` reports an approved folder whose real path differs from its saved spelling
+ * as moved (a canonical approval must not silently follow a newly installed symlink).
+ */
+const inspectProjectEnvironment = Effect.fn("inspectProjectEnvironment")(function* (
   projectId: ProjectId,
   workspaceRoot: string,
   environment: ProjectEnvironmentSettings,
+  canonical: boolean,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const invalid = () => new ProjectEnvironmentError({ projectId, code: "path_not_approved" });
-  if (!Schema.is(ProjectEnvironmentSettings)(environment))
+  if (!isProjectEnvironmentSettings(environment))
     return yield* new ProjectEnvironmentError({ projectId, code: "invalid" });
   const directory = (folder: string) =>
     Effect.gen(function* () {
-      if (!path.isAbsolute(folder)) return yield* invalid();
-      const real = yield* fs.realPath(folder).pipe(Effect.mapError(invalid));
-      const stat = yield* fs.stat(real).pipe(Effect.mapError(invalid));
-      if (stat.type !== "Directory") return yield* invalid();
-      return real;
+      if (!path.isAbsolute(folder)) return Option.none<string>();
+      const real = yield* fs.realPath(folder).pipe(Effect.option);
+      if (Option.isNone(real)) return real;
+      const stat = yield* fs.stat(real.value).pipe(Effect.option);
+      return Option.isSome(stat) && stat.value.type === "Directory" ? real : Option.none<string>();
     });
-  const main = yield* directory(workspaceRoot);
-  const additionalFolders = yield* Effect.forEach(environment.additionalFolders, (folder) =>
-    directory(folder).pipe(
-      Effect.flatMap((real) =>
-        exposesProtectedRealPath(real, path).pipe(
-          Effect.flatMap((exposed) => (exposed ? Effect.fail(invalid()) : Effect.succeed(real))),
-        ),
-      ),
-    ),
-  );
-  if (new Set([main, ...additionalFolders]).size !== additionalFolders.length + 1)
-    return yield* invalid();
-  const roots = [main, ...additionalFolders];
+  const mainReal = yield* directory(workspaceRoot);
+  if (Option.isNone(mainReal))
+    return yield* new ProjectEnvironmentError({
+      projectId,
+      code: "path_not_approved",
+      detail: `The project folder ${workspaceRoot} is missing or is not a folder.`,
+    });
+  const main = mainReal.value;
+  const problems: Array<ProjectEnvironmentProblem> = [];
+  const additionalFolders: Array<string> = [];
+  const roots = new Set([main]);
+  for (const folder of environment.additionalFolders) {
+    const real = yield* directory(folder);
+    if (Option.isNone(real)) {
+      problems.push({ kind: "folder", path: folder, reason: "missing" });
+      continue;
+    }
+    if (canonical && real.value !== folder) {
+      problems.push({ kind: "folder", path: folder, reason: "moved", resolvedPath: real.value });
+      continue;
+    }
+    if (yield* exposesProtectedRealPath(real.value, path)) {
+      problems.push({ kind: "folder", path: folder, reason: "protected" });
+      continue;
+    }
+    if (roots.has(real.value)) {
+      problems.push({ kind: "folder", path: folder, reason: "duplicate" });
+      continue;
+    }
+    roots.add(real.value);
+    additionalFolders.push(real.value);
+  }
   const within = (value: string) =>
-    roots.some((root) => {
+    [...roots].some((root) => {
       const relative = path.relative(root, value);
       return (
         relative === "" ||
         (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
       );
     });
-  const resolveDestination = (repo: ProjectRepository) =>
+  const resolveDestination = (requested: string) =>
     Effect.gen(function* () {
-      const requested = repo.localPath ?? path.join(main, ".studio-repositories", repo.id);
-      if (!path.isAbsolute(requested)) return yield* invalid();
+      if (!path.isAbsolute(requested)) return Option.none<string>();
       let cursor = path.normalize(requested);
       const remaining: string[] = [];
-      while (!(yield* fs.exists(cursor).pipe(Effect.mapError(invalid)))) {
+      while (!(yield* fs.exists(cursor).pipe(Effect.orElseSucceed(() => false)))) {
         const parent = path.dirname(cursor);
-        if (parent === cursor) return yield* invalid();
+        if (parent === cursor) return Option.none<string>();
         remaining.unshift(path.basename(cursor));
         cursor = parent;
       }
-      const ancestor = yield* fs.realPath(cursor).pipe(Effect.mapError(invalid));
-      const localPath = path.join(ancestor, ...remaining);
-      if (!within(localPath)) return yield* invalid();
-      return { ...repo, localPath };
+      const ancestor = yield* fs.realPath(cursor).pipe(Effect.option);
+      return Option.map(ancestor, (real) => path.join(real, ...remaining));
     });
-  const repositories = yield* Effect.forEach(environment.repositories, resolveDestination);
-  if (new Set(repositories.map((repo) => repo.localPath)).size !== repositories.length)
-    return yield* invalid();
-  return { workspaceRoot: main, additionalFolders, repositories };
+  const repositories: Array<ProjectRepository & { readonly localPath: string }> = [];
+  const checkouts = new Set<string>();
+  for (const repo of environment.repositories) {
+    const requested = repo.localPath ?? path.join(main, ".studio-repositories", repo.id);
+    const localPath = yield* resolveDestination(requested);
+    if (Option.isNone(localPath) || !within(localPath.value)) {
+      problems.push({ kind: "repository", path: requested, reason: "outside" });
+      continue;
+    }
+    if (checkouts.has(localPath.value)) {
+      problems.push({ kind: "repository", path: requested, reason: "duplicate" });
+      continue;
+    }
+    checkouts.add(localPath.value);
+    repositories.push({ ...repo, localPath: localPath.value });
+  }
+  return { workspaceRoot: main, additionalFolders, repositories, problems };
 });
+
+const requireEveryEntry = Effect.fn("requireEveryEntry")(function* (
+  projectId: ProjectId,
+  workspaceRoot: string,
+  environment: ProjectEnvironmentSettings,
+  canonical: boolean,
+) {
+  const inspected = yield* inspectProjectEnvironment(
+    projectId,
+    workspaceRoot,
+    environment,
+    canonical,
+  );
+  const [problem] = inspected.problems;
+  if (problem !== undefined)
+    return yield* new ProjectEnvironmentError({
+      projectId,
+      code: "path_not_approved",
+      detail: describeProjectEnvironmentProblem(problem),
+    });
+  return {
+    workspaceRoot: inspected.workspaceRoot,
+    additionalFolders: inspected.additionalFolders,
+    repositories: inspected.repositories,
+  };
+});
+
+/** Every entry must resolve; the first problem fails with a message naming that entry. */
+export const resolveProjectEnvironment = Effect.fn("resolveProjectEnvironment")(function* (
+  projectId: ProjectId,
+  workspaceRoot: string,
+  environment: ProjectEnvironmentSettings,
+) {
+  return yield* requireEveryEntry(projectId, workspaceRoot, environment, false);
+});
+
+/**
+ * As {@link resolveProjectEnvironment}, and every saved approval must still be its own
+ * real path, the execution folder included once anything is approved: a canonical
+ * approval must not silently follow a newly installed symlink.
+ */
+export const resolveCanonicalProjectEnvironment = Effect.fn("resolveCanonicalProjectEnvironment")(
+  function* (projectId: ProjectId, workspaceRoot: string, environment: ProjectEnvironmentSettings) {
+    const resolved = yield* requireEveryEntry(projectId, workspaceRoot, environment, true);
+    if (
+      (environment.additionalFolders.length > 0 || environment.repositories.length > 0) &&
+      resolved.workspaceRoot !== workspaceRoot
+    )
+      return yield* new ProjectEnvironmentError({
+        projectId,
+        code: "path_not_approved",
+        detail: `The project folder ${workspaceRoot} now leads to ${resolved.workspaceRoot}. Move the project to its new folder before using approved folders.`,
+      });
+    return resolved;
+  },
+);
+
+/**
+ * What a run may use: the approved folders that still resolve to their saved real
+ * path, and the problems with the rest, which the run skips instead of failing.
+ * Fails only when the execution folder itself is unusable.
+ */
+export const resolveProjectEnvironmentForRun = Effect.fn("resolveProjectEnvironmentForRun")(
+  function* (projectId: ProjectId, workspaceRoot: string, environment: ProjectEnvironmentSettings) {
+    return yield* inspectProjectEnvironment(projectId, workspaceRoot, environment, true);
+  },
+);
 
 /** Settings store canonical explicit approvals. Recheck at each native turn to reject moved symlinks. */
 export const normalizeProjectEnvironment = Effect.fn("normalizeProjectEnvironment")(function* (

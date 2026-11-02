@@ -530,6 +530,17 @@ export function railLimitSentence(
   return input.label;
 }
 
+/**
+ * The signed-in account in the provider's own words, read from its live snapshot.
+ * Only a confirmed sign-in to an account has one: a pending or failed probe and an
+ * API key say nothing. A provider that reports no email says so; nothing is inferred.
+ */
+export function accountEmailLine(provider: string, snapshot: ServerProvider): string | null {
+  if (snapshot.auth.status !== "authenticated" || isPerTokenProvider(snapshot)) return null;
+  const email = snapshot.auth.email?.trim();
+  return email ? `Signed in as ${email}` : `${provider} does not report an account email`;
+}
+
 /** Usage refusal text. Model pickers display it as an advisory warning. */
 export function availabilityDisabledReason(
   availability: ModelAvailability,

@@ -69,7 +69,7 @@ describe("actionable project rejection messages", () => {
     ["project_delete_rate_limited", "Wait a minute, then delete the rest"],
     [
       "project_environment_active",
-      "Stop active project work before removing or changing folder access. Adding a folder works while threads run.",
+      "Stop active project work before moving the project to another main folder. Approved folders can change while threads run.",
     ],
     ["project_environment_invalid", "approved folders"],
     [

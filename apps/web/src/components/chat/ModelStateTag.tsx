@@ -292,6 +292,8 @@ export function ModelStateTip(props: {
   currentNote?: string | null;
   /** The provider connection that runs it, when it says more than the provider: `Codex Work`. */
   connection?: string | null;
+  /** The signed-in account line: `Signed in as pat@example.com`. */
+  account?: string | null;
   state: ModelState;
 }) {
   const text = modelStateText(props.state);
@@ -304,6 +306,11 @@ export function ModelStateTip(props: {
       </strong>
       {props.connection ? (
         <span className="sws-model-state-tip-detail">Connection: {props.connection}</span>
+      ) : null}
+      {props.account ? (
+        <span className="sws-model-state-tip-detail" data-model-chip-account="">
+          {props.account}
+        </span>
       ) : null}
       <span
         className="sws-model-state-tip-line"

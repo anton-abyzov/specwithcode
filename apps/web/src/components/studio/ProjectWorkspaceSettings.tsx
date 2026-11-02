@@ -195,6 +195,8 @@ export function ProjectWorkspaceSettings({
   const [baseRevision, setBaseRevision] = useState(snapshot.settings.revision);
   const [dirty, setDirty] = useState(false);
   const [environmentDraftDirty, setEnvironmentDraftDirty] = useState(false);
+  // Folder access is sent only when it was edited, so saving the goal never re-checks it.
+  const [environmentEdited, setEnvironmentEdited] = useState(false);
   const [connectionDirty, setConnectionDirty] = useState(false);
   const [environmentBusy, setEnvironmentBusy] = useState(false);
   const [memoryDirty, setMemoryDirty] = useState(false);
@@ -271,7 +273,7 @@ export function ProjectWorkspaceSettings({
           instructions,
           coordinatorModelSelection: coordinator,
           autoResume,
-          environment,
+          ...(environmentEdited ? { environment } : {}),
           ...workerMachinesPatch(workerMachines),
         },
       },
@@ -283,6 +285,7 @@ export function ProjectWorkspaceSettings({
     }
     setDirty(false);
     setTitleEdited(false);
+    setEnvironmentEdited(false);
     setBaseRevision(baseRevision + 1);
     onSaved();
     return true;
@@ -649,10 +652,14 @@ export function ProjectWorkspaceSettings({
                   }
                   disabled={disabled}
                   admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
-                  onChange={(v) => change(setEnvironment, v)}
+                  onChange={(v) => {
+                    change(setEnvironment, v);
+                    setEnvironmentEdited(true);
+                  }}
                   onPrepared={(revision, value) => {
                     setBaseRevision(revision);
                     setEnvironment(value);
+                    setEnvironmentEdited(false);
                     onSaved();
                   }}
                   onDraftChange={setEnvironmentDraftDirty}
@@ -702,7 +709,12 @@ export function ProjectWorkspaceSettings({
           </div>
           {dirty && (
             <footer className="project-settings-footer">
-              <span>Unsaved project settings</span>
+              {/* The tab can be long; repeat a refusal where Save was pressed. */}
+              {error ? (
+                <span className="project-settings-footer-error">{error}</span>
+              ) : (
+                <span>Unsaved project settings</span>
+              )}
               <button
                 className="project-control"
                 disabled={busy}
@@ -717,6 +729,7 @@ export function ProjectWorkspaceSettings({
                   setEnvironment(
                     snapshot.settings.environment ?? { additionalFolders: [], repositories: [] },
                   );
+                  setEnvironmentEdited(false);
                   setBaseRevision(snapshot.settings.revision);
                   setDirty(false);
                   setError(null);

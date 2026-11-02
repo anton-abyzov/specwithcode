@@ -25,6 +25,7 @@ import {
   type SeenAccount,
 } from "../../studio/accountSwitches";
 import {
+  accountEmailLine,
   accountLimitPhrase,
   availabilityText,
   isAvailabilityBlocking,
@@ -622,6 +623,7 @@ export function ModelPickerUsageBand({
     state.kind !== "perToken" &&
     state.kind !== "switching";
   const heading = `${entry.displayName}${usage.machineLabel ? ` on ${usage.machineLabel}` : ""}`;
+  const accountLine = accountEmailLine(entry.displayName, entry.snapshot);
   // The same read time the state is judged on.
   const ago = readAgo(limits?.nativeAllowanceObservedAt ?? limits?.checkedAt, usage.nowMs);
   const sentence = usage.text(entry.instanceId, state);
@@ -650,6 +652,15 @@ export function ModelPickerUsageBand({
           </span>
         ) : null}
       </header>
+      {accountLine ? (
+        <p
+          className="mt-0.5 truncate text-muted-foreground select-text"
+          title={accountLine}
+          data-model-picker-band-account=""
+        >
+          {accountLine}
+        </p>
+      ) : null}
       {showBars ? (
         <>
           <ul className="mt-1.5 flex flex-col gap-1" aria-label="Shared by every model">

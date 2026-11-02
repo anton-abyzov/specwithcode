@@ -351,21 +351,26 @@ extension LiveEngine {
   private func refreshConnectStatuses(_ ids: [String]) async {
     guard let connect else { return }
     let relay = connect.relay
-    let (results, removal) = await withTaskGroup(of: (String, Result<ConnectEnvironmentStatus, any Error>).self) { group in
-      for id in ids {
-        group.addTask {
-          do { return (id, .success(try await relay.status(of: id))) } catch { return (id, .failure(error)) }
-        }
-      }
-      var results: [String: ConnectEnvironmentStatus] = [:]
-      var removal: (any Error)?
-      for await (id, outcome) in group {
-        switch outcome {
+    // One task per computer, each awaited here. Not a task group: on the
+    // iPhone a main-actor task group let this function return while a status
+    // request was still running, and that child then completed into the
+    // freed group and crashed the app at launch.
+    let checks = ids.map { id in
+      (id, Task.detached { () -> Result<ConnectEnvironmentStatus, any Error> in
+        do { return .success(try await relay.status(of: id)) } catch { return .failure(error) }
+      })
+    }
+    var results: [String: ConnectEnvironmentStatus] = [:]
+    var removal: (any Error)?
+    await withTaskCancellationHandler {
+      for (id, check) in checks {
+        switch await check.value {
         case let .success(status): results[id] = status
         case let .failure(error): if Self.isDeviceRemoved(error) { removal = error }
         }
       }
-      return (results, removal)
+    } onCancel: {
+      for (_, check) in checks { check.cancel() }
     }
     if let removal {
       await connectHandleRemoval(removal)

@@ -20,7 +20,10 @@ import {
   type ProviderAdapterV2TurnInput,
   type ProviderAdapterV2Event,
 } from "../orchestration-v2/ProviderAdapter.ts";
-import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
+import {
+  type ProjectEnvironmentProblem,
+  resolveProjectEnvironmentForRun,
+} from "./ProjectEnvironmentPaths.ts";
 
 /** Capture filesystem services once; dispatch effects run after layer construction. */
 export const makeEnvironmentRuntime = Effect.gen(function* () {
@@ -29,6 +32,11 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
   return <E>(
     session: ProviderAdapterV2SessionRuntime,
     read: (projectId: ProjectId) => Effect.Effect<Option.Option<Project>, E>,
+    /** Told once per turn which saved entries this turn skipped, so the run can show it. */
+    skipped: (
+      input: ProviderAdapterV2TurnInput,
+      problems: ReadonlyArray<ProjectEnvironmentProblem>,
+    ) => Effect.Effect<void> = () => Effect.void,
   ): ProviderAdapterV2SessionRuntime => {
     const start = (input: ProviderAdapterV2TurnInput, compact = false, prepare = false) =>
       Effect.gen(function* () {
@@ -49,7 +57,10 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
             : compact && session.compactThread
               ? session.compactThread(input)
               : session.startTurn(input);
-        const resolved = yield* resolveProjectEnvironment(
+        // One unusable entry never fails the turn: it is skipped and named, and a moved
+        // folder is never followed to where it now leads. Only an execution folder that
+        // is gone or now leads elsewhere fails.
+        const resolved = yield* resolveProjectEnvironmentForRun(
           project.id,
           project.workspaceRoot,
           environment,
@@ -57,15 +68,11 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         );
-        if (
-          resolved.workspaceRoot !== project.workspaceRoot ||
-          resolved.additionalFolders.some(
-            (folder, index) => folder !== environment.additionalFolders[index],
-          )
-        )
+        if (resolved.workspaceRoot !== project.workspaceRoot)
           return yield* new ProjectEnvironmentError({
             projectId: project.id,
             code: "path_not_approved",
+            detail: `The project folder ${project.workspaceRoot} now leads to ${resolved.workspaceRoot}. Move the project to its new folder in project settings.`,
           });
         const directories = [
           ...(input.runtimePolicy.cwd === resolved.workspaceRoot ? [] : [resolved.workspaceRoot]),
@@ -86,6 +93,7 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
             projectId: project.id,
             code: "unsupported_provider",
           });
+        if (resolved.problems.length > 0 && !prepare) yield* skipped(input, resolved.problems);
         const next = {
           ...input,
           projectAdditionalDirectories: directories,

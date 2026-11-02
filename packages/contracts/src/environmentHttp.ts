@@ -235,7 +235,7 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
       case "project_confirmation_required":
         return "Type the project name exactly to confirm deletion.";
       case "project_environment_active":
-        return "Stop active project work before removing or changing folder access. Adding a folder works while threads run.";
+        return "Stop active project work before moving the project to another main folder. Approved folders can change while threads run.";
       case "project_environment_invalid":
         return "Use existing approved folders and credential-free HTTPS or SSH repository URLs.";
       case "project_active_work":

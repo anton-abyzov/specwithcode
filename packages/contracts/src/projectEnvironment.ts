@@ -192,9 +192,12 @@ export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironme
       "import_changed",
       "import_blocked",
     ]),
+    /** Which entry failed and how to fix it, when one entry is to blame. */
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.detail !== undefined && this.detail.length > 0) return this.detail;
     return {
       not_found: "The project or repository is no longer available.",
       inactive: "Resume or restore this project before preparing a repository.",

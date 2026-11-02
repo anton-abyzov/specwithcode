@@ -44,12 +44,18 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
     } as const;
     return yield* failEnvironmentInvalidRequest(reason[cause.reason]);
   }
-  if (cause._tag === "ProjectEnvironmentError")
-    return yield* failEnvironmentInvalidRequest("project_environment_invalid");
   // The code stays stable; the detail says why, so the CLI and the app can show it.
-  if (cause._tag === "ProjectFolderChangeError" || cause._tag === "ProjectFolderCheckError") {
-    const detail = cause._tag === "ProjectFolderChangeError" ? cause.detail : cause.message;
-    return yield* failEnvironmentInvalidRequest("project_folder_change_refused").pipe(
+  if (
+    cause._tag === "ProjectEnvironmentError" ||
+    cause._tag === "ProjectFolderChangeError" ||
+    cause._tag === "ProjectFolderCheckError"
+  ) {
+    const detail = cause._tag === "ProjectFolderCheckError" ? cause.message : (cause.detail ?? "");
+    const reason =
+      cause._tag === "ProjectEnvironmentError"
+        ? "project_environment_invalid"
+        : "project_folder_change_refused";
+    return yield* failEnvironmentInvalidRequest(reason).pipe(
       Effect.mapError(
         (error) =>
           new EnvironmentRequestInvalidError({

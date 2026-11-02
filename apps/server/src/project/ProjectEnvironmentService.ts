@@ -21,7 +21,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
-import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
+import { resolveCanonicalProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
 import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
 import { repositoryInspectionEnv } from "./ProjectRepositoryInspection.ts";
 
@@ -54,7 +54,8 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError(() => fail(projectId, "not_found")));
     if (Option.isNone(found)) return yield* fail(projectId, "not_found");
     const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
-    const resolved = yield* resolveProjectEnvironment(
+    // A canonical approval must not silently follow a newly installed symlink.
+    const resolved = yield* resolveCanonicalProjectEnvironment(
       projectId,
       found.value.workspaceRoot,
       settings.environment,
@@ -62,16 +63,6 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    // A canonical approval must not silently follow a newly installed symlink.
-    if (
-      ((settings.environment.additionalFolders.length > 0 ||
-        settings.environment.repositories.length > 0) &&
-        resolved.workspaceRoot !== found.value.workspaceRoot) ||
-      resolved.additionalFolders.some(
-        (folder, index) => folder !== settings.environment.additionalFolders[index],
-      )
-    )
-      return yield* fail(projectId, "path_not_approved");
     return { ...resolved, revision: settings.revision };
   });
   const git = Effect.fn(function* (projectId: ProjectId, cwd: string, args: readonly string[]) {

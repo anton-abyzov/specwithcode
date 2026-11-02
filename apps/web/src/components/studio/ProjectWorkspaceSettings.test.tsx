@@ -540,6 +540,21 @@ describe("project settings and memory", () => {
     );
     expect(state.saved).not.toHaveBeenCalled();
   });
+  it("leaves folder access out of a save that did not edit it, and shows a refusal by Save", async () => {
+    state.update.mockResolvedValueOnce({
+      _tag: "Failure",
+      error: new Error("Approved folder /scratch/gone is missing or is not a folder."),
+    });
+    await render();
+    await input("#project-settings-name", "Atlas revised");
+    await click("Save changes");
+    expect(state.update.mock.calls[0]![0].input.workspaceSettings).not.toHaveProperty(
+      "environment",
+    );
+    expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
+      "/scratch/gone is missing",
+    );
+  });
   it("sends this project's workers to a machine that allows them, and back here", async () => {
     state.fleet = twoMachineFleet();
     await render();

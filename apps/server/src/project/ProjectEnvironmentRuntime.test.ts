@@ -19,6 +19,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnInput,
 } from "../orchestration-v2/ProviderAdapter.ts";
+import type { ProjectEnvironmentProblem } from "./ProjectEnvironmentPaths.ts";
 import { makeEnvironmentRuntime } from "./ProjectEnvironmentRuntime.ts";
 import { makeProviderFailure } from "../orchestration-v2/ProviderFailure.ts";
 import { buildCodexTurnStartParams } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
@@ -185,7 +186,15 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
               received.push(value);
             }),
         } as unknown as ProviderAdapterV2SessionRuntime;
-        const runtime = wrap(session, () => Effect.succeed(Option.some(project)));
+        const skips: ProjectEnvironmentProblem[][] = [];
+        const runtime = wrap(
+          session,
+          () => Effect.succeed(Option.some(project)),
+          (_turn, problems) =>
+            Effect.sync(() => {
+              skips.push([...problems]);
+            }),
+        );
         const input = {
           ...turn(),
           runtimePolicy: {
@@ -228,13 +237,18 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
         assert.equal(received.length, 2);
         yield* fs.remove(second, { recursive: true });
         yield* fs.symlink(first, second);
-        const moved = yield* runtime.startTurn(input).pipe(Effect.flip);
-        assert.equal((moved.cause as { code: string }).code, "path_not_approved");
-        assert.equal(received.length, 2);
+        // A folder that now leads elsewhere is skipped and named, never followed or fatal.
+        assert.deepEqual(skips, []);
+        yield* runtime.startTurn(input);
+        assert.equal(received.length, 3);
+        assert.deepEqual(received[2]?.projectAdditionalDirectories, [first]);
+        assert.deepEqual(skips, [
+          [{ kind: "folder", path: second, reason: "moved", resolvedPath: first }],
+        ]);
       }),
   );
   it.effect(
-    "fails closed for unsupported providers, moved approved symlinks and missing projects",
+    "fails closed for unsupported providers and missing projects, skips moved symlinks",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -270,14 +284,27 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
         );
         yield* fs.remove(extra, { recursive: true });
         yield* fs.symlink(main, extra);
-        assert.equal(
-          (yield* wrap({ ...session, driver: ProviderDriverKind.make("codex") }, () =>
-            Effect.succeed(Option.some(project)),
-          )
-            .startTurn(turn())
-            .pipe(Effect.flip))._tag,
-          "ProviderAdapterTurnStartError",
-        );
+        const skipped: ProjectEnvironmentProblem[] = [];
+        const seen: ProviderAdapterV2TurnInput[] = [];
+        yield* wrap(
+          {
+            ...session,
+            driver: ProviderDriverKind.make("codex"),
+            startTurn: (value: ProviderAdapterV2TurnInput) =>
+              Effect.sync(() => {
+                seen.push(value);
+              }),
+          },
+          () => Effect.succeed(Option.some(project)),
+          (_turn, problems) =>
+            Effect.sync(() => {
+              skipped.push(...problems);
+            }),
+        ).startTurn(turn());
+        assert.deepEqual(seen[0]?.projectAdditionalDirectories, [main]);
+        assert.deepEqual(skipped, [
+          { kind: "folder", path: extra, reason: "moved", resolvedPath: main },
+        ]);
         assert.equal(
           (yield* wrap(session, () => Effect.succeed(Option.none()))
             .startTurn(turn())

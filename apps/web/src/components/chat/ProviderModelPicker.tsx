@@ -20,7 +20,7 @@ import {
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
-import { isAvailabilityBlocking } from "../../studio/modelAvailability";
+import { accountEmailLine, isAvailabilityBlocking } from "../../studio/modelAvailability";
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 import type { ModelPickerEffort } from "./ModelPickerEffortStrip";
 import { useComposerMenuProps } from "./composerEventScope";
@@ -169,6 +169,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       ? usage.text(props.triggerInstanceId ?? activeInstanceId, selectedUsage)
       : null;
   const selectedUsageText = selectedUsageCopy?.long ?? null;
+  // Who the subscription belongs to, as this machine's provider reports it.
+  const accountLine =
+    usage && triggerEntry && showsSingleModel
+      ? accountEmailLine(triggerEntry.displayName, triggerEntry.snapshot)
+      : null;
+  const usageDescription = [selectedUsageText, accountLine].filter(Boolean).join(" ");
   // What a spent limit means for the next turn, as the meter says it.
   const nextOnLimit =
     selectedUsage && isAvailabilityBlocking(selectedUsage) && usage?.nextOnLimit
@@ -322,12 +328,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     <ModelStateTip
       current={currentLabel}
       currentNote={selectedUsageText ? ` · ${selectedUsageText}` : null}
+      account={accountLine}
       state={state}
     />
-  ) : selectedUsageText ? (
+  ) : usageDescription ? (
     <span className="flex max-w-72 flex-col gap-0.5">
       <span>{triggerTooltipContent}</span>
-      <span className="text-muted-foreground">{selectedUsageText}</span>
+      {selectedUsageText ? (
+        <span className="text-muted-foreground">{selectedUsageText}</span>
+      ) : null}
+      {accountLine ? (
+        <span className="break-words text-muted-foreground" data-model-chip-account="">
+          {accountLine}
+        </span>
+      ) : null}
     </span>
   ) : (
     triggerTooltipContent
@@ -357,7 +371,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                     allModelNames ??
                     (selectedUsageLabel ? `${triggerName}, ${selectedUsageLabel}` : undefined)
                   }
-                  {...(selectedUsageText ? { "aria-describedby": usageDescriptionId } : {})}
+                  {...(usageDescription ? { "aria-describedby": usageDescriptionId } : {})}
                   size={size}
                   data-chat-provider-model-picker="true"
                   data-model-state={state?.kind}
@@ -504,9 +518,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   </Badge>
                 ) : null}
               </span>
-              {selectedUsageText ? (
+              {usageDescription ? (
                 <span id={usageDescriptionId} hidden>
-                  {selectedUsageText}
+                  {usageDescription}
                 </span>
               ) : null}
             </PopoverTrigger>
@@ -520,7 +534,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         // Stay above or below the chip. The list is taller than either side before
         // its max height applies, and a sideways fallback detaches it from the chip.
         collisionAvoidance={PICKER_COLLISION_AVOIDANCE}
-        className="before:hidden"
+        className="max-h-(--available-height) before:hidden"
         padding="none"
       >
         {showingSecondary && props.secondaryView ? (

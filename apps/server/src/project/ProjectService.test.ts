@@ -1273,7 +1273,7 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("adds folders while work runs but requires idle work to remove or change them", () =>
+it.effect("changes folder access while work runs but waits to move the main folder", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1327,14 +1327,11 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
         commandId: CommandId.make(id),
         workspaceSettings: { expectedRevision: revision, environment },
       });
-    const expectDenied = (id: string, environment: ProjectEnvironmentSettings) =>
+    const saveNext = (id: string, environment: ProjectEnvironmentSettings) =>
       Effect.gen(function* () {
-        const denied = yield* save(id, environment).pipe(Effect.flip);
-        assert.equal(denied._tag, "ProjectRequestDeniedError");
-        assert.equal(
-          denied._tag === "ProjectRequestDeniedError" && denied.reason,
-          "environment_active",
-        );
+        const saved = yield* save(id, environment);
+        revision = saved.workspaceSettings?.revision ?? 0;
+        assert.deepEqual(saved.workspaceSettings?.environment, environment);
       });
     // Additive: a running turn keeps its starting folders; the new one applies next turn.
     const added = yield* save("active-env-add", { additionalFolders: [extra], repositories: [] });
@@ -1355,22 +1352,23 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
       additionalFolders: [second, extra],
       repositories: [repository],
     });
-    // Removals and path changes can pull a folder from under the running turn.
-    yield* expectDenied("active-env-remove", {
+    // Removing or re-pointing applies from the next turn too; it is how a stale entry is
+    // fixed, so it never waits for the coordinator to go idle.
+    yield* saveNext("active-env-remove", {
       additionalFolders: [extra],
       repositories: [repository],
     });
-    yield* expectDenied("active-env-repo-path", {
+    yield* saveNext("active-env-repo-path", {
       additionalFolders: [second, extra],
       repositories: [{ ...repository, localPath: `${extra}/moved` }],
     });
-    yield* expectDenied("active-env-repo-drop", {
+    yield* saveNext("active-env-repo-drop", {
       additionalFolders: [second, extra],
       repositories: [],
     });
     pending = true;
-    yield* expectDenied("active-env-remove-pending", {
-      additionalFolders: [second],
+    yield* saveNext("active-env-remove-pending", {
+      additionalFolders: [second, extra],
       repositories: [repository],
     });
     pending = false;
@@ -1394,6 +1392,33 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
     assert.equal(saved.workspaceSettings?.goal, "Still editable");
     assert.deepEqual(saved.workspaceSettings?.environment, {
       additionalFolders: [second, extra],
+      repositories: [repository],
+    });
+    revision = saved.workspaceSettings?.revision ?? 0;
+    // Settings sends the whole form. An unchanged environment is not re-checked, so a goal
+    // edit still saves after an approved folder went missing.
+    yield* fs.remove(second, { recursive: true });
+    const goalOnly = yield* service.update({
+      projectId,
+      commandId: CommandId.make("active-goal-stale-folder"),
+      workspaceSettings: {
+        expectedRevision: revision,
+        goal: "Saved despite a stale folder",
+        environment: { additionalFolders: [second, extra], repositories: [repository] },
+      },
+    });
+    assert.equal(goalOnly.workspaceSettings?.goal, "Saved despite a stale folder");
+    revision = goalOnly.workspaceSettings?.revision ?? 0;
+    // An edited environment is checked, and the refusal names the entry and the fix.
+    const stale = yield* save("active-env-stale", {
+      additionalFolders: [second],
+      repositories: [],
+    }).pipe(Effect.flip);
+    assert.equal(stale._tag, "ProjectEnvironmentError");
+    assert.include(stale.message, second);
+    assert.include(stale.message, "Environment settings");
+    yield* saveNext("active-env-drop-stale", {
+      additionalFolders: [extra],
       repositories: [repository],
     });
     // A folder change that leaves the busy thread where it runs does not wait for it,
@@ -1421,32 +1446,6 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
     assert.equal(moved.workspaceRoot, elsewhere);
   }).pipe(Effect.provide(layerProjectServiceDependencies), Effect.provide(NodeServices.layer)),
 );
-
-it("isAdditiveEnvironmentChange accepts only kept approvals plus new ones", () => {
-  const repo = { id: "app", url: "https://github.com/acme/app", localPath: "/work/app" };
-  const prior: ProjectEnvironmentSettings = {
-    additionalFolders: ["/work/a", "/work/b"],
-    repositories: [repo],
-  };
-  const additive = ProjectService.isAdditiveEnvironmentChange;
-  assert.isTrue(additive(prior, prior));
-  assert.isTrue(additive(prior, { ...prior, additionalFolders: ["/work/b", "/work/a"] }));
-  assert.isTrue(
-    additive(prior, {
-      additionalFolders: ["/work/a", "/work/b", "/work/c"],
-      repositories: [repo, { id: "lib", url: "https://github.com/acme/lib", localPath: null }],
-    }),
-  );
-  assert.isTrue(additive({ additionalFolders: [], repositories: [] }, prior));
-  assert.isFalse(additive(prior, { ...prior, additionalFolders: ["/work/a"] }));
-  assert.isFalse(additive(prior, { ...prior, additionalFolders: ["/work/a", "/work/B"] }));
-  assert.isFalse(additive(prior, { ...prior, repositories: [] }));
-  assert.isFalse(
-    additive(prior, { ...prior, repositories: [{ ...repo, url: "https://github.com/acme/fork" }] }),
-  );
-  assert.isFalse(additive(prior, { ...prior, repositories: [{ ...repo, localPath: null }] }));
-  assert.isFalse(additive(prior, { ...prior, repositories: [{ ...repo, id: "renamed" }] }));
-});
 
 it.effect("an explicit environment save canonicalizes a legacy symlink primary folder", () =>
   Effect.gen(function* () {
@@ -1488,7 +1487,7 @@ it.effect("an explicit environment save canonicalizes a legacy symlink primary f
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("rejects implicit root reapproval in goal saves, including an unchanged root field", () =>
+it.effect("never reapproves a replaced root from a goal save or a repeated root field", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -1519,27 +1518,39 @@ it.effect("rejects implicit root reapproval in goal saves, including an unchange
       });
       yield* fs.rename(main, path.join(root, "retained"));
       yield* fs.symlink(outside, main);
-      for (const repeatRoot of [false, true]) {
-        const denied = yield* service
-          .update({
-            projectId,
-            commandId: CommandId.make(`reapproval-goal-${repeatRoot}`),
-            ...(repeatRoot ? { workspaceRoot: main } : {}),
-            workspaceSettings: { expectedRevision: 1, goal: "Ordinary goal change", environment },
-          })
-          .pipe(Effect.flip);
-        assert.equal(denied._tag, "ProjectEnvironmentError");
-        assert.equal(denied._tag === "ProjectEnvironmentError" && denied.code, "path_not_approved");
-        const stored = Option.getOrThrow(yield* service.getById(projectId));
-        assert.equal(stored.workspaceRoot, approved.workspaceRoot);
-        assert.deepEqual(stored.workspaceSettings, approved.workspaceSettings);
-      }
+      // The form resends the unchanged environment with a goal edit. That approves nothing:
+      // the stored root and folders stay as they were, and runs still refuse the new link.
+      const goal = yield* service.update({
+        projectId,
+        commandId: CommandId.make("reapproval-goal"),
+        workspaceSettings: { expectedRevision: 1, goal: "Ordinary goal change", environment },
+      });
+      assert.equal(goal.workspaceRoot, approved.workspaceRoot);
+      assert.equal(goal.workspaceSettings?.goal, "Ordinary goal change");
+      assert.deepEqual(
+        goal.workspaceSettings?.environment,
+        approved.workspaceSettings?.environment,
+      );
+      // Naming the root again is an explicit save, so it must match the approved real path.
+      const denied = yield* service
+        .update({
+          projectId,
+          commandId: CommandId.make("reapproval-goal-root"),
+          workspaceRoot: main,
+          workspaceSettings: { expectedRevision: 2, goal: "Second goal change", environment },
+        })
+        .pipe(Effect.flip);
+      assert.equal(denied._tag, "ProjectEnvironmentError");
+      assert.equal(denied._tag === "ProjectEnvironmentError" && denied.code, "path_not_approved");
+      const stored = Option.getOrThrow(yield* service.getById(projectId));
+      assert.equal(stored.workspaceRoot, approved.workspaceRoot);
+      assert.deepEqual(stored.workspaceSettings, goal.workspaceSettings);
       const cleared = yield* service
         .update({
           projectId,
           commandId: CommandId.make("reapproval-clear"),
           workspaceSettings: {
-            expectedRevision: 1,
+            expectedRevision: 2,
             environment: { additionalFolders: [], repositories: [] },
           },
         })
@@ -1547,16 +1558,16 @@ it.effect("rejects implicit root reapproval in goal saves, including an unchange
       assert.equal(cleared._tag, "ProjectEnvironmentError");
       assert.deepEqual(
         Option.getOrThrow(yield* service.getById(projectId)).workspaceSettings,
-        approved.workspaceSettings,
+        goal.workspaceSettings,
       );
       const explicitlyChanged = yield* service.update({
         projectId,
         commandId: CommandId.make("reapproval-real-path"),
         workspaceRoot: outside,
-        workspaceSettings: { expectedRevision: 1, environment },
+        workspaceSettings: { expectedRevision: 2, environment },
       });
       assert.equal(explicitlyChanged.workspaceRoot, outside);
-      assert.equal(explicitlyChanged.workspaceSettings?.revision, 2);
+      assert.equal(explicitlyChanged.workspaceSettings?.revision, 3);
     }).pipe(Effect.provide(layerTest));
   }).pipe(Effect.provide(NodeServices.layer)),
 );

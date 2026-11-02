@@ -24,7 +24,6 @@ import {
   ProjectId,
   type Project,
   type ProjectCreatePayload,
-  type ProjectEnvironmentSettings,
   type ProjectOrigin,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
@@ -182,29 +181,6 @@ export function threadHasActiveWork(
   );
 }
 
-/**
- * True when `next` keeps every prior approval exactly and only appends folders or
- * repositories. Both sides must be normalized (canonical paths), so a prior folder whose
- * real path moved does not count as kept. Adding does not affect turns in flight: the
- * environment is read when each turn starts.
- */
-export function isAdditiveEnvironmentChange(
-  prior: ProjectEnvironmentSettings,
-  next: ProjectEnvironmentSettings,
-): boolean {
-  const folders = new Set(next.additionalFolders);
-  const repositories = new Map(next.repositories.map((repository) => [repository.id, repository]));
-  return (
-    prior.additionalFolders.every((folder) => folders.has(folder)) &&
-    prior.repositories.every((repository) => {
-      const kept = repositories.get(repository.id);
-      return (
-        kept !== undefined && kept.url === repository.url && kept.localPath === repository.localPath
-      );
-    })
-  );
-}
-
 export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
   "ProjectNotFoundError",
   { projectId: ProjectId },
@@ -289,7 +265,7 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
       case "confirmation_required":
         return "Type the project name exactly to confirm deletion.";
       case "environment_active":
-        return "Stop active project work before removing or changing folder access. Adding a folder works while threads run.";
+        return "Stop active project work before moving the project to another main folder. Approved folders can change while threads run.";
       case "active_work":
         return "Finish or stop active project work before deleting the project.";
       case "name_taken":
@@ -778,7 +754,13 @@ export const make = Effect.gen(function* () {
         existing.value.workspaceSettings?.environment ??
         DEFAULT_PROJECT_WORKSPACE_SETTINGS.environment;
       const changedRoot = workspaceRoot !== previousRoot;
-      const suppliedEnvironment = input.workspaceSettings?.environment;
+      // Settings sends the whole form, so an unchanged environment means "not edited": it must
+      // not re-check folder access when only the goal or another field changed.
+      const suppliedEnvironment =
+        input.workspaceSettings?.environment !== undefined &&
+        stringifyJson(input.workspaceSettings.environment) !== stringifyJson(priorEnvironment)
+          ? input.workspaceSettings.environment
+          : undefined;
       const requestedEnvironment =
         suppliedEnvironment ??
         existing.value.workspaceSettings?.environment ??
@@ -831,21 +813,19 @@ export const make = Effect.gen(function* () {
       if (
         input.requireUnchangedEnvironmentPaths &&
         (workspaceRoot !== previousRoot ||
-          JSON.stringify(environment) !== JSON.stringify(requestedEnvironment))
+          JSON.stringify(environment ?? requestedEnvironment) !==
+            JSON.stringify(requestedEnvironment))
       ) {
         return yield* new ProjectEnvironmentError({
           projectId: input.projectId,
           code: "import_changed",
         });
       }
-      // Removing or changing an approval can pull a folder from under a running turn; adding
-      // one only applies from the next turn, so it does not wait for active work.
-      if (
-        workspaceRoot !== previousRoot ||
-        (environment !== undefined &&
-          stringifyJson(environment) !== stringifyJson(priorEnvironment) &&
-          !isAdditiveEnvironmentChange(priorEnvironment, environment))
-      ) {
+      // Folder approvals are read when each turn starts, so any change to them (adding,
+      // removing or re-pointing) applies from the next turn and never waits for active work.
+      // Narrowing must stay possible while threads run: it is how a stale entry gets fixed.
+      // Moving the main folder still waits, because running turns execute inside it.
+      if (workspaceRoot !== previousRoot) {
         const snapshot = yield* threadProjections.getShellSnapshot().pipe(
           Effect.mapError(
             (cause) =>

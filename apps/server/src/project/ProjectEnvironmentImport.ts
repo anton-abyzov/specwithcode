@@ -12,7 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ProcessRunner from "../processRunner.ts";
-import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
+import { resolveCanonicalProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
 import { repositoryInspectionEnv } from "./ProjectRepositoryInspection.ts";
 
 const configSchema = Schema.Struct({
@@ -51,19 +51,11 @@ export const previewWorkspaceImport = (input: {
     const runner = yield* ProcessRunner.ProcessRunner;
     const fail = (code: ProjectEnvironmentError["code"]) =>
       new ProjectEnvironmentError({ projectId: input.projectId, code });
-    const resolved = yield* resolveProjectEnvironment(
+    const resolved = yield* resolveCanonicalProjectEnvironment(
       input.projectId,
       input.workspaceRoot,
       input.environment,
     );
-    if (
-      resolved.additionalFolders.some(
-        (folder, i) => folder !== input.environment.additionalFolders[i],
-      ) ||
-      ((resolved.additionalFolders.length > 0 || resolved.repositories.length > 0) &&
-        resolved.workspaceRoot !== input.workspaceRoot)
-    )
-      return yield* fail("path_not_approved");
     const roots = [resolved.workspaceRoot, ...resolved.additionalFolders];
     const inside = (root: string, child: string) => {
       const relative = path.relative(root, child);

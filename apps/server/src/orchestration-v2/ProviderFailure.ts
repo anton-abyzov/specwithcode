@@ -61,6 +61,7 @@ export function shouldHoldQueueAfterFailure(input: {
 }
 
 const isProjectEnvironmentCode = Schema.is(ProjectEnvironmentError.fields.code);
+const isProjectEnvironmentError = Schema.is(ProjectEnvironmentError);
 
 /** Reconstruct guidance from the closed code set, never trust a cause-provided message. */
 function projectEnvironmentCode(
@@ -219,11 +220,14 @@ function causeMessage(cause: unknown): string | undefined {
         case "ProjectEnvironmentError":
           const projectCode = projectEnvironmentCode(cause);
           if (projectCode !== undefined) {
+            // Only the server's own error carries a trusted detail naming the folder and the fix.
+            const detail = isProjectEnvironmentError(cause) ? cause.detail : undefined;
             return projectCode === "unsupported_provider"
               ? "This provider cannot use additional project folders under the current permissions. For ACP, select Full access without a restrictive sandbox or approval override, use a provider that supports folder grants, or remove the extra folders in Project settings."
               : new ProjectEnvironmentError({
                   projectId: "diagnostic-project" as ProjectEnvironmentError["projectId"],
                   code: projectCode,
+                  ...(detail === undefined ? {} : { detail }),
                 }).message;
           }
           break;

@@ -9,6 +9,7 @@ import {
   needsPortableChildContext,
 } from "./ChildContinuationContext.ts";
 import * as Path from "effect/Path";
+import { makeEnvironmentSkipNotice } from "../project/ProjectEnvironmentNotice.ts";
 import { makeEnvironmentRuntime } from "../project/ProjectEnvironmentRuntime.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
 import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
@@ -256,6 +257,7 @@ export const layer: Layer.Layer<
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const environmentRuntime = yield* makeEnvironmentRuntime;
+    const environmentSkipNotice = yield* makeEnvironmentSkipNotice;
     const fileSystem = yield* FileSystem.FileSystem;
     const projects = yield* ProjectService.ProjectService;
     const worktreeRestoreContext = yield* Effect.context<
@@ -1346,7 +1348,11 @@ export const layer: Layer.Layer<
       });
       // An answer to a question reads, for the agent, with the questions it answers.
       const userText = yield* withAskedQuestions(projectionStore, message, composedUserText);
-      const environmentSession = environmentRuntime(session, projects.getById);
+      const environmentSession = environmentRuntime(
+        session,
+        projects.getById,
+        environmentSkipNotice(run.providerInstanceId),
+      );
       const contextSession = Option.isSome(projectContextService)
         ? withProjectContext(environmentSession, projectContextService.value)
         : environmentSession;

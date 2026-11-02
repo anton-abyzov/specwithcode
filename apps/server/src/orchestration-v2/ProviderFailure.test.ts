@@ -220,6 +220,20 @@ it("reconstructs project environment diagnostics without reading supplied text",
   assert.notInclude(failure.message, "private-provider-text");
 });
 
+it("keeps the folder and the fix a project environment failure names", () => {
+  const projectId = ProjectId.make("project:moved-root");
+  const detail =
+    "The project folder /work/app now leads to /work/app-renamed. Move the project to its new folder in project settings.";
+  const failure = makeProviderFailure({
+    cause: new ProjectEnvironmentError({ projectId, code: "path_not_approved", detail }),
+  });
+  assert.equal(failure.message, detail);
+  const forged = makeProviderFailure({
+    cause: { _tag: "ProjectEnvironmentError", projectId, code: "path_not_approved", detail: "x" },
+  });
+  assert.notEqual(forged.message, "x");
+});
+
 it("does not trust unknown project environment codes", () => {
   for (const cause of [
     { _tag: "ProjectEnvironmentError", projectId: "p", code: "provider-secret" },

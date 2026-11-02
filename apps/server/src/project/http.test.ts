@@ -64,7 +64,7 @@ it.effect.each([
   [
     "environment_active",
     "project_environment_active",
-    "Stop active project work before removing or changing folder access. Adding a folder works while threads run.",
+    "Stop active project work before moving the project to another main folder. Approved folders can change while threads run.",
   ],
 ] as const)("preserves actionable denial %s across HTTP and RPC", ([reason, httpReason, message]) =>
   Effect.gen(function* () {

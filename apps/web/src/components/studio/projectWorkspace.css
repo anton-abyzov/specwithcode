@@ -1057,6 +1057,9 @@
     margin-right: auto;
     color: var(--desk-muted);
   }
+  & > span.project-settings-footer-error {
+    color: var(--destructive-foreground);
+  }
   @media (max-width: 760px) {
     padding: 10px 14px;
   }

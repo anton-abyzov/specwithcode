@@ -198,19 +198,39 @@ const scenarioProviders = (scenario: string): ServerProvider[] => [
       { slug: "claude-opus-5-5", name: "Claude Opus 5.5", badge: "new" },
       { slug: "claude-fable-5-1", name: "Claude Fable 5.1" },
       { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", badge: "new" },
+      // A list far taller than the picker's cap, as a real provider's is.
+      ...(scenario === "long-list"
+        ? Array.from({ length: 30 }, (_, index) => ({
+            slug: `claude-older-${index}`,
+            name: `Claude Older ${index}`,
+          }))
+        : []),
     ],
     claudeLimits(scenario),
     scenario === "chip-pertoken"
       ? { auth: { status: "authenticated", type: "apiKey", label: "Claude API key" } as never }
       : scenario.startsWith("chip-")
-        ? { auth: { status: "authenticated", type: "subscription", label: "Claude Max" } as never }
+        ? {
+            auth: {
+              status: "authenticated",
+              type: "subscription",
+              label: "Claude Max",
+              email: "pat@example.com",
+            } as never,
+          }
         : scenario === "warning"
           ? { status: "warning", message: "Usage probe warning" }
           : scenario === "signed-out"
             ? { status: "warning", auth: { status: "unauthenticated" } }
             : scenario === "not-installed"
               ? { status: "warning", installed: false }
-              : {},
+              : {
+                  auth: {
+                    status: "authenticated",
+                    type: "subscription",
+                    email: "pat@example.com",
+                  } as never,
+                },
   ),
   // Claude models through GitHub Copilot: another account, no usage reported.
   provider(

@@ -20,8 +20,10 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as Environment from "./ProjectEnvironmentService.ts";
 import {
+  describeProjectEnvironmentProblem,
   normalizeProjectEnvironment,
   resolveProjectEnvironment,
+  resolveProjectEnvironmentForRun,
 } from "./ProjectEnvironmentPaths.ts";
 
 const storage = ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
@@ -307,6 +309,53 @@ it.layer(layer, { excludeTestServices: true })("project environment real Git", (
           "path_not_approved",
         );
       }),
+  );
+  it.effect("a run skips each unusable entry by name and keeps the healthy ones", () =>
+    Effect.gen(function* () {
+      const x = yield* setup;
+      const gone = `${x.external}-gone`;
+      const linked = `${x.main}-link`;
+      yield* x.fs.symlink(x.external, linked);
+      const environment = {
+        additionalFolders: [x.external, gone, linked],
+        repositories: [{ id: "far", url, localPath: `${x.root}/far` }],
+      };
+      const resolved = yield* resolveProjectEnvironmentForRun(x.projectId, x.main, environment);
+      assert.equal(resolved.workspaceRoot, x.main);
+      assert.deepEqual(resolved.additionalFolders, [x.external]);
+      assert.deepEqual(resolved.repositories, []);
+      assert.deepEqual(
+        resolved.problems.map((problem) => [problem.path, problem.reason]),
+        [
+          [gone, "missing"],
+          [linked, "moved"],
+          [`${x.root}/far`, "outside"],
+        ],
+      );
+      assert.include(
+        describeProjectEnvironmentProblem(resolved.problems[1]!),
+        `${linked} now leads to ${x.external}`,
+      );
+      // One line per entry: control characters in a folder name cannot fake more lines.
+      assert.equal(
+        describeProjectEnvironmentProblem({ kind: "folder", path: "/a\nb", reason: "missing" }),
+        "Approved folder /a\\u000ab is missing or is not a folder. Update or remove it in the project's Environment settings.",
+      );
+      // A save still refuses the first bad entry, and says which one and what to do.
+      const refused = yield* resolveProjectEnvironment(x.projectId, x.main, {
+        additionalFolders: [x.external, gone],
+        repositories: [],
+      }).pipe(Effect.flip);
+      assert.equal(refused.code, "path_not_approved");
+      assert.include(refused.message, gone);
+      assert.include(refused.message, "Environment settings");
+      const missingRoot = yield* resolveProjectEnvironmentForRun(
+        x.projectId,
+        `${x.main}-missing`,
+        environment,
+      ).pipe(Effect.flip);
+      assert.equal(missingRoot.code, "path_not_approved");
+    }),
   );
   it.effect("rejects concurrent preparation replay and purges receipts on project deletion", () =>
     Effect.gen(function* () {

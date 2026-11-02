@@ -38,6 +38,7 @@ const entry = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   displayName: "Claude",
   snapshot: {
+    auth: { status: "authenticated", email: "pat@example.com" },
     usageLimits: { checkedAt: iso(now - 60_000), windows },
   } as unknown as ServerProvider,
 } as unknown as ProviderInstanceEntry;
@@ -69,6 +70,7 @@ describe("ModelPickerUsageBand", () => {
     expect(markup).toContain(">Fable weekly<");
     expect(markup).not.toContain("Session");
     expect(markup).not.toContain("Weekly · Fable");
+    expect(markup).toContain("Signed in as pat@example.com");
   });
 
   it("shows no bars from the previous account while the account switches", () => {

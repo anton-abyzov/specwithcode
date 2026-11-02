@@ -339,6 +339,92 @@ try {
       if (width >= 1280) assert.ok(Math.abs(placement.left) <= 2, "picker not aligned to chip");
       await page.screenshot({ path: join(output, `placement-${width}-${theme}.png`) });
       checks.push(`${width}px ${theme}: short window keeps the picker above its chip`);
+
+      // One placement from the first visible frame: the picker never opens high and
+      // settles. Sampled with motion on, every animation frame, in a tall window where
+      // the whole list is far taller than the picker's own cap.
+      for (const height of [860, 560]) {
+        const motion = await browser.newContext({
+          timezoneId: "America/New_York",
+          locale: "en-US",
+        });
+        await motion.clock.setFixedTime(NOW);
+        const live = await motion.newPage();
+        await live.route("**/*", (route) =>
+          route.request().url().startsWith(origin) ? route.continue() : route.abort(),
+        );
+        await live.setViewportSize({ width, height });
+        await live.goto(`${origin}/?case=long-list&theme=${theme}`);
+        await live.evaluate(() => {
+          window.__frames = [];
+          const sample = () => {
+            const picker = document.querySelector("[data-model-picker-content]");
+            if (picker) {
+              const box = picker.getBoundingClientRect();
+              const popup = picker.closest("[data-slot=popover-popup]");
+              window.__frames.push({
+                bottom: box.bottom,
+                left: box.left,
+                visible: Number(getComputedStyle(popup).opacity) > 0.02,
+              });
+            }
+            requestAnimationFrame(sample);
+          };
+          sample();
+        });
+        await live.locator("[data-chat-provider-model-picker]").click();
+        await live.locator("[data-model-picker-content]").waitFor();
+        await live.waitForTimeout(600);
+        const frames = (await live.evaluate(() => window.__frames)).filter((f) => f.visible);
+        assert.ok(frames.length > 3, "too few frames sampled");
+        const rest = frames.at(-1);
+        // The opening scale moves the edges by under 4% of the width; the chip's edge stays.
+        const worst = Math.max(...frames.map((f) => Math.abs(f.bottom - rest.bottom)));
+        assert.ok(worst <= 4, `picker jumps ${worst}px vertically while opening at ${height}px`);
+        await motion.close();
+      }
+      // The cause of that jump, directly: Base UI measures with --available-height set to
+      // max-content, and the size it measures must be the size the picker rests at.
+      await page.setViewportSize({ width, height: 860 });
+      await page.goto(`${origin}/?case=long-list&theme=${theme}`);
+      await page.locator("[data-chat-provider-model-picker]").click();
+      await page.locator("[data-model-picker-content]").waitFor();
+      await settle();
+      const heights = await page.evaluate(() => {
+        const picker = document.querySelector("[data-model-picker-content]");
+        const positioner = picker.closest("[data-slot=popover-positioner]");
+        const resting = picker.getBoundingClientRect().height;
+        positioner.style.setProperty("--available-height", "max-content");
+        const measuring = picker.getBoundingClientRect().height;
+        return { resting, measuring };
+      });
+      assert.equal(heights.measuring, heights.resting, "measured height differs from resting");
+      checks.push(`${width}px ${theme}: picker opens once, in its final position`);
+
+      // The chip's tooltip and the usage band name the account the provider reports.
+      await page.setViewportSize({ width, height: 860 });
+      await page.goto(`${origin}/?case=room&selected-claude=1&theme=${theme}`);
+      const chip = page.locator("[data-chat-provider-model-picker]");
+      await chip.hover();
+      await page.locator("[data-model-chip-account]").waitFor();
+      assert.equal(
+        await page.locator("[data-model-chip-account]").textContent(),
+        "Signed in as pat@example.com",
+      );
+      await chip.click();
+      await rail("Claude").first().click();
+      await page.locator("[data-model-picker-band-account]").first().waitFor();
+      assert.equal(
+        await page.locator("[data-model-picker-band-account]").first().textContent(),
+        "Signed in as pat@example.com",
+      );
+      await rail("Codex").first().click();
+      await page
+        .locator("[data-model-picker-band-account]")
+        .filter({ hasText: "Codex does not report an account email" })
+        .waitFor();
+      await page.screenshot({ path: join(output, `account-${width}-${theme}.png`) });
+      checks.push(`${width}px ${theme}: account email shown, or said to be unreported`);
     }
   }
   assert.deepEqual(errors, []);
