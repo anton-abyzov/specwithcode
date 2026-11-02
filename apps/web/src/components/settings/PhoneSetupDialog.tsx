@@ -207,7 +207,7 @@ function ConnectFirstContent(props: {
       <DialogPanel>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
           <li>
-            On this computer, check Use SpecWithCode on your phone. If it does not say this computer
+            On this computer, check Your phones. If it does not say this computer
             is ready for your iPhone yet, sign in there and turn it on.
           </li>
           <li>On the iPhone, open SpecWithCode and sign in with the same account.</li>

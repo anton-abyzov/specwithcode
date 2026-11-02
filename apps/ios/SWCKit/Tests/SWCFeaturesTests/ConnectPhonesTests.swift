@@ -46,6 +46,17 @@ struct ConnectPhonesTests {
     #expect(ConnectPhone(id: "x", label: "Phone").settingsSubtitle(now: now) == nil)
   }
 
+  @Test func aPhoneThatCanOnlySayIPhoneShowsItsModel() {
+    let duo = ConnectPhone(id: "d", label: "iPhone", model: "iPhone Duo", appVersion: "0.1.4", isThisPhone: true)
+    #expect(duo.title == "iPhone Duo")
+    #expect(duo.settingsSubtitle() == "App 0.1.4")
+    let dev = ConnectPhone(id: "v", label: "iPhone", model: "iPhone Duo", appVersion: "0.1.1", iosMajorVersion: 27, isDevBuild: true, isThisPhone: true)
+    #expect(dev.settingsSubtitle() == "iOS 27 · App 0.1.1 (dev build)")
+    #expect(ConnectPhone(id: "g", label: "iPhone", model: "iPhone").settingsSubtitle() == "Model shows after the app updates")
+    #expect(ConnectPhone(id: "o", label: "iPhone").title == "iPhone")
+    #expect(ConnectPhone(id: "n", label: "Work phone", model: "iPhone 17").title == "Work phone")
+  }
+
   @Test func confirmationNamesThePhone() {
     let this = ConnectPhone(id: "t", label: "Anton's iPhone", isThisPhone: true)
     let other = ConnectPhone(id: "o", label: "Old iPhone")
@@ -65,7 +76,9 @@ struct ConnectPhonesTests {
 
   @Test func modelNamesForKnownAndUnknownHardware() {
     #expect(ConnectDevice.modelName("iPhone17,1") == "iPhone 16 Pro")
-    #expect(ConnectDevice.modelName("iPhone99,9") == "iPhone")
+    #expect(ConnectDevice.modelName("iPhone99,9") == "iPhone99,9")
+    #expect(ConnectDevice.modelName("iPhone19,4") == "iPhone Duo")
+    #expect(ConnectDevice.modelName("iPhone19,2") == "iPhone 18 Pro")
     #expect(ConnectDevice.modelName("arm64") == nil)
     #expect(ConnectDevice.modelName(nil) == nil)
   }

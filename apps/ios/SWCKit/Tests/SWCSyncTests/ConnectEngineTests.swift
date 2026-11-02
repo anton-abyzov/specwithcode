@@ -112,6 +112,13 @@ final class TestKeyStore: DpopKeyStore {
     return Harness(engine: engine, model: model, account: account, relay: relay, machineHTTP: machineHTTP, registry: registry)
   }
 
+  @Test func aBuildWithoutTheEntitlementOffersGoogleOnly() {
+    #expect(ConnectSignInMethod.offered(by: .hosted(offersApple: false)) == [.google])
+    #expect(ConnectSignInMethod.offered(by: .hosted(offersApple: true)) == [.apple, .google])
+    let noMethods = ConnectConfig(publishableKey: "pk_test_x", relayURL: URL(string: "https://relay.example.com")!, offersApple: false)
+    #expect(ConnectSignInMethod.offered(by: noMethods) == [.google])
+  }
+
   @Test func signedInPhoneListsAndConnectsToTheAccountsMac() async throws {
     let h = try await harness()
     #expect(await until { h.model.connect?.macs.first?.isOnline == true })

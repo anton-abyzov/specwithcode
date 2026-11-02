@@ -613,6 +613,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.voiceCallsAllowed !== DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed
         ? ["Voice calls with the coordinator"]
         : []),
+      ...(settings.whatYouCanDoDismissed !== DEFAULT_UNIFIED_SETTINGS.whatYouCanDoDismissed
+        ? ["Show What you can do"]
+        : []),
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
@@ -769,6 +772,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.inputNeededAlertsEnabled,
       settings.keepAwakeWhileWorking,
       settings.voiceCallsAllowed,
+      settings.whatYouCanDoDismissed,
       settings.wordWrap,
       followSystem,
       theme,
@@ -849,6 +853,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       inputNeededAlertsEnabled: DEFAULT_UNIFIED_SETTINGS.inputNeededAlertsEnabled,
       keepAwakeWhileWorking: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileWorking,
       voiceCallsAllowed: DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed,
+      whatYouCanDoDismissed: DEFAULT_UNIFIED_SETTINGS.whatYouCanDoDismissed,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
@@ -2541,6 +2546,17 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+        <SettingsRow
+          {...searchableSetting("what-you-can-do")}
+          description="A short checklist on Overview, ticked from what you have set up. It goes away once everything is done."
+          control={
+            <Switch
+              checked={!settings.whatYouCanDoDismissed}
+              onCheckedChange={(checked) => updateSettings({ whatYouCanDoDismissed: !checked })}
+              aria-label="Show What you can do"
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."

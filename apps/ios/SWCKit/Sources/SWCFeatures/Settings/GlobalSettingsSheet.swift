@@ -85,7 +85,7 @@ private struct GlobalSettingsRoot: View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
       WeaveTextField("My iPhone", text: $deviceLabel, label: "Name of this iPhone")
         .nameInput()
-      Text("Your computers list this phone by this name. It applies the next time you pair.")
+      Text("Your computers list this phone by this name. It applies the next time this app opens.")
         .font(.weave(.caption))
         .foregroundStyle(Color.weave.muted)
         .padding(.horizontal, WeaveSpacing.s4)
@@ -95,6 +95,7 @@ private struct GlobalSettingsRoot: View {
 
   private var about: some View {
     GroupedCard(label: "About", footer: aboutFooter) {
+      WeaveRow("This iPhone", symbol: "iphone", trailingText: Self.thisPhone)
       WeaveRow("Version", symbol: "info.circle", trailingText: Self.version)
       WeaveRow("Privacy policy", subtitle: model.connect == nil ? "Nothing goes through a SpecWithCode server." : nil, symbol: "hand.raised", showsChevron: true) {
         openURL(AppLinks.privacyPolicy)
@@ -108,6 +109,11 @@ private struct GlobalSettingsRoot: View {
       return "Your phone talks straight to the machines you pair. They pass your messages to the AI tools you set up on them."
     }
     return "SpecWithCode Connect signs you in and finds your Macs. Your threads travel over an encrypted connection to your Mac, which passes your messages to the AI tools you set up on it."
+  }
+
+  private static var thisPhone: String {
+    let device = ConnectDevice.current()
+    return "\(device.model ?? "iPhone") · iOS \(device.iosMajorVersion)"
   }
 
   private static var version: String {

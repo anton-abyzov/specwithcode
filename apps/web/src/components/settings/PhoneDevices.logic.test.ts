@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   lastSeenLabel,
   phoneDetail,
+  phoneTitle,
   removedPhoneToast,
   removePhoneDialogCopy,
   sortPhones,
@@ -43,13 +44,17 @@ describe("lastSeenLabel", () => {
 
 describe("phoneDetail", () => {
   it("pairs the model with when it was last seen", () => {
-    expect(phoneDetail(phone(), now)).toBe("iPhone 16 Pro · Last seen 30 minutes ago");
+    expect(phoneDetail(phone(), now)).toBe(
+      "iPhone 16 Pro · App 0.1.1 · Last seen 30 minutes ago",
+    );
   });
 
-  it("falls back to the platform when the app did not report a model", () => {
-    expect(phoneDetail(phone({ model: null }), now)).toBe("iPhone · Last seen 30 minutes ago");
-    expect(phoneDetail(phone({ model: null, platform: "android" }), now)).toBe(
-      "Android phone · Last seen 30 minutes ago",
+  it("says when the app did not report a model", () => {
+    expect(phoneDetail(phone({ model: null, appVersion: null }), now)).toBe(
+      "Model shows after the app updates · Last seen 30 minutes ago",
+    );
+    expect(phoneDetail(phone({ model: null, appVersion: null, platform: "android" }), now)).toBe(
+      "Last seen 30 minutes ago",
     );
   });
 });
@@ -72,6 +77,33 @@ describe("visiblePhones", () => {
     const kept = phone({ deviceId: "kept" });
     const removed = phone({ deviceId: "removed" });
     expect(visiblePhones([kept, removed], new Set(["removed"]))).toEqual([kept]);
+  });
+});
+
+describe("phone identity", () => {
+  it("names a phone by its model when it can only report iPhone", () => {
+    const duo = phone({ label: "iPhone", model: "iPhone Duo", iosMajorVersion: 27, appVersion: "0.1.4" });
+    expect(phoneTitle(duo)).toBe("iPhone Duo");
+    expect(phoneDetail(duo, now)).toBe("iOS 27 · App 0.1.4 · Last seen 30 minutes ago");
+  });
+
+  it("keeps a chosen name and shows the model beside it", () => {
+    const named = phone({ label: "Work phone", model: "iPhone 17 Pro", appVersion: null });
+    expect(phoneTitle(named)).toBe("Work phone");
+    expect(phoneDetail(named, now)).toBe("iPhone 17 Pro · Last seen 30 minutes ago");
+  });
+
+  it("says when an older entry has no exact model yet", () => {
+    for (const model of [null, "iPhone"]) {
+      const old = phone({ label: "iPhone", model, appVersion: null });
+      expect(phoneTitle(old)).toBe("iPhone");
+      expect(phoneDetail(old, now)).toBe("Model shows after the app updates · Last seen 30 minutes ago");
+    }
+  });
+
+  it("marks a dev build", () => {
+    const dev = phone({ bundleId: "com.specwithcode.ios.dev", appVersion: "0.1.1" });
+    expect(phoneDetail(dev, now)).toContain("App 0.1.1 (dev build)");
   });
 });
 

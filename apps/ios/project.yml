@@ -25,6 +25,15 @@ targets:
   SpecWithCode:
     type: application
     platform: iOS
+    preBuildScripts:
+      - name: Require Sign in with Apple in a store archive
+        basedOnDependencyAnalysis: false
+        script: |
+          # App Store guideline 4.8: an archive offering Google must offer Apple too.
+          if [ "$ACTION" = "install" ] && [ -z "$CODE_SIGN_ENTITLEMENTS" ]; then
+            echo "error: Set STUDIO_CODE_SIGN_ENTITLEMENTS=Config/Connect.entitlements before archiving."
+            exit 1
+          fi
     sources:
       - path: App
         excludes:
@@ -53,7 +62,7 @@ targets:
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to SpecWithCode on computers in your home or office network.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         # SpecWithCode Connect. Public values, read from the environment when
-        # the project is generated; empty leaves Connect off. See README.md.
+        # the project is generated; empty uses the hosted service. See README.md.
         SWC_CLERK_PUBLISHABLE_KEY: ${STUDIO_CLERK_PUBLISHABLE_KEY}
         SWC_CLERK_JWT_TEMPLATE: ${STUDIO_CLERK_JWT_TEMPLATE}
         SWC_RELAY_URL: ${STUDIO_RELAY_URL}

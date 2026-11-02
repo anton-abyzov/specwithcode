@@ -115,16 +115,20 @@ public struct ConnectPhoneRecord: Sendable, Hashable, Decodable {
   public var platform: String
   public var model: String?
   public var appVersion: String?
+  public var iosMajorVersion: Int?
+  public var bundleId: String?
   public var lastSeenAt: String
   /// The request came with the Clerk session this phone last used.
   public var current: Bool
 
-  public init(deviceId: String, label: String, platform: String = "ios", model: String? = nil, appVersion: String? = nil, lastSeenAt: String, current: Bool = false) {
+  public init(deviceId: String, label: String, platform: String = "ios", model: String? = nil, appVersion: String? = nil, iosMajorVersion: Int? = nil, bundleId: String? = nil, lastSeenAt: String, current: Bool = false) {
     self.deviceId = deviceId
     self.label = label
     self.platform = platform
     self.model = model
     self.appVersion = appVersion
+    self.iosMajorVersion = iosMajorVersion
+    self.bundleId = bundleId
     self.lastSeenAt = lastSeenAt
     self.current = current
   }

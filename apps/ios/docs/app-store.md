@@ -142,7 +142,7 @@ No account or sign-in is needed. SpecWithCode for iPhone is a remote control for
 
 To review without a computer, use the built-in sample data:
 1. Launch the app. The welcome screen opens.
-2. Tap "Explore with sample data" below "Pair a machine". A "Sample data" bar stays at the top; tap Exit there to leave.
+2. Tap "Explore with sample data" at the bottom of the screen. A "Sample data" bar stays at the top; tap Exit there to leave.
 3. Aide, the personal assistant, opens as a chat. Tap the menu button (top left) for the drawer with projects, recent threads and settings (gear, bottom left).
 4. Tap SpecWeave to open its coordinator chat, then the Threads button (top right) to see threads grouped as Needs you, Working and Idle.
 5. Open "Release 3.1 checklist" to see an approval card with Approve, For session and Deny. The ... menu has Pin, Resolve, Mark unread and Archive.
@@ -192,11 +192,11 @@ The shots use neutral sample names: the main machine is "Office Mac" and the coo
 
 ## When the build includes SpecWithCode Connect
 
-Everything above describes a build without Connect (no `STUDIO_CLERK_PUBLISHABLE_KEY`). A build with Connect lets people create an account and sign in, which changes the submission:
+Every build includes Connect, so this section applies to every submission and replaces what the notes above say about needing no account. Connect lets people create an account and sign in, which changes the submission:
 
 - Demo account (guideline 2.1): App Review needs a working sign-in. Create a dedicated Clerk user (email and password, or an email code App Review can receive) and link it to a Mac that stays online with SpecWithCode running during review, with a sample project. Put the credentials in App Store Connect > App Review Information > Sign-in required, not in the notes text. Sign in with Apple cannot be used as a demo account.
 - Review notes: replace the first paragraph with one that says sign-in is required for real use, names the demo account fields, and says the demo Mac is linked to that account. Keep the sample-data steps (they still work without signing in) and the VPN paragraph, and add: "Sign in with Apple is offered alongside Google and GitHub (guideline 4.8). Settings > Account > Delete account deletes the account in the app (guideline 5.1.1(v))."
-- Sign in with Apple (4.8): it is always the first sign-in method whenever Google or GitHub is offered (`ConnectSignInMethod.offered`).
+- Sign in with Apple (4.8): it is the first sign-in method in a build with `STUDIO_CODE_SIGN_ENTITLEMENTS`, and an archive without that setting fails (`ConnectSignInMethod.offered`).
 - Account deletion (5.1.1(v)): Settings > Account > Delete account calls `DELETE /v1/client/account` on the relay (`RelayClient.deleteAccount`). The relay unlinks the account's Macs, deletes their tunnels and DNS, its mobile devices and push registrations, then the Clerk user; the app then signs out locally. It needs the relay deployed with that endpoint and `CLERK_SECRET_KEY` set.
 - App Privacy: the answer is no longer Data Not Collected. Declare Contact Info (name, email address) and Identifiers (user ID, device ID: the random Connect device id and the APNs token), all linked to the user, used for App Functionality, not for tracking. Update `App/PrivacyInfo.xcprivacy` to match (`NSPrivacyCollectedDataTypes`) in the same release; the Clerk SDK ships its own privacy manifest. The privacy policy's iPhone section must also describe the account, the relay and push notifications.
 - Capabilities: the App ID needs Sign in with Apple and Push Notifications, and the build must be signed with `Config/Connect.entitlements` (README > Sign in with SpecWithCode Connect).

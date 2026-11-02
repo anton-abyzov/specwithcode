@@ -122,7 +122,7 @@ Settings > Account has Sign out and Delete account. Deleting calls the relay's `
 
 ### Build settings
 
-Connect is configured at build time from environment variables that `project.yml` copies into `Info.plist`. Only public values go here; there are no secrets. When `STUDIO_CLERK_PUBLISHABLE_KEY` or `STUDIO_RELAY_URL` is unset or invalid, the app hides Connect and works exactly as before: direct pairing only.
+Connect is configured at build time from environment variables that `project.yml` copies into `Info.plist`. Only public values go here; there are no secrets. When `STUDIO_CLERK_PUBLISHABLE_KEY` or `STUDIO_RELAY_URL` is unset or invalid, the app uses the hosted service, so every build offers sign-in. A build signed without `STUDIO_CODE_SIGN_ENTITLEMENTS` hides Sign in with Apple, which could only fail there, and offers Google.
 
 | Environment variable            | Info.plist key            | Value                                                                                                   |
 | ------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |

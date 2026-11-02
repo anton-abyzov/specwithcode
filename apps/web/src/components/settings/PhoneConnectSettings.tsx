@@ -171,16 +171,14 @@ function ConfiguredPhoneConnectSettings() {
   })();
 
   return (
-    <>
-      <SettingsSection
-        id="phone-connect"
-        title="Use SpecWithCode on your phone"
-        icon={<SmartphoneIcon className="size-4" />}
-      >
-        {row}
-        {authPrompt}
-      </SettingsSection>
+    <SettingsSection
+      id="phone-connect"
+      title="Your phones"
+      icon={<SmartphoneIcon className="size-4" />}
+    >
+      {row}
+      {authPrompt}
       {isSignedIn === true ? <PhoneDevicesSettings /> : null}
-    </>
+    </SettingsSection>
   );
 }

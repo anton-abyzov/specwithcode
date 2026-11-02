@@ -159,6 +159,8 @@ extension LiveEngine {
         label: record.label,
         model: record.model,
         appVersion: record.appVersion,
+        iosMajorVersion: record.iosMajorVersion,
+        isDevBuild: record.bundleId?.hasSuffix(".dev") == true,
         lastSeen: Self.parseDate(record.lastSeenAt),
         isThisPhone: record.current || record.deviceId == connect.deviceId
       )

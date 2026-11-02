@@ -132,6 +132,9 @@ export const RelayPhoneRecord = Schema.Struct({
   platform: RelayAgentAwarenessPlatform,
   model: Schema.NullOr(TrimmedNonEmptyString),
   appVersion: Schema.NullOr(TrimmedNonEmptyString),
+  // Optional so a window newer than the relay still reads its answer.
+  iosMajorVersion: Schema.optional(Schema.NullOr(Schema.Int)),
+  bundleId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   lastSeenAt: TrimmedNonEmptyString,
   current: Schema.Boolean,
 });

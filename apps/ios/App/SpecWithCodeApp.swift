@@ -11,9 +11,9 @@ struct SpecWithCodeApp: App {
 
   init() {
     // The device name is read at each pairing, so a rename needs no relaunch.
-    // Without Connect settings in Info.plist the app pairs directly only.
+    // Only tests that pair with a disposable server leave Connect out.
     AppBootstrap.liveEngineFactory = {
-      let account = ConnectConfig.main().map { ClerkConnectAccount(config: $0) }
+      let account = ProcessInfo.processInfo.arguments.contains("-SWCDirectOnly") ? nil : ClerkConnectAccount(config: ConnectConfig.main())
       return LiveEngine(clientLabel: { DeviceLabel.current() }, account: account)
     }
     _model = State(initialValue: AppBootstrap.makeModel())

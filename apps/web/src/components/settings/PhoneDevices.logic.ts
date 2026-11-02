@@ -30,10 +30,30 @@ export function lastSeenLabel(lastSeenAt: string, nowMs: number): string {
   return `Last seen ${dateFormatter.format(new Date(seenMs))}`;
 }
 
-/** Model and last seen, e.g. "iPhone 16 Pro · Last seen 3 hours ago". */
+/** The marketing model; builds before November 2026 could only report "iPhone" for newer phones. */
+function knownModel(phone: RelayPhoneRecord): string | null {
+  return phone.model && phone.model !== "iPhone" ? phone.model : null;
+}
+
+/** The name the person chose, else the model: most phones can only report "iPhone" as their name. */
+export function phoneTitle(phone: RelayPhoneRecord): string {
+  const generic = phone.label === "iPhone" || phone.label === phone.model;
+  if (!generic) return phone.label;
+  return knownModel(phone) ?? (phone.platform === "ios" ? "iPhone" : "Android phone");
+}
+
+/** Model, OS, app version and last seen, e.g. "iPhone Duo · iOS 27 · App 0.1.4 · Active now". */
 export function phoneDetail(phone: RelayPhoneRecord, nowMs: number): string {
-  const model = phone.model ?? (phone.platform === "ios" ? "iPhone" : "Android phone");
-  return `${model} · ${lastSeenLabel(phone.lastSeenAt, nowMs)}`;
+  const model = knownModel(phone);
+  const parts: Array<string> = [];
+  if (phone.platform === "ios" && model === null) parts.push("Model shows after the app updates");
+  else if (model !== null && phoneTitle(phone) !== model) parts.push(model);
+  if (phone.iosMajorVersion != null) parts.push(`iOS ${phone.iosMajorVersion}`);
+  if (phone.appVersion) {
+    parts.push(`App ${phone.appVersion}${phone.bundleId?.endsWith(".dev") ? " (dev build)" : ""}`);
+  }
+  parts.push(lastSeenLabel(phone.lastSeenAt, nowMs));
+  return parts.join(" · ");
 }
 
 export function removePhoneDialogCopy(phone: RelayPhoneRecord): {
@@ -41,7 +61,7 @@ export function removePhoneDialogCopy(phone: RelayPhoneRecord): {
   readonly description: string;
 } {
   return {
-    title: `Remove ${phone.label}?`,
+    title: `Remove ${phoneTitle(phone)}?`,
     description:
       "It stops getting alerts and can no longer reach your computers. To use it again, sign in to SpecWithCode Connect on that phone.",
   };
@@ -54,11 +74,11 @@ export function removedPhoneToast(
   return result.removed
     ? {
         title: "Phone removed",
-        description: `${phone.label} is signed out and can no longer reach your computers.`,
+        description: `${phoneTitle(phone)} is signed out and can no longer reach your computers.`,
       }
     : {
         title: "Phone already removed",
-        description: `${phone.label} is no longer on your account.`,
+        description: `${phoneTitle(phone)} is no longer on your account.`,
       };
 }
 

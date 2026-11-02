@@ -13,7 +13,7 @@ final class LiveCoordinatorLinkTests: XCTestCase {
   override func setUp() async throws {
     continueAfterFailure = false
     app = XCUIApplication()
-    app.launchArguments = ["-SWCAppearance", "light"]
+    app.launchArguments = ["-SWCAppearance", "light", "-SWCDirectOnly"]
   }
 
   /// Run with `SWC_LIVE_SECOND_LINK`, `SWC_LIVE_SECOND_ENV` and `SWC_LIVE_SECOND_PROJECT`

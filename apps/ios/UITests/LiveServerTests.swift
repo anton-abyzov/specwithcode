@@ -23,7 +23,7 @@ final class LiveServerTests: XCTestCase {
   override func setUp() async throws {
     continueAfterFailure = false
     app = XCUIApplication()
-    app.launchArguments = ["-SWCAppearance", "light"]
+    app.launchArguments = ["-SWCAppearance", "light", "-SWCDirectOnly"]
   }
 
   // MARK: - Tests

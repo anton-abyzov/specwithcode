@@ -482,6 +482,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "what-you-can-do",
+    title: "Show What you can do",
+    to: "/settings/general",
+    searchTerms: ["onboarding checklist getting started tour first steps welcome overview"],
+  },
+  {
     id: "voice-calls",
     title: "Voice calls with the coordinator",
     to: "/settings/general",

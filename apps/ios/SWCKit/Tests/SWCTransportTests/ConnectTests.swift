@@ -317,7 +317,14 @@ enum RelayFixture {
     #expect(ConnectConfig(info: ["SWCClerkPublishableKey": "$(SWC_CLERK_PUBLISHABLE_KEY)", "SWCRelayURL": "https://relay.example.com"]) == nil)
     #expect(ConnectConfig(info: ["SWCClerkPublishableKey": "sk_live_secret", "SWCRelayURL": "https://relay.example.com"]) == nil)
     #expect(ConnectConfig(info: ["SWCClerkPublishableKey": "pk_test_x", "SWCRelayURL": "http://relay.example.com"]) == nil)
-    #expect(ConnectConfig.main(bundle: Bundle(for: FixedKeyStore.self)) == nil)
+  }
+
+  @Test func aBuildWithoutSettingsUsesTheHostedService() {
+    let config = ConnectConfig.main(bundle: Bundle(for: FixedKeyStore.self))
+    #expect(config == .hosted(offersApple: false))
+    #expect(config.publishableKey.hasPrefix("pk_live_"))
+    #expect(config.relayURL.absoluteString == "https://relay.spec-weave.com")
+    #expect(config.oauthProviders == ["google"])
   }
 
   @Test func readsTheBuildSettings() throws {

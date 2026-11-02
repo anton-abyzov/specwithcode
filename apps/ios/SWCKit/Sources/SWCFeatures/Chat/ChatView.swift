@@ -227,8 +227,8 @@ private struct ChatScreen: View {
         transcriptPlaceholder(
           title: machine.recoveryTitle,
           message: machine.recoveryMessage,
-          actionTitle: model.connect != nil && !machine.viaConnect ? "SpecWithCode Connect" : machine.canRetryConnection ? "Reconnect" : nil,
-          action: model.connect != nil && !machine.viaConnect
+          actionTitle: model.connect != nil && (!machine.viaConnect || machine.needsSignIn) ? "SpecWithCode Connect" : machine.canRetryConnection ? "Reconnect" : nil,
+          action: model.connect != nil && (!machine.viaConnect || machine.needsSignIn)
             ? { router.sheet = .globalSettings }
             : machine.canRetryConnection ? { model.engine.reconnect(machineId: machineId) } : nil
         )

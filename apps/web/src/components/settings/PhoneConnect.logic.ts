@@ -19,7 +19,7 @@ export interface PhoneConnectInput {
   readonly managedTunnelActive: boolean;
 }
 
-/** Which single step the "Use SpecWithCode on your phone" card shows. */
+/** Which single step the "Your phones" section shows. */
 export function resolvePhoneConnectStep(input: PhoneConnectInput): PhoneConnectStep {
   if (!input.configured || !input.isDesktop) return "hidden";
   if (!input.authLoaded) return "loading";

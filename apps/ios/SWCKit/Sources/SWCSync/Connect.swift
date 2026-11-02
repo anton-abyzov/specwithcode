@@ -1,8 +1,8 @@
 import Foundation
 import SWCTransport
 
-/// A way to sign in to SpecWithCode Connect. Sign in with Apple is always
-/// offered when any other is (App Store guideline 4.8).
+/// A way to sign in to SpecWithCode Connect. A store build always offers Sign in
+/// with Apple beside any other (App Store guideline 4.8): it carries the entitlement.
 public enum ConnectSignInMethod: String, Sendable, Hashable, CaseIterable, Identifiable {
   case apple, google, github
 
@@ -16,9 +16,11 @@ public enum ConnectSignInMethod: String, Sendable, Hashable, CaseIterable, Ident
     }
   }
 
-  /// The methods a configuration offers, Apple first.
+  /// The methods a configuration offers, Apple first when the build can use it.
   public static func offered(by config: ConnectConfig) -> [ConnectSignInMethod] {
-    [.apple] + config.oauthProviders.compactMap(ConnectSignInMethod.init(rawValue:)).filter { $0 != .apple }
+    let methods = (config.offersApple ? [.apple] : []) + config.oauthProviders.compactMap(ConnectSignInMethod.init(rawValue:)).filter { $0 != .apple }
+    // The sign-in screen must never come up with nothing to tap.
+    return methods.isEmpty ? [.google] : methods
   }
 }
 
@@ -87,16 +89,20 @@ public struct ConnectPhone: Sendable, Hashable, Identifiable {
   public var label: String
   public var model: String?
   public var appVersion: String?
+  public var iosMajorVersion: Int?
+  public var isDevBuild: Bool
   /// Nil when the relay sent a time the app could not read.
   public var lastSeen: Date?
   /// The phone running this app.
   public var isThisPhone: Bool
 
-  public init(id: String, label: String, model: String? = nil, appVersion: String? = nil, lastSeen: Date? = nil, isThisPhone: Bool = false) {
+  public init(id: String, label: String, model: String? = nil, appVersion: String? = nil, iosMajorVersion: Int? = nil, isDevBuild: Bool = false, lastSeen: Date? = nil, isThisPhone: Bool = false) {
     self.id = id
     self.label = label
     self.model = model
     self.appVersion = appVersion
+    self.iosMajorVersion = iosMajorVersion
+    self.isDevBuild = isDevBuild
     self.lastSeen = lastSeen
     self.isThisPhone = isThisPhone
   }

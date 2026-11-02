@@ -84,8 +84,8 @@ Methods the app uses: `server.getConfig`, `orchestration.subscribeShell`,
 
 ## Connect route
 
-Settings come from `Info.plist` (`ConnectConfig.main()`); without them `AppModel.connect` is nil
-and every Connect screen is hidden. The app target supplies a `ConnectAccount` backed by Clerk
+Settings come from `Info.plist` (`ConnectConfig.main()`); without them the app uses the public
+hosted settings. `AppModel.connect` is nil only under `-SWCDirectOnly` and in fixtures. The app target supplies a `ConnectAccount` backed by Clerk
 (`App/ClerkConnectAccount.swift`); `LiveEngine+Connect.swift` does the rest.
 
 - Sign-in: Clerk (Sign in with Apple first, App Store guideline 4.8). The account gives a JWT

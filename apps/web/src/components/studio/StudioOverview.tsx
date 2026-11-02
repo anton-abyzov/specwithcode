@@ -42,6 +42,7 @@ import {
 } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentsWithScope } from "../../state/session";
+import { WhatYouCanDo } from "./WhatYouCanDo";
 import {
   attentionLabel,
   deriveSessions,
@@ -381,6 +382,15 @@ export function StudioOverview() {
               starting work.
             </p>
           )}
+          <WhatYouCanDo
+            known={bootstrapped && isReady}
+            hasProject={listedGroups.some(
+              (group) => !group.memberProjects.some(isPersonalAssistantProject),
+            )}
+            hasSession={catalogShells.length > 0}
+            hasOtherMachine={environments.length > 1}
+            onNewSession={() => openDraftChooser()}
+          />
           <div className="studio-stat-strip" aria-label="Observed workspace status">
             <Stat
               value={bootstrapped ? String(attention.length) : "—"}

@@ -1,8 +1,8 @@
 import Foundation
 
 /// Public settings for SpecWithCode Connect, read from the app's Info.plist,
-/// which takes them from build settings. Nil when the build has none: the app
-/// then only pairs directly and shows no sign-in.
+/// which takes them from build settings. A build without them uses the hosted
+/// service, so no build ever lands on pairing with no way to sign in.
 public struct ConnectConfig: Sendable, Hashable {
   /// Info.plist keys, set from the `STUDIO_*` build settings in project.yml.
   public enum Key {
@@ -10,6 +10,7 @@ public struct ConnectConfig: Sendable, Hashable {
     public static let jwtTemplate = "SWCClerkJWTTemplate"
     public static let relayURL = "SWCRelayURL"
     public static let oauthProviders = "SWCClerkOAuthProviders"
+    public static let entitlements = "SWCCodeSignEntitlements"
   }
 
   public static let defaultJWTTemplate = "studio-relay"
@@ -23,12 +24,15 @@ public struct ConnectConfig: Sendable, Hashable {
   public var relayURL: URL
   /// Extra sign-in providers after Sign in with Apple, e.g. `google`, `github`.
   public var oauthProviders: [String]
+  /// The build carries the Sign in with Apple entitlement; without it the button can only fail.
+  public var offersApple: Bool
 
-  public init(publishableKey: String, jwtTemplate: String = ConnectConfig.defaultJWTTemplate, relayURL: URL, oauthProviders: [String] = []) {
+  public init(publishableKey: String, jwtTemplate: String = ConnectConfig.defaultJWTTemplate, relayURL: URL, oauthProviders: [String] = [], offersApple: Bool = true) {
     self.publishableKey = publishableKey
     self.jwtTemplate = jwtTemplate
     self.relayURL = relayURL
     self.oauthProviders = oauthProviders
+    self.offersApple = offersApple
   }
 
   /// Reads an Info.plist dictionary. Unset build settings arrive as empty
@@ -53,12 +57,29 @@ public struct ConnectConfig: Sendable, Hashable {
       oauthProviders: (value(Key.oauthProviders) ?? "")
         .split(whereSeparator: { $0 == "," || $0 == " " })
         .map { $0.lowercased() }
-        .filter { !$0.isEmpty && $0 != "apple" }
+        .filter { !$0.isEmpty && $0 != "apple" },
+      offersApple: value(Key.entitlements) != nil
     )
   }
 
-  /// The running app's configuration.
-  public static func main(bundle: Bundle = .main) -> ConnectConfig? {
-    ConnectConfig(info: bundle.infoDictionary ?? [:])
+  /// The hosted service. All of it is public by design.
+  public static func hosted(offersApple: Bool) -> ConnectConfig {
+    ConnectConfig(
+      publishableKey: "pk_live_Y2xlcmsuc3BlYy13ZWF2ZS5jb20k",
+      relayURL: URL(string: "https://relay.spec-weave.com")!,
+      oauthProviders: ["google"],
+      offersApple: offersApple
+    )
+  }
+
+  /// The running app's configuration; a build without its own uses the hosted service.
+  public static func main(bundle: Bundle = .main) -> ConnectConfig {
+    let info = bundle.infoDictionary ?? [:]
+    return ConnectConfig(info: info) ?? hosted(offersApple: isSet(info[Key.entitlements]))
+  }
+
+  private static func isSet(_ value: Any?) -> Bool {
+    guard let text = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+    return !text.isEmpty && !text.hasPrefix("$(")
   }
 }

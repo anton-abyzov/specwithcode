@@ -495,6 +495,8 @@ export const make = Effect.gen(function* () {
           platform: relayMobileDevices.platform,
           model: relayMobileDevices.model,
           appVersion: relayMobileDevices.appVersion,
+          iosMajorVersion: relayMobileDevices.iosMajorVersion,
+          bundleId: relayMobileDevices.bundleId,
           proofKeyThumbprint: relayMobileDevices.proofKeyThumbprint,
           clerkSessionId: relayMobileDevices.clerkSessionId,
           lastSeenAt: relayMobileDevices.lastSeenAt,
@@ -520,6 +522,8 @@ export const make = Effect.gen(function* () {
           platform: row.platform,
           model: row.model,
           appVersion: row.appVersion,
+          iosMajorVersion: row.iosMajorVersion,
+          bundleId: row.bundleId,
           lastSeenAt: row.lastSeenAt ?? row.updatedAt,
           current:
             usesSession(row) ||

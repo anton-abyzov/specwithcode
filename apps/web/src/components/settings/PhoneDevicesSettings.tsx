@@ -4,7 +4,6 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 import type { RelayPhoneRecord } from "@specweave-studio/contracts/relay";
-import { SmartphoneIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { removeManagedRelayPhoneCommand, useManagedRelayPhones } from "~/cloud/managedRelayState";
@@ -24,16 +23,17 @@ import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import {
   phoneDetail,
+  phoneTitle,
   removedPhoneToast,
   removePhoneDialogCopy,
   visiblePhones,
 } from "./PhoneDevices.logic";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsRow } from "./settingsLayout";
 
 /**
  * The phones signed in to this SpecWithCode Connect account, each removable.
  * A removed phone is signed out and stays cut off until it signs in again.
- * Shown only while this window is signed in to Connect.
+ * Rows inside "Your phones", shown only while this window is signed in to Connect.
  */
 export function PhoneDevicesSettings() {
   const phonesState = useManagedRelayPhones();
@@ -130,7 +130,7 @@ export function PhoneDevicesSettings() {
         key={phone.deviceId}
         title={
           <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate">{phone.label}</span>
+            <span className="truncate">{phoneTitle(phone)}</span>
             {phone.current ? (
               <Badge variant="secondary" size="sm">
                 This phone
@@ -157,11 +157,7 @@ export function PhoneDevicesSettings() {
   const pending = confirming !== null && removingDeviceId === confirming.deviceId;
 
   return (
-    <SettingsSection
-      id="phone-devices"
-      title="Your phones"
-      icon={<SmartphoneIcon className="size-4" />}
-    >
+    <>
       {rows}
       <AlertDialog
         open={confirming !== null}
@@ -191,6 +187,6 @@ export function PhoneDevicesSettings() {
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>
-    </SettingsSection>
+    </>
   );
 }

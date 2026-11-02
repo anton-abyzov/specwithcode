@@ -10,7 +10,13 @@ final class ClerkConnectAccount: ConnectAccount {
 
   init(config: ConnectConfig) {
     self.config = config
-    Clerk.configure(publishableKey: config.publishableKey)
+    // The account allows one callback, the store app's. The system hands it back to whichever
+    // build started the sign-in, so a dev build signs in the same way without its own entry.
+    let scheme = "com.specwithcode.ios"
+    Clerk.configure(
+      publishableKey: config.publishableKey,
+      options: .init(redirectConfig: .init(redirectUrl: "\(scheme)://callback", callbackUrlScheme: scheme))
+    )
   }
 
   func load() async {

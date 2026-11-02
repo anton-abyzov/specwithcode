@@ -394,6 +394,8 @@ export const ClientSettingsSchema = Schema.Struct({
   voiceCallsAllowed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Pair this browser with reachable private machines from the server's fleet list on load. */
   autoConnectPrivateMachines: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Overview's "What you can do" checklist was dismissed. Settings > General brings it back. */
+  whatYouCanDoDismissed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   diffColorScheme: DiffColorScheme.pipe(
     Schema.withDecodingDefault(Effect.succeed("red-green" as const)),
   ),
@@ -2505,6 +2507,7 @@ export const ClientSettingsPatch = Schema.Struct({
   keepAwakeWhileWorking: Schema.optionalKey(Schema.Boolean),
   voiceCallsAllowed: Schema.optionalKey(Schema.Boolean),
   autoConnectPrivateMachines: Schema.optionalKey(Schema.Boolean),
+  whatYouCanDoDismissed: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),
   chatWidth: Schema.optionalKey(ChatWidth),
   timelineDetail: Schema.optionalKey(TimelineDetail),
