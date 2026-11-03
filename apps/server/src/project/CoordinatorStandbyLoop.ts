@@ -1,7 +1,9 @@
+import { EnvironmentId, type ProjectId } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -10,6 +12,8 @@ import {
   type AdoptWorkersResult,
   RemoteWorkerAdoption,
 } from "../fleet/RemoteWorkerAdoption.ts";
+import { HandoffPeers } from "../handoff/handoffPeers.ts";
+import { LINKED_SYNC_PROTOCOL_VERSION } from "../handoff/linkedSyncWire.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import {
@@ -25,6 +29,7 @@ import {
   systemMonotonicClock,
 } from "./CoordinatorStandbyWatch.ts";
 import { ProjectLink } from "./ProjectLink.ts";
+import * as ProjectService from "./ProjectService.ts";
 
 /**
  * The standby's loop for automatic coordinator takeover. Every 30 seconds,
@@ -49,6 +54,9 @@ import { ProjectLink } from "./ProjectLink.ts";
 /** The longest wait between two tries of a follow-up still owed. */
 const FOLLOW_UP_BACKOFF_MAX_MS = 30 * 60_000;
 
+/** How long the fire preflight waits for each other member. */
+export const PREFLIGHT_TIMEOUT_MS = 5_000;
+
 export interface StandbyTakeoverDeps {
   readonly watch: {
     readonly tick: Effect.Effect<StandbyWatchTick, CoordinatorStandbyStoreError>;
@@ -67,6 +75,14 @@ export interface StandbyTakeoverDeps {
   ) => Effect.Effect<Pick<AdoptWorkersResult, "unclaimed">>;
   /** Whether a service update holds this machine; a held round does nothing. */
   readonly held: Effect.Effect<boolean>;
+  /**
+   * Before a standby a peer armed fires: the highest epoch another member
+   * reports an active coordinator at, so one armed for a coordinator that
+   * was itself replaced never fires. Without it, nothing is asked.
+   */
+  readonly preflight?: (
+    record: CoordinatorStandbyRecord,
+  ) => Effect.Effect<{ readonly knownHigherEpoch?: number | undefined }>;
 }
 
 export interface StandbyRoundResult {
@@ -142,14 +158,25 @@ export const makeStandbyTakeover = (deps: StandbyTakeoverDeps) => {
         if (nowMs < waiting.atMs) continue;
       } else if (!dueIds.has(record.logicalProjectId) && checked.has(key)) continue;
       checked.add(key);
-      const outcome = yield* deps.autoTakeover({ logicalProjectId: record.logicalProjectId }).pipe(
-        Effect.catch((error) =>
-          failed(key, nowMs, "Coordinator standby could not take over", {
-            logicalProjectId: record.logicalProjectId,
-            error,
-          }).pipe(Effect.as(undefined)),
-        ),
-      );
+      const known =
+        deps.preflight !== undefined &&
+        record.armedBy?.kind === "peer" &&
+        dueIds.has(record.logicalProjectId)
+          ? (yield* deps.preflight(record)).knownHigherEpoch
+          : undefined;
+      const outcome = yield* deps
+        .autoTakeover({
+          logicalProjectId: record.logicalProjectId,
+          ...(known === undefined ? {} : { knownHigherEpoch: known }),
+        })
+        .pipe(
+          Effect.catch((error) =>
+            failed(key, nowMs, "Coordinator standby could not take over", {
+              logicalProjectId: record.logicalProjectId,
+              error,
+            }).pipe(Effect.as(undefined)),
+          ),
+        );
       if (outcome === undefined) continue;
       if (outcome.outcome !== "taken-over") {
         retry.delete(key);
@@ -243,6 +270,9 @@ export const layerWith = (options: StandbyLoopOptions = {}) =>
       const adoption = yield* RemoteWorkerAdoption;
       const environment = yield* ServerEnvironment.ServerEnvironment;
       const updateHold = yield* ServiceUpdateHold.optional;
+      // The peer route, for the fire preflight; a runtime without it asks nobody.
+      const peers = yield* Effect.serviceOption(HandoffPeers);
+      const projects = yield* ProjectService.ProjectService;
       const every = Schedule.spaced(Duration.millis(STANDBY_TICK_MS));
       yield* forkParked(
         Effect.gen(function* () {
@@ -261,6 +291,42 @@ export const layerWith = (options: StandbyLoopOptions = {}) =>
             selfEnvironmentId,
             followUp: adoption.adopt,
             held: updateHold.isHeld,
+            preflight: (record) =>
+              Effect.gen(function* () {
+                if (Option.isNone(peers)) return {};
+                const project = Option.getOrUndefined(
+                  yield* projects
+                    .getById(record.projectId as ProjectId)
+                    .pipe(Effect.orElseSucceed(() => Option.none())),
+                );
+                const others = (project?.workspaceSettings?.logicalProject?.members ?? []).filter(
+                  (member) =>
+                    member.environmentId !== selfEnvironmentId &&
+                    member.environmentId !== record.coordinator.environmentId,
+                );
+                const epochs = yield* Effect.forEach(
+                  others,
+                  (member) =>
+                    peers.value
+                      .linkedDigest(EnvironmentId.make(member.environmentId), {
+                        protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
+                        logicalProjectId: record.logicalProjectId,
+                        projectId: member.projectId,
+                      })
+                      .pipe(
+                        // A member that does not answer soon is not waited for: firing late
+                        // holds up every other project in this round.
+                        Effect.timeout(PREFLIGHT_TIMEOUT_MS),
+                        Effect.map((answer) =>
+                          answer.binding?.state === "active" ? answer.binding.epoch : undefined,
+                        ),
+                        Effect.orElseSucceed(() => undefined),
+                      ),
+                  { concurrency: "unbounded" },
+                );
+                const known = epochs.filter((epoch): epoch is number => epoch !== undefined);
+                return known.length === 0 ? {} : { knownHigherEpoch: Math.max(...known) };
+              }),
           });
           yield* standby.round.pipe(Effect.repeat(every), Effect.asVoid);
         }).pipe(Effect.provideService(CoordinatorStandbyStore, store)),

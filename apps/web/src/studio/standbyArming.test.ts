@@ -9,6 +9,9 @@ import {
   armStandby,
   disarmStandby,
   ensureStandbyGrant,
+  rearmGrantPairs,
+  rearmReadiness,
+  saveRearmList,
   standbyArmingProblem,
   standbyGrantScope,
   standbyWorkerMachines,
@@ -95,6 +98,8 @@ function fakeFleet(
     allowResult?: StudioFleetWorkers | Error;
     revokeFails?: boolean;
     setFails?: Error;
+    /** Machines whose consent write fails. */
+    consentFails?: string[];
     /** The line goes over SpecWithCode Connect: it names its session only once redeemed. */
     overConnect?: boolean;
     /** add fails after the line was redeemed, or its answer is lost. */
@@ -147,6 +152,17 @@ function fakeFleet(
       write: (environmentId, ids) => void pending.set(environmentId, [...ids]),
     },
     acceptStandby: async (environmentId, input) => {
+      if (input.rearm !== undefined) {
+        calls.push(
+          `consent ${environmentId} ${
+            input.rearm === null
+              ? "null"
+              : `${input.rearm.chainId} ${input.rearm.members.map((m) => m.environmentId).join(",")} from ${input.rearm.fromEpoch}`
+          }`,
+        );
+        if (options.consentFails?.includes(environmentId)) throw new Error("Unreachable.");
+        return;
+      }
       calls.push(`accept ${environmentId} ${JSON.stringify(input.standby)}`);
     },
     setStandby: async (environmentId, input) => {
@@ -416,5 +432,178 @@ describe("disarmStandby", () => {
       changeAnyway: false,
     });
     expect(calls).toEqual(["set m4 null", "accept m1 null"]);
+  });
+});
+
+describe("re-arm list", () => {
+  const all = () => true;
+  const access = () => "auto" as const;
+
+  it("pairs every listed machine with every other listed machine and each worker", () => {
+    const pairs = rearmGrantPairs({
+      members: [side("m1", "p-m1"), side("m2", "p-m2"), side("m4", "p-m4")],
+      workers: [m3Worker],
+      access,
+    });
+    expect(pairs.map((pair) => `${pair.from.environmentId}>${pair.on.environmentId}`)).toEqual([
+      "m1>m3",
+      "m1>m2",
+      "m1>m4",
+      "m2>m3",
+      "m2>m1",
+      "m2>m4",
+      "m4>m3",
+      "m4>m1",
+      "m4>m2",
+    ]);
+    // A worker keeps the coordinator's access; a listed machine gets the access given for it.
+    expect(pairs[0]!.on).toEqual(m3Worker);
+    expect(pairs[1]!.on).toEqual({
+      environmentId: M2,
+      projectId: "p-m2",
+      label: "M2",
+      access: "auto",
+    });
+  });
+
+  it("flags an old server, another list, a missing grant and one that cannot renew", () => {
+    const grants: Record<string, StudioFleetWorkers | null> = {
+      "m1>m3": workers(),
+      "m1>m2": workers(),
+      "m2>m3": workers({ status: "expiring", renewable: false }),
+      "m2>m1": workers(),
+      "m4>m3": null,
+    };
+    const readiness = rearmReadiness({
+      members: [side("m1", "p-m1"), side("m2", "p-m2"), side("m4", "p-m4"), side("m3", "p-m3")],
+      workers: [],
+      capable: (environmentId) => environmentId !== "m3",
+      grants: (from, on) => grants[`${from}>${on}`],
+      consents: new Map([
+        [M1, "chain-a"],
+        [M2, "chain-a"],
+        [M4, "chain-b"],
+      ]),
+      chainId: "chain-a",
+    });
+    expect(readiness.map((entry) => [entry.member.environmentId, entry.problem])).toEqual([
+      ["m1", null],
+      ["m2", "expiring"],
+      ["m4", "no_consent"],
+      ["m3", "needs_update"],
+    ]);
+    const missing = rearmReadiness({
+      members: [side("m1", "p-m1"), side("m4", "p-m4")],
+      workers: [],
+      capable: all,
+      grants: (from) => (from === "m4" ? null : undefined),
+      consents: new Map(),
+      chainId: "chain-a",
+    });
+    expect(missing.map((entry) => entry.problem)).toEqual([null, "needs_grant"]);
+  });
+
+  it("grants, then writes the consent on each listed machine, then clears the dropped ones", async () => {
+    const { commands, calls } = fakeFleet();
+    const results = await saveRearmList(commands, {
+      logicalProjectId: "logical:1",
+      standby: side("m1", "p-m1"),
+      afterMinutes: 15,
+      chainId: "7307ab55-fc59-4e07-abeb-de54be69215f",
+      workers: [],
+      plan: {
+        order: [side("m2", "p-m2")],
+        previous: [side("m1", "p-m1"), side("m3", "p-m3")],
+        fromEpoch: 4,
+        capable: all,
+        access,
+      },
+    });
+    expect(calls.filter((call) => call.startsWith("consent"))).toEqual([
+      "consent m1 7307ab55-fc59-4e07-abeb-de54be69215f m1,m2 from 4",
+      "consent m2 7307ab55-fc59-4e07-abeb-de54be69215f m1,m2 from 4",
+      "consent m3 null",
+    ]);
+    expect(calls.indexOf("invite m2 for m1")).toBeLessThan(
+      calls.indexOf(calls.find((c) => c.startsWith("consent"))!),
+    );
+    expect(calls).toContain("invite m1 for m2");
+    expect([...results]).toEqual([
+      [M1, { status: "ready" }],
+      [M2, { status: "ready" }],
+    ]);
+  });
+});
+
+describe("armStandby with a re-arm list", () => {
+  const input = {
+    logicalProjectId: "logical:1",
+    coordinator: side("m4", "p-m4"),
+    epoch: 3,
+    standby: side("m1", "p-m1"),
+    previousStandby: null,
+    afterMinutes: 15 as const,
+    workers: [] as StandbyWorkerMachine[],
+    operationId: "7307ab55-fc59-4e07-abeb-de54be69215f",
+    changeAnyway: false,
+  };
+  const plan = (capable: (environmentId: string) => boolean = () => true) => ({
+    order: [side("m2", "p-m2"), side("m3", "p-m3")],
+    previous: [],
+    fromEpoch: 3,
+    capable,
+    access: () => "auto" as const,
+  });
+
+  it("writes the consent on every listed machine before the standby accepts and is named", async () => {
+    const { commands, calls } = fakeFleet();
+    const result = await armStandby(commands, { ...input, rearm: plan() });
+    expect(result.armed).toBe(true);
+    const lifecycle = calls.filter((call) => /^(consent|accept|set) /.test(call));
+    expect(lifecycle).toEqual([
+      "consent m1 7307ab55-fc59-4e07-abeb-de54be69215f m1,m2,m3 from 3",
+      "consent m2 7307ab55-fc59-4e07-abeb-de54be69215f m1,m2,m3 from 3",
+      "consent m3 7307ab55-fc59-4e07-abeb-de54be69215f m1,m2,m3 from 3",
+      `accept m1 ${JSON.stringify({ coordinator: member("m4", "p-m4"), epoch: 3, afterMinutes: 15 })}`,
+      `set m4 ${JSON.stringify({ member: member("m1", "p-m1"), afterMinutes: 15 })}`,
+    ]);
+    expect([...result.rearm.values()].every((entry) => entry.status === "ready")).toBe(true);
+  });
+
+  it("still arms the pair when a list machine is not ready, and says which", async () => {
+    const { commands } = fakeFleet({ consentFails: ["m3"] });
+    const result = await armStandby(commands, { ...input, rearm: plan() });
+    expect(result.armed).toBe(true);
+    expect(result.rearm.get(M3)).toEqual({
+      status: "failed",
+      message: "Could not save the list on M3.",
+    });
+    expect(result.rearm.get(M1)).toEqual({ status: "ready" });
+  });
+
+  it("marks a standby that cannot hold the list, and still arms it", async () => {
+    const { commands, calls } = fakeFleet();
+    const result = await armStandby(commands, {
+      ...input,
+      rearm: plan((environmentId) => environmentId !== "m1"),
+    });
+    expect(result.armed).toBe(true);
+    expect(result.rearm.get(M1)).toEqual({ status: "needs_update" });
+    expect(calls.some((call) => call.startsWith("consent m1"))).toBe(false);
+  });
+});
+
+describe("disarmStandby with a re-arm list", () => {
+  it("removes the consent from every list machine after turning it off", async () => {
+    const { commands, calls } = fakeFleet();
+    await disarmStandby(commands, {
+      logicalProjectId: "logical:1",
+      coordinator: side("m4", "p-m4"),
+      standby: side("m1", "p-m1"),
+      operationId: "7307ab55-fc59-4e07-abeb-de54be69215f",
+      changeAnyway: false,
+      rearmMembers: [side("m1", "p-m1"), side("m2", "p-m2")],
+    });
+    expect(calls).toEqual(["set m4 null", "accept m1 null", "consent m1 null", "consent m2 null"]);
   });
 });

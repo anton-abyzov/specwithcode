@@ -169,28 +169,58 @@ export const layer: Layer.Layer<
       } satisfies ProjectionVerificationV2;
     }).pipe(sql.withTransaction);
 
+    /**
+     * Rebuilds every projection from the log. Threads whose history the opt-in
+     * retention removed (`orchestration_v2_thread_history_compactions`, see
+     * ThreadHistoryRetention.ts) keep their rows as the base: their events
+     * through the recorded sequence are not replayed, later ones are.
+     */
     const rebuild = Effect.gen(function* () {
       yield* sql.withTransaction(
         Effect.gen(function* () {
           const throughSequence = yield* eventStore.latestSequence();
-          yield* sql`DELETE FROM orchestration_v2_projection_context_transfers`;
-          yield* sql`DELETE FROM orchestration_v2_projection_context_handoffs`;
-          yield* sql`DELETE FROM orchestration_v2_projection_checkpoints`;
-          yield* sql`DELETE FROM orchestration_v2_projection_checkpoint_scopes`;
-          yield* sql`DELETE FROM orchestration_v2_projection_turn_items`;
-          yield* sql`DELETE FROM orchestration_v2_projection_plans`;
-          yield* sql`DELETE FROM orchestration_v2_projection_messages`;
-          yield* sql`DELETE FROM orchestration_v2_projection_runtime_requests`;
-          yield* sql`DELETE FROM orchestration_v2_projection_provider_turns`;
-          yield* sql`DELETE FROM orchestration_v2_projection_provider_threads`;
-          yield* sql`DELETE FROM orchestration_v2_projection_provider_session_bindings`;
-          yield* sql`DELETE FROM orchestration_v2_projection_provider_sessions`;
-          yield* sql`DELETE FROM orchestration_v2_projection_subagents`;
-          yield* sql`DELETE FROM orchestration_v2_projection_nodes`;
-          yield* sql`DELETE FROM orchestration_v2_projection_run_attempts`;
-          yield* sql`DELETE FROM orchestration_v2_projection_runs`;
-          yield* sql`DELETE FROM orchestration_v2_projection_threads`;
-          yield* sql`DELETE FROM orchestration_v2_turn_item_positions`;
+          const compactions = yield* sql<{
+            readonly thread_id: string;
+            readonly through_sequence: number;
+          }>`
+            SELECT thread_id, through_sequence
+            FROM orchestration_v2_thread_history_compactions
+          `;
+          const compactedThrough = new Map(
+            compactions.map((row) => [row.thread_id, row.through_sequence]),
+          );
+          const kept = `(SELECT thread_id FROM orchestration_v2_thread_history_compactions)`;
+          /** Clears a table but for the rows of compacted threads. */
+          const clear = (table: string, ...threadColumns: ReadonlyArray<string>) =>
+            compactedThrough.size === 0
+              ? sql.unsafe(`DELETE FROM ${table}`)
+              : sql.unsafe(
+                  `DELETE FROM ${table} WHERE ${threadColumns
+                    .map((column) => `(${column} IS NULL OR ${column} NOT IN ${kept})`)
+                    .join(" AND ")}`,
+                );
+          yield* clear(
+            "orchestration_v2_projection_context_transfers",
+            "source_thread_id",
+            "target_thread_id",
+          );
+          yield* clear("orchestration_v2_projection_context_handoffs", "thread_id");
+          yield* clear("orchestration_v2_projection_checkpoints", "thread_id");
+          yield* clear("orchestration_v2_projection_checkpoint_scopes", "thread_id");
+          yield* clear("orchestration_v2_projection_turn_items", "thread_id");
+          yield* clear("orchestration_v2_projection_plans", "thread_id");
+          yield* clear("orchestration_v2_projection_messages", "thread_id");
+          yield* clear("orchestration_v2_projection_runtime_requests", "thread_id");
+          yield* clear("orchestration_v2_projection_provider_turns", "thread_id");
+          yield* clear("orchestration_v2_projection_provider_threads", "thread_id");
+          yield* clear("orchestration_v2_projection_provider_session_bindings", "thread_id");
+          yield* clear("orchestration_v2_projection_provider_sessions", "thread_id");
+          yield* clear("orchestration_v2_projection_subagents", "thread_id");
+          yield* clear("orchestration_v2_projection_nodes", "thread_id");
+          yield* clear("orchestration_v2_projection_run_attempts", "thread_id");
+          yield* clear("orchestration_v2_projection_runs", "thread_id");
+          yield* clear("orchestration_v2_projection_threads", "thread_id");
+          yield* clear("orchestration_v2_turn_item_positions", "thread_id");
 
           const pageSize = 500;
           let lastSequence = 0;
@@ -199,6 +229,9 @@ export const layer: Layer.Layer<
               .read({ afterSequence: lastSequence, throughSequence, limit: pageSize })
               .pipe(Stream.runCollect);
             for (const stored of page) {
+              lastSequence = stored.sequence;
+              // Already in the kept rows of a compacted thread.
+              if (stored.sequence <= (compactedThrough.get(stored.event.threadId) ?? 0)) continue;
               yield* projectionStore.apply(stored.event);
               if (stored.event.type === "turn-item.updated") {
                 yield* sql`
@@ -216,7 +249,6 @@ export const layer: Layer.Layer<
                   ordinal = excluded.ordinal
                 `;
               }
-              lastSequence = stored.sequence;
             }
             if (page.length < pageSize) break;
             yield* Effect.yieldNow;

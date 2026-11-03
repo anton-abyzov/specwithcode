@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   lastSeen: {} as Record<string, number>,
   old: [] as string[],
   perMachine: [] as string[],
+  rearm: [] as string[],
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@specweave-studio/client-runtime/state/runtime")>()),
@@ -44,7 +45,14 @@ vi.mock("../../state/use-atom-command", () => ({
           },
         };
       if (tag === "projectLink.takeover" || tag === "projectLink.startCoordinator")
-        return { _tag: "Success", value: { replicaFrom: "2026-10-19T12:00:00.000Z" } };
+        return {
+          _tag: "Success",
+          value: {
+            replicaFrom: "2026-10-19T12:00:00.000Z",
+            logicalProject: { id: "logical:1" },
+            coordinatorBinding: { state: "active", epoch: 4 },
+          },
+        };
       return { _tag: "Success", value: {} };
     },
 }));
@@ -52,10 +60,20 @@ vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
   usePrimaryEnvironmentId: () => "m4",
+  useEnvironments: () => ({
+    environments: ["m3", "m4", "m1"].map((environmentId) => ({
+      environmentId,
+      serverConfig: {
+        environment: {
+          capabilities: { coordinatorRearm: state.rearm.includes(environmentId) },
+        },
+      },
+    })),
+  }),
 }));
 vi.mock("./useLinkMachines", () => ({
   useLinkMachines: () => ({
-    label: (id: string) => ({ m4: "M4", m3: "M3" })[id] ?? "Machine",
+    label: (id: string) => ({ m4: "M4", m3: "M3", m1: "M1" })[id] ?? "Machine",
     state: (id: string) => (state.problems[id] ? "offline" : "ready"),
     problem: (id: string) => state.problems[id] ?? null,
     connected: (id: string) => !state.problems[id],
@@ -138,6 +156,7 @@ beforeEach(() => {
   state.dialog = null;
   state.lastSeen = {};
   state.old = [];
+  state.rearm = [];
   state.perMachine = [];
   localStorage.clear();
   container = document.createElement("div");
@@ -258,6 +277,35 @@ it("offers a takeover only after the coordinator is away 10 minutes, with one co
     },
   ]);
   expect(text()).toContain("M4 now coordinates this project.");
+});
+
+it("after a takeover, disarms standbys registered below the new epoch on machines that can", async () => {
+  const three = identity("logical:1", [ref("m3", "kept"), ref("m4", "joined"), ref("m1", "spare")]);
+  const coordinatorCopy = copy("m3", "kept", three, "active");
+  const takingOver = copy("m4", "joined", three, "transferred");
+  const old = copy("m1", "spare", three, "transferred");
+  state.projects = [coordinatorCopy, takingOver, old];
+  state.problems = { m3: "Connect M3 first." };
+  state.lastSeen = { m3: Date.now() - 11 * 60_000 };
+  // M3 is away and M1 cannot hold a re-arm consent: nothing is sent.
+  state.rearm = ["m3", "m4"];
+  await render([coordinatorCopy, takingOver, old]);
+  await click(button("Take over coordinator here"));
+  await click(dialogButton("Take over"));
+  expect(state.calls.filter((call) => call.tag === "projectLink.acceptStandby")).toEqual([]);
+
+  state.calls = [];
+  state.rearm = ["m3", "m4", "m1"];
+  await render([coordinatorCopy, { ...takingOver }, old]);
+  await click(button("Take over coordinator here"));
+  await click(dialogButton("Take over"));
+  expect(state.calls.filter((call) => call.tag === "projectLink.acceptStandby")).toEqual([
+    {
+      tag: "projectLink.acceptStandby",
+      environmentId: "m1",
+      input: { projectId: "spare", logicalProjectId: "logical:1", standby: null, belowEpoch: 4 },
+    },
+  ]);
 });
 
 it("keeps the takeover off while the coordinator is connected or this copy's app is old", async () => {

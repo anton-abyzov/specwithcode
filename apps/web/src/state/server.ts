@@ -52,7 +52,10 @@ export interface EnvironmentStorageStatus {
 const EMPTY_STORAGE_STATUSES: ReadonlyArray<EnvironmentStorageStatus> = [];
 const storageStatusesKey = (statuses: ReadonlyArray<EnvironmentStorageStatus>) =>
   statuses
-    .map(({ environmentId, storage }) => `${environmentId}:${storage.level}:${storage.freeBytes}`)
+    .map(
+      ({ environmentId, storage }) =>
+        `${environmentId}:${storage.level}:${storage.freeBytes}:${storage.homeUsage?.checkedAt ?? ""}:${storage.homeUsage?.level ?? ""}:${storage.homeUsage?.warnAboveBytes ?? ""}`,
+    )
     .join("\n");
 
 /**

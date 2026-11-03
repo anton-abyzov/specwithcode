@@ -5,6 +5,7 @@ import type {
   ProjectAcceptStandbyInput,
   ProjectId,
   ProjectSetStandbyInput,
+  StandbyRearmConsent,
 } from "@specweave-studio/contracts";
 import type {
   StudioFleetSnapshot,
@@ -305,10 +306,241 @@ export interface StandbyProjectCommands {
   ) => Promise<void>;
 }
 
+/**
+ * Re-arming after an automatic takeover. The owner may list the machines to
+ * arm next: whichever of them takes over registers the next one as its own
+ * standby. Each machine on the list holds the owner's consent naming the
+ * whole list, and a worker grant on every other machine involved, so the one
+ * that takes over can reach the next one and the workers.
+ */
+
+/** How many machines the owner may list after the standby; the server takes a few more. */
+export const STANDBY_REARM_NEXT_MAX = 3;
+
+/** One list machine's state after a save: its consent is written, or why not. */
+export type RearmMachineResult =
+  | { readonly status: "ready" }
+  | { readonly status: "needs_update" }
+  | { readonly status: "failed"; readonly message: string };
+
+/** The owner's "if it takes over, arm next" list for one save. */
+export interface StandbyRearmPlan {
+  /** In the owner's order, after the standby; empty turns re-arming off. */
+  readonly order: ReadonlyArray<StandbySide>;
+  /** The machines the last list named: those left out lose their consent. */
+  readonly previous: ReadonlyArray<StandbySide>;
+  /** The coordinator epoch now; a peer may only arm at or above it. */
+  readonly fromEpoch: number;
+  /** Whether the machine's server holds a re-arm consent at all. */
+  readonly capable: (environmentId: EnvironmentId) => boolean;
+  /** The worker access a list machine gets on another list machine. */
+  readonly access: (environmentId: EnvironmentId) => StudioFleetWorkerAccess;
+}
+
+const sameSide = (
+  left: { environmentId: EnvironmentId },
+  right: { environmentId: EnvironmentId },
+) => left.environmentId === right.environmentId;
+
+/**
+ * Every grant a list needs: each listed machine on every other listed machine
+ * and on every worker machine, so whichever takes over reaches all of them.
+ */
+export function rearmGrantPairs(input: {
+  readonly members: ReadonlyArray<StandbySide>;
+  readonly workers: ReadonlyArray<StandbyWorkerMachine>;
+  readonly access: (environmentId: EnvironmentId) => StudioFleetWorkerAccess;
+}): ReadonlyArray<{ readonly from: StandbySide; readonly on: StandbyWorkerMachine }> {
+  const targets: StandbyWorkerMachine[] = [...input.workers];
+  for (const member of input.members)
+    if (!targets.some((target) => sameSide(target, member)))
+      targets.push({
+        environmentId: member.environmentId,
+        projectId: member.projectId,
+        label: member.label,
+        access: input.access(member.environmentId),
+      });
+  return input.members.flatMap((from) =>
+    targets.filter((on) => !sameSide(on, from)).map((on) => ({ from, on })),
+  );
+}
+
+/**
+ * Gives each listed machine its grants. A pair that fails marks the machine
+ * it is for; the first failure is the one reported.
+ */
+export async function prepareRearmMachines(
+  commands: StandbyArmingCommands,
+  pairs: ReturnType<typeof rearmGrantPairs>,
+): Promise<ReadonlyMap<EnvironmentId, StandbyMachineResult>> {
+  const results = new Map<EnvironmentId, StandbyMachineResult>();
+  for (const pair of pairs) {
+    const result = await ensureStandbyGrant(commands, {
+      standbyEnvironmentId: pair.from.environmentId,
+      standbyLabel: pair.from.label,
+      worker: pair.on,
+    });
+    if (results.get(pair.from.environmentId)?.status !== "failed")
+      results.set(pair.from.environmentId, result);
+  }
+  return results;
+}
+
+/**
+ * Writes the consent, or removes it with null, on each machine. A machine
+ * whose server cannot hold one is not asked.
+ */
+export async function writeRearmConsent(
+  commands: StandbyProjectCommands,
+  input: {
+    readonly logicalProjectId: string;
+    readonly consent: StandbyRearmConsent | null;
+    readonly members: ReadonlyArray<StandbySide>;
+    readonly capable: (environmentId: EnvironmentId) => boolean;
+  },
+): Promise<ReadonlyMap<EnvironmentId, "ok" | "needs_update" | "failed">> {
+  const results = new Map<EnvironmentId, "ok" | "needs_update" | "failed">();
+  for (const member of input.members) {
+    if (!input.capable(member.environmentId)) {
+      results.set(member.environmentId, "needs_update");
+      continue;
+    }
+    const written = await commands
+      .acceptStandby(member.environmentId, {
+        projectId: member.projectId,
+        logicalProjectId: input.logicalProjectId,
+        rearm: input.consent,
+      })
+      .then(
+        () => "ok" as const,
+        () => "failed" as const,
+      );
+    results.set(member.environmentId, written);
+  }
+  return results;
+}
+
+/**
+ * Saves the list: grants first, then the consent on the standby and every
+ * listed machine, then removes it from machines the list no longer names.
+ * Nothing here blocks the standby itself; each machine reports on its own.
+ */
+export async function saveRearmList(
+  commands: StandbyArmingCommands & StandbyProjectCommands,
+  input: {
+    readonly logicalProjectId: string;
+    readonly standby: StandbySide;
+    readonly afterMinutes: CoordinatorStandbyAfterMinutes;
+    readonly chainId: string;
+    readonly workers: ReadonlyArray<StandbyWorkerMachine>;
+    readonly plan: StandbyRearmPlan;
+  },
+): Promise<ReadonlyMap<EnvironmentId, RearmMachineResult>> {
+  const { plan } = input;
+  const next = plan.order.filter((side) => !sameSide(side, input.standby));
+  const members = next.length === 0 ? [] : [input.standby, ...next];
+  const results = new Map<EnvironmentId, RearmMachineResult>();
+  if (members.length > 0) {
+    const listed = members.filter((member) => plan.capable(member.environmentId));
+    // The standby's grants on the worker machines are arming's own, made before this.
+    const pairs = rearmGrantPairs({
+      members: listed,
+      workers: input.workers,
+      access: plan.access,
+    }).filter(
+      (pair) =>
+        !(
+          sameSide(pair.from, input.standby) &&
+          input.workers.some((worker) => sameSide(worker, pair.on))
+        ),
+    );
+    const prepared = await prepareRearmMachines(commands, pairs);
+    const written = await writeRearmConsent(commands, {
+      logicalProjectId: input.logicalProjectId,
+      consent: {
+        chainId: input.chainId,
+        members: members.map((member) => member.member),
+        afterMinutes: input.afterMinutes,
+        fromEpoch: plan.fromEpoch,
+      },
+      members,
+      capable: plan.capable,
+    });
+    for (const member of members) {
+      const write = written.get(member.environmentId);
+      const grant = prepared.get(member.environmentId);
+      results.set(
+        member.environmentId,
+        write === "needs_update"
+          ? { status: "needs_update" }
+          : write === "failed"
+            ? { status: "failed", message: `Could not save the list on ${member.label}.` }
+            : grant?.status === "failed"
+              ? grant
+              : { status: "ready" },
+      );
+    }
+  }
+  const dropped = plan.previous.filter((side) => !members.some((member) => sameSide(member, side)));
+  if (dropped.length > 0)
+    await writeRearmConsent(commands, {
+      logicalProjectId: input.logicalProjectId,
+      consent: null,
+      members: dropped,
+      capable: plan.capable,
+    });
+  return results;
+}
+
+export type RearmProblem = "needs_update" | "no_consent" | "needs_grant" | "expiring";
+
+/**
+ * What stops each listed machine from arming the next one: an old server, a
+ * consent from another list, a missing grant, or one that runs out and cannot
+ * renew itself. Unknown answers raise nothing.
+ */
+export function rearmReadiness(input: {
+  readonly members: ReadonlyArray<StandbySide>;
+  readonly workers: ReadonlyArray<StandbyWorkerMachine>;
+  readonly capable: (environmentId: EnvironmentId) => boolean;
+  /** `from`'s worker grant on `on`; null when it has none, undefined when not known. */
+  readonly grants: (
+    from: EnvironmentId,
+    on: EnvironmentId,
+  ) => StudioFleetWorkers | null | undefined;
+  /** The chain each machine holds; null for none, absent when not known. */
+  readonly consents: ReadonlyMap<EnvironmentId, string | null>;
+  readonly chainId: string;
+}): ReadonlyArray<{ readonly member: StandbySide; readonly problem: RearmProblem | null }> {
+  const pairs = rearmGrantPairs({
+    members: input.members,
+    workers: input.workers,
+    access: () => "approval-required",
+  });
+  return input.members.map((member) => {
+    if (!input.capable(member.environmentId)) return { member, problem: "needs_update" };
+    const consent = input.consents.get(member.environmentId);
+    if (consent !== undefined && consent !== input.chainId)
+      return { member, problem: "no_consent" };
+    let problem: RearmProblem | null = null;
+    for (const pair of pairs) {
+      if (!sameSide(pair.from, member)) continue;
+      const grant = input.grants(member.environmentId, pair.on.environmentId);
+      if (grant === undefined) continue;
+      if (grant === null || !LIVE_WORKERS.has(grant.status))
+        return { member, problem: "needs_grant" };
+      if (grant.status === "expiring" || !grant.renewable) problem = "expiring";
+    }
+    return { member, problem };
+  });
+}
+
 export interface StandbyArmingResult {
   /** Both sides armed: the standby registered the coordinator, the coordinator names it. */
   readonly armed: boolean;
   readonly machines: ReadonlyMap<EnvironmentId, StandbyMachineResult>;
+  /** Each machine of the re-arm list; empty without one. */
+  readonly rearm: ReadonlyMap<EnvironmentId, RearmMachineResult>;
 }
 
 /**
@@ -330,6 +562,8 @@ export async function armStandby(
     readonly workers: ReadonlyArray<StandbyWorkerMachine>;
     readonly operationId: string;
     readonly changeAnyway: boolean;
+    /** The list to arm next after a takeover; its chain is this operation. */
+    readonly rearm?: StandbyRearmPlan | undefined;
   },
 ): Promise<StandbyArmingResult> {
   const machines = new Map<EnvironmentId, StandbyMachineResult>();
@@ -343,7 +577,18 @@ export async function armStandby(
       }),
     );
   if ([...machines.values()].some((result) => result.status !== "ready"))
-    return { armed: false, machines };
+    return { armed: false, machines, rearm: new Map() };
+  // The list goes in before the standby registers, so it arms with the list in place.
+  const rearm = input.rearm
+    ? await saveRearmList(commands, {
+        logicalProjectId: input.logicalProjectId,
+        standby: input.standby,
+        afterMinutes: input.afterMinutes,
+        chainId: input.operationId,
+        workers: input.workers,
+        plan: input.rearm,
+      })
+    : new Map<EnvironmentId, RearmMachineResult>();
   await commands.acceptStandby(input.standby.environmentId, {
     projectId: input.standby.projectId,
     logicalProjectId: input.logicalProjectId,
@@ -380,14 +625,15 @@ export async function armStandby(
         standby: null,
       })
       .catch(() => undefined);
-  return { armed: true, machines };
+  return { armed: true, machines, rearm };
 }
 
 /**
  * Turns automatic takeover off. The coordinator releases its standby before
  * the change commits, and refuses when the standby does not answer unless
  * `changeAnyway`. The standby's own registration is then cleared when it can
- * be reached; a released standby disarms on its own otherwise.
+ * be reached; a released standby disarms on its own otherwise. The re-arm
+ * consent is removed from every list machine that answers.
  */
 export async function disarmStandby(
   commands: StandbyProjectCommands,
@@ -397,6 +643,9 @@ export async function disarmStandby(
     readonly standby: StandbySide | null;
     readonly operationId: string;
     readonly changeAnyway: boolean;
+    /** The machines of the re-arm list, whose consent goes too. */
+    readonly rearmMembers?: ReadonlyArray<StandbySide> | undefined;
+    readonly rearmCapable?: ((environmentId: EnvironmentId) => boolean) | undefined;
   },
 ): Promise<void> {
   await commands.setStandby(input.coordinator.environmentId, {
@@ -413,4 +662,11 @@ export async function disarmStandby(
         standby: null,
       })
       .catch(() => undefined);
+  if (input.rearmMembers && input.rearmMembers.length > 0)
+    await writeRearmConsent(commands, {
+      logicalProjectId: input.logicalProjectId,
+      consent: null,
+      members: input.rearmMembers,
+      capable: input.rearmCapable ?? (() => true),
+    });
 }

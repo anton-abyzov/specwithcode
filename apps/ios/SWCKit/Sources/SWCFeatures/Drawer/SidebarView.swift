@@ -245,7 +245,14 @@ struct SidebarView: View {
         }
         .sidebarRowStyle(selected: false)
       }
-      threadRows(shown) { thread in machines.count > 1 ? (nil, thread.placement.owner) : (nil, nil) }
+      let details: (ThreadSummary) -> (String?, String?) = { thread in machines.count > 1 ? (nil, thread.placement.owner) : (nil, nil) }
+      // All of them come grouped by what they need, as on the desktop; a
+      // chip shows its group alone.
+      if filter == .all, !threads.isEmpty {
+        groupedRows(groups, details: details)
+      } else {
+        threadRows(shown, details: details)
+      }
     } header: {
       if !hasModes { Text("Threads") }
     }
@@ -256,6 +263,40 @@ struct SidebarView: View {
       withAnimation(.snappy) { statusFilter = value }
     } label: {
       Text("\(title) \(count)").font(.weave(.callout, weight: .medium))
+    }
+  }
+
+  /// Needs you, Working, Offline, then Idle, each under its header and in the
+  /// list's steady order, folded to a screenful across the groups.
+  @ViewBuilder private func groupedRows(_ groups: ThreadGroups, details: @escaping (ThreadSummary) -> (String?, String?)) -> some View {
+    let all = [("Needs you", groups.needsYou), ("Working", groups.working), ("Offline", groups.offline), ("Idle", groups.idle)]
+    let total = all.reduce(0) { $0 + $1.1.count }
+    ForEach(Self.fold(all, to: showAllRecents ? total : Self.recentCount), id: \.title) { group in
+      SectionHeader(group.title, count: group.count)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("sidebar.thread-group")
+        .sidebarRowStyle(selected: false)
+      ForEach(group.shown) { thread in
+        let (detail, machine) = details(thread)
+        ThreadLine(thread: thread, detail: detail, machine: machine)
+          .accessibilityIdentifier("sidebar.thread")
+          .sidebarItem(.chat(.thread(thread.ref)))
+          .threadRowActions(thread)
+      }
+    }
+    if total > Self.recentCount {
+      foldButton(showAllRecents ? "Show fewer chats" : "Show all \(total) chats") { showAllRecents.toggle() }
+    }
+  }
+
+  /// The groups with threads, keeping the first `limit` threads in order.
+  static func fold(_ groups: [(String, [ThreadSummary])], to limit: Int) -> [(title: String, count: Int, shown: [ThreadSummary])] {
+    var left = limit
+    return groups.compactMap { title, threads in
+      guard !threads.isEmpty, left > 0 else { return nil }
+      let shown = Array(threads.prefix(left))
+      left -= shown.count
+      return (title, threads.count, shown)
     }
   }
 

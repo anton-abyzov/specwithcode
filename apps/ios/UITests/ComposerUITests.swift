@@ -25,4 +25,26 @@ final class ComposerUITests: SWCUITestCase {
     app.typeText("Hello")
     XCTAssertEqual(field.value as? String, "Hello")
   }
+
+  /// Attach opens its choices without the keyboard, and a tap on the
+  /// conversation puts a raised keyboard away.
+  func testAttachLeavesTheKeyboardDownAndATapOnTheChatHidesIt() {
+    launch()
+    waitForHome()
+    let field = composer
+    XCTAssertTrue(field.waitForExistence(timeout: timeout), "Composer field not found")
+    tap(button("Attach"))
+    settle()
+    XCTAssertFalse(app.keyboards.firstMatch.exists, "Attach raised the keyboard")
+    attachScreenshot("Attach choices")
+    if app.buttons["Cancel"].exists { app.buttons["Cancel"].tap() } else { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap() }
+    settle()
+
+    tap(field)
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: timeout), "Keyboard did not appear")
+    let capsule = app.otherElements.matching(identifier: "composer").firstMatch
+    // A point in the conversation, above the composer.
+    capsule.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0)).withOffset(CGVector(dx: 0, dy: -120)).tap()
+    waitForGone(app.keyboards.firstMatch, "A tap on the chat should hide the keyboard")
+  }
 }

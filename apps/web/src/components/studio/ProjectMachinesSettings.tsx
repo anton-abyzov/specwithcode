@@ -8,7 +8,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { useProjects } from "../../state/entities";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { logicalCoordinator, logicalCoordinators } from "../../studio/projectDomain";
@@ -97,6 +97,8 @@ export function ProjectMachinesSettings({
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const unlink = useAtomCommand(projectLink.unlink, { reportFailure: false });
   const takeover = useAtomCommand(projectLink.takeover, { reportFailure: false });
+  const acceptStandby = useAtomCommand(projectLink.acceptStandby, { reportFailure: false });
+  const { environments } = useEnvironments();
   const startCoordinator = useAtomCommand(projectLink.startCoordinator, { reportFailure: false });
   const [takeoverOf, setTakeoverOf] = useState<EnvironmentProject | null>(null);
   const [review, setReview] = useState<{
@@ -175,6 +177,21 @@ export function ProjectMachinesSettings({
         },
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      // A person takeover claims no epoch on the other copies: tell each standby
+      // registered for an older coordinator, so it never fires for one that gave way.
+      const epoch = result.value.coordinatorBinding.epoch;
+      const logicalProjectId = result.value.logicalProject.id;
+      for (const other of shared) {
+        if (other.environmentId === member.environmentId) continue;
+        if (!machines.connected(other.environmentId)) continue;
+        const rearm = environments.find((item) => item.environmentId === other.environmentId)
+          ?.serverConfig?.environment.capabilities.coordinatorRearm;
+        if (rearm !== true) continue;
+        void acceptStandby({
+          environmentId: other.environmentId,
+          input: { projectId: other.id, logicalProjectId, standby: null, belowEpoch: epoch },
+        }).catch(() => undefined);
+      }
       setMessage({
         text: `${memberLabel} now coordinates this project. ${
           result.value.replicaFrom

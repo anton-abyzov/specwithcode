@@ -28,7 +28,7 @@ export const TIMELINE_DETAIL_LABELS: Record<TimelineDetail, string> = {
 };
 
 export const TIMELINE_DETAIL_DESCRIPTIONS: Record<TimelineDetail, string> = {
-  concise: "Hide thinking and in-between messages; one line per finished turn",
+  concise: "Hide thinking, tool runs and in-between messages; one line per turn, opened on click",
   normal: "Fold finished turns and tool groups",
   verbose: "Open every turn, tool call and thought",
 };

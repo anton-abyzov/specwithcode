@@ -18,6 +18,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -26,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
@@ -160,6 +162,15 @@ const projectionDump = Effect.gen(function* () {
   return JSON.stringify(dump);
 });
 
+/** What the UI reads of a thread: its shell and its whole projection. */
+const threadView = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const shell = yield* store.getThreadShell(threadId);
+    const projection = yield* store.getThreadProjection(threadId);
+    return JSON.stringify({ shell, projection });
+  });
+
 const sequences = (dbPath: string) => {
   const database = new NodeSqlite.DatabaseSync(dbPath, { readOnly: true });
   try {
@@ -208,77 +219,252 @@ const makeHome = Effect.gen(function* () {
   return { fs, path, home, userdata, dbPath, options, projections };
 });
 
+/**
+ * A stopped home for `db compact`, 40 days in: one thread deleted and one
+ * archived at the epoch, each with 150 rounds of history.
+ */
+const compactHome = Effect.gen(function* () {
+  // The history is written 40 days in; both threads ended at the epoch.
+  yield* TestClock.adjust(Duration.days(40));
+  const { fs, path, userdata, dbPath, options } = yield* makeHome;
+  const deletedId = ThreadId.make("thread:reclaim:1");
+  const archivedId = ThreadId.make("thread:reclaim:2");
+  const ended = DateTime.makeUnsafe(0);
+  const archivedView = yield* Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("event:reclaim:deleted"),
+          type: "thread.deleted",
+          threadId: deletedId,
+          providerInstanceId,
+          occurredAt: ended,
+          payload: { ...thread(deletedId, now), deletedAt: ended, updatedAt: ended },
+        },
+        {
+          id: EventId.make("event:reclaim:archived"),
+          type: "thread.archived",
+          threadId: archivedId,
+          providerInstanceId,
+          occurredAt: ended,
+          payload: { ...thread(archivedId, now), archivedAt: ended, updatedAt: ended },
+        },
+      ],
+    });
+    return yield* threadView(archivedId);
+  }).pipe(Effect.provide(layerDatabase(dbPath)));
+  const before = sequences(dbPath);
+  const sizeBefore = Number((yield* fs.stat(dbPath)).size);
+  const policy = { deletedAfterDays: 7, archivedAfterDays: 30 };
+  return {
+    fs,
+    path,
+    userdata,
+    dbPath,
+    options,
+    deletedId,
+    archivedId,
+    archivedView,
+    before,
+    sizeBefore,
+    policy,
+  };
+});
+
 // db reclaim refuses on Windows (open files cannot be renamed), so only that refusal runs there.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 it.layer(NodeServices.layer)("db reclaim", (it) => {
-  it.effect.skipIf(windowsHost)("compacts and rewrites the database, keeping every remaining sequence", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, dbPath, options, projections, userdata } = yield* makeHome;
-        const before = sequences(dbPath);
-        const sizeBefore = Number((yield* fs.stat(dbPath)).size);
+  it.effect.skipIf(windowsHost)(
+    "db compact purges an old deleted thread, compacts an old archived one, then vacuums in full",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const {
+            fs,
+            path,
+            dbPath,
+            options,
+            archivedId,
+            archivedView,
+            before,
+            sizeBefore,
+            policy,
+          } = yield* compactHome;
 
-        const dryRun = yield* DatabaseReclaim.reclaim({ ...options, dryRun: true });
-        assert.isTrue(dryRun.dryRun);
-        if (!dryRun.dryRun) return;
-        assert.deepEqual(sequences(dbPath).all, before.all);
-        assert.equal(dryRun.compaction.deletedEventCount, 2 * 148 * 2 + 2 * 149);
-        assert.equal(dryRun.storage.freelistPages, 0);
-        assert.isBelow(dryRun.expectedBytes.high, sizeBefore);
+          // The dry run reads only, and names exactly what the real run removes.
+          const dryRun = yield* DatabaseReclaim.compactDryRun({ dbPath, policy });
+          assert.deepEqual(sequences(dbPath).all, before.all);
+          assert.isTrue(dryRun.retention.dryRun);
+          assert.equal(dryRun.retention.purgedThreadCount, 1);
+          assert.equal(dryRun.retention.compactedThreadCount, 1);
+          // 150 rounds of node, message and visit snapshots per thread.
+          assert.equal(dryRun.retention.deletedEventCount, 2 * 150 * 3);
+          assert.isAbove(dryRun.retention.estimatedBytes.high, 0);
 
-        const result = yield* DatabaseReclaim.reclaim(options);
-        assert.isFalse(result.dryRun);
-        if (result.dryRun) return;
-        assert.equal(result.compaction.deletedEventCount, dryRun.compaction.deletedEventCount);
-        assert.equal(result.maxSequence, before.all.at(-1));
-        assert.isBelow(result.afterBytes, sizeBefore);
-        assert.equal(result.autoVacuum, 0);
-        assert.isTrue(result.backupPath.startsWith(`${dbPath}.before-reclaim-`));
-        // Closed with its log folded in: no -wal or -shm is left beside the new file.
-        assert.isFalse(yield* fs.exists(`${dbPath}-wal`));
-        assert.isFalse(yield* fs.exists(`${dbPath}-shm`));
+          const removed: Array<string> = [];
+          const result = yield* DatabaseReclaim.reclaim({
+            ...options,
+            retention: policy,
+            autoVacuumNone: true,
+            removeAttachments: (attachmentIds) => Effect.sync(() => removed.push(...attachmentIds)),
+          });
+          if (result.dryRun) return assert.fail("not a dry run");
+          // The backup is the database before anything was removed, not the purged original.
+          assert.match(path.basename(result.backupPath), /\.before-compact-/);
+          assert.deepEqual(sequences(result.backupPath).all, before.all);
+          assert.deepEqual(
+            (yield* fs.readDirectory(path.dirname(dbPath))).filter((name) =>
+              name.includes("before-reclaim"),
+            ),
+            [],
+          );
+          assert.equal(removed.length, result.retention?.attachmentIds);
+          assert.equal(result.retention?.purgedThreadCount, 1);
+          assert.equal(result.retention?.compactedThreadCount, 1);
+          assert.equal(result.retention?.deletedEventCount, dryRun.retention.deletedEventCount);
+          assert.deepEqual(
+            result.retention?.deletedRowsByTable,
+            dryRun.retention.deletedRowsByTable,
+          );
+          assert.equal(result.autoVacuum, 0);
+          assert.equal(result.maxSequence, before.all.at(-1));
+          assert.isBelow(result.afterBytes, sizeBefore);
 
-        // The backup is the compacted original; the new file keeps its every sequence.
-        const compacted = sequences(result.backupPath);
-        const rewritten = sequences(dbPath);
-        assert.deepEqual(rewritten.all, compacted.all);
-        assert.equal(rewritten.all.length, before.all.length - result.compaction.deletedEventCount);
-        assert.equal(rewritten.all.at(-1), before.all.at(-1));
-        assert.equal(rewritten.sqliteSequence, before.sqliteSequence);
-        assert.equal(rewritten.quickCheck, "ok");
-        const leftovers = (yield* fs.readDirectory(userdata)).filter((name) =>
-          name.includes(".reclaim-"),
-        );
-        assert.deepEqual(leftovers, []);
+          // Only the tombstones remain: creation and the lifecycle event, highest sequence kept.
+          const rewritten = sequences(dbPath);
+          assert.equal(rewritten.all.length, 4);
+          assert.equal(rewritten.all.at(-1), before.all.at(-1));
+          assert.equal(rewritten.autoVacuum, 0);
+          assert.equal(rewritten.quickCheck, "ok");
 
-        // The service opens the new file, and rebuild reproduces the projections.
-        const rebuilt = yield* Effect.gen(function* () {
-          const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-          assert.isTrue((yield* maintenance.verify).valid);
-          assert.isTrue((yield* maintenance.rebuild).valid);
-          return yield* projectionDump;
-        }).pipe(Effect.provide(layerDatabase(dbPath)));
-        assert.strictEqual(rebuilt, projections);
-      }),
-    ),
+          // The service opens the new file: the archived view is unchanged, and a rebuild agrees.
+          yield* Effect.gen(function* () {
+            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            assert.isTrue((yield* maintenance.verify).valid);
+            assert.strictEqual(yield* threadView(archivedId), archivedView);
+            assert.isTrue((yield* maintenance.rebuild).valid);
+            assert.strictEqual(yield* threadView(archivedId), archivedView);
+          }).pipe(Effect.provide(layerDatabase(dbPath)));
+        }),
+      ),
+  );
+  it.effect.skipIf(windowsHost)(
+    "db compact puts the saved database back when it fails after the retention, and keeps attachments",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options, userdata, archivedId, archivedView, before, policy } =
+            yield* compactHome;
+          const removed: Array<string> = [];
+          const exit = yield* Effect.exit(
+            DatabaseReclaim.reclaim({
+              ...options,
+              retention: policy,
+              autoVacuumNone: true,
+              removeAttachments: (attachmentIds) =>
+                Effect.sync(() => removed.push(...attachmentIds)),
+              // The retention and the copy ran; the swap never comes (as on ENOSPC or a bad copy).
+              beforeSwap: Effect.die(new Error("stopped before the swap")),
+            }),
+          );
+          assert.isTrue(Exit.isFailure(exit));
+          // Every event is back, and no attachment file was touched.
+          const restored = sequences(dbPath);
+          assert.deepEqual(restored.all, before.all);
+          assert.equal(restored.quickCheck, "ok");
+          assert.deepEqual(removed, []);
+          // Nothing is left beside it: no saved copy, no rewritten copy.
+          assert.deepEqual(
+            (yield* fs.readDirectory(userdata)).filter(
+              (name) => name.includes("before-") || name.includes("reclaim"),
+            ),
+            [],
+          );
+          yield* Effect.gen(function* () {
+            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            assert.isTrue((yield* maintenance.verify).valid);
+            assert.strictEqual(yield* threadView(archivedId), archivedView);
+          }).pipe(Effect.provide(layerDatabase(dbPath)));
+        }),
+      ),
+  );
+  it.effect.skipIf(windowsHost)(
+    "compacts and rewrites the database, keeping every remaining sequence",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options, projections, userdata } = yield* makeHome;
+          const before = sequences(dbPath);
+          const sizeBefore = Number((yield* fs.stat(dbPath)).size);
+
+          const dryRun = yield* DatabaseReclaim.reclaim({ ...options, dryRun: true });
+          assert.isTrue(dryRun.dryRun);
+          if (!dryRun.dryRun) return;
+          assert.deepEqual(sequences(dbPath).all, before.all);
+          assert.equal(dryRun.compaction.deletedEventCount, 2 * 148 * 2 + 2 * 149);
+          assert.equal(dryRun.storage.freelistPages, 0);
+          assert.isBelow(dryRun.expectedBytes.high, sizeBefore);
+
+          const result = yield* DatabaseReclaim.reclaim(options);
+          assert.isFalse(result.dryRun);
+          if (result.dryRun) return;
+          assert.equal(result.compaction.deletedEventCount, dryRun.compaction.deletedEventCount);
+          assert.equal(result.maxSequence, before.all.at(-1));
+          assert.isBelow(result.afterBytes, sizeBefore);
+          assert.equal(result.autoVacuum, 0);
+          assert.isTrue(result.backupPath.startsWith(`${dbPath}.before-reclaim-`));
+          // Closed with its log folded in: no -wal or -shm is left beside the new file.
+          assert.isFalse(yield* fs.exists(`${dbPath}-wal`));
+          assert.isFalse(yield* fs.exists(`${dbPath}-shm`));
+
+          // The backup is the compacted original; the new file keeps its every sequence.
+          const compacted = sequences(result.backupPath);
+          const rewritten = sequences(dbPath);
+          assert.deepEqual(rewritten.all, compacted.all);
+          assert.equal(
+            rewritten.all.length,
+            before.all.length - result.compaction.deletedEventCount,
+          );
+          assert.equal(rewritten.all.at(-1), before.all.at(-1));
+          assert.equal(rewritten.sqliteSequence, before.sqliteSequence);
+          assert.equal(rewritten.quickCheck, "ok");
+          const leftovers = (yield* fs.readDirectory(userdata)).filter((name) =>
+            name.includes(".reclaim-"),
+          );
+          assert.deepEqual(leftovers, []);
+
+          // The service opens the new file, and rebuild reproduces the projections.
+          const rebuilt = yield* Effect.gen(function* () {
+            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            assert.isTrue((yield* maintenance.verify).valid);
+            assert.isTrue((yield* maintenance.rebuild).valid);
+            return yield* projectionDump;
+          }).pipe(Effect.provide(layerDatabase(dbPath)));
+          assert.strictEqual(rebuilt, projections);
+        }),
+      ),
   );
 
-  it.effect.skipIf(windowsHost)("writes the copy in another folder and turns on incremental auto_vacuum", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, path, home, dbPath, options } = yield* makeHome;
-        const before = sequences(dbPath);
-        const workDir = path.join(home, "work");
-        const result = yield* DatabaseReclaim.reclaim({ ...options, workDir, incremental: true });
-        if (result.dryRun) return assert.fail("not a dry run");
-        assert.equal(result.autoVacuum, 2);
-        const rewritten = sequences(dbPath);
-        assert.equal(rewritten.autoVacuum, 2);
-        assert.equal(rewritten.all.at(-1), before.all.at(-1));
-        assert.deepEqual(yield* fs.readDirectory(workDir), []);
-      }),
-    ),
+  it.effect.skipIf(windowsHost)(
+    "writes the copy in another folder and turns on incremental auto_vacuum",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, path, home, dbPath, options } = yield* makeHome;
+          const before = sequences(dbPath);
+          const workDir = path.join(home, "work");
+          const result = yield* DatabaseReclaim.reclaim({ ...options, workDir, incremental: true });
+          if (result.dryRun) return assert.fail("not a dry run");
+          assert.equal(result.autoVacuum, 2);
+          const rewritten = sequences(dbPath);
+          assert.equal(rewritten.autoVacuum, 2);
+          assert.equal(rewritten.all.at(-1), before.all.at(-1));
+          assert.deepEqual(yield* fs.readDirectory(workDir), []);
+        }),
+      ),
   );
 
   it.effect.skipIf(windowsHost)("refuses while the service runs", () =>
@@ -305,68 +491,72 @@ it.layer(NodeServices.layer)("db reclaim", (it) => {
     ),
   );
 
-  it.effect.skipIf(windowsHost)("ignores a recorded pid another process took over, and a forced stale pid", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, path, home, options } = yield* makeHome;
-        const runtime = (startedAt: string) =>
-          fs.writeFileString(
-            options.serverRuntimeStatePath,
-            JSON.stringify({
-              version: 1,
-              pid: process.pid,
-              port: 3773,
-              origin: "http://127.0.0.1:3773",
-              startedAt,
-            }),
+  it.effect.skipIf(windowsHost)(
+    "ignores a recorded pid another process took over, and a forced stale pid",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, path, home, options } = yield* makeHome;
+          const runtime = (startedAt: string) =>
+            fs.writeFileString(
+              options.serverRuntimeStatePath,
+              JSON.stringify({
+                version: 1,
+                pid: process.pid,
+                port: 3773,
+                origin: "http://127.0.0.1:3773",
+                startedAt,
+              }),
+            );
+          // This process started after the record: the pid was reused.
+          yield* runtime("2000-01-01T00:00:00.000Z");
+          const updates = path.join(home, "updates");
+          yield* fs.makeDirectory(updates, { recursive: true });
+          yield* fs.writeFileString(
+            path.join(updates, "hold.json"),
+            JSON.stringify({ pid: process.pid, startedAt: "2000-01-01T00:00:00.000Z" }),
           );
-        // This process started after the record: the pid was reused.
-        yield* runtime("2000-01-01T00:00:00.000Z");
-        const updates = path.join(home, "updates");
-        yield* fs.makeDirectory(updates, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(updates, "hold.json"),
-          JSON.stringify({ pid: process.pid, startedAt: "2000-01-01T00:00:00.000Z" }),
-        );
-        const reused = yield* DatabaseReclaim.reclaim(options);
-        assert.isFalse(reused.dryRun);
+          const reused = yield* DatabaseReclaim.reclaim(options);
+          assert.isFalse(reused.dryRun);
 
-        // A pid that cannot be told apart from the service: only the override passes.
-        yield* runtime(wallClockIso());
-        assert.equal(
-          reasonOf(yield* Effect.flip(DatabaseReclaim.reclaim(options))),
-          "service-running",
-        );
-        const forced = yield* DatabaseReclaim.reclaim({ ...options, forceStalePid: true });
-        assert.isFalse(forced.dryRun);
-      }),
-    ),
+          // A pid that cannot be told apart from the service: only the override passes.
+          yield* runtime(wallClockIso());
+          assert.equal(
+            reasonOf(yield* Effect.flip(DatabaseReclaim.reclaim(options))),
+            "service-running",
+          );
+          const forced = yield* DatabaseReclaim.reclaim({ ...options, forceStalePid: true });
+          assert.isFalse(forced.dryRun);
+        }),
+      ),
   );
 
-  it.effect.skipIf(windowsHost)("refuses the swap when a connection opens the database after the copy", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, dbPath, options, userdata } = yield* makeHome;
-        let other: NodeSqlite.DatabaseSync | undefined;
-        const error = yield* Effect.flip(
-          DatabaseReclaim.reclaim({
-            ...options,
-            beforeSwap: Effect.sync(() => {
-              other = new NodeSqlite.DatabaseSync(dbPath);
-              other.prepare("SELECT COUNT(*) FROM orchestration_events").get();
+  it.effect.skipIf(windowsHost)(
+    "refuses the swap when a connection opens the database after the copy",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options, userdata } = yield* makeHome;
+          let other: NodeSqlite.DatabaseSync | undefined;
+          const error = yield* Effect.flip(
+            DatabaseReclaim.reclaim({
+              ...options,
+              beforeSwap: Effect.sync(() => {
+                other = new NodeSqlite.DatabaseSync(dbPath);
+                other.prepare("SELECT COUNT(*) FROM orchestration_events").get();
+              }),
             }),
-          }),
-        ).pipe(Effect.ensuring(Effect.sync(() => other?.close())));
-        assert.equal(reasonOf(error), "in-use");
-        // Nothing was renamed: the compacted original is still the database, and the copy is gone.
-        const names = yield* fs.readDirectory(userdata);
-        assert.deepEqual(
-          names.filter((name) => name.includes("reclaim")),
-          [],
-        );
-        assert.equal(sequences(dbPath).quickCheck, "ok");
-      }),
-    ),
+          ).pipe(Effect.ensuring(Effect.sync(() => other?.close())));
+          assert.equal(reasonOf(error), "in-use");
+          // Nothing was renamed: the compacted original is still the database, and the copy is gone.
+          const names = yield* fs.readDirectory(userdata);
+          assert.deepEqual(
+            names.filter((name) => name.includes("reclaim")),
+            [],
+          );
+          assert.equal(sequences(dbPath).quickCheck, "ok");
+        }),
+      ),
   );
 
   it.effect.skipIf(windowsHost)("keeps every other connection out while it swaps", () =>
@@ -403,160 +593,168 @@ it.layer(NodeServices.layer)("db reclaim", (it) => {
     ),
   );
 
-  it.effect.skipIf(windowsHost)("puts the original back when the copy cannot be moved into place", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, dbPath, options, userdata } = yield* makeHome;
-        const failing = FileSystem.FileSystem.of({
-          ...fs,
-          rename: (from, to) =>
-            to === dbPath && from.includes(".reclaim-")
-              ? fs.rename(`${from}.missing`, to)
-              : fs.rename(from, to),
-        });
-        const error = yield* Effect.flip(
-          DatabaseReclaim.reclaim(options).pipe(
-            Effect.provideService(FileSystem.FileSystem, failing),
-          ),
-        );
-        assert.equal(reasonOf(error), "failed");
-        assert.include(String(error.message), "is unchanged");
-        const names = yield* fs.readDirectory(userdata);
-        assert.deepEqual(
-          names.filter((name) => name.includes("before-reclaim")),
-          [],
-        );
-        // The checked copy is kept, and the original opens where it was.
-        const copy = names.find((name) => /\.reclaim-\d{8}T\d{6}Z$/.test(name));
-        assert.isDefined(copy);
-        assert.equal(sequences(dbPath).quickCheck, "ok");
-        assert.deepEqual(sequences(dbPath).all, sequences(`${userdata}/${copy}`).all);
-      }),
-    ),
-  );
-
-  it.effect.skipIf(windowsHost)("syncs the copy beside the database and its folder before the rename", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, path, home, dbPath, options, userdata } = yield* makeHome;
-        const workDir = path.join(home, "other-volume");
-        yield* fs.makeDirectory(workDir, { recursive: true });
-        const events: Array<string> = [];
-        const watched = FileSystem.FileSystem.of({
-          ...fs,
-          stat: (target) =>
-            target === workDir
-              ? fs.stat(target).pipe(Effect.map((info) => ({ ...info, dev: info.dev + 1 })))
-              : fs.stat(target),
-          open: (target, openOptions) =>
-            fs.open(target, openOptions).pipe(
-              Effect.map((file) => ({
-                ...file,
-                sync: Effect.sync(() => events.push(`sync ${target}`)).pipe(
-                  Effect.andThen(file.sync),
-                ),
-              })),
+  it.effect.skipIf(windowsHost)(
+    "puts the original back when the copy cannot be moved into place",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options, userdata } = yield* makeHome;
+          const failing = FileSystem.FileSystem.of({
+            ...fs,
+            rename: (from, to) =>
+              to === dbPath && from.includes(".reclaim-")
+                ? fs.rename(`${from}.missing`, to)
+                : fs.rename(from, to),
+          });
+          const error = yield* Effect.flip(
+            DatabaseReclaim.reclaim(options).pipe(
+              Effect.provideService(FileSystem.FileSystem, failing),
             ),
-          rename: (from, to) =>
-            Effect.sync(() => events.push(`rename ${from}`)).pipe(
-              Effect.andThen(fs.rename(from, to)),
+          );
+          assert.equal(reasonOf(error), "failed");
+          assert.include(String(error.message), "is unchanged");
+          const names = yield* fs.readDirectory(userdata);
+          assert.deepEqual(
+            names.filter((name) => name.includes("before-reclaim")),
+            [],
+          );
+          // The checked copy is kept, and the original opens where it was.
+          const copy = names.find((name) => /\.reclaim-\d{8}T\d{6}Z$/.test(name));
+          assert.isDefined(copy);
+          assert.equal(sequences(dbPath).quickCheck, "ok");
+          assert.deepEqual(sequences(dbPath).all, sequences(`${userdata}/${copy}`).all);
+        }),
+      ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "syncs the copy beside the database and its folder before the rename",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, path, home, dbPath, options, userdata } = yield* makeHome;
+          const workDir = path.join(home, "other-volume");
+          yield* fs.makeDirectory(workDir, { recursive: true });
+          const events: Array<string> = [];
+          const watched = FileSystem.FileSystem.of({
+            ...fs,
+            stat: (target) =>
+              target === workDir
+                ? fs.stat(target).pipe(Effect.map((info) => ({ ...info, dev: info.dev + 1 })))
+                : fs.stat(target),
+            open: (target, openOptions) =>
+              fs.open(target, openOptions).pipe(
+                Effect.map((file) => ({
+                  ...file,
+                  sync: Effect.sync(() => events.push(`sync ${target}`)).pipe(
+                    Effect.andThen(file.sync),
+                  ),
+                })),
+              ),
+            rename: (from, to) =>
+              Effect.sync(() => events.push(`rename ${from}`)).pipe(
+                Effect.andThen(fs.rename(from, to)),
+              ),
+          });
+          const result = yield* DatabaseReclaim.reclaim({ ...options, workDir }).pipe(
+            Effect.provideService(FileSystem.FileSystem, watched),
+          );
+          assert.isFalse(result.dryRun);
+          const staged = events.find((event) => /^sync .*\.reclaim-\d{8}T\d{6}Z$/.test(event));
+          assert.isDefined(staged);
+          assert.isTrue((staged ?? "").startsWith(`sync ${userdata}/`));
+          const moved = events.indexOf(`rename ${(staged ?? "").slice("sync ".length)}`);
+          assert.isAbove(moved, events.indexOf(staged ?? ""));
+          assert.isAbove(moved, events.indexOf(`sync ${userdata}`));
+          assert.equal(sequences(dbPath).quickCheck, "ok");
+        }),
+      ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps only the work-folder copy when the copy beside the database cannot move",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, path, home, dbPath, options, userdata } = yield* makeHome;
+          const workDir = path.join(home, "other-volume");
+          yield* fs.makeDirectory(workDir, { recursive: true });
+          const failing = FileSystem.FileSystem.of({
+            ...fs,
+            stat: (target) =>
+              target === workDir
+                ? fs.stat(target).pipe(Effect.map((info) => ({ ...info, dev: info.dev + 1 })))
+                : fs.stat(target),
+            rename: (from, to) =>
+              to === dbPath && from.includes(".reclaim-")
+                ? fs.rename(`${from}.missing`, to)
+                : fs.rename(from, to),
+          });
+          const error = yield* Effect.flip(
+            DatabaseReclaim.reclaim({ ...options, workDir }).pipe(
+              Effect.provideService(FileSystem.FileSystem, failing),
             ),
-        });
-        const result = yield* DatabaseReclaim.reclaim({ ...options, workDir }).pipe(
-          Effect.provideService(FileSystem.FileSystem, watched),
-        );
-        assert.isFalse(result.dryRun);
-        const staged = events.find((event) => /^sync .*\.reclaim-\d{8}T\d{6}Z$/.test(event));
-        assert.isDefined(staged);
-        assert.isTrue((staged ?? "").startsWith(`sync ${userdata}/`));
-        const moved = events.indexOf(`rename ${(staged ?? "").slice("sync ".length)}`);
-        assert.isAbove(moved, events.indexOf(staged ?? ""));
-        assert.isAbove(moved, events.indexOf(`sync ${userdata}`));
-        assert.equal(sequences(dbPath).quickCheck, "ok");
-      }),
-    ),
+          );
+          assert.equal(reasonOf(error), "failed");
+          assert.include(String(error.message), "is unchanged");
+          // Nothing of the reclaim is left beside the database; the checked copy waits in the work folder.
+          assert.deepEqual(
+            (yield* fs.readDirectory(userdata)).filter((name) => name.includes("reclaim")),
+            [],
+          );
+          const kept = (yield* fs.readDirectory(workDir)).filter((name) =>
+            /\.reclaim-\d{8}T\d{6}Z$/.test(name),
+          );
+          assert.lengthOf(kept, 1);
+          assert.include(String(error.message), path.join(workDir, kept[0] ?? ""));
+          assert.equal(sequences(dbPath).quickCheck, "ok");
+        }),
+      ),
   );
 
-  it.effect.skipIf(windowsHost)("keeps only the work-folder copy when the copy beside the database cannot move", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, path, home, dbPath, options, userdata } = yield* makeHome;
-        const workDir = path.join(home, "other-volume");
-        yield* fs.makeDirectory(workDir, { recursive: true });
-        const failing = FileSystem.FileSystem.of({
-          ...fs,
-          stat: (target) =>
-            target === workDir
-              ? fs.stat(target).pipe(Effect.map((info) => ({ ...info, dev: info.dev + 1 })))
-              : fs.stat(target),
-          rename: (from, to) =>
-            to === dbPath && from.includes(".reclaim-")
-              ? fs.rename(`${from}.missing`, to)
-              : fs.rename(from, to),
-        });
-        const error = yield* Effect.flip(
-          DatabaseReclaim.reclaim({ ...options, workDir }).pipe(
-            Effect.provideService(FileSystem.FileSystem, failing),
-          ),
-        );
-        assert.equal(reasonOf(error), "failed");
-        assert.include(String(error.message), "is unchanged");
-        // Nothing of the reclaim is left beside the database; the checked copy waits in the work folder.
-        assert.deepEqual(
-          (yield* fs.readDirectory(userdata)).filter((name) => name.includes("reclaim")),
-          [],
-        );
-        const kept = (yield* fs.readDirectory(workDir)).filter((name) =>
-          /\.reclaim-\d{8}T\d{6}Z$/.test(name),
-        );
-        assert.lengthOf(kept, 1);
-        assert.include(String(error.message), path.join(workDir, kept[0] ?? ""));
-        assert.equal(sequences(dbPath).quickCheck, "ok");
-      }),
-    ),
-  );
+  it.effect.skipIf(windowsHost)(
+    "names the file to move back when neither rename can be undone",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options, userdata } = yield* makeHome;
+          const before = sequences(dbPath).all;
+          // A volume without hard links, where both later renames fail.
+          const failing = FileSystem.FileSystem.of({
+            ...fs,
+            link: (from) => fs.link(`${from}.missing`, `${from}.never`),
+            rename: (from, to) =>
+              to === dbPath ? fs.rename(`${from}.missing`, to) : fs.rename(from, to),
+          });
+          const error = yield* Effect.flip(
+            DatabaseReclaim.reclaim(options).pipe(
+              Effect.provideService(FileSystem.FileSystem, failing),
+            ),
+          );
+          assert.equal(reasonOf(error), "failed");
+          const backup = (yield* fs.readDirectory(userdata)).find((name) =>
+            name.includes(".before-reclaim-"),
+          );
+          assert.isDefined(backup);
+          assert.include(String(error.message), `Move ${userdata}/${backup} to ${dbPath}`);
+          assert.isFalse(yield* fs.exists(dbPath));
+          assert.isFalse(yield* fs.exists(`${dbPath}.reclaim-lock`));
 
-  it.effect.skipIf(windowsHost)("names the file to move back when neither rename can be undone", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, dbPath, options, userdata } = yield* makeHome;
-        const before = sequences(dbPath).all;
-        // A volume without hard links, where both later renames fail.
-        const failing = FileSystem.FileSystem.of({
-          ...fs,
-          link: (from) => fs.link(`${from}.missing`, `${from}.never`),
-          rename: (from, to) =>
-            to === dbPath ? fs.rename(`${from}.missing`, to) : fs.rename(from, to),
-        });
-        const error = yield* Effect.flip(
-          DatabaseReclaim.reclaim(options).pipe(
-            Effect.provideService(FileSystem.FileSystem, failing),
-          ),
-        );
-        assert.equal(reasonOf(error), "failed");
-        const backup = (yield* fs.readDirectory(userdata)).find((name) =>
-          name.includes(".before-reclaim-"),
-        );
-        assert.isDefined(backup);
-        assert.include(String(error.message), `Move ${userdata}/${backup} to ${dbPath}`);
-        assert.isFalse(yield* fs.exists(dbPath));
-        assert.isFalse(yield* fs.exists(`${dbPath}.reclaim-lock`));
-
-        // The service refuses to start on a missing database and names the same file.
-        const opened = yield* projectionDump.pipe(
-          Effect.provide(layerDatabase(dbPath)),
-          Effect.exit,
-        );
-        assert.isTrue(Exit.isFailure(opened));
-        const why = Cause.pretty(Exit.isFailure(opened) ? opened.cause : Cause.empty);
-        assert.include(why, `Move ${userdata}/${backup}`);
-        assert.isFalse(yield* fs.exists(dbPath));
-        // Moved back, it is the database again: compacted in place, nothing else lost.
-        yield* fs.rename(`${userdata}/${backup}`, dbPath);
-        assert.equal(sequences(dbPath).quickCheck, "ok");
-        assert.equal(sequences(dbPath).all.at(-1), before.at(-1));
-      }),
-    ),
+          // The service refuses to start on a missing database and names the same file.
+          const opened = yield* projectionDump.pipe(
+            Effect.provide(layerDatabase(dbPath)),
+            Effect.exit,
+          );
+          assert.isTrue(Exit.isFailure(opened));
+          const why = Cause.pretty(Exit.isFailure(opened) ? opened.cause : Cause.empty);
+          assert.include(why, `Move ${userdata}/${backup}`);
+          assert.isFalse(yield* fs.exists(dbPath));
+          // Moved back, it is the database again: compacted in place, nothing else lost.
+          yield* fs.rename(`${userdata}/${backup}`, dbPath);
+          assert.equal(sequences(dbPath).quickCheck, "ok");
+          assert.equal(sequences(dbPath).all.at(-1), before.at(-1));
+        }),
+      ),
   );
 
   it.effect.skipIf(windowsHost)("finishes the swap it started when interrupted", () =>
@@ -617,83 +815,89 @@ it.layer(NodeServices.layer)("db reclaim", (it) => {
     ),
   );
 
-  it.effect.skipIf(windowsHost)("a lock whose pid cannot be dated stops reclaim, not the service", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, dbPath, options } = yield* makeHome;
-        // A live pid (this process's parent) with no readable time: as on Windows or BusyBox.
-        yield* fs.writeFileString(
-          `${dbPath}.reclaim-lock`,
-          JSON.stringify({ pid: process.ppid, startedAt: "unknown" }),
-        );
-        const opened = yield* projectionDump.pipe(
-          Effect.provide(layerDatabase(dbPath)),
-          Effect.exit,
-        );
-        assert.isTrue(Exit.isSuccess(opened));
+  it.effect.skipIf(windowsHost)(
+    "a lock whose pid cannot be dated stops reclaim, not the service",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options } = yield* makeHome;
+          // A live pid (this process's parent) with no readable time: as on Windows or BusyBox.
+          yield* fs.writeFileString(
+            `${dbPath}.reclaim-lock`,
+            JSON.stringify({ pid: process.ppid, startedAt: "unknown" }),
+          );
+          const opened = yield* projectionDump.pipe(
+            Effect.provide(layerDatabase(dbPath)),
+            Effect.exit,
+          );
+          assert.isTrue(Exit.isSuccess(opened));
 
-        const error = yield* Effect.flip(DatabaseReclaim.reclaim(options));
-        assert.equal(reasonOf(error), "in-use");
-        assert.include(String(error.message), `${dbPath}.reclaim-lock`);
-        assert.include(String(error.message), "--force-stale-pid");
-        const forced = yield* DatabaseReclaim.reclaim({ ...options, forceStalePid: true });
-        assert.isFalse(forced.dryRun);
-        assert.isFalse(yield* fs.exists(`${dbPath}.reclaim-lock`));
-      }),
-    ),
+          const error = yield* Effect.flip(DatabaseReclaim.reclaim(options));
+          assert.equal(reasonOf(error), "in-use");
+          assert.include(String(error.message), `${dbPath}.reclaim-lock`);
+          assert.include(String(error.message), "--force-stale-pid");
+          const forced = yield* DatabaseReclaim.reclaim({ ...options, forceStalePid: true });
+          assert.isFalse(forced.dryRun);
+          assert.isFalse(yield* fs.exists(`${dbPath}.reclaim-lock`));
+        }),
+      ),
   );
 
-  it.effect.skipIf(windowsHost)("--force-stale-pid never takes the lock of a reclaim ps dates as running", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, dbPath, options } = yield* makeHome;
-        const before = sequences(dbPath).all;
-        // A live pid (this process's parent) that started before its lock was written.
-        const lock = JSON.stringify({ pid: process.ppid, startedAt: wallClockIso() });
-        yield* fs.writeFileString(`${dbPath}.reclaim-lock`, lock);
-        const error = yield* Effect.flip(
-          DatabaseReclaim.reclaim({ ...options, forceStalePid: true }),
-        );
-        assert.equal(reasonOf(error), "in-use");
-        assert.include(String(error.message), "does not override");
-        assert.equal(yield* fs.readFileString(`${dbPath}.reclaim-lock`), lock);
-        assert.deepEqual(sequences(dbPath).all, before);
-      }),
-    ),
+  it.effect.skipIf(windowsHost)(
+    "--force-stale-pid never takes the lock of a reclaim ps dates as running",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, dbPath, options } = yield* makeHome;
+          const before = sequences(dbPath).all;
+          // A live pid (this process's parent) that started before its lock was written.
+          const lock = JSON.stringify({ pid: process.ppid, startedAt: wallClockIso() });
+          yield* fs.writeFileString(`${dbPath}.reclaim-lock`, lock);
+          const error = yield* Effect.flip(
+            DatabaseReclaim.reclaim({ ...options, forceStalePid: true }),
+          );
+          assert.equal(reasonOf(error), "in-use");
+          assert.include(String(error.message), "does not override");
+          assert.equal(yield* fs.readFileString(`${dbPath}.reclaim-lock`), lock);
+          assert.deepEqual(sequences(dbPath).all, before);
+        }),
+      ),
   );
 
-  it.effect.skipIf(windowsHost)("removes a partial copy beside the database when copying it fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { fs, path, home, dbPath, options, userdata } = yield* makeHome;
-        const workDir = path.join(home, "other-volume");
-        yield* fs.makeDirectory(workDir, { recursive: true });
-        // The work folder reads as another volume, and the copy across breaks off.
-        const failing = FileSystem.FileSystem.of({
-          ...fs,
-          stat: (target) =>
-            target === workDir
-              ? fs.stat(target).pipe(Effect.map((info) => ({ ...info, dev: info.dev + 1 })))
-              : fs.stat(target),
-          copyFile: (from, to) =>
-            fs
-              .writeFileString(to, "partial")
-              .pipe(Effect.andThen(fs.copyFile(`${from}.missing`, to))),
-        });
-        const error = yield* Effect.flip(
-          DatabaseReclaim.reclaim({ ...options, workDir }).pipe(
-            Effect.provideService(FileSystem.FileSystem, failing),
-          ),
-        );
-        assert.notEqual(reasonOf(error), "in-use");
-        assert.deepEqual(
-          (yield* fs.readDirectory(userdata)).filter((name) => name.includes("reclaim")),
-          [],
-        );
-        assert.deepEqual(yield* fs.readDirectory(workDir), []);
-        assert.equal(sequences(dbPath).quickCheck, "ok");
-      }),
-    ),
+  it.effect.skipIf(windowsHost)(
+    "removes a partial copy beside the database when copying it fails",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { fs, path, home, dbPath, options, userdata } = yield* makeHome;
+          const workDir = path.join(home, "other-volume");
+          yield* fs.makeDirectory(workDir, { recursive: true });
+          // The work folder reads as another volume, and the copy across breaks off.
+          const failing = FileSystem.FileSystem.of({
+            ...fs,
+            stat: (target) =>
+              target === workDir
+                ? fs.stat(target).pipe(Effect.map((info) => ({ ...info, dev: info.dev + 1 })))
+                : fs.stat(target),
+            copyFile: (from, to) =>
+              fs
+                .writeFileString(to, "partial")
+                .pipe(Effect.andThen(fs.copyFile(`${from}.missing`, to))),
+          });
+          const error = yield* Effect.flip(
+            DatabaseReclaim.reclaim({ ...options, workDir }).pipe(
+              Effect.provideService(FileSystem.FileSystem, failing),
+            ),
+          );
+          assert.notEqual(reasonOf(error), "in-use");
+          assert.deepEqual(
+            (yield* fs.readDirectory(userdata)).filter((name) => name.includes("reclaim")),
+            [],
+          );
+          assert.deepEqual(yield* fs.readDirectory(workDir), []);
+          assert.equal(sequences(dbPath).quickCheck, "ok");
+        }),
+      ),
   );
 
   it.effect.skipIf(windowsHost)("the service does not open the database while a reclaim runs", () =>

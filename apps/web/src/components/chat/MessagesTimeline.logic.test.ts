@@ -5178,7 +5178,7 @@ describe("timelineDetail", () => {
       ).toContain("attachment");
     });
 
-    it("folds successful activity in a failed turn without hiding its error", () => {
+    it("folds a failed turn's commands, failed one included, and counts it on the fold", () => {
       const failure = command("failed-cmd", 3, "failed");
       const timelineEntries = [
         user("user", 0),
@@ -5193,15 +5193,10 @@ describe("timelineDetail", () => {
         timelineEntries,
         timelineDetail: "concise",
       });
-      expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+      expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({ failedCount: 1 });
       expect(rows.map((row) => row.id)).not.toContain("note");
       expect(rows.map((row) => row.id)).toContain("error");
-      expect(
-        rows.some(
-          (row) =>
-            row.kind === "work" && row.groupedEntries.some((entry) => entry.id === "failed-cmd"),
-        ),
-      ).toBe(true);
+      expect(rows.some((row) => row.kind === "work")).toBe(false);
       const expanded = deriveMessagesTimelineRows({
         ...settled,
         latestRun: { ...settled.latestRun, status: "failed" },
@@ -5210,6 +5205,155 @@ describe("timelineDetail", () => {
         expandedRunIds: new Set([runId]),
       });
       expect(expanded.map((row) => row.id)).toContain("note");
+      expect(
+        expanded.some(
+          (row) =>
+            row.kind === "work" && row.groupedEntries.some((entry) => entry.id === "failed-cmd"),
+        ),
+      ).toBe(true);
+    });
+
+    it("folds work without a run under a prompt that has one into that turn's single fold", () => {
+      const promptWithRun = ((): TimelineEntry => {
+        const prompt = user("user", 0);
+        return prompt.kind === "message"
+          ? { ...prompt, message: { ...prompt.message, runId } }
+          : prompt;
+      })();
+      const orphan = (id: string, second: number): TimelineEntry => {
+        const entry = command(id, second);
+        return entry.kind === "work" ? { ...entry, entry: { ...entry.entry, runId: null } } : entry;
+      };
+      const timelineEntries = [
+        promptWithRun,
+        command("cmd", 1),
+        orphan("sub-cmd", 2),
+        assistant("final", 3),
+      ];
+      const rows = deriveMessagesTimelineRows({
+        ...settled,
+        timelineEntries,
+        timelineDetail: "concise",
+      });
+      expect(rows.filter((row) => row.kind === "turn-fold")).toHaveLength(1);
+      expect(rows.some((row) => row.kind === "work")).toBe(false);
+      const live = deriveMessagesTimelineRows({
+        ...running,
+        timelineEntries: timelineEntries.slice(0, 3),
+        timelineDetail: "concise",
+      });
+      expect(live.some((row) => row.kind === "turn-fold")).toBe(false);
+      expect(live.some((row) => row.kind === "work")).toBe(false);
+      expect(
+        live.find((row) => row.kind === "work-live")?.groupedEntries.map((entry) => entry.id),
+      ).toEqual(["cmd", "sub-cmd"]);
+    });
+
+    it("keeps a failed turn's commands open in normal", () => {
+      const timelineEntries = [
+        user("user", 0),
+        command("cmd", 2),
+        command("failed-cmd", 3, "failed"),
+        assistant("error", 4, "Credit balance is too low"),
+      ];
+      const rows = deriveMessagesTimelineRows({
+        ...settled,
+        latestRun: { ...settled.latestRun, status: "failed" },
+        timelineEntries,
+      });
+      expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
+      expect(rows.some((row) => row.kind === "work")).toBe(true);
+    });
+
+    it("folds a stopped turn in concise and names the stop", () => {
+      const timelineEntries = [
+        user("user", 0),
+        command("cmd", 2),
+        command("cmd-2", 3, "inProgress"),
+        {
+          id: "stop",
+          kind: "event" as const,
+          createdAt: at(4),
+          projectedItem: {
+            item: { type: "run_interrupt_result", runId, id: "stop" },
+          } as never,
+        },
+      ];
+      const stopped = {
+        ...settled,
+        latestRun: { ...settled.latestRun, status: "interrupted" as const },
+      };
+      const rows = deriveMessagesTimelineRows({
+        ...stopped,
+        timelineEntries,
+        timelineDetail: "concise",
+      });
+      expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
+        activityDetail: expect.stringContaining("You stopped after"),
+      });
+      expect(rows.some((row) => row.kind === "work")).toBe(false);
+      const normal = deriveMessagesTimelineRows({ ...stopped, timelineEntries });
+      expect(normal.some((row) => row.kind === "turn-fold")).toBe(false);
+    });
+
+    it("folds a settled turn whose run never recorded its end or still streams", () => {
+      const final = assistant("final", 5);
+      const streaming: TimelineEntry =
+        final.kind === "message"
+          ? { ...final, message: { ...final.message, streaming: true } }
+          : final;
+      const timelineEntries = [user("user", 0), command("cmd", 2), streaming];
+      const rows = deriveMessagesTimelineRows({
+        ...settled,
+        latestRun: { ...settled.latestRun, completedAt: null },
+        timelineEntries,
+        timelineDetail: "concise",
+      });
+      expect(rows.some((row) => row.kind === "turn-fold")).toBe(true);
+      expect(rows.some((row) => row.kind === "work")).toBe(false);
+      const normal = deriveMessagesTimelineRows({
+        ...settled,
+        latestRun: { ...settled.latestRun, completedAt: null },
+        timelineEntries,
+      });
+      expect(normal.some((row) => row.kind === "work")).toBe(true);
+    });
+
+    it("folds commands left running after the final reply once the turn settles", () => {
+      const timelineEntries = [
+        user("user", 0),
+        command("cmd", 2),
+        assistant("final", 3),
+        command("trailing", 4, "inProgress"),
+      ];
+      const rows = deriveMessagesTimelineRows({
+        ...settled,
+        timelineEntries,
+        timelineDetail: "concise",
+      });
+      expect(rows.some((row) => row.kind === "work")).toBe(false);
+      expect(rows.map((row) => row.id)).toContain("final");
+    });
+
+    it("gathers every command of the running turn into the live row, failed ones too", () => {
+      const timelineEntries = [
+        user("user", 0),
+        command("cmd-1", 2),
+        command("failed", 3, "failed"),
+        assistant("latest-note", 4, "Trying another way"),
+        command("cmd-2", 5),
+      ];
+      const rows = deriveMessagesTimelineRows({
+        ...running,
+        timelineEntries,
+        timelineDetail: "concise",
+      });
+      expect(rows.some((row) => row.kind === "work")).toBe(false);
+      const live = rows.find((row) => row.kind === "work-live");
+      expect(
+        live?.kind === "work-live" ? live.groupedEntries.map((entry) => entry.id) : [],
+      ).toEqual(["cmd-1", "failed", "cmd-2"]);
+      expect(rows.map((row) => row.id)).toContain("latest-note");
     });
 
     it("leaves no row for a group that only thought", () => {

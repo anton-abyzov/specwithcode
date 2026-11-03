@@ -22,6 +22,7 @@ import Migration0062 from "./Migrations/062_ProjectEnvironmentPreparations.ts";
 import Migration0067 from "./Migrations/067_AuthPrincipal.ts";
 import Migration0068 from "./Migrations/068_ActiveTurnItemIndexes.ts";
 import Migration0069 from "./Migrations/069_AuthSessionProofKeyThumbprint.ts";
+import Migration0070 from "./Migrations/070_ThreadHistoryCompactions.ts";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -168,6 +169,7 @@ export const migrationEntries = [
   [67, "AuthPrincipal", Migration0067],
   [68, "ActiveTurnItemIndexes", Migration0068],
   [69, "AuthSessionProofKeyThumbprint", Migration0069],
+  [70, "ThreadHistoryCompactions", Migration0070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

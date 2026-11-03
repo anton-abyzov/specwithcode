@@ -11,6 +11,12 @@ export {
   WorktreeLocationMode,
   resolveWorktreeLocationMode,
 } from "./workspaceLifecycleSettings.ts";
+import {
+  StorageCleanupSettings,
+  StorageCleanupSettingsPatch,
+  StorageRetentionDays,
+} from "./storageCleanupSettings.ts";
+export * from "./storageCleanupSettings.ts";
 import { MaxBootedDevices, SshDeviceHostConfigs } from "./device.ts";
 import { ExternalBrowserTarget } from "./externalBrowser.ts";
 import {
@@ -1425,9 +1431,6 @@ export type ProviderLimitWaitUnderMinutes = typeof ProviderLimitWaitUnderMinutes
  * background activity, theme. UI, search and the write planner derive
  * eligibility from this list, so adding a key here is the whole opt-in.
  */
-const StorageRetentionDays = Schema.NullOr(
-  Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
-);
 
 export const WorktreeCleanupRules = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays,
@@ -1652,23 +1655,6 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "providerLimitSwitchAtPercent",
   "keepActiveThreadsPerProject",
 ]);
-
-export const StorageCleanupSettings = Schema.Struct({
-  worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  worktreeOnDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  worktreeUnchanged: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  browserArtifactsAfterDays: StorageRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  /**
-   * Rotated logs are swept after two weeks by default: they are the one store
-   * that grows on its own, and a full disk stalls the whole app. An explicit
-   * null still keeps them forever.
-   */
-  logsAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(14))),
-});
-export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const PromptSuggestionsMode = Schema.Literals(["all", "native", "off"]);
 export type PromptSuggestionsMode = typeof PromptSuggestionsMode.Type;
@@ -2286,16 +2272,7 @@ export const ServerSettingsPatch = Schema.Struct({
       ]),
     ),
   ),
-  storageCleanup: Schema.optionalKey(
-    Schema.Struct({
-      worktreeAfterDays: Schema.optionalKey(StorageRetentionDays),
-      worktreeOnMerge: Schema.optionalKey(Schema.Boolean),
-      worktreeOnDelete: Schema.optionalKey(Schema.Boolean),
-      worktreeUnchanged: Schema.optionalKey(Schema.Boolean),
-      browserArtifactsAfterDays: Schema.optionalKey(StorageRetentionDays),
-      logsAfterDays: Schema.optionalKey(StorageRetentionDays),
-    }),
-  ),
+  storageCleanup: Schema.optionalKey(StorageCleanupSettingsPatch),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   worktreeLocationMode: Schema.optionalKey(WorktreeLocationMode),
   archiveInactiveThreadsAfterDays: Schema.optionalKey(ArchiveInactiveThreadsAfterDays),

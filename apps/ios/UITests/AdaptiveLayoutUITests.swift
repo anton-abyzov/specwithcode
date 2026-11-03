@@ -119,7 +119,7 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
 
     tap(app.descendants(matching: .any).matching(identifier: "sidebar.thread").firstMatch)
     let back = app.buttons["chat.back-to-threads"]
-    waitForHittable(back)
+    waitFor(back)
     XCTAssertGreaterThan(back.frame.minX, middle * 0.8)
     XCTAssertTrue(panes.exists, "The coordinator stays in the column while a thread opens")
     saveShot("2 Thread beside its coordinator")
@@ -139,7 +139,7 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     settle()
     waitForHittable(panes)
 
-    tap(back)
+    tapLow(back)
     waitForHittable(threadsPane)
     XCTAssertTrue(app.buttons["column.panes.both"].isSelected)
 
@@ -173,6 +173,11 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     waitForHittable(thread)
     XCTAssertLessThan(thread.frame.minX, middle, "The column lists the coordinator's threads")
     waitForGone(threadsButton)
+    // Grouped by what they need, as on the desktop.
+    let groups = app.descendants(matching: .any).matching(identifier: "sidebar.thread-group")
+    waitFor(groups.firstMatch)
+    XCTAssertTrue(groups.firstMatch.label.hasPrefix("Needs you"), "Needs you leads, got \(groups.firstMatch.label)")
+    XCTAssertGreaterThan(groups.count, 1)
     saveShot("7 Threads beside the coordinator")
   }
 
@@ -233,6 +238,56 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
 
     chooseMachine(nil)
     waitForHittable(specweave)
+  }
+
+  /// Beside Aide's coordinator the screen lists Aide's threads, not every
+  /// project; All projects stays one tap back, and Threads returns.
+  func testAidesCoordinatorShowsItsOwnThreadsBeside() throws {
+    launch(coordinatorBeside: true)
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let middle = app.frame.width / 2
+    let threadsPane = app.staticTexts["threads-pane.header"]
+    waitForHittable(threadsPane)
+    XCTAssertEqual(threadsPane.label, "Threads", "Beside Aide the list is Aide's threads")
+    XCTAssertGreaterThan(threadsPane.frame.minX, middle * 0.8)
+    saveShot("12 Aide and its threads")
+
+    tapLow(app.buttons["sidebar.all-projects"])
+    let threadsButton = app.buttons["chat.threads"]
+    waitFor(threadsButton)
+    settle()
+    saveShot("13 All projects beside Aide")
+    tapLow(threadsButton)
+    waitForHittable(threadsPane)
+    XCTAssertEqual(threadsPane.label, "Threads")
+  }
+
+  /// A long reply opens and closes again at once on an unfolded Duo.
+  func testLongReplyExpandsAndCollapsesWithoutFreezing() throws {
+    launch(fixture: "long")
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    let more = app.buttons["Show more"]
+    waitForHittable(more)
+    let start = Date()
+    tap(more)
+    let less = app.buttons["Show less"]
+    for _ in 0..<12 where !less.isHittable { app.swipeUp() }
+    waitForHittable(less)
+    tap(less)
+    waitFor(more)
+    XCTAssertLessThan(Date().timeIntervalSince(start), 20, "Expanding and collapsing took too long")
+    tap(field("Message"))
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The app stopped answering after collapsing")
+  }
+
+  /// Headers at the top edge of an unfolded Duo read as covered to
+  /// XCUITest; a tap low in the frame reaches them as a finger does.
+  private func tapLow(_ element: XCUIElement) {
+    waitFor(element)
+    element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
   }
 
   /// Picks a machine from the chips, or from the menu that replaces them

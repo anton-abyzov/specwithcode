@@ -27,6 +27,8 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { planProjectCommand } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectRow } from "../orchestration-v2/ProjectStore.ts";
+import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
+import * as CoordinatorRearmStore from "./CoordinatorRearmStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
@@ -81,6 +83,10 @@ export function machine(environment: string) {
   /** This machine's standby records, and whether it says it can stand by. */
   const standby = new Map<string, CoordinatorStandbyRecord>();
   const capabilities = { coordinatorStandby: true };
+  /** This machine's re-arm consents and runs. */
+  const rearm = CoordinatorRearmStore.makeMemory();
+  /** Coordinator epochs claimed on this machine (WorkerEpochStore). */
+  const epochs = new Map<string, WorkerEpochStore.WorkerEpochRecord>();
   /** Routine copies this machine was asked to keep, by its project. */
   const keptRoutines = new Map<string, { logicalProjectId: string; ids: string[] }>();
   const toRow = (project: Project): ProjectRow =>
@@ -176,6 +182,19 @@ export function machine(environment: string) {
               }),
           }),
         ),
+        Layer.succeed(CoordinatorRearmStore.CoordinatorRearmStore, rearm.service),
+        Layer.succeed(WorkerEpochStore.WorkerEpochStore, {
+          get: (id) => Effect.sync(() => epochs.get(id)),
+          claim: (claim) =>
+            Effect.sync(() => {
+              const applied = WorkerEpochStore.applyEpochClaim(
+                epochs.get(claim.logicalProjectId),
+                claim,
+              );
+              if (applied.next !== undefined) epochs.set(claim.logicalProjectId, applied.next);
+              return { accepted: applied.accepted, epoch: applied.epoch };
+            }),
+        }),
         Layer.succeed(ProjectService.ProjectService, {
           getById: (projectId: ProjectId) =>
             Effect.succeed(Option.fromNullishOr(projects.get(projectId))),
@@ -333,6 +352,9 @@ export function machine(environment: string) {
     replicas,
     keptRoutines,
     standby,
+    rearm: rearm.entries,
+    rearmStore: rearm.service,
+    epochs,
     layer,
     capabilities,
     run,

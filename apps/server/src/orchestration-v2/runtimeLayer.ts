@@ -6,6 +6,7 @@ import * as CoordinatorLeaseRoute from "../project/CoordinatorLeaseRoute.ts";
 import * as CoordinatorWakeGate from "../project/CoordinatorWakeGate.ts";
 import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
 import * as CoordinatorRole from "../project/CoordinatorRole.ts";
+import * as CoordinatorRearmStore from "../project/CoordinatorRearmStore.ts";
 import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
 import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
@@ -497,6 +498,7 @@ const layerProjectLinkProvided = ProjectLink.layer.pipe(
       layerProjectWorkspaceProvided,
       CoordinatorReplicas.layer,
       CoordinatorStandbyStore.layer,
+      CoordinatorRearmStore.layer,
       layerCoordinatorRoleProvided,
       // The standby keeps the routines its coordinator sends.
       layerRoutineCopiesProvided,

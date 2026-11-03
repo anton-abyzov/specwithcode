@@ -127,6 +127,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
+  /** Opt-in purge of deleted threads and archived threads' event log (storageCleanup). */
+  threadHistoryRetention: Schema.optionalKey(Schema.Boolean),
   /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   worktreeLocationMode: Schema.optionalKey(Schema.Boolean),
@@ -325,6 +327,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       automatically (`projectLink.acceptStandby`, `coordinator-lease`). Absent
       on older servers, which cannot be chosen as a standby. */
   coordinatorStandby: Schema.optionalKey(Schema.Boolean),
+  /** Holds the owner's re-arm consent, and accepts a standby registration from a
+      listed coordinator that took over automatically (`projectLink.acceptStandby`
+      `rearm`, `studio_coordinator_claim_epoch` `standby`). Absent on older servers. */
+  coordinatorRearm: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

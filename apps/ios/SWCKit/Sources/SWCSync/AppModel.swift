@@ -323,6 +323,8 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
     case subagent(title: String, child: ThreadRef?, isRunning: Bool = false)
     case error(message: String)
     case notice(text: String)
+    /// A turn's folded steps: "Worked · Ran 3 commands". Tap to open them.
+    case fold(label: String, summary: String?, failures: Int, expanded: Bool, running: Bool)
   }
 
   public let id: String
@@ -606,6 +608,10 @@ public final class AppModel {
   public var appearance: AppearancePreference {
     didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
   }
+  /// How much of a thread's work the transcript shows; kept on this device.
+  public var timelineDetail: TimelineDetail {
+    didSet { UserDefaults.standard.set(timelineDetail.rawValue, forKey: TimelineDetail.defaultsKey) }
+  }
 
   @ObservationIgnored public let engine: AppEngine
   @ObservationIgnored private var sessions: [ChatTarget: ChatSession] = [:]
@@ -614,6 +620,7 @@ public final class AppModel {
   public init(engine: AppEngine) {
     self.engine = engine
     self.appearance = UserDefaults.standard.string(forKey: "appearance").flatMap(AppearancePreference.init) ?? .system
+    self.timelineDetail = TimelineDetail.stored()
     engine.start(model: self)
   }
 

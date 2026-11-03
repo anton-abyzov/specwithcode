@@ -93,7 +93,20 @@ describe("storage cleanup settings", () => {
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: 14,
+      scratchAfterDays: null,
+      homeSizeWarningGb: 50,
+      deletedThreadHistoryAfterDays: null,
+      archivedThreadHistoryAfterDays: null,
     });
+  });
+
+  it("keeps scratch folders at least a week and accepts turning the size warning off", () => {
+    expect(() => decodeServerSettings({ storageCleanup: { scratchAfterDays: 3 } })).toThrow();
+    const decoded = decodeServerSettings({
+      storageCleanup: { scratchAfterDays: null, homeSizeWarningGb: null },
+    }).storageCleanup;
+    expect(decoded.scratchAfterDays).toBeNull();
+    expect(decoded.homeSizeWarningGb).toBeNull();
   });
 
   it("sweeps rotated logs after two weeks unless the user turned it off", () => {

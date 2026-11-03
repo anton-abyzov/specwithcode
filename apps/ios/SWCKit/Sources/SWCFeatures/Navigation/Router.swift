@@ -257,7 +257,11 @@ final class AppRouter {
   /// chat it was opened from.
   func sidebarScope(in model: AppModel) -> ProjectRef? {
     guard !sidebarShowsAllProjects else { return nil }
-    return followedProject(in: model)
+    if let project = followedProject(in: model) { return project }
+    // Aide's chats show the whole tree, except beside Aide's coordinator:
+    // there the screen holds Aide's own threads.
+    if showsCoordinatorBeside, !isDrawerSearching, case let .aide(ref)? = landingCoordinator(in: model) { return ref }
+    return nil
   }
 
   /// The project of the chat on screen.

@@ -80,6 +80,12 @@ export const CoordinatorLeaseRecord = Schema.Struct({
   fencedSince: Schema.NullOr(Schema.String),
   gaveWay: Schema.NullOr(CoordinatorGaveWay),
   updatedAt: Schema.String,
+  /**
+   * When a lease or pause to the current target may have reached it: it
+   * answered, or the call got no answer. Null proves no lease reached it, so
+   * the standby cannot have started counting. Reset when the target changes.
+   */
+  maybeDeliveredAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type CoordinatorLeaseRecord = typeof CoordinatorLeaseRecord.Type;
 
@@ -102,6 +108,47 @@ export const emptyLeaseRecord = (
   gaveWay: null,
   updatedAt: at,
 });
+
+const sameEntry = (
+  entry: Pick<CoordinatorPendingRelease, "standby" | "epoch">,
+  standby: LogicalProjectMember,
+  epoch: number,
+) =>
+  entry.epoch === epoch &&
+  entry.standby.environmentId === standby.environmentId &&
+  entry.standby.projectId === standby.projectId &&
+  entry.standby.coordinatorThreadId === standby.coordinatorThreadId;
+
+/** `current` owing `entry` a release too; a fresh record when there is none. Never twice. */
+export function withPendingRelease(
+  current: CoordinatorLeaseRecord | undefined,
+  entry: CoordinatorPendingRelease,
+  projectId: string,
+  at: string,
+): CoordinatorLeaseRecord {
+  const base = current ?? emptyLeaseRecord(projectId, entry.logicalProjectId, at);
+  if (base.pendingReleases.some((kept) => sameEntry(kept, entry.standby, entry.epoch))) return base;
+  return { ...base, pendingReleases: [...base.pendingReleases, entry], updatedAt: at };
+}
+
+/**
+ * `current` without a release owed to `standby` at `epoch`: undefined when
+ * nothing changes, null when the record is left with nothing to keep.
+ */
+export function withoutPendingRelease(
+  current: CoordinatorLeaseRecord | undefined,
+  standby: LogicalProjectMember,
+  epoch: number,
+): CoordinatorLeaseRecord | null | undefined {
+  if (current === undefined) return undefined;
+  const pendingReleases = current.pendingReleases.filter(
+    (kept) => !sameEntry(kept, standby, epoch),
+  );
+  if (pendingReleases.length === current.pendingReleases.length) return undefined;
+  return current.target === null && pendingReleases.length === 0 && current.gaveWay === null
+    ? null
+    : { ...current, pendingReleases };
+}
 
 const StoreFile = Schema.Struct({
   version: Schema.Literal(1),

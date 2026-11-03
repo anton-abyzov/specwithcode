@@ -101,6 +101,21 @@ export function readClaimAnswer(value: unknown): ClaimAnswer {
   return { accepted: true, origins };
 }
 
+/**
+ * The configured machine with this environment id, as `adopt` finds it;
+ * undefined when there is none or the list of machines cannot be read.
+ */
+export const fleetMachineFor = (
+  targets: Pick<FleetTargets.FleetTargets["Service"], "load">,
+  environmentId: string,
+) =>
+  targets.load.pipe(
+    Effect.map((config) =>
+      (config?.machines ?? []).find((candidate) => candidate.environmentId === environmentId),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 export class RemoteWorkerAdoption extends Context.Service<
   RemoteWorkerAdoption,
   {

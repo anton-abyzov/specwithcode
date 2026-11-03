@@ -29,6 +29,7 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as CoordinatorLeaseRoute from "./CoordinatorLeaseRoute.ts";
 import { CoordinatorRole, type CoordinatorRoleChange } from "./CoordinatorRole.ts";
 import * as CoordinatorStandbyLoop from "./CoordinatorStandbyLoop.ts";
+import type { CoordinatorStandbyRecord } from "./CoordinatorStandbyStore.ts";
 import { STANDBY_TICK_MS } from "./CoordinatorStandbyWatch.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { legacyPair, link, removeCheckouts } from "./ProjectLink.testkit.ts";
@@ -261,4 +262,64 @@ describe("the standby loop the server runs", () => {
       expect(f.adoptions).toEqual([]);
     }).pipe(Effect.scoped),
   );
+});
+
+describe("fire preflight for a standby a peer armed", () => {
+  const record = (armedBy?: { kind: "owner" | "peer"; chainId?: string }) =>
+    ({
+      logicalProjectId: "logical:easychamp",
+      projectId: "easychamp-m3",
+      coordinator: {
+        environmentId: EnvironmentId.make("m1"),
+        projectId: "easychamp-m1",
+        coordinatorThreadId: "project-coordinator:easychamp-m1",
+      },
+      epoch: 3,
+      acceptedAt: "2026-11-03T10:00:00.000Z",
+      shadowWorkers: [],
+      ...(armedBy === undefined ? {} : { armedBy }),
+    }) as unknown as CoordinatorStandbyRecord;
+
+  const roundWith = (due: CoordinatorStandbyRecord, knownHigherEpoch: number | undefined) => {
+    const asked: Array<string> = [];
+    const inputs: Array<{ readonly knownHigherEpoch?: number | undefined }> = [];
+    const standby = CoordinatorStandbyLoop.makeStandbyTakeover({
+      watch: {
+        tick: Effect.succeed({ restarted: false, due: [due] }),
+        resumeAfterHold: Effect.void,
+      },
+      store: { list: Effect.succeed([due]) },
+      autoTakeover: (input) => {
+        inputs.push(input);
+        return Effect.succeed({ outcome: "disarmed" } as const);
+      },
+      selfEnvironmentId: "m3",
+      followUp: () => Effect.succeed({ unclaimed: [] }),
+      held: Effect.succeed(false),
+      preflight: (checked) => {
+        asked.push(checked.logicalProjectId);
+        return Effect.succeed(knownHigherEpoch === undefined ? {} : { knownHigherEpoch });
+      },
+    });
+    return Effect.runPromise(standby.round).then(() => ({ asked, inputs }));
+  };
+
+  it("passes a newer coordinator another member reports to the takeover", async () => {
+    const { asked, inputs } = await roundWith(record({ kind: "peer", chainId: "c" }), 4);
+    expect(asked).toEqual(["logical:easychamp"]);
+    expect(inputs).toEqual([{ logicalProjectId: "logical:easychamp", knownHigherEpoch: 4 }]);
+  });
+
+  it("fires as before when no member answers", async () => {
+    const { inputs } = await roundWith(record({ kind: "peer", chainId: "c" }), undefined);
+    expect(inputs).toEqual([{ logicalProjectId: "logical:easychamp" }]);
+  });
+
+  it("asks nobody for a standby the owner armed", async () => {
+    for (const armedBy of [undefined, { kind: "owner" as const }]) {
+      const { asked, inputs } = await roundWith(record(armedBy), 9);
+      expect(asked).toEqual([]);
+      expect(inputs).toEqual([{ logicalProjectId: "logical:easychamp" }]);
+    }
+  });
 });

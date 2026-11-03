@@ -80,7 +80,9 @@ export type CoordinatorStandbyAfterMinutes = typeof CoordinatorStandbyAfterMinut
 /**
  * The one member the owner chose to take over this coordinator automatically
  * when it goes quiet. Off when absent. The standby learns its role from the
- * owner's `acceptStandby`, never from a peer message.
+ * owner's `acceptStandby`, or from a coordinator that took over automatically
+ * under a re-arm consent the owner's app wrote on that standby; never from a
+ * peer message alone.
  */
 export const ProjectCoordinatorStandby = Schema.Struct({
   member: LogicalProjectMember,

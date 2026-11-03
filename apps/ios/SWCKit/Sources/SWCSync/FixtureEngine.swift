@@ -1020,6 +1020,14 @@ private enum FixtureSample {
       }
       rows.append(.assistant(markdown: reply, streaming: false))
     }
+    // A long report from another machine, collapsed behind Show more.
+    rows.append(.user(text: "What did ministorm report?"))
+    var report = "## Ministorm report\n\n"
+    for section in 1...24 {
+      report += "### Step \(section)\n\nRoot `/home/dev/projects/fleet` on branch `feature/handoff`, HEAD `73b0efcc9a873ff24ad2490b5dfe20810d8929f3`. "
+      report += "Nested package `console-ui` verified with `npm run i18n-audit && vitest run`.\n\n- Checkpoint marker M4-CONTEXT-\(section)\n- No installs, builds or writes\n\n"
+    }
+    rows.append(.assistant(markdown: report, streaming: false))
     return rows
   }()
 

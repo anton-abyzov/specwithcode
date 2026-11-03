@@ -1,6 +1,8 @@
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   logicalProjectMemberKey,
+  type CoordinatorStandbyAfterMinutes,
+  type LogicalProject,
   type LogicalProjectMember,
   type Project,
   type ProjectAcceptStandbyInput,
@@ -14,7 +16,9 @@ import {
   type ProjectLinkReplicateResult,
   type ProjectSetStandbyInput,
   type ProjectSetStandbyResult,
+  type ProjectStandbyRearmStatus,
   type ProjectTakeoverResult,
+  type StandbyRearmConsent,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -26,6 +30,7 @@ import type * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import type * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import type { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import type { CoordinatorRoleShape } from "./CoordinatorRole.ts";
 import type {
   CoordinatorStandbyRecord,
@@ -90,11 +95,64 @@ export interface ProjectLinkStandbyMethods {
   readonly replicateFromPeer: (
     input: ReplicateFromPeerInput,
   ) => Effect.Effect<ProjectLinkReplicateResult, ProjectLinkError>;
+  /**
+   * Internal: a coordinator that took over automatically registers this
+   * machine as its standby, through `studio_coordinator_claim_epoch`. Only
+   * under the owner's re-arm consent on this machine, naming the same chain
+   * and the caller, at or above the consent's epoch.
+   */
+  readonly acceptStandbyFromPeer: (
+    input: AcceptStandbyFromPeerInput,
+  ) => Effect.Effect<ProjectAcceptStandbyResult, ProjectLinkError>;
   /** Internal: takes over when the standby clock fires, re-reading it under the lock. */
   readonly autoTakeover: (input: {
     readonly logicalProjectId: string;
+    /** A newer active coordinator another member reported; the registration is spent then. */
+    readonly knownHigherEpoch?: number | undefined;
   }) => Effect.Effect<AutoTakeoverOutcome, ProjectLinkError>;
+  /**
+   * Internal: the coordinator that took over automatically names or clears
+   * its own standby while re-arming (CoordinatorStandbyRearm), only at the
+   * epoch it took over at and never over the owner's choice.
+   */
+  readonly rearmStandby: (
+    input: RearmStandbyInput,
+  ) => Effect.Effect<ProjectSetStandbyResult, ProjectLinkError>;
+  /** This machine's re-arm consent and run for a copy, for `projectLink.syncStatus`. */
+  readonly rearmStatus: (
+    projectId: ProjectId,
+  ) => Effect.Effect<ProjectStandbyRearmStatus | undefined>;
 }
+
+export interface RearmStandbyInput {
+  readonly projectId: ProjectId;
+  readonly logicalProjectId: string;
+  /** The epoch this copy took over at; any other refuses. */
+  readonly epoch: number;
+  readonly operationId: string;
+  /** Null clears the standby, only while it is still `expect`. */
+  readonly standby: {
+    readonly member: LogicalProjectMember;
+    readonly afterMinutes: CoordinatorStandbyAfterMinutes;
+  } | null;
+  readonly expect?: LogicalProjectMember | undefined;
+}
+
+/** The detail of a re-arm refused because the owner chose another standby, or none. */
+export const REARM_OWNER_CHOSE = "The owner chose the standby here.";
+
+export interface AcceptStandbyFromPeerInput {
+  readonly logicalProjectId: string;
+  /** The environment the caller's work grant names; the registered coordinator is its listed copy. */
+  readonly callerEnvironmentId: string;
+  readonly epoch: number;
+  readonly chainId: string;
+}
+
+/** The detail of a peer registration refused for want of a matching consent. */
+export const PEER_ARM_NO_CONSENT = "no_consent";
+/** The detail of a registration refused because this server cannot stand by. */
+export const STANDBY_CAPABILITY_REFUSAL = "This machine cannot take over automatically. Update it.";
 
 export interface ReleaseBeforeChangeInput {
   readonly projectId: ProjectId;
@@ -177,6 +235,13 @@ export interface ProjectLinkStandbyDeps {
   readonly environment: ServerEnvironment.ServerEnvironment["Service"];
   readonly replicas: CoordinatorReplicas.CoordinatorReplicas["Service"];
   readonly store: CoordinatorStandbyStore["Service"];
+  readonly rearmStore: CoordinatorRearmStore["Service"];
+  /** The coordinator epoch claimed on this machine for a project (WorkerEpochStore); undefined when unread. */
+  readonly claimedEpoch?: (
+    logicalProjectId: string,
+  ) => Effect.Effect<{ readonly epoch: number; readonly claimedBy: string } | undefined>;
+  /** Why team rules stop machines working together here, or null. */
+  readonly teamRulesRefusal?: Effect.Effect<string | null>;
   readonly fail: (
     code: ProjectLinkError["code"],
     detail?: string,
@@ -218,7 +283,7 @@ export interface ProjectLinkStandbyDeps {
 }
 
 export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLinkStandbyMethods => {
-  const { admission, environment, replicas, store, fail, load } = deps;
+  const { admission, environment, replicas, store, rearmStore, fail, load } = deps;
   const storeFailed = () => fail("storage_failed");
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -281,6 +346,164 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
       }),
     );
 
+  /**
+   * Registers `wanted.coordinator` as the coordinator this machine stands by
+   * for, under the project lock the caller holds. Shared by the owner's
+   * `acceptStandby` and a peer's re-arm; neither may replace a registration
+   * for a newer coordinator, nor one at the same epoch for another.
+   */
+  const acceptLocked = (
+    project: Project,
+    identity: LogicalProject,
+    wanted: {
+      readonly coordinator: LogicalProjectMember;
+      readonly epoch: number;
+      readonly afterMinutes: CoordinatorStandbyAfterMinutes;
+    },
+    armedBy: NonNullable<CoordinatorStandbyRecord["armedBy"]>,
+  ) =>
+    Effect.gen(function* () {
+      const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      yield* deps.refusePersonal(project);
+      const descriptor = yield* environment.getDescriptor;
+      if (descriptor.capabilities.coordinatorStandby !== true)
+        return yield* fail("invalid", STANDBY_CAPABILITY_REFUSAL);
+      const binding = settings.coordinatorBinding;
+      if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
+      // An active copy runs its own coordinator; standing by for another would make two.
+      if (binding?.state !== "transferred") return yield* fail("not_member");
+      if (settings.archived) return yield* fail("archived");
+      const self = yield* deps.selfMember(project);
+      const coordinator = identity.members.find((member) => sameMember(member, wanted.coordinator));
+      if (
+        coordinator === undefined ||
+        logicalProjectMemberKey(coordinator) === logicalProjectMemberKey(self)
+      )
+        return yield* fail("invalid", "The coordinator is another member listed here.");
+      // At this copy's own epoch only the successor it gave way to coordinates.
+      const otherSuccessor =
+        binding.successor !== undefined &&
+        logicalProjectMemberKey(binding.successor) !== logicalProjectMemberKey(coordinator);
+      if (wanted.epoch < binding.epoch || (otherSuccessor && wanted.epoch === binding.epoch))
+        return yield* fail(
+          "superseded_conflict",
+          "That coordinator epoch is older than this copy's.",
+        );
+      const found = yield* store.get(identity.id).pipe(Effect.catch(storeFailed));
+      const held = found !== undefined && found.projectId === project.id ? found : undefined;
+      const sameRegistration =
+        held !== undefined &&
+        sameMember(held.coordinator, coordinator) &&
+        held.epoch === wanted.epoch;
+      // Registrations only move forward, whoever asks.
+      if (
+        held !== undefined &&
+        !sameRegistration &&
+        (held.epoch > wanted.epoch ||
+          (held.epoch === wanted.epoch && !sameMember(held.coordinator, coordinator)))
+      )
+        return yield* fail(
+          "superseded_conflict",
+          "This machine already stands by for a newer coordinator.",
+        );
+      // The owner's own registration wins over a peer's; a peer's never replaces the owner's
+      // mark. A record from before re-arm has none, and the owner registered it.
+      const nextArmedBy: NonNullable<CoordinatorStandbyRecord["armedBy"]> =
+        sameRegistration && armedBy.kind === "peer" ? (held.armedBy ?? { kind: "owner" }) : armedBy;
+      if (
+        sameRegistration &&
+        held.afterMinutes === wanted.afterMinutes &&
+        (held.armedBy?.kind ?? "owner") === nextArmedBy.kind
+      )
+        return { standby: registration(held), replayed: true };
+      const now = yield* Clock.currentTimeMillis;
+      const at = DateTime.formatIso(DateTime.makeUnsafe(now));
+      const record: CoordinatorStandbyRecord = sameRegistration
+        ? { ...held, afterMinutes: wanted.afterMinutes, armedBy: nextArmedBy, updatedAt: at }
+        : {
+            logicalProjectId: identity.id,
+            projectId: project.id,
+            coordinator,
+            epoch: wanted.epoch,
+            afterMinutes: wanted.afterMinutes,
+            acceptedAt: at,
+            lastLeaseAt: null,
+            lastSeq: null,
+            watchingSince: at,
+            leaseSinceWatching: false,
+            pausedUntil: null,
+            coordinatorSleptAt: null,
+            standbySleeping: false,
+            armedFor: [],
+            runningThreads: [],
+            shadowWorkers: [],
+            lastRefusal: null,
+            updatedAt: at,
+            armedBy,
+          };
+      yield* store.modify(identity.id, () => record).pipe(Effect.catch(storeFailed));
+      yield* deps.publishRole({
+        kind: "standby-armed",
+        projectId: project.id,
+        logicalProjectId: identity.id,
+        coordinator,
+        epoch: record.epoch,
+        afterMinutes: record.afterMinutes,
+      });
+      return { standby: registration(record), replayed: false };
+    });
+
+  /** Writes or removes the owner's re-arm consent on this machine, under the project lock. */
+  const writeConsent = (
+    project: Project,
+    identity: LogicalProject,
+    consent: StandbyRearmConsent | null,
+  ) =>
+    Effect.gen(function* () {
+      const at = yield* nowIso;
+      if (consent === null) {
+        yield* rearmStore
+          .modify(identity.id, (current) =>
+            current === undefined || current.consent === null
+              ? undefined
+              : current.run === null
+                ? null
+                : { ...current, consent: null, consentUpdatedAt: at },
+          )
+          .pipe(Effect.catch(storeFailed));
+        return null;
+      }
+      yield* deps.refusePersonal(project);
+      const self = yield* deps.selfMember(project);
+      const keys = consent.members.map(logicalProjectMemberKey);
+      const listed = new Set(identity.members.map(logicalProjectMemberKey));
+      if (new Set(keys).size !== keys.length)
+        return yield* fail("invalid", "A machine is listed twice for re-arming.");
+      if (!keys.every((key) => listed.has(key)))
+        return yield* fail("invalid", "Every machine to re-arm is a member of this project.");
+      if (!keys.includes(logicalProjectMemberKey(self)))
+        return yield* fail("invalid", "This machine is not in the re-arm list it was sent.");
+      yield* rearmStore
+        .modify(identity.id, (current) => {
+          const same =
+            current !== undefined &&
+            current.projectId === project.id &&
+            current.consent !== null &&
+            JSON.stringify(current.consent) === JSON.stringify(consent);
+          return same
+            ? undefined
+            : {
+                logicalProjectId: identity.id,
+                projectId: project.id,
+                consent,
+                consentUpdatedAt: at,
+                run: current?.projectId === project.id ? current.run : null,
+              };
+        })
+        .pipe(Effect.catch(storeFailed));
+      return { chainId: consent.chainId };
+    });
+
   const acceptStandby: ProjectLinkStandbyMethods["acceptStandby"] = (input) =>
     admission.withLock(
       input.projectId,
@@ -289,91 +512,91 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
         const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
         const identity = settings.logicalProject;
         if (!identity || identity.id !== input.logicalProjectId) return yield* fail("not_linked");
+        if (input.standby === undefined && input.rearm === undefined)
+          return yield* fail("invalid", "Give a standby, a re-arm consent, or both.");
+        // The consent comes first, so a standby it names is armed with the list in place.
+        const rearm =
+          input.rearm === undefined
+            ? {}
+            : { rearm: yield* writeConsent(project, identity, input.rearm) };
         const held = yield* store.get(identity.id).pipe(Effect.catch(storeFailed));
         const wanted = input.standby;
+        if (wanted === undefined)
+          return {
+            standby:
+              held !== undefined && held.projectId === project.id ? registration(held) : null,
+            replayed: true,
+            ...rearm,
+          };
         if (wanted === null) {
-          if (held === undefined) return { standby: null, replayed: true };
+          if (held === undefined) return { standby: null, replayed: true, ...rearm };
+          // Another member took over as a person at `belowEpoch`: only an older registration is spent.
+          if (input.belowEpoch !== undefined && held.epoch >= input.belowEpoch)
+            return { standby: registration(held), replayed: true, ...rearm };
           yield* store.modify(identity.id, () => null).pipe(Effect.catch(storeFailed));
           yield* deps.publishRole({
             kind: "standby-released",
             projectId: project.id,
             logicalProjectId: identity.id,
-            reason: "turned-off",
+            reason: input.belowEpoch === undefined ? "turned-off" : "outdated",
           });
-          return { standby: null, replayed: false };
+          return { standby: null, replayed: false, ...rearm };
         }
-        yield* deps.refusePersonal(project);
-        const descriptor = yield* environment.getDescriptor;
-        if (descriptor.capabilities.coordinatorStandby !== true)
-          return yield* fail("invalid", "This machine cannot take over automatically. Update it.");
-        const binding = settings.coordinatorBinding;
-        if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
-        // An active copy runs its own coordinator; standing by for another would make two.
-        if (binding?.state !== "transferred") return yield* fail("not_member");
-        if (settings.archived) return yield* fail("archived");
-        const self = yield* deps.selfMember(project);
-        const coordinator = identity.members.find((member) =>
-          sameMember(member, wanted.coordinator),
-        );
-        if (
-          coordinator === undefined ||
-          logicalProjectMemberKey(coordinator) === logicalProjectMemberKey(self)
-        )
-          return yield* fail("invalid", "The coordinator is another member listed here.");
-        if (wanted.epoch < binding.epoch)
-          return yield* fail(
-            "superseded_conflict",
-            "That coordinator epoch is older than this copy's.",
-          );
-        if (
-          held !== undefined &&
-          held.projectId === project.id &&
-          sameMember(held.coordinator, coordinator) &&
-          held.epoch === wanted.epoch &&
-          held.afterMinutes === wanted.afterMinutes
-        )
-          return { standby: registration(held), replayed: true };
-        const now = yield* Clock.currentTimeMillis;
-        const at = DateTime.formatIso(DateTime.makeUnsafe(now));
-        const keepsWatch =
-          held !== undefined &&
-          held.projectId === project.id &&
-          sameMember(held.coordinator, coordinator) &&
-          held.epoch === wanted.epoch;
-        const record: CoordinatorStandbyRecord = keepsWatch
-          ? { ...held, afterMinutes: wanted.afterMinutes, updatedAt: at }
-          : {
-              logicalProjectId: identity.id,
-              projectId: project.id,
-              coordinator,
-              epoch: wanted.epoch,
-              afterMinutes: wanted.afterMinutes,
-              acceptedAt: at,
-              lastLeaseAt: null,
-              lastSeq: null,
-              watchingSince: at,
-              leaseSinceWatching: false,
-              pausedUntil: null,
-              coordinatorSleptAt: null,
-              standbySleeping: false,
-              armedFor: [],
-              runningThreads: [],
-              shadowWorkers: [],
-              lastRefusal: null,
-              updatedAt: at,
-            };
-        yield* store.modify(identity.id, () => record).pipe(Effect.catch(storeFailed));
-        yield* deps.publishRole({
-          kind: "standby-armed",
-          projectId: project.id,
-          logicalProjectId: identity.id,
-          coordinator,
-          epoch: record.epoch,
-          afterMinutes: record.afterMinutes,
-        });
-        return { standby: registration(record), replayed: false };
+        const accepted = yield* acceptLocked(project, identity, wanted, { kind: "owner" });
+        return { ...accepted, ...rearm };
       }),
     );
+
+  const acceptStandbyFromPeer: ProjectLinkStandbyMethods["acceptStandbyFromPeer"] = (input) =>
+    Effect.gen(function* () {
+      const noConsent = () => fail("not_member", PEER_ARM_NO_CONSENT);
+      const found = yield* rearmStore.get(input.logicalProjectId).pipe(Effect.catch(storeFailed));
+      if (found === undefined) return yield* noConsent();
+      return yield* admission.withLock(
+        found.projectId as ProjectId,
+        Effect.gen(function* () {
+          if (deps.teamRulesRefusal !== undefined) {
+            const refused = yield* deps.teamRulesRefusal;
+            if (refused !== null) return yield* fail("invalid", refused);
+          }
+          const entry = yield* rearmStore
+            .get(input.logicalProjectId)
+            .pipe(Effect.catch(storeFailed));
+          const consent = entry?.consent ?? null;
+          if (entry === undefined || consent === null || consent.chainId !== input.chainId)
+            return yield* noConsent();
+          const project = yield* load(entry.projectId as ProjectId);
+          const identity = project.workspaceSettings?.logicalProject;
+          if (identity === undefined || identity.id !== input.logicalProjectId)
+            return yield* fail("not_linked");
+          // Who is calling comes from its work grant only, never from the request.
+          const callers = identity.members.filter(
+            (member) => member.environmentId === input.callerEnvironmentId,
+          );
+          const caller = callers.length === 1 ? callers[0] : undefined;
+          if (caller === undefined)
+            return yield* fail("invalid", "The caller is not one listed copy of this project.");
+          if (
+            !consent.members.some(
+              (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(caller),
+            )
+          )
+            return yield* noConsent();
+          if (input.epoch < consent.fromEpoch)
+            return yield* fail(
+              "superseded_conflict",
+              "That coordinator epoch is older than the owner's re-arm list.",
+            );
+          return yield* acceptLocked(
+            project,
+            identity,
+            // The delay is always the owner's, never the caller's.
+            { coordinator: caller, epoch: input.epoch, afterMinutes: consent.afterMinutes },
+            { kind: "peer", chainId: input.chainId },
+          );
+        }),
+      );
+    });
 
   const replicateFromPeer: ProjectLinkStandbyMethods["replicateFromPeer"] = (input) =>
     Effect.gen(function* () {
@@ -444,7 +667,10 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
       );
     });
 
-  const autoTakeover: ProjectLinkStandbyMethods["autoTakeover"] = ({ logicalProjectId }) =>
+  const autoTakeover: ProjectLinkStandbyMethods["autoTakeover"] = ({
+    logicalProjectId,
+    knownHigherEpoch,
+  }) =>
     Effect.gen(function* () {
       const found = yield* store.get(logicalProjectId).pipe(Effect.catch(storeFailed));
       if (found === undefined) return { outcome: "disarmed" } as const;
@@ -483,17 +709,7 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
               },
               instructionsChangedAt: yield* changedAt,
             } as const;
-          // A binding past the registration's epoch means this copy already took over
-          // or was handed past that coordinator; an active copy (or one unlinked since)
-          // coordinates itself. Either way the registration is spent: firing on it
-          // would take the project from whoever coordinates now, and it would only fail
-          // here on every later round.
-          if (
-            (binding?.epoch ?? 0) > record.epoch ||
-            binding === undefined ||
-            binding.state === "active" ||
-            project.workspaceSettings?.logicalProject?.id !== logicalProjectId
-          ) {
+          const spend = Effect.gen(function* () {
             yield* store
               .modify(logicalProjectId, (current) =>
                 current !== undefined &&
@@ -510,7 +726,19 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
               reason: "outdated",
             });
             return { outcome: "disarmed" } as const;
-          }
+          });
+          // A binding past the registration's epoch means this copy already took over
+          // or was handed past that coordinator; an active copy (or one unlinked since)
+          // coordinates itself. Either way the registration is spent: firing on it
+          // would take the project from whoever coordinates now, and it would only fail
+          // here on every later round.
+          if (
+            (binding?.epoch ?? 0) > record.epoch ||
+            binding === undefined ||
+            binding.state === "active" ||
+            project.workspaceSettings?.logicalProject?.id !== logicalProjectId
+          )
+            return yield* spend;
           const decision = shouldTakeOver(record, yield* Clock.currentTimeMillis);
           if (!decision.fire) return { outcome: "not-due", reason: decision.reason } as const;
           if (binding?.state !== "transferred")
@@ -519,6 +747,20 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
             );
           // The epoch comes first; the operation is named by it, so a retry replays.
           const epoch = Math.max(binding.epoch, record.epoch) + 1;
+          // Another machine already coordinates at that epoch or above: it claimed it
+          // here after its own takeover, or a member reported it. Firing would make two.
+          const claim =
+            deps.claimedEpoch === undefined
+              ? undefined
+              : yield* deps.claimedEpoch(logicalProjectId);
+          const selfEnvironmentId = yield* environment.getEnvironmentId;
+          if (
+            (claim !== undefined &&
+              claim.claimedBy !== selfEnvironmentId &&
+              claim.epoch >= epoch) ||
+            (knownHigherEpoch !== undefined && knownHigherEpoch > record.epoch)
+          )
+            return yield* spend;
           const instructionsChangedAt = yield* changedAt;
           const result = yield* deps.takeoverLocked({
             projectId: project.id,
@@ -533,7 +775,111 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
       );
     });
 
-  return { setStandby, acceptStandby, replicateFromPeer, autoTakeover };
+  const rearmStandby: ProjectLinkStandbyMethods["rearmStandby"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+        const identity = settings.logicalProject;
+        const current = settings.coordinatorBinding;
+        if (!identity || identity.id !== input.logicalProjectId) return yield* fail("not_linked");
+        if (current?.state === "transferring") return yield* fail("handoff_in_progress");
+        if (current?.state !== "active") return yield* fail("not_coordinator");
+        // Only the copy that took over automatically at exactly this epoch re-arms.
+        if (
+          current.epoch !== input.epoch ||
+          current.takenOverBy !== "auto" ||
+          current.operationId !== autoTakeoverOperationId(identity.id, current.epoch)
+        )
+          return yield* fail(
+            "superseded_conflict",
+            "This copy no longer coordinates at that epoch.",
+          );
+        let next: ProjectCoordinatorBinding;
+        const wanted = input.standby;
+        if (wanted === null) {
+          if (current.standby === undefined) return { coordinatorBinding: current, replayed: true };
+          if (input.expect === undefined || !sameMember(current.standby.member, input.expect))
+            return yield* fail("superseded_conflict", REARM_OWNER_CHOSE);
+          const { standby: _standby, ...rest } = current;
+          next = rest;
+        } else {
+          if (current.standby !== undefined)
+            return sameMember(current.standby.member, wanted.member)
+              ? { coordinatorBinding: current, replayed: true }
+              : yield* fail("superseded_conflict", REARM_OWNER_CHOSE);
+          if (settings.archived) return yield* fail("archived");
+          const self = yield* deps.selfMember(project);
+          const listed = identity.members.find((member) => sameMember(member, wanted.member));
+          if (
+            listed === undefined ||
+            logicalProjectMemberKey(listed) === logicalProjectMemberKey(self)
+          )
+            return yield* fail("invalid", "The standby is another member listed in this project.");
+          next = {
+            ...current,
+            standby: {
+              member: listed,
+              afterMinutes: wanted.afterMinutes,
+              enabledAt: yield* nowIso,
+            },
+          };
+        }
+        yield* deps.writeOwnership(project, "project-set-standby", input.operationId, {
+          mode: "set-standby",
+          logicalProject: identity,
+          coordinatorBinding: next,
+        });
+        return { coordinatorBinding: next, replayed: false };
+      }),
+    );
+
+  const rearmStatus: ProjectLinkStandbyMethods["rearmStatus"] = (projectId) =>
+    Effect.gen(function* () {
+      const project = yield* load(projectId);
+      const identity = project.workspaceSettings?.logicalProject;
+      if (identity === undefined) return undefined;
+      const entry = yield* rearmStore.get(identity.id);
+      if (entry === undefined || entry.projectId !== project.id) return undefined;
+      const binding = project.workspaceSettings?.coordinatorBinding;
+      const run =
+        entry.run !== null && binding?.state === "active" && entry.run.epoch === binding.epoch
+          ? entry.run
+          : null;
+      if (entry.consent === null && run === null) return undefined;
+      return {
+        consent:
+          entry.consent === null
+            ? null
+            : {
+                chainId: entry.consent.chainId,
+                members: entry.consent.members,
+                afterMinutes: entry.consent.afterMinutes,
+              },
+        run:
+          run === null
+            ? null
+            : {
+                state: run.state,
+                reason: run.reason,
+                detail: run.detail,
+                standby: run.standby,
+                epoch: run.epoch,
+                since: run.since,
+              },
+      } satisfies ProjectStandbyRearmStatus;
+    }).pipe(Effect.orElseSucceed(() => undefined));
+
+  return {
+    setStandby,
+    acceptStandby,
+    acceptStandbyFromPeer,
+    replicateFromPeer,
+    autoTakeover,
+    rearmStandby,
+    rearmStatus,
+  };
 };
 
 function registration(record: CoordinatorStandbyRecord) {

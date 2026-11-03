@@ -3,6 +3,7 @@ import {
   OrchestratorMcpFailure,
   OrchestratorMcpMachineListInput,
   OrchestratorMcpMachineListResult,
+  StandbyRearmReason,
 } from "@specweave-studio/contracts";
 import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
@@ -33,6 +34,10 @@ const ClaimEpochInput = Schema.Struct({
   threadIds: Schema.optional(
     Schema.Array(Schema.String.check(Schema.isMaxLength(256))).check(Schema.isMaxLength(50)),
   ),
+  /** Also register this machine as the caller's standby, under the owner's re-arm consent here. */
+  standby: Schema.optional(
+    Schema.Struct({ chainId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)) }),
+  ),
 });
 
 const ClaimEpochResult = Schema.Struct({
@@ -43,6 +48,14 @@ const ClaimEpochResult = Schema.Struct({
     Schema.Struct({
       threadId: Schema.String,
       coordinatorEnvironmentId: Schema.NullOr(Schema.String),
+    }),
+  ),
+  /** Present when the claim asked for a standby registration. */
+  standby: Schema.optional(
+    Schema.Struct({
+      armed: Schema.Boolean,
+      code: Schema.optional(StandbyRearmReason),
+      message: Schema.optional(Schema.String.check(Schema.isMaxLength(1000))),
     }),
   ),
 });

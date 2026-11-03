@@ -58,7 +58,7 @@ export const CoordinatorStandbyRecord = Schema.Struct({
   logicalProjectId: Schema.String,
   /** This machine's copy of the project. */
   projectId: Schema.String,
-  /** The coordinator the owner registered through `acceptStandby`; leases from anyone else are ignored. */
+  /** The coordinator registered through `acceptStandby` (or a peer's re-arm); leases from anyone else are ignored. */
   coordinator: LogicalProjectMember,
   epoch: NonNegativeInt,
   afterMinutes: CoordinatorStandbyAfterMinutes,
@@ -85,6 +85,17 @@ export const CoordinatorStandbyRecord = Schema.Struct({
   shadowWorkers: Schema.Array(CoordinatorStandbyShadowWorker),
   lastRefusal: Schema.NullOr(Schema.Struct({ at: Schema.String, reason: Schema.String })),
   updatedAt: Schema.String,
+  /**
+   * Who registered it: the owner's app, or a coordinator that took over
+   * automatically under the owner's re-arm consent (`chainId`). Absent on
+   * records from before re-arm, which the owner registered.
+   */
+  armedBy: Schema.optional(
+    Schema.Struct({
+      kind: Schema.Literals(["owner", "peer"]),
+      chainId: Schema.optional(Schema.String),
+    }),
+  ),
 });
 export type CoordinatorStandbyRecord = typeof CoordinatorStandbyRecord.Type;
 

@@ -11,6 +11,8 @@ struct TranscriptRowView: View {
   let onOpenThread: (ThreadRef) -> Void
   var onOpenLink: ((URL) -> Void)? = nil
   var environmentId: String = ""
+  /// Opens or closes a turn's folded steps; the row's id names the fold.
+  var onToggleFold: ((String) -> Void)? = nil
 
   /// Replies longer than this collapse behind "Show more".
   static let collapseThreshold = 1_200
@@ -84,6 +86,12 @@ struct TranscriptRowView: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .padding(.vertical, WeaveSpacing.s1)
+
+    case let .fold(label, summary, failures, expanded, running):
+      TurnFoldRow(label: label, summary: summary, failures: failures, expanded: expanded, running: running) {
+        onToggleFold?(row.id)
+      }
+      .padding(.leading, Self.textInset)
     }
   }
 }

@@ -955,7 +955,16 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
             }),
         ),
       );
-      if (input.afterSequence > highWater) {
+      if (
+        input.afterSequence > highWater ||
+        // Retention removed history after the cursor (ThreadHistoryRetention): snapshot.
+        (yield* applicationEvents
+          .threadHistoryCompactedAfter({
+            threadId: input.threadId,
+            afterSequence: input.afterSequence,
+          })
+          .pipe(Effect.orElseSucceed(() => true)))
+      ) {
         return yield* snapshotThenLive();
       }
       const stats = yield* applicationEvents

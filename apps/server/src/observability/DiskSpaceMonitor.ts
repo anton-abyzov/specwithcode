@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import {
   formatStorageFreeSpace,
   statfsBytes,
+  type StorageHomeUsage,
   type StorageStatus,
   type StorageStatusLevel,
 } from "@specweave-studio/contracts";
@@ -57,6 +58,11 @@ export class DiskSpaceMonitor extends Context.Service<
     readonly current: Effect.Effect<Option.Option<StorageStatus>>;
     /** The latest check if there is one, then every later check. */
     readonly changes: Stream.Stream<StorageStatus>;
+    /**
+     * Attaches the latest home folder measurement (storage cleanup takes it
+     * every few hours) to this and every later status.
+     */
+    readonly reportHomeUsage: (usage: StorageHomeUsage) => Effect.Effect<void>;
   }
 >()("specweave-studio/observability/DiskSpaceMonitor") {}
 
@@ -82,6 +88,11 @@ export const storageLevel = (
  */
 export const sameStorageReport = (left: StorageStatus, right: StorageStatus): boolean => {
   if (left.level !== right.level) return false;
+  // The app folder report changes with a new walk or a new warning size,
+  // which republishes the same walk with a new level.
+  if (left.homeUsage?.checkedAt !== right.homeUsage?.checkedAt) return false;
+  if (left.homeUsage?.level !== right.homeUsage?.level) return false;
+  if (left.homeUsage?.warnAboveBytes !== right.homeUsage?.warnAboveBytes) return false;
   if (right.level === "ok") return true;
   const step =
     Math.min(left.freeBytes, right.freeBytes) < 1e9
@@ -119,6 +130,7 @@ export const layerWith = (
     Effect.gen(function* () {
       const { stateDir } = yield* ServerConfig.ServerConfig;
       const status = yield* SubscriptionRef.make(Option.none<StorageStatus>());
+      let homeUsage: StorageHomeUsage | undefined;
 
       const check = Effect.gen(function* () {
         const { freeBytes, totalBytes } = yield* read(stateDir);
@@ -130,7 +142,13 @@ export const layerWith = (
         const checkedAt = DateTime.formatIso(yield* DateTime.now);
         yield* SubscriptionRef.set(
           status,
-          Option.some({ level, freeBytes, totalBytes, checkedAt }),
+          Option.some({
+            level,
+            freeBytes,
+            totalBytes,
+            checkedAt,
+            ...(homeUsage === undefined ? {} : { homeUsage }),
+          }),
         );
         if (level === previous) return;
         const free = formatStorageFreeSpace(freeBytes);
@@ -163,6 +181,11 @@ export const layerWith = (
           Stream.filter(Option.isSome),
           Stream.map((current) => current.value),
         ),
+        reportHomeUsage: (usage) =>
+          SubscriptionRef.update(status, (current) => {
+            homeUsage = usage;
+            return Option.map(current, (latest) => ({ ...latest, homeUsage: usage }));
+          }),
       });
     }),
   );

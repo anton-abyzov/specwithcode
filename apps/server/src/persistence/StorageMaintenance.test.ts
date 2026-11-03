@@ -366,6 +366,85 @@ it.layer(layerTest)("storage maintenance", (it) => {
     ),
   );
 
+  it.effect(
+    "purges old deleted threads only when turned on, and never while an update holds the database",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          // Deleted at the epoch, a week and a day before the pass. The clock moves
+          // before setup starts its timers.
+          yield* TestClock.adjust(Duration.days(8));
+          const { fs, path, updates, hold, snapshotMarkerPath } = yield* setup;
+          const threadId = ThreadId.make("thread:storage-maintenance:retention");
+          yield* writeVisitedThread(threadId, 3);
+          const sink = yield* EventSink.EventSinkV2;
+          const deletedAt = DateTime.makeUnsafe(0);
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`event:storage-maintenance:${(serial += 1)}`),
+                type: "thread.deleted",
+                threadId,
+                providerInstanceId,
+                occurredAt: deletedAt,
+                payload: { ...thread(threadId, deletedAt), deletedAt },
+              },
+            ],
+          });
+          let policy: {
+            deletedAfterDays: number | null;
+            archivedAfterDays: number | null;
+          } = { deletedAfterDays: null, archivedAfterDays: null };
+          const service = yield* StorageMaintenance.make({
+            statePath: path.join(updates, "retention", StorageMaintenance.STATE_FILE),
+            snapshotMarkerPath,
+            pagePause: Duration.zero,
+            retentionPolicy: Effect.sync(() => policy),
+          }).pipe(Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, hold));
+          const streamEvents = Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            const rows = yield* sql<{ readonly count: number }>`
+              SELECT COUNT(*) AS count FROM orchestration_events WHERE stream_id = ${threadId}
+            `;
+            return rows[0]?.count ?? 0;
+          });
+
+          // Off by default: the pass compacts superseded visits and retains the thread.
+          const off = yield* service.runNow();
+          assert.equal(off.status, "completed");
+          assert.isNull(off.retention);
+          const retained = yield* streamEvents;
+          assert.isAbove(retained, 2);
+
+          // Turned on, but an update helper's snapshot is live: nothing at all.
+          policy = { deletedAfterDays: 7, archivedAfterDays: null };
+          const now = yield* Clock.currentTimeMillis;
+          yield* fs.writeFileString(
+            snapshotMarkerPath,
+            JSON.stringify({ at: DateTime.formatIso(DateTime.makeUnsafe(now)), pid: 1 }),
+          );
+          const blocked = yield* service.runNow();
+          assert.equal(blocked.status, "skipped");
+          assert.isNull(blocked.retention);
+          assert.equal(yield* streamEvents, retained);
+
+          // Held for an update: nothing either.
+          yield* fs.remove(snapshotMarkerPath);
+          yield* hold.acquire({ reason: "install" });
+          assert.equal((yield* service.runNow()).blocker, "update-hold");
+          assert.equal(yield* streamEvents, retained);
+          yield* hold.release("test");
+
+          const purged = yield* service.runNow();
+          assert.equal(purged.status, "completed");
+          assert.equal(purged.retention?.purgedThreadCount, 1);
+          assert.isFalse(purged.retention?.interrupted);
+          // The tombstone: creation and deletion.
+          assert.equal(yield* streamEvents, 2);
+        }),
+      ),
+  );
+
   it.effect("persists the last pass: not due again, then incremental", () =>
     Effect.scoped(
       Effect.gen(function* () {

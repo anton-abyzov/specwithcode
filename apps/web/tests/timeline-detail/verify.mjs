@@ -171,9 +171,20 @@ try {
       NodeAssert.equal(await shown(page, LIVE_LATEST), true, `${label}: latest live message`);
       NodeAssert.equal(await shown(page, LIVE_NOTE), false, `${label}: earlier live message shown`);
       NodeAssert.equal(await shown(page, LIVE_THOUGHT), false, `${label}: live thought shown`);
+      // The live turn's finished command sits behind the one live row.
+      NodeAssert.equal(
+        await shown(page, "sed -n 1,40p CHANGELOG.md"),
+        false,
+        `${label}: finished live command shown`,
+      );
       if (wide) {
         NodeAssert.equal(await shown(page, FINISHED_ANSWER), true, `${label}: answer`);
         NodeAssert.equal(await shown(page, FINISHED_NOTE), false, `${label}: finished note shown`);
+        NodeAssert.equal(
+          await shown(page, FAILURE_OUTPUT),
+          false,
+          `${label}: command output shown`,
+        );
         NodeAssert.equal(
           await shown(page, "Ran 2 commands and changed 1 file"),
           true,

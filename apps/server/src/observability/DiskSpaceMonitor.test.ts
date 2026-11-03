@@ -117,6 +117,36 @@ describe("DiskSpaceMonitor", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("carries the latest app folder measurement on every status", () =>
+    Effect.gen(function* () {
+      const monitor = yield* buildMonitor([20 * GIB]);
+      const before = Option.getOrThrow(yield* monitor.current);
+      const usage = {
+        level: "large" as const,
+        path: "/Users/me/.specwithcode",
+        totalBytes: 172e9,
+        warnAboveBytes: 50e9,
+        parts: [{ key: "worktrees", bytes: 102e9 }],
+        worktreeCount: 40,
+        complete: true,
+        checkedAt: "2026-11-03T12:00:00.000Z",
+      };
+      yield* monitor.reportHomeUsage(usage);
+      const after = Option.getOrThrow(yield* monitor.current);
+      assert.deepStrictEqual(after.homeUsage, usage);
+      // A new measurement is a new report even when the disk reads the same.
+      assert.isFalse(DiskSpaceMonitor.sameStorageReport(before, after));
+      // A new warning size republishes the same walk with a new level: still a new report.
+      const off = { ...usage, level: "ok" as const, warnAboveBytes: null };
+      yield* monitor.reportHomeUsage(off);
+      const relevelled = Option.getOrThrow(yield* monitor.current);
+      assert.isFalse(DiskSpaceMonitor.sameStorageReport(after, relevelled));
+      yield* monitor.reportHomeUsage(usage);
+      yield* TestClock.adjust("60 seconds");
+      assert.deepStrictEqual(Option.getOrThrow(yield* monitor.current).homeUsage, usage);
+    }).pipe(Effect.scoped),
+  );
+
   // Decimal units, as the banner shows them.
   it("raises under 5 GB and 1 GB, and clears to ok only above 6 GB", () => {
     assert.strictEqual(DiskSpaceMonitor.storageLevel("ok", 5.5e9), "ok");

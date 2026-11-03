@@ -10,9 +10,16 @@
  * 2. takes an exclusive lock, which SQLite refuses while any other connection
  *    has the file open, even an idle one;
  * 3. checks the file (`PRAGMA quick_check`) and its projections (`verify`);
- * 4. compacts the event log in full and checks the projections again;
+ * 4. for `db compact`, first saves the database as it is to
+ *    `statev2.sqlite.before-compact-<time>` (an APFS clone where the volume
+ *    can, else a full copy), then runs the thread history retention it was
+ *    given (ThreadHistoryRetention.ts), which deletes in place; any failure
+ *    from there until the swap puts that copy back. Attachment files of
+ *    purged threads are removed only after the swap. Then it compacts the
+ *    event log in full and checks the projections again;
  * 5. writes a rewritten copy with `VACUUM INTO` (into `workDir` when given),
- *    in the current auto_vacuum mode, or INCREMENTAL with `incremental`;
+ *    in the current auto_vacuum mode, INCREMENTAL with `incremental`, or NONE
+ *    with `autoVacuumNone` (`db compact`: the page proof needs NONE);
  * 6. checks the copy: quick_check, its auto_vacuum mode, every table's row
  *    count, the log's sequences (event ids with their sequence, the last
  *    sequence, `sqlite_sequence`), and checksums of every projection and log
@@ -70,6 +77,7 @@ import { sha256 } from "../nodeCrypto.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ThreadHistoryRetention from "../orchestration-v2/ThreadHistoryRetention.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { liveDatabaseReadOnlyUri } from "./liveDatabaseSnapshot.ts";
@@ -137,6 +145,8 @@ export interface ReclaimResult {
   readonly afterBytes: number;
   readonly autoVacuum: number;
   readonly compaction: ProjectionMaintenance.CompactEventStoreResult;
+  /** `db compact`: what the thread history retention removed; null for a plain reclaim. */
+  readonly retention: ThreadHistoryRetention.ThreadHistoryRetentionResult | null;
   readonly backupPath: string;
   readonly checkedTables: number;
   readonly maxSequence: number;
@@ -151,6 +161,16 @@ export interface ReclaimOptions {
   /** Where VACUUM INTO writes the copy; beside the database by default. */
   readonly workDir?: string;
   readonly incremental?: boolean;
+  /** Write the copy with auto_vacuum NONE whatever the database had. */
+  readonly autoVacuumNone?: boolean;
+  /**
+   * `db compact`: thread history retention to run, in full, before the
+   * compaction. The database is saved first and put back on any failure
+   * before the swap; `backupPath` then names that saved database.
+   */
+  readonly retention?: ThreadHistoryRetention.ThreadHistoryRetentionPolicy;
+  /** With `retention`: removes purged threads' attachment files, once the swap succeeded. */
+  readonly removeAttachments?: (attachmentIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly dryRun?: boolean;
   /**
    * Ignore pids in the runtime state, the hold marker and the reclaim lock
@@ -459,6 +479,45 @@ export const reclaim = Effect.fn("DatabaseReclaim.reclaim")(function* (options: 
 
 const MIB = 1024 * 1024;
 
+export interface CompactDryRun {
+  readonly storage: DatabaseStorageReading;
+  readonly retention: ThreadHistoryRetention.ThreadHistoryRetentionResult;
+}
+
+/**
+ * `db compact --dry-run`: what the retention would remove, from index counts
+ * and a few sampled rows. Read-only with the flags that cannot disturb a live
+ * service; it does not read the whole log the way `reclaim --dry-run` does.
+ */
+export const compactDryRun = Effect.fn("DatabaseReclaim.compactDryRun")(function* (options: {
+  readonly dbPath: string;
+  readonly policy: ThreadHistoryRetention.ThreadHistoryRetentionPolicy;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dbPath = path.resolve(options.dbPath);
+  if (!(yield* fs.exists(dbPath))) {
+    return yield* fail("missing", `No SpecWithCode database at ${dbPath}.`);
+  }
+  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+  return yield* Effect.gen(function* () {
+    const storage = yield* readStorage;
+    const retention = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+      policy: options.policy,
+      nowMs,
+      dryRun: true,
+    });
+    return {
+      storage: { ...storage, fileBytes: storage.pageCount * storage.pageSize },
+      retention,
+    } satisfies CompactDryRun;
+  }).pipe(
+    Effect.provide(
+      NodeSqliteClient.layer({ filename: liveDatabaseReadOnlyUri(dbPath), readonly: true }),
+    ),
+  );
+});
+
 const refuseIfBusy = (options: ReclaimOptions) =>
   Effect.gen(function* () {
     const blocker = yield* serviceOrUpdateBlocker(options);
@@ -503,6 +562,42 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
       fs.remove(base + suffix, { force: true }).pipe(Effect.ignore),
     );
   const removeCopy = removeFiles(copyPath);
+  // `db compact`: the database before retention deleted anything in place.
+  const compacting = options.retention !== undefined;
+  const preCompactPath = `${dbPath}.before-compact-${stamp}`;
+  let preCompactSaved = false;
+  const purgedAttachmentIds = new Set<string>();
+  /**
+   * Puts the saved database back over a purged one after a failure before
+   * the swap. Only once no other connection has the file (exclusive lock,
+   * log emptied into it); the rename comes before the sidecars go, so a
+   * failed rename leaves the purged database whole with its log.
+   */
+  const restorePreCompact = (why: string) =>
+    Effect.gen(function* () {
+      if (!preCompactSaved) return;
+      const moveBack = `Move ${preCompactPath} to ${dbPath} (and delete ${dbPath}-wal and -shm) before starting SpecWithCode`;
+      const restored = yield* Effect.gen(function* () {
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* lockExclusively;
+          yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })), Effect.scoped);
+        yield* fs.rename(preCompactPath, dbPath);
+        for (const suffix of ["-wal", "-shm", "-journal"]) {
+          yield* fs.remove(dbPath + suffix, { force: true }).pipe(Effect.ignore);
+        }
+        yield* syncDirectory(path.dirname(dbPath));
+      }).pipe(
+        Effect.as(true),
+        Effect.catchCause(() => Effect.succeed(false)),
+      );
+      yield* log(
+        restored
+          ? `${why} The database before compact is back in place; nothing was removed.`
+          : `${why} Could not put the saved database back. ${moveBack}.`,
+      );
+    });
 
   // Phase 1, under the exclusive lock: check, compact, copy, check the copy.
   const phase = Effect.gen(function* () {
@@ -532,6 +627,39 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
         "The projections need repair first: start SpecWithCode once so it rebuilds them. If this CLI is older than the service that wrote the database, update it first.",
       );
     }
+    let retention: ThreadHistoryRetention.ThreadHistoryRetentionResult | null = null;
+    if (options.retention !== undefined) {
+      if (!(yield* ThreadHistoryRetention.markerTableExists)) {
+        return yield* fail(
+          "projections-invalid",
+          "This database predates thread history retention: start the updated SpecWithCode once so it migrates the database, stop it, then run this again.",
+        );
+      }
+      // The retention deletes in place: save the database first, so any
+      // failure before the swap can put it back.
+      yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+      const fileBytes = Number((yield* fs.stat(dbPath)).size);
+      yield* log(`Saving the database as it is to ${preCompactPath}.`);
+      yield* saveRestorePoint(dbPath, preCompactPath, fileBytes + neededBytes);
+      preCompactSaved = true;
+      yield* log("Removing old deleted and archived thread history.");
+      retention = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+        policy: options.retention,
+        nowMs: DateTime.toEpochMillis(started),
+        batchSize: OFFLINE_PAGE_SIZE,
+        // Collected only: the files go after the swap, once nothing can roll back.
+        removeAttachments: (attachmentIds) =>
+          Effect.sync(() => {
+            for (const id of attachmentIds) purgedAttachmentIds.add(id);
+          }),
+      });
+      if (!(yield* maintenance.verify).valid) {
+        return yield* fail(
+          "projections-invalid",
+          "The projections stopped verifying after the thread history retention.",
+        );
+      }
+    }
     yield* log("Deleting superseded events.");
     const compaction = yield* maintenance.compactEventStoreWith({ pageSize: OFFLINE_PAGE_SIZE });
     if (!(yield* maintenance.verify).valid) {
@@ -543,7 +671,8 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
     yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
     yield* log("Fingerprinting the database.");
     const expected = yield* fingerprint;
-    const autoVacuum = options.incremental === true ? 2 : before.autoVacuum;
+    const autoVacuum =
+      options.incremental === true ? 2 : options.autoVacuumNone === true ? 0 : before.autoVacuum;
     yield* sql.unsafe(`PRAGMA auto_vacuum = ${autoVacuum}`);
     yield* log(`Writing the rewritten copy to ${copyPath}.`);
     yield* sql.unsafe(`VACUUM INTO ?`, [copyPath]);
@@ -566,11 +695,21 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
         return yield* fail("copy-differs", `The copy differs: ${difference}.`);
       yield* copySql`PRAGMA wal_checkpoint(TRUNCATE)`;
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: copyPath })), Effect.scoped);
-    return { before, compaction, autoVacuum, expected };
+    return { before, compaction, retention, autoVacuum, expected };
   }).pipe(Effect.provide(layerMaintenance(dbPath, false)), Effect.scoped);
 
-  const result = yield* phase.pipe(Effect.onError(() => removeCopy));
-  if (options.beforeSwap !== undefined) yield* options.beforeSwap;
+  const result = yield* phase.pipe(
+    Effect.onError(() =>
+      removeCopy.pipe(Effect.andThen(restorePreCompact("The compaction failed before the swap."))),
+    ),
+  );
+  if (options.beforeSwap !== undefined) {
+    yield* options.beforeSwap.pipe(
+      Effect.onError(() =>
+        removeCopy.pipe(Effect.andThen(restorePreCompact("Stopped before the swap."))),
+      ),
+    );
+  }
 
   // Phase 2: the swap, under exclusive locks on the original and on the copy
   // from before the original is linked aside until the copy is in place. Any
@@ -731,11 +870,13 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
     Effect.onError(() => {
       switch (stage) {
         case "before":
-          return staged === copyPath
-            ? removeCopy
-            : removeFiles(staged).pipe(Effect.andThen(removeCopy));
+          return (
+            staged === copyPath ? removeCopy : removeFiles(staged).pipe(Effect.andThen(removeCopy))
+          ).pipe(Effect.andThen(restorePreCompact("The swap failed.")));
         case "intact":
-          return staged === copyPath ? Effect.void : removeFiles(staged);
+          return (staged === copyPath ? Effect.void : removeFiles(staged)).pipe(
+            Effect.andThen(restorePreCompact("The swap failed.")),
+          );
         default:
           // Mid-replace or after it: every file may be the database or its only copy.
           return Effect.void;
@@ -745,6 +886,15 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
 
   // Done: the service may open the new file from here on, so nothing below
   // reopens it. The swap checked it under the lock.
+  if (compacting) {
+    // The name the swap kept of the original is the purged file; the saved
+    // database from before the retention is the one to keep.
+    yield* fs.remove(backupPath, { force: true }).pipe(Effect.ignore);
+    if (purgedAttachmentIds.size > 0 && options.removeAttachments !== undefined) {
+      yield* log(`Removing ${purgedAttachmentIds.size} attachment files of purged threads.`);
+      yield* options.removeAttachments([...purgedAttachmentIds]);
+    }
+  }
   const maxSequence = result.expected.maxSequence;
   const afterBytes = Number((yield* fs.stat(dbPath)).size);
   const finished = yield* DateTime.now;
@@ -754,12 +904,65 @@ const rewrite = Effect.fn("DatabaseReclaim.rewrite")(function* (
     afterBytes,
     autoVacuum: result.autoVacuum,
     compaction: result.compaction,
-    backupPath,
+    retention: result.retention,
+    backupPath: compacting ? preCompactPath : backupPath,
     checkedTables: Object.keys(result.expected.counts).length,
     maxSequence,
     elapsedMs: DateTime.toEpochMillis(finished) - DateTime.toEpochMillis(started),
   } satisfies ReclaimResult;
 });
+
+/**
+ * Saves the database file (its log already checkpointed, under the exclusive
+ * lock) to `target`: an APFS/Btrfs clone where the volume can, which costs no
+ * space until the original changes; else a full copy, refused when the
+ * volume lacks `neededBytes`. Synced before it counts.
+ */
+const saveRestorePoint = (source: string, target: string, neededBytes: number) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const cloned = yield* Effect.tryPromise(async () => {
+      const { copyFile, constants } = await import("node:fs/promises");
+      await copyFile(source, target, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE_FORCE);
+    }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (!cloned) {
+      yield* fs.remove(target, { force: true }).pipe(Effect.ignore);
+      yield* requireFreeSpace(
+        path.dirname(source),
+        neededBytes,
+        "compact saves the database beside it before removing anything.",
+      );
+      yield* Effect.tryPromise(async () => {
+        const { copyFile, constants } = await import("node:fs/promises");
+        await copyFile(source, target, constants.COPYFILE_EXCL);
+      }).pipe(
+        Effect.catch((cause) =>
+          fs
+            .remove(target, { force: true })
+            .pipe(
+              Effect.ignore,
+              Effect.andThen(
+                fail(
+                  "failed",
+                  `Could not save the database to ${target} (${String(cause)}); nothing was removed.`,
+                ),
+              ),
+            ),
+        ),
+      );
+    }
+    const [original, saved] = yield* Effect.all([fs.stat(source), fs.stat(target)]);
+    if (original.size !== saved.size) {
+      yield* fs.remove(target, { force: true }).pipe(Effect.ignore);
+      return yield* fail("copy-differs", `The saved database ${target} has another size.`);
+    }
+    yield* syncFile(target);
+    yield* syncDirectory(path.dirname(target));
+  });
 
 /** fsync of a file (F_FULLFSYNC on macOS, through libuv). */
 const syncFile = (target: string) =>

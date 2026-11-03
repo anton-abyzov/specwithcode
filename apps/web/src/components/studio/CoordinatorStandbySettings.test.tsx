@@ -14,6 +14,7 @@ import {
   tookOverText,
   workersReportHereText,
 } from "./CoordinatorStandbySettings";
+import { rearmReasonText, rearmStatusText } from "./StandbyRearmList";
 
 const state = vi.hoisted(() => ({
   connected: {} as Record<string, boolean>,
@@ -21,6 +22,9 @@ const state = vi.hoisted(() => ({
   remoteWorkers: [] as Array<{ machineLabel: string; state: string }>,
   disarmed: [] as Array<Record<string, unknown>>,
   handoff: null as Record<string, unknown> | null,
+  rearmCapable: [] as string[],
+  syncStatus: {} as Record<string, unknown>,
+  saved: [] as Array<Record<string, unknown>>,
 }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
@@ -28,7 +32,13 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal)
   createEnvironmentRpcCommand: (_runtime: unknown, options: { tag: string }) => options.tag,
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success", value: {} }),
+  useAtomCommand: (tag: string) => async (request: { environmentId: string }) => ({
+    _tag: "Success",
+    value:
+      tag === "projectLink.syncStatus"
+        ? { pairs: [], ...(state.syncStatus[request.environmentId] ?? {}) }
+        : {},
+  }),
 }));
 vi.mock("../../state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../state/environments")>()),
@@ -37,7 +47,12 @@ vi.mock("../../state/environments", async (importOriginal) => ({
     environments: ["m4", "m1", "m3"].map((environmentId) => ({
       environmentId,
       serverConfig: {
-        environment: { capabilities: { coordinatorStandby: state.capable[environmentId] ?? true } },
+        environment: {
+          capabilities: {
+            coordinatorStandby: state.capable[environmentId] ?? true,
+            coordinatorRearm: state.rearmCapable.includes(environmentId),
+          },
+        },
       },
     })),
   }),
@@ -68,6 +83,10 @@ vi.mock("../../studio/standbyArming", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../studio/standbyArming")>()),
   disarmStandby: async (_commands: unknown, input: Record<string, unknown>) => {
     state.disarmed.push(input);
+  },
+  saveRearmList: async (_commands: unknown, input: Record<string, unknown>) => {
+    state.saved.push(input);
+    return new Map();
   },
 }));
 vi.mock("./ProjectMachineHandoff", () => ({
@@ -118,6 +137,9 @@ beforeEach(() => {
   state.remoteWorkers = [];
   state.disarmed = [];
   state.handoff = null;
+  state.rearmCapable = [];
+  state.syncStatus = {};
+  state.saved = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -354,5 +376,166 @@ describe("CoordinatorStandbySettings", () => {
       ),
     );
     expect(text()).not.toContain("went quiet");
+  });
+});
+
+describe("re-arm after a takeover", () => {
+  const run = (overrides: Record<string, unknown>) =>
+    ({
+      state: "pending",
+      reason: "unreachable",
+      detail: "M3",
+      standby: null,
+      epoch: 3,
+      since: "2026-10-26T14:31:00.000Z",
+      ...overrides,
+    }) as never;
+  const label = (id: string) => ({ m3: "M3", m1: "M1" })[id] ?? "Machine";
+
+  it("says why no standby is armed yet, and whether it waits for the owner", () => {
+    expect(rearmStatusText(run({}), label)).toBe(
+      "No standby armed yet: M3 did not answer. Trying again.",
+    );
+    expect(rearmStatusText(run({ reason: "needs_grant" }), label)).toBe(
+      "No standby armed yet: This Mac needs access to M3. Prepare machines again. Waiting for you.",
+    );
+    expect(rearmStatusText(run({ state: "verifying", standby: ref("m3", "p3") }), label)).toBe(
+      "Checking M3.",
+    );
+    expect(rearmStatusText(run({ state: "armed", standby: ref("m3", "p3") }), label)).toBe(
+      "Armed M3 automatically after taking over.",
+    );
+    expect(
+      rearmStatusText(
+        run({ state: "pending", reason: "standby_missing", standby: ref("m3", "p3") }),
+        label,
+      ),
+    ).toBe("M3 is still named as the standby: M3 stopped standing by. Trying again later.");
+    expect(rearmStatusText(run({ state: "stopped", reason: "owner_changed" }), label)).toBeNull();
+    expect(rearmStatusText(null, label)).toBeNull();
+    const reasons = [
+      "unreachable",
+      "needs_grant",
+      "needs_update",
+      "not_member",
+      "no_consent",
+      "team_rules",
+      "lease_failed",
+      "standby_missing",
+      "no_candidates",
+    ] as const;
+    for (const reason of reasons) expect(rearmReasonText(reason, "M3")).not.toMatch(/[—–]/);
+  });
+
+  it("shows the status line on the machine that took over", async () => {
+    state.rearmCapable = ["m1", "m3", "m4"];
+    state.syncStatus = {
+      m1: {
+        standbyRearm: {
+          consent: {
+            chainId: "chain-a",
+            members: [ref("m1", "p1"), ref("m3", "p3")],
+            afterMinutes: 5,
+          },
+          run: run({}),
+        },
+      },
+    };
+    const coordinator = copy("m1", "p1", {
+      epoch: 3,
+      state: "active",
+      takenOverBy: "auto",
+      takenOverAt: "2026-10-26T14:30:00.000Z",
+      predecessor: ref("m4", "p4"),
+    });
+    await act(async () =>
+      root.render(
+        <CoordinatorStandbySettings
+          coordinator={coordinator as never}
+          shared={
+            [
+              coordinator,
+              copy("m4", "p4", { epoch: 2, state: "transferred" }),
+              copy("m3", "p3", { epoch: 2, state: "transferred" }),
+            ] as never
+          }
+        />,
+      ),
+    );
+    expect(text()).toContain("No standby armed yet: M3 did not answer. Trying again.");
+  });
+
+  it("lists the saved order, edits it within the cap, and saves only the consent", async () => {
+    state.rearmCapable = ["m1", "m3", "m4"];
+    const standby = { member: ref("m1", "p1"), afterMinutes: 5, enabledAt: "2026-10-26T12:00:00Z" };
+    state.syncStatus = {
+      m1: {
+        standbyRearm: {
+          consent: {
+            chainId: "chain-a",
+            members: [ref("m1", "p1"), ref("m3", "p3")],
+            afterMinutes: 5,
+          },
+          run: null,
+        },
+      },
+    };
+    const coordinator = copy("m4", "p4", { epoch: 2, state: "active", standby });
+    const shared = [
+      coordinator,
+      copy("m1", "p1", { epoch: 2, state: "transferred" }),
+      copy("m3", "p3", { epoch: 2, state: "transferred" }),
+    ];
+    await act(async () =>
+      root.render(
+        <CoordinatorStandbySettings coordinator={coordinator as never} shared={shared as never} />,
+      ),
+    );
+    expect(text()).toContain("If it takes over, arm next");
+    expect(text()).toContain("only after it gives way");
+    const box = (id: string) =>
+      document.querySelector<HTMLElement>(`[data-rearm-machine="${id}"] [role="checkbox"]`)!;
+    expect(box("m3").getAttribute("aria-checked")).toBe("true");
+    expect(box("m4").getAttribute("aria-checked")).toBe("false");
+    expect(text()).not.toContain("Save list");
+    await click(box("m4"));
+    await click(button("Save list"));
+    expect(state.saved).toEqual([
+      expect.objectContaining({
+        logicalProjectId: "logical:1",
+        afterMinutes: 5,
+        standby: expect.objectContaining({ environmentId: "m1" }),
+        plan: expect.objectContaining({
+          fromEpoch: 2,
+          order: [
+            expect.objectContaining({ environmentId: "m3" }),
+            expect.objectContaining({ environmentId: "m4" }),
+          ],
+          previous: [
+            expect.objectContaining({ environmentId: "m1" }),
+            expect.objectContaining({ environmentId: "m3" }),
+          ],
+        }),
+      }),
+    ]);
+    expect(text()).toContain("List saved.");
+  });
+
+  it("asks to update a standby that cannot hold a list", async () => {
+    state.rearmCapable = ["m4", "m3"];
+    const standby = { member: ref("m1", "p1"), afterMinutes: 5, enabledAt: "2026-10-26T12:00:00Z" };
+    const coordinator = copy("m4", "p4", { epoch: 2, state: "active", standby });
+    await act(async () =>
+      root.render(
+        <CoordinatorStandbySettings
+          coordinator={coordinator as never}
+          shared={[coordinator, copy("m1", "p1", { epoch: 2, state: "transferred" })] as never}
+        />,
+      ),
+    );
+    expect(text()).toContain(
+      "Update SpecWithCode on M1 to arm the next machine after it takes over.",
+    );
+    expect(text()).not.toContain("If it takes over, arm next");
   });
 });

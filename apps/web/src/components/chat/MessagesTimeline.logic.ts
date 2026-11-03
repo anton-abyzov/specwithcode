@@ -1073,6 +1073,8 @@ interface SupersededAttemptFold {
 function deriveSupersededAttemptFolds(
   timelineEntries: ReadonlyArray<TimelineEntry>,
   unfoldedRunIds: ReadonlySet<RunId>,
+  /** Keep a superseded attempt's own error rows out of the fold. */
+  keepErrorRows = false,
 ): ReadonlyMap<string, SupersededAttemptFold> {
   const entriesByAttemptId = new Map<RunAttemptId, TimelineEntry[]>();
   for (const entry of timelineEntries) {
@@ -1083,7 +1085,10 @@ function deriveSupersededAttemptFolds(
       // A published page stays visible, as it does when its turn folds.
       entry.kind === "html-render" ||
       timelineEntryIsPersistentResourceCard(entry) ||
-      (entry.kind === "work" && entry.entry.itemType === "system_notice")
+      (entry.kind === "work" && entry.entry.itemType === "system_notice") ||
+      (keepErrorRows &&
+        entry.kind === "work" &&
+        (entry.entry.itemType === "error" || entry.entry.sourceActivityKind === "runtime.error"))
     ) {
       continue;
     }
@@ -1238,9 +1243,16 @@ function deriveTurnFolds(input: {
   unfoldedRunIds: ReadonlySet<RunId>;
   /** Keeps the latest runless response open; V2 work must not reopen imported turns. */
   runlessWorkActive: boolean;
-  /** Concise detail: summarise the folded work as short counts beside the duration. */
+  /**
+   * Concise detail (Results only): summarise the folded work as short counts
+   * beside the duration, and fold every settled turn, including interrupted
+   * ones, ones left streaming, failed or still-running tool calls after the
+   * reply, and work with no run of its own. Only the turn's own error rows
+   * stay out of the fold; tool failures show as counts on it.
+   */
   includeActivitySummary?: boolean;
 }): ReadonlyMap<string, TurnFold> {
+  const concise = input.includeActivitySummary === true;
   const interruptedRunIds = new Set<RunId>();
   for (const entry of input.timelineEntries) {
     if (
@@ -1273,6 +1285,11 @@ function deriveTurnFolds(input: {
   // stable key of its own. Decide per prompt, not per thread: a V1 thread's
   // first V2 run must not unfold every imported turn above it.
   let runlessKey: RunId | null = null;
+  // Results only also folds work that has no run under a prompt that has one
+  // (provider-native subagent turns); such work joins the prompt's run, so a
+  // prompt gets one fold. Only the latest prompt's orphan work may stay open.
+  let boundaryKey: RunId | null = null;
+  let latestOrphanKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -1286,10 +1303,23 @@ function deriveTurnFolds(input: {
           : entry.kind === "work"
             ? entry.entry.runId
             : null;
-      runlessKey = boundaryRunId == null ? RunId.make(`runless:${entry.id}`) : null;
+      boundaryKey = boundaryRunId ?? RunId.make(`runless:${entry.id}`);
+      runlessKey = boundaryRunId == null ? boundaryKey : null;
+      latestOrphanKey = null;
       continue;
     }
-    const runId = timelineEntryFoldRunId(entry, runlessKey);
+    let runId = timelineEntryFoldRunId(entry, runlessKey);
+    if (
+      !runId &&
+      concise &&
+      boundaryKey !== null &&
+      entry.kind === "work" &&
+      entry.entry.itemType !== "system_notice" &&
+      entry.entry.runId == null
+    ) {
+      runId = boundaryKey;
+      latestOrphanKey = runId;
+    }
     if (!runId) {
       continue;
     }
@@ -1326,13 +1356,15 @@ function deriveTurnFolds(input: {
   for (const [runId, group] of groupsByRunId) {
     if (
       input.unfoldedRunIds.has(runId) ||
-      interruptedRunIds.has(runId) ||
-      (!input.includeActivitySummary && runlessFailedKeys.has(runId)) ||
-      (input.runlessWorkActive && runId === runlessKey)
+      (!concise && interruptedRunIds.has(runId)) ||
+      (!concise && runlessFailedKeys.has(runId)) ||
+      (input.runlessWorkActive && (runId === runlessKey || runId === latestOrphanKey))
     ) {
       continue;
     }
-    if (group.hasStreamingMessage) {
+    // A message left streaming by a lost end event must not keep a settled
+    // turn's work open in Results only.
+    if (group.hasStreamingMessage && !concise) {
       continue;
     }
     const hiddenEntryIds = new Set<string>();
@@ -1355,18 +1387,15 @@ function deriveTurnFolds(input: {
         entry.kind === "work" &&
         entry.entry.toolLifecycleStatus !== "inProgress" &&
         !workEntryShowsFailureSignal(entry.entry);
-      if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
+      if (!isCompaction && !concise && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }
-      // Results only folds routine work even when the run failed. Keep the
-      // actual failure visible, independently of the disclosure.
+      // Results only folds every tool call, failed ones included: their counts
+      // show on the fold. The turn's own error stays visible.
       if (
-        input.includeActivitySummary &&
+        concise &&
         entry.kind === "work" &&
-        (workEntryShowsFailureSignal(entry.entry) ||
-          entry.entry.tone === "error" ||
-          entry.entry.sourceActivityKind === "runtime.error" ||
-          entry.entry.itemType === "error")
+        (entry.entry.sourceActivityKind === "runtime.error" || entry.entry.itemType === "error")
       )
         continue;
       // Linked resources can outlive their launching run and stay visible
@@ -1398,7 +1427,8 @@ function deriveTurnFolds(input: {
     }
 
     const isLatestInterruptedTurn =
-      input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
+      (input.latestRun?.runId === runId && input.latestRun.status === "interrupted") ||
+      interruptedRunIds.has(runId);
     // A turn cut short by a steer leaves trailing work entries behind its
     // terminal message — take whichever ended last.
     const lastEntryEnd =
@@ -1734,20 +1764,26 @@ export function deriveMessagesTimelineRows(input: {
   );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
+  const concise = detail === "concise";
+  // Results only folds failed runs' superseded attempts too; their error rows
+  // stay visible, as a turn's own error does.
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
     timelineEntries,
-    failedRunIds,
+    concise ? new Set<RunId>() : failedRunIds,
+    concise,
   );
   const foldsByAnchorEntryId = deriveTurnFolds({
     timelineEntries: timelineEntries,
     terminalAssistantMessageIds,
     latestRun: input.latestRun ?? null,
+    // Results only keeps a turn open only while the thread works on it: a run
+    // that never recorded its end, or a stale running id, is settled history.
     unfoldedRunIds: new Set([
-      ...activeVisualResponseRunIds,
-      ...(detail === "concise" ? [] : failedRunIds),
+      ...(concise && !input.isWorking ? [] : activeVisualResponseRunIds),
+      ...(concise ? [] : failedRunIds),
     ]),
     runlessWorkActive,
-    includeActivitySummary: detail === "concise",
+    includeActivitySummary: concise,
   });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
@@ -1780,23 +1816,42 @@ export function deriveMessagesTimelineRows(input: {
   // row that survives between actions: while a tool runs it shows that tool,
   // and once everything settles it keeps the latest tool in past tense
   // instead of vanishing (#8984).
+  // Results only gathers every tool call of the running response into that one
+  // row, across errors, notices and attempts, so no command or output shows on
+  // its own until the row is opened.
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
   if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
     let tailAttemptId: string | null | undefined;
     for (let index = timelineEntries.length - 1; index >= activeTurnHeaderIndex; index -= 1) {
       const entry = timelineEntries[index]!;
+      const activeWork =
+        entry.kind === "work" &&
+        entry.entry.itemType !== "system_notice" &&
+        entry.entry.itemType !== "notification" &&
+        entry.entry.sourceActivityKind !== "context-compaction" &&
+        // Results only also gathers the running turn's work that has no run
+        // (provider-native subagents) into the live row.
+        (runIdIsActiveResponse(entry.entry.runId) || (concise && entry.entry.runId == null)) &&
+        !collapsedEntryIds.has(entry.id) &&
+        !collapsedSupersededEntryIds.has(entry.id) &&
+        !foldsByAnchorEntryId.has(entry.id) &&
+        !supersededFoldsByAnchorEntryId.has(entry.id);
+      if (concise) {
+        if (
+          activeWork &&
+          entry.kind === "work" &&
+          entry.entry.sourceActivityKind !== "runtime.error" &&
+          entry.entry.itemType !== "error"
+        ) {
+          activeToolEntries.unshift(entry);
+        }
+        continue;
+      }
       if (
+        !activeWork ||
         entry.kind !== "work" ||
         entry.entry.tone === "error" ||
-        entry.entry.sourceActivityKind === "runtime.error" ||
-        entry.entry.itemType === "system_notice" ||
-        entry.entry.itemType === "notification" ||
-        !runIdIsActiveResponse(entry.entry.runId) ||
-        entry.entry.sourceActivityKind === "context-compaction" ||
-        collapsedEntryIds.has(entry.id) ||
-        collapsedSupersededEntryIds.has(entry.id) ||
-        foldsByAnchorEntryId.has(entry.id) ||
-        supersededFoldsByAnchorEntryId.has(entry.id)
+        entry.entry.sourceActivityKind === "runtime.error"
       ) {
         break;
       }
@@ -1824,7 +1879,10 @@ export function deriveMessagesTimelineRows(input: {
     latestVisibleToolEntry === undefined
       ? null
       : timelineEntryFailureKind(latestVisibleToolEntry.entry);
+  // A failed latest call leaves the live row and shows on its own, except in
+  // Results only, where the row stays and carries the failure itself.
   const latestToolFailed =
+    !concise &&
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
     latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&

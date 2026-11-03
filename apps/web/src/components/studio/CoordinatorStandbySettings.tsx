@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
@@ -8,19 +8,29 @@ import {
   type EnvironmentId,
   type ProjectAcceptStandbyInput,
   type ProjectSetStandbyInput,
+  type ProjectStandbyRearmStatus,
 } from "@specweave-studio/contracts";
+import type {
+  StudioFleetSnapshot,
+  StudioFleetWorkerAccess,
+} from "@specweave-studio/contracts/studioFleet";
 import { isElectron } from "../../env";
 import { randomUUID } from "../../lib/utils";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProjectRemoteWorkers, useStudioFleet } from "../../studio/fleet";
-import { linkMemberOf, projectLink } from "../../studio/projectLink";
+import { highestEpoch, linkMemberOf, projectLink } from "../../studio/projectLink";
 import {
   armStandby,
   disarmStandby,
+  type RearmMachineResult,
+  rearmReadiness,
+  saveRearmList,
+  STANDBY_REARM_NEXT_MAX,
   standbyArmingProblem,
   standbyWorkerMachines,
   type StandbyMachineResult,
+  type StandbyRearmPlan,
   type StandbySide,
 } from "../../studio/standbyArming";
 import { hasFullAccess, liveStandbyArmingCommands } from "../../studio/standbyArmingCommands";
@@ -28,6 +38,13 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow } from "../settings/settingsLayout";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import {
+  rearmProblemText,
+  rearmStandbyOldText,
+  rearmStatusText,
+  StandbyRearmList,
+  type StandbyRearmListProps,
+} from "./StandbyRearmList";
 import { useLinkMachines } from "./useLinkMachines";
 
 /* ---------- Copy: short plain sentences, one place for every line. ---------- */
@@ -109,6 +126,12 @@ export interface CoordinatorStandbyViewProps {
   readonly problem: string | null;
   /** Shown while the coordinator may be paused waiting for its standby. */
   readonly fenceNote: string | null;
+  /** The "if it takes over, arm next" list; null hides it. */
+  readonly rearm?: StandbyRearmListProps | null;
+  /** Why the chosen standby cannot hold that list, or null. */
+  readonly rearmNote?: string | null;
+  /** On the machine that took over automatically: how re-arming its own standby goes. */
+  readonly rearmStatus?: string | null;
   readonly pending: boolean;
   readonly message: { readonly text: string; readonly error: boolean } | null;
   readonly canChangeAnyway: boolean;
@@ -159,6 +182,15 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
           </Select>
         }
       />
+      {props.rearmStatus ? (
+        <p
+          role="status"
+          data-standby-rearm-status=""
+          className="px-3 py-2 text-sm text-muted-foreground sm:px-4"
+        >
+          {props.rearmStatus}
+        </p>
+      ) : null}
       {props.standby !== null ? (
         <SettingsRow
           title="After"
@@ -184,6 +216,10 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
             </Select>
           }
         />
+      ) : null}
+      {props.standby !== null && props.rearm ? <StandbyRearmList {...props.rearm} /> : null}
+      {props.standby !== null && props.rearmNote ? (
+        <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">{props.rearmNote}</p>
       ) : null}
       {props.rows.map((row) => (
         <SettingsRow
@@ -250,8 +286,35 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
 /* ---------- Container: Settings > Project > Machines. ---------- */
 
 type PendingChange =
-  | { readonly kind: "arm"; readonly standby: EnvironmentId; readonly afterMinutes: number }
+  | {
+      readonly kind: "arm";
+      readonly standby: EnvironmentId;
+      readonly afterMinutes: number;
+      readonly order: ReadonlyArray<EnvironmentId>;
+    }
+  | { readonly kind: "list"; readonly order: ReadonlyArray<EnvironmentId> }
   | { readonly kind: "off" };
+
+type RearmConsent = NonNullable<ProjectStandbyRearmStatus["consent"]>;
+
+/** What the machines said about re-arming when the page opened or after the last change. */
+interface RearmSeen {
+  /** Each answering machine's consent; null for none. Absent machines did not answer. */
+  readonly consents: ReadonlyMap<EnvironmentId, RearmConsent | null>;
+  /** The coordinator's own re-arm after an automatic takeover. */
+  readonly run: ProjectStandbyRearmStatus["run"];
+  /** Each listed machine's fleet, for its worker grants. */
+  readonly fleets: ReadonlyMap<EnvironmentId, StudioFleetSnapshot>;
+}
+
+const NO_REARM_SEEN: RearmSeen = { consents: new Map(), run: null, fleets: new Map() };
+
+/** Without a known access on that machine, a listed machine gets the narrowest. */
+const FALLBACK_REARM_ACCESS: StudioFleetWorkerAccess = "approval-required";
+
+const sameOrder = (left: ReadonlyArray<EnvironmentId>, right: ReadonlyArray<EnvironmentId>) =>
+  left.length === right.length &&
+  left.every((environmentId, index) => right[index] === environmentId);
 
 /**
  * "If this Mac goes quiet": the opt-in standby for one shared project's
@@ -272,6 +335,7 @@ export function CoordinatorStandbySettings({
   const acceptStandbyCommand = useAtomCommand(projectLink.acceptStandby, {
     reportFailure: false,
   });
+  const syncStatusCommand = useAtomCommand(projectLink.syncStatus, { reportFailure: false });
   const binding = coordinator.workspaceSettings?.coordinatorBinding;
   const identity = coordinator.workspaceSettings?.logicalProject;
   const current = binding?.state === "active" ? binding.standby : undefined;
@@ -292,6 +356,15 @@ export function CoordinatorStandbySettings({
   const capable = (environmentId: EnvironmentId) =>
     environments.find((item) => item.environmentId === environmentId)?.serverConfig?.environment
       .capabilities.coordinatorStandby === true;
+  const rearmCapable = (environmentId: EnvironmentId) =>
+    environments.find((item) => item.environmentId === environmentId)?.serverConfig?.environment
+      .capabilities.coordinatorRearm === true;
+  const [rearmSeen, setRearmSeen] = useState<RearmSeen>(NO_REARM_SEEN);
+  const [rearmEdit, setRearmEdit] = useState<ReadonlyArray<EnvironmentId> | null>(null);
+  const [rearmResults, setRearmResults] = useState<ReadonlyMap<EnvironmentId, RearmMachineResult>>(
+    new Map(),
+  );
+  const [rearmRead, setRearmRead] = useState(0);
 
   const coordinatorLabel = machines.label(coordinator.environmentId);
   const coordinatorIsHere = coordinator.environmentId === primaryEnvironmentId;
@@ -347,6 +420,102 @@ export function CoordinatorStandbySettings({
         : "Set this up in the SpecWithCode desktop app.";
   const problem = problemFor(choice);
 
+  // Every open, and after each change, asks each machine what list it holds.
+  const readRearm = useRef<() => Promise<RearmSeen>>(async () => NO_REARM_SEEN);
+  readRearm.current = async () => {
+    const consents = new Map<EnvironmentId, RearmConsent | null>();
+    let run: ProjectStandbyRearmStatus["run"] = null;
+    const asked = shared.filter(
+      (member) => rearmCapable(member.environmentId) && machines.connected(member.environmentId),
+    );
+    await Promise.all(
+      asked.map(async (member) => {
+        const result = await syncStatusCommand({
+          environmentId: member.environmentId,
+          input: { projectId: member.id },
+        }).catch(() => null);
+        if (result?._tag !== "Success") return;
+        const status = result.value.standbyRearm;
+        consents.set(member.environmentId, status?.consent ?? null);
+        if (member.environmentId === coordinator.environmentId && member.id === coordinator.id)
+          run = status?.run ?? null;
+      }),
+    );
+    const listed = new Set<EnvironmentId>();
+    for (const consent of consents.values())
+      for (const member of consent?.members ?? []) listed.add(member.environmentId);
+    const fleets = new Map<EnvironmentId, StudioFleetSnapshot>();
+    await Promise.all(
+      [...listed]
+        .filter((environmentId) => machines.connected(environmentId))
+        .map(async (environmentId) => {
+          try {
+            fleets.set(environmentId, await liveStandbyArmingCommands.fleet(environmentId));
+          } catch {
+            /* Unknown grants raise nothing. */
+          }
+        }),
+    );
+    return { consents, run, fleets };
+  };
+  const copiesKey = shared
+    .map(
+      (member) =>
+        `${member.environmentId}:${member.id}:${member.workspaceSettings?.coordinatorBinding?.epoch ?? ""}`,
+    )
+    .join(",");
+  useEffect(() => {
+    let cancelled = false;
+    void readRearm.current().then((seen) => {
+      if (!cancelled) setRearmSeen(seen);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [copiesKey, rearmRead]);
+
+  const sideFor = (member: { environmentId: EnvironmentId; projectId?: string }) => {
+    const project =
+      shared.find(
+        (copy) => copy.environmentId === member.environmentId && copy.id === member.projectId,
+      ) ?? shared.find((copy) => copy.environmentId === member.environmentId);
+    return project ? sideOf(project) : undefined;
+  };
+  // The list the machines hold: the standby's first, else the coordinator's, else any.
+  const listConsent =
+    [
+      current?.member.environmentId,
+      coordinator.environmentId,
+      ...shared.map((m) => m.environmentId),
+    ]
+      .map((environmentId) => (environmentId ? rearmSeen.consents.get(environmentId) : undefined))
+      .find((consent) => consent !== undefined && consent !== null) ?? null;
+  const previousRearm = (listConsent?.members ?? [])
+    .map(sideFor)
+    .filter((side) => side !== undefined);
+  const rearmAccess = (environmentId: EnvironmentId) =>
+    coordinatorFleet?.machines.find((machine) => machine.environmentId === environmentId)?.workers
+      ?.access ?? FALLBACK_REARM_ACCESS;
+  const rearmPlan = (
+    standby: EnvironmentId,
+    order: ReadonlyArray<EnvironmentId>,
+  ): StandbyRearmPlan | undefined => {
+    const next = rearmCapable(standby)
+      ? order
+          .filter((environmentId) => environmentId !== standby)
+          .map((environmentId) => sideFor({ environmentId }))
+          .filter((side) => side !== undefined)
+      : [];
+    if (next.length === 0 && previousRearm.length === 0) return undefined;
+    return {
+      order: next,
+      previous: previousRearm,
+      fromEpoch: highestEpoch(shared),
+      capable: rearmCapable,
+      access: rearmAccess,
+    };
+  };
+
   const projectCommands = {
     setStandby: async (environmentId: EnvironmentId, input: ProjectSetStandbyInput) => {
       const result = await setStandbyCommand({ environmentId, input });
@@ -356,6 +525,21 @@ export function CoordinatorStandbySettings({
       const result = await acceptStandbyCommand({ environmentId, input });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     },
+  };
+
+  /** A sentence about the list after a save, or "" when every machine is ready. */
+  const rearmOutcomeText = (
+    standby: EnvironmentId,
+    outcome: ReadonlyMap<EnvironmentId, RearmMachineResult>,
+  ) => {
+    const own = outcome.get(standby);
+    if (own && own.status !== "ready")
+      return ` Arming the next machine after a takeover is off: ${
+        own.status === "needs_update" ? `${machines.label(standby)} needs an update.` : own.message
+      }`;
+    return [...outcome.values()].some((result) => result.status !== "ready")
+      ? " Some machines on the list are not ready yet."
+      : "";
   };
 
   const apply = async (change: PendingChange, changeAnyway: boolean) => {
@@ -373,9 +557,40 @@ export function CoordinatorStandbySettings({
           standby: previous ? sideOf(previous) : null,
           operationId: randomUUID(),
           changeAnyway,
+          rearmMembers: previousRearm,
+          rearmCapable,
         });
         setResults(new Map());
+        setRearmResults(new Map());
+        setRearmEdit(null);
         setMessage({ text: "Automatic takeover is off.", error: false });
+        return;
+      }
+      if (change.kind === "list") {
+        if (!current || !previous) throw new Error("Turn automatic takeover on first.");
+        const plan = rearmPlan(current.member.environmentId, change.order);
+        const outcome = plan
+          ? await saveRearmList(
+              { ...liveStandbyArmingCommands, ...projectCommands },
+              {
+                logicalProjectId: identity.id,
+                standby: sideOf(previous),
+                afterMinutes: current.afterMinutes,
+                chainId: randomUUID(),
+                workers: workersFor(current.member.environmentId),
+                plan,
+              },
+            )
+          : new Map<EnvironmentId, RearmMachineResult>();
+        setRearmResults(outcome);
+        setRearmEdit(null);
+        setMessage({
+          text:
+            change.order.length === 0
+              ? "Nothing is armed next after a takeover."
+              : `List saved.${rearmOutcomeText(current.member.environmentId, outcome)}`,
+          error: false,
+        });
         return;
       }
       const standby = copyOf(change.standby);
@@ -392,13 +607,16 @@ export function CoordinatorStandbySettings({
           workers: workersFor(change.standby),
           operationId: randomUUID(),
           changeAnyway,
+          rearm: rearmPlan(change.standby, change.order),
         },
       );
       setResults(outcome.machines);
+      setRearmResults(outcome.rearm);
+      if (outcome.armed) setRearmEdit(null);
       setMessage(
         outcome.armed
           ? {
-              text: `${machines.label(change.standby)} takes over after ${change.afterMinutes} quiet minutes.`,
+              text: `${machines.label(change.standby)} takes over after ${change.afterMinutes} quiet minutes.${rearmOutcomeText(change.standby, outcome.rearm)}`,
               error: false,
             }
           : {
@@ -415,6 +633,7 @@ export function CoordinatorStandbySettings({
     } finally {
       running.current = false;
       setPending(false);
+      setRearmRead((read) => read + 1);
     }
   };
 
@@ -441,6 +660,113 @@ export function CoordinatorStandbySettings({
       })
     : [];
   const standbyLabel = current ? machines.label(current.member.environmentId) : null;
+
+  // "If it takes over, arm next": the other copies, then this coordinator once it gives way.
+  const rearmCandidates = choice
+    ? [
+        ...shared.filter(
+          (member) =>
+            member.environmentId !== choice &&
+            member.environmentId !== coordinator.environmentId &&
+            member.workspaceSettings?.coordinatorBinding?.state === "transferred",
+        ),
+        coordinator,
+      ].filter(
+        (member, index, all) =>
+          all.findIndex((other) => other.environmentId === member.environmentId) === index,
+      )
+    : [];
+  const savedOrder = (listConsent?.members ?? [])
+    .map((member) => member.environmentId)
+    .filter((environmentId) => environmentId !== choice);
+  const selectable = (environmentId: EnvironmentId) =>
+    rearmCandidates.some((member) => member.environmentId === environmentId) &&
+    rearmCapable(environmentId);
+  const order = (rearmEdit ?? savedOrder).filter(selectable).slice(0, STANDBY_REARM_NEXT_MAX);
+  const readiness =
+    choice && listConsent
+      ? rearmReadiness({
+          members: [choice, ...savedOrder]
+            .map((environmentId) => sideFor({ environmentId }))
+            .filter((side) => side !== undefined),
+          workers: workersFor(choice),
+          capable: rearmCapable,
+          grants: (from, on) => {
+            const fleet = rearmSeen.fleets.get(from);
+            if (!fleet) return undefined;
+            return fleet.machines.find((machine) => machine.environmentId === on)?.workers ?? null;
+          },
+          consents: new Map(
+            [...rearmSeen.consents].map(([environmentId, consent]) => [
+              environmentId,
+              consent?.chainId ?? null,
+            ]),
+          ),
+          chainId: listConsent.chainId,
+        })
+      : [];
+  const problemOfMachine = (environmentId: EnvironmentId): string | null => {
+    const saved = rearmResults.get(environmentId);
+    if (saved?.status === "failed") return saved.message;
+    if (saved?.status === "needs_update") return rearmProblemText("needs_update");
+    if (saved?.status === "ready") return null;
+    const found = readiness.find((entry) => entry.member.environmentId === environmentId)?.problem;
+    return found ? rearmProblemText(found) : null;
+  };
+  const standbyProblem = choice ? problemOfMachine(choice) : null;
+  const rearmList: StandbyRearmListProps | null =
+    choice && rearmCapable(choice)
+      ? {
+          standbyLabel: machines.label(choice),
+          choices: rearmCandidates.map((member) => ({
+            environmentId: member.environmentId,
+            label: machines.label(member.environmentId),
+            note: !rearmCapable(member.environmentId)
+              ? "needs an update"
+              : member.environmentId === coordinator.environmentId
+                ? "only after it gives way"
+                : null,
+            disabled: !rearmCapable(member.environmentId),
+            problem: problemOfMachine(member.environmentId),
+          })),
+          order,
+          max: STANDBY_REARM_NEXT_MAX,
+          changed: rearmEdit !== null && !sameOrder(order, savedOrder),
+          needsPrepare: current !== undefined && readiness.some((entry) => entry.problem !== null),
+          disabled: pending || problem !== null,
+          onToggle: (environmentId, checked) =>
+            setRearmEdit(
+              checked
+                ? [...order.filter((id) => id !== environmentId), environmentId].slice(
+                    0,
+                    STANDBY_REARM_NEXT_MAX,
+                  )
+                : order.filter((id) => id !== environmentId),
+            ),
+          onMove: (environmentId, by) => {
+            const index = order.indexOf(environmentId);
+            const target = index + by;
+            if (index === -1 || target < 0 || target >= order.length) return;
+            const next = [...order];
+            [next[index], next[target]] = [next[target]!, next[index]!];
+            setRearmEdit(next);
+          },
+          onSave: () => {
+            if (current && current.member.environmentId === choice)
+              void apply({ kind: "list", order }, false);
+            else if (problemFor(choice) === null)
+              void apply({ kind: "arm", standby: choice, afterMinutes, order }, false);
+          },
+          onPrepare: () => void apply({ kind: "list", order: savedOrder }, false),
+        }
+      : null;
+  const rearmNote = !choice
+    ? null
+    : !rearmCapable(choice)
+      ? rearmStandbyOldText(machines.label(choice))
+      : standbyProblem
+        ? `${machines.label(choice)}: ${standbyProblem}`
+        : null;
   // A coordinator too old to lease to a standby offers nothing here.
   if (!capable(coordinator.environmentId) && !current) return null;
 
@@ -458,6 +784,9 @@ export function CoordinatorStandbySettings({
             : null
         }
         problem={problem}
+        rearm={rearmList}
+        rearmNote={rearmNote}
+        rearmStatus={rearmStatusText(rearmSeen.run, machines.label)}
         fenceNote={
           current && standbyLabel && !machines.connected(current.member.environmentId)
             ? `Checking with ${standbyLabel} before running.`
@@ -473,13 +802,16 @@ export function CoordinatorStandbySettings({
             return;
           }
           if (problemFor(environmentId) === null)
-            void apply({ kind: "arm", standby: environmentId, afterMinutes }, false);
+            void apply({ kind: "arm", standby: environmentId, afterMinutes, order }, false);
         }}
         onAfter={(minutes) => {
           setAfterMinutes(minutes);
-          if (choice) void apply({ kind: "arm", standby: choice, afterMinutes: minutes }, false);
+          if (choice)
+            void apply({ kind: "arm", standby: choice, afterMinutes: minutes, order }, false);
         }}
-        onAllow={() => choice && void apply({ kind: "arm", standby: choice, afterMinutes }, false)}
+        onAllow={() =>
+          choice && void apply({ kind: "arm", standby: choice, afterMinutes, order }, false)
+        }
         onChangeAnyway={() => retry && void apply(retry, true)}
         onRunHereAnyway={() => {
           setChoice(null);

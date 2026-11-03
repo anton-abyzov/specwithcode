@@ -53,7 +53,11 @@ public struct MarkdownText: View {
         }
       if collapsible, fullHeight > collapsedHeight + 80 {
         Button(expanded ? "Show less" : "Show more") {
-          withAnimation(.snappy) { expanded.toggle() }
+          // No animation: animating thousands of points of selectable text
+          // stalls a phone for many seconds.
+          var change = Transaction()
+          change.disablesAnimations = true
+          withTransaction(change) { expanded.toggle() }
         }
         .font(.weave(.callout))
         .foregroundStyle(Color.weave.muted)

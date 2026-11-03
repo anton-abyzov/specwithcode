@@ -1,4 +1,8 @@
-import { EnvironmentId, type StorageStatus } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  type StorageHomeUsage,
+  type StorageStatus,
+} from "@specweave-studio/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -80,6 +84,90 @@ describe("resolveLowDiskSpaceNotices", () => {
     expect(resolve([low], ["env-m4:low"])).toEqual([]);
     const critical = { ...low, storage: storage("critical", 4e8) };
     expect(resolve([critical], ["env-m4:low"]).map(({ key }) => key)).toEqual(["env-m4:critical"]);
+  });
+});
+
+const homeUsage = (
+  level: StorageHomeUsage["level"],
+  overrides: Partial<StorageHomeUsage> = {},
+): StorageHomeUsage => ({
+  level,
+  path: "/Users/anton/.specwithcode",
+  totalBytes: 172e9,
+  warnAboveBytes: 50e9,
+  parts: [
+    { key: "worktrees", bytes: 102e9 },
+    { key: "database", bytes: 23e9 },
+    { key: "backups", bytes: 21e9 },
+    { key: "release", bytes: 14e9 },
+  ],
+  worktreeCount: 40,
+  complete: true,
+  checkedAt: "2026-11-03T12:00:00.000Z",
+  ...overrides,
+});
+
+describe("app folder notices", () => {
+  it("warns when the app folder passes its warning size, with the largest parts", () => {
+    const notices = resolve([
+      {
+        environmentId: THIS_MAC,
+        os: "darwin",
+        storage: { ...storage("ok", 40e9), homeUsage: homeUsage("large") },
+      },
+    ]);
+    expect(notices).toEqual([
+      expect.objectContaining({
+        key: "env-m4:home-large",
+        level: "low",
+        action: "review-storage",
+        title: "SpecWithCode folder is large",
+        message:
+          "The SpecWithCode folder on this Mac takes 172 GB (worktrees 102 GB, database 23 GB, update backups 21 GB). Cloned files count in full, so the disk may hold less. Review storage to clean up what is safe.",
+      }),
+    ]);
+  });
+
+  it("names the part that grew fast, after a low disk notice for the same machine", () => {
+    const usage = homeUsage("growing", {
+      totalBytes: 40e9,
+      parts: [{ key: "scratch", bytes: 16e9, grewBytes: 12e9 }],
+    });
+    const notices = resolve([
+      {
+        environmentId: REMOTE,
+        os: "darwin",
+        storage: { ...storage("low", 3e9), homeUsage: usage },
+      },
+    ]);
+    expect(notices.map(({ key }) => key)).toEqual(["env-m1:low", "env-m1:home-growing"]);
+    expect(notices[1]?.message).toBe(
+      "The SpecWithCode folder on Anton's MacBook M1 takes 40 GB: scratch folders grew 12 GB since the last check. Review storage to clean up what is safe.",
+    );
+  });
+
+  it("stays quiet for a normal folder and while dismissed", () => {
+    const ok = { ...storage("ok", 40e9), homeUsage: homeUsage("ok") };
+    expect(resolve([{ environmentId: THIS_MAC, os: "darwin", storage: ok }])).toEqual([]);
+    const large = { ...storage("ok", 40e9), homeUsage: homeUsage("large") };
+    expect(
+      resolve([{ environmentId: THIS_MAC, os: "darwin", storage: large }], ["env-m4:home-large"]),
+    ).toEqual([]);
+  });
+
+  it("offers a way to Storage settings", () => {
+    const [notice] = resolve([
+      {
+        environmentId: THIS_MAC,
+        os: "darwin",
+        storage: { ...storage("ok", 40e9), homeUsage: homeUsage("large") },
+      },
+    ]);
+    const markup = renderToStaticMarkup(
+      <LowDiskSpaceNoticeCard notice={notice!} onDismiss={() => {}} onReviewStorage={() => {}} />,
+    );
+    expect(markup).toContain("Review storage");
+    expect(markup).toContain('aria-label="Dismiss app folder notice"');
   });
 });
 

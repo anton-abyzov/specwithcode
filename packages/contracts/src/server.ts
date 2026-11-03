@@ -686,11 +686,52 @@ export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 export const StorageStatusLevel = Schema.Literals(["ok", "low", "critical"]);
 export type StorageStatusLevel = typeof StorageStatusLevel.Type;
 
+/**
+ * The size of the app's home folder (`~/.specwithcode`) and its parts, as a
+ * bounded walk that counts each file once measured it. `large` passes the
+ * size set in Storage settings; `growing` means a part grew abnormally since
+ * the measurement before. Part keys are open-ended (`worktrees`, `database`,
+ * `backups`, `scratch`, `evidence`, `release`, `logs`, `other`).
+ */
+export const StorageHomeUsageLevel = Schema.Literals(["ok", "large", "growing"]);
+export type StorageHomeUsageLevel = typeof StorageHomeUsageLevel.Type;
+
+export const StorageHomeUsagePart = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  bytes: NonNegativeInt,
+  /** Bytes added since the measurement before, when it grew abnormally. */
+  grewBytes: Schema.optionalKey(NonNegativeInt),
+});
+export type StorageHomeUsagePart = typeof StorageHomeUsagePart.Type;
+
+export const StorageHomeUsage = Schema.Struct({
+  level: StorageHomeUsageLevel,
+  path: TrimmedNonEmptyString,
+  totalBytes: NonNegativeInt,
+  /** The warning size from settings in bytes, or null when the warning is off. */
+  warnAboveBytes: Schema.NullOr(NonNegativeInt),
+  parts: Schema.Array(StorageHomeUsagePart),
+  /** Checkouts (folders holding `.git`) under the worktrees folder. */
+  worktreeCount: NonNegativeInt,
+  /** False when the walk stopped at its time or entry limit: sizes are lower bounds. */
+  complete: Schema.Boolean,
+  checkedAt: IsoDateTime,
+});
+export type StorageHomeUsage = typeof StorageHomeUsage.Type;
+
+/** A home usage this build cannot read drops itself, never the disk status. */
+const BestEffortStorageHomeUsage = StorageHomeUsage.pipe(
+  Schema.catchDecoding(() => Effect.succeedNone),
+  Schema.catchEncoding(() => Effect.succeedNone),
+);
+
 export const StorageStatus = Schema.Struct({
   level: StorageStatusLevel,
   freeBytes: NonNegativeInt,
   totalBytes: NonNegativeInt,
   checkedAt: IsoDateTime,
+  /** Absent before the first measurement and on servers that predate it. */
+  homeUsage: Schema.optionalKey(BestEffortStorageHomeUsage),
 });
 export type StorageStatus = typeof StorageStatus.Type;
 

@@ -1093,10 +1093,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     if (latestRun.runId === previous.runId) {
       // Verbose already shows the turn open; adding its id would close it.
+      // Results only folds a stopped turn like any other.
       if (
         previous.status === "running" &&
         latestRun.status === "interrupted" &&
-        timelineDetail !== "verbose"
+        timelineDetail === "normal"
       ) {
         setExpandedRunIds((existing) => {
           const next = new Set(existing);

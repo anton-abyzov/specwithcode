@@ -2,14 +2,17 @@ import {
   isPersonalAssistantProject,
   PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
 } from "@specweave-studio/shared/personalAssistant";
+import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
 import {
   isProjectCoordinatorThreadId,
   OrchestratorMcpFailure,
+  type ProjectLinkError,
   type OrchestratorMcpDelegation,
   type OrchestrationV2ThreadShell,
   type Project,
   type ProjectId,
   type ProviderInstanceId,
+  type StandbyRearmReason,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -25,7 +28,10 @@ import {
   projectInGrant,
   type WorkOrigin,
 } from "../fleet/workGrantPolicy.ts";
+import { ProjectLink } from "../project/ProjectLink.ts";
+import { PEER_ARM_NO_CONSENT, STANDBY_CAPABILITY_REFUSAL } from "../project/ProjectLinkStandby.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import type { Caller } from "./threadAccess.ts";
 
 /**
@@ -428,6 +434,45 @@ export interface CoordinatorEpochClaimInput {
   readonly logicalProjectId: string;
   readonly epoch: number;
   readonly threadIds?: ReadonlyArray<string> | undefined;
+  /** Register this machine as the caller's standby, under the owner's re-arm consent here. */
+  readonly standby?: { readonly chainId: string } | undefined;
+}
+
+/** Whether this machine now stands by for the caller, and why not. */
+export interface ClaimStandbyAnswer {
+  readonly armed: boolean;
+  readonly code?: StandbyRearmReason | undefined;
+  readonly message?: string | undefined;
+}
+
+/**
+ * What a refused peer registration tells the coordinator that asked.
+ * `teamRulesMessage` is this machine's team-rules refusal, when there is one:
+ * a registration refused under the lock because the rules changed carries it.
+ */
+export function peerArmCode(
+  error: ProjectLinkError,
+  teamRulesMessage?: string,
+): StandbyRearmReason {
+  if (error.detail === PEER_ARM_NO_CONSENT) return "no_consent";
+  if (
+    error.code === "invalid" &&
+    teamRulesMessage !== undefined &&
+    error.detail === teamRulesMessage
+  )
+    return "team_rules";
+  switch (error.code) {
+    case "superseded_conflict":
+      return "superseded_conflict";
+    case "not_member":
+    case "not_linked":
+    case "handoff_in_progress":
+      return "not_member";
+    case "invalid":
+      return error.detail === STANDBY_CAPABILITY_REFUSAL ? "needs_update" : "refused";
+    default:
+      return "refused";
+  }
 }
 
 export interface CoordinatorEpochClaimResult {
@@ -438,6 +483,8 @@ export interface CoordinatorEpochClaimResult {
     readonly threadId: string;
     readonly coordinatorEnvironmentId: string | null;
   }>;
+  /** Present when the claim asked for a standby registration. */
+  readonly standby?: ClaimStandbyAnswer;
 }
 
 /**
@@ -491,10 +538,59 @@ export const claimCoordinatorEpoch = Effect.fn("mcp.claimCoordinatorEpoch")(func
         : yield* grants.originOf(shell).pipe(Effect.mapError(storageFailure));
     origins.push({ threadId, coordinatorEnvironmentId: origin?.coordinatorEnvironmentId ?? null });
   }
+  const standby =
+    input.standby === undefined
+      ? undefined
+      : yield* registerStandby(work, input, input.standby.chainId, claimed.accepted);
   return {
     logicalProjectId: input.logicalProjectId,
     accepted: claimed.accepted,
     epoch: claimed.epoch,
     origins,
+    ...(standby === undefined ? {} : { standby }),
   } satisfies CoordinatorEpochClaimResult;
+});
+
+/**
+ * A coordinator that took over automatically asks this machine to stand by
+ * for it. Only a claim that stands may; the caller is the machine its grant
+ * names, and the owner's consent here decides the rest. A refusal is an
+ * answer, never a failure of the claim.
+ */
+const registerStandby = Effect.fn("mcp.claimCoordinatorEpoch.standby")(function* (
+  work: WorkGrantContext,
+  input: CoordinatorEpochClaimInput,
+  chainId: string,
+  claimAccepted: boolean,
+) {
+  if (!claimAccepted) return { armed: false, code: "superseded_conflict" } as ClaimStandbyAnswer;
+  const refused = teamRulesMachineLinkRefusal(yield* currentTeamRules);
+  if (refused !== null)
+    return {
+      armed: false,
+      code: "team_rules",
+      message: refused.message.slice(0, 1000),
+    } as ClaimStandbyAnswer;
+  const link = yield* Effect.serviceOption(ProjectLink);
+  if (Option.isNone(link)) return { armed: false, code: "refused" } as ClaimStandbyAnswer;
+  return yield* link.value
+    .acceptStandbyFromPeer({
+      logicalProjectId: input.logicalProjectId,
+      callerEnvironmentId: work.grant.coordinatorEnvironmentId,
+      epoch: input.epoch,
+      chainId,
+    })
+    .pipe(
+      Effect.as({ armed: true } as ClaimStandbyAnswer),
+      Effect.catchTag("ProjectLinkError", (error) =>
+        Effect.map(currentTeamRules, (rules) => ({
+          armed: false,
+          code: peerArmCode(error, teamRulesMachineLinkRefusal(rules)?.message),
+          ...(error.detail === undefined || error.detail === PEER_ARM_NO_CONSENT
+            ? {}
+            : { message: error.detail.slice(0, 1000) }),
+        })),
+      ),
+      Effect.map((answer): ClaimStandbyAnswer => answer),
+    );
 });

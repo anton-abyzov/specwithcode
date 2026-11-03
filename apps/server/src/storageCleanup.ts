@@ -11,6 +11,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { resolveWorktreeCleanup } from "@specweave-studio/shared/projectSettings";
 import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +29,10 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "./config.ts";
 import { elapsedMs, newestFinite, olderThan } from "./failClosedAge.ts";
 import * as GitManager from "./git/GitManager.ts";
+import { makeHomeUsageGuard } from "./homeUsage/guard.ts";
+import { listProcessCwds } from "./homeUsage/processCwds.ts";
+import * as DiskSpaceMonitor from "./observability/DiskSpaceMonitor.ts";
+import { casesFoldOn } from "./scratchPrune.ts";
 import { worktreeHasNoAdditionalChanges } from "./git/worktreeIntegration.ts";
 import {
   isOpenThreadOwner,
@@ -704,6 +709,26 @@ export const make = Effect.gen(function* () {
     return found;
   });
 
+  // Measures the app folder every few hours and runs scratch retention from
+  // that walk; folders any owner uses are kept by the orphan sweep's own check.
+  const diskSpace = yield* Effect.serviceOption(DiskSpaceMonitor.DiskSpaceMonitor);
+  const platform = yield* HostProcessPlatform;
+  const homeUsage = yield* makeHomeUsageGuard({
+    baseDir: config.baseDir,
+    stateDir: config.stateDir,
+    worktreesDir: config.worktreesDir,
+    logsDir: config.logsDir,
+    foldCase: casesFoldOn(platform),
+    publish: (usage) =>
+      Option.match(diskSpace, {
+        onNone: () => Effect.void,
+        onSome: (monitor) => monitor.reportHomeUsage(usage),
+      }),
+    processCwds: listProcessCwds(platform),
+    isOwned: orphanOwned,
+    guardRemoval: withWorkspaceLease,
+  });
+
   const cleanupStatePath = path.join(config.stateDir, STORAGE_CLEANUP_STATE_FILE);
   /** undefined until read from `storage-cleanup.json`; null when no sweep is recorded. */
   let lastOrphanSweepAt: number | null | undefined;
@@ -1005,6 +1030,10 @@ export const make = Effect.gen(function* () {
     yield* cleanFiles(config.logsDir, settings.logsAfterDays, now, true).pipe(
       Effect.catch((error) => Effect.logWarning("rotated log cleanup failed", { error })),
     );
+    // Last: it measures what the cleanups above left.
+    yield* homeUsage
+      .run(serverSettings, now)
+      .pipe(Effect.catch((error) => Effect.logWarning("app folder check failed", { error })));
   });
   const worker = yield* makeDrainableWorker(() =>
     sweep().pipe(
@@ -1031,6 +1060,8 @@ export const make = Effect.gen(function* () {
       }),
     );
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+    // The last measurement, read from its own file: no walk at startup.
+    yield* homeUsage.restore;
     const changes = yield* settingsService.subscribeChanges;
     const events = engine.streamDomainEvents;
     let lastSettings = yield* settingsService.getSettings.pipe(Effect.orDie);

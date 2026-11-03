@@ -36,6 +36,13 @@
  * here, in small `incremental_vacuum` steps; see `specweave-studio db reclaim`
  * for why that mode is opt-in.
  *
+ * After a completed pass, and only when the owner turned it on (Settings >
+ * Storage, `storageCleanup.deletedThreadHistoryAfterDays` and
+ * `archivedThreadHistoryAfterDays`, both off by default), the same pass purges
+ * old deleted threads and drops old archived threads' events
+ * (ThreadHistoryRetention.ts), up to RETENTION_MAX_THREADS_PER_PASS threads,
+ * behind the same update checks before every delete.
+ *
  * Active runs do not stop a pass. Every statement shares the server's one
  * connection, so a delete never interleaves with an event write, and a
  * deleted event always has a newer retained one for the same entity: a
@@ -59,10 +66,13 @@ import * as SqlClient from "effect/sql/SqlClient";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the check right before each delete must not yield, so it reads the files synchronously.
 import * as NodeFS from "node:fs";
 
+import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as AuthRowPruning from "./AuthRowPruning.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as ThreadHistoryRetention from "../orchestration-v2/ThreadHistoryRetention.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as UpdateInstallGate from "../serviceUpdate/UpdateInstallGate.ts";
 
@@ -224,6 +234,8 @@ export interface StorageMaintenanceRun {
   readonly compaction: ProjectionMaintenance.CompactEventStoreResult | null;
   /** Expired and revoked auth rows deleted; null when the pass never reached that step. */
   readonly authPruning: AuthRowPruning.PruneAuthRowsResult | null;
+  /** Opt-in thread history retention after the pass; null when off or not reached. */
+  readonly retention: ThreadHistoryRetention.ThreadHistoryRetentionResult | null;
   readonly reclaimedPages: number;
 }
 
@@ -241,6 +253,10 @@ export interface StorageMaintenanceOptions {
   readonly pagePause?: Duration.Input;
   /** How long an expired or revoked auth row stays: AuthRowPruning.AUTH_ROW_RETENTION_MS. */
   readonly authRowRetentionMs?: number;
+  /** The owner's retention choice, read at each pass; absent or off retains everything. */
+  readonly retentionPolicy?: Effect.Effect<ThreadHistoryRetention.ThreadHistoryRetentionPolicy>;
+  /** Removes a purged thread's attachment files. */
+  readonly removeAttachments?: (attachmentIds: ReadonlyArray<string>) => Effect.Effect<void>;
 }
 
 /** After 25 ms of work, rest nine times its duration, outside the connection lock. */
@@ -389,6 +405,50 @@ export const make = (options: StorageMaintenanceOptions) =>
         return result;
       });
 
+    /** The owner's opt-in retention, behind the pass's gate; null when it is off. */
+    const runRetention = (gate: {
+      readonly check: Effect.Effect<boolean>;
+      readonly mayDelete: () => boolean;
+      readonly reason: () => MaintenanceBlocker | null;
+    }) =>
+      Effect.gen(function* () {
+        const policy =
+          options.retentionPolicy === undefined
+            ? ThreadHistoryRetention.RETENTION_OFF
+            : yield* options.retentionPolicy;
+        if (!ThreadHistoryRetention.retentionEnabled(policy)) return null;
+        const startedAt = yield* Clock.currentTimeMillis;
+        const result = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+          policy,
+          nowMs: startedAt,
+          shouldContinue: gate.check,
+          mayDelete: gate.mayDelete,
+          betweenBatches: Effect.andThen(Effect.sleep(pagePause), yield* makeCompactionPacer),
+          maxThreads: ThreadHistoryRetention.RETENTION_MAX_THREADS_PER_PASS,
+          ...(options.removeAttachments === undefined
+            ? {}
+            : { removeAttachments: options.removeAttachments }),
+        });
+        yield* Effect.logInfo("storage-maintenance.retention.completed", {
+          purgedThreadCount: result.purgedThreadCount,
+          compactedThreadCount: result.compactedThreadCount,
+          deferredThreadCount: result.deferredThreadCount,
+          skipped: result.skipped,
+          deletedEventCount: result.deletedEventCount,
+          deletedRowsByTable: result.deletedRowsByTable,
+          interrupted: result.interrupted,
+          blocker: gate.reason(),
+          elapsedMs: (yield* Clock.currentTimeMillis) - startedAt,
+        });
+        return result;
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("storage-maintenance.retention.failed", { cause }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+
     /** One pass now, whether due or not; still never while an update blocks it. */
     const runNow = (input?: { readonly forceFull?: boolean }) =>
       permit.withPermit(
@@ -401,6 +461,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               mode: null,
               compaction: null,
               authPruning: null,
+              retention: null,
               reclaimedPages: 0,
             } satisfies StorageMaintenanceRun;
           }
@@ -433,6 +494,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               mode: full ? "full" : "incremental",
               compaction,
               authPruning: null,
+              retention: null,
               reclaimedPages: 0,
             } satisfies StorageMaintenanceRun;
           }
@@ -450,6 +512,7 @@ export const make = (options: StorageMaintenanceOptions) =>
             ),
           );
           const authPruning = yield* pruneAuthWith(gate);
+          const retention = yield* runRetention(gate);
           const reclaimedPages = yield* reclaimWith(gate);
           yield* Effect.logInfo("storage-maintenance.compaction.completed", {
             mode: full ? "full" : "incremental",
@@ -469,6 +532,7 @@ export const make = (options: StorageMaintenanceOptions) =>
             mode: full ? "full" : "incremental",
             compaction,
             authPruning,
+            retention,
             reclaimedPages,
           } satisfies StorageMaintenanceRun;
         }),
@@ -492,6 +556,7 @@ export const make = (options: StorageMaintenanceOptions) =>
           mode: null,
           compaction: null,
           authPruning,
+          retention: null,
           reclaimedPages,
         } satisfies StorageMaintenanceRun;
       }
@@ -512,10 +577,35 @@ export const layerStart = Layer.effectDiscard(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     const service = yield* make({
       statePath: path.join(path.dirname(config.dbPath), STATE_FILE),
       snapshotMarkerPath: path.join(config.baseDir, "updates", SNAPSHOT_MARKER_FILE),
       installGatePath: path.join(config.baseDir, "updates", UpdateInstallGate.INSTALL_GATE_FILE),
+      retentionPolicy: Option.match(settings, {
+        onNone: () => Effect.succeed(ThreadHistoryRetention.RETENTION_OFF),
+        onSome: (service) =>
+          service.getSettings.pipe(
+            Effect.map(({ storageCleanup }) => ({
+              deletedAfterDays: storageCleanup.deletedThreadHistoryAfterDays,
+              archivedAfterDays: storageCleanup.archivedThreadHistoryAfterDays,
+            })),
+            Effect.orElseSucceed(() => ThreadHistoryRetention.RETENTION_OFF),
+          ),
+      }),
+      removeAttachments: (attachmentIds) =>
+        Effect.forEach(
+          attachmentIds,
+          (attachmentId) => {
+            const file = resolveAttachmentPathById({
+              attachmentsDir: config.attachmentsDir,
+              attachmentId,
+            });
+            return file === null ? Effect.void : Effect.ignore(fs.remove(file, { force: true }));
+          },
+          { discard: true },
+        ),
     });
     yield* forkParked(
       Effect.sleep(Duration.millis(FIRST_CHECK_DELAY_MS)).pipe(

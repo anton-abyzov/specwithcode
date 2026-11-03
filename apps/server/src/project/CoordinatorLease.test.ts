@@ -1,6 +1,7 @@
 import {
   type CoordinatorRoutineCopy,
   EnvironmentId,
+  type Project,
   type ProjectId,
   ProjectLinkError,
 } from "@specweave-studio/contracts";
@@ -20,10 +21,16 @@ import {
   type CoordinatorLeaseDeps,
   type CoordinatorLeaseShape,
   makeCoordinatorLease,
+  releaseSettledBy,
   reviewBoundary,
 } from "./CoordinatorLease.ts";
 import * as CoordinatorLeaseRoute from "./CoordinatorLeaseRoute.ts";
-import { makeMemory } from "./CoordinatorLeaseStore.ts";
+import {
+  emptyLeaseRecord,
+  makeMemory,
+  withoutPendingRelease,
+  withPendingRelease,
+} from "./CoordinatorLeaseStore.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectLink from "./ProjectLink.ts";
 import {
@@ -36,6 +43,7 @@ afterEach(removeCheckouts);
 
 const standbyId = "55555555-5555-4555-8555-555555555555";
 const offId = "66666666-6666-4666-8666-666666666666";
+const againId = "67676767-6767-4767-8767-676767676767";
 const MINUTE = 60_000;
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 const nowMs = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
@@ -100,6 +108,8 @@ const armed = async () => {
     replicas: 0,
     interrupted: [] as string[],
     stoppedRows: 0,
+    /** What the loop's sync sees instead of M4's projects: a view from before a change. */
+    listed: null as ReadonlyArray<Project> | null,
     /** The coordinator's routines as RoutineCopies would read them; null sends none. */
     routines: null as RoutineCopiesSnapshot | null,
   };
@@ -127,7 +137,7 @@ const armed = async () => {
               return onM3((receiver) => receiver.replica(m4Grant, request));
             }),
         },
-        listProjects: Effect.sync(() => [...pair.m4.projects.values()]),
+        listProjects: Effect.sync(() => state.listed ?? [...pair.m4.projects.values()]),
         loadProject: (id: ProjectId) => Effect.sync(() => pair.m4.projects.get(id)),
         runningThreads: () =>
           Effect.succeed([{ threadId: pair.kept.coordinatorThreadId, title: "Coordinator" }]),
@@ -457,6 +467,177 @@ describe("CoordinatorLease", () => {
     expect(record()?.lastError).toContain("the epoch is not above");
     expect(binding()).toEqual(own);
     expect(state.interrupted).toEqual([]);
+  });
+
+  it("drops a release owed to the standby the owner sets again, which stays armed", async () => {
+    const { tick, sent, record, standbyRecord, state, releaseBefore, pair, projectId } =
+      await armed();
+    await tick();
+    state.offline = peerError("unreachable");
+    await releaseBefore({ projectId, changeAnyway: true, reason: "standby-off" });
+    await pair.m4.run((service) =>
+      service.setStandby({ operationId: offId, projectId, standby: null }),
+    );
+    await tick();
+    expect(record()?.pendingReleases).toMatchObject([{ epoch: 0 }]);
+
+    state.offline = null;
+    await pair.m4.run((service) =>
+      service.setStandby({
+        operationId: againId,
+        projectId,
+        standby: { member: pair.joining, afterMinutes: 15 },
+      }),
+    );
+    const before = sent.length;
+    await tick();
+    // The same standby at the same epoch is leased to again; releasing it would disarm it.
+    expect(sent.slice(before).map((request) => request.kind)).toEqual(["lease"]);
+    expect(record()).toMatchObject({ pendingReleases: [], target: { epoch: 0 } });
+    expect(standbyRecord()).toBeDefined();
+  });
+
+  it("checks a release against the binding again just before sending it", async () => {
+    const { tick, sent, record, standbyRecord, state, releaseBefore, pair, projectId } =
+      await armed();
+    await tick();
+    state.offline = peerError("unreachable");
+    await releaseBefore({ projectId, changeAnyway: true, reason: "standby-off" });
+    await pair.m4.run((service) =>
+      service.setStandby({ operationId: offId, projectId, standby: null }),
+    );
+    await tick();
+    // The owner sets the standby again after this round's sync read the projects.
+    state.listed = [...pair.m4.projects.values()];
+    state.offline = null;
+    await pair.m4.run((service) =>
+      service.setStandby({
+        operationId: againId,
+        projectId,
+        standby: { member: pair.joining, afterMinutes: 15 },
+      }),
+    );
+    const before = sent.length;
+    await tick();
+    expect(sent.slice(before)).toEqual([]);
+    expect(record()?.pendingReleases ?? []).toEqual([]);
+    expect(standbyRecord()).toBeDefined();
+    state.listed = null;
+    await tick();
+    expect(sent.slice(before).map((request) => request.kind)).toEqual(["lease"]);
+  });
+
+  it("settles a release the standby ignored, but not one refused for its version", async () => {
+    const { tick, sent, record, state, pair, projectId } = await armed();
+    await tick();
+    state.offline = new HandoffPeerError({
+      code: "invalid",
+      message: "Update this machine.",
+      check: "version",
+      uncertain: false,
+    });
+    await pair.m4.run((service) =>
+      service.setStandby({ operationId: offId, projectId, standby: null }),
+    );
+    await tick();
+    expect(sent.at(-1)).toMatchObject({ kind: "release" });
+    expect(record()?.pendingReleases).toHaveLength(1);
+    // It holds no registration from this copy at that epoch: nothing is left to release.
+    state.offline = peerError("invalid");
+    await tick();
+    expect(record()).toBeUndefined();
+
+    expect(releaseSettledBy(peerError("not_found"))).toBe(true);
+    expect(releaseSettledBy(peerError("not_found", true))).toBe(false);
+    expect(releaseSettledBy(peerError("invalid", true))).toBe(false);
+    expect(releaseSettledBy(peerError("unreachable"))).toBe(false);
+    expect(releaseSettledBy(peerError("busy"))).toBe(false);
+  });
+
+  it("records when a lease may have reached the standby, until the target changes", async () => {
+    const { tick, record, state, pair, projectId } = await armed();
+    state.offline = peerError("unreachable");
+    await tick();
+    // A definite failure proves nothing reached it.
+    expect(record()?.maybeDeliveredAt ?? null).toBeNull();
+    state.offline = new HandoffPeerError({
+      code: "unreachable",
+      message: "M3 did not answer.",
+      uncertain: true,
+    });
+    await tick();
+    const unanswered = record()?.maybeDeliveredAt;
+    expect(unanswered).toEqual(expect.any(String));
+    state.offline = null;
+    await Effect.runPromise(Effect.sleep("5 millis"));
+    await tick();
+    expect(Date.parse(record()!.maybeDeliveredAt!)).toBeGreaterThan(Date.parse(unanswered!));
+
+    state.offline = peerError("unreachable");
+    await pair.m4.run((service) =>
+      service.setStandby({ operationId: offId, projectId, standby: null }),
+    );
+    await tick();
+    expect(record()).toMatchObject({ target: null, maybeDeliveredAt: null });
+  });
+
+  it("marks a lease as maybe reached before it leaves, so one cut off keeps the mark", async () => {
+    const { tick, record, state } = await armed();
+    let whileInFlight: string | null | undefined;
+    state.answer = () => {
+      whileInFlight = record()?.maybeDeliveredAt;
+      // The process stops mid-call: no answer and no result is recorded.
+      throw new Error("server restarted");
+    };
+    await tick();
+    expect(whileInFlight).toEqual(expect.any(String));
+    expect(record()?.lastSuccessfulLeaseAt ?? null).toBeNull();
+    expect(record()?.maybeDeliveredAt).toBe(whileInFlight);
+
+    // A definite failure removes only its own mark; the cut-off call's stays.
+    state.answer = null;
+    state.offline = peerError("unreachable");
+    await tick();
+    expect(record()?.maybeDeliveredAt).toBe(whileInFlight);
+  });
+});
+
+describe("pending release helpers", () => {
+  const member = (environmentId: string) => ({
+    environmentId: EnvironmentId.make(environmentId),
+    projectId: `easychamp-${environmentId}` as ProjectId,
+    coordinatorThreadId: `project-coordinator:easychamp-${environmentId}` as never,
+  });
+  const entry = (environmentId: string, epoch: number) => ({
+    standby: member(environmentId),
+    epoch,
+    logicalProjectId: "logical:easychamp",
+    since: "2026-11-03T10:00:00.000Z",
+  });
+  const at = "2026-11-03T10:05:00.000Z";
+
+  it("owes a release once, starting a record when there is none", () => {
+    const first = withPendingRelease(undefined, entry("m2", 4), "easychamp-m1", at);
+    expect(first).toMatchObject({
+      projectId: "easychamp-m1",
+      logicalProjectId: "logical:easychamp",
+      target: null,
+      pendingReleases: [entry("m2", 4)],
+    });
+    expect(withPendingRelease(first, entry("m2", 4), "easychamp-m1", at)).toBe(first);
+    expect(
+      withPendingRelease(first, entry("m2", 5), "easychamp-m1", at).pendingReleases,
+    ).toHaveLength(2);
+  });
+
+  it("removes only the named release, and the record once nothing is left", () => {
+    const base = emptyLeaseRecord("easychamp-m1", "logical:easychamp", at);
+    const two = { ...base, pendingReleases: [entry("m2", 4), entry("m3", 4)] };
+    expect(withoutPendingRelease(undefined, member("m2"), 4)).toBeUndefined();
+    expect(withoutPendingRelease(two, member("m2"), 5)).toBeUndefined();
+    const one = withoutPendingRelease(two, member("m2"), 4);
+    expect(one).toMatchObject({ pendingReleases: [entry("m3", 4)] });
+    expect(withoutPendingRelease(one!, member("m3"), 4)).toBeNull();
   });
 });
 

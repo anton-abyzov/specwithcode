@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   settings: {} as typeof DEFAULT_SERVER_SETTINGS,
   update: vi.fn(),
   multiple: false,
+  storage: undefined as unknown,
   targets: [{ environmentId: "fixture" }] as Array<Record<string, unknown>>,
   member: undefined as
     | Pick<SidebarProjectGroupMember, "environmentId" | "workspaceSettings">
@@ -28,7 +29,9 @@ vi.mock("./SettingsScopeContext", () => ({
           capabilities: { worktreeLocationMode: true, storageCleanup: true },
           defaultWorktreesDirectory: "/app/worktrees",
         },
+        storage: state.storage,
       },
+      label: environmentId,
     })),
   }),
 }));
@@ -115,6 +118,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   state.settings = { ...DEFAULT_SERVER_SETTINGS };
   state.multiple = false;
+  state.storage = undefined;
   state.member = undefined;
   state.targets = [{ environmentId: "fixture" }];
   state.update.mockClear();
@@ -253,4 +257,56 @@ it("keeps a retention rule on when machines only differ in day counts", () => {
     renderer = create(<StorageSettingsPanel />);
   });
   expect(toggle()).toMatchObject({ checked: false, "data-mixed": "" });
+});
+
+it("shows the app folder breakdown and saves the warning size and scratch retention", () => {
+  state.storage = {
+    level: "ok",
+    freeBytes: 40e9,
+    totalBytes: 994e9,
+    checkedAt: "2026-11-03T12:00:00.000Z",
+    homeUsage: {
+      level: "large",
+      path: "/Users/anton/.specwithcode",
+      totalBytes: 172e9,
+      warnAboveBytes: 50e9,
+      parts: [
+        { key: "worktrees", bytes: 102e9 },
+        { key: "scratch", bytes: 10e9, grewBytes: 6e9 },
+      ],
+      worktreeCount: 40,
+      complete: true,
+      checkedAt: "2026-11-03T12:00:00.000Z",
+    },
+  };
+  state.targets = [
+    {
+      environmentId: "one",
+      label: "one",
+      projectId: null,
+      settings: DEFAULT_SERVER_SETTINGS,
+      sources: { worktreeCleanup: "environment" },
+    },
+  ];
+  act(() => {
+    renderer = create(<StorageSettingsPanel />);
+  });
+  const text = JSON.stringify(renderer.toJSON());
+  expect(renderer.root.findByProps({ "aria-label": "App folder size: 172 GB" })).toBeTruthy();
+  expect(text).toContain("worktrees 102 GB, 40 checkouts · scratch folders 10 GB (+6.0 GB)");
+  const warning = renderer.root
+    .findAllByType("select")
+    .find((select) => select.props.value === "50")!;
+  act(() => warning.props.onChange({ target: { value: "100" } }));
+  expect(state.update).toHaveBeenCalledWith({ storageCleanup: { homeSizeWarningGb: 100 } });
+  act(() => warning.props.onChange({ target: { value: "off" } }));
+  expect(state.update).toHaveBeenCalledWith({ storageCleanup: { homeSizeWarningGb: null } });
+  const scratch = renderer.root.findByProps({ "aria-label": "Delete old scratch folders" });
+  // Off by default; turning it on starts at 14 days.
+  expect(scratch.findByType("input").props.checked).toBe(false);
+  const scratchSwitch = renderer.root
+    .findAllByProps({ "aria-label": "Delete old scratch folders" })
+    .find((node) => typeof node.props.onCheckedChange === "function")!;
+  act(() => scratchSwitch.props.onCheckedChange(true));
+  expect(state.update).toHaveBeenCalledWith({ storageCleanup: { scratchAfterDays: 14 } });
 });

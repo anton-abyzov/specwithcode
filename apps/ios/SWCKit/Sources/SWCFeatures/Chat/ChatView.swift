@@ -56,6 +56,8 @@ private struct ChatScreen: View {
   @State private var railWidth: CGFloat = 0
   @State private var increment: IncrementProgress?
   @State private var choosingAttachment = false
+  /// Turn folds the person opened, by fold row id.
+  @State private var expandedFolds: Set<String> = []
   @State private var preparingPhotos = 0
 
   /// A thread's thinking rows carry its provider's mark; a coordinator chat has no single provider.
@@ -130,6 +132,12 @@ private struct ChatScreen: View {
 
   // MARK: Transcript
 
+  /// The rows at the chosen detail level: Results only and Folded steps fold
+  /// each turn's steps behind one row; Everything shows them all.
+  private var visibleRows: [TranscriptRow] {
+    TranscriptFolding.rows(session.rows, detail: model.timelineDetail, isRunning: session.isRunning, expandedFolds: expandedFolds)
+  }
+
   private var transcript: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: WeaveSpacing.s4) {
@@ -150,7 +158,7 @@ private struct ChatScreen: View {
             emptyTranscript
           }
         }
-        ForEach(session.rows) { row in
+        ForEach(visibleRows) { row in
           TranscriptRowView(
             row: row,
             busyRequests: busyRequests,
@@ -158,7 +166,10 @@ private struct ChatScreen: View {
             onDecision: { requestId, decision in respond(requestId, decision) },
             onOpenThread: { router.pushThread($0, on: nav, in: model) },
             onOpenLink: { openThreadLink($0, in: row) },
-            environmentId: target.environmentId
+            environmentId: target.environmentId,
+            onToggleFold: { id in
+              if expandedFolds.contains(id) { expandedFolds.remove(id) } else { expandedFolds.insert(id) }
+            }
           )
           .id(row.id)
         }
@@ -180,6 +191,9 @@ private struct ChatScreen: View {
     .scrollPosition($position)
     .defaultScrollAnchor(session.rows.isEmpty ? .top : .bottom)
     .scrollDismissesKeyboard(.interactively)
+    // A tap on the conversation puts the keyboard away, even when there is
+    // too little to scroll.
+    .simultaneousGesture(TapGesture().onEnded { if composerFocused { composerFocused = false } })
     .onScrollGeometryChange(for: Bool.self) { geometry in
       geometry.visibleRect.maxY >= geometry.contentSize.height - 120
     } action: { _, nearBottom in
@@ -467,8 +481,7 @@ private struct ChatScreen: View {
   /// threads are in every level of the list, so it counts once the list shows.
   private func threadsOnScreen(_ project: ProjectRef) -> Bool {
     guard sidebarVisible, !router.showsColumnOnly(in: model) else { return false }
-    let scope = isAide ? nil : model.project(project)?.ref
-    return router.sidebarScope(in: model) == scope
+    return router.sidebarScope(in: model) == model.project(project)?.ref
   }
 
   /// On a wide screen the threads come up beside the coordinator; on a
@@ -481,8 +494,14 @@ private struct ChatScreen: View {
     withAnimation(.snappy) {
       router.isSidebarCollapsed = false
       if router.showsColumnOnly(in: model) { router.choosePanes(.both, in: model) }
-      if !isAide, let row = model.project(project)?.ref { router.showProject(row, in: model) }
       router.sidebarShowsAllProjects = false
+      if isAide {
+        // Kept beside the column, Aide's threads come up next to it;
+        // otherwise they open in its place.
+        if !router.showsThreadsBeside(in: model) { nav.push(.overview(project)) }
+      } else if let row = model.project(project)?.ref {
+        router.showProject(row, in: model)
+      }
     }
   }
 

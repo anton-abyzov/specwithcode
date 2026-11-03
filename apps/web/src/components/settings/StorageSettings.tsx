@@ -25,6 +25,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
+import { AppFolderSizeWarningControl, AppFolderUsage } from "./StorageUsageBreakdown";
 import type { ScopedSettingsTarget } from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
@@ -160,12 +161,18 @@ function RetentionControl({
   value,
   mixed = false,
   daysMixed = false,
+  min = 1,
+  enableWith = 8,
   onChange,
 }: {
   label: string;
   value: number | null;
   mixed?: boolean;
   daysMixed?: boolean;
+  /** The fewest days the setting accepts. */
+  min?: number;
+  /** Days set when the switch turns the rule on. */
+  enableWith?: number;
   onChange: (value: number | null) => void;
 }) {
   const [draft, setDraft] = useState(value);
@@ -182,7 +189,7 @@ function RetentionControl({
       ) : value !== null ? (
         <NumberField
           value={draft}
-          min={1}
+          min={min}
           max={3650}
           step={1}
           size="sm"
@@ -191,7 +198,7 @@ function RetentionControl({
           onValueCommitted={(next) => {
             if (next === null) setDraft(value);
             else {
-              const days = Math.min(3650, Math.max(1, Math.round(next)));
+              const days = Math.min(3650, Math.max(min, Math.round(next)));
               setDraft(days);
               onChange(days);
             }
@@ -217,7 +224,7 @@ function RetentionControl({
         aria-label={label}
         mixed={mixed}
         checked={mixed ? false : value !== null}
-        onCheckedChange={(enabled) => onChange(enabled ? 8 : null)}
+        onCheckedChange={(enabled) => onChange(enabled ? enableWith : null)}
       />
     </div>
   );
@@ -309,6 +316,52 @@ export function StorageSettingsPanel() {
       <SettingsSection id="storage-archive" title="Chat history">
         {!isProjectScope && <InactiveThreadArchiveSetting />}
         <ActiveThreadCapSetting />
+        {!isProjectScope &&
+          connectedEnvironments.every(
+            (environment) =>
+              environment.serverConfig?.environment.capabilities.threadHistoryRetention === true,
+          ) && (
+            <>
+              <SettingsRow
+                title="Purge deleted chats"
+                status={ruleStatus("deletedThreadHistoryAfterDays")}
+                mixed={ruleMixed("deletedThreadHistoryAfterDays")}
+                description="Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. Off by default; it cannot be undone."
+                serverScoped
+                control={
+                  <RetentionControl
+                    label="Purge deleted chats"
+                    value={settings.deletedThreadHistoryAfterDays}
+                    mixed={ruleMixed("deletedThreadHistoryAfterDays")}
+                    daysMixed={daysMixed("deletedThreadHistoryAfterDays")}
+                    enableWith={7}
+                    onChange={(deletedThreadHistoryAfterDays) =>
+                      update({ deletedThreadHistoryAfterDays })
+                    }
+                  />
+                }
+              />
+              <SettingsRow
+                title="Compact archived chats"
+                status={ruleStatus("archivedThreadHistoryAfterDays")}
+                mixed={ruleMixed("archivedThreadHistoryAfterDays")}
+                description="Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. Off by default."
+                serverScoped
+                control={
+                  <RetentionControl
+                    label="Compact archived chats"
+                    value={settings.archivedThreadHistoryAfterDays}
+                    mixed={ruleMixed("archivedThreadHistoryAfterDays")}
+                    daysMixed={daysMixed("archivedThreadHistoryAfterDays")}
+                    enableWith={30}
+                    onChange={(archivedThreadHistoryAfterDays) =>
+                      update({ archivedThreadHistoryAfterDays })
+                    }
+                  />
+                }
+              />
+            </>
+          )}
       </SettingsSection>
       <SettingsSection id="storage-worktrees" title="Worktrees">
         <WorktreesDirectoryRow />
@@ -421,6 +474,44 @@ export function StorageSettingsPanel() {
           </>
         )}
       </SettingsSection>
+
+      {!isProjectScope && (
+        <SettingsSection id="storage-app-folder" title="App folder">
+          <AppFolderUsage />
+          <SettingsRow
+            title="Warn when the app folder is large"
+            status={ruleStatus("homeSizeWarningGb")}
+            mixed={ruleMixed("homeSizeWarningGb")}
+            description="Show a notice when this machine's app folder passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours."
+            serverScoped
+            control={
+              <AppFolderSizeWarningControl
+                value={settings.homeSizeWarningGb}
+                mixed={ruleMixed("homeSizeWarningGb") || daysMixed("homeSizeWarningGb")}
+                onChange={(homeSizeWarningGb) => update({ homeSizeWarningGb })}
+              />
+            }
+          />
+          <SettingsRow
+            title="Delete old scratch folders"
+            status={ruleStatus("scratchAfterDays")}
+            mixed={ruleMixed("scratchAfterDays")}
+            description="Delete folders in the scratch folder that nothing changed in for this many days. Folders a thread, project, agent session, terminal or running process uses are always kept. Deleted folders are not copied anywhere. Off unless you turn it on."
+            serverScoped
+            control={
+              <RetentionControl
+                label="Delete old scratch folders"
+                value={settings.scratchAfterDays}
+                mixed={ruleMixed("scratchAfterDays")}
+                daysMixed={daysMixed("scratchAfterDays")}
+                min={7}
+                enableWith={14}
+                onChange={(scratchAfterDays) => update({ scratchAfterDays })}
+              />
+            }
+          />
+        </SettingsSection>
+      )}
 
       {!isProjectScope && (
         <SettingsSection id="storage-artifacts" title="Artifacts and logs">

@@ -70,7 +70,9 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
+import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import { CoordinatorRearmStore } from "./CoordinatorRearmStore.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
@@ -263,6 +265,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const replicas = yield* CoordinatorReplicas.CoordinatorReplicas;
   const standbyStore = yield* CoordinatorStandbyStore;
+  const rearmStore = yield* CoordinatorRearmStore;
   const publishRole = yield* CoordinatorRole.publisher;
   const routineCopies = Option.getOrUndefined(yield* Effect.serviceOption(RoutineCopies));
 
@@ -743,6 +746,11 @@ const make = Effect.gen(function* () {
           logicalProject,
           coordinatorBinding: active,
         });
+        // A copy that left is no longer in anyone's re-arm list.
+        if (identity !== undefined)
+          yield* rearmStore
+            .modify(identity.id, (entry) => (entry?.projectId === project.id ? null : undefined))
+            .pipe(Effect.ignore);
         // Leaving makes this copy the coordinator of its own, new project.
         yield* publishRole({
           kind: "took-over",
@@ -1193,6 +1201,17 @@ const make = Effect.gen(function* () {
     environment,
     replicas,
     store: standbyStore,
+    rearmStore,
+    // Read when a standby fires, from the runtime it fires in.
+    claimedEpoch: (logicalProjectId) =>
+      Effect.gen(function* () {
+        const epochs = yield* WorkerEpochStore.WorkerEpochStore;
+        return yield* epochs.get(logicalProjectId);
+      }).pipe(Effect.orElseSucceed(() => undefined)),
+    teamRulesRefusal: Effect.map(
+      currentTeamRules,
+      (rules) => teamRulesMachineLinkRefusal(rules)?.message ?? null,
+    ),
     fail,
     load,
     refusePersonal,
@@ -1238,7 +1257,10 @@ function rootSummary(here: RepositoryFingerprint, there: RepositoryFingerprint):
   return `This copy holds ${root(here)}; the other holds ${root(there)}.`;
 }
 
-/** Needs `CoordinatorReplicas` and `CoordinatorStandbyStore`; the runtime provides their file stores. */
+/**
+ * Needs `CoordinatorReplicas`, `CoordinatorStandbyStore` and
+ * `CoordinatorRearmStore`; the runtime provides their file stores.
+ */
 export const layer = Layer.effect(ProjectLink, make).pipe(Layer.provide(ProjectAdmission.layer));
 
 /** The `projectLink.*` and `projects.fingerprint` handlers (see `WsProjectLinkRpcGroup`). */
@@ -1284,10 +1306,17 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
       ),
       [WS_METHODS.projectLinkDigest]: link.digest,
       [WS_METHODS.projectLinkSyncStatus]: ({ projectId }: { readonly projectId: ProjectId }) =>
-        Option.match(syncState, {
-          onNone: () => Effect.succeed({ pairs: [] }),
-          onSome: (state) => state.status(projectId).pipe(Effect.map((pairs) => ({ pairs }))),
-        }),
+        Effect.all({
+          pairs: Option.match(syncState, {
+            onNone: () => Effect.succeed([]),
+            onSome: (state) => state.status(projectId),
+          }),
+          standbyRearm: link.rearmStatus(projectId),
+        }).pipe(
+          Effect.map(({ pairs, standbyRearm }) =>
+            standbyRearm === undefined ? { pairs } : { pairs, standbyRearm },
+          ),
+        ),
       [WS_METHODS.projectLinkReplicate]: whereRulesAllow(link.replicate),
       [WS_METHODS.projectLinkMemoryExport]: whereRulesAllow(memory.memoryExport),
       [WS_METHODS.projectLinkMemoryMerge]: whereRulesAllow(memory.memoryMerge),

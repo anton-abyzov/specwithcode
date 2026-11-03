@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useNavigate } from "@tanstack/react-router";
 import { HardDriveIcon, XIcon } from "lucide-react";
 import { memo, useCallback, useMemo, useState } from "react";
 
@@ -37,9 +38,11 @@ function writeDismissed(dismissed: ReadonlySet<string>) {
 export const LowDiskSpaceNoticeCard = memo(function LowDiskSpaceNoticeCard({
   notice,
   onDismiss,
+  onReviewStorage,
 }: {
   notice: LowDiskSpaceNotice;
   onDismiss: () => void;
+  onReviewStorage?: () => void;
 }) {
   return (
     <Alert
@@ -52,10 +55,21 @@ export const LowDiskSpaceNoticeCard = memo(function LowDiskSpaceNoticeCard({
     >
       <HardDriveIcon />
       <AlertTitle>{notice.title}</AlertTitle>
-      <AlertDescription>{notice.message}</AlertDescription>
+      <AlertDescription>
+        {notice.message}
+        {notice.action === "review-storage" && onReviewStorage !== undefined && (
+          <Button className="w-fit" onClick={onReviewStorage} size="xs" variant="outline">
+            Review storage
+          </Button>
+        )}
+      </AlertDescription>
       <AlertAction>
         <Button
-          aria-label="Dismiss low disk space notice"
+          aria-label={
+            notice.action === "review-storage"
+              ? "Dismiss app folder notice"
+              : "Dismiss low disk space notice"
+          }
           onClick={onDismiss}
           size="icon-xs"
           variant="ghost-muted"
@@ -76,6 +90,10 @@ export function LowDiskSpaceBanner() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const [dismissed, setDismissed] = useState(readDismissed);
+  const navigate = useNavigate();
+  const reviewStorage = useCallback(() => {
+    void navigate({ to: "/settings/storage" });
+  }, [navigate]);
 
   const notices = useMemo(() => {
     const labels = new Map(environments.map(({ environmentId, label }) => [environmentId, label]));
@@ -108,6 +126,7 @@ export function LowDiskSpaceBanner() {
           key={notice.key}
           notice={notice}
           onDismiss={() => dismiss(notice.key)}
+          onReviewStorage={reviewStorage}
         />
       ))}
     </div>

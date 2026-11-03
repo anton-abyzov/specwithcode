@@ -5,19 +5,22 @@
  * -readonly`, Python `?mode=ro`), can truncate the `-shm` index the running
  * service has mapped and crash it. These commands open the database through
  * `openLiveDatabaseReadOnly`, which cannot change it, its `-wal` or its `-shm`.
- * `reclaim` is the exception: it writes only once the service is stopped and
- * it holds an exclusive lock (see persistence/DatabaseReclaim.ts); its
- * `--dry-run` reads with the same read-only flags.
+ * `reclaim` and `compact` are the exceptions: they write only once the service
+ * is stopped and they hold an exclusive lock (see persistence/DatabaseReclaim.ts);
+ * their `--dry-run` reads with the same read-only flags.
  */
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 
 import * as ServerConfig from "../config.ts";
+import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import { resolveBaseDir } from "../os-jank.ts";
+import * as ThreadHistoryRetention from "../orchestration-v2/ThreadHistoryRetention.ts";
 import * as DatabaseReclaim from "../persistence/DatabaseReclaim.ts";
 import {
   openLiveDatabaseReadOnly,
@@ -157,7 +160,7 @@ const reclaimCommand = Command.make("reclaim", {
   ),
 }).pipe(
   Command.withDescription(
-    "Delete superseded event history and rewrite the database to return the space to the disk. Stop SpecWithCode first; refused while it runs or an update is in progress. The original is kept beside it as statev2.sqlite.before-reclaim-<time>. Not available on Windows.",
+    "Delete superseded event history and rewrite the database to return the space to the disk. Stop SpecWithCode first; refused while it runs or an update is in progress. Before removing anything it saves the database beside it as statev2.sqlite.before-compact-<time> (an APFS clone where it can) and puts it back if anything fails before the swap; purged threads' attachment files go only after the swap. Not available on Windows.",
   ),
   Command.withHandler(
     Effect.fn("cli.db.reclaim")(function* (flags) {
@@ -198,9 +201,130 @@ const reclaimCommand = Command.make("reclaim", {
   ),
 );
 
+const formatRows = (rows: Readonly<Record<string, number>>) =>
+  Object.entries(rows)
+    .toSorted(([, left], [, right]) => right - left)
+    .map(([table, count]) => `${count} ${table.replace("orchestration_v2_projection_", "")}`)
+    .join(", ") || "none";
+
+const formatRetention = (retention: ThreadHistoryRetention.ThreadHistoryRetentionResult) =>
+  [
+    `Deleted threads purged: ${retention.purgedThreadCount}; archived threads compacted: ${retention.compactedThreadCount}.`,
+    `Skipped: ${retention.skipped.linked} linked to another machine, ${retention.skipped.busy} with work in flight, ${retention.skipped.legacy} legacy threads not yet hydrated.`,
+    `Rows: ${formatRows(retention.deletedRowsByTable)}.`,
+    `Estimated space: ${formatBytes(retention.estimatedBytes.low)} to ${formatBytes(retention.estimatedBytes.high)}.`,
+  ].join("\n");
+
+const daysFlag = (name: string, fallback: number, what: string) =>
+  Flag.Int(name).pipe(
+    Flag.withDescription(`${what} at least this many days ago (default ${fallback}; 0 means now).`),
+    Flag.withDefault(fallback),
+  );
+
+const compactCommand = Command.make("compact", {
+  baseDir: baseDirFlag,
+  dryRun: Flag.Boolean("dry-run").pipe(
+    Flag.withDescription(
+      "Count what compact would remove and estimate the space, from indexes and a few sampled rows; change nothing. Works while SpecWithCode runs.",
+    ),
+    Flag.withDefault(false),
+  ),
+  deletedAfterDays: daysFlag("deleted-after-days", 7, "Purge threads deleted"),
+  archivedAfterDays: daysFlag(
+    "archived-after-days",
+    30,
+    "Drop the event log of threads archived (and untouched)",
+  ),
+  deletedOnly: Flag.Boolean("deleted-only").pipe(
+    Flag.withDescription("Purge deleted threads only; leave archived threads' events alone."),
+    Flag.withDefault(false),
+  ),
+  workDir: Flag.String("work-dir").pipe(
+    Flag.withDescription(
+      "Folder for the rewritten copy (needs about the database's used size free). Beside the database by default.",
+    ),
+    Flag.optional,
+  ),
+  forceStalePid: Flag.Boolean("force-stale-pid").pipe(
+    Flag.withDescription(
+      "As for reclaim: ignore recorded pids that no longer name SpecWithCode or a reclaim.",
+    ),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "Once, with SpecWithCode stopped: purge threads deleted --deleted-after-days ago (events, messages, turn items, attachments; a tombstone stays), drop the event log of threads archived --archived-after-days ago (their messages and turn items stay), delete superseded history, then VACUUM the database (auto_vacuum NONE) and print the sizes. Refused while it runs or an update is in progress. Before removing anything it saves the database beside it as statev2.sqlite.before-compact-<time> (an APFS clone where it can) and puts it back if anything fails before the swap; purged threads' attachment files go only after the swap. Not available on Windows.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.db.compact")(function* (flags) {
+      const { home, paths } = yield* resolveHome(flags.baseDir);
+      for (const [name, value] of [
+        ["--deleted-after-days", flags.deletedAfterDays],
+        ["--archived-after-days", flags.archivedAfterDays],
+      ] as const) {
+        if (value < 0) {
+          return yield* new CliDatabaseError({ reason: `${name} must be 0 or more.` });
+        }
+      }
+      const policy: ThreadHistoryRetention.ThreadHistoryRetentionPolicy = {
+        deletedAfterDays: flags.deletedAfterDays,
+        archivedAfterDays: flags.deletedOnly ? null : flags.archivedAfterDays,
+      };
+      if (flags.dryRun) {
+        const { storage, retention } = yield* DatabaseReclaim.compactDryRun({
+          dbPath: paths.dbPath,
+          policy,
+        });
+        yield* Console.log(
+          [
+            `Database ${paths.dbPath}: ${formatBytes(storage.fileBytes)}, auto_vacuum ${storage.autoVacuum}, free list ${formatBytes(storage.freelistPages * storage.pageSize)}.`,
+            formatRetention(retention),
+            "VACUUM also returns the free list and part of the page slack; superseded history is counted only by the real run (see db reclaim --dry-run).",
+            "Dry run: nothing changed.",
+          ].join("\n"),
+        );
+        return;
+      }
+      const fs = yield* FileSystem.FileSystem;
+      const result = yield* DatabaseReclaim.reclaim({
+        dbPath: paths.dbPath,
+        baseDir: home,
+        serverRuntimeStatePath: paths.serverRuntimeStatePath,
+        retention: policy,
+        removeAttachments: (attachmentIds) =>
+          Effect.forEach(
+            attachmentIds,
+            (attachmentId) => {
+              const file = resolveAttachmentPathById({
+                attachmentsDir: paths.attachmentsDir,
+                attachmentId,
+              });
+              return file === null ? Effect.void : Effect.ignore(fs.remove(file, { force: true }));
+            },
+            { discard: true },
+          ),
+        autoVacuumNone: true,
+        forceStalePid: flags.forceStalePid,
+        log: (line: string) => Console.log(line),
+        ...(Option.isSome(flags.workDir) ? { workDir: flags.workDir.value } : {}),
+      });
+      if (result.dryRun) return;
+      yield* Console.log(
+        [
+          `Done: ${formatBytes(result.before.fileBytes)} -> ${formatBytes(result.afterBytes)} in ${Math.round(result.elapsedMs / 1000)} s.`,
+          ...(result.retention === null ? [] : [formatRetention(result.retention)]),
+          `Deleted ${result.compaction.deletedEventCount} superseded events (${formatDeleted(result.compaction.deletedByType)}).`,
+          `Checked ${result.checkedTables} tables; the log still ends at sequence ${result.maxSequence}. auto_vacuum ${result.autoVacuum}.`,
+          `The database as it was before compact is kept at ${result.backupPath}; delete it once SpecWithCode starts normally. It holds the purged threads' history, not their attachment files, which compact removed.`,
+        ].join("\n"),
+      );
+    }),
+  ),
+);
+
 export const dbCommand = Command.make("db").pipe(
   Command.withDescription(
     "Read the live database safely, or reclaim its space while stopped. Never open userdata/statev2.sqlite with sqlite3, Python or Node directly.",
   ),
-  Command.withSubcommands([snapshotCommand, queryCommand, reclaimCommand]),
+  Command.withSubcommands([snapshotCommand, queryCommand, reclaimCommand, compactCommand]),
 );

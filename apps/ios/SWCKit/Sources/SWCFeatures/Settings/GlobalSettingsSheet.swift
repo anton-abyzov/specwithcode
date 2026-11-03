@@ -36,6 +36,7 @@ private struct GlobalSettingsRoot: View {
           TeamRulesCard(rules: machine.teamRules, machineName: model.machines.count > 1 ? machine.displayName : nil)
         }
         appearance
+        replies
         deviceName
         about
       }
@@ -88,6 +89,34 @@ private struct GlobalSettingsRoot: View {
           symbol: "rectangle.split.2x1",
           isOn: Binding(get: { router.showsCoordinatorBeside }, set: { router.showsCoordinatorBeside = $0 })
         )
+      }
+    }
+  }
+
+  /// How much of a thread's work the transcript shows. Kept on this phone,
+  /// apart from the same setting on each computer.
+  private var replies: some View {
+    GroupedCard(label: "Replies", footer: model.timelineDetail.summary + ". Tap a turn's folded row to see its steps.") {
+      WeaveRow("Show", stacksTrailing: true) {
+        WeaveRowSymbol("list.bullet.indent")
+      } trailing: {
+        Menu {
+          Picker("Show", selection: Binding(get: { model.timelineDetail }, set: { model.timelineDetail = $0 })) {
+            ForEach(TimelineDetail.allCases) { Text($0.label).tag($0) }
+          }
+        } label: {
+          HStack(spacing: WeaveSpacing.s1) {
+            Text(model.timelineDetail.label).lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.system(size: 12, weight: .medium))
+              .accessibilityHidden(true)
+          }
+          .font(.weave(.body))
+          .foregroundStyle(Color.weave.muted)
+          .frame(minHeight: WeaveSize.minTap)
+          .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Show, \(model.timelineDetail.label)")
       }
     }
   }

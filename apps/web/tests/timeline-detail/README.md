@@ -6,7 +6,7 @@ This renders the production `MessagesTimeline` under the production `ChatHeader`
 
 - **Folded steps** (Normal): the finished turn folds to its answer; the running turn shows its notes.
 - **Everything** (Verbose), chosen from the menu: the finished turn's notes, command output and thoughts are open, and so is the running turn's thought.
-- **Results only** (Concise), reached with ⌥⌘O: a "Show: Results only" toast appears; the running turn keeps only its latest note and no thought; the finished turn's fold reads "Ran 2 commands and changed 1 file".
+- **Results only** (Concise), reached with ⌥⌘O: a "Show: Results only" toast appears; the running turn keeps only its latest note and no thought, and its finished command sits behind the live row; the finished turn's fold reads "Ran 2 commands and changed 1 file" and its failing output is hidden.
 
 It also checks that the trigger's accessible name follows the level, that away from Normal the trigger shows the level's name, that it sits at the header's end after the thread title, that the level survives a reload, that the shortcut wraps back to Normal, and that the page never scrolls sideways. The rows near the start of the thread are checked at desktop width only, because the list renders just the end of the thread on a phone.
 

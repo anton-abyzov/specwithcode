@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
-import { EnvironmentId, IsoDateTime, ProjectId } from "./baseSchemas.ts";
+import { EnvironmentId, IsoDateTime, NonNegativeInt, ProjectId } from "./baseSchemas.ts";
+import { CoordinatorStandbyAfterMinutes, LogicalProjectMember } from "./logicalProject.ts";
 
 /**
  * Server-driven sync of linked copies. Each pair of copies is driven by one of
@@ -40,8 +41,55 @@ export const LinkedServerSyncPair = Schema.Struct({
 });
 export type LinkedServerSyncPair = typeof LinkedServerSyncPair.Type;
 
+/** Why re-arming a standby after an automatic takeover has not finished, or stopped. */
+export const StandbyRearmReason = Schema.Literals([
+  "no_candidates",
+  "unreachable",
+  "needs_grant",
+  "needs_update",
+  "not_member",
+  "no_consent",
+  "superseded_conflict",
+  "team_rules",
+  "refused",
+  "lease_failed",
+  "standby_missing",
+  "owner_changed",
+  "superseded",
+  "off",
+]);
+export type StandbyRearmReason = typeof StandbyRearmReason.Type;
+
+/**
+ * This machine's re-arm for one copy: the owner's consent here, and, while
+ * this copy coordinates after an automatic takeover, how far re-arming went.
+ */
+export const ProjectStandbyRearmStatus = Schema.Struct({
+  consent: Schema.NullOr(
+    Schema.Struct({
+      chainId: Schema.String,
+      members: Schema.Array(LogicalProjectMember),
+      afterMinutes: CoordinatorStandbyAfterMinutes,
+    }),
+  ),
+  /** Only for the epoch this copy coordinates at now. */
+  run: Schema.NullOr(
+    Schema.Struct({
+      state: Schema.Literals(["pending", "verifying", "armed", "stopped"]),
+      reason: Schema.NullOr(StandbyRearmReason),
+      detail: Schema.NullOr(Schema.String),
+      standby: Schema.NullOr(LogicalProjectMember),
+      epoch: NonNegativeInt,
+      since: IsoDateTime,
+    }),
+  ),
+});
+export type ProjectStandbyRearmStatus = typeof ProjectStandbyRearmStatus.Type;
+
 /** The pairs this server drives for one of its copies; empty when it drives none. */
 export const ProjectLinkSyncStatus = Schema.Struct({
   pairs: Schema.Array(LinkedServerSyncPair).check(Schema.isMaxLength(1000)),
+  /** Absent from older servers, and where this copy has no re-arm consent or run. */
+  standbyRearm: Schema.optional(ProjectStandbyRearmStatus),
 });
 export type ProjectLinkSyncStatus = typeof ProjectLinkSyncStatus.Type;

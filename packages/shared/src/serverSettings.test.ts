@@ -39,6 +39,10 @@ describe("serverSettings helpers", () => {
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,
       logsAfterDays: 30,
+      scratchAfterDays: null,
+      homeSizeWarningGb: 50,
+      deletedThreadHistoryAfterDays: null,
+      archivedThreadHistoryAfterDays: null,
     });
   });
   it("replaces GitHub host choices so a cleared account pin does not survive", () => {

@@ -72,6 +72,23 @@ const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
 const sameTarget = (a: CoordinatorLeaseTarget | null, b: CoordinatorLeaseTarget | null) =>
   a === null || b === null ? a === b : sameMember(a.standby, b.standby) && a.epoch === b.epoch;
 
+/** A pending release naming the standby and epoch leased to now. */
+const isTarget = (entry: CoordinatorPendingRelease, target: CoordinatorLeaseTarget | null) =>
+  target !== null && sameMember(entry.standby, target.standby) && entry.epoch === target.epoch;
+
+/**
+ * Whether a standby's refusal of a release settles it: it does not stand by
+ * for this copy (`not_found`), or it ignored the release because it holds no
+ * registration from this copy at that epoch (`invalid`). A version mismatch
+ * (`check: "version"`) and anything decided on this machine stay owed.
+ */
+export function releaseSettledBy(error: HandoffPeerError): boolean {
+  return (
+    error.local !== true &&
+    (error.code === "not_found" || (error.code === "invalid" && error.check !== "version"))
+  );
+}
+
 /** The standby this copy should lease to: only an active, linked, unarchived copy with one set. */
 export function desiredLeaseTarget(project: Project): CoordinatorLeaseTarget | null {
   const settings = project.workspaceSettings;
@@ -183,9 +200,23 @@ export class CoordinatorLease extends Context.Service<CoordinatorLease, Coordina
   "specweave-studio/project/CoordinatorLease",
 ) {}
 
+/** The "may have reached it" mark a lease wrote before it left, and the value it replaced. */
+interface DeliveryMark {
+  readonly value: string;
+  readonly prior: string | null;
+}
+
 type SendOutcome =
-  | { readonly kind: "answered"; readonly answer: CoordinatorLeaseResponse }
-  | { readonly kind: "refused"; readonly error: HandoffPeerError }
+  | {
+      readonly kind: "answered";
+      readonly answer: CoordinatorLeaseResponse;
+      readonly mark: DeliveryMark | null;
+    }
+  | {
+      readonly kind: "refused";
+      readonly error: HandoffPeerError;
+      readonly mark: DeliveryMark | null;
+    }
   | { readonly kind: "skipped" };
 
 export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLeaseShape => {
@@ -206,16 +237,32 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
       "Could not write the coordinator lease record",
     );
 
-  /** Reserves the next sequence: above every one sent before, and above the wall clock so a lost file never repeats one. */
-  const nextSeq = (projectId: string) =>
+  /**
+   * Reserves the next sequence: above every one sent before, and above the
+   * wall clock so a lost file never repeats one. A lease or pause to the
+   * current target also marks, in the same write, that it may reach the
+   * standby: a call still in flight, or cut off by a restart, leaves the mark.
+   */
+  const nextSeq = (projectId: string, markFor: CoordinatorLeaseTarget | null) =>
     Effect.gen(function* () {
       const nowMs = yield* now;
-      const record = yield* store.modify(projectId, (current) =>
-        current === undefined
-          ? undefined
-          : { ...current, seq: Math.max(current.seq + 1, nowMs), updatedAt: isoAt(nowMs) },
-      );
-      return record?.seq;
+      const marks: { mark: DeliveryMark | null } = { mark: null };
+      const record = yield* store.modify(projectId, (current) => {
+        if (current === undefined) return undefined;
+        const seq = Math.max(current.seq + 1, nowMs);
+        const mark: DeliveryMark | null =
+          markFor !== null && sameTarget(current.target, markFor)
+            ? { value: isoAt(seq), prior: current.maybeDeliveredAt ?? null }
+            : null;
+        marks.mark = mark;
+        return {
+          ...current,
+          seq,
+          ...(mark === null ? {} : { maybeDeliveredAt: mark.value }),
+          updatedAt: isoAt(nowMs),
+        };
+      });
+      return record === undefined ? undefined : { seq: record.seq, mark: marks.mark };
     });
 
   const selfMemberOf = (project: Project) =>
@@ -241,26 +288,35 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           emptyLeaseRecord(projectId, project!.workspaceSettings!.logicalProject!.id, at);
         const coordinatorThreadId =
           project?.workspaceSettings?.coordinatorThreadId ?? base.coordinatorThreadId ?? null;
+        // A release owed to the standby leased to now would disarm it; it is no longer owed.
+        const stillOwed = base.pendingReleases.filter((entry) => !isTarget(entry, desired));
         if (sameTarget(base.target, desired)) {
           if (
             (desired === null ||
               base.target === null ||
               (base.target.afterMinutes === desired.afterMinutes &&
                 base.target.enabledAt === desired.enabledAt)) &&
-            (base.coordinatorThreadId ?? null) === coordinatorThreadId
+            (base.coordinatorThreadId ?? null) === coordinatorThreadId &&
+            stillOwed.length === base.pendingReleases.length
           )
             return current === undefined ? base : undefined;
-          return { ...base, coordinatorThreadId, target: desired, updatedAt: at };
+          return {
+            ...base,
+            coordinatorThreadId,
+            target: desired,
+            pendingReleases: stillOwed,
+            updatedAt: at,
+          };
         }
         const owed: CoordinatorPendingRelease[] =
           base.target === null ||
-          base.pendingReleases.some(
+          stillOwed.some(
             (entry) =>
               sameMember(entry.standby, base.target!.standby) && entry.epoch === base.target!.epoch,
           )
-            ? [...base.pendingReleases]
+            ? stillOwed
             : [
-                ...base.pendingReleases,
+                ...stillOwed,
                 {
                   standby: base.target.standby,
                   epoch: base.target.epoch,
@@ -280,6 +336,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           lastSuccessfulLeaseAt: null,
           lastPausedAnswerAt: null,
           standbyMissingAt: null,
+          maybeDeliveredAt: null,
           lastError: null,
           fencedSince: null,
           gaveWay: desired === null ? base.gaveWay : null,
@@ -301,6 +358,8 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
       "protocolVersion" | "seq" | "contentDigest" | "runningThreads" | "workers"
     >,
     project: Project | undefined,
+    /** The target a lease or pause goes to, marked as maybe reached before it leaves. */
+    markFor: CoordinatorLeaseTarget | null = null,
   ) =>
     Effect.gen(function* () {
       const contentDigest =
@@ -314,8 +373,9 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
         project === undefined || body.kind === "release" || deps.routines === undefined
           ? null
           : yield* deps.routines(project);
-      const seq = yield* nextSeq(record.projectId);
-      if (seq === undefined) return { kind: "skipped" } as SendOutcome;
+      const reserved = yield* nextSeq(record.projectId, markFor);
+      if (reserved === undefined) return { kind: "skipped" } as SendOutcome;
+      const { seq, mark } = reserved;
       const running =
         project === undefined || body.kind === "release" ? [] : yield* deps.runningThreads(project);
       const workers =
@@ -334,9 +394,11 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           workers: workers.slice(0, LEASES_MAX),
         })
         .pipe(Effect.exit);
-      if (Exit.isSuccess(exit)) return { kind: "answered", answer: exit.value } as SendOutcome;
+      if (Exit.isSuccess(exit))
+        return { kind: "answered", answer: exit.value, mark } as SendOutcome;
       const failure = exit.cause.reasons.find((reason) => reason._tag === "Fail");
-      if (failure !== undefined) return { kind: "refused", error: failure.error } as SendOutcome;
+      if (failure !== undefined)
+        return { kind: "refused", error: failure.error, mark } as SendOutcome;
       return yield* Effect.failCause(exit.cause);
     }).pipe(Effect.orDie);
 
@@ -456,6 +518,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           ...(pause?.sleeping === true ? { sleeping: true } : {}),
         },
         project,
+        target,
       );
       const answeredAtMs = yield* now;
       const at = isoAt(answeredAtMs);
@@ -466,6 +529,15 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
         yield* update(record.projectId, (current) => ({
           ...current,
           lastError: error.message.slice(0, 500),
+          // No answer: the lease may have reached the standby and started its clock.
+          ...(error.uncertain === true && sameTarget(current.target, target)
+            ? { maybeDeliveredAt: at }
+            : // A definite failure: nothing reached it, so its own mark goes, unless another lease marked since.
+              error.uncertain !== true &&
+                outcome.mark !== null &&
+                current.maybeDeliveredAt === outcome.mark.value
+              ? { maybeDeliveredAt: outcome.mark.prior }
+              : {}),
           ...(fromStandby && error.code === "busy" ? { lastPausedAnswerAt: at } : {}),
           // The standby does not stand by for this copy, so it cannot take over: nothing to fence for.
           ...(fromStandby && error.code === "not_found"
@@ -486,6 +558,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           : {
               ...current,
               lastSuccessfulLeaseAt: isoAt(sentAtMs),
+              maybeDeliveredAt: at,
               lastPausedAnswerAt: answer.standbySleeping ? at : current.lastPausedAnswerAt,
               standbyMissingAt: null,
               lastError: null,
@@ -549,8 +622,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
         project,
       );
       if (outcome.kind === "skipped") return false;
-      if (outcome.kind === "refused")
-        return outcome.error.local !== true && outcome.error.code === "not_found";
+      if (outcome.kind === "refused") return releaseSettledBy(outcome.error);
       if (outcome.answer.takenOver !== null && project !== undefined) {
         yield* giveWay(project.id, entry.standby, outcome.answer, sentAtMs, yield* now);
         return true;
@@ -558,27 +630,44 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
       return true;
     });
 
+  /** Drops a release no longer owed: settled meanwhile, or naming the standby leased to now. */
+  const dropRelease = (projectId: string, entry: CoordinatorPendingRelease) =>
+    store
+      .modify(projectId, (current) => {
+        if (current === undefined) return undefined;
+        const pendingReleases = current.pendingReleases.filter(
+          (kept) => !(sameMember(kept.standby, entry.standby) && kept.epoch === entry.epoch),
+        );
+        return current.target === null && pendingReleases.length === 0 && current.gaveWay === null
+          ? null
+          : { ...current, pendingReleases };
+      })
+      .pipe(Effect.orDie);
+
   const settleReleases = (record: CoordinatorLeaseRecord) =>
     Effect.gen(function* () {
       for (const entry of record.pendingReleases) {
-        if (!(yield* release(record, entry))) continue;
+        // A change since this round's sync (the owner set this standby again) must not be undone.
+        const current = yield* store.get(record.projectId).pipe(Effect.orDie);
+        if (
+          current === undefined ||
+          !current.pendingReleases.some(
+            (kept) => sameMember(kept.standby, entry.standby) && kept.epoch === entry.epoch,
+          )
+        )
+          continue;
+        const project = yield* deps.loadProject(record.projectId as ProjectId);
+        const desired = project === undefined ? null : desiredLeaseTarget(project);
+        if (isTarget(entry, desired) || isTarget(entry, current.target)) {
+          yield* dropRelease(record.projectId, entry);
+          continue;
+        }
+        if (!(yield* release(current, entry))) continue;
         yield* Effect.logInfo("Coordinator standby released", {
           projectId: record.projectId,
           standby: entry.standby.environmentId,
         });
-        yield* store
-          .modify(record.projectId, (current) => {
-            if (current === undefined) return undefined;
-            const pendingReleases = current.pendingReleases.filter(
-              (kept) => !(sameMember(kept.standby, entry.standby) && kept.epoch === entry.epoch),
-            );
-            return current.target === null &&
-              pendingReleases.length === 0 &&
-              current.gaveWay === null
-              ? null
-              : { ...current, pendingReleases };
-          })
-          .pipe(Effect.orDie);
+        yield* dropRelease(record.projectId, entry);
       }
     });
 
@@ -653,6 +742,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
                 ...current,
                 target: null,
                 fencedSince: null,
+                maybeDeliveredAt: null,
                 pendingReleases: answered
                   ? current.pendingReleases
                   : [...current.pendingReleases, entry],

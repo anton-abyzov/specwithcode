@@ -53,6 +53,7 @@ function start(ready) {
     }),
     Layer.mock(Events.OrchestrationEventStore)({
       latestAgentSequence: () => Effect.succeed(1),
+      threadHistoryCompactedAfter: () => Effect.succeed(false),
       getAgentReplayStats: () =>
         Effect.succeed({
           eventCount: 1,

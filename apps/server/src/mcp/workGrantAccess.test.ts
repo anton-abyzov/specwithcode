@@ -1,7 +1,9 @@
 import { projectFixture } from "../project/ProjectWorkspace.testkit.ts";
 import { describe, expect, it } from "@effect/vitest";
+import { TEAM_RULES_NONE, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  ProjectLinkError,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
@@ -18,12 +20,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ServerConfig from "../config.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
+import { ProjectLink } from "../project/ProjectLink.ts";
+import { PEER_ARM_NO_CONSENT, STANDBY_CAPABILITY_REFUSAL } from "../project/ProjectLinkStandby.ts";
 import * as Project from "../project/ProjectService.ts";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import {
   assertAccountInGrant,
   assertProjectInGrant,
   assertThreadWritable,
   claimCoordinatorEpoch,
+  peerArmCode,
   type WorkGrantContext,
 } from "./workGrantAccess.ts";
 
@@ -487,4 +493,143 @@ describe("grant refusals point at Settings > Machines", () => {
       }
     }),
   );
+});
+
+/** A coordinator that took over automatically asks this machine to stand by for it. */
+describe("claimCoordinatorEpoch with a standby registration", () => {
+  const M1 = EnvironmentId.make("env-m1");
+  const chainId = "77777777-7777-4777-8777-777777777777";
+  const current = linked({ epoch: 4, state: "transferred", operationId: "link-op" });
+  const asked: Array<unknown> = [];
+  const run = (options: {
+    readonly accepted?: boolean;
+    readonly standby?: boolean;
+    readonly link?: Effect.Effect<unknown, ProjectLinkError> | null;
+    readonly rules?: TeamRulesState;
+  }) => {
+    const services = Layer.mergeAll(
+      Layer.mock(Project.ProjectService)({
+        snapshot: Effect.succeed({ projects: [current] } as never),
+      }),
+      Layer.succeed(WorkGrants.WorkGrants, {
+        ...(WorkGrants.WorkGrants.defaultValue() as WorkGrants.WorkGrantsShape),
+        enabled: true,
+        forClient: () =>
+          Effect.succeed({
+            coordinatorEnvironmentId: M1,
+            projects: { kind: "listed", projectIds: [project] },
+            accounts: { kind: "all" },
+            owner: "self",
+            hopLimit: 1,
+            revoked: false,
+          } satisfies WorkGrantContext["grant"]),
+        originOf: () => Effect.succeed(undefined),
+      }),
+      Layer.succeed(WorkerEpochStore.WorkerEpochStore, {
+        get: () => Effect.succeed(undefined),
+        claim: (input) =>
+          Effect.succeed({
+            accepted: options.accepted ?? true,
+            epoch: options.accepted === false ? input.epoch + 1 : input.epoch,
+          }),
+      }),
+    );
+    const withLink =
+      options.link === null
+        ? services
+        : Layer.merge(
+            services,
+            Layer.mock(ProjectLink)({
+              acceptStandbyFromPeer: (input) => {
+                asked.push(input);
+                return (options.link ?? Effect.succeed({ standby: null, replayed: false })).pipe(
+                  Effect.as({ standby: null, replayed: false }),
+                );
+              },
+            }),
+          );
+    return Effect.exit(
+      claimCoordinatorEpoch(
+        {
+          scope: { client: { principal: {} } as never } as never,
+          threads: { getThreadShell: () => Effect.succeed(null) } as never,
+          caller: undefined,
+          limits: { runtimeMode: "auto", interactionMode: "default" } as never,
+        },
+        {
+          logicalProjectId: "logical:easychamp",
+          epoch: 5,
+          ...(options.standby === false ? {} : { standby: { chainId } }),
+        },
+      ).pipe(
+        Effect.provide(withLink),
+        Effect.provideService(TeamRules, teamRulesOf(options.rules ?? TEAM_RULES_NONE)),
+      ),
+    );
+  };
+  const standbyOf = (exit: Exit.Exit<{ readonly standby?: unknown }, unknown>) => {
+    if (Exit.isFailure(exit)) throw new Error(JSON.stringify(exit));
+    return exit.value.standby;
+  };
+  const refusal = (code: ProjectLinkError["code"], detail?: string) =>
+    Effect.fail(new ProjectLinkError({ code, ...(detail === undefined ? {} : { detail }) }));
+
+  it.effect("registers the caller named by its grant, after a claim that stands", () =>
+    Effect.gen(function* () {
+      asked.length = 0;
+      expect(standbyOf(yield* run({}))).toEqual({ armed: true });
+      expect(asked).toEqual([
+        { logicalProjectId: "logical:easychamp", callerEnvironmentId: M1, epoch: 5, chainId },
+      ]);
+      // Without the field the answer has no standby key, as before.
+      expect(standbyOf(yield* run({ standby: false }))).toBeUndefined();
+      expect(asked).toHaveLength(1);
+    }),
+  );
+
+  it.effect("answers a refusal with its reason and never fails the claim", () =>
+    Effect.gen(function* () {
+      asked.length = 0;
+      expect(standbyOf(yield* run({ accepted: false }))).toEqual({
+        armed: false,
+        code: "superseded_conflict",
+      });
+      expect(standbyOf(yield* run({ rules: { status: "hold", issues: ["x"] } }))).toMatchObject({
+        armed: false,
+        code: "team_rules",
+      });
+      expect(asked).toEqual([]);
+      expect(standbyOf(yield* run({ link: null }))).toEqual({ armed: false, code: "refused" });
+      expect(standbyOf(yield* run({ link: refusal("not_member", PEER_ARM_NO_CONSENT) }))).toEqual({
+        armed: false,
+        code: "no_consent",
+      });
+      expect(
+        standbyOf(yield* run({ link: refusal("invalid", STANDBY_CAPABILITY_REFUSAL) })),
+      ).toEqual({ armed: false, code: "needs_update", message: STANDBY_CAPABILITY_REFUSAL });
+      expect(
+        standbyOf(yield* run({ link: refusal("superseded_conflict", "newer") })),
+      ).toMatchObject({ armed: false, code: "superseded_conflict" });
+    }),
+  );
+
+  it("maps every refusal to the reason the coordinator records", () => {
+    const code = (error: ProjectLinkError["code"], detail?: string) =>
+      peerArmCode(new ProjectLinkError({ code: error, ...(detail ? { detail } : {}) }));
+    expect(code("not_member", PEER_ARM_NO_CONSENT)).toBe("no_consent");
+    expect(code("superseded_conflict")).toBe("superseded_conflict");
+    expect(code("not_member")).toBe("not_member");
+    expect(code("not_linked")).toBe("not_member");
+    expect(code("handoff_in_progress")).toBe("not_member");
+    expect(code("invalid", STANDBY_CAPABILITY_REFUSAL)).toBe("needs_update");
+    expect(code("invalid", "The caller is not one listed copy of this project.")).toBe("refused");
+    // The rules changed between the check and the lock: the refusal carries their message.
+    const rules = "Team rules turn off working across machines here.";
+    expect(peerArmCode(new ProjectLinkError({ code: "invalid", detail: rules }), rules)).toBe(
+      "team_rules",
+    );
+    expect(code("invalid", rules)).toBe("refused");
+    expect(code("archived")).toBe("refused");
+    expect(code("storage_failed")).toBe("refused");
+  });
 });

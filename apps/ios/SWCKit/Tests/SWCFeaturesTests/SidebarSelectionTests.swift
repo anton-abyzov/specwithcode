@@ -232,6 +232,36 @@ struct SidebarSelectionTests {
     #expect(router.sidebarScope(in: model) == nil)
   }
 
+  @Test func besideAidesCoordinatorTheListIsAidesThreads() throws {
+    let model = model()
+    let aide = try #require(model.aide)
+    let router = besideRouter()
+    #expect(router.landingCoordinator(in: model) == .aide(aide.ref))
+    #expect(router.sidebarScope(in: model) == aide.ref)
+    #expect(router.showsThreadsBeside(in: model))
+
+    // All projects is one tap back, and leaves Aide on the right.
+    router.sidebarShowsAllProjects = true
+    #expect(router.sidebarScope(in: model) == nil)
+    #expect(router.besideCoordinator(in: model) == nil)
+
+    // With the coordinator on the right, the column keeps the whole tree.
+    let right = AppRouter()
+    right.showsCoordinatorBeside = false
+    #expect(right.sidebarScope(in: model) == nil)
+  }
+
+  @Test func groupedThreadsFoldAcrossGroupsInOrder() throws {
+    let model = model()
+    let threads = Array(model.recentThreads.prefix(5))
+    try #require(threads.count == 5)
+    let folded = SidebarView.fold([("Needs you", Array(threads.prefix(2))), ("Working", []), ("Idle", Array(threads.suffix(3)))], to: 3)
+    #expect(folded.map(\.title) == ["Needs you", "Idle"])
+    #expect(folded.map(\.count) == [2, 3])
+    #expect(folded.map(\.shown.count) == [2, 1])
+    #expect(SidebarView.fold([("Idle", threads)], to: 0).isEmpty)
+  }
+
   @Test func theMachineChipFiltersUntilItsMachineIsGone() throws {
     let engine = FixtureEngine(scenario: .fleet)
     engine.latency = .zero
