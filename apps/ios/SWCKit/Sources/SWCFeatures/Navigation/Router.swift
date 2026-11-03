@@ -23,6 +23,12 @@ nonisolated enum SheetRoute: Hashable, Identifiable, Sendable {
   var id: Self { self }
 }
 
+/// Which halves of the wide layout show: the column alone, both, or the
+/// screen beside the column alone.
+nonisolated enum WidePanes: String, CaseIterable, Sendable {
+  case column, both, detail
+}
+
 /// A row of the expanded sidebar. Chats replace the root of the main stack;
 /// a machine replaces the whole stack with its detail screen.
 nonisolated enum SidebarItem: Hashable, Sendable {
@@ -55,10 +61,55 @@ final class AppRouter {
   }
   /// The person hid the wide layout's navigation column. Remembered across
   /// launches, as in the iPad and desktop apps.
-  var isSidebarCollapsed = UserDefaults.standard.bool(forKey: AppRouter.sidebarCollapsedKey) {
-    didSet { UserDefaults.standard.set(isSidebarCollapsed, forKey: AppRouter.sidebarCollapsedKey) }
+  var isSidebarCollapsed = AppRouter.savedSidebarCollapsed() {
+    didSet {
+      UserDefaults.standard.set(isSidebarCollapsed, forKey: AppRouter.sidebarCollapsedKey)
+      if isSidebarCollapsed { isDetailCollapsed = false }
+    }
   }
   static let sidebarCollapsedKey = "swc.sidebarCollapsed"
+  static let panesMigratedKey = "swc.panesMigrated"
+  /// Before the coordinator stayed in the column, hiding the column hid only
+  /// the project list. That choice would now hide the coordinator, so the
+  /// layout starts split once.
+  private static func savedSidebarCollapsed() -> Bool {
+    let defaults = UserDefaults.standard
+    if !defaults.bool(forKey: panesMigratedKey) {
+      defaults.set(true, forKey: panesMigratedKey)
+      defaults.set(false, forKey: sidebarCollapsedKey)
+    }
+    return defaults.bool(forKey: sidebarCollapsedKey)
+  }
+  /// The person gave the coordinator column the whole width. Remembered, and
+  /// ended by opening a thread, which needs the screen beside it.
+  var isDetailCollapsed = UserDefaults.standard.bool(forKey: AppRouter.detailCollapsedKey) {
+    didSet { UserDefaults.standard.set(isDetailCollapsed, forKey: AppRouter.detailCollapsedKey) }
+  }
+  static let detailCollapsedKey = "swc.detailCollapsed"
+  /// The thread on screen when the coordinator took the whole width. Any
+  /// other thread arriving, by a link or a launch route, shows beside it.
+  private var collapsedBeside: SidebarItem?
+  /// The pane switch's choice, over the two remembered flags.
+  var widePanes: WidePanes {
+    get { isSidebarCollapsed ? .detail : isDetailCollapsed ? .column : .both }
+    set {
+      isSidebarCollapsed = newValue == .detail
+      isDetailCollapsed = newValue == .column
+    }
+  }
+
+  /// The coordinator column takes the whole width: chosen, still the same
+  /// screen beside it, and a coordinator in the column.
+  func showsColumnOnly(in model: AppModel) -> Bool {
+    guard isDetailCollapsed, besideCoordinator(in: model) != nil else { return false }
+    return showsThreadsBeside(in: model) || (collapsedBeside != nil && collapsedBeside == sidebarSelection(in: model))
+  }
+
+  /// Picks the panes from the switch.
+  func choosePanes(_ panes: WidePanes, in model: AppModel) {
+    collapsedBeside = panes == .column ? sidebarSelection(in: model) : nil
+    widePanes = panes
+  }
   /// Beside an open thread, the wide column holds the thread's coordinator
   /// rather than the project's threads. The person's last choice stays.
   var showsCoordinatorBeside = UserDefaults.standard.object(forKey: AppRouter.coordinatorBesideKey) == nil
@@ -100,7 +151,7 @@ final class AppRouter {
   func open(_ target: ChatTarget) {
     sidebarShowsAllProjects = false
     linkedThread = nil
-    if target.threadRef == nil { chosenCoordinator = nil }
+    if target.threadRef == nil { chosenCoordinator = nil } else { isDetailCollapsed = false }
     root = target
     main.path = []
     isDrawerOpen = false
@@ -108,7 +159,10 @@ final class AppRouter {
 
   /// Pushes a screen onto the main stack and closes the drawer.
   func push(_ route: Route) {
-    if case .chat = route { sidebarShowsAllProjects = false }
+    if case let .chat(target) = route {
+      sidebarShowsAllProjects = false
+      if target.threadRef != nil { isDetailCollapsed = false }
+    }
     main.path.append(route)
     isDrawerOpen = false
   }
@@ -172,14 +226,30 @@ final class AppRouter {
   /// coordinator's transcript now sits beside the threads it links to.
   func pushThread(_ ref: ThreadRef, on nav: StackNavigator, in model: AppModel) {
     if nav === main, sidebarSelection(in: model) == .chat(.thread(ref)) { return }
-    if nav === main { sidebarShowsAllProjects = false }
+    if nav === main {
+      sidebarShowsAllProjects = false
+      isDetailCollapsed = false
+    }
     nav.push(.chat(.thread(ref)))
   }
 
   /// The coordinator the wide column shows right now; nil shows the project list.
+  /// It stays on the left whether or not one of its threads is open.
   func besideCoordinator(in model: AppModel) -> ChatTarget? {
     guard showsCoordinatorBeside, !sidebarShowsAllProjects, !isDrawerSearching else { return nil }
-    return openThreadCoordinator(in: model)
+    return openThreadCoordinator(in: model) ?? landingCoordinator(in: model)
+  }
+
+  /// With no thread open, the coordinator on screen moves into the column, so
+  /// the screen beside it holds its threads.
+  func landingCoordinator(in model: AppModel) -> ChatTarget? {
+    guard main.path.isEmpty, let landing = landing(in: model), landing.threadRef == nil else { return nil }
+    return coordinator(openedFrom: landing, in: model)
+  }
+
+  /// The screen beside the column lists the coordinator's threads.
+  func showsThreadsBeside(in model: AppModel) -> Bool {
+    besideCoordinator(in: model) != nil && landingCoordinator(in: model) != nil
   }
 
   /// The project the wide list is scoped to; nil shows every project. A screen

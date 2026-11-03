@@ -384,6 +384,22 @@ private struct ChatScreen: View {
         }
       } else if !sidebarVisible {
         MenuButton()
+      } else if !isBesideCoordinator, target.threadRef != nil, let coordinator = router.besideCoordinator(in: model) {
+        // The coordinator stays in the column; this returns the screen to its threads.
+        Button {
+          withAnimation(.snappy) { router.open(coordinator) }
+        } label: {
+          Label("Threads", systemImage: "chevron.left")
+            .font(.weave(.callout, weight: .semibold))
+            .foregroundStyle(Color.weave.ink)
+            .padding(.horizontal, WeaveSpacing.s3)
+            .frame(minHeight: WeaveSize.minTap)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .weaveGlass(in: Capsule(), interactive: true)
+        .accessibilityLabel("Back to threads")
+        .accessibilityIdentifier("chat.back-to-threads")
       }
     } center: {
       titleCapsule
@@ -598,7 +614,10 @@ private struct ChatScreen: View {
   private func openAgents() {
     switch target {
     case let .aide(project), let .project(project):
-      if isBesideCoordinator {
+      if isBesideCoordinator, router.showsThreadsBeside(in: model) {
+        // The threads are already beside this coordinator; make sure they show.
+        if router.showsColumnOnly(in: model) { withAnimation(.snappy) { router.choosePanes(.both, in: model) } }
+      } else if isBesideCoordinator {
         withAnimation(.snappy) { router.showsCoordinatorBeside = false }
       } else {
         nav.push(.overview(project))

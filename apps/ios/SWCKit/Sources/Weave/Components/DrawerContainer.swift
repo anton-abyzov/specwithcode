@@ -14,14 +14,18 @@ import SwiftUI
 /// From `WeaveSize.sidebarBreakpoint` points wide the drawer is a column
 /// beside the content, whatever the size class: an unfolded or rotated iPhone
 /// Duo can report a compact class at full width. `isCollapsed` hides that
-/// column so the content takes the whole width; `isWideLayout` tells screens
-/// the column exists, shown or not.
+/// column so the content takes the whole width; `isContentCollapsed` gives a
+/// chat column the whole width instead; `isWideLayout` tells screens the
+/// column exists, shown or not.
 public struct DrawerContainer<Drawer: View, Content: View>: View {
   @Binding var isOpen: Bool
   @Binding var isCollapsed: Bool
   /// The column holds a conversation rather than a list, so it opens at half
   /// the scene, on the Duo's hinge, and may grow further.
   let isChatColumn: Bool
+  /// The chat column takes the whole width and the content waits off screen,
+  /// laid out at its usual size so it comes back unchanged.
+  let isContentCollapsed: Bool
   let edgeSwipeEnabled: Bool
   let sceneInsets: EdgeInsets
   let drawer: Drawer
@@ -46,10 +50,11 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.layoutDirection) private var layoutDirection
 
-  public init(isOpen: Binding<Bool>, isCollapsed: Binding<Bool> = .constant(false), isChatColumn: Bool = false, edgeSwipeEnabled: Bool = true, sceneInsets: EdgeInsets = EdgeInsets(), @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
+  public init(isOpen: Binding<Bool>, isCollapsed: Binding<Bool> = .constant(false), isChatColumn: Bool = false, isContentCollapsed: Bool = false, edgeSwipeEnabled: Bool = true, sceneInsets: EdgeInsets = EdgeInsets(), @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
     self._isOpen = isOpen
     self._isCollapsed = isCollapsed
     self.isChatColumn = isChatColumn
+    self.isContentCollapsed = isContentCollapsed
     self.edgeSwipeEnabled = edgeSwipeEnabled
     self.sceneInsets = sceneInsets
     self.drawer = drawer()
@@ -73,7 +78,9 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
       // the breakpoint, and the Duo reports compact classes at full width.
       let wide = proxy.size.width >= WeaveSize.sidebarBreakpoint
       let persistent = wide && !isCollapsed
-      let width = persistent ? columnWidth(scene: proxy.size.width) : min(max(proxy.size.width * 0.8, 1), 340)
+      let columnOnly = persistent && isChatColumn && isContentCollapsed
+      let split = persistent ? columnWidth(scene: proxy.size.width) : 0
+      let width = columnOnly ? proxy.size.width : persistent ? split : min(max(proxy.size.width * 0.8, 1), 340)
       let modalOpen = isOpen && !persistent
       let progress: CGFloat = persistent ? 0 : progress(drawerWidth: width)
       ZStack(alignment: .leading) {
@@ -111,11 +118,11 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
           content
             .padding(EdgeInsets(
               top: sceneInsets.top,
-              leading: max(0, sceneInsets.leading - (persistent ? width : 0)),
+              leading: max(0, sceneInsets.leading - (persistent ? split : 0)),
               bottom: sceneInsets.bottom, trailing: sceneInsets.trailing
             ))
             .background(Color.weave.canvas)
-            .accessibilityHidden(modalOpen)
+            .accessibilityHidden(modalOpen || columnOnly)
             .environment(\.isCoveredByDrawer, modalOpen)
             .environment(\.isNavigationSidebarVisible, persistent)
             .environment(\.isWideLayout, wide)
@@ -123,13 +130,14 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
           // Newer SwiftUI versions propagate that hidden state to overlays.
           dim(progress: progress, drawerWidth: width, active: modalOpen)
         }
-          .frame(width: max(0, proxy.size.width - (persistent ? width : 0)), height: proxy.size.height)
+          .frame(width: max(0, proxy.size.width - (persistent ? split : 0)), height: proxy.size.height)
           .clipShape(RoundedRectangle(cornerRadius: reduceMotion ? 0 : WeaveRadius.drawerContent * progress, style: .continuous))
           .shadow(color: .black.opacity(reduceMotion ? 0 : 0.14 * progress), radius: 24, x: -4)
           .scaleEffect(reduceMotion ? 1 : 1 - 0.06 * progress, anchor: .leading)
           .offset(x: persistent ? width : reduceMotion ? 0 : (width + 8) * progress)
+          .allowsHitTesting(!columnOnly)
           .overlay(alignment: .leading) {
-            if persistent {
+            if persistent, !columnOnly {
               // The content is moved by offset, which leaves its overlay at
               // the scene's leading edge, so the handle moves to the divider.
               ResizeHandle(
@@ -154,6 +162,7 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
       .animation(dragging ? nil : animation, value: isOpen)
       .animation(collapseAnimation, value: isCollapsed)
       .animation(collapseAnimation, value: isChatColumn && wide)
+      .animation(collapseAnimation, value: isContentCollapsed)
       .transaction { if resizing { $0.animation = nil } }
       .onChange(of: isCollapsed) { _, _ in
         // Hiding the column must not reveal a modal drawer left open earlier.

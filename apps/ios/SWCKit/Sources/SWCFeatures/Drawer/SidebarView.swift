@@ -2,6 +2,18 @@ import SwiftUI
 import SWCSync
 import Weave
 
+private nonisolated struct ThreadsPaneKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
+extension EnvironmentValues {
+  /// The list fills the screen beside a coordinator in the wide column.
+  nonisolated var isThreadsPane: Bool {
+    get { self[ThreadsPaneKey.self] }
+    set { self[ThreadsPaneKey.self] = newValue }
+  }
+}
+
 /// The expanded layout's navigation column, a native sidebar list on two
 /// levels: all projects with Aide, recent threads and machines, or one
 /// project's coordinator and threads. Going into a project brings its
@@ -13,6 +25,8 @@ struct SidebarView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @Environment(\.headerTopPadding) private var headerTopPadding
+  @Environment(\.isThreadsPane) private var isThreadsPane
+  @Environment(\.isNavigationSidebarVisible) private var columnVisible
   @State private var showAllProjects = false
   @State private var showAllRecents = false
   @State private var showAutomated = false
@@ -42,14 +56,16 @@ struct SidebarView: View {
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if !router.isDrawerSearching { bottomBar }
     }
-    .background(Color.weave.sunken.ignoresSafeArea())
+    .background((isThreadsPane ? Color.weave.canvas : Color.weave.sunken).ignoresSafeArea())
     .overlay(alignment: .trailing) {
       // Hairline between the sidebar and the chat, as in iPad split views.
-      Rectangle()
-        .fill(Color.weave.line)
-        .frame(width: 1 / 3)
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
+      if !isThreadsPane {
+        Rectangle()
+          .fill(Color.weave.line)
+          .frame(width: 1 / 3)
+          .ignoresSafeArea()
+          .accessibilityHidden(true)
+      }
     }
     .tint(Color.weave.iris)
   }
@@ -58,17 +74,40 @@ struct SidebarView: View {
 
   private var header: some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
-      ColumnHeader {
-        ColumnActions()
-      } modeTrailing: {
-        EmptyView()
+      if isThreadsPane {
+        threadsPaneTitle
+      } else {
+        ColumnHeader {
+          ColumnActions()
+        } modeTrailing: {
+          EmptyView()
+        }
       }
       if model.machines.count > 1, router.sidebarScope(in: model) == nil { machineChips }
     }
     .padding(.horizontal, WeaveSpacing.s4)
     .padding(.top, headerTopPadding)
     .padding(.bottom, WeaveSpacing.s2)
-    .background(Color.weave.sunken)
+    .background(isThreadsPane ? Color.weave.canvas : Color.weave.sunken)
+  }
+
+  /// Beside the coordinator the column header already names the project,
+  /// leads back to all of them and holds search and New chat, so this pane
+  /// only says what it lists.
+  private var threadsPaneTitle: some View {
+    HStack(spacing: WeaveSpacing.s2) {
+      // Alone on screen, the list brings the coordinator back.
+      if !columnVisible { MenuButton() }
+      Text(router.sidebarScope(in: model) == nil ? "All projects" : "Threads")
+        .font(.weave(.headline, weight: .semibold))
+        .foregroundStyle(Color.weave.ink)
+        .lineLimit(1)
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("threads-pane.header")
+      Spacer(minLength: 0)
+    }
+    .frame(minHeight: WeaveSize.minTap)
+    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
   }
 
   /// All, then one chip per machine with its status.
@@ -137,7 +176,7 @@ struct SidebarView: View {
   /// needs attention one tap away.
   @ViewBuilder private func projectSections(_ project: ProjectSummary) -> some View {
     // With a thread open, the switch above already leads to the coordinator.
-    let hasModes = router.openThreadCoordinator(in: model) != nil
+    let hasModes = router.openThreadCoordinator(in: model) != nil || isThreadsPane
     if !hasModes {
       Section {
         SidebarRow(title: project.title, subtitle: "Coordinator") {
@@ -191,6 +230,7 @@ struct SidebarView: View {
     ForEach(visible) { thread in
       let (detail, machine) = details(thread)
       ThreadLine(thread: thread, detail: detail, machine: machine)
+        .accessibilityIdentifier("sidebar.thread")
         .sidebarItem(.chat(.thread(thread.ref)))
         .threadRowActions(thread)
     }
@@ -371,7 +411,7 @@ struct SidebarView: View {
     .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     .padding(.horizontal, WeaveSpacing.s4)
     .padding(.vertical, WeaveSpacing.s2)
-    .background(Color.weave.sunken)
+    .background(isThreadsPane ? Color.weave.canvas : Color.weave.sunken)
   }
 
   private func isSelected(_ target: ChatTarget) -> Bool {

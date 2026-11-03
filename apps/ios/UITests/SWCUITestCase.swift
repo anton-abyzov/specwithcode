@@ -22,7 +22,7 @@ class SWCUITestCase: XCTestCase {
     app?.terminate()
     let app = XCUIApplication()
     // A sidebar hidden on this simulator earlier must not change the layout under test.
-    var arguments = ["-SWCFixture", fixture, "-SWCAppearance", appearance, "-swc.sidebarCollapsed", "NO", "-swc.listColumnWidth", "0", "-swc.chatColumnWidth", "0", "-swc.coordinatorBeside", coordinatorBeside ? "YES" : "NO"]
+    var arguments = ["-SWCFixture", fixture, "-SWCAppearance", appearance, "-swc.sidebarCollapsed", "NO", "-swc.listColumnWidth", "0", "-swc.chatColumnWidth", "0", "-swc.coordinatorBeside", coordinatorBeside ? "YES" : "NO", "-swc.detailCollapsed", "NO"]
     if let route { arguments += ["-SWCRoute", route] }
     if !aide { arguments += ["-SWCAide", "off"] }
     app.launchArguments = arguments

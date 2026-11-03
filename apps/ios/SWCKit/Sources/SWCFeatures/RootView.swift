@@ -89,7 +89,8 @@ private struct AppScreens: View {
         top: proxy.safeAreaInsets.top, leading: proxy.safeAreaInsets.leading,
         bottom: max(proxy.safeAreaInsets.bottom, keyboardInset), trailing: proxy.safeAreaInsets.trailing
       )
-      DrawerContainer(isOpen: $router.isDrawerOpen, isCollapsed: $router.isSidebarCollapsed, isChatColumn: router.besideCoordinator(in: model) != nil, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
+      let chatColumn = router.besideCoordinator(in: model) != nil
+      DrawerContainer(isOpen: $router.isDrawerOpen, isCollapsed: $router.isSidebarCollapsed, isChatColumn: chatColumn, isContentCollapsed: router.showsColumnOnly(in: model), edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
         NavigationColumn()
       } content: {
         NavigationStack(path: $main.path) {
@@ -137,14 +138,20 @@ private struct NavigationColumn: View {
   }
 }
 
-/// The screen at the root of the main stack.
+/// The screen at the root of the main stack. On a wide screen it is the
+/// threads of the coordinator in the column, shown or hidden, so the
+/// coordinator stays put while a thread opens and closes beside it.
 private struct RootContent: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
+  @Environment(\.isWideLayout) private var wide
 
   var body: some View {
     if model.machines.isEmpty {
       if model.isLoading { LoadingView() } else { PairWelcomeView() }
+    } else if wide, router.showsThreadsBeside(in: model) {
+      SidebarView()
+        .environment(\.isThreadsPane, true)
     } else if let target = router.landing(in: model) {
       ChatView(target: target)
     } else if model.isLoading {

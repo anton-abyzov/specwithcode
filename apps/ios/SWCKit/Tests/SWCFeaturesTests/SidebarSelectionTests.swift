@@ -40,15 +40,20 @@ struct SidebarSelectionTests {
   @Test func theColumnHoldsTheOpenThreadsCoordinator() throws {
     let model = model()
     let router = besideRouter()
-    #expect(router.besideCoordinator(in: model) == nil)
+    // With no thread open, the coordinator on screen sits in the column.
+    let aide = try #require(model.aide)
+    #expect(router.besideCoordinator(in: model) == .aide(aide.ref))
+    #expect(router.showsThreadsBeside(in: model))
 
     let project = try #require(model.projects.first { !model.threads(in: $0.ref).isEmpty })
     let thread = try #require(model.threads(in: project.ref).first)
     router.select(.chat(.project(project.ref)))
-    #expect(router.besideCoordinator(in: model) == nil)
+    #expect(router.besideCoordinator(in: model) == .project(project.ref))
+    #expect(router.showsThreadsBeside(in: model))
 
     router.select(.chat(.thread(thread.ref)))
     #expect(router.besideCoordinator(in: model) == .project(project.ref))
+    #expect(!router.showsThreadsBeside(in: model))
 
     // A thread pushed from the coordinator counts the same.
     router.select(.chat(.project(project.ref)))
@@ -58,6 +63,60 @@ struct SidebarSelectionTests {
     // A screen without a chat goes back to the list.
     router.push(.overview(project.ref))
     #expect(router.besideCoordinator(in: model) == nil)
+  }
+
+  @Test func thePaneSwitchPicksOneOrBothPanes() throws {
+    UserDefaults.standard.removeObject(forKey: AppRouter.detailCollapsedKey)
+    UserDefaults.standard.removeObject(forKey: AppRouter.sidebarCollapsedKey)
+    defer {
+      UserDefaults.standard.removeObject(forKey: AppRouter.detailCollapsedKey)
+      UserDefaults.standard.removeObject(forKey: AppRouter.sidebarCollapsedKey)
+    }
+    let model = model()
+    let router = besideRouter()
+    #expect(router.widePanes == .both)
+
+    router.widePanes = .column
+    #expect(router.isDetailCollapsed && !router.isSidebarCollapsed)
+    #expect(AppRouter().widePanes == .column)
+
+    router.widePanes = .detail
+    #expect(router.isSidebarCollapsed && !router.isDetailCollapsed)
+    router.widePanes = .both
+    #expect(!router.isSidebarCollapsed && !router.isDetailCollapsed)
+
+    // Opening a thread needs the screen beside the coordinator.
+    let project = try #require(model.projects.first { !model.threads(in: $0.ref).isEmpty })
+    let thread = try #require(model.threads(in: project.ref).first)
+    router.open(.project(project.ref))
+    router.widePanes = .column
+    router.open(.project(project.ref))
+    #expect(router.widePanes == .column)
+    router.select(.chat(.thread(thread.ref)))
+    #expect(router.widePanes == .both)
+
+    router.open(.project(project.ref))
+    router.widePanes = .column
+    router.pushThread(thread.ref, on: router.main, in: model)
+    #expect(router.widePanes == .both)
+
+    // Coordinator only lasts while the same screen sits beside it: a link to
+    // another thread shows beside the coordinator.
+    router.open(.project(project.ref))
+    router.choosePanes(.column, in: model)
+    #expect(router.showsColumnOnly(in: model))
+    router.handle(.thread(thread.ref))
+    #expect(!router.showsColumnOnly(in: model))
+    router.choosePanes(.column, in: model)
+    #expect(router.showsColumnOnly(in: model))
+    let other = try #require(model.threads(in: project.ref).first { $0.ref != thread.ref })
+    router.handle(.thread(other.ref))
+    #expect(!router.showsColumnOnly(in: model))
+
+    // Hiding the column ends coordinator-only.
+    router.widePanes = .column
+    router.isSidebarCollapsed = true
+    #expect(router.widePanes == .detail)
   }
 
   @Test func theThreadsModeLastsWhileThreadsChange() throws {

@@ -59,7 +59,8 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
   /// Duo, where the system takes touches along the top edge of the screen.
   func testTopLeftControlAnswersAlongItsWholeHeight() throws {
     launch(route: "thread", coordinatorBeside: true)
-    let hide = app.descendants(matching: .any).matching(identifier: "sidebar.collapse").firstMatch
+    // Beside a coordinator, the pane switch's last choice hides the column.
+    let hide = app.descendants(matching: .any).matching(identifier: "column.panes.detail").firstMatch
     try XCTSkipUnless(hide.waitForExistence(timeout: 5), "No wide column on this display; run it unfolded")
     let reopen = app.buttons["chrome.show-sidebar"]
     settle()
@@ -97,6 +98,67 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     attachScreenshot("Threads in the column")
     tap(coordinator)
     waitForHittable(threads)
+  }
+
+  /// The coordinator stays in the left column; beside it are its threads,
+  /// then the thread picked from them. The pane switch shows either alone.
+  func testCoordinatorStaysLeftWithItsThreadsBeside() throws {
+    launch(route: "coordinator", coordinatorBeside: true)
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let middle = app.frame.width / 2
+    let threadsPane = app.descendants(matching: .any).matching(identifier: "threads-pane.header").firstMatch
+    waitForHittable(threadsPane)
+    XCTAssertGreaterThan(threadsPane.frame.minX, middle * 0.8, "The threads belong beside the coordinator")
+    let panes = app.descendants(matching: .any).matching(identifier: "column.panes").firstMatch
+    XCTAssertLessThan(panes.frame.minX, middle, "The pane switch belongs to the coordinator column")
+    XCTAssertTrue(app.buttons["column.panes.both"].isSelected)
+    XCTAssertFalse(app.buttons["column.panes.column"].isSelected)
+    saveShot("1 Coordinator and its threads")
+
+    tap(app.descendants(matching: .any).matching(identifier: "sidebar.thread").firstMatch)
+    let back = app.buttons["chat.back-to-threads"]
+    waitForHittable(back)
+    XCTAssertGreaterThan(back.frame.minX, middle * 0.8)
+    XCTAssertTrue(panes.exists, "The coordinator stays in the column while a thread opens")
+    saveShot("2 Thread beside its coordinator")
+
+    tap(app.buttons["column.panes.column"])
+    settle()
+    XCTAssertFalse(back.isHittable, "Coordinator only hides the thread")
+    XCTAssertGreaterThan(panes.frame.minX, 0)
+    saveShot("3 Coordinator only")
+
+    tap(app.buttons["column.panes.detail"])
+    let reopen = app.buttons["chrome.show-sidebar"]
+    waitForHittable(reopen)
+    XCTAssertLessThan(reopen.frame.minX, middle * 0.5, "Thread only fills the screen")
+    saveShot("4 Thread only")
+    tap(reopen)
+    settle()
+    waitForHittable(panes)
+
+    tap(back)
+    waitForHittable(threadsPane)
+    XCTAssertTrue(app.buttons["column.panes.both"].isSelected)
+
+    // With no thread open, the other side alone is the threads list.
+    tap(app.buttons["column.panes.detail"])
+    waitForHittable(reopen)
+    waitForHittable(threadsPane)
+    XCTAssertLessThan(threadsPane.frame.minX, middle * 0.5, "Threads only fills the screen")
+    saveShot("5 Threads only")
+    tap(reopen)
+    waitForHittable(panes)
+  }
+
+  /// A screenshot attached to the run and, when SWC_SHOTS_DIR is set for the
+  /// runner, written there for before-and-after comparisons.
+  private func saveShot(_ name: String) {
+    attachScreenshot(name)
+    guard let dir = ProcessInfo.processInfo.environment["SWC_SHOTS_DIR"] else { return }
+    try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
   }
 
   func testBothLandscapeRotationsPreserveDraftAndSelectedChat() throws {

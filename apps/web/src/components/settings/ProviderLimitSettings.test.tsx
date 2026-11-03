@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
   ProviderInstanceId,
@@ -129,9 +130,9 @@ afterEach(() => {
   act(() => renderer?.unmount());
   vi.unstubAllGlobals();
 });
-it("defaults to switching automatically at 95 percent and waiting for a reset under 30 minutes", () => {
+it("defaults to switching automatically at 98 percent and waiting for a reset under 30 minutes", () => {
   expect(row("When a provider runs out").props.value).toBe("switch");
-  expect(row("Switch before the limit").props.value).toBe("95");
+  expect(row("Switch before the limit").props.value).toBe("98");
   expect(row("Wait when the reset is close").props.value).toBe("30");
 });
 it("writes the reset wait", () => {
@@ -148,11 +149,16 @@ it("writes the rule and the threshold", () => {
   act(() => row("Switch before the limit").props.onChange({ target: { value: "85" } }));
   expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 85 });
 });
-it("offers thresholds from 50 to 95 percent used", () => {
+it("offers thresholds from 50 to 99 percent used", () => {
   const options = row("Switch before the limit")
     .findAllByType("option")
     .map((option) => option.props.value);
-  expect(options).toEqual(["off", "50", "60", "70", "75", "80", "85", "90", "95"]);
+  expect(options).toEqual(["off", "50", "60", "70", "75", "80", "85", "90", "95", "98", "99"]);
+  const labels = row("Switch before the limit")
+    .findAllByType("option")
+    .map((option) => option.children.join(""));
+  expect(labels.slice(-3)).toEqual(["At 5% left", "At 2% left", "At 1% left"]);
+  expect(options).toContain(String(DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT));
   act(() => row("Switch before the limit").props.onChange({ target: { value: "50" } }));
   expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 50 });
 });
