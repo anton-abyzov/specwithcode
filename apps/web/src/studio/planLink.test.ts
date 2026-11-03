@@ -53,6 +53,28 @@ describe("syncLinkedPlans", () => {
     expect(merges).toEqual(["Mac a→Mac c", "Mac c→Mac a"]);
   });
 
+  it("reads and merges only the pairs left to it", async () => {
+    const calls: string[] = [];
+    const [a, b, c] = [member("a"), member("b"), member("c")];
+    await syncLinkedPlans([a, b, c], {
+      exportPlan: async (item) => {
+        calls.push(`export ${item.label}`);
+        return plan(item.label);
+      },
+      mergePlan: async (target, peer) => {
+        calls.push(`merge ${peer.label}→${target.label}`);
+      },
+      // Servers keep a-b and a-c in step; only b-c is left.
+      skipPair: (left, right) => left === a || right === a,
+    });
+    expect(calls).toEqual([
+      "export Mac b",
+      "export Mac c",
+      "merge Mac b→Mac c",
+      "merge Mac c→Mac b",
+    ]);
+  });
+
   it("does nothing when fewer than two members can be read", async () => {
     const mergePlan = vi.fn(async () => undefined);
     await syncLinkedPlans([member("a"), member("b")], {

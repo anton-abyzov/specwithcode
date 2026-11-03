@@ -124,6 +124,7 @@ import {
   codexThreadShellEnvironmentConfig,
   withSpecweaveAgentEnvironment,
 } from "../../provider/RuntimeInstructions.ts";
+import { manualWorktreeGuardPath } from "../../provider/ManualWorktreeGuard.ts";
 import {
   mergeNativeSubscriptionEnvironment,
   mergeProviderInstanceEnvironment,
@@ -1421,6 +1422,25 @@ export function codexThreadRuntimeParams(input: {
       value,
     ]),
   );
+  // One app-server serves every thread, so the worktree guard rides on this
+  // thread's config, not the process PATH. A login shell would rebuild PATH
+  // from the user's profile and drop the shim, so these threads run without one.
+  const guardPath = manualWorktreeGuardPath(
+    input.environment,
+    input.runtimePolicy?.manualWorktreesBlocked,
+  );
+  const manualWorktreeGuard =
+    Object.keys(guardPath).length === 0
+      ? {}
+      : {
+          allow_login_shell: false,
+          ...Object.fromEntries(
+            Object.entries(guardPath).map(([name, value]) => [
+              `shell_environment_policy.set.${name}`,
+              value,
+            ]),
+          ),
+        };
   const mcpSession =
     input.threadId === null ? undefined : McpProviderSession.readMcpProviderSession(input.threadId);
   return {
@@ -1429,6 +1449,7 @@ export function codexThreadRuntimeParams(input: {
     config: {
       ...CODEX_THREAD_CONFIG,
       ...gitHubShellVariables,
+      ...manualWorktreeGuard,
       // The shared app-server's own `-c` identity names the thread that opened it.
       ...(input.threadId === null
         ? {}
@@ -3076,9 +3097,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                           .request("thread/resume", {
                             threadId: input.nativeThreadId,
                             excludeTurns: true,
+                            // The parent turn's policy, so a child reloaded here
+                            // keeps its parent's worktree guard and shell.
                             ...codexThreadRuntimeParams({
                               threadId: input.context.projectionThreadId,
                               environment: adapterOptions.environment,
+                              runtimePolicy: input.context.input.runtimePolicy,
                             }),
                           })
                           .pipe(Effect.flatMap(decodeCodexChildModel))

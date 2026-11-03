@@ -167,15 +167,21 @@ struct DrawerView: View {
 
   private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
     let target = ChatTarget.project(project.ref)
-    // The machine name only tells apart projects with the same name.
-    return WeaveRow(project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil, titleLineLimit: 1, subtitleLineLimit: 1, action: { router.open(target) }) {
+    // With more than one machine, every row says which ones it is on;
+    // otherwise the name only tells apart projects with the same name.
+    let machines = model.machines.count > 1 ? model.machines(of: project) : []
+    let subtitle = machines.isEmpty
+      ? (shared.contains(project.title.lowercased()) ? project.machineLabel : nil)
+      : machines.map(\.name).joined(separator: " · ")
+    return WeaveRow(project.title, subtitle: subtitle, titleLineLimit: 1, subtitleLineLimit: machines.count > 1 ? 2 : 1, action: { router.open(target) }) {
       ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
         .frame(width: 28)
         .accessibilityHidden(true)
     } trailing: {
       ProjectStatusGlyphs(project: project)
     }
-    .accessibilityValue(ProjectStatusGlyphs.spoken(project))
+    // The subtitle already reads the names; the value adds which are offline.
+    .accessibilityValue((machines.filter { $0.status == .offline }.map { "\($0.name) offline" } + [ProjectStatusGlyphs.spoken(project)]).filter { !$0.isEmpty }.joined(separator: ", "))
     .drawerSelection(isSelected(target))
     .projectRowActions(project)
   }

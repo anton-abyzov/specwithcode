@@ -4,6 +4,7 @@ import datetime
 import json
 import random
 import sqlite3
+import subprocess
 import time
 import state_backup
 import importlib.util
@@ -128,6 +129,84 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(mode.after_attempts, 2)
         self.assertIsNotNone(mode.verdict)
         self.assertIsNone(mode.fallback_reason)
+
+    def restart_with_snapshot(self, wrap, **patches):
+        mode, before, auth = self.prepare()
+        self.flow.mark();self.flow.stop();self.flow.clone()
+        mode.stopped(self.flow.held, before, auth, START, 'browser-cookie')
+        self.flow.restart();self.pid = 101
+        mode.snapshot = wrap(mode.snapshot)
+        with patch.object(update_apply, 'PAGE_VERIFY_DESCENDANT_POLL_SECONDS', 0.01), \
+             patch.object(update_apply, 'PAGE_VERIFY_QUIET_SECONDS', 0.05):
+            with patch.multiple(update_apply, **{'PAGE_VERIFY_DESCENDANT_SECONDS': 30, **patches}):
+                return mode, mode.after(self.flow.held, START, 'browser-cookie')
+
+    def refusing(self, error, times, calls, then=None):
+        def wrap(snapshot):
+            def refused_first():
+                calls.append(1)
+                if len(calls) <= times:
+                    raise error
+                if then: then(len(calls))
+                return snapshot()
+            return refused_first
+        return wrap
+
+    def passing_child(self, error):
+        calls = []
+        mode, value = self.restart_with_snapshot(self.refusing(error, 3, calls))
+        self.assertIsNotNone(value)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(mode.after_attempts, 1)  # Not proved again, only the process check.
+        self.assertEqual(mode.child_waits, 3)
+        self.assertIsNotNone(mode.verdict)
+        self.assertIsNone(mode.fallback_reason)
+        receipt = {}
+        mode.receipt(receipt)
+        self.assertEqual(receipt['pageChildWaits'], 3)
+
+    def test_a_passing_child_keeps_the_page_proof(self):
+        self.passing_child(AssertionError('Owned service has unexpected descendants'))
+
+    def test_a_child_exiting_during_the_inventory_keeps_the_page_proof(self):
+        self.passing_child(AssertionError('Owned process identities changed during inventory'))
+
+    def test_an_inventory_timeout_keeps_the_page_proof(self):
+        self.passing_child(subprocess.TimeoutExpired('ps', 1))
+
+    def test_a_child_that_stays_still_takes_the_full_read(self):
+        calls = []
+        mode, value = self.restart_with_snapshot(
+            self.refusing(AssertionError('Owned service has unexpected descendants'), 10**6, calls),
+            PAGE_VERIFY_DESCENDANT_SECONDS=0.05)
+        self.assertIsNone(value)
+        self.assertIsNone(mode.verdict)
+        self.assertEqual(mode.fallback_reason, 'AssertionError:Owned service has unexpected descendants')
+        self.assertGreater(len(calls), 1)
+
+    def test_a_timeout_that_never_ends_takes_the_full_read(self):
+        calls = []
+        mode, value = self.restart_with_snapshot(
+            self.refusing(subprocess.TimeoutExpired('ps', 1), 10**6, calls), PAGE_VERIFY_DESCENDANT_SECONDS=0.05)
+        self.assertIsNone(value)
+        self.assertTrue(mode.fallback_reason.startswith('TimeoutExpired:'))
+
+    def test_other_refusals_are_not_waited_on(self):
+        calls = []
+        mode, value = self.restart_with_snapshot(self.refusing(AssertionError('A protected Studio file is missing or is a link'), 10**6, calls))
+        self.assertIsNone(value)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(mode.child_waits, 0)
+
+    def test_a_write_while_waiting_on_a_child_proves_again(self):
+        calls = []
+        def write(count):
+            if count == 3: self.flow.new.heartbeat('session-1', '2026-10-22T14:05:30Z')
+        mode, value = self.restart_with_snapshot(
+            self.refusing(AssertionError('Owned service has unexpected descendants'), 2, calls, then=write))
+        self.assertIsNotNone(value)
+        self.assertEqual(mode.after_attempts, 2)  # The watermark moved during the wait, so that proof is discarded.
+        self.assertIsNotNone(mode.verdict)
 
     def test_no_heartbeat_opt_in_declines_page_verdict(self):
         mode, before, auth = self.prepare(heartbeat=False)

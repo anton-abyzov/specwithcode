@@ -976,7 +976,7 @@ it.live(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("a carried hold under an older helper's marker ends where the old one did", () =>
+it.effect("a carried hold under an older helper's marker ends where the old one did", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -992,11 +992,12 @@ it.live("a carried hold under an older helper's marker ends where the old one di
       updatedAt: yield* isoIn(0),
       handledInstallRequestAt: request,
     });
-    yield* Effect.sleep(Duration.millis(500));
+    yield* TestClock.adjust(Duration.millis(500));
     assert.equal(Option.getOrThrow(yield* hold.current).expiresAtMs, endMs);
     const marker = JSON.parse(yield* fs.readFileString(path.join(dir, Hold.HOLD_MARKER_FILE)));
     assert.equal(marker.ceiling, iso(endMs));
-    assert.isTrue(yield* awaitSelfRelease(hold));
+    yield* TestClock.adjust(Duration.millis(1_001));
+    assert.isFalse(yield* hold.isHeld);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

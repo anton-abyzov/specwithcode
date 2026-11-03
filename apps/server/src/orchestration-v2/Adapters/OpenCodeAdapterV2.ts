@@ -70,6 +70,7 @@ import {
   buildRuntimeInstructions,
   withSpecweaveAgentEnvironment,
 } from "../../provider/RuntimeInstructions.ts";
+import { withManualWorktreeGuard } from "../../provider/ManualWorktreeGuard.ts";
 import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -968,10 +969,13 @@ export function makeOpenCodeAdapterV2(
           ...(options.settings.serverPassword
             ? { serverPassword: options.settings.serverPassword }
             : {}),
-          environment: withSpecweaveAgentEnvironment(options.environment, {
-            threadId: input.threadId,
-            tool: "opencode",
-          }),
+          environment: withManualWorktreeGuard(
+            withSpecweaveAgentEnvironment(options.environment, {
+              threadId: input.threadId,
+              tool: "opencode",
+            }),
+            input.runtimePolicy.manualWorktreesBlocked,
+          ),
         });
         // The connection carries the password it resolved: the settings value, or
         // OPENCODE_SERVER_PASSWORD for a server this adapter started.

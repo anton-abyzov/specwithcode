@@ -82,6 +82,12 @@ frontier models already do it, or another channel already says it.
 | Logical projects, machine ids, `expectedRevision` on memory writes          | (c)      | `studio_thread_list`, `studio_machine_list` and `studio_project_memory_write` descriptions                                                                                                                                                                                                                                                    |
 | SpecWeave increment for each launched worker                                | (a)/(b)  | Code: the launch tools take `increment`, resolve it before any thread exists, seed the thread's SpecWeave binding, refuse a coordinator without one under `planning.requireIncrement: enforce` and warn under `remind`. Prose: one orchestration line, the same sentence in the three launch tool descriptions, no separate coordinator line. |
 
+## Answering worker questions
+
+A user can answer a worker in the coordinator conversation. The coordinator reads the owning thread and forwards the original message with `studio_thread_send` and `forwardMessageId`. It asks which worker only when the destination is ambiguous. The worker evaluates whether those words answer its question; successful forwarding alone does not settle a question or a native permission request. Permission to perform an action does not establish a personal factual declaration such as having reviewed training material.
+
+Same-machine explicit forwarding preserves the user's words and identity, records the routing thread, and uses a stable per-target message identity on retries. An agent's paraphrase is still agent-authored. Keep selected-worker follow-ups quiet when they return to the same worker.
+
 ## Who can change what
 
 | Layer                                        | Who edits it                                                       | Agents can change it?                                                                                                                                     |

@@ -75,9 +75,12 @@ import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
+import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import {
   CoordinatorReleaseGuard,
   makeProjectLinkStandby,
+  type PeerReplicaContent,
+  peerReplicaMark,
   type ProjectLinkStandbyMethods,
 } from "./ProjectLinkStandby.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -130,11 +133,26 @@ export class ProjectLink extends Context.Service<
     readonly supersede: (
       input: ProjectSupersedeInput,
     ) => Effect.Effect<ProjectSupersedeResult, ProjectLinkError>;
+    /** Internal: a linked coordinator's content, carried by server-driven sync (`LinkedPeerSync`). */
+    readonly replicateFromMember: (
+      input: ReplicateFromMemberInput,
+    ) => Effect.Effect<ProjectLinkReplicateResult, ProjectLinkError>;
     readonly startCoordinator: (
       input: ProjectStartCoordinatorInput,
     ) => Effect.Effect<ProjectStartCoordinatorResult, ProjectLinkError>;
   } & ProjectLinkStandbyMethods
 >()("specweave-studio/project/ProjectLink") {}
+
+/** The content of a coordinator copy on another machine, for this member's replica. */
+export interface ReplicateFromMemberInput {
+  readonly projectId: ProjectId;
+  readonly logicalProjectId: string;
+  /** The coordinator copy it is from: a listed member on another machine. */
+  readonly from: Pick<LogicalProjectMember, "environmentId" | "projectId">;
+  /** That copy's epoch; a lower one never replaces a newer coordinator's copy. */
+  readonly fromEpoch: number;
+  readonly content: PeerReplicaContent;
+}
 
 const fail = (code: ProjectLinkError["code"], detail?: string) =>
   Effect.fail(new ProjectLinkError({ code, ...(detail ? { detail } : {}) }));
@@ -731,7 +749,12 @@ const make = Effect.gen(function* () {
         digest: yield* contentDigest(projectId),
         replica: Option.match(replica, {
           onNone: () => null,
-          onSome: ({ from, digest, replicatedAt }) => ({ from, digest, replicatedAt }),
+          onSome: ({ from, digest, fromEpoch, replicatedAt }) => ({
+            from,
+            digest,
+            ...(fromEpoch === undefined ? {} : { fromEpoch }),
+            replicatedAt,
+          }),
         }),
       };
     });
@@ -760,11 +783,85 @@ const make = Effect.gen(function* () {
           sameMember(held.value.from, replica.from)
         )
           return { replicatedAt: held.value.replicatedAt, replayed: true };
+        // Another coordinator at a higher epoch wrote the held copy: a stale view never replaces it.
+        if (
+          Option.isSome(held) &&
+          !sameMember(held.value.from, replica.from) &&
+          (held.value.fromEpoch ?? -1) > (replica.fromEpoch ?? Number.MAX_SAFE_INTEGER)
+        )
+          return yield* fail("superseded_conflict");
         const replicatedAt = DateTime.formatIso(yield* DateTime.now);
         // Only this machine records that a peer pushed a copy; the app never claims it.
         const { peer: _peer, ...written } = replica;
         yield* replicas
           .write(projectId, { ...written, replicatedAt })
+          .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
+        return { replicatedAt, replayed: false };
+      }),
+    );
+
+  const replicateFromMember: ProjectLink["Service"]["replicateFromMember"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        yield* refusePersonal(project);
+        const self = yield* selfMember(project);
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding = project.workspaceSettings?.coordinatorBinding;
+        if (identity?.id !== input.logicalProjectId || binding?.state !== "transferred")
+          return yield* fail("not_member");
+        const from = identity.members.find(
+          (member) =>
+            logicalProjectMemberKey(member) === logicalProjectMemberKey(input.from) &&
+            member.environmentId !== self.environmentId,
+        );
+        if (from === undefined) return yield* fail("not_member");
+        // The epoch is the sender's own word. The copy this one gave way to may send at its
+        // epoch or later; any other member only one past it (or at it, when this copy never
+        // learned who it gave way to), as a takeover or a coordinator started beside it would
+        // be, so a claim never outranks what that member could really do. A longer chain of
+        // takeovers is left to the app, which reads both sides.
+        const successor =
+          binding.successor !== undefined &&
+          logicalProjectMemberKey(binding.successor) === logicalProjectMemberKey(from);
+        const lowest =
+          successor || binding.successor === undefined ? binding.epoch : binding.epoch + 1;
+        const highest = successor ? Number.MAX_SAFE_INTEGER : binding.epoch + 1;
+        if (input.fromEpoch < lowest || input.fromEpoch > highest)
+          return yield* fail(
+            "not_coordinator",
+            "That copy is not the coordinator this copy knows of.",
+          );
+        if (coordinatorContentDigest(input.content) !== input.content.digest)
+          return yield* fail("invalid");
+        const held = yield* readReplica(project);
+        if (Option.isSome(held)) {
+          const same = logicalProjectMemberKey(held.value.from) === logicalProjectMemberKey(from);
+          if (
+            same &&
+            held.value.digest === input.content.digest &&
+            held.value.fromEpoch === input.fromEpoch
+          )
+            return { replicatedAt: held.value.replicatedAt, replayed: true };
+          // Another coordinator at a higher epoch wrote it: this one is behind.
+          if (!same && (held.value.fromEpoch ?? -1) > input.fromEpoch)
+            return yield* fail("superseded_conflict");
+        }
+        const replicatedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* replicas
+          .write(project.id, {
+            from,
+            logicalProjectId: identity.id,
+            digest: input.content.digest,
+            fromEpoch: input.fromEpoch,
+            replicatedAt,
+            goal: input.content.goal,
+            instructions: input.content.instructions,
+            notes: [...input.content.notes],
+            notesTruncated: input.content.notesTruncated,
+            peer: peerReplicaMark(held, input.content, replicatedAt),
+          })
           .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
         return { replicatedAt, replayed: false };
       }),
@@ -1063,6 +1160,7 @@ const make = Effect.gen(function* () {
 
   return ProjectLink.of({
     ...standby,
+    replicateFromMember,
     fingerprint,
     preview,
     prepare,
@@ -1095,6 +1193,7 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
     const link = yield* ProjectLink;
     const memory = yield* LinkedMemorySync.LinkedMemorySync;
     const guard = yield* CoordinatorReleaseGuard;
+    const syncState = yield* Effect.serviceOption(LinkedPeerSyncState);
     // The standby this copy leases to is released, and answers, before the change is written.
     const released =
       <I, A>(
@@ -1130,6 +1229,11 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
         link.unlink,
       ),
       [WS_METHODS.projectLinkDigest]: link.digest,
+      [WS_METHODS.projectLinkSyncStatus]: ({ projectId }: { readonly projectId: ProjectId }) =>
+        Option.match(syncState, {
+          onNone: () => Effect.succeed({ pairs: [] }),
+          onSome: (state) => state.status(projectId).pipe(Effect.map((pairs) => ({ pairs }))),
+        }),
       [WS_METHODS.projectLinkReplicate]: whereRulesAllow(link.replicate),
       [WS_METHODS.projectLinkMemoryExport]: whereRulesAllow(memory.memoryExport),
       [WS_METHODS.projectLinkMemoryMerge]: whereRulesAllow(memory.memoryMerge),

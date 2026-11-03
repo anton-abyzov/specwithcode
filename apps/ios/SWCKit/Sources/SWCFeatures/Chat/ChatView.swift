@@ -420,20 +420,21 @@ private struct ChatScreen: View {
             guard case .project = target else { return false }
             return OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1
           }()
-          if switches || !sidebarVisible {
+          let showsThreads = !threadsOnScreen(project)
+          if switches || showsThreads {
             HStack(spacing: 0) {
               if switches {
                 OrchestratorSwitcher(current: project)
-                if !sidebarVisible {
+                if showsThreads {
                   Rectangle()
                     .fill(Color.weave.line)
                     .frame(width: WeaveSize.hairline, height: 20)
                     .accessibilityHidden(true)
                 }
               }
-              if !sidebarVisible {
+              if showsThreads {
                 Button {
-                  nav.push(.overview(project))
+                  showThreads(of: project)
                 } label: {
                   Label("Threads", systemImage: "bubble.left.and.bubble.right")
                     .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
@@ -454,6 +455,34 @@ private struct ChatScreen: View {
           if !usesRail { threadControls(thread) }
         }
       }
+    }
+  }
+
+  private var isAide: Bool {
+    if case .aide = target { return true }
+    return false
+  }
+
+  /// The list beside this coordinator already holds its threads. Aide's
+  /// threads are in every level of the list, so it counts once the list shows.
+  private func threadsOnScreen(_ project: ProjectRef) -> Bool {
+    guard sidebarVisible, !router.showsColumnOnly(in: model) else { return false }
+    let scope = isAide ? nil : model.project(project)?.ref
+    return router.sidebarScope(in: model) == scope
+  }
+
+  /// On a wide screen the threads come up beside the coordinator; on a
+  /// phone they are their own screen.
+  private func showThreads(of project: ProjectRef) {
+    guard wide else {
+      nav.push(.overview(project))
+      return
+    }
+    withAnimation(.snappy) {
+      router.isSidebarCollapsed = false
+      if router.showsColumnOnly(in: model) { router.choosePanes(.both, in: model) }
+      if !isAide, let row = model.project(project)?.ref { router.showProject(row, in: model) }
+      router.sidebarShowsAllProjects = false
     }
   }
 

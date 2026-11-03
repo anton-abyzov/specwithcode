@@ -915,7 +915,12 @@ private enum FixtureSample {
 
   static let projects: [ProjectSummary] = [
     ProjectSummary(ref: specweave, title: "SpecWeave", icon: .symbol(name: "dna", color: "amber"), machineLabel: "Office Mac", machineOnline: true, isPinned: true),
-    ProjectSummary(ref: verified, title: "Verified Skill", icon: .symbol(name: "shield-check", color: "green"), machineLabel: "Office Mac", machineOnline: true, isPinned: true),
+    // Linked across three machines, so rows show more than one.
+    ProjectSummary(ref: verified, title: "Verified Skill", icon: .symbol(name: "shield-check", color: "green"), machineLabel: "Office Mac", machineOnline: true, isPinned: true, members: [
+      ProjectMember(ref: verified, machineLabel: "Office Mac", machineOnline: true, isCoordinator: true),
+      ProjectMember(ref: ProjectRef(environmentId: buildBox, projectId: "verified-skill"), machineLabel: "Build box", machineOnline: true),
+      ProjectMember(ref: ProjectRef(environmentId: travel, projectId: "verified-skill"), machineLabel: "Travel laptop", machineOnline: false),
+    ]),
     ProjectSummary(ref: recipes, title: "Recipe app", icon: .symbol(name: "utensils", color: "orange"), machineLabel: "Build box", machineOnline: true),
     ProjectSummary(ref: docs, title: "Docs site", icon: .symbol(name: "book-open", color: "blue"), machineLabel: "Travel laptop", machineOnline: false),
   ]

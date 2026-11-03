@@ -149,6 +149,12 @@ export const ProjectCoordinatorReplica = Schema.Struct({
   logicalProjectId: bounded(512),
   /** `ProjectLinkDigest.digest` of the coordinator when it was copied. */
   digest: bounded(128),
+  /**
+   * The coordinator's epoch when a server copied it (server-driven sync); a
+   * copy from a lower epoch never replaces one from a higher. Absent on
+   * copies the app wrote.
+   */
+  fromEpoch: Schema.optional(NonNegativeInt),
   replicatedAt: IsoDateTime,
   goal: bounded(PROJECT_GOAL_MAX_LENGTH),
   instructions: bounded(PROJECT_INSTRUCTIONS_MAX_LENGTH),
@@ -330,6 +336,7 @@ export const ProjectLinkDigest = Schema.Struct({
     Schema.Struct({
       from: LogicalProjectMember,
       digest: bounded(128),
+      fromEpoch: Schema.optional(NonNegativeInt),
       replicatedAt: IsoDateTime,
     }),
   ),

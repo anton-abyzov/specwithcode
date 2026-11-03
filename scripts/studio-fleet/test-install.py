@@ -331,7 +331,7 @@ runpy.run_path(install, run_name='__main__')
         receipt = json.loads(result.stdout)
         own = self.home / '.specwithcode/stage'
         settings = json.loads((own / 'userdata/settings.json').read_text())
-        self.assertEqual(settings['defaultThreadEnvMode'], 'worktree')
+        self.assertEqual(settings['defaultThreadEnvMode'], 'local')
         self.assertEqual(settings['defaultRuntimeMode'], 'approval-required')
         launcher = (own / 'launch.sh').read_text()
         path_tokens = [part for part in shlex.split(launcher.splitlines()[4]) if part.startswith('PATH=')]

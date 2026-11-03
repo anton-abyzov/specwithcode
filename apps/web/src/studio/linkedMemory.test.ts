@@ -263,6 +263,23 @@ describe("linked memory sync", () => {
     expect(calls).toEqual([]);
   });
 
+  it("leaves a pair its servers keep in step alone and syncs the rest", async () => {
+    const { calls, driver } = recorder({
+      a: memory("a", { "MEMORY.md": "1" }),
+      b: memory("b", { "MEMORY.md": "2" }),
+      c: memory("c", { "MEMORY.md": "3" }),
+    });
+    await syncLinkedMemory([[member("a"), member("b"), member("c")]], {
+      ...driver,
+      skipPair: (left, right) => left.environmentId === "a" && right.environmentId === "b",
+    });
+    expect(
+      calls.some((call) => call.includes("into b from a") || call.includes("into a from b")),
+    ).toBe(false);
+    expect(calls).toContain("merge c into a from c");
+    expect(calls).toContain("merge b into c from b");
+  });
+
   it("reports a pair that still differs after one retry", async () => {
     const { mismatches, driver } = recorder({
       a: memory("a", { "MEMORY.md": "1" }),

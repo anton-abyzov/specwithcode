@@ -175,13 +175,27 @@ export function UpdatePreferencesSection() {
       />
       <SettingsRow
         title="Install automatically"
-        description="The app updates the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here."
+        description="The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here."
         control={
           <Switch
             checked={preferences.installAutomatically}
             disabled={locked || !preferences.checkAutomatically}
             onCheckedChange={(checked) => change({ installAutomatically: checked })}
             aria-label="Install updates automatically"
+          />
+        }
+      />
+      <SettingsRow
+        title="Restart automatically when idle"
+        description="On this machine, restart a downloaded app update after five minutes without keyboard or mouse activity, once no work or questions are waiting. Never stops running work. Turn this off to install the app on quit or with Restart. Each machine keeps its own setting."
+        control={
+          <Switch
+            checked={preferences.restartWhenIdle !== false}
+            disabled={
+              locked || !preferences.checkAutomatically || !preferences.installAutomatically
+            }
+            onCheckedChange={(checked) => change({ restartWhenIdle: checked })}
+            aria-label="Restart automatically when idle"
           />
         }
       />

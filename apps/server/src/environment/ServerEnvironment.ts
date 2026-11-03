@@ -351,6 +351,7 @@ export const make = Effect.gen(function* () {
       googleAccount: true,
       linkedMemorySync: true,
       linkedMemoryPeerSync: true,
+      serverLinkedSync: true,
       projectLink: true,
       coordinatorTakeover: true,
       coordinatorPerMachine: true,

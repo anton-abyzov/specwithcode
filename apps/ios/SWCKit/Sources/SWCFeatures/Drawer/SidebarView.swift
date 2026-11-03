@@ -110,9 +110,11 @@ struct SidebarView: View {
     .dynamicTypeSize(...DynamicTypeSize.xxLarge)
   }
 
-  /// All, then one chip per machine with its status.
+  /// All, then one chip per machine with its status. When they don't all fit
+  /// the column, one menu names the machine in force and lists them all, so
+  /// no machine hides past the edge.
   private var machineChips: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
+    ViewThatFits(in: .horizontal) {
       HStack(spacing: WeaveSpacing.s1) {
         machineChip(nil) {
           Text("All").font(.weave(.callout, weight: .medium))
@@ -127,8 +129,41 @@ struct SidebarView: View {
           .accessibilityLabel("\(machine.displayName), \(machine.statusLabel)")
         }
       }
+      .fixedSize()
+      .accessibilityIdentifier("sidebar.machine-chips")
+      machineMenu
     }
-    .accessibilityIdentifier("sidebar.machine-chips")
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private var machineMenu: some View {
+    let current = router.activeSidebarMachine(in: model).flatMap { model.machine($0) }
+    return Menu {
+      Picker("Machine", selection: Binding(get: { router.activeSidebarMachine(in: model) }, set: { id in withAnimation(.snappy) { router.sidebarMachine = id } })) {
+        Text("All machines").tag(String?.none)
+        ForEach(model.machines) { machine in
+          Text("\(machine.displayName) · \(machine.statusLabel)").tag(String?.some(machine.id))
+        }
+      }
+    } label: {
+      HStack(spacing: WeaveSpacing.s1) {
+        if let current { MachineBadge(status: current.displayStatus, size: 15) }
+        Text(current?.displayName ?? "All machines")
+          .font(.weave(.callout, weight: .medium))
+          .lineLimit(1)
+        Image(systemName: "chevron.down")
+          .font(.system(size: 11, weight: .semibold))
+          .accessibilityHidden(true)
+      }
+      .foregroundStyle(Color.weave.ink)
+      .padding(.horizontal, WeaveSpacing.s3)
+      .frame(minHeight: WeaveSize.minTap)
+      .background(Color.weave.line, in: Capsule())
+      .contentShape(Capsule())
+    }
+    .accessibilityLabel("Machine")
+    .accessibilityValue(current.map { "\($0.displayName), \($0.statusLabel)" } ?? "All machines")
+    .accessibilityIdentifier("sidebar.machine-menu")
   }
 
   private func machineChip<Label: View>(_ machine: String?, @ViewBuilder label: () -> Label) -> some View {
@@ -293,10 +328,19 @@ struct SidebarView: View {
   // MARK: Projects
 
   @ViewBuilder private var projectsSection: some View {
-    let projects = model.pinnedProjects + model.otherProjects
-    let automated = model.automatedProjects
-    let archived = model.archivedProjects
-    if !projects.isEmpty || !automated.isEmpty || !archived.isEmpty {
+    // A machine chip keeps the projects with a copy on that machine.
+    let machine = router.activeSidebarMachine(in: model)
+    let projects = model.projectsOn(machine, among: model.pinnedProjects + model.otherProjects)
+    let automated = model.projectsOn(machine, among: model.automatedProjects)
+    let archived = model.projectsOn(machine, among: model.archivedProjects)
+    if projects.isEmpty, automated.isEmpty, archived.isEmpty, let machine = machine.flatMap({ model.machine($0) }) {
+      Section("Projects") {
+        Text("No projects on \(machine.displayName)")
+          .font(.weave(.callout))
+          .foregroundStyle(Color.weave.muted)
+          .accessibilityIdentifier("sidebar.no-projects-on-machine")
+      }
+    } else if !projects.isEmpty || !automated.isEmpty || !archived.isEmpty {
       let shared = DrawerView.sharedTitles(projects + automated + archived)
       Section("Projects") {
         let visible = showAllProjects ? projects : Array(projects.prefix(Self.collapsedProjectCount))
@@ -322,10 +366,12 @@ struct SidebarView: View {
   private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
     let selected = router.followedProject(in: model) == project.ref
     let waiting = ThreadGroups(model.threads(in: project.ref).filter { !$0.isResolved }).needsYou.count
+    // With more than one machine, every row says which ones it is on.
+    let machines = model.machines.count > 1 ? model.machines(of: project) : []
     return Button {
       withAnimation(.snappy) { router.showProject(project.ref, in: model) }
     } label: {
-      SidebarRow(title: project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil) {
+      SidebarRow(title: project.title, subtitle: machines.isEmpty && shared.contains(project.title.lowercased()) ? project.machineLabel : nil, machines: machines) {
         ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
       } trailing: {
         HStack(spacing: WeaveSpacing.s2) {
@@ -346,7 +392,7 @@ struct SidebarView: View {
       }
     }
     .buttonStyle(.plain)
-    .accessibilityValue(([waiting > 0 ? needsYouLabel(waiting) : nil, ProjectStatusGlyphs.spoken(project)] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
+    .accessibilityValue(([machines.spoken, waiting > 0 ? needsYouLabel(waiting) : nil, ProjectStatusGlyphs.spoken(project)] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
     .accessibilityAddTraits(selected ? .isSelected : [])
     .accessibilityHint("Opens it and shows its threads")
     .sidebarRowStyle(selected: selected)
@@ -457,6 +503,7 @@ private struct SidebarItemRow: ViewModifier {
 private struct SidebarRow<Icon: View, Trailing: View>: View {
   let title: String
   var subtitle: String?
+  var machines: [ProjectMachine] = []
   @ViewBuilder let icon: Icon
   @ViewBuilder let trailing: Trailing
 
@@ -474,6 +521,10 @@ private struct SidebarRow<Icon: View, Trailing: View>: View {
             .font(.weave(.footnote))
             .foregroundStyle(Color.weave.muted)
             .lineLimit(3)
+        }
+        if !machines.isEmpty {
+          ProjectMachinesLine(machines: machines)
+            .accessibilityIdentifier("sidebar.project-machines")
         }
       }
       Spacer(minLength: 0)

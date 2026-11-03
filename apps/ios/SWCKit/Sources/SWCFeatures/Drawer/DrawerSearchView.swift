@@ -60,10 +60,8 @@ struct DrawerSearchView: View {
 
       ScrollView {
         VStack(alignment: .leading, spacing: 0) {
-          if query.trimmingCharacters(in: .whitespaces).isEmpty {
-            hint("Type a project or thread name.")
-          } else if results.isEmpty {
-            hint("No matches for \u{201C}\(query)\u{201D}.")
+          if results.isEmpty {
+            hint(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Type a project or thread name." : "No matches for \u{201C}\(query)\u{201D}.")
           } else {
             if !results.projects.isEmpty {
               DrawerSectionLabel("Projects")

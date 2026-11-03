@@ -1,0 +1,230 @@
+// @effect-diagnostics nodeBuiltinImport:off - runs once at startup and in sync env builders.
+/**
+ * Holds the project's Use worktrees setting for every provider. A thread that
+ * works in the project's own checkout gets a `git` first on its PATH that
+ * refuses `git worktree add` and runs the real git for everything else, so an
+ * agent cannot leave a worktree behind that no thread owns. The server never
+ * puts the directory on its own PATH, so its git calls and worktree threads are
+ * unaffected. There is no variable that turns it off: the agent could set one.
+ */
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+export const MANUAL_WORKTREE_REFUSAL =
+  "Use worktrees is off for this project; work in the checkout this thread was given. If the user wants a separate worktree, start a SpecWithCode thread with its own worktree, or turn on Use worktrees in project settings for new threads.";
+
+/** Global options that take their value as the next argument (`-C <dir>`). */
+export const GIT_GLOBAL_OPTIONS_WITH_VALUE = [
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--config-env",
+  "--attr-source",
+] as const;
+
+export interface ManualWorktreeGuard {
+  /** Holds the shim; never on the server's own PATH. */
+  readonly directory: string;
+  readonly platform: NodeJS.Platform;
+  /** The server's environment, whose PATH a child without its own builds on. */
+  readonly serverEnvironment: NodeJS.ProcessEnv;
+}
+
+let installedGuard: ManualWorktreeGuard | null = null;
+
+/** Set once the shim is written; null turns the guard off (no shim, no PATH change). */
+export function setManualWorktreeGuard(guard: ManualWorktreeGuard | null): void {
+  installedGuard = guard;
+}
+
+/** Whether git `args` (without `git` itself) run `git worktree add`. */
+export function isGitWorktreeAdd(args: ReadonlyArray<string>): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if ((GIT_GLOBAL_OPTIONS_WITH_VALUE as ReadonlyArray<string>).includes(arg)) {
+      index += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    return arg === "worktree" && args[index + 1] === "add";
+  }
+  return false;
+}
+
+const shSingleQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+
+/** The POSIX sh shim; isGitWorktreeAdd is the same parse in TypeScript. */
+export function posixGitShim(realGit: string): string {
+  const refusal = shSingleQuoted(`fatal: ${MANUAL_WORKTREE_REFUSAL}`);
+  return `#!/bin/sh
+# Written by SpecWithCode for threads that work in the project's own checkout.
+real_git=${shSingleQuoted(realGit)}
+skip=
+sub=
+for arg do
+  if [ -n "$skip" ]; then skip=; continue; fi
+  if [ -n "$sub" ]; then
+    if [ "$sub" = worktree ] && [ "$arg" = add ]; then
+      printf '%s\\n' ${refusal} >&2
+      exit 128
+    fi
+    break
+  fi
+  case $arg in
+    ${GIT_GLOBAL_OPTIONS_WITH_VALUE.join("|")}) skip=1 ;;
+    -*) ;;
+    *) sub=$arg ;;
+  esac
+done
+exec "$real_git" "$@"
+`;
+}
+
+/**
+ * The Windows shim, found through PATHEXT by cmd.exe and PowerShell. cmd
+ * splits unquoted arguments at `=`, `,` and `;` too, so `-c key=value` arrives
+ * as two words and option values cannot be skipped reliably. It refuses any
+ * bare `worktree` followed by `add` instead: stricter than isGitWorktreeAdd
+ * (`git log worktree add` is refused too), never looser. The scan ends at a
+ * missing argument (`[%1]`), not an empty one (`""`), and never wraps `%1` in
+ * quotes, which a quoted argument with a space or `=` would turn into a syntax
+ * error.
+ */
+export function windowsGitShim(realGit: string): string {
+  return `@echo off\r
+rem Written by SpecWithCode for threads that work in the project's own checkout.\r
+call :sw_scan %*\r
+if errorlevel 1 (\r
+  >&2 echo fatal: ${MANUAL_WORKTREE_REFUSAL}\r
+  exit /b 128\r
+)\r
+"${realGit}" %*\r
+exit /b %errorlevel%\r
+:sw_scan\r
+if [%1]==[] exit /b 0\r
+if "%~1"=="worktree" if "%~2"=="add" exit /b 1\r
+shift\r
+goto sw_scan\r
+`;
+}
+
+/** `C:\Program Files\Git\cmd\git.exe` as Git Bash names it: `/c/Program Files/Git/cmd/git.exe`. */
+export function msysPath(windowsPath: string): string {
+  const drive = /^([A-Za-z]):[\\/]/.exec(windowsPath);
+  const rest = windowsPath.replaceAll("\\", "/");
+  return drive === null ? rest : `/${drive[1]!.toLowerCase()}/${rest.slice(3)}`;
+}
+
+/**
+ * The shim files for `platform`. Windows gets the `.cmd` for cmd.exe and
+ * PowerShell plus an extensionless sh script for Git Bash, which ignores
+ * PATHEXT (the layout npm uses for its own commands). A program that starts
+ * `git.exe` directly, without a shell, finds neither.
+ */
+export function manualWorktreeGuardFiles(
+  platform: NodeJS.Platform,
+  realGit: string,
+): ReadonlyArray<readonly [name: string, content: string]> {
+  if (platform !== "win32") return [["git", posixGitShim(realGit)]];
+  return [
+    ["git.cmd", windowsGitShim(realGit)],
+    ["git", posixGitShim(msysPath(realGit))],
+  ];
+}
+
+/** The first git on `pathValue`, skipping the shim's own directory. */
+export function resolveRealGit(
+  pathValue: string | undefined,
+  options: {
+    readonly platform: NodeJS.Platform;
+    readonly exclude?: string;
+    readonly isExecutable?: (candidate: string) => boolean;
+  },
+): string | null {
+  const platform = options.platform;
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
+  const name = platform === "win32" ? "git.exe" : "git";
+  const isExecutable =
+    options.isExecutable ??
+    ((candidate: string) => {
+      try {
+        NodeFS.accessSync(
+          candidate,
+          platform === "win32" ? NodeFS.constants.F_OK : NodeFS.constants.X_OK,
+        );
+        return NodeFS.statSync(candidate).isFile();
+      } catch {
+        return false;
+      }
+    });
+  for (const entry of (pathValue ?? "").split(path.delimiter)) {
+    if (entry.length === 0 || !path.isAbsolute(entry)) continue;
+    if (options.exclude !== undefined && path.resolve(entry) === path.resolve(options.exclude))
+      continue;
+    const candidate = path.join(entry, name);
+    if (isExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Writes the shim under `stateDir` for the git on the server's PATH, or returns
+ * null when there is no git to wrap. Rewritten at every start, so a moved or
+ * upgraded git is picked up.
+ */
+export function installManualWorktreeGuard(input: {
+  readonly stateDir: string;
+  readonly serverEnvironment: NodeJS.ProcessEnv;
+  readonly platform: NodeJS.Platform;
+}): ManualWorktreeGuard | null {
+  const { platform, serverEnvironment } = input;
+  const directory = NodePath.join(input.stateDir, "agent-bin");
+  const realGit = resolveRealGit(serverEnvironment[pathKey(serverEnvironment, platform)], {
+    platform,
+    exclude: directory,
+  });
+  if (realGit === null) return null;
+  NodeFS.mkdirSync(directory, { recursive: true });
+  for (const [name, content] of manualWorktreeGuardFiles(platform, realGit)) {
+    const target = NodePath.join(directory, name);
+    const temporary = `${target}.tmp`;
+    NodeFS.writeFileSync(temporary, content, { mode: 0o755 });
+    NodeFS.renameSync(temporary, target);
+  }
+  return { directory, platform, serverEnvironment };
+}
+
+function pathKey(environment: NodeJS.ProcessEnv, platform: NodeJS.Platform): string {
+  if (platform !== "win32") return "PATH";
+  return Object.keys(environment).find((key) => key.toUpperCase() === "PATH") ?? "Path";
+}
+
+/**
+ * The PATH entry that puts the shim first, built on `environment`'s PATH (the
+ * server's when it has none). Empty when the guard is off or not installed.
+ */
+export function manualWorktreeGuardPath(
+  environment: NodeJS.ProcessEnv | undefined,
+  blocked: boolean | undefined,
+  guard: ManualWorktreeGuard | null = installedGuard,
+): Record<string, string> {
+  if (blocked !== true || guard === null) return {};
+  const { directory, platform, serverEnvironment } = guard;
+  const delimiter = platform === "win32" ? ";" : ":";
+  const key = pathKey(environment ?? {}, platform);
+  const base = environment?.[key] ?? serverEnvironment[pathKey(serverEnvironment, platform)] ?? "";
+  const rest = base.split(delimiter).filter((entry) => entry.length > 0 && entry !== directory);
+  return { [key]: [directory, ...rest].join(delimiter) };
+}
+
+/** `environment` with the shim first on its PATH when `blocked`. */
+export function withManualWorktreeGuard(
+  environment: NodeJS.ProcessEnv,
+  blocked: boolean | undefined,
+): NodeJS.ProcessEnv {
+  const guardPath = manualWorktreeGuardPath(environment, blocked);
+  return Object.keys(guardPath).length === 0 ? environment : { ...environment, ...guardPath };
+}

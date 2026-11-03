@@ -85,6 +85,28 @@ const failureOf = (result: ReturnType<typeof plan>) => {
 };
 
 describe("planProjectCommand", () => {
+  it("pins the original badge only on rename and ignores forged badge seeds", () => {
+    assert.isUndefined(payloadOf(update({ title: "Scripts" })).workspaceSettings);
+    assert.deepInclude(payloadOf(update({ title: "Renamed" })).workspaceSettings, {
+      iconSeedTitle: "Scripts",
+      revision: 1,
+    });
+    const patched = payloadOf(
+      update({
+        workspaceSettings: {
+          expectedRevision: 0,
+          goal: "New goal",
+          iconSeedTitle: "Forged",
+        } as ProjectWorkspacePatch,
+      }),
+    );
+    assert.notProperty(patched.workspaceSettings, "iconSeedTitle");
+    assert.notProperty(
+      payloadOf(update({ projectIcon: null, faviconPath: null })),
+      "workspaceSettings",
+    );
+  });
+
   it("creates projects with empty scripts and no model default", () => {
     const result = plan({
       type: "project.create",
@@ -362,7 +384,11 @@ describe("durable logical coordinator ownership", () => {
     const historical = payloadOf(
       plan({ ...command, title: "Old history" }, { project: row({ workspaceSettings: settings }) }),
     );
-    assert.isUndefined(historical.workspaceSettings);
+    assert.deepEqual(historical.workspaceSettings, {
+      ...settings,
+      iconSeedTitle: "Scripts",
+      revision: settings.revision + 1,
+    });
   });
   it("rejects stale revisions, epoch jumps and fence resets", () => {
     for (const patch of [

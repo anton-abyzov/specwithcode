@@ -197,12 +197,41 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         modelSelection,
       });
       assert.equal(resolved.cwd, "/project-root");
+      assert.isTrue(resolved.manualWorktreesBlocked);
       assert.equal(
         resolved.agentInstructions,
         `## Environment instructions\nEnvironment rule\n\n## Project instructions\nProject rule\n\n${LIVE_DATABASE_INSTRUCTIONS}`,
       );
       assert.equal(resolved.claudeWorkflowMode, "disabled");
       assert.equal(resolved.responseStyle, "concise");
+    }),
+  );
+
+  it.effect("lets a local-checkout thread add worktrees while Use worktrees is on", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const now = yield* DateTime.now;
+      const thread = makeThread({ now, worktreePath: null });
+      const projectRule = {
+        agentInstructions: "Project rule",
+        claudeWorkflowMode: "disabled",
+      } as const;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { ...projectRule, defaultThreadEnvMode: "worktree" },
+        },
+      });
+      const resolved = yield* policy.resolve({ thread, modelSelection });
+      assert.equal(resolved.cwd, "/project-root");
+      assert.isFalse(resolved.manualWorktreesBlocked);
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: { ...projectRule, defaultThreadEnvMode: "local" },
+        },
+      });
+      assert.isTrue((yield* policy.resolve({ thread, modelSelection })).manualWorktreesBlocked);
+      yield* settings.updateSettings({ projectSettingsOverrides: { [projectId]: projectRule } });
     }),
   );
 
@@ -255,6 +284,7 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         modelSelection,
       });
       assert.equal(resolved.cwd, "/project-worktree");
+      assert.isFalse(resolved.manualWorktreesBlocked);
       assert.match(resolved.agentInstructions ?? "", /Environment rule[\s\S]*Project rule/);
     }),
   );

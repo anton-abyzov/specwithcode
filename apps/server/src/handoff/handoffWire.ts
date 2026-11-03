@@ -285,6 +285,8 @@ export type CoordinatorReplicaResponse = typeof CoordinatorReplicaResponse.Type;
  * escaping can at most double.
  */
 export const LINKED_MEMORY_PEER_MAX_BYTES = COORDINATOR_REPLICA_MAX_BYTES;
+/** A coordinator's content or a plan, either way (`linkedSyncWire.ts`): the same cap as a memory page. */
+export const LINKED_SYNC_PEER_MAX_BYTES = COORDINATOR_REPLICA_MAX_BYTES;
 
 export type PeerPath =
   | "negotiate"
@@ -295,7 +297,13 @@ export type PeerPath =
   | "coordinator-lease"
   | "coordinator-replica"
   | "memory-export"
-  | "memory-merge";
+  | "memory-merge"
+  | "linked-digest"
+  | "linked-content"
+  | "linked-replica"
+  | "linked-supersede"
+  | "plan-export"
+  | "plan-merge";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "negotiate",
   "replicate",
@@ -306,6 +314,12 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "coordinator-replica",
   "memory-export",
   "memory-merge",
+  "linked-digest",
+  "linked-content",
+  "linked-replica",
+  "linked-supersede",
+  "plan-export",
+  "plan-merge",
 ]);
 
 export class FrameError extends Error {}

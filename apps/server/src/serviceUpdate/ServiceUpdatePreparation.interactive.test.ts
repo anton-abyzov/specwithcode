@@ -2,11 +2,15 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
 import * as FolderWork from "../fleet/folderTransfer/folderWork.ts";
@@ -432,7 +436,7 @@ it.live("a folder copy in flight still blocks a pressed install", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.live("the checkpoint and effect graces share one window when a person waits", () =>
+it.effect("the checkpoint and effect graces share one window when a person waits", () =>
   Effect.gen(function* () {
     const hold = yield* holdFor();
     const fixture = newFixture({ hold });
@@ -451,13 +455,38 @@ it.live("the checkpoint and effect graces share one window when a person waits",
             ('t1', 'pending', ${`${Cleanup.CHECKPOINT_CAPTURE_COMMAND_PREFIX}r1`}, 'checkpoint.capture'),
             ('t1', 'pending', 'other', 'provider-thread.rollback')`;
           const started = yield* Clock.currentTimeMillis;
-          const result = yield* preparation.prepare({
-            stopWork: true,
-            hold: true,
-            reason: "install",
-            interactive: interactiveInput,
-          });
-          elapsed.push(yield* elapsedSince(started));
+          const ticks = yield* Queue.unbounded<void>();
+          const clock = yield* Clock.Clock;
+          const pollingClock: Clock.Clock = {
+            ...clock,
+            sleep: (duration) =>
+              Effect.gen(function* () {
+                const sleeper = yield* Effect.forkChild(clock.sleep(duration));
+                if (Duration.toMillis(duration) === slow.pollMs)
+                  yield* Queue.offer(ticks, undefined);
+                yield* Fiber.join(sleeper);
+              }),
+          };
+          const driver = yield* Effect.forkChild(
+            Effect.forever(Queue.take(ticks).pipe(Effect.andThen(TestClock.adjust(slow.pollMs)))),
+          );
+          const drain = yield* preparation
+            .prepare({
+              stopWork: true,
+              hold: true,
+              reason: "install",
+              interactive: interactiveInput,
+            })
+            .pipe(
+              Effect.tap(() =>
+                elapsedSince(started).pipe(Effect.tap((ms) => Effect.sync(() => elapsed.push(ms)))),
+              ),
+              Effect.provideService(Clock.Clock, pollingClock),
+              Effect.forkChild,
+            );
+          // Advance only scheduled polls; asynchronous I/O consumes no virtual time.
+          const result = yield* Fiber.join(drain);
+          yield* Fiber.interrupt(driver);
           assert.isTrue(result.idle);
           yield* preparation.prepare({ stopWork: false, releaseHold: true });
         }

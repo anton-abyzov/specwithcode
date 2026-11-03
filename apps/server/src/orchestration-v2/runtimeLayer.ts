@@ -6,6 +6,7 @@ import * as CoordinatorLeaseRoute from "../project/CoordinatorLeaseRoute.ts";
 import * as CoordinatorWakeGate from "../project/CoordinatorWakeGate.ts";
 import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
 import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
+import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
@@ -512,6 +513,8 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   layerProjectLinkProvided,
+  // Which linked pairs this server keeps in step; the driver, the peer route and the app read it.
+  LinkedPeerSyncState.layer,
   // The standby's side of the coordinator lease, served on the handoff peer route.
   CoordinatorLeaseRoute.layer.pipe(
     Layer.provide(

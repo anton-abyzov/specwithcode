@@ -1,4 +1,9 @@
-import { EnvironmentId, ProjectId, ProviderInstanceId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -545,6 +550,20 @@ describe("the icon a project shares across its checkouts", () => {
     const group = snapshotOf({ projectIcon: null, faviconPath: null }, { projectIcon: dna });
     expect(group.projectIcon).toEqual(dna);
     expect(group.memberProjects.map((member) => member.projectIcon)).toEqual([dna, dna]);
+  });
+
+  it("keeps a linked checkout icon after renaming a copy with an automatic badge seed", () => {
+    const group = snapshotOf(
+      {
+        title: "Renamed",
+        projectIcon: null,
+        faviconPath: null,
+        workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, iconSeedTitle: "Original" },
+      },
+      { projectIcon: dna },
+    );
+    expect(group.projectIcon).toEqual(dna);
+    expect(group.workspaceSettings?.iconSeedTitle).toBe("Original");
   });
 
   it("prefers the saved icon over a favicon this checkout found automatically", () => {

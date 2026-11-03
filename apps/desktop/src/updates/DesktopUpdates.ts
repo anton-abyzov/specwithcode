@@ -207,7 +207,11 @@ export class DesktopUpdates extends Context.Service<
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
     readonly installPrepared: (
       expectedVersion: string,
-      options?: { readonly serviceLacksRelease?: boolean },
+      options?: {
+        readonly serviceLacksRelease?: boolean;
+        readonly beforeQuit?: Effect.Effect<boolean>;
+        readonly afterFailure?: Effect.Effect<void>;
+      },
     ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
     /** Re-reads the saved update preferences and applies them to the updater. */
     readonly applyPreferences: Effect.Effect<void>;
@@ -933,9 +937,19 @@ export const make = Effect.gen(function* () {
     return yield* Ref.get(desktopState.shutdownBegun);
   });
 
-  const installDownloadedUpdate = (expectedVersion?: string, serviceLacksRelease = false) =>
+  const installDownloadedUpdate = (
+    expectedVersion?: string,
+    serviceLacksRelease = false,
+    beforeQuit?: Effect.Effect<boolean>,
+    afterFailure: Effect.Effect<void> = Effect.void,
+  ) =>
     Effect.scoped(
       Effect.gen(function* () {
+        // The legacy Debian installer opens a password dialog. Idle installation
+        // must wait for a silent-capable installer (or an already replaced binary).
+        if (beforeQuit !== undefined && isDebPackage && !runningInstallReplaced()) {
+          return { accepted: false, completed: false, failed: false, reason: "disabled" as const };
+        }
         if (yield* activation.refusesInstall(expectedVersion, serviceLacksRelease)) {
           yield* markRestartStep("app-install", { detail: "service-behind" });
           return {
@@ -1001,7 +1015,9 @@ export const make = Effect.gen(function* () {
         // Taken at admission, so an older install's watch never acts on this one.
         const attempt = ++installAttempt;
         const recoverOwnStalledInstall = Effect.suspend(() =>
-          attempt === installAttempt ? recoverStalledInstall : Effect.void,
+          attempt === installAttempt
+            ? recoverStalledInstall.pipe(Effect.ensuring(afterFailure))
+            : Effect.void,
         );
 
         const markStaged = yield* markRestartStepFromNow("staged");
@@ -1030,6 +1046,14 @@ export const make = Effect.gen(function* () {
           );
         }
 
+        // Automatic installs fence admission only after staging has finished.
+        // A refused fence must not leave a watchdog or action reservation behind.
+        if (beforeQuit !== undefined && !(yield* beforeQuit)) {
+          installAttempt++;
+          yield* finishUpdateAction("install");
+          yield* activation.applyActivation;
+          return { accepted: false, completed: false, failed: false, reason: "busy" as const };
+        }
         yield* Ref.set(desktopState.quitting, true);
 
         const result = yield* Effect.gen(function* () {
@@ -1110,6 +1134,8 @@ export const make = Effect.gen(function* () {
   const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
     expectedVersion?: string,
     serviceLacksRelease = false,
+    beforeQuit?: Effect.Effect<boolean>,
+    afterFailure: Effect.Effect<void> = Effect.void,
   ) {
     if (yield* Ref.get(desktopState.quitting)) {
       return {
@@ -1125,7 +1151,12 @@ export const make = Effect.gen(function* () {
       completed: boolean;
       failed: boolean;
       reason?: DesktopUpdateRefusalReason;
-    } = yield* installDownloadedUpdate(expectedVersion, serviceLacksRelease);
+    } = yield* installDownloadedUpdate(
+      expectedVersion,
+      serviceLacksRelease,
+      beforeQuit,
+      afterFailure,
+    );
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1566,7 +1597,12 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.updates.download")),
     install: installWithExpectedVersion(),
     installPrepared: (expectedVersion, options) =>
-      installWithExpectedVersion(expectedVersion, options?.serviceLacksRelease === true),
+      installWithExpectedVersion(
+        expectedVersion,
+        options?.serviceLacksRelease === true,
+        options?.beforeQuit,
+        options?.afterFailure,
+      ),
     checkIfStale,
     applyPreferences: applyInstallPreference,
     registerLocalServiceProbe: activation.registerProbe,

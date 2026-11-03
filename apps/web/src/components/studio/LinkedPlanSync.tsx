@@ -9,14 +9,16 @@ import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { linkedPlanGroups, planLink, syncLinkedPlans } from "../../studio/planLink";
+import { drivenPairs } from "../../studio/serverLinkedSync";
+import { useServerSyncCoverage } from "./useServerSyncCoverage";
 
 const SYNC_EVERY_MS = 60_000;
 
 /**
  * Replicates the native plan of every shared project between its reachable
  * machines, so a task claimed on one machine is seen, and refused, on the
- * others. An unreachable machine is skipped; its claims stay until the user
- * releases them.
+ * others, for pairs the machines' servers do not keep in step themselves. An
+ * unreachable machine is skipped; its claims stay until the user releases them.
  */
 export function LinkedPlanSync() {
   const projects = useProjects();
@@ -25,6 +27,7 @@ export function LinkedPlanSync() {
   const read = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
   const exportPlan = useAtomCommand(planLink.export, { reportFailure: false });
   const mergePlan = useAtomCommand(planLink.merge, { reportFailure: false });
+  const coverage = useServerSyncCoverage();
   const groups = useMemo(() => {
     const byId = new Map(environments.map((item) => [item.environmentId, item]));
     return linkedPlanGroups(projects, (environmentId) => {
@@ -53,8 +56,11 @@ export function LinkedPlanSync() {
     running.current = true;
     void (async () => {
       try {
+        // Pairs the machines' servers keep in step themselves are left to them.
+        const covered = await coverage(drivenPairs(groups, "plan"));
         for (const members of groups)
           await syncLinkedPlans(members, {
+            skipPair: (left, right) => covered("plan", left, right),
             exportPlan: async (member) => {
               const result = await exportPlan({
                 environmentId: member.environmentId,

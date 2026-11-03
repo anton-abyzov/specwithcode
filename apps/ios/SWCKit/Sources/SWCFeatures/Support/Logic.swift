@@ -76,18 +76,40 @@ nonisolated struct SearchResults: Equatable {
 
   init(query: String, projects: [ProjectSummary], threads: [ThreadSummary], threadLimit: Int = 30) {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    // Every project is listed before anything is typed, Aide and pinned first
+    // (pins keep their own order), then the most recently active; typing only
+    // narrows that list.
+    let listed = Self.recentFirst(projects.filter { !$0.archived && !$0.isAutomated }, threads: threads)
     guard !needle.isEmpty else {
-      self.projects = []
+      self.projects = listed
       self.threads = []
       return
     }
-    self.projects = projects.filter {
-      !$0.archived && !$0.isAutomated && $0.title.localizedStandardContains(needle)
-    }
+    self.projects = listed.filter { $0.title.localizedStandardContains(needle) }
     self.threads = Array(threads.filter { $0.matches(needle) }.prefix(threadLimit))
   }
 
   var isEmpty: Bool { projects.isEmpty && threads.isEmpty }
+
+  private static func recentFirst(_ projects: [ProjectSummary], threads: [ThreadSummary]) -> [ProjectSummary] {
+    var latest: [ProjectRef: Date] = [:]
+    for thread in threads {
+      guard let ref = thread.projectRef else { continue }
+      latest[ref] = max(latest[ref] ?? .distantPast, thread.activityAt)
+    }
+    let keyed = projects.enumerated().map { offset, project in
+      let rank = project.kind == .personal ? 0 : project.isPinned ? 1 : 2
+      // Only unpinned projects move by activity; a project linked across
+      // machines counts its newest copy.
+      let active = rank < 2 ? Date.distantPast : ([project.ref] + project.members.map(\.ref)).compactMap { latest[$0] }.max() ?? .distantPast
+      return (project: project, offset: offset, rank: rank, active: active)
+    }
+    return keyed.sorted { a, b in
+      if a.rank != b.rank { return a.rank < b.rank }
+      if a.active != b.active { return a.active > b.active }
+      return a.offset < b.offset
+    }.map(\.project)
+  }
 }
 
 extension ThreadSummary {

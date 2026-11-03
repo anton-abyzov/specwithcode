@@ -2849,7 +2849,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           model: "gpt-5.4",
           config: {
             ...CodexAdapterV2.CODEX_THREAD_CONFIG,
-            "shell_environment_policy.set.SPECWEAVE_STUDIO_THREAD_ID": "thread-inject-thread-not-loaded",
+            "shell_environment_policy.set.SPECWEAVE_STUDIO_THREAD_ID":
+              "thread-inject-thread-not-loaded",
             "shell_environment_policy.set.SPECWEAVE_TOOL": "codex",
             "shell_environment_policy.set.SPECWEAVE_MODEL": "",
           },
@@ -7601,13 +7602,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const modelReported = yield* Deferred.make<void>();
           const model = "gpt-6-sol";
           const metadataRequests: Array<string> = [];
+          const childResumeParams: Array<unknown> = [];
           const harness = yield* makeCodexReplayHarness(
             resumeSubagentTranscript,
             (event) =>
               event.type === "subagent.updated" && event.subagent.model === model
                 ? Deferred.succeed(modelReported, undefined)
                 : Effect.void,
-            undefined,
+            (method, params) =>
+              Effect.sync(() => {
+                if (
+                  method === "thread/resume" &&
+                  (params as { threadId?: unknown }).threadId === RESUME_CHILD_THREAD
+                ) {
+                  childResumeParams.push(params);
+                }
+              }),
             (threadId, method) => {
               assert.equal(threadId, RESUME_CHILD_THREAD);
               metadataRequests.push(method);
@@ -7646,6 +7656,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* harness.firstTerminal;
           assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
           assert.deepEqual(metadataRequests, ["thread/read", "thread/resume"]);
+          // The child reloads under the parent turn's policy (its cwd, and the
+          // worktree guard when the thread has one), not the app-server defaults.
+          assert.equal(childResumeParams.length, 1);
+          assert.equal((childResumeParams[0] as { cwd?: unknown }).cwd, "/workspace");
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );

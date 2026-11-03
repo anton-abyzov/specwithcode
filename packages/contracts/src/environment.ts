@@ -316,6 +316,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   linkedMemorySync: Schema.optionalKey(Schema.Boolean),
   /** The coordinator's server syncs its linked copies' memory itself, over the handoff peer route. */
   linkedMemoryPeerSync: Schema.optionalKey(Schema.Boolean),
+  /** Linked copies sync server to server without an open app window: notes
+      replica, memory, plan claims and giving way after a takeover, each pair
+      driven by one of its servers (`projectLink.syncStatus`). Absent on older
+      servers, which the app keeps syncing itself. */
+  serverLinkedSync: Schema.optionalKey(Schema.Boolean),
   /** Can be armed as a linked project's standby coordinator and take over
       automatically (`projectLink.acceptStandby`, `coordinator-lease`). Absent
       on older servers, which cannot be chosen as a standby. */

@@ -1,6 +1,9 @@
 import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  type EnvironmentId,
+} from "@specweave-studio/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@specweave-studio/shared/projectFavicon";
 
 const testState = vi.hoisted(() => ({
@@ -120,6 +123,24 @@ describe("ProjectFavicon", () => {
   beforeEach(() => {
     hooks.reset();
     testState.faviconUrl = "https://environment.test/api/assets/token-a/v1-20-favicon.svg";
+  });
+
+  it("uses the persisted badge seed after a rename without hiding a favicon", () => {
+    const project = makeProject({
+      workspaceRoot: "/workspace/original",
+      title: "Renamed",
+      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, iconSeedTitle: "Original" },
+    });
+    testState.faviconUrl = "";
+    const fallback = ProjectFavicon({ project }) as ReactElement<{ projectName: string }>;
+    expect(fallback.props.projectName).toBe("Original");
+    testState.faviconUrl = "https://environment.test/icon.svg";
+    const favicon = ProjectFavicon({ project }) as ReactElement<{
+      src: string;
+      fallbackProjectName: string;
+    }>;
+    expect(favicon.props.src).toBe(testState.faviconUrl);
+    expect(favicon.props.fallbackProjectName).toBe("Original");
   });
 
   it("shows the project monogram when no favicon exists", () => {

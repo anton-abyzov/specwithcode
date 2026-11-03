@@ -110,12 +110,24 @@ Apart from Unlink and a takeover (below), a copy that runs workers gets an
 active coordinator only through a [handoff](./portable-handoffs.md) from the
 current coordinator. Project settings cannot clear that.
 
+## Keeping copies in step
+
+The machines keep their copies in step on their own, about once a minute, even
+when no SpecWithCode window is open: the coordinator's notes, goal and
+instructions, project memory, and task claims. One of the two machines does
+the work for each pair of copies; nothing is sent when nothing changed.
+
+This needs each machine to have added the other, so it can reach it. If a
+machine runs an older version of SpecWithCode, or has not added the other, the
+open app keeps the copies in step instead, as before, while it can reach both
+machines.
+
 ## When the coordinator's machine is gone
 
 Each copy that runs workers keeps a read-only copy of the coordinator's notes,
-goal and instructions. The app refreshes it when you link, and whenever the
-coordinator's notes, goal or instructions change while it can reach both
-machines.
+goal and instructions. It is refreshed when you link, and whenever the
+coordinator's notes, goal or instructions change while the two machines can
+reach each other.
 
 If the coordinator's machine has been unreachable for at least 10 minutes,
 **Settings > Project > Machines** shows **Take over coordinator here** next to

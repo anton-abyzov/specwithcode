@@ -551,6 +551,14 @@
       "types": "./src/linkedMemorySync.ts",
       "import": "./src/linkedMemorySync.ts"
     },
+    "./linkedPlanSync": {
+      "types": "./src/linkedPlanSync.ts",
+      "import": "./src/linkedPlanSync.ts"
+    },
+    "./linkedPairSync": {
+      "types": "./src/linkedPairSync.ts",
+      "import": "./src/linkedPairSync.ts"
+    },
     "./personalAssistant": {
       "types": "./src/personalAssistant.ts",
       "import": "./src/personalAssistant.ts"

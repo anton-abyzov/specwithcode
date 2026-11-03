@@ -118,6 +118,7 @@ import {
   buildRuntimeInstructions,
   specweaveAgentEnvironment,
 } from "../../provider/RuntimeInstructions.ts";
+import { manualWorktreeGuardPath } from "../../provider/ManualWorktreeGuard.ts";
 import {
   agentProtectedPathsForConfig,
   makeAgentPathGuard,
@@ -805,10 +806,15 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
 function acpAgentEnvironment(
   threadId: ThreadId | null,
   flavor: Pick<AcpAdapterV2Flavor, "driver" | "specweaveTool">,
+  manualWorktreesBlocked: boolean | undefined,
 ): Readonly<Record<string, string>> | undefined {
+  // The guard's PATH builds on the server's, which ACP agents inherit.
   return threadId === null
     ? undefined
-    : specweaveAgentEnvironment({ threadId, tool: flavor.specweaveTool ?? flavor.driver });
+    : {
+        ...specweaveAgentEnvironment({ threadId, tool: flavor.specweaveTool ?? flavor.driver }),
+        ...manualWorktreeGuardPath(undefined, manualWorktreesBlocked),
+      };
 }
 
 /** Commands an agent runs through terminal/create work for the same thread. */
@@ -816,9 +822,10 @@ function acpTerminalEnvironment(
   threadId: ThreadId | null,
   self: SelfInvocation,
   flavor: Pick<AcpAdapterV2Flavor, "driver" | "specweaveTool">,
+  manualWorktreesBlocked: boolean | undefined,
 ): NodeJS.ProcessEnv | undefined {
   const processEnvironment = acpMcpContext(threadId, self).processEnvironment;
-  const agentEnvironment = acpAgentEnvironment(threadId, flavor);
+  const agentEnvironment = acpAgentEnvironment(threadId, flavor, manualWorktreesBlocked);
   return processEnvironment === undefined && agentEnvironment === undefined
     ? undefined
     : { ...processEnvironment, ...agentEnvironment };
@@ -1784,7 +1791,12 @@ export function makeAcpAdapterV2(
           readonly sessionId: string | null;
         }
         let pendingTerminalEnvironment: PendingTerminalEnvironment | null = {
-          environment: acpTerminalEnvironment(input.threadId, self, flavor),
+          environment: acpTerminalEnvironment(
+            input.threadId,
+            self,
+            flavor,
+            input.runtimePolicy.manualWorktreesBlocked,
+          ),
           claimUnknownSession: input.initialNativeThreadId === undefined,
           sessionId: input.initialNativeThreadId ?? null,
         };
@@ -1793,14 +1805,24 @@ export function makeAcpAdapterV2(
           sessionId?: string,
         ): void => {
           pendingTerminalEnvironment = {
-            environment: acpTerminalEnvironment(threadId, self, flavor),
+            environment: acpTerminalEnvironment(
+              threadId,
+              self,
+              flavor,
+              input.runtimePolicy.manualWorktreesBlocked,
+            ),
             claimUnknownSession: false,
             sessionId: sessionId ?? null,
           };
         };
         const prepareClaimableTerminalEnvironment = (threadId: ThreadId | null): void => {
           pendingTerminalEnvironment = {
-            environment: acpTerminalEnvironment(threadId, self, flavor),
+            environment: acpTerminalEnvironment(
+              threadId,
+              self,
+              flavor,
+              input.runtimePolicy.manualWorktreesBlocked,
+            ),
             claimUnknownSession: true,
             sessionId: null,
           };
@@ -1809,7 +1831,12 @@ export function makeAcpAdapterV2(
           sessionId: string,
           threadId: ThreadId | null,
         ): void => {
-          const environment = acpTerminalEnvironment(threadId, self, flavor);
+          const environment = acpTerminalEnvironment(
+            threadId,
+            self,
+            flavor,
+            input.runtimePolicy.manualWorktreesBlocked,
+          );
           pendingTerminalEnvironment = null;
           if (environment === undefined) {
             terminalEnvironmentBySessionId.delete(sessionId);
@@ -2354,7 +2381,11 @@ export function makeAcpAdapterV2(
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           const mcpContext = acpMcpContext(threadId, self);
-          const agentEnvironment = acpAgentEnvironment(threadId, flavor);
+          const agentEnvironment = acpAgentEnvironment(
+            threadId,
+            flavor,
+            input.runtimePolicy.manualWorktreesBlocked,
+          );
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             modelSelection: latestModelSelection,

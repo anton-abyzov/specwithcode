@@ -125,6 +125,7 @@ export const DEFAULT_UPDATE_PREFERENCES: DesktopUpdatePreferences = {
   checkAutomatically: true,
   downloadAutomatically: true,
   installAutomatically: true,
+  restartWhenIdle: true,
   forceInstallAfterMinutes: DEFAULT_FORCE_INSTALL_AFTER_MINUTES,
   pauseWorkAfterMinutes: DEFAULT_PAUSE_WORK_AFTER_MINUTES,
 };
@@ -204,6 +205,7 @@ const DesktopSettingsDocument = Schema.Struct({
       checkAutomatically: Schema.optionalKey(Schema.Boolean),
       downloadAutomatically: Schema.optionalKey(Schema.Boolean),
       installAutomatically: Schema.optionalKey(Schema.Boolean),
+      restartWhenIdle: Schema.optionalKey(Schema.Boolean),
       forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
       pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
     }),
@@ -464,6 +466,7 @@ function normalizeDesktopSettingsDocument(
       checkAutomatically: parsed.updatePreferences?.checkAutomatically !== false,
       downloadAutomatically: parsed.updatePreferences?.downloadAutomatically !== false,
       installAutomatically: parsed.updatePreferences?.installAutomatically !== false,
+      restartWhenIdle: parsed.updatePreferences?.restartWhenIdle !== false,
       forceInstallAfterMinutes: normalizeForceInstallAfterMinutes(
         parsed.updatePreferences?.forceInstallAfterMinutes,
       ),
@@ -527,6 +530,7 @@ function toDesktopSettingsDocument(
       defaults.updatePreferences.downloadAutomatically ||
     settings.updatePreferences.installAutomatically !==
       defaults.updatePreferences.installAutomatically ||
+    settings.updatePreferences.restartWhenIdle !== defaults.updatePreferences.restartWhenIdle ||
     (settings.updatePreferences.forceInstallAfterMinutes ?? DEFAULT_FORCE_INSTALL_AFTER_MINUTES) !==
       (defaults.updatePreferences.forceInstallAfterMinutes ??
         DEFAULT_FORCE_INSTALL_AFTER_MINUTES) ||
@@ -666,6 +670,7 @@ export function setUpdatePreferences(
   return next.checkAutomatically === current.checkAutomatically &&
     next.downloadAutomatically === current.downloadAutomatically &&
     next.installAutomatically === current.installAutomatically &&
+    next.restartWhenIdle === current.restartWhenIdle &&
     next.forceInstallAfterMinutes === current.forceInstallAfterMinutes &&
     next.pauseWorkAfterMinutes === current.pauseWorkAfterMinutes
     ? settings

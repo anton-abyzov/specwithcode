@@ -161,6 +161,7 @@ import {
   withHeadlessBrowserEnvironment,
   withSpecweaveAgentEnvironment,
 } from "../../provider/RuntimeInstructions.ts";
+import { withManualWorktreeGuard } from "../../provider/ManualWorktreeGuard.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
@@ -8277,11 +8278,14 @@ export function makeClaudeAdapterV2(
             settings: adapterOptions.settings,
             // SpecWeave hooks read it: inside Studio they save a checkpoint
             // instead of asking the model to hand off.
-            environment: withSpecweaveAgentEnvironment(adapterOptions.environment, {
-              threadId: turnInput.threadId,
-              tool: "claude",
-              model: compiledSelection.apiModelId,
-            }),
+            environment: withManualWorktreeGuard(
+              withSpecweaveAgentEnvironment(adapterOptions.environment, {
+                threadId: turnInput.threadId,
+                tool: "claude",
+                model: compiledSelection.apiModelId,
+              }),
+              turnInput.runtimePolicy.manualWorktreesBlocked,
+            ),
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...mcpOverrides,
             permissionMode: queryPolicy.permissionMode,

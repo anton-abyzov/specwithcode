@@ -10,7 +10,9 @@ import {
   projectLink,
   replicaMembers,
 } from "../../studio/projectLink";
+import { drivenPairs } from "../../studio/serverLinkedSync";
 import { useLinkMachines } from "./useLinkMachines";
+import { useServerSyncCoverage } from "./useServerSyncCoverage";
 
 /** How often copies are compared while both machines are reachable. */
 const SYNC_EVERY_MS = 60_000;
@@ -33,7 +35,8 @@ export function sharedGroups(projects: ReadonlyArray<EnvironmentProject>): Envir
  * member holds a read-only replica of the coordinator's notes, goal and
  * instructions, so a takeover starts with them, and a coordinator that a
  * member took over from gives way when it is back. It never moves the
- * coordinator on its own.
+ * coordinator on its own. Pairs the machines' servers keep in step
+ * themselves, with no window open, are left to them.
  */
 export function CoordinatorSync() {
   const projects = useProjects();
@@ -42,6 +45,7 @@ export function CoordinatorSync() {
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const replicate = useAtomCommand(projectLink.replicate, { reportFailure: false });
   const supersede = useAtomCommand(projectLink.supersede, { reportFailure: false });
+  const coverage = useServerSyncCoverage();
   const groups = useMemo(() => sharedGroups(projects), [projects]);
   // Changes to bindings, settings or reachability start a pass at once; notes are polled.
   const signature = JSON.stringify(
@@ -67,13 +71,40 @@ export function CoordinatorSync() {
     if (running.current || groups.length === 0) return;
     running.current = true;
     const ready = (project: EnvironmentProject) => machines.takeoverReady(project.environmentId);
+    const copy = (project: EnvironmentProject) => ({
+      environmentId: project.environmentId,
+      projectId: project.id,
+    });
     void (async () => {
       try {
+        // Pairs the machines' servers keep in step themselves are left to them.
+        const covered = await coverage(
+          groups.flatMap((members) => {
+            const coordinator = logicalCoordinator(members)?.member;
+            return [
+              ...pendingSupersedes(members).map(({ successor, previous }) => ({
+                kind: "supersede" as const,
+                driver: copy(successor),
+                peer: copy(previous),
+              })),
+              ...(coordinator
+                ? drivenPairs(
+                    replicaMembers(coordinator, members).map((member) => [
+                      copy(coordinator),
+                      copy(member),
+                    ]),
+                    "replica",
+                  )
+                : []),
+            ];
+          }),
+        );
         for (const members of groups) {
           for (const { successor, previous } of pendingSupersedes(members)) {
             const binding = successor.workspaceSettings?.coordinatorBinding;
             const identity = successor.workspaceSettings?.logicalProject;
             if (!binding || !identity || !ready(successor) || !ready(previous)) continue;
+            if (covered("supersede", copy(successor), copy(previous))) continue;
             const key = `${previous.environmentId}:${previous.id}:${binding.operationId}`;
             if (Date.now() - (demoted.current.get(key) ?? 0) < SYNC_EVERY_MS) continue;
             demoted.current.set(key, Date.now());
@@ -89,7 +120,9 @@ export function CoordinatorSync() {
           }
           const coordinator = logicalCoordinator(members)?.member;
           if (!coordinator || !ready(coordinator)) continue;
-          const targets = replicaMembers(coordinator, members).filter(ready);
+          const targets = replicaMembers(coordinator, members).filter(
+            (member) => ready(member) && !covered("replica", copy(coordinator), copy(member)),
+          );
           const identity = coordinator.workspaceSettings?.logicalProject;
           if (targets.length === 0 || !identity) continue;
           const own = await digest({
@@ -126,6 +159,7 @@ export function CoordinatorSync() {
                   from,
                   logicalProjectId: identity.id,
                   digest: own.value.digest,
+                  fromEpoch: coordinator.workspaceSettings?.coordinatorBinding?.epoch ?? 0,
                   replicatedAt: new Date().toISOString(),
                   goal: content.value.goal,
                   instructions: content.value.instructions,

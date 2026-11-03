@@ -206,7 +206,7 @@ with installation_lock(home, create=True):
             providers[driver]['binaryPath'] = str(resolved)
             if driver == 'codex':
                 providers[driver]['setupMode'] = 'existing'
-    settings = {'defaultThreadEnvMode': 'worktree', 'defaultRuntimeMode': 'approval-required',
+    settings = {'defaultThreadEnvMode': 'local', 'defaultRuntimeMode': 'approval-required',
                 'providers': providers}
     (state / 'settings.json').write_text(json.dumps(settings, indent=2) + '\n')
     user = owner.user
@@ -262,7 +262,7 @@ with installation_lock(home, create=True):
                'release': str(release), 'studioHome': str(studio_home), 'stateDir': str(state),
                'node': str(node), 'nodeVersion': '22.20.0', 'host': '127.0.0.1', 'port': args.port,
                'cookieName': 'studio_session_' + str(args.port) + '_' + hashlib.sha256(str(state).encode()).hexdigest()[:12],
-               'settings': {'defaultThreadEnvMode': 'worktree', 'defaultRuntimeMode': 'approval-required'},
+               'settings': {'defaultThreadEnvMode': 'local', 'defaultRuntimeMode': 'approval-required'},
                'startup': {'autoBootstrapProjectFromCwd': False, 'presentation': 'overview'},
                'trustedOrigins': args.trusted_origin, 'service': service,
                'cliWrapper': str(cli) if args.install_cli else None,

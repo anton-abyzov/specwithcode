@@ -32,7 +32,7 @@ function DynamicProjectIconFallback() {
 // changes the automatic icon, which is how the command palette drifted once.
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
-  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
+  "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon" | "workspaceSettings"
 >;
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
@@ -40,6 +40,7 @@ export function ProjectFavicon(input: {
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
   const { project } = input;
+  const iconTitle = project.workspaceSettings?.iconSeedTitle ?? project.title;
   const src = useAtomValue(
     projectFaviconUrlAtom({
       environmentId: project.environmentId,
@@ -91,7 +92,7 @@ export function ProjectFavicon(input: {
       <ProjectFaviconFallback
         className={input.className}
         icon={FallbackIcon}
-        projectName={project.title}
+        projectName={iconTitle}
       />
     );
   }
@@ -108,7 +109,7 @@ export function ProjectFavicon(input: {
       src={src}
       className={input.className}
       fallbackIcon={FallbackIcon}
-      fallbackProjectName={project.title}
+      fallbackProjectName={iconTitle}
     />
   );
 }

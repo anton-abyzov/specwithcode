@@ -145,8 +145,44 @@ struct LogicTests {
     let results = SearchResults(query: "RECIPE", projects: projects, threads: threads)
     #expect(results.projects.map(\.title) == ["Recipe app"])
     #expect(results.threads.map(\.ref.threadId) == ["t1"])
-    #expect(SearchResults(query: " ", projects: projects, threads: threads).isEmpty)
     #expect(SearchResults(query: "zzz", projects: projects, threads: threads).isEmpty)
+  }
+
+  @Test func emptySearchListsProjectsRecentFirstAndTypingNarrowsThem() {
+    func project(_ id: String, _ title: String, kind: ProjectKind = .code, pinned: Bool = false, archived: Bool = false, automated: Bool = false, members: [String] = []) -> ProjectSummary {
+      ProjectSummary(ref: ProjectRef(environmentId: "env", projectId: id), title: title, kind: kind, machineLabel: "Office Mac", machineOnline: true, isPinned: pinned, archived: archived, isAutomated: automated, members: members.map { ProjectMember(ref: ProjectRef(environmentId: "env-\($0)", projectId: id), machineLabel: $0, machineOnline: true) })
+    }
+    func activity(_ projectId: String, env: String = "env", minutesAgo: Double) -> ThreadSummary {
+      ThreadSummary(ref: ThreadRef(environmentId: env, threadId: "t-\(projectId)-\(minutesAgo)"), projectRef: ProjectRef(environmentId: env, projectId: projectId), title: "Work", activity: .idle, updatedAt: now.addingTimeInterval(-minutesAgo * 60), machineLabel: "Office Mac", machineOnline: true)
+    }
+    let projects = [
+      project("aide", "Aide", kind: .personal),
+      project("old", "Recipe app"),
+      project("new", "Spec site"),
+      project("pinA", "Pinned A", pinned: true),
+      project("pinB", "Pinned B", pinned: true),
+      project("quiet", "Quiet notes"),
+      project("linked", "Linked repo", members: ["m1"]),
+      project("arch", "Old recipes", archived: true),
+      project("auto", "Recipe acceptance run", automated: true),
+    ]
+    let threads = [
+      activity("old", minutesAgo: 90), activity("new", minutesAgo: 30), activity("old", minutesAgo: 300),
+      // Pins keep their own order however recent their threads are.
+      activity("pinB", minutesAgo: 1),
+      // A linked project counts its newest copy on any machine.
+      activity("linked", env: "env-m1", minutesAgo: 5),
+    ]
+
+    let opened = SearchResults(query: " \n", projects: projects, threads: threads)
+    #expect(opened.projects.map(\.title) == ["Aide", "Pinned A", "Pinned B", "Linked repo", "Spec site", "Recipe app", "Quiet notes"])
+    #expect(opened.threads.isEmpty)
+    #expect(!opened.isEmpty)
+
+    // Typing narrows the same list without reordering it.
+    let typed = SearchResults(query: "e", projects: projects, threads: threads)
+    #expect(typed.projects.map(\.title) == opened.projects.map(\.title).filter { $0.localizedStandardContains("e") })
+    #expect(SearchResults(query: "re", projects: projects, threads: threads).projects.map(\.title) == ["Linked repo", "Recipe app"])
   }
 }
 
@@ -275,6 +311,27 @@ struct RouterTests {
     ]
     #expect(DrawerView.sharedTitles(projects) == ["docs"])
     #expect(DrawerView.sharedTitles([]).isEmpty)
+  }
+
+  @Test func machineChipKeepsProjectsOnThatMachineAndRowsListTheirMachines() {
+    let model = model(.empty)
+    model.machines = [
+      MachineSummary(id: "a", label: "Office Mac", status: .connected),
+      MachineSummary(id: "b", label: "Build box", status: .offline),
+    ]
+    let solo = ProjectSummary(ref: ProjectRef(environmentId: "a", projectId: "1"), title: "Solo", machineLabel: "Office Mac", machineOnline: true)
+    let linked = ProjectSummary(ref: ProjectRef(environmentId: "a", projectId: "2"), title: "Linked", machineLabel: "Office Mac", machineOnline: true, members: [
+      ProjectMember(ref: ProjectRef(environmentId: "a", projectId: "2"), machineLabel: "Office Mac", machineOnline: true, isCoordinator: true),
+      ProjectMember(ref: ProjectRef(environmentId: "a", projectId: "2b"), machineLabel: "Office Mac", machineOnline: true),
+      ProjectMember(ref: ProjectRef(environmentId: "b", projectId: "2"), machineLabel: "Build box", machineOnline: false),
+    ])
+    #expect(model.projectsOn(nil, among: [solo, linked]).map(\.title) == ["Solo", "Linked"])
+    #expect(model.projectsOn("b", among: [solo, linked]).map(\.title) == ["Linked"])
+    #expect(model.machines(of: solo).map(\.name) == ["Office Mac"])
+    // Two checkouts on one machine name it once.
+    #expect(model.machines(of: linked).map(\.name) == ["Office Mac", "Build box"])
+    #expect(model.machines(of: linked).map(\.status) == [.online, .offline])
+    #expect(model.machines(of: linked).spoken == "On Office Mac, online; Build box, offline")
   }
 
   @Test func launchRouteWaitsForData() {

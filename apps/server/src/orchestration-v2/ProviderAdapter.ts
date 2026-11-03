@@ -65,6 +65,12 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * Chrome tools (Claude in Chrome). Absent means the default, on.
    */
   preferSpecWithCodeBrowser: Schema.optional(Schema.Boolean),
+  /**
+   * The thread works in the project's own checkout rather than a SpecWithCode
+   * worktree, so its agents get a git that refuses to add worktrees (see
+   * ManualWorktreeGuard.ts). Absent means no guard.
+   */
+  manualWorktreesBlocked: Schema.optional(Schema.Boolean),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

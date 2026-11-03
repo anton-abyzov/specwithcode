@@ -3,8 +3,8 @@ import type { EnvironmentId, LinkedMemoryExport, ProjectId } from "@specweave-st
 /**
  * Two-way replication of linked project memory, driven from one place over
  * export and merge calls on each member: the app window drives it for
- * machines that cannot, and a coordinator's server drives it for its copies
- * (`LinkedMemoryPeerSync`), so memory moves without an open window.
+ * pairs no server drives, and a member's server drives the pairs it owns
+ * (`LinkedPeerSync`), so memory moves without an open window.
  *
  * @module linkedMemorySync
  */
@@ -36,6 +36,8 @@ export interface LinkedMemoryDriver {
   ) => Promise<boolean>;
   /** A pair still differs after a pass and its retry. Defaults to a console warning. */
   readonly reportMismatch?: (left: LinkedMemoryMember, right: LinkedMemoryMember) => void;
+  /** A pair another driver keeps in step: this pass leaves it alone. */
+  readonly skipPair?: (left: LinkedMemoryMember, right: LinkedMemoryMember) => boolean;
 }
 
 /** More pages than 16 MiB of memory needs at 2 MiB each; past this an export is left incomplete. */
@@ -166,6 +168,7 @@ export async function syncLinkedMemory(
     for (const [index, left] of members.entries()) {
       for (const right of members.slice(index + 1)) {
         if (left.environmentId === right.environmentId) continue;
+        if (driver.skipPair?.(left, right)) continue;
         if (!(await mergePair(driver, left, right))) continue;
         if ((await confirmPair(driver, left, right)) !== false) continue;
         if (!(await mergePair(driver, left, right))) continue;

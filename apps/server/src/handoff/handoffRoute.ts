@@ -18,6 +18,7 @@ import { parseJson } from "../json.ts";
 import { clientRuntimeModeCeiling } from "../mcp/McpInvocationContext.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
+import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { HandoffReceiver, type HandoffRefusal, type ReceiverCaller } from "./HandoffReceiver.ts";
 import {
@@ -30,6 +31,7 @@ import {
   HANDOFF_PEER_PREFIX,
   HeartbeatRequest,
   LINKED_MEMORY_PEER_MAX_BYTES,
+  LINKED_SYNC_PEER_MAX_BYTES,
   NegotiateRequest,
   PEER_PATHS,
   PeerPreflightRequest,
@@ -37,6 +39,14 @@ import {
   ReplicateMeta,
   TakeoverRequest,
 } from "./handoffWire.ts";
+import {
+  LinkedContentRequest,
+  LinkedDigestRequest,
+  LinkedPlanExportRequest,
+  LinkedPlanMergeRequest,
+  LinkedReplicaRequest,
+  LinkedSupersedeRequest,
+} from "./linkedSyncWire.ts";
 import {
   HANDOFF_MAX_BUNDLE_BYTES,
   LinkedMemoryExportInput,
@@ -127,7 +137,9 @@ export const layer = HttpRouter.add(
           ? COORDINATOR_REPLICA_MAX_BYTES
           : path === "memory-merge"
             ? LINKED_MEMORY_PEER_MAX_BYTES
-            : HANDOFF_JSON_MAX_BYTES;
+            : path === "linked-replica" || path === "plan-merge"
+              ? LINKED_SYNC_PEER_MAX_BYTES
+              : HANDOFF_JSON_MAX_BYTES;
     const contentLength = Number(request.headers["content-length"] ?? "0");
     if (!Number.isFinite(contentLength) || contentLength > limit) {
       return refusal(413, "The request is too large.", { code: "too_large" });
@@ -196,6 +208,42 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedMemoryPeerReceiver).memoryMerge(caller, input.value));
+      }
+      case "linked-digest": {
+        const input = decodeJson(LinkedDigestRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).digest(caller, input.value));
+      }
+      case "linked-content": {
+        const input = decodeJson(LinkedContentRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).content(caller, input.value));
+      }
+      case "linked-replica": {
+        const input = decodeJson(LinkedReplicaRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).replica(caller, input.value));
+      }
+      case "linked-supersede": {
+        const input = decodeJson(LinkedSupersedeRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).supersede(caller, input.value));
+      }
+      case "plan-export": {
+        const input = decodeJson(LinkedPlanExportRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).planExport(caller, input.value));
+      }
+      case "plan-merge": {
+        const input = decodeJson(LinkedPlanMergeRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).planMerge(caller, input.value));
       }
       case "replicate": {
         let frame: { meta: unknown; bundle: Uint8Array };

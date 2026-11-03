@@ -170,7 +170,7 @@ export function useProjectIconEditor({
         tooltip={tooltip}
         current={withSharedProjectIcon(project, members).projectIcon ?? null}
         customized={customized}
-        projectName={project.title}
+        projectName={project.workspaceSettings?.iconSeedTitle ?? project.title}
         disabled={locked}
         onSelect={(icon) => save({ faviconPath: null, projectIcon: icon })}
         onReset={() => save({ faviconPath: null, projectIcon: null })}

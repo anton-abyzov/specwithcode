@@ -413,6 +413,13 @@ const scenario = (
       coordinatorReplica: () => Effect.die("unused"),
       memoryExport: () => Effect.die("unused"),
       memoryMerge: () => Effect.die("unused"),
+      linkedDigest: () => Effect.die("unused"),
+      linkedContent: () => Effect.die("unused"),
+      linkedReplica: () => Effect.die("unused"),
+      linkedSupersede: () => Effect.die("unused"),
+      reachable: () => Effect.die("unused"),
+      planExport: () => Effect.die("unused"),
+      planMerge: () => Effect.die("unused"),
     });
     const moves = yield* Effect.gen(function* () {
       const receiver = yield* HandoffReceiver.make;

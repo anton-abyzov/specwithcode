@@ -86,6 +86,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.handoffModeResumeFenced]: AuthOrchestrationOperateScope,
   [WS_METHODS.handoffModePreflight]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryMerge]: AuthSettingsWriteScope,
   // Machine names, grant status and usage of paired machines for one thread.

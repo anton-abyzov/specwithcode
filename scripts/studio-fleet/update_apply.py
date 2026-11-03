@@ -70,12 +70,19 @@ import datetime
 import pathlib
 import re
 import sqlite3
+import subprocess
 import time
 import urllib.parse
 
 PAGE_VERIFY_ATTEMPTS = 5  # Each costs seconds; giving up costs minutes of full reads.
 PAGE_VERIFY_QUIET_SECONDS = 1.0
 PAGE_VERIFY_QUIET_WAIT_SECONDS = 15
+# The restarted service runs git, gh and python3 for milliseconds at a time while it starts, and one
+# seen in the process inventory cost M4 345 s of full reads on 1.0.162 (M1, 121 MB, paid 4 s for the
+# same refusal). A child that stays past this also refuses the full read, so waiting loses nothing.
+PAGE_VERIFY_DESCENDANT_SECONDS = 30
+PAGE_VERIFY_DESCENDANT_POLL_SECONDS = 0.25
+PASSING_CHILD_REFUSALS = ('Owned service has unexpected descendants', 'Owned process identities changed during inventory')
 # Rows of one authority table or identity set. M4's 48,000 auth sessions and 54,000 pairing links
 # (October 31, 2026) cost about 2 s a read, and past the old 20,000 every held install silently
 # took three full reads of the database.
@@ -232,6 +239,7 @@ class PageMode:
         # back on the first heartbeat and the full read held "Installing" for 326 s.
         self.verdict = None
         self.after_attempts = 0
+        self.child_waits = 0
         for attempt in range(PAGE_VERIFY_ATTEMPTS):
             self.after_attempts += 1
             try:
@@ -242,7 +250,8 @@ class PageMode:
                         type(error).__name__, str(error)[:160], self.after_attempts)
                     return None
                 self._wait_quiet()
-            except (page_continuity.Refused, read_cache.Unavailable, AssertionError, OSError, sqlite3.Error, ValueError) as error:
+            except (page_continuity.Refused, read_cache.Unavailable, AssertionError, OSError, sqlite3.Error, ValueError,
+                    subprocess.TimeoutExpired) as error:
                 self.fallback_reason = type(error).__name__ + ':' + str(error)[:160]
                 return None
         return None
@@ -274,7 +283,7 @@ class PageMode:
             verdict = page_continuity.prove(self.state, held, started, observed,
                                             identity=self.identity, web_session_policy=policy)
             assert self.heartbeat or verdict['authHeartbeat'] is None, 'Auth heartbeat was not authorized'
-            after, auth, _ = self.snapshot()
+            after, auth, _ = self._snapshot_once_children_pass()
             assert after['servicePid'] != self.expected['servicePid'], 'Page verification still sees the old service'
             if not mark.unchanged(token):
                 raise DatabaseChangedDuringVerification('Database changed during page verification')
@@ -283,6 +292,20 @@ class PageMode:
             return after, auth, None
         finally:
             mark.close()
+
+    def _snapshot_once_children_pass(self):
+        """The proof stands while the watermark holds, which the caller checks after this returns,
+        so only the process check is repeated, and it must still pass in full."""
+        deadline = time.monotonic() + PAGE_VERIFY_DESCENDANT_SECONDS
+        while True:
+            try:
+                return self.snapshot()
+            except (AssertionError, subprocess.TimeoutExpired) as error:
+                passing = isinstance(error, subprocess.TimeoutExpired) or str(error) in PASSING_CHILD_REFUSALS
+                if not passing or time.monotonic() >= deadline:
+                    raise
+            self.child_waits += 1
+            time.sleep(PAGE_VERIFY_DESCENDANT_POLL_SECONDS)
 
     def full_baseline(self, held, before):
         path = pathlib.Path(held['clone'])
@@ -306,6 +329,7 @@ class PageMode:
     def receipt(self, result):
         result['databaseProofMode'] = 'stopped-clone-pages-v1'
         result['databasePageProof'] = self.verdict
+        result['pageChildWaits'] = self.child_waits
         result['rowPreservation'] = 'verified-stopped-clone-pages'
         result['completeDatabaseContinuity'] = 'verified-pages'
         result.pop('rowsByteIdentical', None)  # No claim about a legacy whole-history hash.

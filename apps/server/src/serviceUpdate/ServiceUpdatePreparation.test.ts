@@ -718,10 +718,18 @@ it.live("an if-idle hold holds an idle service, stopping nothing, without an upd
             Preparation.IF_IDLE_HOLD_TTL_MS,
           );
         }
+        // A foreign hold may have queued work. An unattended if-idle caller
+        // must leave it intact, unlike the explicit drain's plain prepare look.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('late', 't2', 'queued', NULL)`;
         // A hold already in place is not this caller's: not reported as its own, not released.
         const again = yield* preparation.prepare({ stopWork: false, hold: true, ifIdle: true });
         assert.isFalse(again.held);
         assert.isTrue(yield* hold.isHeld);
+        assert.deepEqual(fixture.dispatched, []);
+        const queued =
+          yield* sql`SELECT status FROM orchestration_v2_projection_runs WHERE run_id = 'late'`;
+        assert.equal(queued[0]?.status, "queued");
       }),
     );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

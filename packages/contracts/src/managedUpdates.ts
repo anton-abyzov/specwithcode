@@ -98,10 +98,12 @@ export interface DesktopUpdatePreferences {
   /** Download a found release in the background instead of waiting for a click. */
   downloadAutomatically: boolean;
   /**
-   * Install without asking: the app when it quits, the service at a quiet
+   * Install without asking: the app when idle (if enabled) or when it quits, the service at a quiet
    * moment (no session working for a while).
    */
   installAutomatically: boolean;
+  /** Restart a downloaded app update after five minutes idle; never stop running work. */
+  restartWhenIdle?: boolean;
   /**
    * False when this build keeps self-update off (SPECWITHCODE_DISABLE_AUTO_UPDATE or STUDIO_DISABLE_AUTO_UPDATE),
    * so nothing runs on its own and the switches above report off. Absent on
@@ -127,6 +129,7 @@ export const DesktopUpdatePreferencesSchema = Schema.Struct({
   checkAutomatically: Schema.Boolean,
   downloadAutomatically: Schema.Boolean,
   installAutomatically: Schema.Boolean,
+  restartWhenIdle: Schema.optionalKey(Schema.Boolean),
   automaticUpdatesAllowed: Schema.optionalKey(Schema.Boolean),
   forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
   pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
@@ -136,6 +139,7 @@ export const DesktopUpdatePreferencesPatchSchema = Schema.Struct({
   checkAutomatically: Schema.optionalKey(Schema.Boolean),
   downloadAutomatically: Schema.optionalKey(Schema.Boolean),
   installAutomatically: Schema.optionalKey(Schema.Boolean),
+  restartWhenIdle: Schema.optionalKey(Schema.Boolean),
   forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
   pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
 });

@@ -219,6 +219,57 @@ const waitForProject = Effect.fn("ProjectServiceTest.waitForProject")(function* 
   return yield* Effect.die(`Project ${projectId} was not enriched in time.`);
 });
 
+it.layer(layerTestFor(layerMetadata))("Project rename appearance", (it) => {
+  it.effect("keeps automatic identity and every saved icon through repeated renames", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const appearances = [
+        { projectIcon: null, faviconPath: null },
+        { projectIcon: { kind: "lucide", name: "dna", color: "yellow" }, faviconPath: null },
+        { projectIcon: { kind: "emoji", emoji: "🌲" }, faviconPath: null },
+        { projectIcon: { kind: "monogram", text: "SW", color: "blue" }, faviconPath: null },
+        { projectIcon: null, faviconPath: "brand/icon.svg" },
+      ] as const;
+      for (const [index, appearance] of appearances.entries()) {
+        const projectId = ProjectId.make(`rename-icon-${index}`);
+        const commandId = (step: string) => CommandId.make(`rename-icon-${index}-${step}`);
+        yield* service.create({
+          commandId: commandId("create"),
+          projectId,
+          title: `Original ${index}`,
+          workspaceRoot: `/work/rename-icon-${index}`,
+        });
+        yield* service.update({ commandId: commandId("icon"), projectId, ...appearance });
+        for (const name of ["Renamed", "Renamed again"]) {
+          const result = yield* service.update({
+            commandId: commandId(name),
+            projectId,
+            title: `${name} ${index}`,
+          });
+          assert.deepEqual(result.projectIcon, appearance.projectIcon);
+          if (appearance.faviconPath !== null)
+            assert.equal(result.faviconPath, appearance.faviconPath);
+          const reloaded = Option.getOrThrow(yield* service.getById(projectId));
+          assert.equal(reloaded.workspaceSettings?.iconSeedTitle, `Original ${index}`);
+          assert.deepEqual(reloaded.projectIcon, appearance.projectIcon);
+          const shell = Option.getOrThrow(yield* service.getShell(projectId));
+          assert.equal(shell.workspaceSettings?.iconSeedTitle, `Original ${index}`);
+          assert.deepEqual(shell.projectIcon, appearance.projectIcon);
+          assert.equal(shell.faviconPath, appearance.faviconPath);
+        }
+        const reset = yield* service.update({
+          commandId: commandId("reset"),
+          projectId,
+          projectIcon: null,
+          faviconPath: null,
+        });
+        assert.isNull(reset.projectIcon);
+        assert.equal(reset.workspaceSettings?.iconSeedTitle, `Original ${index}`);
+      }
+    }),
+  );
+});
+
 it.layer(layerTest)("ProjectService", (it) => {
   it.effect("creates, updates, resolves, snapshots, and soft-deletes projects", () =>
     Effect.gen(function* () {

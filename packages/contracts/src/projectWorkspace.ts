@@ -122,6 +122,8 @@ export const ProjectWorkspaceSettings = Schema.Struct({
   /** Server-managed identity and transfer fence; absent on legacy independent projects. */
   logicalProject: Schema.optional(LogicalProject),
   coordinatorBinding: Schema.optional(ProjectCoordinatorBinding),
+  /** Server-owned title seed for the automatic badge, retained across renames. */
+  iconSeedTitle: Schema.optional(Schema.String),
   kind: ProjectKind.pipe(Schema.withDecodingDefault(Effect.succeed("code" as const))),
   environment: ProjectEnvironmentSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_ENVIRONMENT)),

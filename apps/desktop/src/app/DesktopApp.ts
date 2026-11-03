@@ -1,3 +1,5 @@
+import { makeIdleAppUpdate, type IdleUpdateSession } from "../updates/idleAppUpdate.ts";
+import { prepareIdleAppUpdate } from "../updates/idleAppUpdateRpc.ts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -31,6 +33,7 @@ import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironment
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
 import { embeddedBackendRefusal, reservedServicePorts } from "../backend/localServiceAttach.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopLegacyLocalStorage from "./DesktopLegacyLocalStorage.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./DesktopLinuxUrlHandler.ts";
@@ -628,6 +631,45 @@ const startup = Effect.gen(function* () {
     }
     return { httpBaseUrl, bearerToken: yield* sleepAuth.getBearerToken };
   });
+  const idleSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const idleConfig = yield* DesktopConfig.DesktopConfig;
+  const idleUpdater = makeIdleAppUpdate({
+    preferences: idleSettings.get.pipe(
+      Effect.map((value) => ({
+        ...value.updatePreferences,
+        automaticUpdatesAllowed: !idleConfig.disableAutoUpdate,
+      })),
+    ),
+    state: updates.getState,
+    idleSeconds: powerMonitor.getSystemIdleTime,
+    session: Effect.gen(function* () {
+      // Every backend the updater stops needs an idle lease. Secondary/WSL
+      // backends currently have separate auth, so defer rather than stop them.
+      if ((yield* sleepPool.list).length > 1) return null;
+      const target = yield* localServer;
+      return {
+        prepare: (input: Parameters<IdleUpdateSession["prepare"]>[0]) =>
+          prepareIdleAppUpdate(target, input).pipe(
+            Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
+          ),
+        current: Effect.gen(function* () {
+          if ((yield* sleepPool.list).length > 1) return false;
+          const current = yield* localServer;
+          return (
+            current.httpBaseUrl.href === target.httpBaseUrl.href &&
+            current.bearerToken === target.bearerToken
+          );
+        }).pipe(Effect.catchCause(() => Effect.succeed(false))),
+      };
+    }).pipe(Effect.catchCause(() => Effect.succeed(null))),
+    install: (version, beforeQuit, afterFailure) =>
+      updates.installPrepared(version, { beforeQuit, afterFailure }),
+  });
+  yield* idleUpdater.tick.pipe(
+    Effect.andThen(Effect.sleep(Duration.seconds(30))),
+    Effect.forever,
+    Effect.forkScoped,
+  );
   yield* registerHandoffSleepNotice(
     powerMonitor,
     (action) => handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" }),

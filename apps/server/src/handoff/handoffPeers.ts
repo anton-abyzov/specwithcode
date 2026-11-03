@@ -25,6 +25,8 @@ import {
   LinkedMemoryExportInput,
   LinkedMemoryMergeInput,
   LinkedMemoryMergeResult,
+  type ProjectPlanLinkExport,
+  ProjectPlanLinkMergeResult,
 } from "@specweave-studio/contracts";
 
 import { teamRulesHoldRefusal } from "@specweave-studio/shared/teamRules";
@@ -52,6 +54,7 @@ import {
   HeartbeatRequest,
   HeartbeatResponse,
   LINKED_MEMORY_PEER_MAX_BYTES,
+  LINKED_SYNC_PEER_MAX_BYTES,
   NegotiateRequest,
   NegotiateResponse,
   PeerErrorBody,
@@ -63,6 +66,19 @@ import {
   TakeoverRequest,
   TakeoverResponse,
 } from "./handoffWire.ts";
+import {
+  LinkedContentRequest,
+  LinkedContentResponse,
+  LinkedDigestRequest,
+  LinkedDigestResponse,
+  LinkedPlanExportRequest,
+  LinkedPlanExportResponse,
+  LinkedPlanMergeRequest,
+  LinkedReplicaRequest,
+  LinkedReplicaResponse,
+  LinkedSupersedeRequest,
+  LinkedSupersedeResponse,
+} from "./linkedSyncWire.ts";
 
 const IDENTITY_TTL_MS = 5 * 60_000;
 const TIMEOUT_MS: Record<PeerPath, number> = {
@@ -75,10 +91,20 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "coordinator-replica": 10_000,
   "memory-export": 60_000,
   "memory-merge": 60_000,
+  "linked-digest": 15_000,
+  "linked-content": 60_000,
+  "linked-replica": 60_000,
+  "linked-supersede": 30_000,
+  "plan-export": 60_000,
+  "plan-merge": 60_000,
 };
-/** A memory page answers with up to the link cap; every other answer is small. */
+/** A memory page, a coordinator's content or a plan answers with up to the link cap; the rest is small. */
 const answerLimit = (path: PeerPath) =>
-  path === "memory-export" ? LINKED_MEMORY_PEER_MAX_BYTES : HANDOFF_JSON_MAX_BYTES;
+  path === "memory-export"
+    ? LINKED_MEMORY_PEER_MAX_BYTES
+    : path === "linked-content" || path === "plan-export"
+      ? LINKED_SYNC_PEER_MAX_BYTES
+      : HANDOFF_JSON_MAX_BYTES;
 
 export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
   readonly code: HandoffModeErrorCode;
@@ -118,6 +144,11 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
     ) => Effect.Effect<HandoffPeerTarget, HandoffPeerError>;
     readonly targets: Effect.Effect<ReadonlyArray<HandoffPeerTarget>>;
+    /**
+     * Whether this machine can reach `environmentId` now with its work grant
+     * there: an address answers as that machine. Sends no request.
+     */
+    readonly reachable: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
     readonly negotiate: (
       environmentId: EnvironmentId,
       request: NegotiateRequest,
@@ -158,6 +189,31 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: LinkedMemoryMergeInput,
     ) => Effect.Effect<LinkedMemoryMergeResult, HandoffPeerError>;
+    /** Server-driven sync of a linked copy there (`linkedSyncWire.ts`). */
+    readonly linkedDigest: (
+      environmentId: EnvironmentId,
+      request: LinkedDigestRequest,
+    ) => Effect.Effect<LinkedDigestResponse, HandoffPeerError>;
+    readonly linkedContent: (
+      environmentId: EnvironmentId,
+      request: LinkedContentRequest,
+    ) => Effect.Effect<LinkedContentResponse, HandoffPeerError>;
+    readonly linkedReplica: (
+      environmentId: EnvironmentId,
+      request: LinkedReplicaRequest,
+    ) => Effect.Effect<LinkedReplicaResponse, HandoffPeerError>;
+    readonly linkedSupersede: (
+      environmentId: EnvironmentId,
+      request: LinkedSupersedeRequest,
+    ) => Effect.Effect<LinkedSupersedeResponse, HandoffPeerError>;
+    readonly planExport: (
+      environmentId: EnvironmentId,
+      request: LinkedPlanExportRequest,
+    ) => Effect.Effect<ProjectPlanLinkExport, HandoffPeerError>;
+    readonly planMerge: (
+      environmentId: EnvironmentId,
+      request: LinkedPlanMergeRequest,
+    ) => Effect.Effect<ProjectPlanLinkMergeResult, HandoffPeerError>;
   }
 >()("specweave-studio/handoff/handoffPeers") {}
 
@@ -173,6 +229,18 @@ const encodeMemoryMerge = Schema.encodeSync(LinkedMemoryMergeInput);
 const decodeMemoryExport = Schema.decodeUnknownOption(LinkedMemoryExport);
 const decodeMemoryMerge = Schema.decodeUnknownOption(LinkedMemoryMergeResult);
 const decodeError = Schema.decodeUnknownOption(PeerErrorBody);
+const encodeLinkedDigest = Schema.encodeSync(LinkedDigestRequest);
+const encodeLinkedContent = Schema.encodeSync(LinkedContentRequest);
+const encodeLinkedReplica = Schema.encodeSync(LinkedReplicaRequest);
+const encodeLinkedSupersede = Schema.encodeSync(LinkedSupersedeRequest);
+const encodePlanExport = Schema.encodeSync(LinkedPlanExportRequest);
+const encodePlanMerge = Schema.encodeSync(LinkedPlanMergeRequest);
+const decodeLinkedDigest = Schema.decodeUnknownOption(LinkedDigestResponse);
+const decodeLinkedContent = Schema.decodeUnknownOption(LinkedContentResponse);
+const decodeLinkedReplica = Schema.decodeUnknownOption(LinkedReplicaResponse);
+const decodeLinkedSupersede = Schema.decodeUnknownOption(LinkedSupersedeResponse);
+const decodePlanExport = Schema.decodeUnknownOption(LinkedPlanExportResponse);
+const decodePlanMerge = Schema.decodeUnknownOption(ProjectPlanLinkMergeResult);
 const decodeNegotiate = Schema.decodeUnknownOption(NegotiateResponse);
 const decodeReplicate = Schema.decodeUnknownOption(ReplicateResponse);
 const decodePreflight = Schema.decodeUnknownOption(PeerPreflightResponse);
@@ -417,6 +485,15 @@ export const make = Effect.gen(function* () {
   return HandoffPeers.of({
     target: (environmentId) => findTarget(environmentId).pipe(Effect.map(toPeerTarget)),
     targets: configured.pipe(Effect.map((machines) => machines.map(toPeerTarget))),
+    reachable: (environmentId) =>
+      Effect.gen(function* () {
+        const target = yield* findTarget(environmentId);
+        const credential = yield* credentialFor(target);
+        yield* reachPeer(target, credential.accessToken);
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ),
     negotiate: (environmentId, request) =>
       postJson(environmentId, "negotiate", encodeNegotiate(request), decodeNegotiate),
     replicate: (environmentId, meta, bundle) =>
@@ -461,6 +538,23 @@ export const make = Effect.gen(function* () {
       postJson(environmentId, "memory-export", encodeMemoryExport(request), decodeMemoryExport),
     memoryMerge: (environmentId, request) =>
       postJson(environmentId, "memory-merge", encodeMemoryMerge(request), decodeMemoryMerge),
+    linkedDigest: (environmentId, request) =>
+      postJson(environmentId, "linked-digest", encodeLinkedDigest(request), decodeLinkedDigest),
+    linkedContent: (environmentId, request) =>
+      postJson(environmentId, "linked-content", encodeLinkedContent(request), decodeLinkedContent),
+    linkedReplica: (environmentId, request) =>
+      postJson(environmentId, "linked-replica", encodeLinkedReplica(request), decodeLinkedReplica),
+    linkedSupersede: (environmentId, request) =>
+      postJson(
+        environmentId,
+        "linked-supersede",
+        encodeLinkedSupersede(request),
+        decodeLinkedSupersede,
+      ),
+    planExport: (environmentId, request) =>
+      postJson(environmentId, "plan-export", encodePlanExport(request), decodePlanExport),
+    planMerge: (environmentId, request) =>
+      postJson(environmentId, "plan-merge", encodePlanMerge(request), decodePlanMerge),
   });
 });
 

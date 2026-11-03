@@ -11,15 +11,17 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { linkedMemory, linkedMemoryGroups, syncLinkedMemory } from "../../studio/linkedMemory";
+import { drivenPairs } from "../../studio/serverLinkedSync";
+import { useServerSyncCoverage } from "./useServerSyncCoverage";
 
 /** How often linked copies exchange memory while their machines are reachable. */
 const SYNC_EVERY_MS = 60_000;
 
 /**
- * Keeps project memory the same on every reachable copy of a linked project
- * whose coordinator's server cannot sync it itself (an older version), in both
- * directions: the last writer wins per file and the other version is
- * kept beside it. Memory larger than one message goes over in pages, and each
+ * Keeps project memory the same on every reachable copy of a linked project,
+ * in both directions, for pairs the machines' servers do not keep in step
+ * themselves (an older version, no work grant between them, a failing pass):
+ * the last writer wins per file and the other version is kept beside it. Memory larger than one message goes over in pages, and each
  * pass ends by checking both copies agree. Machines too old for two-way memory
  * are left out.
  */
@@ -31,6 +33,7 @@ export function LinkedMemorySync() {
   const read = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
   const exportMemory = useAtomCommand(linkedMemory.export, { reportFailure: false });
   const mergeMemory = useAtomCommand(linkedMemory.merge, { reportFailure: false });
+  const coverage = useServerSyncCoverage();
   const groups = useMemo(() => {
     const byId = new Map(environments.map((item) => [item.environmentId, item]));
     const ready = (environmentId: EnvironmentId) => {
@@ -55,22 +58,27 @@ export function LinkedMemorySync() {
   const sync = useEffectEvent(() => {
     if (running.current || groups.length === 0) return;
     running.current = true;
-    void syncLinkedMemory(groups, {
-      exportMemory: async (member, options) => {
-        const result = await exportMemory({
-          environmentId: member.environmentId,
-          input: { projectId: member.projectId, ...options },
-        });
-        return result._tag === "Success" ? result.value : null;
-      },
-      mergeMemory: async (member, peer, memory) => {
-        const result = await mergeMemory({
-          environmentId: member.environmentId,
-          input: { projectId: member.projectId, peer, export: memory },
-        });
-        return result._tag === "Success";
-      },
-    }).finally(() => {
+    void (async () => {
+      // Pairs the machines' servers keep in step themselves are left to them.
+      const covered = await coverage(drivenPairs(groups, "memory"));
+      await syncLinkedMemory(groups, {
+        skipPair: (left, right) => covered("memory", left, right),
+        exportMemory: async (member, options) => {
+          const result = await exportMemory({
+            environmentId: member.environmentId,
+            input: { projectId: member.projectId, ...options },
+          });
+          return result._tag === "Success" ? result.value : null;
+        },
+        mergeMemory: async (member, peer, memory) => {
+          const result = await mergeMemory({
+            environmentId: member.environmentId,
+            input: { projectId: member.projectId, peer, export: memory },
+          });
+          return result._tag === "Success";
+        },
+      });
+    })().finally(() => {
       running.current = false;
     });
   });

@@ -634,155 +634,169 @@ it("readThread and sendToThread reach threads in other projects", async () => {
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-it("sendToThread forwards the user's own words from a worker follow-up", async () => {
-  const workerThreadId = ThreadId.make("thread-mcp-orchestrator-worker");
-  const followUpId = MessageId.make("coordinator-send:project:command-1");
-  const userMessage = (id: string, text: string, createdBy: "user" | "agent") => ({
-    id,
-    threadId: parentThreadId,
-    role: "user",
-    text,
-    createdBy,
-    creationSource: createdBy === "user" ? "web" : "mcp",
-    senderThreadId: workerThreadId,
-    attachments: [],
-    streaming: false,
-    runId: null,
-    nodeId: null,
-    createdAt: now,
-    updatedAt: now,
-  });
-  const parentProjection = {
-    thread: baseThread({
+it.each(["worker follow-up", "coordinator answer"] as const)(
+  "sendToThread forwards the user's own words from a %s",
+  async (source) => {
+    const workerThreadId = ThreadId.make("thread-mcp-orchestrator-worker");
+    const followUpId = MessageId.make("coordinator-send:project:command-1");
+    const userMessage = (id: string, text: string, createdBy: "user" | "agent") => ({
+      id,
       threadId: parentThreadId,
-      title: "Coordinator",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
-    runs: [makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" })],
-    visibleTurnItems: [],
-    runtimeRequests: [],
-    messages: [
-      userMessage(
-        followUpId,
-        `User follow-up from selected worker ${workerThreadId}, message ${followUpId}. Review that thread and decide whether to reuse it or route elsewhere.\n\nrlease and push all!`,
-        "user",
-      ),
-      userMessage("agent-report", "Worker finished", "agent"),
-    ],
-    contextTransfers: [],
-    subagents: [],
-    updatedAt: now,
-  } as unknown as OrchestrationV2ThreadProjection;
-  const workerProjection = {
-    ...parentProjection,
-    thread: baseThread({
-      threadId: workerThreadId,
-      title: "Release macOS app",
-      instanceId: parentInstanceId,
-      model: "gpt-5.4",
-    }),
-    runs: [],
-    messages: [],
-  } as unknown as OrchestrationV2ThreadProjection;
-  const sent: Array<ThreadManagementService.ThreadManagementSendInput> = [];
-  const layer = OrchestratorMcpService.layer.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: (threadId) =>
-            threadId === parentThreadId
-              ? Effect.succeed(parentProjection)
-              : threadId === workerThreadId
-                ? Effect.succeed(workerProjection)
-                : Effect.die(`unexpected thread ${threadId}`),
-          getThreadShell: (threadId) =>
-            Effect.succeed(
-              threadId === workerThreadId
-                ? (workerProjection.thread as unknown as OrchestrationV2ThreadShell)
-                : null,
-            ),
-          getProjectThreadRecords: () => Effect.succeed(workerProjection),
-          sendToThread: (input) => {
-            sent.push(input);
-            return Effect.succeed({
-              run: { id: "run-worker", status: "queued" },
-              projection: { runs: [] },
-              delivery: "started",
-            } as unknown as ThreadManagementService.ThreadManagementSendResult);
-          },
-        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeed(Option.none()) }),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-          list: () => Effect.succeed([]),
-        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
-        NodeCrypto.layer,
-      ),
-    ),
-  );
-
-  await Effect.gen(function* () {
-    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-    yield* service.sendToThread(makeScope(), {
-      threadId: workerThreadId,
-      forwardMessageId: followUpId,
+      role: "user",
+      text,
+      createdBy,
+      creationSource: createdBy === "user" ? "web" : "mcp",
+      senderThreadId: source === "worker follow-up" ? workerThreadId : null,
+      attachments: [],
+      streaming: false,
+      runId: null,
+      nodeId: null,
+      createdAt: now,
+      updatedAt: now,
     });
-    // A retry without a clientRequestId lands on the same message.
-    yield* service.sendToThread(makeScope(), {
-      threadId: workerThreadId,
-      forwardMessageId: followUpId,
-    });
-    expect(sent).toHaveLength(2);
-    expect(sent[0]).toMatchObject({
-      threadId: workerThreadId,
-      text: "rlease and push all!",
-      createdBy: "user",
-      senderThreadId: parentThreadId,
-    });
-    expect(sent[1]!.messageId).toBe(sent[0]!.messageId);
-
-    // Only what the user wrote is forwarded as theirs, and never alongside rewritten text.
-    const agentWords = yield* service
-      .sendToThread(makeScope(), {
+    const parentProjection = {
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Coordinator",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [makeRun({ id: RunId.make("run-parent-live"), ordinal: 1, status: "running" })],
+      visibleTurnItems: [],
+      runtimeRequests: [],
+      messages: [
+        userMessage(
+          followUpId,
+          source === "worker follow-up"
+            ? `User follow-up from selected worker ${workerThreadId}, message ${followUpId}. Review that thread and decide whether to reuse it or route elsewhere.\n\nrlease and push all!`
+            : "rlease and push all!",
+          "user",
+        ),
+        userMessage("agent-report", "Worker finished", "agent"),
+      ],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    } as unknown as OrchestrationV2ThreadProjection;
+    const workerProjection = {
+      ...parentProjection,
+      thread: baseThread({
         threadId: workerThreadId,
-        forwardMessageId: MessageId.make("agent-report"),
-      })
-      .pipe(Effect.flip);
-    expect(agentWords.code).toBe("invalid_request");
-    const both = yield* service
-      .sendToThread(makeScope(), {
+        title: "Release macOS app",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [],
+      messages: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const sent: Array<ThreadManagementService.ThreadManagementSendInput> = [];
+    const layer = OrchestratorMcpService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: (threadId) =>
+              threadId === parentThreadId
+                ? Effect.succeed(parentProjection)
+                : threadId === workerThreadId
+                  ? Effect.succeed(workerProjection)
+                  : Effect.die(`unexpected thread ${threadId}`),
+            getThreadShell: (threadId) =>
+              Effect.succeed(
+                threadId === workerThreadId
+                  ? (workerProjection.thread as unknown as OrchestrationV2ThreadShell)
+                  : null,
+              ),
+            getProjectThreadRecords: () => Effect.succeed(workerProjection),
+            sendToThread: (input) => {
+              sent.push(input);
+              return Effect.succeed({
+                run: { id: "run-worker", status: "queued" },
+                projection: { runs: [] },
+                delivery: "started",
+              } as unknown as ThreadManagementService.ThreadManagementSendResult);
+            },
+          } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () => Effect.succeed(Option.none()),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+            list: () => Effect.succeed([]),
+          } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+          NodeCrypto.layer,
+        ),
+      ),
+    );
+
+    await Effect.gen(function* () {
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      yield* service.sendToThread(makeScope(), {
         threadId: workerThreadId,
         forwardMessageId: followUpId,
-        message: "From the user (coordinator relay): release",
-      })
-      .pipe(Effect.flip);
-    expect(both.code).toBe("invalid_request");
-    const neither = yield* service
-      .sendToThread(makeScope(), { threadId: workerThreadId })
-      .pipe(Effect.flip);
-    expect(neither.code).toBe("invalid_request");
-    expect(sent).toHaveLength(2);
+      });
+      // A retry without a clientRequestId lands on the same message.
+      yield* service.sendToThread(makeScope(), {
+        threadId: workerThreadId,
+        forwardMessageId: followUpId,
+      });
+      expect(sent).toHaveLength(2);
+      expect(sent[0]).toMatchObject({
+        threadId: workerThreadId,
+        text: "rlease and push all!",
+        createdBy: "user",
+        senderThreadId: parentThreadId,
+      });
+      expect(sent[1]!.messageId).toBe(sent[0]!.messageId);
 
-    // A relay that quotes the follow-up back to its thread delivers only the user's words.
-    yield* service.sendToThread(makeScope(), {
-      threadId: workerThreadId,
-      clientRequestId: "relay-1",
-      message:
-        'User follow-up typed in this thread, relayed by the coordinator: "rlease and push all!"\n\nReply with one line of status.',
-    });
-    expect(sent[2]).toMatchObject({ text: "rlease and push all!", createdBy: "user" });
-    expect(sent[2]!.messageId).toBe(sent[0]!.messageId);
-    // A coordinator's own brief that does not quote the user stays the coordinator's.
-    yield* service.sendToThread(makeScope(), {
-      threadId: workerThreadId,
-      message: "Please push all the branches",
-    });
-    expect(sent[3]).toMatchObject({ text: "Please push all the branches", createdBy: "agent" });
-  }).pipe(Effect.provide(layer), Effect.runPromise);
-});
+      // Only what the user wrote is forwarded as theirs, and never alongside rewritten text.
+      const agentWords = yield* service
+        .sendToThread(makeScope(), {
+          threadId: workerThreadId,
+          forwardMessageId: MessageId.make("agent-report"),
+        })
+        .pipe(Effect.flip);
+      expect(agentWords.code).toBe("invalid_request");
+      const both = yield* service
+        .sendToThread(makeScope(), {
+          threadId: workerThreadId,
+          forwardMessageId: followUpId,
+          message: "From the user (coordinator relay): release",
+        })
+        .pipe(Effect.flip);
+      expect(both.code).toBe("invalid_request");
+      const neither = yield* service
+        .sendToThread(makeScope(), { threadId: workerThreadId })
+        .pipe(Effect.flip);
+      expect(neither.code).toBe("invalid_request");
+      expect(sent).toHaveLength(2);
+
+      // A plain coordinator reply has no selected-worker provenance. Its explicit
+      // forward above is valid, but quoting it in an agent brief must not upgrade
+      // that brief to user-authored consent.
+      yield* service.sendToThread(makeScope(), {
+        threadId: workerThreadId,
+        clientRequestId: "relay-1",
+        message:
+          'User follow-up typed in this thread, relayed by the coordinator: "rlease and push all!"\n\nReply with one line of status.',
+      });
+      if (source === "worker follow-up") {
+        expect(sent[2]).toMatchObject({ text: "rlease and push all!", createdBy: "user" });
+        expect(sent[2]!.messageId).toBe(sent[0]!.messageId);
+      } else {
+        expect(sent[2]).toMatchObject({ createdBy: "agent" });
+        expect(sent[2]!.messageId).not.toBe(sent[0]!.messageId);
+      }
+      // A coordinator's own brief that does not quote the user stays the coordinator's.
+      yield* service.sendToThread(makeScope(), {
+        threadId: workerThreadId,
+        message: "Please push all the branches",
+      });
+      expect(sent[3]).toMatchObject({ text: "Please push all the branches", createdBy: "agent" });
+    }).pipe(Effect.provide(layer), Effect.runPromise);
+  },
+);
 
 it("scheduleTask gives a coordinator's routines their own thread and binds a worker's", async () => {
   const workerThreadId = ThreadId.make("thread-mcp-orchestrator-worker");

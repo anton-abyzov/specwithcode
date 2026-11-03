@@ -72,6 +72,7 @@ import {
 } from "../../provider/PiCommands.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { withSpecweaveAgentEnvironment } from "../../provider/RuntimeInstructions.ts";
+import { withManualWorktreeGuard } from "../../provider/ManualWorktreeGuard.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
@@ -417,10 +418,13 @@ export function makePiAdapterV2(
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: withSpecweaveAgentEnvironment(options.environment, {
-          threadId: input.threadId,
-          tool: "pi",
-        }),
+        environment: withManualWorktreeGuard(
+          withSpecweaveAgentEnvironment(options.environment, {
+            threadId: input.threadId,
+            tool: "pi",
+          }),
+          input.runtimePolicy.manualWorktreesBlocked,
+        ),
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,

@@ -715,10 +715,12 @@ export function planProjectCommand(input: {
         expectedRevision: _expected,
         logicalProject: _identity,
         coordinatorBinding: _binding,
+        iconSeedTitle: _iconSeed,
         ...settingsPatch
       } = (command.workspaceSettings ?? {}) as ProjectWorkspacePatch & {
         logicalProject?: unknown;
         coordinatorBinding?: unknown;
+        iconSeedTitle?: unknown;
       };
       const renamedIdentity =
         command.title !== undefined &&
@@ -726,11 +728,18 @@ export function planProjectCommand(input: {
         previousSettings.coordinatorBinding?.state === "active"
           ? { ...previousSettings.logicalProject, title: command.title }
           : undefined;
+      // Keep the automatic badge separate from chosen icons: a rename must not
+      // turn a fallback into an override that hides a favicon or a linked icon.
+      const iconSeedTitle =
+        command.title !== undefined && command.title !== project.title
+          ? (previousSettings.iconSeedTitle ?? project.title)
+          : undefined;
       const workspaceSettings =
         command.workspaceSettings ||
         command.coordinatorThreadId ||
         command.ownership ||
-        renamedIdentity
+        renamedIdentity ||
+        iconSeedTitle !== undefined
           ? {
               ...previousSettings,
               ...Object.fromEntries(
@@ -740,6 +749,7 @@ export function planProjectCommand(input: {
                 ? { coordinatorThreadId: command.coordinatorThreadId }
                 : {}),
               ...(renamedIdentity ? { logicalProject: renamedIdentity } : {}),
+              ...(iconSeedTitle === undefined ? {} : { iconSeedTitle }),
               ...(command.ownership
                 ? {
                     logicalProject: command.ownership.logicalProject,

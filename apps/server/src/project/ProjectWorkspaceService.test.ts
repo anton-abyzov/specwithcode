@@ -515,6 +515,34 @@ it("asks workers for short reports and the coordinator to relay only their outco
   assert.include(worker, "the user reads it in this thread");
   assert.notInclude(coordinator, "not a replay of your steps");
 });
+it("routes answers written in either coordinator kind without inventing consent", () => {
+  for (const kind of ["code", "personal"] as const) {
+    const context = Workspace.projectContextText({
+      projectId: "p",
+      threadId: "c",
+      settings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        kind,
+        coordinatorThreadId: ThreadId.make("c"),
+      },
+      files: [],
+      index: "",
+    });
+    assert.include(context, "Users may answer worker questions here");
+    assert.include(context, "studio_thread_send {threadId, forwardMessageId}");
+    assert.include(context, "never ask them to repeat it there");
+    assert.include(context, "If the destination is ambiguous, ask which worker, never broadcast");
+    assert.include(context, "permission is not a personal factual declaration");
+    assert.include(
+      context,
+      "Never invent an answer, choose an option for the user or bypass native permission controls",
+    );
+    assert.include(context, "Do not call a question answered merely because forwarding succeeded");
+    assert.notInclude(context, "A go-ahead written here never answers");
+    assert.notInclude(context, "answered by the user inside that worker");
+  }
+});
+
 it("keeps the coordinator role to what tools and code do not already say", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,

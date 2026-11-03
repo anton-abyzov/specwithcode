@@ -130,6 +130,7 @@ describe("DesktopSettings", () => {
       checkAutomatically: true,
       downloadAutomatically: true,
       installAutomatically: false,
+      restartWhenIdle: true,
       forceInstallAfterMinutes: 2,
       pauseWorkAfterMinutes: 10,
     });
@@ -138,6 +139,20 @@ describe("DesktopSettings", () => {
       off,
     );
   });
+
+  it.effect("persists idle restart opt-out independently of installation", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setUpdatePreferences({ restartWhenIdle: false });
+        const loaded = yield* settings.load;
+        assert.isFalse(loaded.updatePreferences.restartWhenIdle);
+        assert.isTrue(loaded.updatePreferences.installAutomatically);
+        yield* settings.setUpdatePreferences({ installAutomatically: false });
+        assert.isFalse((yield* settings.load).updatePreferences.restartWhenIdle);
+      }),
+    ),
+  );
 
   it("keeps the force-install wait within range and stores a changed one", () => {
     const base = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;

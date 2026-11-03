@@ -23,9 +23,11 @@ import { type EffectiveWorkGrant, unscopedGrant } from "../fleet/workGrantPolicy
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { CoordinatorLeaseReceiver } from "../project/CoordinatorLeaseRoute.ts";
 import { LinkedMemoryPeerReceiver } from "../project/LinkedMemoryPeers.ts";
+import { LinkedPeerReceiver } from "../project/LinkedPeerRoute.ts";
 import { HandoffReceiver, type ReceiverCaller } from "./HandoffReceiver.ts";
 import * as HandoffRoute from "./handoffRoute.ts";
-import { HANDOFF_PEER_PREFIX } from "./handoffWire.ts";
+import { HANDOFF_PEER_PREFIX, LINKED_SYNC_PEER_MAX_BYTES } from "./handoffWire.ts";
+import { LINKED_SYNC_PROTOCOL_VERSION } from "./linkedSyncWire.ts";
 
 const m4 = EnvironmentId.make("env-m4");
 
@@ -76,6 +78,13 @@ function api() {
         }),
         Layer.mock(CoordinatorLeaseReceiver)({ grantRefused: () => Effect.void }),
         Layer.mock(LinkedMemoryPeerReceiver)({}),
+        Layer.mock(LinkedPeerReceiver)({
+          digest: (caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return {} as never;
+            }),
+        }),
         Layer.mock(HandoffReceiver)({
           negotiate: (caller) =>
             Effect.sync(() => {
@@ -108,7 +117,19 @@ function api() {
         }),
       }),
     );
-  return { negotiate, callers, dispose };
+  const post = (path: string, bearer: string, body: string, length = body.length) =>
+    handler(
+      new Request(`http://minis.local${HANDOFF_PEER_PREFIX}/${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(length),
+          authorization: `Bearer ${bearer}`,
+        },
+        body,
+      }),
+    );
+  return { negotiate, post, callers, dispose };
 }
 
 describe("handoff route", () => {
@@ -133,6 +154,49 @@ describe("handoff route", () => {
       expect((await app.negotiate("legacy")).status).toBe(200);
       expect(app.callers[0]?.grant?.legacy).toBe(true);
       expect(app.callers[0]?.runtimeCeiling).toBe("auto");
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("hands linked sync to its receiver with the caller its grant names", async () => {
+    const app = api();
+    try {
+      const body = JSON.stringify({
+        protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
+        logicalProjectId: "logical:1",
+        projectId: "project-minis",
+      });
+      expect((await app.post("linked-digest", "limited", body)).status).toBe(200);
+      expect(app.callers[0]?.sourceEnvironmentId).toBe(m4);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("refuses an oversize linked payload before reading it", async () => {
+    const app = api();
+    try {
+      const answer = await app.post(
+        "linked-replica",
+        "limited",
+        "{}",
+        LINKED_SYNC_PEER_MAX_BYTES + 1,
+      );
+      expect(answer.status).toBe(413);
+      expect(await answer.json()).toMatchObject({ code: "too_large" });
+      expect(app.callers).toEqual([]);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("answers an unknown path the way older machines do, so a driver can tell them apart", async () => {
+    const app = api();
+    try {
+      const answer = await app.post("linked-something-newer", "limited", "{}");
+      expect(answer.status).toBe(404);
+      expect(await answer.json()).toEqual({ error: "not_found", code: "not_found" });
     } finally {
       await app.dispose();
     }

@@ -1,5 +1,6 @@
 import { teamRulesInstanceDriver, teamRulesTurnRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   ModelSelection,
   OrchestrationV2AppThread,
@@ -22,6 +23,7 @@ import {
 } from "./ProviderAdapter.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { projectUsesWorktrees } from "../mcp/toolkits/project/launchWorkspace.ts";
 
 /**
  * ERRORS
@@ -140,31 +142,42 @@ export const layerFromProjectStore: Layer.Layer<
           instance === undefined
             ? undefined
             : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
-        const cwd =
-          input.thread.worktreePath ??
-          (yield* projects.get(input.thread.projectId).pipe(
-            Effect.mapError(
-              (cause) =>
-                new RuntimePolicyResolveError({
-                  projectId: input.thread.projectId,
-                  providerInstanceId: input.modelSelection.instanceId,
-                  cause,
-                }),
-            ),
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(
+        const worktreePath = input.thread.worktreePath;
+        const localProject =
+          worktreePath === null
+            ? yield* projects.get(input.thread.projectId).pipe(
+                Effect.mapError(
+                  (cause) =>
                     new RuntimePolicyResolveError({
                       projectId: input.thread.projectId,
                       providerInstanceId: input.modelSelection.instanceId,
-                      cause: "Project not found.",
+                      cause,
                     }),
-                  ),
-                onSome: (project) => Effect.succeed(project.workspaceRoot),
-              }),
-            ),
-          ));
+                ),
+                Effect.flatMap(
+                  Option.match({
+                    onNone: () =>
+                      Effect.fail(
+                        new RuntimePolicyResolveError({
+                          projectId: input.thread.projectId,
+                          providerInstanceId: input.modelSelection.instanceId,
+                          cause: "Project not found.",
+                        }),
+                      ),
+                    onSome: (project) => Effect.succeed(project),
+                  }),
+                ),
+              )
+            : null;
+        const cwd = localProject === null ? worktreePath! : localProject.workspaceRoot;
+        // A thread in the project's own checkout may not add a worktree while
+        // the project's Use worktrees switch is off; with it on (an umbrella
+        // folder, a coordinator) the agent may still make one itself.
+        const manualWorktreesBlocked =
+          localProject !== null &&
+          !projectUsesWorktrees(
+            resolveProjectSettings(settings, input.thread.projectId, localProject),
+          );
         return ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
@@ -178,6 +191,7 @@ export const layerFromProjectStore: Layer.Layer<
           claudeWorkflowMode: projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode,
           responseStyle: projectOverrides?.responseStyle ?? settings.responseStyle,
           preferSpecWithCodeBrowser: settings.preferSpecWithCodeBrowser,
+          manualWorktreesBlocked,
         });
       }),
     });

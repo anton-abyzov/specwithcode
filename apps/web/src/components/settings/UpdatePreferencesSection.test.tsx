@@ -26,7 +26,22 @@ vi.mock("./settingsLayout", () => ({
 vi.mock("./settingsSearch", () => ({
   searchableSetting: () => ({ id: "app-updates", title: "Check for updates automatically" }),
 }));
-vi.mock("../ui/switch", () => ({ Switch: () => null }));
+vi.mock("../ui/switch", () => ({
+  Switch: (props: {
+    checked: boolean;
+    disabled?: boolean;
+    onCheckedChange: (value: boolean) => void;
+    "aria-label": string;
+  }) => (
+    <button
+      role="switch"
+      aria-label={props["aria-label"]}
+      aria-checked={props.checked}
+      disabled={props.disabled}
+      onClick={() => props.onCheckedChange(!props.checked)}
+    />
+  ),
+}));
 vi.mock("../ui/button", () => ({
   Button: ({
     children,
@@ -102,6 +117,32 @@ afterEach(() => {
 });
 
 describe("UpdatePreferencesSection", () => {
+  it("keeps idle restart disabled under an installation opt-out", async () => {
+    await render();
+    const control = renderer!.root
+      .findAllByType("button")
+      .find((node) => node.props["aria-label"] === "Restart automatically when idle")!;
+    expect(control.props.disabled).toBe(true);
+  });
+  it("saves idle restart opt-out without changing other update preferences", async () => {
+    bridge.getUpdatePreferences.mockImplementationOnce(async () => ({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: true,
+    }));
+    bridge.setUpdatePreferences.mockImplementationOnce(async (patch: object) => ({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      installAutomatically: true,
+      ...patch,
+    }));
+    await render();
+    const control = renderer!.root
+      .findAllByType("button")
+      .find((node) => node.props["aria-label"] === "Restart automatically when idle")!;
+    await act(async () => control.props.onClick());
+    expect(bridge.setUpdatePreferences).toHaveBeenLastCalledWith({ restartWhenIdle: false });
+  });
   it("installs the service through the same Update now flow as the sidebar", async () => {
     await render();
     const button = installButton();

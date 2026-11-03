@@ -29,6 +29,11 @@ import {
   ThreadId,
   WS_METHODS,
 } from "@specweave-studio/contracts";
+import {
+  isReplicaTarget,
+  type LinkedCopy as SyncCopy,
+  pendingSupersede,
+} from "@specweave-studio/shared/linkedPairSync";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { isProjectFolder } from "./projectMachineFolders";
 import { isOrdinaryProjectChoice, type ScratchRootLookup } from "./projectListVisibility";
@@ -74,6 +79,11 @@ export const projectLink = {
     label: "project-link:supersede",
     tag: WS_METHODS.projectSupersede,
   }),
+  /** Which pairs this copy's server keeps in step itself, and how its last passes went. */
+  syncStatus: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:sync-status",
+    tag: WS_METHODS.projectLinkSyncStatus,
+  }),
   /** Runs this copy's own coordinator next to the others; nothing gives way. */
   startCoordinator: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "project-link:start-coordinator",
@@ -117,10 +127,13 @@ export function highestEpoch(members: ReadonlyArray<EnvironmentProject>): number
   return Math.max(0, ...members.map((m) => m.workspaceSettings?.coordinatorBinding?.epoch ?? 0));
 }
 
-const sameRef = (
-  a: LogicalProjectMember,
-  b: Pick<LogicalProjectMember, "environmentId" | "projectId">,
-) => a.environmentId === b.environmentId && a.projectId === b.projectId;
+/** A copy as the shared sync decisions see it. */
+const syncCopyOf = (project: EnvironmentProject): SyncCopy => ({
+  environmentId: project.environmentId,
+  projectId: project.id,
+  logicalProjectId: project.workspaceSettings?.logicalProject?.id,
+  binding: project.workspaceSettings?.coordinatorBinding,
+});
 
 export interface PendingSupersede {
   /** The copy that took over and is active now. */
@@ -136,22 +149,15 @@ export interface PendingSupersede {
 export function pendingSupersedes(members: ReadonlyArray<EnvironmentProject>): PendingSupersede[] {
   const pending: PendingSupersede[] = [];
   for (const successor of members) {
-    const binding = successor.workspaceSettings?.coordinatorBinding;
-    if (binding?.state !== "active" || !binding.predecessor || !binding.takenOverAt) continue;
-    const previous = members.find((candidate) =>
-      sameRef(binding.predecessor!, {
-        environmentId: candidate.environmentId,
-        projectId: candidate.id,
-      }),
-    );
-    const previousBinding = previous?.workspaceSettings?.coordinatorBinding;
-    if (
-      previous &&
-      previous.workspaceSettings?.logicalProject?.id ===
-        successor.workspaceSettings?.logicalProject?.id &&
-      (previousBinding?.state ?? "active") === "active" &&
-      (previousBinding?.epoch ?? 0) < binding.epoch
-    )
+    const predecessor = successor.workspaceSettings?.coordinatorBinding?.predecessor;
+    const previous = predecessor
+      ? members.find(
+          (candidate) =>
+            candidate.environmentId === predecessor.environmentId &&
+            candidate.id === predecessor.projectId,
+        )
+      : undefined;
+    if (previous && pendingSupersede(syncCopyOf(successor), syncCopyOf(previous)))
       pending.push({ successor, previous });
   }
   return pending;
@@ -162,13 +168,9 @@ export function replicaMembers(
   coordinator: EnvironmentProject,
   members: ReadonlyArray<EnvironmentProject>,
 ): EnvironmentProject[] {
-  const identity = coordinator.workspaceSettings?.logicalProject?.id;
   return members.filter(
     (member) =>
-      member !== coordinator &&
-      member.environmentId !== coordinator.environmentId &&
-      member.workspaceSettings?.logicalProject?.id === identity &&
-      member.workspaceSettings?.coordinatorBinding?.state === "transferred",
+      member !== coordinator && isReplicaTarget(syncCopyOf(coordinator), syncCopyOf(member)),
   );
 }
 

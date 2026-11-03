@@ -28,9 +28,9 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
       let input = field("Message").frame
       XCTAssertGreaterThan(input.minX, search.frame.minX, "Expanded navigation must sit beside the composer")
       // A machine chip leaves every project reachable.
-      tap(button(startingWith: "Office Mac"))
+      chooseMachine("Office Mac")
       waitForHittable(button(startingWith: "Recipe app"))
-      tap(button("All"))
+      chooseMachine(nil)
       // A project row goes down a level in the column; its first row opens the coordinator.
       tap(button(startingWith: "Recipe app"))
       waitForHittable(app.buttons["sidebar.all-projects"])
@@ -151,6 +151,101 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     saveShot("5 Threads only")
     tap(reopen)
     waitForHittable(panes)
+  }
+
+  /// With the column at All projects, the coordinator on the right still
+  /// reaches its threads: its header's Threads button brings them back.
+  func testCoordinatorReachesItsThreadsFromAllProjects() throws {
+    launch(route: "coordinator")
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let middle = app.frame.width / 2
+    let allProjects = app.buttons["sidebar.all-projects"]
+    if allProjects.exists { tap(allProjects); settle() }
+    let threadsButton = app.buttons["chat.threads"]
+    waitForHittable(threadsButton)
+    XCTAssertGreaterThan(threadsButton.frame.minX, middle * 0.8, "The coordinator header offers its threads")
+    saveShot("6 All projects beside the coordinator")
+
+    tap(threadsButton)
+    let thread = app.descendants(matching: .any).matching(identifier: "sidebar.thread").firstMatch
+    waitForHittable(thread)
+    XCTAssertLessThan(thread.frame.minX, middle, "The column lists the coordinator's threads")
+    waitForGone(threadsButton)
+    saveShot("7 Threads beside the coordinator")
+  }
+
+  /// With the coordinator kept in the column, the same button brings the
+  /// coordinator back to the column with its threads beside it.
+  func testCoordinatorBesideReachesItsThreadsFromAllProjects() throws {
+    launch(route: "coordinator", coordinatorBeside: true)
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let middle = app.frame.width / 2
+    let threadsPane = app.descendants(matching: .any).matching(identifier: "threads-pane.header").firstMatch
+    waitForHittable(threadsPane)
+    let threadsButton = app.buttons["chat.threads"]
+
+    tap(app.buttons["sidebar.all-projects"])
+    settle()
+    waitForHittable(threadsButton)
+    saveShot("8 All projects, coordinator kept beside")
+    tap(threadsButton)
+    waitForHittable(threadsPane)
+    XCTAssertGreaterThan(threadsPane.frame.minX, middle * 0.8, "The threads sit beside the coordinator")
+    XCTAssertLessThan(app.descendants(matching: .any).matching(identifier: "column.panes").firstMatch.frame.minX, middle)
+    saveShot("9 Coordinator and its threads again")
+  }
+
+  /// A machine chip keeps the projects on that machine, and each project row
+  /// names the machines it is on.
+  func testMachineChipNarrowsProjectsAndRowsNameTheirMachines() throws {
+    launch()
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let allProjects = app.buttons["sidebar.all-projects"]
+    if allProjects.exists { tap(allProjects); settle() }
+    let specweave = app.buttons["SpecWeave"]
+    let verified = app.buttons["Verified Skill"]
+    waitForHittable(specweave)
+    waitForHittable(verified)
+    XCTAssertTrue((verified.value as? String ?? "").contains("Build box, online"), "The row says which machines it is on")
+    XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "sidebar.project-machines").firstMatch.exists)
+    saveShot("10 Projects with their machines")
+
+    // Machines that don't fit as chips are all in one menu.
+    let menu = app.buttons["sidebar.machine-menu"]
+    if menu.exists {
+      tap(menu)
+      waitForHittable(button(startingWith: "Travel laptop"))
+      saveShot("10b Machine menu")
+      tap(button(startingWith: "Build box"))
+    } else {
+      chooseMachine("Build box")
+    }
+    waitForGone(specweave)
+    waitForHittable(verified)
+    waitForHittable(app.buttons["Recipe app"])
+    saveShot("11 Build box projects")
+
+    chooseMachine(nil)
+    waitForHittable(specweave)
+  }
+
+  /// Picks a machine from the chips, or from the menu that replaces them
+  /// when they don't fit the column; nil picks all of them.
+  private func chooseMachine(_ name: String?) {
+    let menu = app.buttons["sidebar.machine-menu"]
+    if menu.exists {
+      tap(menu)
+      tap(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name ?? "All machines")).firstMatch)
+    } else {
+      tap(name.map { button(startingWith: $0) } ?? button("All"))
+    }
+    settle()
   }
 
   /// A screenshot attached to the run and, when SWC_SHOTS_DIR is set for the

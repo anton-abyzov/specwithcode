@@ -57,6 +57,45 @@ describe("DesktopUpdates Squirrel staging", () => {
       return updates;
     });
 
+  it.effect(
+    "an automatic install refused after staging leaves backends running and can retry",
+    () =>
+      Effect.gen(function* () {
+        const harness = makeHarness({
+          downloadUpdate: Effect.sync(() =>
+            harness.emit("update-downloaded", { version: "1.2.4" }),
+          ),
+        });
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            harness.emit("update-available", { version: "1.2.4" });
+            yield* settle;
+            yield* updates.download;
+            yield* settle;
+            let checked = false;
+            const refused = yield* updates.installPrepared("1.2.4", {
+              beforeQuit: Effect.sync(() => {
+                checked = true;
+                assert.equal(harness.quits(), 0);
+                return false;
+              }),
+            });
+            assert.isTrue(checked);
+            assert.isFalse(refused.accepted);
+            assert.equal(harness.quits(), 0);
+            assert.isFalse(yield* Ref.get((yield* DesktopState.DesktopState).quitting));
+            const accepted = yield* updates.installPrepared("1.2.4", {
+              beforeQuit: Effect.succeed(true),
+            });
+            assert.isTrue(accepted.accepted);
+            assert.equal(harness.quits(), 1);
+          }),
+        ).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
   it.effect("the run follow-up install in the gate-opening tick restages before quitting", () =>
     Effect.gen(function* () {
       const service = serviceOn("1.2.3");
@@ -267,6 +306,51 @@ describe("DesktopUpdates Squirrel staging", () => {
     }),
   );
 
+  it.effect("restores an opt-out changed while automatic installation stages", () =>
+    Effect.gen(function* () {
+      const staging = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let downloads = 0;
+      const harness = makeHarness({
+        squirrel: true,
+        downloadUpdate: Effect.gen(function* () {
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          if (++downloads === 2) {
+            yield* Deferred.succeed(staging, undefined);
+            yield* Deferred.await(release);
+          }
+        }),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.setUpdatePreferences({ installAutomatically: false });
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* settle;
+          yield* updates.download;
+          yield* settle;
+          const install = yield* updates
+            .installPrepared("1.2.4", {
+              beforeQuit: Effect.succeed(false),
+            })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(staging);
+          // Applying the saved opt-out must preserve staging's temporary flag.
+          yield* settings.setUpdatePreferences({ installAutomatically: false });
+          yield* updates.applyPreferences;
+          assert.isTrue(harness.installOnQuit());
+          yield* Deferred.succeed(release, undefined);
+          assert.isFalse((yield* Fiber.join(install)).accepted);
+          assert.isFalse(harness.installOnQuit());
+          assert.equal(harness.quits(), 0);
+          assert.deepEqual(harness.installSteps, []);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("an install that cannot stage fails without quitting or stopping backends", () =>
     Effect.gen(function* () {
       let downloads = 0;
@@ -317,7 +401,16 @@ describe("DesktopUpdates Squirrel staging", () => {
           yield* flushCallbacks;
 
           // The test process is the app, and it does not quit.
-          assert.isTrue((yield* updates.install).accepted);
+          let released = 0;
+          assert.isTrue(
+            (yield* updates.installPrepared("1.2.4", {
+              beforeQuit: Effect.succeed(true),
+              afterFailure: Effect.sync(() => {
+                released++;
+              }),
+            })).accepted,
+          );
+          assert.equal(released, 0);
           assert.isTrue(yield* Ref.get(desktopState.quitting));
 
           // The updater's quit began, so only the backstop takes it back.
@@ -332,6 +425,7 @@ describe("DesktopUpdates Squirrel staging", () => {
           assert.isFalse(yield* Ref.get(desktopState.shutdownBegun));
           assert.isFalse(yield* updates.isActionActive);
           assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+          assert.equal(released, 1);
           assert.equal((yield* updates.getState).errorContext, "install");
 
           const checks = harness.checkCount();

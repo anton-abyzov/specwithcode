@@ -123,6 +123,27 @@ export function goalDigest(content: { readonly goal: string; readonly instructio
   return sha256([JSON.stringify([content.goal, content.instructions])]).toString("hex");
 }
 
+/**
+ * How a copy a peer pushed is marked: the baseline is the last copy the
+ * owner's app wrote, and a peer's copies carry it on, so a takeover can say
+ * the goal or instructions changed since the owner's app last saw them.
+ */
+export function peerReplicaMark(
+  held: Option.Option<ProjectCoordinatorReplica>,
+  content: { readonly goal: string; readonly instructions: string },
+  replicatedAt: string,
+): NonNullable<ProjectCoordinatorReplica["peer"]> {
+  const clientGoalDigest = Option.match(held, {
+    onNone: () => null,
+    onSome: (value) => (value.peer === undefined ? goalDigest(value) : value.peer.clientGoalDigest),
+  });
+  const changed = clientGoalDigest !== null && goalDigest(content) !== clientGoalDigest;
+  const instructionsChangedAt = changed
+    ? (Option.getOrUndefined(held)?.peer?.instructionsChangedAt ?? replicatedAt)
+    : null;
+  return { receivedAt: replicatedAt, clientGoalDigest, instructionsChangedAt };
+}
+
 const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
   a.environmentId === b.environmentId &&
   a.projectId === b.projectId &&
@@ -336,28 +357,18 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
           )
             return { replicatedAt: held.value.replicatedAt, replayed: true };
           const replicatedAt = yield* nowIso;
-          // The baseline is the last copy the owner's app wrote; a peer's copies carry it on.
-          const clientGoalDigest = Option.match(held, {
-            onNone: () => null,
-            onSome: (value) =>
-              value.peer === undefined ? goalDigest(value) : value.peer.clientGoalDigest,
-          });
-          const changed =
-            clientGoalDigest !== null && goalDigest(input.content) !== clientGoalDigest;
-          const instructionsChangedAt = changed
-            ? (Option.getOrUndefined(held)?.peer?.instructionsChangedAt ?? replicatedAt)
-            : null;
           yield* replicas
             .write(project.id, {
               from: record.coordinator,
               logicalProjectId: record.logicalProjectId,
               digest: input.content.digest,
+              fromEpoch: record.epoch,
               replicatedAt,
               goal: input.content.goal,
               instructions: input.content.instructions,
               notes: [...input.content.notes],
               notesTruncated: input.content.notesTruncated,
-              peer: { receivedAt: replicatedAt, clientGoalDigest, instructionsChangedAt },
+              peer: peerReplicaMark(held, input.content, replicatedAt),
             })
             .pipe(Effect.catch(storeFailed));
           return { replicatedAt, replayed: false };

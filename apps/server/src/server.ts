@@ -40,7 +40,12 @@ import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { fixPath } from "./os-jank.ts";
+import {
+  installManualWorktreeGuard,
+  setManualWorktreeGuard,
+} from "./provider/ManualWorktreeGuard.ts";
 import * as Ws from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
@@ -228,6 +233,8 @@ import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
 import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
+import * as LinkedPeerRoute from "./project/LinkedPeerRoute.ts";
+import * as LinkedPeerSync from "./project/LinkedPeerSync.ts";
 import * as HandoffRoute from "./handoff/handoffRoute.ts";
 import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
@@ -700,12 +707,18 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(HandoffReceiver.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
-  // Linked project memory between machines: the peer route's side, and the
-  // coordinator's loop that drives it without an open app window.
+  // Linked copies kept in step between machines without an open app window:
+  // the peer route's side, and the loop that drives the pairs this server owns.
   LinkedMemoryPeers.layerReceiver,
-  Layer.effectDiscard(Effect.forkScoped(LinkedMemoryPeers.runLoop)).pipe(
+  LinkedPeerRoute.layer.pipe(
+    Layer.provide(layerCoordinatorLease),
+    // Confirms a takeover with the copy that took over before this one gives way.
+    Layer.provide(HandoffPeers.layer),
+    Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+  ),
+  Layer.effectDiscard(LinkedPeerSync.start).pipe(
     Layer.provide(
-      LinkedMemoryPeers.layerSync.pipe(
+      LinkedPeerSync.layer.pipe(
         Layer.provide(HandoffPeers.layer),
         Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
       ),
@@ -1028,6 +1041,28 @@ const layerMakeServer = Layer.unwrap(
     const layerLauncher = ServiceLauncherClient.layer;
 
     yield* fixPath();
+    // After fixPath, so the shim wraps the git the user's shell finds.
+    const hostEnvironment = yield* HostProcessEnvironment;
+    const hostPlatform = yield* HostProcessPlatform;
+    yield* Effect.sync(() => {
+      try {
+        const guard = installManualWorktreeGuard({
+          stateDir: config.stateDir,
+          serverEnvironment: hostEnvironment,
+          platform: hostPlatform,
+        });
+        setManualWorktreeGuard(guard);
+        if (guard !== null && hostPlatform === "win32") {
+          process.stderr.write(
+            "[server] The git worktree guard covers cmd, PowerShell and Git Bash; a program that starts git.exe directly is not guarded.\n",
+          );
+        }
+      } catch (error) {
+        process.stderr.write(
+          `[server] Could not write the git worktree guard: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    });
 
     const layerHttpListening = Layer.effectDiscard(
       Effect.gen(function* () {
