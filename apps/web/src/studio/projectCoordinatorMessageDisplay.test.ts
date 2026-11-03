@@ -7,6 +7,7 @@ import {
   projectReportMessageIds,
   projectSystemNotice,
   returnedFollowUpIds,
+  relayedReplyNotes,
   routedRepliesForThread,
   routedReplyNotes,
 } from "./projectCoordinatorMessageDisplay";
@@ -513,5 +514,110 @@ describe("requests the personal assistant routed here", () => {
     expect(
       projectCoordinatorMessageDisplay(routed(text, "someone-else"), project, [worker]),
     ).toEqual({ text, sourceThread: null, routedFrom: null });
+  });
+});
+
+describe("relayedReplyNotes", () => {
+  const thread = { id: ThreadId.make("shared-id"), environmentId: "ministorm" };
+  const typedAt = "2026-11-03T01:00:00.000Z";
+  const history = { partial: false, millis: (at: string) => Date.parse(at) };
+  const relayed = (id: string, threadId: string, machine: string, words: string) => ({
+    id,
+    role: "user",
+    createdBy: "user",
+    createdAt: typedAt,
+    text: `Regarding thread ${threadId} on machine ${machine} (m4 lag):\n\n${words}`,
+  });
+  const mine = relayed("mine", "shared-id", "ministorm", " yes ");
+  const note = {
+    id: "mine",
+    text: "yes",
+    kind: "relayed",
+    targetThreadId: null,
+    createdAt: typedAt,
+  };
+  const threadMessage = (text: string, createdAt: string) => ({ role: "user", text, createdAt });
+
+  it("finds only messages typed in this thread on its machine", () => {
+    expect(
+      relayedReplyNotes(
+        [
+          mine,
+          relayed("other-machine", "shared-id", "m1", "Same id elsewhere"),
+          relayed("other-thread", "other-id", "ministorm", "Another thread"),
+          relayed("empty", "shared-id", "ministorm", "  "),
+          { id: "plain", role: "user", createdBy: "user", text: "Plain coordinator message" },
+          { ...relayed("quoted", "shared-id", "ministorm", "Quoted"), createdBy: "agent" },
+        ],
+        thread,
+        [],
+        history,
+      ),
+    ).toEqual([note]);
+  });
+
+  it("adds no note for a message that reached the thread after it was typed", () => {
+    expect(
+      relayedReplyNotes(
+        [mine],
+        thread,
+        [threadMessage("From your coordinator: yes", "2026-11-03T01:00:05.000Z")],
+        history,
+      ),
+    ).toEqual([]);
+  });
+
+  it("is not fooled by the same words earlier in the thread", () => {
+    expect(
+      relayedReplyNotes(
+        [mine],
+        thread,
+        [threadMessage("Answer yes or no when asked", "2026-11-02T23:59:00.000Z")],
+        history,
+      ),
+    ).toEqual([note]);
+  });
+
+  it("is not fooled by a later message that only contains the letters", () => {
+    expect(
+      relayedReplyNotes(
+        [mine],
+        thread,
+        [threadMessage("See yesterday's run", "2026-11-03T01:00:05.000Z")],
+        history,
+      ),
+    ).toEqual([note]);
+  });
+
+  it.each([
+    ["да", "дальше", false],
+    ["да", "Ответ: да.", true],
+    ["😀", "x😀y", true],
+    ["c++", "use c++ here", true],
+    ["long ".repeat(10_000).trim(), `Later: ${"long ".repeat(10_000).trim()}`, true],
+  ])("matches relayed words %j whole in any script or length", (words, later, delivered) => {
+    expect(
+      relayedReplyNotes(
+        [relayed("words", "shared-id", "ministorm", words)],
+        thread,
+        [threadMessage(later, "2026-11-03T01:00:05.000Z")],
+        history,
+      ),
+    ).toHaveLength(delivered ? 0 : 1);
+  });
+
+  it("says nothing about a relay older than a partly loaded thread", () => {
+    const partial = { ...history, partial: true };
+    const later = threadMessage("Later turn", "2026-11-03T02:00:00.000Z");
+    expect(relayedReplyNotes([mine], thread, [later], partial)).toEqual([]);
+    expect(relayedReplyNotes([mine], thread, [], partial)).toEqual([]);
+    expect(
+      relayedReplyNotes(
+        [mine],
+        thread,
+        [threadMessage("Earlier turn", "2026-11-02T23:00:00.000Z"), later],
+        partial,
+      ),
+    ).toEqual([note]);
   });
 });

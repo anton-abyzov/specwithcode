@@ -38,9 +38,9 @@ export interface ProjectMessageRouting {
   readonly saveCoordinatorModel?: (selection: ModelSelection) => Promise<void>;
   readonly send: (prompt: string, attachments?: ReadonlyArray<ChatAttachment>) => Promise<void>;
   /**
-   * A worker on this machine: its composer sends straight to the worker, the
-   * way a thread outside a project does, with no coordinator turn. The user
-   * chose the thread by typing in it.
+   * A worker, here or on another machine: its composer sends straight to the
+   * worker, the way a thread outside a project does, with no coordinator turn.
+   * The user chose the thread by typing in it.
    */
   readonly direct?: boolean;
   readonly openCoordinator: () => void;

@@ -1,6 +1,7 @@
 import type { ThreadId } from "@specweave-studio/contracts";
 import {
   parseRoutedMessage,
+  parseRoutedThreadReply,
   routedThreadReplyDisplayText,
 } from "@specweave-studio/shared/routedMessage";
 import { resolveStudioMcpToolId } from "@specweave-studio/shared/studioMcpToolPresentation";
@@ -148,8 +149,12 @@ function linkedThreadIds(markdown: string): string[] {
 export type RoutedReplyNote = {
   readonly id: string;
   readonly text: string;
-  /** pending: the coordinator has not answered; sent: delivered to another thread; answered: kept in the coordinator. */
-  readonly kind: "pending" | "sent" | "answered";
+  /**
+   * pending: the coordinator has not answered; sent: delivered to another thread;
+   * answered: kept in the coordinator; relayed: typed in a thread on another
+   * machine and sent to this machine's coordinator, which may not reach it.
+   */
+  readonly kind: "pending" | "sent" | "answered" | "relayed";
   readonly targetThreadId: string | null;
 };
 
@@ -189,6 +194,65 @@ export function routedReplyNotes(
     }
   }
   return notes;
+}
+
+const WORD_START = /^[\p{L}\p{N}_]/u;
+const WORD_END = /[\p{L}\p{N}_]$/u;
+
+/** Whole words only, in any script: a relayed "yes" is not delivered by a later "yesterday". */
+function containsWords(text: string, words: string): boolean {
+  const checkBefore = WORD_START.test(words);
+  const checkAfter = WORD_END.test(words);
+  for (let at = text.indexOf(words); at !== -1; at = text.indexOf(words, at + 1)) {
+    const end = at + words.length;
+    if (
+      !(checkBefore && WORD_END.test(text.slice(Math.max(0, at - 2), at))) &&
+      !(checkAfter && WORD_START.test(text.slice(end, end + 2)))
+    )
+      return true;
+  }
+  return false;
+}
+
+/**
+ * Messages typed in this thread on another machine that an earlier version sent
+ * to this machine's coordinator. A message that did reach the thread (one
+ * launched from here accepts sends) arrives after it was typed and is already in
+ * the timeline, so it gets no note. Before the start of a partly loaded thread
+ * nothing can be said about delivery, so a relay older than that gets no note.
+ */
+export function relayedReplyNotes<At>(
+  coordinatorMessages: readonly (Message & { readonly createdAt?: At | undefined })[],
+  thread: Pick<Worker, "id" | "environmentId">,
+  threadMessages: readonly (Pick<Message, "role" | "text"> & { readonly createdAt: At })[],
+  history: { readonly partial: boolean; readonly millis: (at: At) => number },
+): (RoutedReplyNote & { readonly createdAt: At | null })[] {
+  const times = threadMessages.map((message) => history.millis(message.createdAt));
+  const knownFrom = history.partial && times.length > 0 ? Math.min(...times) : null;
+  return coordinatorMessages.flatMap((message) => {
+    if (message.role !== "user" || message.createdBy !== "user") return [];
+    const reply = parseRoutedThreadReply(message.text);
+    if (reply?.threadId !== thread.id || reply.environmentId !== thread.environmentId) return [];
+    const words = reply.words.trim();
+    if (words === "" || message.createdAt === undefined) return [];
+    const typedAt = history.millis(message.createdAt);
+    if (history.partial && (knownFrom === null || typedAt < knownFrom)) return [];
+    const delivered = threadMessages.some(
+      (other, index) =>
+        other.role === "user" && times[index]! >= typedAt && containsWords(other.text, words),
+    );
+    return delivered
+      ? []
+      : [
+          {
+            id: message.id,
+            text: words,
+            kind: "relayed" as const,
+            targetThreadId: null,
+            createdAt: message.createdAt,
+          },
+        ];
+  });
 }
 
 /**

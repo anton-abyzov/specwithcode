@@ -7,6 +7,7 @@ import { ProjectWorkerPane } from "./ProjectWorkerPane";
 
 const state = vi.hoisted(() => ({
   send: vi.fn(),
+  routing: null as import("../../studio/projectMessageRouting").ProjectMessageRouting | null,
   clear: vi.fn(),
   reportError: vi.fn(),
   draft: "Continue this work",
@@ -16,9 +17,7 @@ vi.mock("./shell/ProjectThreadHeader", () => ({
   ProjectThreadHeader: () => <header>Worker</header>,
 }));
 vi.mock("./ProjectRoutedReplies", () => ({
-  // A remote worker gets no coordinator, so nothing is placed in its timeline.
-  useRoutedThreadMessages: (_project: unknown, coordinatorId: string | null) =>
-    coordinatorId ? [{ id: "routed" }] : [],
+  useRoutedThreadMessages: () => [{ id: "routed" }],
 }));
 vi.mock("../ChatView", async () => {
   const { useProjectMessageRouting, routeProjectComposerSend } =
@@ -26,6 +25,7 @@ vi.mock("../ChatView", async () => {
   return {
     default: ({ environmentId, threadId }: { environmentId: string; threadId: string }) => {
       const routing = useProjectMessageRouting();
+      state.routing = routing;
       return (
         <section data-chat-environment={environmentId} data-chat-thread={threadId}>
           {routing?.routedMessages?.length ? <div data-routed-replies /> : null}
@@ -57,7 +57,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.draft = "Continue this work";
   state.attachments = [];
-  state.send.mockResolvedValue(undefined);
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -66,7 +65,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
 });
-const render = (environmentId = "m1", coordinatorBlocked = false) =>
+const render = (environmentId = "m1") =>
   act(async () =>
     root.render(
       <ProjectWorkerPane
@@ -79,65 +78,38 @@ const render = (environmentId = "m1", coordinatorBlocked = false) =>
         send={state.send}
         suspendShortcuts={false}
         toolsSlot={null}
-        coordinatorBlocked={coordinatorBlocked}
       />,
     ),
   );
 const send = () => act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
 
-it("opens the selected remote copy and includes its machine in the coordinator reply instead of a colliding local thread id", async () => {
-  await render();
-  await send();
-  expect(
-    container.querySelector('[data-chat-environment="m1"][data-chat-thread="shared-thread-id"]'),
-  ).not.toBeNull();
-  expect(container.querySelector("[data-routed-replies]")).toBeNull();
-  expect(state.send).toHaveBeenCalledWith(
-    "Regarding thread shared-thread-id on machine m1 (Investigate the build):\n\nContinue this work",
-  );
-  expect(state.clear).toHaveBeenCalledTimes(1);
-});
+it.each([
+  ["on another machine", "m1"],
+  ["on this machine", "m4"],
+])(
+  "lets a worker %s take its message and files itself, with no coordinator turn",
+  async (_, environmentId) => {
+    state.attachments = [{ id: "pending-file" } as ChatAttachment];
+    await render(environmentId);
+    await send();
+    expect(
+      container.querySelector(
+        `[data-chat-environment="${environmentId}"][data-chat-thread="shared-thread-id"]`,
+      ),
+    ).not.toBeNull();
+    // Earlier messages that went elsewhere still show where they went.
+    expect(container.querySelector("[data-routed-replies]")).not.toBeNull();
+    expect(state.reportError).not.toHaveBeenCalled();
+    expect(state.send).not.toHaveBeenCalled();
+    // The composer's own send runs instead, so the draft is not cleared here.
+    expect(state.clear).not.toHaveBeenCalled();
+    expect(state.draft).toBe("Continue this work");
+    expect(state.attachments).toHaveLength(1);
+  },
+);
 
-it("keeps remote reply drafts and attachments when their files cannot safely cross hosts", async () => {
-  state.attachments = [{ id: "pending-remote-file" } as ChatAttachment];
-  await render();
-  await send();
+it("never sends a message typed in a thread on another machine to the coordinator here", async () => {
+  await render("m1");
+  await expect(state.routing!.send("Keep going")).rejects.toThrow("on its own machine");
   expect(state.send).not.toHaveBeenCalled();
-  expect(state.clear).not.toHaveBeenCalled();
-  expect(state.draft).toBe("Continue this work");
-  expect(state.attachments).toHaveLength(1);
-  expect(state.reportError).toHaveBeenCalledWith(
-    "Attach files in the coordinator composer when replying across machines.",
-  );
-});
-
-it("preserves the remote draft when the coordinator rejects the routed request", async () => {
-  state.send.mockRejectedValue(new Error("Coordinator connection lost"));
-  await render();
-  await send();
-  expect(state.reportError).toHaveBeenCalledWith("Coordinator connection lost");
-  expect(state.clear).not.toHaveBeenCalled();
-  expect(state.draft).toBe("Continue this work");
-});
-
-it("lets a worker on this machine take its reply and files itself, with no coordinator turn", async () => {
-  state.attachments = [{ id: "pending-local-file" } as ChatAttachment];
-  await render("m4");
-  await send();
-  // Earlier messages the coordinator moved elsewhere still show where they went.
-  expect(container.querySelector("[data-routed-replies]")).not.toBeNull();
-  expect(state.send).not.toHaveBeenCalled();
-  expect(state.reportError).not.toHaveBeenCalled();
-  // The composer's own send runs instead, so the draft is not cleared here.
-  expect(state.clear).not.toHaveBeenCalled();
-});
-
-it("answers a thread on another machine there when this copy's coordinator would refuse the relay", async () => {
-  // A workers-only copy is viewed; its coordinator moved to the thread's machine.
-  await render("m1", true);
-  await send();
-  expect(container.querySelector('[data-chat-environment="m1"]')).not.toBeNull();
-  expect(state.send).not.toHaveBeenCalled();
-  expect(state.reportError).not.toHaveBeenCalled();
-  expect(container.querySelector("[data-routed-replies]")).toBeNull();
 });

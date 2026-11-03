@@ -232,6 +232,8 @@ const DRIVERS = [
   "opencode2",
   "antigravity",
 ];
+/** Runs only the stage for a message typed in another machine's thread. */
+const REMOTE_MESSAGE_ONLY = process.env.STUDIO_TWO_ORCHESTRATORS_REMOTE_MESSAGE_ONLY === "1";
 const ECHO = { instanceId: "fixtureEcho", model: "link-launch" };
 let logicalId;
 const hosts = [];
@@ -552,48 +554,52 @@ async function main() {
   assert.equal(replicatedOwner?.threadId, minis.workerThreadId, JSON.stringify(m4Plan.native));
   check("A Minis thread's plan claim replicated to M4 with its machine");
 
-  // Memory: one note edited on both machines keeps both versions after the exchange.
-  for (const host of [m4, minis])
-    await rpc(host, "projects.memoryWrite", {
-      projectId: host.projectId,
-      name: "notes.md",
-      content: `${host.label} notes`,
-      expectedRevision: null,
-    });
-  const [m4Memory, minisMemory] = await Promise.all(
-    [m4, minis].map((host) => rpc(host, "projectLink.memoryExport", { projectId: host.projectId })),
-  );
-  const merges = [];
-  for (const [host, peer, exported] of [
-    [m4, minis, minisMemory],
-    [minis, m4, m4Memory],
-  ])
-    merges.push({
-      host,
-      result: await rpc(host, "projectLink.memoryMerge", {
+  if (!REMOTE_MESSAGE_ONLY) {
+    // Memory: one note edited on both machines keeps both versions after the exchange.
+    for (const host of [m4, minis])
+      await rpc(host, "projects.memoryWrite", {
         projectId: host.projectId,
-        peer: { environmentId: peer.environmentId, projectId: peer.projectId, label: peer.label },
-        export: exported,
-      }),
-    });
-  const conflicted = merges.filter((merge) => merge.result.conflicts.length > 0);
-  assert.equal(
-    conflicted.length,
-    1,
-    `One side records the concurrent edit: ${JSON.stringify(merges.map((m) => m.result))}`,
-  );
-  const { host: copyHost, result } = conflicted[0];
-  const contents = await Promise.all(
-    ["notes.md", result.conflicts[0].copy].map(
-      async (name) =>
-        (await rpc(copyHost, "projects.memoryRead", { projectId: copyHost.projectId, name }))
-          .content,
-    ),
-  );
-  assert.deepEqual(contents.toSorted(), ["M4 fixture notes", "Minis fixture notes"]);
-  check(
-    `Concurrent memory edits keep both versions (${copyHost.short} holds ${result.conflicts[0].copy})`,
-  );
+        name: "notes.md",
+        content: `${host.label} notes`,
+        expectedRevision: null,
+      });
+    const [m4Memory, minisMemory] = await Promise.all(
+      [m4, minis].map((host) =>
+        rpc(host, "projectLink.memoryExport", { projectId: host.projectId }),
+      ),
+    );
+    const merges = [];
+    for (const [host, peer, exported] of [
+      [m4, minis, minisMemory],
+      [minis, m4, m4Memory],
+    ])
+      merges.push({
+        host,
+        result: await rpc(host, "projectLink.memoryMerge", {
+          projectId: host.projectId,
+          peer: { environmentId: peer.environmentId, projectId: peer.projectId, label: peer.label },
+          export: exported,
+        }),
+      });
+    const conflicted = merges.filter((merge) => merge.result.conflicts.length > 0);
+    assert.equal(
+      conflicted.length,
+      1,
+      `One side records the concurrent edit: ${JSON.stringify(merges.map((m) => m.result))}`,
+    );
+    const { host: copyHost, result } = conflicted[0];
+    const contents = await Promise.all(
+      ["notes.md", result.conflicts[0].copy].map(
+        async (name) =>
+          (await rpc(copyHost, "projects.memoryRead", { projectId: copyHost.projectId, name }))
+            .content,
+      ),
+    );
+    assert.deepEqual(contents.toSorted(), ["M4 fixture notes", "Minis fixture notes"]);
+    check(
+      `Concurrent memory edits keep both versions (${copyHost.short} holds ${result.conflicts[0].copy})`,
+    );
+  }
 
   // ── Browser: M4's page, with Minis in this device's saved machines ──
   const { chromium } = loadPlaywright();
@@ -697,6 +703,196 @@ async function main() {
   };
   const minisKey = `${minis.environmentId}:${minis.projectId}`;
   const m4Key = `${m4.environmentId}:${m4.projectId}`;
+
+  // ── A message typed on M4 in Minis's own thread lands in that thread ──
+  const question = "Should the fixture VMs keep running?";
+  await dispatch(minis, {
+    type: "message.dispatch",
+    threadId: minis.workerThreadId,
+    messageId: randomUUID(),
+    text: `Ask the user.\nREPLY-TEXT **Blockers:** ${question}`,
+    attachments: [],
+    createdBy: "user",
+    creationSource: "web",
+    dispatchMode: { type: "start_immediately" },
+  });
+  const workerShell = async () =>
+    (await shellSnapshot(minis)).threads.find((thread) => thread.id === minis.workerThreadId);
+  await until("the worker's blocker to appear", async () =>
+    (await workerShell())?.reportedBlocker?.includes(question),
+  );
+  // A message an earlier version relayed shows where it was typed, and says where it went.
+  const relayedWords = `Relayed by an earlier version ${randomUUID().slice(0, 8)}`;
+  await seedHistory(
+    m4,
+    `Regarding thread ${minis.workerThreadId} on machine ${minis.environmentId} (Minis fixture worker):\n\n${relayedWords}`,
+  );
+  m4.seedEcho = await until("M4's coordinator to take the relayed message", () => {
+    const value = readJson(m4.echoFile);
+    return value?.text?.includes(relayedWords) ? value : null;
+  });
+  await page.goto(
+    `${m4.origin}/projects/${encodeURIComponent(`logical-project:${logicalId}`)}?checkout=${encodeURIComponent(m4Key)}&thread=${encodeURIComponent(minis.workerThreadId)}&threadEnvironment=${encodeURIComponent(minis.environmentId)}`,
+  );
+  const pane = page.locator(".project-native-thread").filter({ visible: true });
+  await pane.locator("[data-thread-blocker-text]").getByText(question).waitFor({ timeout: 45000 });
+  await pane.getByText(relayedWords).waitFor({ timeout: 45000 });
+  await pane.locator('[data-routed-note="relayed"]').waitFor({ timeout: 45000 });
+  await shot("08-m4-remote-thread-before-send.png");
+  const m4RunsBeforeReply = (
+    await rpc(m4, "orchestration.getThreadProjection", { threadId: m4.coordinatorThreadId })
+  ).runs.length;
+  const answer = `Yes, complete the job ${randomUUID().slice(0, 8)}`;
+  await pane.locator('[contenteditable="true"]').first().click();
+  await page.keyboard.insertText(answer);
+  await page.keyboard.press("Enter");
+  const answered = await until(
+    "Minis's worker to run the message typed on M4",
+    () => {
+      const value = readJson(minis.echoFile);
+      return value?.text?.includes(answer) ? value : null;
+    },
+    30000,
+  ).catch(async (error) => {
+    // Where the message went instead.
+    receipt.m4CoordinatorUserTexts = (
+      await rpc(m4, "orchestration.getThreadProjection", { threadId: m4.coordinatorThreadId })
+    ).messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.text);
+    throw error;
+  });
+  assert.ok(answered.cwd?.startsWith(minis.dir), `The turn ran on Minis: ${answered.cwd}`);
+  await pane.getByText(answer).first().waitFor({ timeout: 45000 });
+  await until(
+    "the blocked note to clear on M4",
+    async () => (await pane.locator("[data-thread-blocker-text]").count()) === 0,
+  );
+  await shot("09-m4-remote-thread-after-send.png");
+  assert.equal(
+    (await rpc(m4, "orchestration.getThreadProjection", { threadId: m4.coordinatorThreadId })).runs
+      .length,
+    m4RunsBeforeReply,
+    "M4's coordinator got no turn for a message typed in Minis's thread",
+  );
+  assert.equal(
+    (await workerShell())?.reportedBlocker ?? null,
+    null,
+    "The worker's blocker cleared",
+  );
+  // A screenshot and a file typed into the same thread go with it, on that machine's own upload.
+  const attachedWords = `With a file ${randomUUID().slice(0, 8)}`;
+  await pane
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles([
+      {
+        name: "fixture-note.txt",
+        mimeType: "text/plain",
+        buffer: Buffer.from("Fixture attachment\n"),
+      },
+      {
+        name: "fixture-screenshot.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      },
+    ]);
+  await pane.locator('[contenteditable="true"]').first().click();
+  await page.keyboard.insertText(attachedWords);
+  await sleep(1500);
+  await page.keyboard.press("Enter");
+  const attachedMessage = await until("the file to reach Minis's thread", async () => {
+    const projection = await rpc(minis, "orchestration.getThreadProjection", {
+      threadId: minis.workerThreadId,
+    });
+    return projection.messages.find(
+      (message) => message.text?.includes(attachedWords) && message.attachments?.length === 2,
+    );
+  });
+  assert.equal(attachedMessage.role, "user");
+  assert.equal(
+    await page.getByText("Project message not sent").count(),
+    0,
+    "Files in a thread on another machine are not refused",
+  );
+  await pane.getByText(attachedWords).first().waitFor({ timeout: 45000 });
+  const minisContext = await browser.newContext({
+    viewport: { width: 1600, height: 1050 },
+    colorScheme: "light",
+    reducedMotion: "reduce",
+  });
+  const minisPairing = await request(minis, "/api/auth/pairing-token", {
+    label: "Two orchestrators Minis browser",
+  });
+  assert.equal(
+    (
+      await minisContext.request.post(minis.origin + "/api/auth/browser-session", {
+        headers: { Origin: minis.origin },
+        data: { credential: minisPairing.credential },
+      })
+    ).status(),
+    200,
+    "Minis browser authentication failed",
+  );
+  await minisContext.addInitScript(() =>
+    localStorage.setItem(
+      "studio:client-settings:v1",
+      JSON.stringify({ onboardingCompletedAt: new Date().toISOString() }),
+    ),
+  );
+  const minisPage = await minisContext.newPage();
+  await minisPage.goto(
+    `${minis.origin}/projects/${encodeURIComponent(`logical-project:${logicalId}`)}?checkout=${encodeURIComponent(minisKey)}&thread=${encodeURIComponent(minis.workerThreadId)}&threadEnvironment=${encodeURIComponent(minis.environmentId)}`,
+  );
+  await minisPage
+    .locator(".project-native-thread")
+    .filter({ visible: true })
+    .getByText(answer)
+    .first()
+    .waitFor({ timeout: 45000 });
+  const minisShot = join(output, "10-minis-sees-the-message.png");
+  await minisPage.screenshot({ path: minisShot });
+  receipt.screenshots.push(minisShot);
+  await minisContext.close();
+  check(
+    "A message typed on M4 in Minis's thread ran in that thread, shows on both machines and cleared its blocked note, with no M4 coordinator turn",
+  );
+
+  if (REMOTE_MESSAGE_ONLY) {
+    // A machine that is down takes nothing, sends nothing elsewhere and keeps the draft.
+    const runsBeforeOffline = (
+      await rpc(m4, "orchestration.getThreadProjection", { threadId: m4.coordinatorThreadId })
+    ).runs.length;
+    await stop(minis);
+    const draft = `Typed while Minis is down ${randomUUID().slice(0, 8)}`;
+    await pane.getByText("Can't reach Minis fixture").first().waitFor({ timeout: 60000 });
+    await pane.locator('[contenteditable="true"]').first().click();
+    await page.keyboard.insertText(draft);
+    await page.keyboard.press("Enter");
+    await sleep(1500);
+    await pane.getByText(draft).first().waitFor({ timeout: 5000 });
+    assert.equal(
+      (await rpc(m4, "orchestration.getThreadProjection", { threadId: m4.coordinatorThreadId }))
+        .runs.length,
+      runsBeforeOffline,
+      "Nothing typed for Minis while it was down went to M4's coordinator",
+    );
+    await shot("11-m4-remote-thread-minis-down-draft-kept.png");
+    check("With Minis down the draft stays in the composer and M4's coordinator gets nothing");
+    assert.deepEqual(errors, [], `Page errors: ${errors.join("\n")}`);
+    await browser.close();
+    browser = undefined;
+    stopped = true;
+    receipt.success = true;
+    return;
+  }
+
+  await page.goto(`${m4.origin}/projects/${encodeURIComponent(`logical-project:${logicalId}`)}`);
+  await region.getByText("M4 fixture coordinator history").waitFor({ timeout: 45000 });
+
   // Match the host suffix after the switcher removes the possessive owner prefix.
   const m4ViewLabel = new RegExp(
     `View .*${m4.selfLabel
@@ -906,7 +1102,8 @@ async function main() {
       `${host.label} never got the offline message`,
     );
   }
-  assert.deepEqual(m4State.userTexts, ["M4 fixture coordinator history"]);
+  assert.equal(m4State.userTexts[0], "M4 fixture coordinator history");
+  assert.equal(m4State.userTexts.length, 2, "M4's coordinator got only the seeded relayed message");
   assert.ok(minisState.userTexts.includes(liveText), "Minis's coordinator holds the message");
   check("Viewing moved nothing: both bindings unchanged, threads stayed on their machines");
   Object.assign(before, {

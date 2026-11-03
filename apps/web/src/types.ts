@@ -113,7 +113,7 @@ export interface ChatMessage {
 }
 
 export interface RoutedMessageNote {
-  readonly kind: "pending" | "sent" | "answered";
+  readonly kind: "pending" | "sent" | "answered" | "relayed";
   readonly targetThreadId: ThreadId | null;
 }
 

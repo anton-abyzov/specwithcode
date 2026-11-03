@@ -4,10 +4,12 @@ import { MessageId, ThreadId } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { useStructuralValue } from "../../hooks/useStructuralValue";
-import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useThreadHistory, useThreadProjection, useThreadShell } from "../../state/entities";
 import {
+  relayedReplyNotes,
   routedRepliesForThread,
   routedReplyNotes,
+  type RoutedReplyNote,
 } from "../../studio/projectCoordinatorMessageDisplay";
 import type { ChatMessage, RoutedMessageNote } from "../../types";
 
@@ -34,10 +36,10 @@ export function sameRoutedMessages(
 }
 
 /**
- * Messages the person typed in this worker that did not come back to it. Each
- * one goes to the coordinator first; one delivered back here is already in the
- * timeline as the person's own, so only the rest are returned, to sit in the
- * timeline where they were typed with a note on where they went.
+ * Messages the person typed in this worker that did not come back to it. One
+ * delivered back here is already in the timeline as the person's own, so only
+ * the rest are returned, to sit in the timeline where they were typed with a
+ * note on where they went.
  *
  * The coordinator's messages change on every streamed token. The list keeps its
  * identity until a note changes, so the worker's timeline is not rebuilt for them.
@@ -57,14 +59,29 @@ export function useRoutedThreadMessages(
   );
   const coordinatorMessages = useThreadProjection(coordinatorRef)?.projection.messages;
   const threadMessages = useThreadProjection(threadRef)?.projection.messages;
+  const threadHistoryPartial = useThreadHistory(threadRef).hasMoreHistory;
   const routed = useMemo(() => {
     if (!coordinatorId || !coordinatorMessages) return EMPTY;
-    const replies = routedRepliesForThread(coordinatorMessages, project, thread);
-    const notes = routedReplyNotes(replies, threadMessages ?? [], thread.id, coordinatorId);
+    let notes: readonly (RoutedReplyNote & { readonly createdAt: DateTime.Utc | null })[];
+    if (thread.environmentId === project.environmentId) {
+      const replies = routedRepliesForThread(coordinatorMessages, project, thread);
+      notes = routedReplyNotes(replies, threadMessages ?? [], thread.id, coordinatorId).map(
+        (note) => ({
+          ...note,
+          createdAt: replies.find((candidate) => candidate.id === note.id)?.createdAt ?? null,
+        }),
+      );
+    } else {
+      // Until the thread loads, nothing says whether a relayed message reached it.
+      if (!threadMessages) return EMPTY;
+      notes = relayedReplyNotes(coordinatorMessages, thread, threadMessages, {
+        partial: threadHistoryPartial,
+        millis: DateTime.toEpochMillis,
+      });
+    }
     return notes.flatMap((note): ChatMessage[] => {
-      const reply = replies.find((candidate) => candidate.id === note.id);
-      if (!reply?.createdAt) return [];
-      const at = DateTime.formatIso(reply.createdAt);
+      if (!note.createdAt) return [];
+      const at = DateTime.formatIso(note.createdAt);
       return [
         {
           id: MessageId.make(note.id),
@@ -83,7 +100,7 @@ export function useRoutedThreadMessages(
         },
       ];
     });
-  }, [coordinatorId, coordinatorMessages, threadMessages, project, thread]);
+  }, [coordinatorId, coordinatorMessages, threadMessages, threadHistoryPartial, project, thread]);
   return useStructuralValue(routed, sameRoutedMessages);
 }
 
@@ -115,6 +132,10 @@ export function RoutedMessageNoteLine({
         </button>
       ) : note.kind === "pending" ? (
         "Sending via coordinator…"
+      ) : note.kind === "relayed" ? (
+        <button type="button" className={link} onClick={onOpenCoordinator}>
+          → Went to the coordinator, not this thread
+        </button>
       ) : (
         <button type="button" className={link} onClick={onOpenCoordinator}>
           → Answered in the coordinator

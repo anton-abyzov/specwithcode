@@ -60,17 +60,14 @@ export function parseRoutedMessage(
 }
 
 /**
- * A reply typed in a worker on another machine reaches the coordinator with this header:
- * the coordinator routes by its IDs, and the person sees only the title and machine name.
+ * A reply typed in a worker on another machine reached the coordinator with this
+ * header in earlier versions; those messages stay in coordinators' history,
+ * where the person sees only the title and machine name.
  */
 export interface RoutedThreadReplyTarget {
   readonly threadId: string;
   readonly environmentId: string;
   readonly title: string;
-}
-
-export function routedThreadReplyText(target: RoutedThreadReplyTarget, words: string): string {
-  return `Regarding thread ${target.threadId} on machine ${target.environmentId} (${target.title}):\n\n${words}`;
 }
 
 const THREAD_REPLY_HEADER = /^Regarding thread (\S+) on machine (\S+) \((.*)\):\n\n/;

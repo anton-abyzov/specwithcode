@@ -12303,7 +12303,8 @@ export default function ChatView(props: ChatViewProps) {
       appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
         ? parseComposerAppCommand(promptRef.current)
         : null;
-    if (appCommand !== null) {
+    // A machine that is down cannot act on one, so the draft stays; `/status` reads what is here.
+    if (appCommand !== null && (appCommand === "status" || !activeEnvironmentUnavailable)) {
       promptRef.current = "";
       setComposerDraftPrompt(composerDraftTarget, "");
       composerRef.current?.resetCursorState();

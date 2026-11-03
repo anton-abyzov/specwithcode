@@ -14,6 +14,7 @@
  * "arguments"}` also makes that one call with the thread's own credential and
  * records its outcome as `mcp`, so a verifier can act as the thread itself.
  *
+ * A prompt line `REPLY-TEXT <text>` adds that text as its own paragraph of the reply.
  * Every echo prompt is also appended to `<result.json>.jsonl`, so a verifier
  * can count the turns each instance ran. A prompt containing `HOLD-TURN`
  * stays running until the client cancels it (`session/cancel`).
@@ -165,6 +166,8 @@ async function prompt(id, params) {
         "\n",
     );
     update(params.sessionId, `Echo worker ran in ${cwd}`);
+    const reply = text.match(/^REPLY-TEXT ([^<\n]+)/m)?.[1];
+    if (reply) update(params.sessionId, `\n\n${reply}`);
     if (holdResumeFixture && existsSync(`${resultFile}.hold-next`)) {
       unlinkSync(`${resultFile}.hold-next`);
       update(params.sessionId, "Target continuation is running before the offline fault.");

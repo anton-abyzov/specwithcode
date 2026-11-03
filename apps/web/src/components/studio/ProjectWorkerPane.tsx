@@ -13,7 +13,6 @@ import ChatView from "../ChatView";
 import type { SubagentEntry } from "../../studio/threadSubagents";
 import { ProjectThreadHeader } from "./shell/ProjectThreadHeader";
 import { SubagentPeek } from "./shell/SubagentPeek";
-import { routedThreadReplyText } from "@specweave-studio/shared/routedMessage";
 import { useRoutedThreadMessages } from "./ProjectRoutedReplies";
 
 export function ProjectWorkerPane({
@@ -27,7 +26,6 @@ export function ProjectWorkerPane({
   suspendShortcuts,
   toolsSlot,
   peek = null,
-  coordinatorBlocked = false,
 }: {
   project: EnvironmentProject;
   thread: EnvironmentThreadShell;
@@ -48,45 +46,25 @@ export function ProjectWorkerPane({
     readonly entry: SubagentEntry | null;
     readonly onClose: () => void;
   } | null;
-  /** The viewed copy runs workers only, so its coordinator refuses every relay. */
-  coordinatorBlocked?: boolean;
 }) {
-  const local = thread.environmentId === project.environmentId;
-  // A thread on another machine is answered there when this copy's coordinator
-  // would refuse the relay, instead of failing every reply.
-  const direct = local || coordinatorBlocked;
-  const routedMessages = useRoutedThreadMessages(project, local ? coordinatorId : null, thread);
+  const routedMessages = useRoutedThreadMessages(project, coordinatorId, thread);
   return (
     <SelectedThreadShell value={thread}>
       <ProjectThreadHeader {...header} />
       <ProjectMessageRoutingContext
         value={{
           coordinatorThreadId: coordinatorId,
-          // A worker here takes the user's message itself; only a thread on
-          // another machine still goes through the coordinator, when it can.
-          direct,
+          // A thread takes the user's message itself on its own machine, over this
+          // client's connection there. The coordinator here may not reach it.
+          direct: true,
           openCoordinator,
           openThread,
           routedMessages,
-          send: (text, attachments) => {
-            if (local) return send(text, thread.id, attachments);
-            if (attachments?.length)
-              return Promise.reject(
-                new Error(
-                  "Attach files in the coordinator composer when replying across machines.",
-                ),
-              );
-            return send(
-              routedThreadReplyText(
-                {
-                  threadId: thread.id,
-                  environmentId: thread.environmentId,
-                  title: thread.title,
-                },
-                text,
-              ),
-            );
-          },
+          // Nothing typed in a thread on another machine may reach the coordinator here.
+          send: (text, attachments) =>
+            thread.environmentId === project.environmentId
+              ? send(text, thread.id, attachments)
+              : Promise.reject(new Error("This thread takes its messages on its own machine.")),
         }}
       >
         <div className="project-native-thread">

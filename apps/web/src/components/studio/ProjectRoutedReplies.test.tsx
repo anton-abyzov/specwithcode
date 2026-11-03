@@ -9,10 +9,16 @@ import { useRoutedThreadMessages } from "./ProjectRoutedReplies";
 
 const state = vi.hoisted(() => ({
   coordinator: [] as unknown[],
+  remote: undefined as unknown[] | undefined,
 }));
 vi.mock("../../state/entities", () => ({
   useThreadProjection: (ref: { threadId: string } | null) =>
-    ref?.threadId === "coordinator" ? { projection: { messages: state.coordinator } } : null,
+    ref?.threadId === "coordinator"
+      ? { projection: { messages: state.coordinator } }
+      : ref?.threadId === "remote" && state.remote
+        ? { projection: { messages: state.remote } }
+        : null,
+  useThreadHistory: () => ({ hasMoreHistory: false }),
   useThreadShell: () => null,
 }));
 
@@ -80,4 +86,41 @@ it("keeps the worker's routed messages while the coordinator streams, and update
   const sent = results.at(-1)!;
   expect(sent).not.toBe(pending);
   expect(sent[0]!.routedNote).toEqual({ kind: "sent", targetThreadId: "other-thread" });
+});
+
+it("shows a message relayed from a thread on another machine once that thread loads", () => {
+  function RemoteProbe() {
+    results.push(
+      useRoutedThreadMessages(
+        { id: "project", environmentId: "host" as never },
+        ThreadId.make("coordinator"),
+        {
+          id: ThreadId.make("remote"),
+          environmentId: "other-machine",
+          projectId: "other-project",
+          title: "Lag",
+          deletedAt: null,
+        } as never,
+      ),
+    );
+    return null;
+  }
+  state.coordinator = [
+    {
+      id: "relayed",
+      role: "user",
+      createdBy: "user",
+      text: "Regarding thread remote on machine other-machine (Lag):\n\nyes, complete the job!",
+      createdAt: at,
+    },
+  ];
+  state.remote = undefined;
+  act(() => root.render(<RemoteProbe />));
+  expect(results.at(-1)).toEqual([]);
+
+  state.remote = [];
+  act(() => root.render(<RemoteProbe />));
+  expect(results.at(-1)!.map((message) => [message.text, message.routedNote?.kind])).toEqual([
+    ["yes, complete the job!", "relayed"],
+  ]);
 });
