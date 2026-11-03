@@ -228,6 +228,11 @@ const windowFitsWithinDisplay = WindowPlacement.windowFitsWithinDisplay;
 // few seconds to report itself again.
 const SAVED_DISPLAY_WAIT_MS = 2 * 60 * 1000;
 
+// When the monitor a window is saved on goes away (unplugged, or asleep while
+// the Mac wakes), macOS moves the window to another display, sometimes in
+// several steps. Moves until this long after the last one are the system's.
+const DISPLAY_REMOVED_SETTLE_MS = 3000;
+
 function windowBoundsEqual(
   left: DesktopAppSettings.DesktopWindowBounds,
   right: DesktopAppSettings.DesktopWindowBounds,
@@ -599,10 +604,6 @@ export const make = Effect.gen(function* () {
         height: Math.round(bounds.height),
       });
     };
-    const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
-    const fallbackWindowMaximized = spec.persisted.maximized;
-    // Full screen as restored; leaving or entering it is the user's change.
-    const fallbackWindowFullScreen = restoreFullScreen;
     // Whether the first reveal puts the window into full screen. A saved
     // monitor that appears before the reveal sets it too.
     let fullScreenOnReveal = restoreFullScreen;
@@ -630,6 +631,74 @@ export const make = Effect.gen(function* () {
       }
       return { fullScreen, display };
     };
+    // While saving is off, the placement the window was put in; a change from
+    // it is the user's and turns saving back on. Moving a full-screen window
+    // to another monitor changes only the monitor, so that is compared too.
+    let fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
+    let fallbackWindowMaximized = spec.persisted.maximized;
+    // Full screen as restored; leaving or entering it is the user's change.
+    let fallbackWindowFullScreen = restoreFullScreen;
+    let fallbackWindowDisplayId =
+      fallbackWindowBounds === null
+        ? null
+        : (readPlacementExtras(fallbackWindowBounds).display?.id ?? null);
+    // The monitor last saved for this window.
+    let savedDisplay = spec.persisted.display;
+    // Running while macOS moves the window off a monitor that just went away.
+    let displayRemovedSettleFiber: Fiber.Fiber<void, never> | undefined;
+    // A missing saved monitor the user has since worked without: their changes
+    // are saved. One missing at launch already waits for the user's change.
+    let acceptedMissingDisplayId: number | null = placement.savedDisplayMissing
+      ? (spec.persisted.display?.id ?? null)
+      : null;
+    const savedDisplayIsGone = (): boolean => {
+      if (savedDisplay === null || savedDisplay.id === acceptedMissingDisplayId) return false;
+      try {
+        const saved = savedDisplay;
+        return !readConnectedDisplaysSync().some(
+          (display) =>
+            display.id === saved.id &&
+            display.bounds.width === saved.bounds.width &&
+            display.bounds.height === saved.bounds.height,
+        );
+      } catch {
+        return false;
+      }
+    };
+    const stopDisplayRemovedSettle = () => {
+      if (displayRemovedSettleFiber === undefined) return;
+      const fiber = displayRemovedSettleFiber;
+      displayRemovedSettleFiber = undefined;
+      runFork(Fiber.interrupt(fiber));
+    };
+    // Pause saving until macOS has finished moving the window, then take where
+    // it was put as the placement a later user change is measured against.
+    const settleAfterDisplayRemoved = () => {
+      if (boundsPersistFiber !== undefined) {
+        const fiber = boundsPersistFiber;
+        boundsPersistFiber = undefined;
+        runFork(Fiber.interrupt(fiber));
+      }
+      boundsPersistenceEnabled = false;
+      stopDisplayRemovedSettle();
+      const lostDisplayId = savedDisplay?.id ?? null;
+      displayRemovedSettleFiber = runFork(
+        Effect.sleep(DISPLAY_REMOVED_SETTLE_MS).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              displayRemovedSettleFiber = undefined;
+              acceptedMissingDisplayId = lostDisplayId;
+              const bounds = readPersistableBounds();
+              if (bounds === null) return;
+              fallbackWindowBounds = bounds;
+              fallbackWindowMaximized = window.isMaximized();
+              fallbackWindowFullScreen = window.isFullScreen();
+              fallbackWindowDisplayId = readPlacementExtras(bounds).display?.id ?? null;
+            }),
+          ),
+        ),
+      );
+    };
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
       if (!boundsPersistenceEnabled || placementFrozen) {
         return pendingBoundsPersistFiber;
@@ -638,8 +707,17 @@ export const make = Effect.gen(function* () {
       if (bounds === null) {
         return pendingBoundsPersistFiber;
       }
+      // The saved monitor vanished before its display-removed event arrived:
+      // this placement is where macOS parked the window, not the user's.
+      if (savedDisplayIsGone()) {
+        settleAfterDisplayRemoved();
+        return pendingBoundsPersistFiber;
+      }
+      const extras = readPlacementExtras(bounds);
+      savedDisplay = extras.display;
+      acceptedMissingDisplayId = null;
       pendingBoundsPersistFiber = runFork(
-        spec.persistBounds(bounds, window.isMaximized(), readPlacementExtras(bounds)).pipe(
+        spec.persistBounds(bounds, window.isMaximized(), extras).pipe(
           Effect.asVoid,
           Effect.catch((error) =>
             logWindowWarning(`failed to persist ${windowLabel} bounds`, {
@@ -654,6 +732,10 @@ export const make = Effect.gen(function* () {
       if (placementFrozen) {
         return;
       }
+      if (displayRemovedSettleFiber !== undefined) {
+        settleAfterDisplayRemoved();
+        return;
+      }
       if (!boundsPersistenceEnabled) {
         const currentBounds = readPersistableBounds();
         if (
@@ -661,7 +743,8 @@ export const make = Effect.gen(function* () {
           (fallbackWindowBounds !== null &&
             windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
             window.isMaximized() === fallbackWindowMaximized &&
-            window.isFullScreen() === fallbackWindowFullScreen)
+            window.isFullScreen() === fallbackWindowFullScreen &&
+            (readPlacementExtras(currentBounds).display?.id ?? null) === fallbackWindowDisplayId)
         ) {
           return;
         }
@@ -911,6 +994,31 @@ export const make = Effect.gen(function* () {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
       }
     });
+
+    // The saved monitor went away: keep it saved, so the next launch opens the
+    // window there again, instead of saving where macOS parked the window.
+    // Once the moves settle, a change the user makes is saved as usual.
+    {
+      const screen = Electron.screen as Partial<Pick<Electron.Screen, "on" | "removeListener">>;
+      if (typeof screen.on === "function" && typeof screen.removeListener === "function") {
+        const onDisplayRemoved = (_event: unknown, removed: Electron.Display) => {
+          if (window.isDestroyed() || placementFrozen) return;
+          if (savedDisplay === null || removed.id !== savedDisplay.id) return;
+          if (removed.id === acceptedMissingDisplayId) return;
+          settleAfterDisplayRemoved();
+          runFork(
+            logWindowInfo(`${windowLabel} monitor disconnected; keeping its saved placement`, {
+              displayId: removed.id,
+            }),
+          );
+        };
+        screen.on("display-removed", onDisplayRemoved);
+        window.once("closed", () => {
+          screen.removeListener?.("display-removed", onDisplayRemoved);
+          stopDisplayRemovedSettle();
+        });
+      }
+    }
 
     // A window that opened away from its saved monitor moves there when the
     // monitor reports itself, unless the user has moved it in the meantime.

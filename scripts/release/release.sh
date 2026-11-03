@@ -1009,6 +1009,8 @@ stage_quit_desktop() {
     command="$(q desktop-command --may-fail -- ps -o comm= -p "$pid")"
     # A helper listed by pgrep exits with the app it belongs to; skip it once it is gone.
     if [ -z "$command" ] && ! t desktop-running -- kill -0 "$pid" 2> /dev/null; then continue; fi
+    # The iOS app in a Simulator has the same name; it is not this install.
+    case "$command" in */Library/Developer/CoreSimulator/Devices/*) continue ;; esac
     # One still exiting after the app quit shows another name for a moment; give it 5s.
     if [ "$command" != "$APP/Contents/MacOS/SpecWithCode" ]; then
       waited=0
