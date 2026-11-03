@@ -218,6 +218,62 @@ if (rowsFixture)
       ],
     }),
   ];
+// `?filters`: threads on two machines and two agents, one waiting and one with a pull request,
+// for the Threads pane's filter row.
+if (new URLSearchParams(window.location.search).has("filters")) {
+  const on = (machine: string) => ({
+    source: {
+      ownerMachineId: "host",
+      executionMachineId: machine === "ministorm" ? "host" : machine,
+      executionMachineLabel: machine,
+      executionState: "running",
+    },
+  });
+  const openPullRequest = {
+    pullRequests: [
+      {
+        host: "github.com",
+        repository: "atlas/studio",
+        number: 1224,
+        url: "https://example.invalid/pr/1224",
+        source: "agent",
+        linkedAt: "2026-10-09T00:00:00Z",
+        snapshot: {
+          state: "open",
+          title: "Artifact cards",
+          headBranch: "cards",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-09T00:00:00Z",
+        },
+        stack: null,
+      },
+    ],
+  };
+  const codex = { modelSelection: { instanceId: "codex", model: "gpt-5.5" } };
+  const claude = { modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" } };
+  const running = { runtime: { status: "running" } };
+  shells = [
+    shell("coord", "Project coordinator"),
+    shell("release", "Release all platforms in 3 hours", {
+      ...on("m4"),
+      ...claude,
+      hasActionableProposedPlan: true,
+    }),
+    shell("duo", "Duo split coordinator layout", { ...on("ministorm"), ...claude, ...running }),
+    shell("status", "Idle status while work continues", { ...on("m4"), ...claude, ...running }),
+    shell("hangs", "Why requests hang on M4", { ...on("m4"), ...codex, ...running }),
+    shell("linkedin", "Open LinkedIn in Chrome", { ...on("ministorm"), ...claude }),
+    shell("dialog", "Move dialog icon and threads", { ...on("ministorm"), ...codex }),
+    shell("cards", "Artifact cards with document previews", {
+      ...on("m4"),
+      ...claude,
+      ...openPullRequest,
+    }),
+    shell("phone", "Phone error opening coordinator threads", { ...on("m4"), ...claude }),
+  ];
+}
 // `?subagents`: a worker that started subagents of its own, the way the Claude Agent tool and a
 // worker's delegate_task do. Only the worker is a thread; its subagents show inside it.
 shells = applySubagentScenario(shells);

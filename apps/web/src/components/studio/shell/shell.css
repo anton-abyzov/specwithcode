@@ -2419,6 +2419,106 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* Machines stay in view; the rest of the filtering waits behind one quiet button. */
+.sws-threads-filters {
+  margin: 8px 0 -6px -8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+}
+.sws-filter-machines {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.sws-filter-choice,
+.sws-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  max-width: 100%;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  transition:
+    background-color 120ms,
+    color 120ms;
+}
+.sws-filter-choice:hover,
+.sws-filter-chip:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+.sws-filter-choice[aria-pressed="true"] {
+  font-weight: 500;
+  color: var(--foreground);
+  background: var(--accent);
+}
+.sws-filter-choice-name {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sws-filter-count {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.sws-filter-choice .sws-dot {
+  flex: none;
+}
+.sws-filter-chip {
+  gap: 4px;
+  padding-right: 6px;
+  color: var(--foreground);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sws-filter-chip svg {
+  width: 12px;
+  height: 12px;
+  color: var(--muted-foreground);
+}
+.sws-filter-more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 7px;
+  color: var(--muted-foreground);
+}
+.sws-filter-more:hover,
+.sws-filter-more[data-popup-open] {
+  color: var(--foreground);
+  background: var(--accent);
+}
+.sws-filter-more svg {
+  width: 14px;
+  height: 14px;
+}
+.sws-filter-clear {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (pointer: coarse) {
+  .sws-filter-choice,
+  .sws-filter-chip,
+  .sws-filter-more {
+    min-height: 34px;
+  }
+  .sws-filter-more {
+    width: 34px;
+  }
+}
 .sws-threads-tools {
   flex: none;
   display: flex;

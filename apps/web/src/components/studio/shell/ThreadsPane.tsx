@@ -16,11 +16,13 @@ import {
   ChevronRightIcon,
   LaptopIcon,
   ListChecksIcon,
+  ListFilterIcon,
   PaletteIcon,
   RotateCcwIcon,
   SearchIcon,
   SlidersVerticalIcon,
   WifiOffIcon,
+  XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
@@ -38,9 +40,15 @@ import {
   machineColumnLabel,
   machineFilterOptions,
 } from "../../../studio/threadMachineFilter";
+import {
+  agentChoices,
+  machineChoices,
+  threadMatchesPaneFilters,
+  type ThreadPaneFacts,
+} from "../../../studio/threadPaneFilters";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { withRunningSubagents } from "../../../studio/threadSubagents";
-import { useEnvironments } from "../../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import {
   buildThreadPaneGroups,
   compactAge,
@@ -92,6 +100,14 @@ const FoldedSchema = Schema.Array(Schema.String);
 // The machine each project's list is narrowed to, by `environmentId:projectId`.
 const MACHINE_FILTER_STORAGE_KEY = "studio:project-threads-machine:v1";
 const MachineFilterSchema = Schema.Record(Schema.String, Schema.String);
+// The agent and open pull request filters, by the same key.
+const PANE_FILTERS_STORAGE_KEY = "studio:project-threads-filters:v1";
+const PaneFiltersSchema = Schema.Record(
+  Schema.String,
+  Schema.Struct({ agent: Schema.NullOr(Schema.String), openPullRequest: Schema.Boolean }),
+);
+type StoredPaneFilters = typeof PaneFiltersSchema.Type;
+const NO_PANE_FILTERS = { agent: null, openPullRequest: false } as const;
 const EMPTY_GROUP_COPY: Partial<Record<ProjectThreadGroup, string>> = {
   "Waiting on you": "No decisions or replies requested.",
   Waiting: "No dependency waits.",
@@ -247,9 +263,11 @@ export function ThreadsPane({
     Readonly<Record<string, string>>
   >(MACHINE_FILTER_STORAGE_KEY, {}, MachineFilterSchema);
   const storedFilter = machineFilters[filterKey] ?? null;
-  const machineFilter = machineOptions.some((option) => option.machineId === storedFilter)
-    ? storedFilter
-    : null;
+  // With one machine left there is no row to undo it from, and nothing to narrow.
+  const machineFilter =
+    machineOptions.length > 1 && machineOptions.some((option) => option.machineId === storedFilter)
+      ? storedFilter
+      : null;
   const setMachineFilter = (machineId: string | null) =>
     setMachineFilters((current) => {
       const { [filterKey]: _dropped, ...rest } = current;
@@ -265,8 +283,77 @@ export function ThreadsPane({
       return rest;
     });
   }, [staleFilter, filterKey]);
-  const machineFilterLabel =
-    machineOptions.find((option) => option.machineId === machineFilter)?.label ?? null;
+  const [paneFilters, setPaneFilters] = useLocalStorage<StoredPaneFilters, StoredPaneFilters>(
+    PANE_FILTERS_STORAGE_KEY,
+    {},
+    PaneFiltersSchema,
+  );
+  const storedPaneFilters = paneFilters[filterKey] ?? NO_PANE_FILTERS;
+  const updatePaneFilters = (change: Partial<(typeof paneFilters)[string]>) =>
+    setPaneFilters((current) => {
+      const { [filterKey]: previous = NO_PANE_FILTERS, ...rest } = current;
+      const next = { ...previous, ...change };
+      return next.agent === null && !next.openPullRequest ? rest : { ...rest, [filterKey]: next };
+    });
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  // What the filters read about a thread, by the key its row uses.
+  const threadFacts = useMemo(() => {
+    const facts = new Map<string, ThreadPaneFacts>();
+    for (const thread of allThreads) {
+      const current = thread.modelIdentity?.current ?? thread.modelSelection;
+      const pullRequest = threadPullRequest(thread);
+      facts.set(`${thread.environmentId}:${thread.id}`, {
+        machine: threadLocation({
+          summary: thread.source,
+          servingEnvironmentId: thread.environmentId,
+          name: machineNames.name,
+          unreachable,
+        }).executionMachineId,
+        agent: modelLabel(
+          entriesByEnvironment.get(thread.environmentId)?.get(current.instanceId) ?? null,
+          current.instanceId,
+          current.model,
+        ).provider,
+        openPullRequest: pullRequest?.state === "open" || pullRequest?.state === "draft",
+        open: thread.archivedAt === null && thread.settledOverride !== "settled",
+      });
+    }
+    return facts;
+  }, [allThreads, machineNames, unreachable, entriesByEnvironment]);
+  const allFacts = useMemo(() => [...threadFacts.values()], [threadFacts]);
+  const anyOpenPullRequest = allFacts.some((facts) => facts.openPullRequest);
+  // An agent no thread uses any more lets go, as a machine does, so nothing stays hidden by it.
+  const agentKnown = allFacts.some((facts) => facts.agent === storedPaneFilters.agent);
+  const agentFilter = agentKnown ? storedPaneFilters.agent : null;
+  // Names need each host's provider list too; before it arrives a thread can read differently.
+  const agentNamesLoaded = allThreads.every((thread) =>
+    entriesByEnvironment.has(thread.environmentId),
+  );
+  const staleAgent =
+    storedPaneFilters.agent !== null &&
+    agentFilter === null &&
+    props.threadsLoaded &&
+    agentNamesLoaded;
+  useEffect(() => {
+    if (!staleAgent) return;
+    updatePaneFilters({ agent: null });
+  }, [staleAgent, filterKey]);
+  const openPullRequestOnly = storedPaneFilters.openPullRequest;
+  const filters = {
+    machine: machineFilter,
+    agent: agentFilter,
+    openPullRequest: openPullRequestOnly,
+  };
+  const machineRow = machineChoices(machineOptions, allFacts, filters, primaryEnvironmentId);
+  const agentRow = agentChoices(allFacts, filters);
+  const offerAgents = agentRow.length > 1 || agentFilter !== null;
+  const offerPullRequests = anyOpenPullRequest || openPullRequestOnly;
+  const activeMenuFilters = (agentFilter === null ? 0 : 1) + (openPullRequestOnly ? 1 : 0);
+  const anyFilter = machineFilter !== null || activeMenuFilters > 0;
+  const clearFilters = () => {
+    setMachineFilter(null);
+    updatePaneFilters(NO_PANE_FILTERS);
+  };
   // Sized by what the rows show, so "→ Minis" fits as well as "M4".
   const machineCh = machineColumnCh(
     allThreads.flatMap((thread) => {
@@ -323,23 +410,8 @@ export function ThreadsPane({
           ),
         }))
       : built;
-    return machineFilter === null
-      ? unplannedShown
-      : unplannedShown.map((entry) => ({
-          ...entry,
-          threads: entry.threads.filter(
-            (thread) =>
-              threadLocation({
-                summary: thread.source,
-                servingEnvironmentId: thread.environmentId,
-                name: machineNames.name,
-                unreachable,
-              }).executionMachineId === machineFilter,
-          ),
-        }));
+    return unplannedShown;
   }, [
-    machineFilter,
-    machineNames,
     allThreads,
     query,
     sortBy,
@@ -350,10 +422,54 @@ export function ThreadsPane({
     showUnplannedOnly,
     freshUnplanned,
   ]);
-  const matches = groups.reduce((sum, group) => sum + group.threads.length, 0);
+  // A thread waiting on the person marks its machine while the filters keep it off the
+  // list. Searching does not count: the find field is in view and says what it hides.
+  const machinesWaiting = useMemo(() => {
+    const waiting = new Map<string, number>();
+    if (props.unattended) return waiting;
+    const unsearched = buildThreadPaneGroups(
+      allThreads,
+      sortBy,
+      "",
+      props.runningSubagents,
+      unreachable,
+      props.attention,
+    );
+    for (const thread of unsearched.find((entry) => entry.group === "Waiting on you")?.threads ??
+      []) {
+      const facts = threadFacts.get(`${thread.environmentId}:${thread.id}`);
+      if (!facts || threadMatchesPaneFilters(facts, filters)) continue;
+      waiting.set(facts.machine, (waiting.get(facts.machine) ?? 0) + 1);
+    }
+    return waiting;
+  }, [
+    allThreads,
+    sortBy,
+    props.runningSubagents,
+    props.attention,
+    props.unattended,
+    unreachable,
+    threadFacts,
+    machineFilter,
+    agentFilter,
+    openPullRequestOnly,
+  ]);
+  const shownGroups = anyFilter
+    ? groups.map((entry) => ({
+        ...entry,
+        threads: entry.threads.filter((thread) => {
+          const facts = threadFacts.get(`${thread.environmentId}:${thread.id}`);
+          return facts !== undefined && threadMatchesPaneFilters(facts, filters);
+        }),
+      }))
+    : groups;
+  const matches = shownGroups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
-  // Searching or filtering shows every match: empty groups go, folded ones open.
-  const narrowed = searching || showUnplannedOnly || machineFilter !== null;
+  // Searching or filtering drops empty groups.
+  const narrowed = searching || showUnplannedOnly || anyFilter;
+  // A filter is a lasting focus, so Resolved stays folded and paging stays on. A search or
+  // the unplanned list looks inside everything, because a hidden match would read as none.
+  const openEverything = searching || showUnplannedOnly;
   const offerStarters =
     allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
   // The coordinator is not a row here, so a question it asks is offered in the header.
@@ -412,6 +528,13 @@ export function ThreadsPane({
                   <TooltipPopup side="bottom">Stop or continue all threads</TooltipPopup>
                 </Tooltip>
                 <MenuPopup align="end" side="bottom" className="min-w-56">
+                  {anyFilter ? (
+                    <MenuGroup>
+                      <MenuGroupLabel data-bulk-ignores-filters>
+                        Every machine, ignoring filters
+                      </MenuGroupLabel>
+                    </MenuGroup>
+                  ) : null}
                   <MenuItem
                     disabled={props.bulk.busy || props.bulk.running === 0}
                     onClick={props.bulk.onStopAll}
@@ -463,44 +586,6 @@ export function ThreadsPane({
                     ))}
                   </MenuRadioGroup>
                 </MenuGroup>
-                {machineOptions.length > 1 ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Machine</MenuGroupLabel>
-                      <MenuRadioGroup
-                        value={machineFilter ?? ""}
-                        onValueChange={(value) => setMachineFilter(value === "" ? null : value)}
-                      >
-                        {[
-                          { machineId: "", label: "All machines", count: null },
-                          ...machineOptions,
-                        ].map((option) => (
-                          <MenuRadioItem
-                            key={option.machineId}
-                            value={option.machineId}
-                            data-machine-filter={option.machineId || "all"}
-                            aria-label={
-                              option.count === null
-                                ? option.label
-                                : `${option.label}, ${option.count} open ${option.count === 1 ? "thread" : "threads"}`
-                            }
-                          >
-                            <span className="flex items-center justify-between gap-6">
-                              <span>
-                                {option.label}
-                                {option.count === null ? null : (
-                                  <span className="text-muted-foreground"> {option.count}</span>
-                                )}
-                              </span>
-                              <MenuRadioItemIndicator />
-                            </span>
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                  </>
-                ) : null}
                 <MenuSeparator />
                 <MenuGroup>
                   <MenuCheckboxItem
@@ -555,21 +640,6 @@ export function ThreadsPane({
               Coordinator · {attentionActionWord(coordinatorAsk.reason)}
             </button>
           ) : null}
-          {machineFilterLabel ? (
-            <span className="sws-unplanned-notice" data-machine-filter-pill>
-              <button
-                type="button"
-                className="sws-unplanned-filter"
-                aria-pressed
-                aria-label={`Showing threads on ${machineFilterLabel}. Show all machines`}
-                onClick={() => setMachineFilter(null)}
-              >
-                <LaptopIcon aria-hidden />
-                On {machineFilterLabel}
-                <span className="sws-unplanned-clear">Show all</span>
-              </button>
-            </span>
-          ) : null}
           {unplannedCount > 0 && !offerStarters ? (
             <UnplannedThreadsFilter
               count={unplannedCount}
@@ -580,6 +650,152 @@ export function ThreadsPane({
                 dismissUnplanned();
               }}
             />
+          ) : null}
+          {!offerStarters && (machineRow.length > 1 || offerAgents || offerPullRequests) ? (
+            <div className="sws-threads-filters" data-thread-filters>
+              {machineRow.length > 1 ? (
+                <div className="sws-filter-machines" role="group" aria-label="Show threads on">
+                  <button
+                    type="button"
+                    className="sws-filter-choice"
+                    aria-pressed={machineFilter === null}
+                    data-machine-choice="all"
+                    onClick={() => setMachineFilter(null)}
+                  >
+                    All
+                  </button>
+                  {machineRow.map((choice) => {
+                    const waiting = machinesWaiting.get(choice.machineId) ?? 0;
+                    return (
+                      <Tip
+                        key={choice.machineId}
+                        label={choice.current ? `${choice.label} · this machine` : choice.label}
+                      >
+                        <button
+                          type="button"
+                          className="sws-filter-choice"
+                          aria-pressed={machineFilter === choice.machineId}
+                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${choice.count === 1 ? "thread" : "threads"}${waiting > 0 ? `, ${waiting} waiting on you` : ""}`}
+                          data-machine-choice={choice.machineId}
+                          data-current={choice.current || undefined}
+                          onClick={() =>
+                            setMachineFilter(
+                              machineFilter === choice.machineId ? null : choice.machineId,
+                            )
+                          }
+                        >
+                          {waiting > 0 ? (
+                            <span className="sws-dot" data-tone="waiting" aria-hidden />
+                          ) : null}
+                          <span className="sws-filter-choice-name">{choice.label}</span>
+                          <span className="sws-filter-count">{choice.count}</span>
+                        </button>
+                      </Tip>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {agentFilter !== null ? (
+                <button
+                  type="button"
+                  className="sws-filter-chip"
+                  data-filter-chip="agent"
+                  aria-label={`Showing ${agentFilter} threads. Remove this filter`}
+                  onClick={() => updatePaneFilters({ agent: null })}
+                >
+                  {agentFilter}
+                  <XIcon aria-hidden />
+                </button>
+              ) : null}
+              {openPullRequestOnly ? (
+                <button
+                  type="button"
+                  className="sws-filter-chip"
+                  data-filter-chip="pull-request"
+                  aria-label="Showing threads with an open pull request. Remove this filter"
+                  onClick={() => updatePaneFilters({ openPullRequest: false })}
+                >
+                  Open pull request
+                  <XIcon aria-hidden />
+                </button>
+              ) : null}
+              {offerAgents || offerPullRequests ? (
+                <Menu>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <MenuTrigger
+                          render={
+                            <button
+                              type="button"
+                              className="sws-filter-more"
+                              aria-label={
+                                activeMenuFilters > 0
+                                  ? `Filter threads, ${activeMenuFilters} on`
+                                  : "Filter threads"
+                              }
+                              data-thread-filter-menu
+                            />
+                          }
+                        />
+                      }
+                    >
+                      <ListFilterIcon aria-hidden />
+                    </TooltipTrigger>
+                    <TooltipPopup side="bottom">Filter threads</TooltipPopup>
+                  </Tooltip>
+                  <MenuPopup align="end" side="bottom" className="min-w-52">
+                    {offerAgents ? (
+                      <MenuGroup>
+                        <MenuGroupLabel>Agent</MenuGroupLabel>
+                        <MenuRadioGroup
+                          value={agentFilter ?? ""}
+                          onValueChange={(value) =>
+                            updatePaneFilters({ agent: value === "" ? null : (value as string) })
+                          }
+                        >
+                          {[{ agent: "", count: null as number | null }, ...agentRow].map(
+                            (option) => (
+                              <MenuRadioItem
+                                key={option.agent}
+                                value={option.agent}
+                                closeOnClick
+                                data-agent-filter={option.agent || "all"}
+                              >
+                                <span className="flex items-center justify-between gap-6">
+                                  <span>
+                                    {option.agent || "All agents"}
+                                    {option.count === null ? null : (
+                                      <span className="text-muted-foreground"> {option.count}</span>
+                                    )}
+                                  </span>
+                                  <MenuRadioItemIndicator />
+                                </span>
+                              </MenuRadioItem>
+                            ),
+                          )}
+                        </MenuRadioGroup>
+                      </MenuGroup>
+                    ) : null}
+                    {offerAgents && offerPullRequests ? <MenuSeparator /> : null}
+                    {offerPullRequests ? (
+                      <MenuGroup>
+                        <MenuCheckboxItem
+                          variant="switch"
+                          checked={openPullRequestOnly}
+                          onCheckedChange={(checked) =>
+                            updatePaneFilters({ openPullRequest: checked })
+                          }
+                          data-pull-request-filter
+                        >
+                          Open pull request
+                        </MenuCheckboxItem>
+                      </MenuGroup>
+                    ) : null}
+                  </MenuPopup>
+                </Menu>
+              ) : null}
+            </div>
           ) : null}
         </header>
         {props.shelf}
@@ -610,22 +826,34 @@ export function ThreadsPane({
             </label>
           ) : null}
         </div>
-        {searching && matches === 0 ? (
-          <p className="sws-empty" role="status">
-            No thread matches “{query.trim()}”.
+        {matches === 0 && (searching || anyFilter) && !offerStarters ? (
+          <p className="sws-empty" role="status" data-thread-filter-empty>
+            {searching ? (
+              <>No thread matches “{query.trim()}”.</>
+            ) : (
+              "No thread matches these filters."
+            )}
+            {anyFilter ? (
+              <>
+                {" "}
+                <button type="button" className="sws-filter-clear" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              </>
+            ) : null}
           </p>
         ) : null}
         {offerStarters ? props.starters : null}
-        {(offerStarters ? [] : groups).map(({ group, threads }) => {
+        {(offerStarters ? [] : shownGroups).map(({ group, threads }) => {
           if (narrowed && threads.length === 0) return null;
-          const limit = narrowed ? threads.length : (limits[group] ?? THREAD_GROUP_PAGE);
+          const limit = openEverything ? threads.length : (limits[group] ?? THREAD_GROUP_PAGE);
           const rows = threads.slice(0, limit);
           const hidden = threads.length - rows.length;
           const slug = group.replace(/\s+/g, "-").toLowerCase();
           const headingId = `sws-threads-${slug}`;
           const listId = `sws-threads-${slug}-list`;
           // A search looks inside folded groups too; hiding a match would read as "not found".
-          const isFolded = !narrowed && folded.includes(group);
+          const isFolded = !openEverything && folded.includes(group);
           return (
             <section
               className="sws-thread-group"
@@ -641,14 +869,14 @@ export function ThreadsPane({
                   aria-controls={isFolded ? undefined : listId}
                   // A search opens every group on purpose; folding one then would change
                   // nothing on screen and still be remembered.
-                  aria-disabled={narrowed || undefined}
-                  onClick={narrowed ? undefined : () => setGroupFolded(group, !isFolded)}
+                  aria-disabled={openEverything || undefined}
+                  onClick={openEverything ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
                   {group}
                   <span className="sws-group-count">
                     {threads.length}
-                    {narrowed ? " shown" : ""}
+                    {openEverything ? " shown" : ""}
                     <span className="sr-only"> threads</span>
                   </span>
                 </button>
@@ -958,7 +1186,7 @@ export function ThreadsPane({
                     , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden {group} threads
                   </span>
                 </button>
-              ) : !narrowed && threads.length > THREAD_GROUP_PAGE ? (
+              ) : !openEverything && threads.length > THREAD_GROUP_PAGE ? (
                 <button
                   type="button"
                   className="sws-show-more"

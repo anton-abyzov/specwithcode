@@ -545,7 +545,7 @@ vi.mock("./shell/ModelBadge", () => ({
   ),
   ModelBadgeMark: () => null,
   useProviderEntries: () => new Map(),
-  useProviderEntriesByEnvironment: () => new Map(),
+  useProviderEntriesByEnvironment: () => new Map([["host", new Map()]]),
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,

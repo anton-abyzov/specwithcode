@@ -90,7 +90,7 @@ describe("project coordinator surface", () => {
     // A project on one machine leaves the machine to the composer.
     expect(meta.querySelector(".sws-thread-machine")).toBeNull();
   });
-  it("narrows the threads to the machine chosen for this project, and Show all undoes it", async () => {
+  it("narrows the threads to the machine chosen for this project, and All undoes it", async () => {
     const onMinis = {
       source: {
         ownerMachineId: "host",
@@ -110,11 +110,108 @@ describe("project coordinator surface", () => {
         row.getAttribute("data-thread-id"),
       );
     expect(rows()).toEqual(["linux"]);
-    const pill = container.querySelector<HTMLButtonElement>("[data-machine-filter-pill] button")!;
-    expect(pill.getAttribute("aria-label")).toBe("Showing threads on Minis. Show all machines");
-    await act(async () => pill.click());
+    const choice = (id: string) =>
+      container.querySelector<HTMLButtonElement>(`[data-machine-choice='${id}']`)!;
+    expect(choice("minis").getAttribute("aria-pressed")).toBe("true");
+    expect(choice("all").getAttribute("aria-pressed")).toBe("false");
+    await act(async () => choice("all").click());
     expect(rows().toSorted()).toEqual(["linux", "worker"]);
     expect(localStorage.getItem("studio:project-threads-machine:v1")).toBe("{}");
+    await act(async () => choice("host").click());
+    expect(rows()).toEqual(["worker"]);
+    const order = [...container.querySelectorAll("[data-machine-choice]")].map((node) =>
+      node.getAttribute("data-machine-choice"),
+    );
+    expect(order).toEqual(["all", "minis", "host"]);
+    expect(choice("host").getAttribute("aria-label")).toBe("Test host, 1 open thread");
+  });
+  it("lets go of a machine filter once one machine is left, so the list is not stuck narrowed", async () => {
+    state.shells = [shell("coord"), shell("worker")];
+    localStorage.setItem(
+      "studio:project-threads-machine:v1",
+      JSON.stringify({ "host:project": "host" }),
+    );
+    await render();
+    expect(
+      container.querySelector("[data-group='Working'] .sws-group-count")?.textContent ?? "",
+    ).not.toContain("shown");
+    expect(localStorage.getItem("studio:project-threads-machine:v1")).toBe("{}");
+  });
+  it("keeps Resolved folded under a filter, and its heading still folds", async () => {
+    const onMinis = {
+      source: {
+        ownerMachineId: "host",
+        executionMachineId: "minis",
+        executionMachineLabel: "Anton's Minis",
+        executionState: "running",
+      },
+    } as never;
+    state.shells = [
+      shell("coord"),
+      shell("worker"),
+      shell("linux", onMinis),
+      shell("done", { ...(onMinis as object), settledOverride: "settled" } as never),
+    ];
+    localStorage.setItem(
+      "studio:project-threads-machine:v1",
+      JSON.stringify({ "host:project": "minis" }),
+    );
+    await render();
+    const rows = [...container.querySelectorAll(".sws-thread-row")].map((row) =>
+      row.getAttribute("data-thread-id"),
+    );
+    expect(rows).toEqual(["linux"]);
+    const resolved = container.querySelector("[data-group='Resolved'] .sws-group-bar")!;
+    expect(resolved.getAttribute("aria-disabled")).toBeNull();
+    expect(resolved.getAttribute("aria-expanded")).toBe("false");
+    expect(resolved.textContent).toContain("1");
+    expect(resolved.textContent).not.toContain("shown");
+    await act(async () => (resolved as HTMLButtonElement).click());
+    expect(container.querySelector("[data-thread-id='done']")).not.toBeNull();
+  });
+  it("forgets an agent no thread uses, so a later thread does not narrow the list unasked", async () => {
+    state.shells = [shell("coord"), shell("worker")];
+    localStorage.setItem(
+      "studio:project-threads-filters:v1",
+      JSON.stringify({ "host:project": { agent: "Gone", openPullRequest: false } }),
+    );
+    await render();
+    expect(container.querySelector("[data-filter-chip]")).toBeNull();
+    expect(localStorage.getItem("studio:project-threads-filters:v1")).toBe("{}");
+  });
+  it("offers no filter row while threads share one machine and agent and no pull request", async () => {
+    state.shells = [shell("coord"), shell("worker")];
+    await render();
+    expect(container.querySelector("[data-thread-filters]")).toBeNull();
+  });
+  it("marks another machine's waiting thread and clears filters from an empty list", async () => {
+    const onMinis = {
+      source: {
+        ownerMachineId: "host",
+        executionMachineId: "minis",
+        executionMachineLabel: "Anton's Minis",
+        executionState: "running",
+      },
+    } as never;
+    state.shells = [shell("coord"), shell("worker"), shell("linux", onMinis)];
+    localStorage.setItem(
+      "studio:project-threads-machine:v1",
+      JSON.stringify({ "host:project": "minis" }),
+    );
+    localStorage.setItem(
+      "studio:project-threads-filters:v1",
+      JSON.stringify({ "host:project": { agent: null, openPullRequest: true } }),
+    );
+    await render();
+    expect(container.querySelector(".sws-thread-row")).toBeNull();
+    const chip = container.querySelector<HTMLButtonElement>("[data-filter-chip='pull-request']")!;
+    expect(chip.getAttribute("aria-label")).toContain("open pull request");
+    const empty = container.querySelector("[data-thread-filter-empty]")!;
+    expect(empty.textContent).toContain("No thread matches these filters.");
+    await act(async () => empty.querySelector("button")!.click());
+    expect(container.querySelectorAll(".sws-thread-row").length).toBe(2);
+    expect(container.querySelector("[data-filter-chip]")).toBeNull();
+    expect(localStorage.getItem("studio:project-threads-filters:v1")).toBe("{}");
   });
   it("lets a machine filter go once every host answered and that machine has no thread", async () => {
     state.shells = [shell("coord"), shell("worker")];
@@ -123,7 +220,7 @@ describe("project coordinator surface", () => {
       JSON.stringify({ "host:project": "gone", "host:other": "minis" }),
     );
     await render();
-    expect(container.querySelector("[data-machine-filter-pill]")).toBeNull();
+    expect(container.querySelector("[data-machine-choice]")).toBeNull();
     expect(localStorage.getItem("studio:project-threads-machine:v1")).toBe(
       JSON.stringify({ "host:other": "minis" }),
     );

@@ -1,6 +1,6 @@
 // Run against serve.mjs. In a project on several machines (`?rows`) every row's
-// machine sits in one aligned column beside the age, the sort menu narrows the
-// list to one machine with a dismissible "On <machine>" pill, and a narrow pane
+// machine sits in one aligned column beside the age, the filter row narrows the
+// list to one machine and All undoes it, and a narrow pane
 // keeps only the icon and the name's first letters. MACHINE_MEASURE_ONLY=1 records what a
 // build shows instead of asserting, for a before capture.
 import * as NodeAssert from "node:assert/strict";
@@ -73,8 +73,8 @@ try {
       );
       await page.reload();
       await page.locator(".sws-thread-row").first().waitFor();
-      const pill = page.locator("[data-machine-filter-pill]");
-      check((await pill.count()) === 1, "a chosen machine shows its pill");
+      const all = page.locator("[data-machine-choice='all']");
+      check((await all.count()) === 1, "a chosen machine keeps All in view");
       const after = await page.locator(".sws-thread-row").count();
       receipt.filtered = { before: rows.length, after, home, other };
       check(
@@ -82,14 +82,12 @@ try {
         `the filter narrows the list: ${rows.length} → ${after}`,
       );
       await listShot(page, "machine-filter-on");
-      if ((await pill.count()) === 1) {
+      if ((await all.count()) === 1) {
         // A pointer click hangs this fixture page; the DOM click is the same button press.
-        await page.evaluate(() =>
-          document.querySelector("[data-machine-filter-pill] button").click(),
-        );
+        await page.evaluate(() => document.querySelector("[data-machine-choice='all']").click());
         check(
           (await page.locator(".sws-thread-row").count()) === rows.length,
-          "Show all brings every thread back",
+          "All brings every thread back",
         );
       }
     }
