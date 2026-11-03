@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { TimelineEntry } from "../../session-logic";
 import {
   buildComposerSkillGroups,
+  composerSkillCatalog,
   collectSessionSkillUses,
   composerSkillsDiscoveryError,
   composerSkillsFailureReason,
@@ -260,7 +261,7 @@ describe("buildComposerSkillGroups", () => {
       ["Project", ["alpha", "zeta"]],
       ["User", ["off-skill"]],
       ["Plugin", ["sw:do"]],
-      ["Other", ["builtin"]],
+      ["Bundled", ["builtin"]],
     ]);
     const gone = groups[0]!.items[1]!;
     expect(gone).toMatchObject({ missing: true, levelLabel: "Not listed", used: "tool" });
@@ -423,5 +424,82 @@ describe("composerSkillsRescanPlan", () => {
       server: false,
       providers: false,
     });
+  });
+});
+
+describe("composerSkillCatalog", () => {
+  it("preserves ACP command and skill advertisements and matches their provider aliases", () => {
+    const command = skill({ name: "unslop", path: "acp://command/unslop" });
+    const advertised = skill({ name: "workspace-skill", path: "acp://skill/workspace-skill" });
+    const snapshot = {
+      rows: [
+        row({
+          name: "canonical",
+          aliases: ["unslop", "workspace-skill"],
+          providers: [
+            presence({ instanceId: "copilot", path: "/work/.agents/skills/canonical/SKILL.md" }),
+          ],
+        }),
+      ],
+    };
+    expect(composerSkillCatalog([command, advertised], "copilot", null)).toEqual([
+      command,
+      advertised,
+    ]);
+    expect(composerSkillCatalog([command, advertised], "copilot", snapshot)).toEqual([command]);
+    expect(composerSkillCatalog([command, advertised], "other", snapshot)).toHaveLength(2);
+  });
+  it("excludes plugin commands and hidden copies exactly like Settings", () => {
+    const valid = skill({ name: "valid" });
+    expect(
+      composerSkillCatalog(
+        [
+          valid,
+          skill({ name: "command", path: "/plugins/commands/setup.md" }),
+          skill({ name: "trash", path: "/skills/.trash/test/SKILL.md" }),
+        ],
+        "codex",
+        null,
+      ),
+    ).toEqual([valid]);
+  });
+  it("counts user and system skill-creator copies once, preserving an enabled native path", () => {
+    const user = skill({ name: "skill-creator", enabled: false });
+    const system = skill({
+      name: "skill-creator",
+      path: "/home/me/.codex/skills/.system/skill-creator/SKILL.md",
+      scope: "system",
+    });
+    expect(composerSkillCatalog([user, system], "codex", null)).toEqual([system]);
+  });
+  it("joins alias names only when this instance's exact copies share a Settings row", () => {
+    const first = skill({ name: "one" });
+    const second = skill({ name: "alias" });
+    const snapshot = {
+      rows: [
+        row({
+          name: "canonical",
+          providers: [presence({ path: first.path }), presence({ path: second.path })],
+        }),
+      ],
+    };
+    expect(composerSkillCatalog([first, second], "claudeAgent", snapshot)).toEqual([first]);
+    expect(composerSkillCatalog([first, second], "codex", snapshot)).toHaveLength(2);
+  });
+  it("searches full descriptions behind short summaries, across tokens", () => {
+    const groups = buildComposerSkillGroups({
+      skills: [
+        skill({
+          name: "launch",
+          shortDescription: "Write copy",
+          description: "Marketing campaigns for football",
+        }),
+      ],
+      instanceId: "codex",
+      snapshot: null,
+      uses: [],
+      query: "football marketing",
+    });
+    expect(groups.flatMap((group) => group.items).map((item) => item.name)).toEqual(["launch"]);
   });
 });

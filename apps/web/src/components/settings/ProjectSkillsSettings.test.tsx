@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   search: {} as Record<string, unknown>,
   navigations: [] as Array<{ replace?: boolean; search?: unknown }>,
   skillsInputs: [] as unknown[],
+  versionInputs: [] as unknown[],
+  actionInputs: [] as unknown[],
   toasts: [] as Array<{
     title?: string;
     actionProps?: { children?: unknown; onClick?: () => void };
@@ -33,7 +35,10 @@ vi.mock("../../studio/projectWorkspace", () => ({
       state.skillsInputs.push(options.input);
       return { kind: "skills" };
     },
-    skillVersions: () => ({ kind: "versions" }),
+    skillVersions: (options: { input: unknown }) => {
+      state.versionInputs.push(options.input);
+      return { kind: "versions" };
+    },
     skillAction: { label: "skill-action" },
     skillFleetPush: { label: "skill-fleet-push" },
     skillStudioLink: { label: "skill-studio-link" },
@@ -83,6 +88,7 @@ vi.mock("../../state/use-atom-command", () => ({
     }: {
       input: { preview: boolean; action: { kind: string; enabled?: boolean }; expected?: unknown };
     }) => {
+      state.actionInputs.push(input);
       state.actions.push({
         preview: input.preview,
         action: input.action,
@@ -208,6 +214,8 @@ beforeEach(() => {
   state.search = {};
   state.navigations = [];
   state.skillsInputs = [];
+  state.versionInputs = [];
+  state.actionInputs = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -332,9 +340,9 @@ describe("ProjectSkillsView", () => {
       container.querySelector<HTMLElement>(
         `[aria-label='Filter by ${group}'] [data-facet='${value}']`,
       )!;
-    await act(async () => chip("agent", "Codex").click());
+    await act(async () => chip("agent", "codex").click());
     expect(bodyRows()).toEqual(["gws"]);
-    await act(async () => chip("agent", "Codex").click());
+    await act(async () => chip("agent", "codex").click());
     await act(async () => chip("level", "project").click());
     expect(bodyRows()).toEqual(["deploy", "review"]);
     await act(async () => chip("tier", "VERIFIED").click());
@@ -445,7 +453,12 @@ describe("ProjectSkillsView", () => {
     expect(document.querySelector("[data-testid=skill-fleet-push]")).not.toBeNull();
   });
 
-  it("shows the version, and previews a switch before it writes, with Undo after", async () => {
+  it("keeps the thread folder through versions, preview, apply and Undo", async () => {
+    state.search = {
+      skillCwd: "/work/thread",
+      skillThread: "thread-1",
+      skillContext: "host:project",
+    };
     state.versions = {
       skill: "deploy",
       skillId: "acme/deploy/deploy",
@@ -499,6 +512,7 @@ describe("ProjectSkillsView", () => {
     expect(panel.querySelector("[data-testid=skill-action-preview]")).toBeNull();
     expect(state.toasts[0]?.title).toBe("Turned off deploy for Claude.");
     expect(state.toasts[0]?.actionProps?.children).toBe("Undo");
+    expect(state.versionInputs.at(-1)).toMatchObject({ cwd: "/work/thread", threadId: "thread-1" });
 
     // Undo previews the inverse and applies it with what that preview saw.
     await act(async () => state.toasts[0]!.actionProps!.onClick!());
@@ -509,6 +523,9 @@ describe("ProjectSkillsView", () => {
       }),
       expect.objectContaining({ preview: false, expected: { fileHash: "h1" } }),
     ]);
+    expect(state.actionInputs).toHaveLength(4);
+    for (const input of state.actionInputs)
+      expect(input).toMatchObject({ cwd: "/work/thread", threadId: "thread-1" });
   });
 
   it("says why Pin and Unpin are disabled for a skill in the user's lock", async () => {
@@ -672,5 +689,67 @@ describe("ProjectSkillsView", () => {
     state.data = { ...snapshot, rows: [] };
     await render();
     expect(container.textContent).toContain("No agent loads any skill in this folder");
+  });
+  it("preselects the linked instance and queries its thread folder", async () => {
+    state.data = {
+      ...snapshot,
+      rows: [
+        row("codex-skill", {
+          providers: [
+            {
+              ...claude,
+              instanceId: ProviderInstanceId.make("codex"),
+              label: "Codex",
+              path: "/skills/codex/SKILL.md",
+              scope: "user",
+              enabled: true,
+            },
+          ],
+        }),
+      ],
+    };
+    state.search = {
+      agent: "codex",
+      skillCwd: "/work/owned-tree",
+      skillThread: "thread-1",
+      skillContext: "host:project",
+    };
+    await render();
+    expect(state.skillsInputs.at(-1)).toMatchObject({
+      cwd: "/work/owned-tree",
+      threadId: "thread-1",
+    });
+    expect(container.querySelector('[data-facet="codex"]')?.getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+  it("ignores a thread folder after switching to another settings context", async () => {
+    state.search = {
+      skillCwd: "/other/worktree",
+      skillThread: "other-thread",
+      skillContext: "other:other-project",
+    };
+    await render();
+    expect(state.skillsInputs.at(-1)).not.toHaveProperty("cwd");
+  });
+  it("drops old worktree rows and controls while a new context is loading", async () => {
+    state.search = { skillCwd: "/work/first", skillThread: "first", skillContext: "host:project" };
+    await render();
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>("button[aria-label='Show details for deploy']")!
+        .click(),
+    );
+    expect(document.querySelector("[data-testid=skill-details]")).not.toBeNull();
+    state.search = {
+      skillCwd: "/work/second",
+      skillThread: "second",
+      skillContext: "host:project",
+    };
+    state.data = null;
+    state.isPending = true;
+    await render();
+    expect(bodyRows()).toEqual([]);
+    expect(document.querySelector("[data-testid=skill-details]")).toBeNull();
   });
 });

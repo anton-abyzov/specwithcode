@@ -179,12 +179,12 @@ describe("agent, level and tier filters", () => {
   });
 
   it("filters by agent, by level, and by both on the same copy", () => {
-    expect(names({ ...base, providers: ["Codex"] })).toEqual(["repo-codex", "both"]);
+    expect(names({ ...base, providers: ["codex"] })).toEqual(["repo-codex", "both"]);
     expect(names({ ...base, levels: ["project"] })).toEqual(["repo-codex", "both"]);
     expect(names({ ...base, levels: ["user"] })).toEqual(["user-claude", "both", "lock-only"]);
     // `both` has Claude at project level and Codex at user level, not Claude at user level.
-    expect(names({ ...base, providers: ["Claude"], levels: ["user"] })).toEqual(["user-claude"]);
-    expect(names({ ...base, providers: ["Claude", "Codex"], levels: ["project"] })).toEqual([
+    expect(names({ ...base, providers: ["claude"], levels: ["user"] })).toEqual(["user-claude"]);
+    expect(names({ ...base, providers: ["claude", "codex"], levels: ["project"] })).toEqual([
       "repo-codex",
       "both",
     ]);

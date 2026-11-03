@@ -213,7 +213,12 @@ function StudioLinkButton() {
     try {
       const result = await link({
         environmentId: controls.environmentId,
-        input: { projectId: controls.projectId, ...target! },
+        input: {
+          projectId: controls.projectId,
+          ...(controls.cwd ? { cwd: controls.cwd } : {}),
+          ...(controls.threadId ? { threadId: controls.threadId } : {}),
+          ...target!,
+        },
       });
       if (result._tag === "Success") await openSkillLink(result.value.url);
       else setError(skillActionErrorText(squashAtomCommandFailure(result)));

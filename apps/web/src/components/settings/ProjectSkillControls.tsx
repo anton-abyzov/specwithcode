@@ -10,6 +10,7 @@ import {
   AuthTerminalOperateScope,
   type EnvironmentId,
   type ProjectId,
+  type ThreadId,
   type ProjectSkillRow,
   type ProjectSkillsAction,
   type ProjectSkillsActionApplied,
@@ -62,6 +63,8 @@ interface Proposal {
 export interface SkillControls {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly cwd?: string | undefined;
+  readonly threadId?: ThreadId | undefined;
   readonly row: ProjectSkillRow;
   readonly memberProjects: ReadonlyArray<SkillMemberProject>;
   /** The machine-wide view: every switch is the user's own. */
@@ -113,6 +116,8 @@ export function skillActionKey(action: ProjectSkillsAction): string {
 export function SkillControlsProvider({
   environmentId,
   projectId,
+  cwd,
+  threadId,
   row,
   memberProjects,
   userLevel = false,
@@ -123,6 +128,8 @@ export function SkillControlsProvider({
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  cwd?: string | undefined;
+  threadId?: ThreadId | undefined;
   row: ProjectSkillRow;
   memberProjects: ReadonlyArray<SkillMemberProject>;
   /** A row of the machine-wide view: actions name the user level, and switches the user's files. */
@@ -144,7 +151,13 @@ export function SkillControlsProvider({
     version.skillId
       ? projectWorkspace.skillVersions({
           environmentId,
-          input: { projectId, skill: row.name, ...(userLevel ? { userLevel: true } : {}) },
+          input: {
+            projectId,
+            ...(cwd ? { cwd } : {}),
+            ...(threadId ? { threadId } : {}),
+            skill: row.name,
+            ...(userLevel ? { userLevel: true } : {}),
+          },
         })
       : null,
   );
@@ -171,6 +184,8 @@ export function SkillControlsProvider({
           environmentId,
           input: {
             projectId,
+            ...(cwd ? { cwd } : {}),
+            ...(threadId ? { threadId } : {}),
             skill: row.name,
             ...(userLevel ? { userLevel: true } : {}),
             preview,
@@ -187,7 +202,7 @@ export function SkillControlsProvider({
         return { ok: false as const, message: "The machine did not confirm the change." };
       }
     },
-    [environmentId, projectId, row.name, run, userLevel],
+    [environmentId, projectId, cwd, threadId, row.name, run, userLevel],
   );
 
   // The delayed rescans, cleared when the sheet closes so none fires after it.
@@ -308,6 +323,8 @@ export function SkillControlsProvider({
     () => ({
       environmentId,
       projectId,
+      cwd,
+      threadId,
       row,
       memberProjects,
       userLevel,
@@ -343,6 +360,8 @@ export function SkillControlsProvider({
       memberProjects,
       pending,
       projectId,
+      cwd,
+      threadId,
       proposal,
       propose,
       pushOpen,

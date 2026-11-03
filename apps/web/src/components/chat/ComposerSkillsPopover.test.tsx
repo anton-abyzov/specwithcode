@@ -4,6 +4,17 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, type ServerProviderSkill } from "@specweave-studio/contracts";
 
+vi.mock("../settings/useSettingsProjectGroups", () => ({
+  useSettingsProjectGroups: () => [
+    {
+      projectKey: "logical-project",
+      memberProjects: [
+        { id: "project", environmentId: "host", physicalProjectKey: "host:/work/app" },
+      ],
+    },
+  ],
+}));
+
 vi.mock("../../studio/projectWorkspace", () => ({ projectWorkspace: { skills: () => ({}) } }));
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
@@ -97,10 +108,61 @@ describe("ComposerSkillsPopover", () => {
     expect(manage.textContent).toBe("Manage");
     expect(manage.closest(".opacity-50")).toBeNull();
     expect(manage.className).toContain("focus-visible:ring-2");
-    expect(manage.getAttribute("href")).toBe("/settings/skills?skill=html-report");
+    expect(manage.getAttribute("href")).toBe(
+      "/settings/skills?machine=host&project=logical-project&checkout=host%3A%2Fwork%2Fapp&skill=html-report",
+    );
     // A skill that is on has nothing to manage from here.
     expect(
       document.querySelector("[data-skill-name='deploy'] [data-testid=composer-skill-manage]"),
     ).toBeNull();
+  });
+  it("updates matches per keystroke and labels totals and disabled skills", async () => {
+    const list = Array.from({ length: 20 }, (_, i) => ({
+      name: `skill-${i === 19 ? 0 : i}`,
+      path: `/skills/${i}/SKILL.md`,
+      enabled: i < 13,
+      scope: i === 18 ? "system" : "user",
+      shortDescription: "Short summary",
+      description: i === 3 ? "Marketing football campaigns" : "Other work",
+    }));
+    await act(async () =>
+      root.render(
+        <ComposerSkillsPopover
+          environmentId={EnvironmentId.make("host")}
+          projectId={ProjectId.make("project")}
+          cwd="/work/app"
+          provider={
+            { instanceId: "codex", displayName: "Codex", snapshot: { status: "ready" } } as never
+          }
+          machineLabel="M3"
+          skills={list}
+        />,
+      ),
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(
+      "[data-testid=composer-skills-trigger]",
+    )!;
+    expect(trigger.textContent).toContain("19");
+    await act(async () => trigger.click());
+    const panel = document.querySelector<HTMLElement>("[data-testid=composer-skills-popover]")!;
+    expect(panel.textContent).toContain("19 skills · 13 enabled · 6 off");
+    expect(panel.querySelector('[aria-label="System"]')).not.toBeNull();
+    const input = panel.querySelector<HTMLInputElement>('input[aria-label="Search skills"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    for (const text of ["ma", "mar", "marketing", "marketing football", "nomatch", ""]) {
+      await act(async () => {
+        setter.call(input, text);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      const expected =
+        text === "" ? 19 : text === "nomatch" ? 0 : ["ma", "mar"].includes(text) ? 19 : 1;
+      expect(panel.querySelectorAll("[data-skill-name]")).toHaveLength(expected);
+      if (text) expect(panel.textContent).toContain(`${expected} of 19 skills`);
+    }
+    const settings = [...panel.querySelectorAll("a")].find(
+      (a) => a.textContent === "Open Skills settings",
+    )!;
+    expect(settings.getAttribute("href")).toContain("agent=codex");
+    expect(settings.getAttribute("href")).toContain("machine=host&project=logical-project");
   });
 });

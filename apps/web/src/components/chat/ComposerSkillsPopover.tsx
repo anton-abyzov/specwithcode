@@ -1,12 +1,13 @@
 import type {
   EnvironmentId,
   ProjectId,
+  ProjectSkillsSnapshot,
   ServerProviderSkill,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
 import { RefreshCwIcon, SearchIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { TimelineEntry } from "../../session-logic";
@@ -14,6 +15,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -23,6 +25,7 @@ import { Spinner } from "../ui/spinner";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
   buildComposerSkillGroups,
+  composerSkillCatalog,
   collectSessionSkillUses,
   COMPOSER_SKILLS_SEARCH_THRESHOLD,
   composerSkillsDiscoveryError,
@@ -66,7 +69,21 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
   props: ComposerSkillsPopoverProps,
 ) {
   const [open, setOpen] = useState(false);
-  const count = props.skills.filter((skill) => skill.enabled).length;
+  const context = `${props.environmentId}:${props.projectId}:${props.cwd}:${props.provider?.instanceId}`;
+  const [resolved, setResolved] = useState<{
+    context: string;
+    snapshot: ProjectSkillsSnapshot;
+  } | null>(null);
+  const setSnapshot = useCallback(
+    (snapshot: ProjectSkillsSnapshot) => setResolved({ context, snapshot }),
+    [context],
+  );
+  const catalog = composerSkillCatalog(
+    props.skills,
+    props.provider?.instanceId ?? null,
+    resolved?.context === context ? resolved.snapshot : null,
+  );
+  const count = catalog.length;
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -77,7 +94,7 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
             variant="ghost-muted"
             className="shrink-0"
             data-testid="composer-skills-trigger"
-            aria-label={`Skills: ${count} available`}
+            aria-label={`Skills: ${count} total`}
           >
             <SparklesIcon aria-hidden="true" />
             <span className="hidden sm:inline">Skills</span>
@@ -93,13 +110,21 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
         width="md"
         className="text-left whitespace-normal"
       >
-        {open ? <ComposerSkillsPanel {...props} /> : null}
+        {open ? (
+          <ComposerSkillsPanel
+            key={`${props.environmentId}:${props.projectId}:${props.cwd}:${props.provider?.instanceId}`}
+            {...props}
+            onSnapshot={setSnapshot}
+          />
+        ) : null}
       </PopoverPopup>
     </Popover>
   );
 });
 
-function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
+function ComposerSkillsPanel(
+  props: ComposerSkillsPopoverProps & { onSnapshot: (snapshot: ProjectSkillsSnapshot) => void },
+) {
   const [rescan, setRescan] = useState(false);
   const [search, setSearch] = useState("");
   const query = useEnvironmentQuery(
@@ -119,6 +144,35 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
   const lastSnapshot = useRef(query.data);
   if (query.data) lastSnapshot.current = query.data;
   const snapshot = query.data ?? lastSnapshot.current;
+  useEffect(() => {
+    if (snapshot) props.onSnapshot(snapshot);
+  }, [snapshot, props.onSnapshot]);
+  const catalog = useMemo(
+    () => composerSkillCatalog(props.skills, props.provider?.instanceId ?? null, snapshot ?? null),
+    [props.skills, props.provider?.instanceId, snapshot],
+  );
+  const projectGroups = useSettingsProjectGroups();
+  const projectGroup = projectGroups.find((group) =>
+    group.memberProjects.some(
+      (member) => member.environmentId === props.environmentId && member.id === props.projectId,
+    ),
+  );
+  const projectMember = projectGroup?.memberProjects.find(
+    (member) => member.environmentId === props.environmentId && member.id === props.projectId,
+  );
+  const settingsSearch = {
+    machine: props.environmentId,
+    ...(projectGroup ? { project: projectGroup.projectKey } : {}),
+    ...(projectMember ? { checkout: projectMember.physicalProjectKey } : {}),
+    ...(props.provider ? { agent: props.provider.instanceId } : {}),
+    ...(props.cwd && props.threadId
+      ? {
+          skillCwd: props.cwd,
+          skillThread: props.threadId,
+          skillContext: `${props.environmentId}:${props.projectId}`,
+        }
+      : {}),
+  };
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -136,13 +190,13 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
   const groups = useMemo(
     () =>
       buildComposerSkillGroups({
-        skills: props.skills,
+        skills: catalog,
         instanceId,
         snapshot: snapshot ?? null,
         uses,
         query: search,
       }),
-    [instanceId, props.skills, search, snapshot, uses],
+    [instanceId, catalog, search, snapshot, uses],
   );
   const discoveryError = composerSkillsDiscoveryError({
     providerStatus: props.provider?.snapshot.status ?? null,
@@ -178,7 +232,7 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
       }).finally(() => setRefreshing(false));
     }
   };
-  const usedCount = countSessionSkillsUsed(props.skills, uses);
+  const usedCount = countSessionSkillsUsed(catalog, uses);
   const heading = composerSkillsHeading({
     agent,
     machine: props.machineLabel.trim() || null,
@@ -186,13 +240,22 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
   });
   const showSearch = props.skills.length > COMPOSER_SKILLS_SEARCH_THRESHOLD;
   const empty = groups.length === 0;
+  const total = catalog.length;
+  const enabled = catalog.filter((skill) => skill.enabled).length;
+  const matching = groups.reduce(
+    (sum, group) => sum + group.items.filter((item) => !item.missing).length,
+    0,
+  );
 
   return (
     <div className="flex max-h-[min(28rem,70vh)] flex-col" data-testid="composer-skills-popover">
       <div className="flex flex-col gap-0.5 border-b px-3 pt-2.5 pb-2">
         <div className="truncate font-medium text-xs">{heading}</div>
         <div className="text-2xs text-muted-foreground tabular-nums">
-          {props.skills.length} skill{props.skills.length === 1 ? "" : "s"}
+          {search.trim()
+            ? `${matching} of ${total} skills`
+            : `${total} skill${total === 1 ? "" : "s"}`}
+          {` · ${enabled} enabled${total > enabled ? ` · ${total - enabled} off` : ""}`}
           {usedCount > 0 ? ` · ${usedCount} used` : ""}
         </div>
       </div>
@@ -235,9 +298,18 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
               {group.label}
               <span className="ms-1 tabular-nums">{group.items.length}</span>
             </h3>
+            {group.id === "system" ? (
+              <p className="px-3 pb-1 text-2xs text-muted-foreground">
+                Built into the agent, such as Codex skills in ~/.codex/skills/.system.
+              </p>
+            ) : null}
             <ul>
               {group.items.map((item) => (
-                <ComposerSkillRow key={`${group.id}:${item.name}:${item.path ?? ""}`} item={item} />
+                <ComposerSkillRow
+                  key={`${group.id}:${item.name}:${item.path ?? ""}`}
+                  item={item}
+                  settingsSearch={settingsSearch}
+                />
               ))}
             </ul>
           </section>
@@ -261,6 +333,7 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
         </Button>
         <Link
           to="/settings/skills"
+          search={settingsSearch}
           className="rounded-sm px-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
           Open Skills settings
@@ -270,7 +343,13 @@ function ComposerSkillsPanel(props: ComposerSkillsPopoverProps) {
   );
 }
 
-function ComposerSkillRow({ item }: { item: ComposerSkillItem }) {
+function ComposerSkillRow({
+  item,
+  settingsSearch,
+}: {
+  item: ComposerSkillItem;
+  settingsSearch: Record<string, string>;
+}) {
   const versionText = item.version
     ? item.version.value
       ? `v${item.version.value.replace(/^v/i, "")}`
@@ -308,7 +387,7 @@ function ComposerSkillRow({ item }: { item: ComposerSkillItem }) {
           <span className="shrink-0 text-2xs text-muted-foreground">off</span>
           <Link
             to="/settings/skills"
-            search={{ skill: item.name }}
+            search={{ ...settingsSearch, skill: item.name }}
             className="shrink-0 rounded-sm text-2xs text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`Manage ${item.displayName} in Skills settings`}
             data-testid="composer-skill-manage"

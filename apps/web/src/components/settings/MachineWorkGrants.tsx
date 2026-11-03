@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
+import { IncomingWorkerSetup } from "./IncomingWorkerSetup";
 import { RefreshCwIcon } from "lucide-react";
 import {
   AuthAccessWriteScope,
@@ -349,6 +350,7 @@ export function MachineWorkGrantsList({
   notice,
   onRefresh,
   onChange,
+  setup,
 }: {
   snapshot: StudioWorkGrantsSnapshot | null;
   loading: boolean;
@@ -360,6 +362,7 @@ export function MachineWorkGrantsList({
   notice: string | null;
   onRefresh: () => void;
   onChange: (change: GrantChange) => void;
+  setup?: ReactNode;
 }) {
   return (
     <SettingsSection
@@ -397,9 +400,10 @@ export function MachineWorkGrantsList({
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           {loading
             ? "Checking who can run work here…"
-            : "No other machine can start work here. A machine gets access when you add this one there and choose Allow workers on its card."}
+            : "No other machine can start work here. Choose a machine below, or open Connections on that machine and choose Allow workers on this machine’s card."}
         </p>
       )}
+      {setup}
       {snapshot?.grants.length ? (
         <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
           Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then
@@ -498,6 +502,15 @@ export function MachineWorkGrants({
       notice={notice}
       onRefresh={refresh}
       onChange={(next) => void change(next)}
+      setup={
+        snapshot && !failed && !loading ? (
+          <IncomingWorkerSetup
+            environmentId={environmentId}
+            snapshot={snapshot}
+            onGranted={refresh}
+          />
+        ) : null
+      }
     />
   );
 }

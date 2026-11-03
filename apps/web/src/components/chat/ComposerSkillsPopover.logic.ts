@@ -1,3 +1,4 @@
+import { isListableSkillPath } from "@specweave-studio/contracts";
 import type {
   ProjectSkillPresence,
   ProjectSkillRow,
@@ -63,13 +64,22 @@ export function sessionSkillUsesKey(uses: ReadonlyArray<SessionSkillUse>): strin
   return uses.map((use) => `${use.via}:${use.name}`).join("\n");
 }
 
-export type ComposerSkillGroupId = "used" | "project" | "user" | "plugin" | "other";
+export type ComposerSkillGroupId =
+  | "used"
+  | "project"
+  | "user"
+  | "plugin"
+  | "system"
+  | "bundled"
+  | "other";
 
 const GROUP_ORDER: ReadonlyArray<ComposerSkillGroupId> = [
   "used",
   "project",
   "user",
   "plugin",
+  "system",
+  "bundled",
   "other",
 ];
 
@@ -78,6 +88,8 @@ const GROUP_LABELS: Readonly<Record<ComposerSkillGroupId, string>> = {
   project: "Project",
   user: "User",
   plugin: "Plugin",
+  system: "System",
+  bundled: "Bundled",
   other: "Other",
 };
 
@@ -92,6 +104,7 @@ export interface ComposerSkillItem {
   readonly name: string;
   readonly displayName: string;
   readonly description: string | null;
+  readonly searchText?: string;
   readonly path: string | null;
   readonly enabled: boolean;
   /** Level from {@link projectSkillLevel}: project, user, plugin, bundled, ... */
@@ -152,15 +165,53 @@ export function composerSkillVersion(
   return { value: null, source: null, ...(note ? { note } : {}) };
 }
 
+/** Count identities like Settings: several copies of one skill form one row. */
+export function composerSkillCatalog(
+  skills: ReadonlyArray<ServerProviderSkill>,
+  instanceId: string | null,
+  snapshot: Pick<ProjectSkillsSnapshot, "rows"> | null,
+): ReadonlyArray<ServerProviderSkill> {
+  const catalog = new Map<string, ServerProviderSkill>();
+  for (const skill of skills) {
+    const advertised = /^acp:\/\/(?:command|skill)\//.test(skill.path);
+    if (!advertised && !isListableSkillPath(skill.path)) continue;
+    const row = snapshot?.rows.find((candidate) =>
+      candidate.providers.some(
+        (presence) =>
+          presence.instanceId === instanceId &&
+          (presence.path === skill.path || (advertised && rowMatches(candidate, skill.name))),
+      ),
+    );
+    const key = row?.name ?? skill.name;
+    const previous = catalog.get(key);
+    // Preserve the first enabled native invocation and its path, not a cross-agent display name.
+    if (!previous || (!previous.enabled && skill.enabled)) catalog.set(key, skill);
+  }
+  return [...catalog.values()];
+}
+
 function groupOfLevel(level: string): ComposerSkillGroupId {
-  return level === "project" || level === "user" || level === "plugin" ? level : "other";
+  return level === "project" ||
+    level === "user" ||
+    level === "plugin" ||
+    level === "system" ||
+    level === "bundled"
+    ? level
+    : "other";
 }
 
 function matchesQuery(item: ComposerSkillItem, query: string): boolean {
   if (query === "") return true;
-  return [item.name, item.displayName, item.description ?? "", item.levelLabel].some((value) =>
-    normalizeSearchText(value).includes(query),
+  const haystack = normalizeSearchText(
+    [
+      item.name,
+      item.displayName,
+      item.description ?? "",
+      item.searchText ?? "",
+      item.levelLabel,
+    ].join(" "),
   );
+  return query.split(/\s+/).every((token) => haystack.includes(token));
 }
 
 /**
@@ -184,6 +235,7 @@ export function buildComposerSkillGroups(input: {
       name: skill.name,
       displayName: skill.displayName ?? skill.name,
       description: skill.shortDescription ?? skill.description ?? null,
+      searchText: [skill.name, skill.description, skill.shortDescription].filter(Boolean).join(" "),
       path: skill.path,
       enabled: skill.enabled,
       level,

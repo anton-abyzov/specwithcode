@@ -8,7 +8,7 @@ import { normalizeSearchText } from "~/lib/utils";
 export interface ProjectSkillsFilter {
   readonly query: string;
   readonly problemsOnly: boolean;
-  /** Agent labels; a row matches when any of them loads it. Empty matches all. */
+  /** Agent instance IDs; a row matches when any of them loads it. Empty matches all. */
   readonly providers?: ReadonlyArray<string>;
   /** Levels from {@link projectSkillLevel}; empty matches all. */
   readonly levels?: ReadonlyArray<string>;
@@ -57,7 +57,7 @@ function rowMatchesAgentAndLevel(
   // Agent and level must hold for the same copy: "Claude at user level", not one of each.
   const matched = row.providers.some(
     (presence) =>
-      (providers.length === 0 || providers.includes(presence.label)) &&
+      (providers.length === 0 || providers.includes(presence.instanceId)) &&
       (levels.length === 0 || levels.includes(projectSkillLevel(presence.scope, presence.path))),
   );
   if (matched || row.providers.length > 0) return matched;
@@ -193,8 +193,10 @@ export function projectSkillFacets(rows: ReadonlyArray<ProjectSkillRow>): {
   return {
     providers: facet(
       rows,
-      (row) => row.providers.map((presence) => presence.label),
-      (value) => value,
+      (row) => row.providers.map((presence) => presence.instanceId),
+      (value) =>
+        rows.flatMap((row) => row.providers).find((presence) => presence.instanceId === value)
+          ?.label ?? value,
       (a, b) => a.localeCompare(b),
     ),
     levels: facet(rows, projectSkillLevels, projectSkillLevelLabel, rankOrder(LEVEL_ORDER)),

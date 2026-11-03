@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  ThreadId,
   summarizeProjectSkills,
   type ProjectId,
   type ProjectSkillPresence,
@@ -609,7 +610,25 @@ function SkillsFootnotes({ snapshot }: { snapshot: ProjectSkillsSnapshot }) {
 
 const NO_MEMBERS: ReadonlyArray<SkillMemberProject> = [];
 
-export function ProjectSkillsView({
+export function ProjectSkillsView(props: Parameters<typeof ScopedProjectSkillsView>[0]) {
+  const linked = useSearch({ strict: false }) as {
+    skillContext?: string;
+    skillCwd?: string;
+    skillThread?: string;
+  };
+  const threadFolder =
+    !props.userLevel && linked.skillContext === `${props.environmentId}:${props.projectId}`
+      ? `${linked.skillCwd ?? ""}:${linked.skillThread ?? ""}`
+      : "";
+  return (
+    <ScopedProjectSkillsView
+      key={`${props.environmentId}:${props.projectId}:${props.userLevel ?? false}:${threadFolder}`}
+      {...props}
+    />
+  );
+}
+
+function ScopedProjectSkillsView({
   environmentId,
   projectId,
   folder,
@@ -624,6 +643,20 @@ export function ProjectSkillsView({
   /** The machine-wide view: user-level skills of every agent, read from the home folder. */
   userLevel?: boolean;
 }) {
+  const linked = useSearch({ strict: false }) as {
+    readonly skill?: unknown;
+    readonly agent?: string;
+    readonly skillCwd?: string;
+    readonly skillThread?: string;
+    readonly skillContext?: string;
+  };
+  const threadFolder =
+    !userLevel &&
+    linked.skillContext === `${environmentId}:${projectId}` &&
+    linked.skillCwd &&
+    linked.skillThread
+      ? { cwd: linked.skillCwd, threadId: ThreadId.make(linked.skillThread) }
+      : {};
   const [rescan, setRescan] = useState(false);
   const environment = useEnvironment(environmentId);
   const machineOffline =
@@ -637,17 +670,28 @@ export function ProjectSkillsView({
         projectId,
         ...(rescan ? { refresh: true } : {}),
         ...(userLevel ? { userLevel: true } : {}),
+        ...threadFolder,
       },
     }),
   );
   const [search, setSearch] = useState("");
   const [problemsOnly, setProblemsOnly] = useState(false);
-  const [providers, setProviders] = useState<ReadonlyArray<string>>([]);
+  const [providers, setProviders] = useState<ReadonlyArray<string>>(
+    linked.agent ? [linked.agent] : [],
+  );
+  useEffect(() => {
+    setProviders((current) =>
+      current.length === (linked.agent ? 1 : 0) && (!linked.agent || current[0] === linked.agent)
+        ? current
+        : linked.agent
+          ? [linked.agent]
+          : [],
+    );
+  }, [linked.agent]);
   const [levels, setLevels] = useState<ReadonlyArray<string>>([]);
   const [tiers, setTiers] = useState<ReadonlyArray<string>>([]);
   // `?skill=` from the composer's Manage link opens that skill's sheet once, then leaves the URL,
   // so closing the sheet, a reload or Back does not open it again.
-  const linked = useSearch({ strict: false }) as { readonly skill?: unknown };
   const linkedSkill = typeof linked.skill === "string" && linked.skill !== "" ? linked.skill : null;
   const navigate = useNavigate();
   const [openSkill, setOpenSkill] = useState<string | null>(linkedSkill);
@@ -714,7 +758,7 @@ export function ProjectSkillsView({
     const byLabel = new Map<string, ProjectSkillPresence>();
     for (const row of snapshot?.rows ?? [])
       for (const presence of row.providers)
-        if (!byLabel.has(presence.label)) byLabel.set(presence.label, presence);
+        if (!byLabel.has(presence.instanceId)) byLabel.set(presence.instanceId, presence);
     return byLabel;
   }, [snapshot]);
 
@@ -747,10 +791,12 @@ export function ProjectSkillsView({
         ) : (
           <p className="text-xs text-muted-foreground">
             Which skills each agent loads in{" "}
-            <span className="break-all font-mono text-foreground/80">{folder}</span>, and whether
-            each still matches the version vskill installed. Filter by agent or by level: project
-            skills live in this folder, user skills apply to every project. Click a skill for
-            details.
+            <span className="break-all font-mono text-foreground/80">
+              {snapshot?.cwd ?? folder}
+            </span>
+            , and whether each still matches the version vskill installed. Filter by agent or by
+            level: project skills live in this folder, user skills apply to every project. Click a
+            skill for details.
           </p>
         )}
         {linkedMissing ? (
@@ -921,9 +967,10 @@ export function ProjectSkillsView({
             <SheetPopup className="max-w-lg" layer="dialog" data-testid="skill-details">
               {detailRow ? (
                 <SkillControlsProvider
-                  key={detailRow.name}
+                  key={`${detailRow.name}:${threadFolder.cwd ?? ""}:${threadFolder.threadId ?? ""}`}
                   environmentId={environmentId}
                   projectId={projectId}
+                  {...threadFolder}
                   row={detailRow}
                   memberProjects={memberProjects}
                   userLevel={userLevel}

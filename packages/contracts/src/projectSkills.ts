@@ -474,3 +474,18 @@ export class ProjectSkillsActionError extends Schema.TaggedError<ProjectSkillsAc
     return this.detail ?? ACTION_ERROR_MESSAGES[this.reason];
   }
 }
+
+/**
+ * Catalog entries the view leaves out: anything under a dot folder inside a
+ * skills folder (`.trash`, `.root-owned-*`; Codex's own `.system` stays) and
+ * files that are not a SKILL.md (Claude Code plugin command files).
+ */
+export function isListableSkillPath(skillPath: string): boolean {
+  const segments = skillPath.split(/[\\/]+/);
+  if (!/^skill\.md$/i.test(segments.at(-1) ?? "")) return false;
+  const skillsIndex = segments.lastIndexOf("skills");
+  if (skillsIndex === -1) return true;
+  return segments
+    .slice(skillsIndex + 1, -1)
+    .every((segment) => !segment.startsWith(".") || segment === ".system");
+}

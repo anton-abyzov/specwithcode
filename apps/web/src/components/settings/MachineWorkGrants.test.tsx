@@ -6,6 +6,7 @@ import type {
 } from "@specweave-studio/contracts/studioFleet";
 import { visitElements } from "../../test/reactElementTree";
 
+vi.mock("./IncomingWorkerSetup", () => ({ IncomingWorkerSetup: () => null }));
 vi.mock("../../studio/fleet", () => ({
   changeMachineWorkGrant: vi.fn(),
   useMachineWorkGrants: vi.fn(),
