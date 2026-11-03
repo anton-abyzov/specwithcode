@@ -58,14 +58,19 @@ beforeEach(() => {
 });
 afterEach(() => NodeFS.rmSync(base, { recursive: true, force: true }));
 
-it("fetches and fast-forwards a clean checkout on the default branch", async () => {
+it("fetches a clean checkout without changing its branch, index or files", async () => {
   const { clone, push } = repository();
+  const before = git(clone, "rev-parse", "HEAD");
+  const index = git(clone, "write-tree");
   push();
   expect(await syncRepository({ path: clone, inUse: free })).toEqual({
-    kind: "updated",
+    kind: "behind",
     commits: 1,
   });
-  expect(NodeFS.readFileSync(NodePath.join(clone, "b.txt"), "utf8")).toBe("two\n");
+  expect(git(clone, "rev-parse", "HEAD")).toBe(before);
+  expect(git(clone, "write-tree")).toBe(index);
+  expect(NodeFS.existsSync(NodePath.join(clone, "b.txt"))).toBe(false);
+  expect(git(clone, "rev-list", "--count", "HEAD..origin/main")).toBe("1");
 });
 
 it("says nothing when the checkout is already current", async () => {
@@ -161,16 +166,16 @@ it("finds nested repositories, skips linked worktrees, and shares a recent fetch
 
   second.push();
   const results = await syncRepositories({ paths: [nested], inUse: free });
-  expect(results[0]?.outcome).toEqual({ kind: "updated", commits: 1 });
+  expect(results[0]?.outcome).toEqual({ kind: "behind", commits: 1 });
   second.push("three\n");
   // Moments later a second thread reuses that fetch.
   const again = await syncRepositories({ paths: [nested], inUse: free });
-  expect(again[0]?.outcome).toEqual({ kind: "current" });
+  expect(again[0]?.outcome).toEqual({ kind: "behind", commits: 1 });
 });
 
 it("writes one short plain line per thing it did", () => {
   const notice = repositorySyncNotice([
-    { path: "/a", name: "a", outcome: { kind: "updated", commits: 3 } },
+    { path: "/a", name: "a", outcome: { kind: "behind", commits: 3 } },
     { path: "/b", name: "b", outcome: { kind: "uncommitted", changes: 2 } },
     { path: "/c", name: "c", outcome: { kind: "other-branch", branch: "fix/x", main: "main" } },
     { path: "/d", name: "d", outcome: { kind: "unreachable" } },
@@ -178,7 +183,7 @@ it("writes one short plain line per thing it did", () => {
   ]);
   expect(notice?.message).toBe(
     [
-      "Updated from origin: a.",
+      "Didn't update a: origin has 3 new commits. Pull when you are ready.",
       "Didn't update b: it has 2 uncommitted changes.",
       "Didn't update c: it's on fix/x, not main.",
       "Didn't update d: this machine can't reach its origin.",
@@ -213,14 +218,33 @@ it("omits a repository with nothing left behind", async () => {
   expect(await leftBehindOf([clone])).toEqual([]);
 });
 
-it("starts no fast-forward after its time is up, and leaves the checkout alone", async () => {
+it("leaves both branch tips alone when another Git client switches during sync", async () => {
   const { clone, push } = repository();
+  git(clone, "branch", "feature");
+  const before = git(clone, "rev-parse", "main");
   push();
-  const before = git(clone, "rev-parse", "HEAD");
-  const outcome = await syncRepository({ path: clone, inUse: free, mayStart: () => false });
-  expect(outcome).toEqual({ kind: "late" });
-  expect(git(clone, "rev-parse", "HEAD")).toBe(before);
+  await syncRepository({
+    path: clone,
+    inUse: async () => {
+      git(clone, "switch", "feature");
+      return false;
+    },
+  });
+  expect(git(clone, "branch", "--show-current")).toBe("feature");
+  expect(git(clone, "rev-parse", "main")).toBe(before);
+  expect(git(clone, "rev-parse", "feature")).toBe(before);
   expect(git(clone, "status", "--porcelain")).toBe("");
+});
+
+it("ignores a configured fetch mapping into a local branch", async () => {
+  const { clone, push } = repository();
+  git(clone, "branch", "feature");
+  const before = git(clone, "rev-parse", "feature");
+  git(clone, "config", "--add", "remote.origin.fetch", "+refs/heads/main:refs/heads/feature");
+  push();
+  expect(await fetchOrigin(clone)).not.toBeNull();
+  expect(git(clone, "rev-parse", "feature")).toBe(before);
+  expect(git(clone, "rev-list", "--count", "HEAD..origin/main")).toBe("1");
 });
 
 it("lists uncommitted work in a worktree, which a move would leave behind", async () => {

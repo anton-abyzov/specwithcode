@@ -1305,6 +1305,7 @@ export class DestinationCopies {
           other.state === "applied" &&
           other.committed &&
           other.targetFolder === record.targetFolder &&
+          other.sourceEnvironmentId === record.sourceEnvironmentId &&
           other.sourceProjectId === record.sourceProjectId &&
           // Started after this comparison last changed; a finished copy's updatedAt moves later.
           Date.parse(other.createdAt) > Date.parse(record.updatedAt) &&
@@ -1313,15 +1314,28 @@ export class DestinationCopies {
           record.selection.every((value) => other.selection.includes(value)),
       );
       if (!finished) continue;
-      // Someone may have started this comparison since the list was read.
-      const current = await this.read(record.operationId);
-      if (
-        current?.state !== "previewed" ||
-        current.updatedAt !== record.updatedAt ||
-        this.running.has(record.operationId)
-      )
-        continue;
-      await this.cancel(record.operationId, "A later copy of this folder finished.");
+      const cancelled = await this.locked(record.operationId, async () => {
+        const current = await this.read(record.operationId);
+        if (
+          current?.state !== "previewed" ||
+          current.updatedAt !== record.updatedAt ||
+          this.running.has(record.operationId)
+        )
+          return null;
+        const next: DestinationRecord = {
+          ...current,
+          state: "cancelled",
+          progress: null,
+          updatedAt: this.now(),
+        };
+        await writeJson(this.paths(record.operationId).record, next);
+        return next;
+      });
+      if (cancelled === null) continue;
+      await this.client(cancelled)
+        .release("A later copy of this folder finished.")
+        .catch(() => undefined);
+      await NodeFSP.rm(this.paths(record.operationId).staging, { recursive: true, force: true });
       closed.push(record.operationId);
     }
     return closed;

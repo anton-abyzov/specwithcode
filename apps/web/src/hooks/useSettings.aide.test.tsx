@@ -89,6 +89,12 @@ describe("useAideSettingSettled", () => {
     expect(seen).toEqual({ enabled: true, settled: true });
   });
 
+  it("shows Aide when the primary's settings never saved a choice", async () => {
+    registry.set(state.primaryConfig, { settings: { ...DEFAULT_SERVER_SETTINGS } });
+    await render();
+    expect(seen).toEqual({ enabled: true, settled: true });
+  });
+
   it("settles as off when the primary's settings arrive with Aide off", async () => {
     registry.set(state.primaryConfig, {
       settings: { ...DEFAULT_SERVER_SETTINGS, aideEnabled: false },

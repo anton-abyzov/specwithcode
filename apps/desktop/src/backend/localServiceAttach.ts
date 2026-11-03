@@ -5,6 +5,11 @@
 // its local environment instead of starting a second backend.
 
 import { AuthAdministrativeScopes } from "@specweave-studio/contracts";
+import {
+  isProcessExiting,
+  readProcessState,
+  type ProcessStateReader,
+} from "@specweave-studio/shared/processExitState";
 import { canonicalStudioPath } from "@specweave-studio/shared/studioIdentity";
 
 export interface RunningServerRuntimeState {
@@ -177,18 +182,21 @@ export function embeddedBackendRefusal(input: {
 
 /**
  * Signal 0 delivers nothing; it reports whether the pid exists. EPERM means it
- * exists under another user, which still counts as alive.
+ * exists under another user, which still counts as alive. A pid that answers
+ * but is exiting or a zombie (macOS `?E` when a thread is stuck in the kernel)
+ * serves nothing and may never go away, so it counts as gone.
  */
 export function isProcessAlive(
   pid: number,
   kill: (pid: number, signal: 0) => void = (target, signal) => process.kill(target, signal),
+  readState: ProcessStateReader = readProcessState,
 ): boolean {
   try {
     kill(pid, 0);
-    return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException | undefined)?.code === "EPERM";
+    if ((error as NodeJS.ErrnoException | undefined)?.code !== "EPERM") return false;
   }
+  return !isProcessExiting(pid, readState);
 }
 
 /** Reads the one-time pairing token from `specweave-studio pair` output (JSON or text). */

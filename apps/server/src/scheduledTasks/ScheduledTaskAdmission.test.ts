@@ -9,7 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
-import { assertTaskAdmission } from "./ScheduledTaskAdmission.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 
 it.effect(
   "blocks source coordinator routines after transfer and permits acknowledged worker routines",
@@ -47,4 +48,34 @@ it.effect(
         }
       }
     }),
+);
+
+it.effect("suspends a personal assistant's routines while Aide is off, and only those", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project");
+    const admit = (kind: "personal" | "code", aideEnabled: boolean) =>
+      assertTaskAdmission({
+        id: ScheduledTaskId.make("routine"),
+        projectId,
+        threadId: null,
+      }).pipe(
+        Effect.provideService(ProjectStore.ProjectStoreV2, {
+          get: () =>
+            Effect.succeed(
+              Option.some({
+                projectId,
+                workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind },
+              }),
+            ),
+        } as unknown as ProjectStore.ProjectStoreV2["Service"]),
+        Effect.provideService(SqlClient.SqlClient, (() =>
+          Effect.succeed([])) as unknown as SqlClient.SqlClient),
+        Effect.provide(ServerSettings.layerTest({ aideEnabled })),
+      );
+
+    const refused = yield* admit("personal", false).pipe(Effect.flip);
+    expect(suspendedProjectState(refused)).toBe("assistant-off");
+    yield* admit("personal", true);
+    yield* admit("code", false);
+  }),
 );

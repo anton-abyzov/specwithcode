@@ -1,10 +1,7 @@
-import * as NodeModule from "node:module";
-
 import type {
   DirItem,
   DirSearchResult,
   FileItem,
-  FileFinder as FileFinderType,
   GrepCursor,
   MixedItem,
   MixedSearchResult,
@@ -26,13 +23,19 @@ import type {
   ProjectSearchEntriesResult,
 } from "@specweave-studio/contracts";
 import { isWorkspaceImagePreviewPath } from "@specweave-studio/shared/filePreview";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
-// fff-node stays external to the CLI bundle because it dlopens a native
-// library. A static `import` of an external package is a hard error inside a
-// Node single-executable (only built-ins resolve there), so load it through
-// `require`, which reads from the real filesystem in every runtime.
-const requireForFff = NodeModule.createRequire(import.meta.url);
-const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
+import * as ServerConfig from "../config.ts";
+import {
+  type SearchFinder,
+  type SearchFinderBackend,
+  isSearchFinderLost,
+  workerFinderBackend,
+} from "./WorkspaceSearchFinder.ts";
+import {
+  type SearchRootGuardOptions,
+  unsafeSearchRootReasonResolved,
+} from "./WorkspaceSearchRoots.ts";
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
@@ -74,6 +77,8 @@ export class WorkspaceSearchIndexSearchFailed extends Schema.TaggedError<Workspa
     queryLength: Schema.Number,
     pageSize: Schema.Number,
     reason: Schema.String,
+    /** The index's worker is gone, so the index must be rebuilt; fff errors leave it alone. */
+    finderLost: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -310,10 +315,11 @@ function withDirectoryAncestors(entries: ReadonlyArray<ProjectEntry>): ProjectEn
 const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant,
+  backend: SearchFinderBackend,
 ) {
-  const result = yield* Effect.try({
+  const result = yield* Effect.tryPromise({
     try: () =>
-      FileFinder.create({
+      backend.create({
         basePath: cwd,
         disableMmapCache: true,
         // Content indexing costs scan CPU and memory, so only the on-demand
@@ -321,8 +327,9 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
         // composer path search, file picker) keep the lightweight index.
         disableContentIndexing: variant !== "content",
         aiMode: false,
-        enableFsRootScanning: true,
-        enableHomeDirScanning: true,
+        // fff's own refusal backs up the root guard in `make`.
+        enableFsRootScanning: false,
+        enableHomeDirScanning: false,
       }),
     catch: (cause) =>
       new WorkspaceSearchIndexCreateFailed({
@@ -340,7 +347,7 @@ const createFinder = Effect.fn("WorkspaceSearchIndex.createFinder")(function* (
 
 const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(function* <E>(
   cwd: string,
-  finder: FileFinderType,
+  finder: SearchFinder,
   onFailure: (input: { readonly reason: string; readonly cause?: unknown }) => E,
 ): Effect.fn.Return<void, E | WorkspaceSearchIndexScanTimedOut> {
   const result = yield* Effect.tryPromise({
@@ -362,11 +369,30 @@ const waitForIndexReady = Effect.fn("WorkspaceSearchIndex.waitForIndexReady")(fu
   }
 });
 
+export interface WorkspaceSearchIndexOptions extends Partial<SearchRootGuardOptions> {
+  /** Where fff runs; the worker thread unless a test runs it in-process. */
+  readonly backend?: SearchFinderBackend;
+}
+
 export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   cwd: string,
   variant: WorkspaceSearchIndexVariant = "paths",
+  options: WorkspaceSearchIndexOptions = {},
 ) {
-  const finder = yield* Effect.acquireRelease(createFinder(cwd, variant), (finder) =>
+  const platform = options.platform ?? (yield* HostProcessPlatform);
+  const unsafeReason = yield* Effect.promise(() =>
+    unsafeSearchRootReasonResolved(cwd, { ...options, platform }),
+  );
+  if (unsafeReason !== undefined) {
+    return yield* new WorkspaceSearchIndexCreateFailed({
+      cwd,
+      reason: `Refused to index '${cwd}': ${unsafeReason}.`,
+    });
+  }
+  const backend = options.backend ?? workerFinderBackend;
+  // Destroy is synchronous only for the in-process (test) backend; the worker
+  // backend posts it and returns, so releasing an index never waits on fff.
+  const finder = yield* Effect.acquireRelease(createFinder(cwd, variant, backend), (finder) =>
     Effect.try({
       try: () => finder.destroy(),
       catch: (cause) => new WorkspaceSearchIndexDestroyFailed({ cwd, cause }),
@@ -392,16 +418,18 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           : Effect.fail(error),
     }),
   );
-
-  const hasIncompleteInitialScan = () => initialScanTimedOut && finder.isScanning();
+  const hasIncompleteInitialScan = () =>
+    initialScanTimedOut
+      ? Effect.promise(() => finder.isScanning().catch(() => false))
+      : Effect.succeed(false);
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "grep" | "mixedSearch",
-    execute: () => Result<A>,
+    execute: () => Promise<Result<A>>,
   ): Effect.fn.Return<A, WorkspaceSearchIndexSearchFailed> {
-    const result = yield* Effect.try({
+    const result = yield* Effect.tryPromise({
       try: execute,
       catch: (cause) =>
         new WorkspaceSearchIndexSearchFailed({
@@ -409,6 +437,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           queryLength: query.length,
           pageSize,
           reason: `FileFinder.${operation} threw unexpectedly.`,
+          ...(isSearchFinderLost(cause) ? { finderLost: true } : {}),
           cause,
         }),
     });
@@ -426,7 +455,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const refresh: WorkspaceSearchIndex["Service"]["refresh"] = Effect.fn(
     "WorkspaceSearchIndex.refresh",
   )(function* () {
-    const result = yield* Effect.try({
+    const result = yield* Effect.tryPromise({
       try: () => finder.scanFiles(),
       catch: (cause) =>
         new WorkspaceSearchIndexRefreshFailed({
@@ -455,7 +484,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
   const list: WorkspaceSearchIndex["Service"]["list"] = Effect.fn("WorkspaceSearchIndex.list")(
     function* () {
-      const incompleteBeforeQuery = hasIncompleteInitialScan();
+      const incompleteBeforeQuery = yield* hasIncompleteInitialScan();
       const result = yield* runSearch("", WORKSPACE_INDEX_PAGE_SIZE, "mixedSearch", () =>
         finder.mixedSearch("", { pageSize: WORKSPACE_INDEX_PAGE_SIZE }),
       );
@@ -476,7 +505,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     "WorkspaceSearchIndex.search",
   )(function* (query, limit, kind, imageOnly) {
     const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, limit + 1);
-    const incompleteBeforeQuery = hasIncompleteInitialScan();
+    const incompleteBeforeQuery = yield* hasIncompleteInitialScan();
     if (kind === "file" || imageOnly) {
       const result = yield* runSearch(query, pageSize, "fileSearch", () =>
         finder.fileSearch(query, { pageSize }),
@@ -592,9 +621,22 @@ function parseWorkspaceSearchIndexKey(key: string): {
  *
  * @public Service construction is part of the canonical Effect module API.
  */
+/** Where indexes run fff: the worker thread, unless a test needs it in-process. */
+export const SearchFinderBackendReference = Context.Reference<SearchFinderBackend>(
+  "specweave-studio/workspace/WorkspaceSearchIndex/SearchFinderBackendReference",
+  { defaultValue: () => workerFinderBackend },
+);
+
 export const layer = (key: string) => {
   const { cwd, variant } = parseWorkspaceSearchIndexKey(key);
-  return Layer.effect(WorkspaceSearchIndex, make(cwd, variant));
+  return Layer.effect(
+    WorkspaceSearchIndex,
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const backend = yield* SearchFinderBackendReference;
+      return yield* make(cwd, variant, { stateDir: config.stateDir, backend });
+    }),
+  );
 };
 
 export class WorkspaceSearchIndexMap extends LayerMap.Service<WorkspaceSearchIndexMap>()(

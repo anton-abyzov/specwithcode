@@ -256,9 +256,56 @@ describe("isProcessAlive", () => {
     const fail = (code: string) => () => {
       throw Object.assign(new Error(code), { code });
     };
-    expect(isProcessAlive(1, () => {})).toBe(true);
-    expect(isProcessAlive(1, fail("EPERM"))).toBe(true);
-    expect(isProcessAlive(1, fail("ESRCH"))).toBe(false);
+    const running = () => "Ss";
+    expect(isProcessAlive(1, () => {}, running)).toBe(true);
+    expect(isProcessAlive(1, fail("EPERM"), running)).toBe(true);
+    expect(isProcessAlive(1, fail("ESRCH"), running)).toBe(false);
+  });
+
+  it("treats an exiting or zombie pid as gone, and an unreadable state as alive", () => {
+    expect(
+      isProcessAlive(
+        1,
+        () => {},
+        () => "?E",
+      ),
+    ).toBe(false);
+    expect(
+      isProcessAlive(
+        1,
+        () => {},
+        () => "Z+",
+      ),
+    ).toBe(false);
+    expect(
+      isProcessAlive(
+        1,
+        () => {},
+        () => null,
+      ),
+    ).toBe(true);
+    const eperm = () => {
+      throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+    };
+    expect(isProcessAlive(1, eperm, () => "?E")).toBe(false);
+  });
+
+  it("does not read the state of a pid that is gone", () => {
+    let reads = 0;
+    const esrch = () => {
+      throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
+    };
+    expect(
+      isProcessAlive(1, esrch, () => {
+        reads += 1;
+        return "S";
+      }),
+    ).toBe(false);
+    expect(reads).toBe(0);
+  });
+
+  it("reports this process as alive with the real state reader", () => {
+    expect(isProcessAlive(process.pid)).toBe(true);
   });
 });
 

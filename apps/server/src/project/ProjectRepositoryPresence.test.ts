@@ -8,6 +8,7 @@ import {
   type ProjectNestedRepository,
   type RepositoryIdentity,
 } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -29,10 +30,10 @@ let copy = "";
 /** The remote each checkout reports, by real folder. */
 const remotes = new Map<string, string>();
 const clones: string[] = [];
-const discarded: string[] = [];
 let cloneFails: string | null = null;
 /** When set, a clone waits for it before finishing. */
 let cloneGate: Promise<void> | null = null;
+let onCloneStart: (() => void) | null = null;
 
 const identityOf = (remoteUrl: string, rootPath: string): RepositoryIdentity => {
   const repository = remoteUrl.replace(/^.*github\.com[:/]/u, "").replace(/\.git$/u, "");
@@ -92,17 +93,13 @@ const provide = <A, E>(
             await NodeFSP.mkdir(NodePath.join(input.destinationPath, ".git"), {
               recursive: true,
             });
+            onCloneStart?.();
             if (cloneGate !== null) await cloneGate;
             if (cloneFails !== null) throw new Error(cloneFails);
             remotes.set(await NodeFSP.realpath(input.destinationPath), input.remoteUrl!);
             return { cwd: input.destinationPath, remoteUrl: input.remoteUrl!, repository: null };
           },
           catch: (cause) => ({ detail: (cause as Error).message }),
-        }),
-      discardClone: (destinationPath: string) =>
-        Effect.promise(async () => {
-          discarded.push(destinationPath);
-          await NodeFSP.rm(destinationPath, { recursive: true, force: true });
         }),
     } as never),
   );
@@ -117,9 +114,9 @@ beforeEach(async () => {
   await NodeFSP.mkdir(copy, { recursive: true });
   remotes.clear();
   clones.length = 0;
-  discarded.length = 0;
   cloneFails = null;
   cloneGate = null;
+  onCloneStart = null;
 });
 afterEach(async () => {
   await NodeFSP.rm(base, { recursive: true, force: true });
@@ -209,7 +206,12 @@ describe("checkProjectRepositories", () => {
         checkProjectRepositories({ projectId: PROJECT_COPY, repositories: [api], clone: true }),
       );
       expect(result.results[0]?.status).toBe("cloned");
-      expect(clones).toEqual([NodePath.join(copy, "repositories/acme/api")]);
+      expect(clones).toHaveLength(1);
+      const folder = NodePath.join(copy, "repositories/acme/api");
+      expect(yield* Effect.promise(() => NodeFSP.readdir(folder))).toEqual([".git"]);
+      expect(yield* Effect.promise(() => NodeFSP.readdir(NodePath.dirname(folder)))).toEqual([
+        "api",
+      ]);
     }),
   );
 
@@ -263,7 +265,7 @@ describe("checkProjectRepositories", () => {
         detail: "Permission denied (publickey).",
       });
       const folder = NodePath.join(copy, "repositories/acme/api");
-      expect(discarded).toEqual([folder]);
+      expect(yield* Effect.promise(() => NodeFSP.readdir(NodePath.dirname(folder)))).toEqual([]);
       // The next check finds it missing, not a broken checkout.
       cloneFails = null;
       const again = yield* provide(
@@ -273,15 +275,62 @@ describe("checkProjectRepositories", () => {
     }),
   );
 
+  it.effect("preserves another checkout created while a clone is staged", () =>
+    Effect.gen(function* () {
+      let resume = () => {};
+      cloneGate = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        onCloneStart = resolve;
+      });
+      const work = yield* provide(
+        checkProjectRepositories({ projectId: PROJECT_COPY, repositories: [api], clone: true }),
+      ).pipe(Effect.forkChild);
+      yield* Effect.raceFirst(
+        Effect.promise(() => started),
+        Fiber.await(work),
+      );
+      const destination = NodePath.join(copy, "repositories/acme/api");
+      yield* Effect.promise(async () => {
+        try {
+          await checkout(copy, api.path, "git@github.com:someone/api.git");
+          await NodeFSP.writeFile(NodePath.join(destination, "keep.txt"), "existing work");
+        } finally {
+          resume();
+        }
+      });
+      const result = yield* Fiber.join(work);
+      expect(
+        yield* Effect.promise(() =>
+          NodeFSP.readFile(NodePath.join(destination, "keep.txt"), "utf8"),
+        ),
+      ).toBe("existing work");
+      expect(yield* Effect.promise(() => NodeFSP.readdir(NodePath.dirname(destination)))).toEqual([
+        "api",
+      ]);
+      expect(result.results[0]?.status).toBe("failed");
+    }),
+  );
+
   it.effect("counts an empty folder as missing and clones into it", () =>
     Effect.gen(function* () {
       yield* Effect.promise(() =>
-        NodeFSP.mkdir(NodePath.join(copy, "repositories/acme/api"), { recursive: true }),
+        NodeFSP.mkdir(NodePath.join(copy, "repositories/acme/api"), {
+          recursive: true,
+          mode: 0o700,
+        }),
       );
       const result = yield* provide(
         checkProjectRepositories({ projectId: PROJECT_COPY, repositories: [api], clone: true }),
       );
       expect(result.results[0]?.status).toBe("cloned");
+      if ((yield* HostProcessPlatform) !== "win32") {
+        const stat = yield* Effect.promise(() =>
+          NodeFSP.stat(NodePath.join(copy, "repositories/acme/api")),
+        );
+        expect(stat.mode & 0o777).toBe(0o700);
+      }
     }),
   );
 

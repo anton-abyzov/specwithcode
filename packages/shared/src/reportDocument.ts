@@ -138,8 +138,16 @@ export function reportDocument(text: string): ReportDocument | null {
   const frontmatter = reportFrontmatter(text);
   const body = reportBodyAfterTitle(text);
   const all = blocks(body);
-  // A `# Title` with markup stays in the body, but the reader shows it as the title all the same.
-  if (body === frontmatter.body && /^\s{0,3}#\s/.test(all[0] ?? "") && !all[0]!.includes("\n")) {
+  const frontmatterTitle = frontmatter.fields.find((field) => field.label === "Title")?.value;
+  // Without a frontmatter title, a marked-up opening H1 supplies the displayed title.
+  const opening = all[0];
+  if (
+    (typeof frontmatterTitle !== "string" || frontmatterTitle.trim() === "") &&
+    body === frontmatter.body &&
+    opening !== undefined &&
+    /^\s{0,3}#\s/.test(opening) &&
+    !opening.includes("\n")
+  ) {
     all.shift();
   }
 

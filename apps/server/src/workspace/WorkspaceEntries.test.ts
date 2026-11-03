@@ -15,6 +15,8 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
+import { inProcessFinderBackend, SearchFinderLostError } from "./WorkspaceSearchFinder.ts";
+import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -25,6 +27,10 @@ const layerTest = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntries.layer.pipe(Layer.provide(WorkspacePaths.layer))),
   Layer.provideMerge(WorkspacePaths.layer),
   Layer.provideMerge(VcsProcess.layer),
+  // These tests spy on fff in this thread; the worker runs in the other suites.
+  Layer.provide(
+    Layer.succeed(WorkspaceSearchIndex.SearchFinderBackendReference, inProcessFinderBackend),
+  ),
   Layer.provide(
     ServerConfig.ServerConfig.layerTest(process.cwd(), {
       prefix: "studio-workspace-entries-test-",
@@ -465,6 +471,40 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* workspaceEntries.refresh(cwd);
 
         yield* workspaceEntries.list({ cwd });
+        expect(createSpy).toHaveBeenCalledTimes(2);
+      }),
+    );
+
+    it.effect("keeps the index after an fff error and rebuilds it once its worker is lost", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "studio-workspace-search-failure-" });
+        yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const createSpy = vi.spyOn(FileFinder, "create");
+        yield* searchWorkspaceEntries({ cwd, query: "index", limit: 10 });
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        const mixedSearch = vi.spyOn(FileFinder.prototype, "mixedSearch");
+        mixedSearch.mockReturnValueOnce({ ok: false, error: "bad query" });
+        mixedSearch.mockReturnValueOnce({ ok: false, error: "bad query" });
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const error = yield* Effect.flip(
+            searchWorkspaceEntries({ cwd, query: "index", limit: 10 }),
+          );
+          expect(error).toMatchObject({ _tag: "WorkspaceSearchIndexSearchFailed" });
+        }
+        // fff answered, so the index is healthy and stays cached.
+        yield* searchWorkspaceEntries({ cwd, query: "index", limit: 10 });
+        expect(createSpy).toHaveBeenCalledTimes(1);
+
+        mixedSearch.mockImplementationOnce(() => {
+          throw new SearchFinderLostError("The search index worker did not answer.");
+        });
+        const lost = yield* Effect.flip(searchWorkspaceEntries({ cwd, query: "index", limit: 10 }));
+        expect(lost).toMatchObject({ finderLost: true });
+        const result = yield* workspaceEntries.search({ cwd, query: "index", limit: 10 });
+        expect(result.entries.map((entry) => entry.path)).toContain("src/index.ts");
         expect(createSpy).toHaveBeenCalledTimes(2);
       }),
     );

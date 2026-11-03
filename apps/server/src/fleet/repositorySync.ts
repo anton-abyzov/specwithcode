@@ -1,10 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - Plain promises over real Git, like folderTransfer/git.ts.
 /**
- * Keeps a machine's checkouts current from Git. Every repository is fetched; a checkout
- * moves only when that cannot touch anyone's work: clean, on origin's default branch,
- * strictly behind, and with no other thread working there. Anything else is left exactly
- * as it is and reported. Nothing here changes a remote, a setting or a credential, and no
- * failure escapes: a thread starts whether or not this could do its job.
+ * Fetches remote-tracking branches before a turn and reports the checkout's state.
+ * A checkout may also be used by a terminal or another Git client. Leave its
+ * branch, index and working files to explicit Git actions.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -15,10 +13,6 @@ import { readFolderLayout } from "../project/FolderLayout.ts";
 
 /** Two attempts, SSH then HTTPS, still fit inside a turn's 30 seconds. */
 const FETCH_MS = 13_000;
-/** A fast-forward is never interrupted once started; this only catches a stuck Git. */
-const MERGE_MS = 10 * 60_000;
-/** No fast-forward starts later than this, which leaves it time to finish before the turn. */
-const MERGE_WINDOW_MS = 20_000;
 const LOCAL_MS = 15_000;
 const PARALLEL = 4;
 const MANAGED_REPOSITORIES = ".studio-repositories";
@@ -36,7 +30,7 @@ export const markProjectMoved = (projectId: string) => void moved.add(projectId)
 export const takeProjectMoved = (projectId: string) => moved.delete(projectId);
 
 export type RepositorySyncOutcome =
-  | { readonly kind: "updated"; readonly commits: number }
+  | { readonly kind: "behind"; readonly commits: number }
   | { readonly kind: "current" }
   | { readonly kind: "no-remote" }
   | { readonly kind: "unreachable" }
@@ -44,7 +38,6 @@ export type RepositorySyncOutcome =
   | { readonly kind: "other-branch"; readonly branch: string | null; readonly main: string | null }
   | { readonly kind: "diverged"; readonly ahead: number; readonly behind: number }
   | { readonly kind: "in-use" }
-  | { readonly kind: "late" }
   | { readonly kind: "failed" };
 
 export interface RepositorySyncResult {
@@ -84,9 +77,13 @@ const FETCH = [
   "fetch",
   "--quiet",
   "--no-tags",
+  "--no-prune",
+  "--no-prune-tags",
+  "--refmap=",
   "--no-recurse-submodules",
   "--no-write-fetch-head",
 ] as const;
+const ORIGIN_TRACKING_REFS = "+refs/heads/*:refs/remotes/origin/*";
 
 /**
  * Updates the repository's view of origin and returns the address that answered, or null.
@@ -97,13 +94,10 @@ export async function fetchOrigin(cwd: string, options: GitOptions = {}): Promis
   const origin = await local(cwd, ["remote", "get-url", "origin"], options);
   if (!origin.ok || origin.text === "") return null;
   const [first, ...others] = originCandidates(origin.text);
-  if ((await remote(cwd, [...FETCH, "origin"], options)).code === 0) return first ?? origin.text;
+  if ((await remote(cwd, [...FETCH, "origin", ORIGIN_TRACKING_REFS], options)).code === 0)
+    return first ?? origin.text;
   for (const candidate of others) {
-    const fetched = await remote(
-      cwd,
-      [...FETCH, candidate, "+refs/heads/*:refs/remotes/origin/*"],
-      options,
-    );
+    const fetched = await remote(cwd, [...FETCH, candidate, ORIGIN_TRACKING_REFS], options);
     if (fetched.code === 0) return candidate;
   }
   return null;
@@ -144,8 +138,6 @@ export async function syncRepository(input: {
   readonly address?: string | null | undefined;
   readonly inUse: (path: string) => Promise<boolean>;
   readonly signal?: AbortSignal | undefined;
-  /** False once it's too late to start a fast-forward. */
-  readonly mayStart?: (() => boolean) | undefined;
 }): Promise<RepositorySyncOutcome> {
   const { path: cwd } = input;
   const options = { signal: input.signal };
@@ -185,24 +177,7 @@ export async function syncRepository(input: {
   const changes = changeCount(status.text);
   if (changes > 0) return { kind: "uncommitted", changes };
   if (await input.inUse(cwd)) return { kind: "in-use" };
-  if (input.signal?.aborted || input.mayStart?.() === false) return { kind: "late" };
-  // runGit turns hooks off: they are a project's automation for a person's merge, not this.
-  // Never tied to the signal: Git killed mid-checkout leaves new files beside the old HEAD.
-  const merged = await runGit(
-    cwd,
-    ["merge", "--ff-only", "--no-edit", "--quiet", "--no-overwrite-ignore", target.text],
-    // A partial clone downloads the files it now needs from its own origin.
-    {
-      allowFailure: true,
-      timeoutMs: MERGE_MS,
-      env: { ...remoteEnv(), GIT_NO_LAZY_FETCH: "0" },
-    },
-  );
-  if (merged.code !== 0) return { kind: "failed" };
-  const after = await local(cwd, ["rev-parse", "HEAD"], {});
-  return after.ok && after.text === target.text
-    ? { kind: "updated", commits: lacking.behind }
-    : { kind: "failed" };
+  return { kind: "behind", commits: lacking.behind };
 }
 
 /** A repository's own checkout, never a linked worktree: a thread owns those. */
@@ -323,7 +298,6 @@ export async function syncRepositories(input: {
   readonly now?: () => number;
 }): Promise<ReadonlyArray<RepositorySyncResult>> {
   const now = input.now ?? Date.now;
-  const startBy = now() + MERGE_WINDOW_MS;
   const results: Array<RepositorySyncResult> = [];
   const queue = [...input.paths];
   const worker = async () => {
@@ -345,7 +319,6 @@ export async function syncRepositories(input: {
           address,
           inUse: input.inUse,
           signal: input.signal,
-          mayStart: () => now() <= startBy,
         });
       } catch {
         outcome = { kind: "failed" };
@@ -394,8 +367,8 @@ function skipReason(outcome: RepositorySyncOutcome): string | null {
       return `it has ${plural(outcome.ahead, "local commit")} and origin has ${plural(outcome.behind, "other commit")}`;
     case "in-use":
       return "another thread is working in it";
-    case "late":
-      return "origin answered too slowly";
+    case "behind":
+      return `origin has ${plural(outcome.commits, "new commit")}. Pull when you are ready`;
     case "unreachable":
       return "this machine can't reach its origin";
     case "failed":
@@ -419,21 +392,14 @@ export interface RepositorySyncNotice {
 export function repositorySyncNotice(
   results: ReadonlyArray<RepositorySyncResult>,
 ): RepositorySyncNotice | null {
-  const updated = results.filter((result) => result.outcome.kind === "updated");
   const skipped = results.flatMap((result) => {
     const reason = skipReason(result.outcome);
     return reason === null ? [] : [`${NOT_UPDATED} ${result.name}: ${reason}.`];
   });
-  if (updated.length === 0 && skipped.length === 0) return null;
-  const lines = [
-    ...(updated.length > 0
-      ? [`Updated from origin: ${updated.map((result) => result.name).join(", ")}.`]
-      : []),
-    ...skipped,
-  ];
+  if (skipped.length === 0) return null;
   return {
-    title: updated.length > 0 ? "Updated repositories" : "Repositories not updated",
-    message: lines.join("\n"),
+    title: "Repositories not updated",
+    message: skipped.join("\n"),
     skipped: skipped.join("\n"),
   };
 }

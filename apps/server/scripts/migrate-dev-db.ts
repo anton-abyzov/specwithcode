@@ -47,6 +47,7 @@ import { Command, Flag } from "effect/cli";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import { liveDatabaseReadOnlyUri } from "../src/persistence/liveDatabaseSnapshot.ts";
+import { isProcessAlive } from "../src/serverRuntimeState.ts";
 import * as NodeSqliteClient from "@specweave-studio/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -188,16 +189,6 @@ const removeDatabaseFiles = Effect.fn("removeDatabaseFiles")(function* (database
 /** The slice of server-runtime.json this script cares about. */
 const ServerRuntimeState = Schema.fromJsonString(Schema.Struct({ pid: Schema.Number }));
 const decodeServerRuntimeState = Schema.decodeEffect(ServerRuntimeState);
-
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM means the process exists but belongs to someone else.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
 
 /** Liveness probe for a running dev server. The server writes its pid to
  * server-runtime.json next to the database, which also catches an idle

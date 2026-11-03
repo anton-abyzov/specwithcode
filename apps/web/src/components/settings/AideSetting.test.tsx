@@ -58,7 +58,7 @@ describe("AideSetting", () => {
     mocks.update.mockReset();
   });
 
-  it("reads off by default and turns Aide on in this machine's server settings", () => {
+  it("reads off when saved off and turns Aide on in this machine's server settings", () => {
     render();
     expect(renderer.root.findByProps({ "data-title": true }).children).toEqual([
       "Personal assistant (beta)",

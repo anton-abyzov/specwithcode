@@ -132,6 +132,8 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   return path.resolve(expandHomePathWith(input.cwd, path), input.partialPath);
 });
 
+const isSearchIndexSearchFailed = Schema.is(WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed);
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -145,6 +147,20 @@ export const make = Effect.gen(function* () {
   ): Effect.fn.Return<string, WorkspaceEntriesError> {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
+
+  // A query that failed because the index's worker is gone (deadline missed or
+  // crashed) drops the index, so the next one builds a fresh index on a fresh
+  // worker instead of failing until it idles out. An error fff itself returns,
+  // such as a bad pattern, leaves the healthy index cached.
+  const withSearchIndex = <A, E, R>(indexKey: string, effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provide(workspaceSearchIndexes.get(indexKey)),
+      Effect.tapError((error) =>
+        isSearchIndexSearchFailed(error) && error.finderLost === true
+          ? workspaceSearchIndexes.invalidate(indexKey)
+          : Effect.void,
+      ),
+    );
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
@@ -240,15 +256,17 @@ export const make = Effect.gen(function* () {
       const normalizedQuery = normalizeSearchQuery(input.query, {
         trimLeadingPattern: /^[@./]+/,
       });
-      return yield* Effect.gen(function* () {
-        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
-          ),
-        ),
+      return yield* withSearchIndex(
+        WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
+        Effect.gen(function* () {
+          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+          return yield* searchIndex.search(
+            normalizedQuery,
+            input.limit,
+            input.kind,
+            input.imageOnly,
+          );
+        }),
       );
     },
   );
@@ -280,17 +298,14 @@ export const make = Effect.gen(function* () {
       normalizedCwd,
       { realpath },
     );
-    return yield* Effect.gen(function* () {
-      const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-      return yield* searchIndex.searchContents(input, (relativePaths) =>
-        Effect.promise(() => protectedPaths.protectedAmong(relativePaths)),
-      );
-    }).pipe(
-      Effect.provide(
-        workspaceSearchIndexes.get(
-          WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content"),
-        ),
-      ),
+    return yield* withSearchIndex(
+      WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content"),
+      Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        return yield* searchIndex.searchContents(input, (relativePaths) =>
+          Effect.promise(() => protectedPaths.protectedAmong(relativePaths)),
+        );
+      }),
     );
   });
 
@@ -382,15 +397,12 @@ export const make = Effect.gen(function* () {
           truncated: false,
         };
       }
-      return yield* Effect.gen(function* () {
-        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.list();
-      }).pipe(
-        Effect.provide(
-          workspaceSearchIndexes.get(
-            WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
-          ),
-        ),
+      return yield* withSearchIndex(
+        WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths"),
+        Effect.gen(function* () {
+          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+          return yield* searchIndex.list();
+        }),
       );
     },
   );

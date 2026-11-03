@@ -425,14 +425,16 @@ export function useInboxSidebarEnabled(): boolean {
 
 /**
  * Whether the personal assistant (Aide) is shown (Settings → General → Personal
- * assistant). Saved per machine on the primary server and off by default; while
+ * assistant). Saved per machine on the primary server and on by default; while
  * off, its sidebar rows, setup offers and pages are hidden, and nothing is deleted.
- * Stays off where primary settings have nowhere to live, so it never flashes in.
+ * Stays off until the primary's saved value arrives, and where primary settings
+ * have nowhere to live, so a machine that turned it off never sees it flash in.
  */
 export function useAideEnabled(): boolean {
   const aideEnabled = usePrimarySettings((settings) => settings.aideEnabled);
+  const config = useAtomValue(primaryServerConfigAtom);
   const available = usePrimarySettingsAvailable();
-  return available && aideEnabled;
+  return available && config !== null && aideEnabled;
 }
 
 /**

@@ -202,4 +202,12 @@ describe("serverRuntimeState", () => {
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it("treats an exiting or zombie process as gone", () => {
+    assert.isTrue(ServerRuntimeState.isProcessAlive(process.pid, () => "S"));
+    assert.isTrue(ServerRuntimeState.isProcessAlive(process.pid, () => null));
+    assert.isFalse(ServerRuntimeState.isProcessAlive(process.pid, () => "?E"));
+    assert.isFalse(ServerRuntimeState.isProcessAlive(process.pid, () => "Z+"));
+    assert.isTrue(ServerRuntimeState.isProcessAlive(process.pid));
+  });
 });

@@ -328,6 +328,19 @@ class FleetHealth(unittest.TestCase):
         self.assertTrue(hold['leftover'])
         self.assertIn('nothing is held', hold['summary'])
 
+    def test_an_exiting_or_zombie_pid_is_not_alive(self):
+        own = os.getpid()
+        self.assertTrue(fleet_health.pid_alive(own, read_state=lambda pid: 'Ss'))
+        self.assertTrue(fleet_health.pid_alive(own, read_state=lambda pid: None))
+        self.assertFalse(fleet_health.pid_alive(own, read_state=lambda pid: '?E'))
+        self.assertFalse(fleet_health.pid_alive(own, read_state=lambda pid: 'Z+'))
+        self.assertFalse(fleet_health.pid_alive(own, read_state=lambda pid: 'X'))
+        self.assertTrue(fleet_health.pid_alive(own, read_state=lambda pid: 'SX'))  # macOS: traced
+        self.assertTrue(fleet_health.pid_alive(own))
+        state = fleet_health.process_state(own)
+        self.assertIsNotNone(state)
+        self.assertFalse(fleet_health.is_exiting_state(state))
+
     def test_a_check_that_crashes_is_reported_and_the_rest_still_run(self):
         base = make_home(self.root, closed_port())
         write(base / 'userdata' / 'logs' / 'server.trace.ndjson', '[1, 2]\n"Failure"\n')

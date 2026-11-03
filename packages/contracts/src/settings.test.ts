@@ -25,6 +25,14 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings personal assistant", () => {
+  it("shows Aide by default and keeps a machine's saved choice", () => {
+    expect(DEFAULT_SERVER_SETTINGS.aideEnabled).toBe(true);
+    expect(decodeServerSettings({}).aideEnabled).toBe(true);
+    expect(decodeServerSettings({ aideEnabled: false }).aideEnabled).toBe(false);
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

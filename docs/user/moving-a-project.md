@@ -2,10 +2,10 @@
 
 Git is how a project stays current across machines. When a thread starts, or a
 coordinator moves to a machine, SpecWithCode fetches every repository of the
-project and fast-forwards the ones where that is safe. A repository with uncommitted
-changes, on another branch, or that can't reach origin is left exactly as it is, and
-the thread still starts with a short notice saying what was skipped and why. An SSH
-origin that fails is retried over HTTPS with the machine's GitHub login, without
+project. It leaves checked-out branches and files alone, and reports when a
+checkout has updates to pull or when it couldn't reach origin. New worktrees can
+still start from the fetched origin branch. An SSH origin that fails is retried
+over HTTPS with the machine's GitHub login, without
 changing the remote. Secrets and other uncommitted files stay where they are.
 
 **Copy local files** is the separate action for first setup and what Git can't

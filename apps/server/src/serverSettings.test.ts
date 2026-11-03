@@ -284,6 +284,23 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("keeps a machine's choice to turn Aide off through later saves", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+
+      assert.isTrue((yield* service.getSettings).aideEnabled);
+      yield* service.updateSettings({ aideEnabled: false });
+      yield* service.updateSettings({ responseStreamingMode: "turn" });
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.isFalse(persisted.aideEnabled);
+      assert.isFalse((yield* service.getSettings).aideEnabled);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("saves a sidebar project order whose pinned or unpinned list is empty", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

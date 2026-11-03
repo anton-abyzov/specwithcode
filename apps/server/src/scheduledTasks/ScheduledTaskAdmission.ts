@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   projectExecutionIsFenced,
   type ProjectWorkspaceSettings,
@@ -8,22 +9,27 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { taskError } from "./ScheduledTaskStorage.ts";
 
 /**
- * The cause of a refusal because the routine's project is archived or paused.
- * Unlike the other refusals it lasts until a person restores the project, so a
- * scheduled run moves on to its next time instead of being tried again at once.
+ * The cause of a refusal because the routine's project is archived or paused,
+ * or is the personal assistant while Aide is turned off on this machine. Unlike
+ * the other refusals it lasts until a person restores the project or turns Aide
+ * on, so a scheduled run moves on to its next time instead of being tried again
+ * at once.
  */
 export class RoutineProjectSuspended extends Schema.TaggedError<RoutineProjectSuspended>()(
   "RoutineProjectSuspended",
-  { state: Schema.Literals(["archived", "paused"]) },
+  { state: Schema.Literals(["archived", "paused", "assistant-off"]) },
 ) {}
 
 const isRoutineProjectSuspended = Schema.is(RoutineProjectSuspended);
 
-/** Whether `error` refused a run because its project is archived or paused, and which. */
-export function suspendedProjectState(error: unknown): "archived" | "paused" | null {
+/** Whether `error` refused a run because its project is suspended, and how. */
+export function suspendedProjectState(
+  error: unknown,
+): "archived" | "paused" | "assistant-off" | null {
   const cause =
     typeof error === "object" && error !== null && "cause" in error ? error.cause : undefined;
   return isRoutineProjectSuspended(cause) ? cause.state : null;
@@ -62,6 +68,20 @@ export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmissi
       taskId: task.id,
       cause: new RoutineProjectSuspended({ state }),
     });
+  }
+  // Turning Aide off stops its routines, which would otherwise keep reading mail
+  // from a chat nobody can see. Settings that cannot be read count as off.
+  if (isPersonalAssistantProject({ workspaceSettings: policy })) {
+    const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    if (Option.isSome(settings)) {
+      const current = yield* settings.value.getSettings.pipe(Effect.option);
+      if (Option.isNone(current) || !current.value.aideEnabled) {
+        return yield* taskError("The personal assistant is turned off on this machine.", {
+          taskId: task.id,
+          cause: new RoutineProjectSuspended({ state: "assistant-off" }),
+        });
+      }
+    }
   }
   if (task.threadId !== null) {
     const rows = yield* sql<{ readonly project_id: string; readonly deleted_at: string | null }>`

@@ -2,7 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, beforeEach, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { DestinationCopies } from "./destinationService.ts";
 
@@ -117,4 +117,49 @@ it("keeps a waiting move when only a files-only copy finished", async () => {
     updatedAt: "2026-10-30T03:46:00.000Z",
   });
   expect(await copies().closeSupersededPreviews()).toEqual([]);
+});
+
+it("keeps a comparison from another source machine with the same project ID", async () => {
+  write(OLD, {});
+  write(FINISHED, {
+    state: "applied",
+    committed: true,
+    sourceEnvironmentId: "env-other",
+    createdAt: "2026-10-29T23:58:00.000Z",
+  });
+  const service = copies();
+  expect(await service.closeSupersededPreviews()).toEqual([]);
+  expect((await service.read(OLD))?.state).toBe("previewed");
+});
+
+it("serializes supersession with an approval that arrives during its final read", async () => {
+  write(OLD, {});
+  write(FINISHED, {
+    state: "applied",
+    committed: true,
+    createdAt: "2026-10-29T23:58:00.000Z",
+  });
+  const service = copies();
+  const read = service.read.bind(service);
+  const records = await service.list();
+  vi.spyOn(service, "list").mockResolvedValueOnce(records);
+  const transitions = service as unknown as {
+    locked<T>(operationId: string, task: () => Promise<T>): Promise<T>;
+  };
+  let approval: Promise<boolean> | undefined;
+  vi.spyOn(service, "read").mockImplementation(async (id) => {
+    const preview = await read(id);
+    if (id === OLD && approval === undefined) {
+      approval = transitions.locked(OLD, async () => {
+        if ((await read(OLD))?.state !== "previewed") return false;
+        write(OLD, { state: "approved" });
+        return true;
+      });
+    }
+    return preview;
+  });
+
+  expect(await service.closeSupersededPreviews()).toEqual([OLD]);
+  expect(await approval).toBe(false);
+  expect((await read(OLD))?.state).toBe("cancelled");
 });

@@ -1,6 +1,6 @@
 /**
  * "Personal assistant (beta)": shows or hides Aide, the machine's personal
- * assistant, on every surface. Saved in this machine's server settings and off
+ * assistant, on every surface. Saved in this machine's server settings and on
  * by default. Off hides it and stops new setups; nothing is deleted.
  *
  * @module AideSetting

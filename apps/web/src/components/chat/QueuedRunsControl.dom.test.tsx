@@ -3,7 +3,7 @@
 import { OrchestrationV2DispatchCommandError } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act } from "react";
+import { act, createRef, type Ref } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -51,7 +51,7 @@ vi.mock("../../assets/assetUrls", () => ({
   useAssetUrls: () => [],
 }));
 
-import { QueuedRunsControl } from "./QueuedRunsControl";
+import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl";
 
 const refusal = (message: string) =>
   AsyncResult.failure(
@@ -91,7 +91,12 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const render = async (props: { readonly actionsUnavailableReason?: string | null } = {}) =>
+const render = async (
+  props: {
+    readonly actionsUnavailableReason?: string | null;
+    readonly ref?: Ref<QueuedRunsControlHandle>;
+  } = {},
+) =>
   act(async () =>
     root.render(
       <QueuedRunsControl
@@ -135,6 +140,40 @@ describe("QueuedRunsControl command outcomes", () => {
     await act(async () => button("Run now").click());
     expect(state.calls[0]?.input).toMatchObject({
       queuedRunId: "run:a",
+      targetRunId: "run:active",
+    });
+  });
+
+  it("only lets the shortcut steer the first eligible row without changing models", async () => {
+    const ref = createRef<QueuedRunsControlHandle>();
+    const workflow = {
+      activeRun: { id: "run:active" },
+      canPromoteToSteer: true,
+      canReorder: true,
+      waitReason: "turn",
+      steerUnavailableReason: null,
+    };
+    state.workflow = {
+      ...workflow,
+      queuedRuns: [
+        row("a", { pickedModel: { instanceId: "muse", model: "muse-wonder-1.0" } }),
+        row("b"),
+      ],
+    };
+    await render({ ref });
+    await act(async () => {
+      expect(ref.current?.steerNext(false)).toBe(false);
+    });
+    expect(state.calls).toEqual([]);
+
+    state.projection = { projection: { messages: [] } };
+    state.workflow = { ...workflow, queuedRuns: [row("b")] };
+    await render({ ref });
+    await act(async () => {
+      expect(ref.current?.steerNext(false)).toBe(true);
+    });
+    expect(state.calls[0]?.input).toMatchObject({
+      queuedRunId: "run:b",
       targetRunId: "run:active",
     });
   });

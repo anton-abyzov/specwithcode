@@ -16,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectCoordinator from "../project/ProjectCoordinatorService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -48,6 +49,7 @@ const harness = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const state = {
     policy: "active",
+    kind: "code" as "code" | "personal",
     launches: 0,
     sends: 0,
     dispatchGate: Effect.void,
@@ -76,6 +78,7 @@ const harness = Effect.gen(function* () {
                   ...routineProject(id),
                   workspaceSettings: {
                     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                    kind: state.kind,
                     paused: state.policy === "paused",
                     archived: state.policy === "archived",
                   },
@@ -155,6 +158,22 @@ const harness = Effect.gen(function* () {
         heldMsBetween: () => Effect.sync(() => state.heldMs),
       }),
     );
+  const runWithAide = <A, E, R>(
+    aideEnabled: boolean,
+    body: (service: Service.ScheduledTaskService["Service"]) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* Service.ScheduledTaskService;
+        return yield* body(service);
+      }).pipe(
+        Effect.provide(
+          Service.layer.pipe(
+            Layer.provide(Layer.merge(dependencies(), ServerSettings.layerTest({ aideEnabled }))),
+          ),
+        ),
+      ),
+    );
   const run = <A, E, R>(
     body: (service: Service.ScheduledTaskService["Service"]) => Effect.Effect<A, E, R>,
   ) =>
@@ -166,7 +185,7 @@ const harness = Effect.gen(function* () {
     );
   const seedThread = (id: string, projectId: string, deletedAt: string | null = null) =>
     sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({ thread_id: id, project_id: projectId, title: "Synthetic", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-09T00:00:00Z", updated_at: "2026-10-09T00:00:00Z", deleted_at: deletedAt, payload_json: "{}" })}`;
-  return { state, run, sql, seedThread };
+  return { state, run, runWithAide, sql, seedThread };
 });
 
 it.effect("refuses manual and due routines for paused, archived or deleted projects", () =>
@@ -191,6 +210,38 @@ it.effect("refuses manual and due routines for paused, archived or deleted proje
         }
         state.policy = "active";
         yield* state.due;
+        yield* state.due;
+        assert.equal(state.launches, 1);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("stops a personal assistant's routines while Aide is off on this machine", () =>
+  Effect.gen(function* () {
+    const { state, runWithAide, sql } = yield* harness;
+    state.kind = "personal";
+    const forceDue = sql`UPDATE scheduled_tasks SET next_run_at = '1970-01-01T00:00:00.000Z'`;
+    yield* runWithAide(false, (service) =>
+      Effect.gen(function* () {
+        const { task } = yield* service.upsert(taskInput());
+        const failure = yield* service.runNow({ id: task.id }).pipe(Effect.flip);
+        assert.include(failure.message, "turned off");
+        yield* forceDue;
+        yield* state.due;
+        assert.equal(state.launches, 0);
+        const [row] = yield* sql<{
+          run_count: number;
+          enabled: number;
+        }>`SELECT run_count,enabled FROM scheduled_tasks`;
+        assert.equal(row?.run_count, 0);
+        // Still on: it runs again once Aide is turned back on.
+        assert.equal(row?.enabled, 1);
+      }),
+    );
+    yield* runWithAide(true, () =>
+      Effect.gen(function* () {
+        yield* forceDue;
         yield* state.due;
         assert.equal(state.launches, 1);
       }),

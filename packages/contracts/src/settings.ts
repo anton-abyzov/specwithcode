@@ -1812,12 +1812,11 @@ export const ServerSettings = Schema.Struct({
    */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
-   * Whether the personal assistant (Aide) is shown. Off hides every way into
-   * it on the desktop, web and iPhone, and stops new assistants from being
-   * created, until its voice experience is ready. Existing assistants and
-   * their threads are kept.
+   * Whether the personal assistant (Aide) is shown. On by default. Off hides
+   * every way into it on the desktop, web and iPhone, and stops new assistants
+   * from being created. Existing assistants and their threads are kept.
    */
-  aideEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  aideEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Whether the server-local Device panel setup flow has been completed. */
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**

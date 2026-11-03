@@ -77,6 +77,20 @@ describe("reportDocument", () => {
 });
 
 describe("reportDocument with frontmatter", () => {
+  it("keeps a distinct opening heading when frontmatter names the report", () => {
+    const document = reportDocument(
+      "---\ntitle: Deployment audit\n---\n\n# Failed controls\n\nThe token remained valid.",
+    );
+    expect(document?.sections).toEqual([
+      { label: "Failed controls", markdown: "The token remained valid." },
+    ]);
+  });
+
+  it("shows a plain duplicate frontmatter title once", () => {
+    const document = reportDocument("---\ntitle: Audit\n---\n\n# Audit\n\nBody.");
+    expect(document).toEqual({ lead: "Body.", properties: [], sections: [] });
+  });
+
   it("shows flat frontmatter as properties, lists as chips, and takes the title from it", () => {
     const text = [
       "---",

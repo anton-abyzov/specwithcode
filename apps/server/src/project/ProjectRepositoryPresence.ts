@@ -34,6 +34,7 @@ import {
   repositoryGroupingDisplayNameOf,
   repositoryGroupingKeyOf,
 } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -227,6 +228,7 @@ export const checkProjectRepositories = Effect.fn("ProjectRepositoryPresence.che
   const project = yield* readProject(input.projectId);
   const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const repositories = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+  const platform = yield* HostProcessPlatform;
   const root = yield* Effect.promise(() =>
     NodeFSP.realpath(project.workspaceRoot).catch(() => null),
   );
@@ -275,10 +277,6 @@ export const checkProjectRepositories = Effect.fn("ProjectRepositoryPresence.che
       results.push(presence(entry.path, "different", "That path leads out of the project folder."));
       continue;
     }
-    if (cloning.has(folder)) {
-      results.push(presence(entry.path, "failed", "Another clone of it is still running here."));
-      continue;
-    }
     // A local path or file URL would copy another folder of this machine in.
     if (projectRepositoryIdentity(entry.remoteUrl) === null) {
       results.push(
@@ -286,30 +284,77 @@ export const checkProjectRepositories = Effect.fn("ProjectRepositoryPresence.che
       );
       continue;
     }
-    const found = yield* inspect(entry, folder);
-    if (found.status !== "missing" || !input.clone) {
-      results.push(found);
+    if (cloning.has(folder)) {
+      results.push(presence(entry.path, "failed", "Another clone of it is still running here."));
       continue;
     }
-    cloning.add(folder);
-    const cloned = yield* repositories
-      .cloneRepository(
-        { remoteUrl: entry.remoteUrl, destinationPath: folder },
-        { timeoutMs: Duration.toMillis(CLONE_TIMEOUT) },
-      )
-      .pipe(
-        Effect.tapError(() =>
-          // A clone stopped part way leaves a .git that would read as a checkout.
-          repositories.discardClone(folder, { removeDestination: true }).pipe(Effect.ignore),
-        ),
-        Effect.result,
-        Effect.ensuring(Effect.sync(() => cloning.delete(folder))),
-      );
-    results.push(
-      cloned._tag === "Success"
-        ? presence(entry.path, "cloned")
-        : presence(entry.path, "failed", cloned.failure.detail || "The clone failed."),
+    if (input.clone) cloning.add(folder);
+    let staging: string | undefined;
+    const result = yield* Effect.gen(function* () {
+      const found = yield* inspect(entry, folder);
+      if (found.status !== "missing" || !input.clone) return found;
+
+      const clone = yield* Effect.gen(function* () {
+        const parent = yield* Effect.tryPromise(async () => {
+          const directory = NodePath.dirname(folder);
+          if ((await placeInside(root, entry.path)) === null) {
+            throw new Error("That path leads out of the project folder.");
+          }
+          await NodeFSP.mkdir(directory, { recursive: true });
+          const real = await NodeFSP.realpath(directory);
+          if (!within(root, real)) throw new Error("That path leads out of the project folder.");
+          return real;
+        });
+        const stagingPath = yield* Effect.tryPromise(async () => {
+          staging = await NodeFSP.mkdtemp(NodePath.join(parent, ".swc-clone-"));
+          return staging;
+        }).pipe(Effect.uninterruptible);
+        const checkout = NodePath.join(stagingPath, "checkout");
+        yield* repositories.cloneRepository(
+          { remoteUrl: entry.remoteUrl, destinationPath: checkout },
+          { timeoutMs: Duration.toMillis(CLONE_TIMEOUT) },
+        );
+        yield* Effect.tryPromise(async () => {
+          if ((await NodeFSP.realpath(NodePath.dirname(folder))) !== parent) {
+            throw new Error("The clone destination moved.");
+          }
+          const target = NodePath.join(parent, NodePath.basename(folder));
+          // Windows cannot replace even an empty directory with rename.
+          // rmdir refuses a checkout or a folder that has gained any files.
+          try {
+            const existing = await NodeFSP.lstat(target);
+            if (!existing.isDirectory())
+              throw new Error("The clone destination is no longer a folder.");
+            if (platform !== "win32") await NodeFSP.chmod(checkout, existing.mode & 0o777);
+            await NodeFSP.rmdir(target);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          await NodeFSP.rename(checkout, target);
+        }).pipe(Effect.uninterruptible);
+      }).pipe(Effect.result);
+      if (clone._tag === "Success") return presence(entry.path, "cloned");
+      const error = clone.failure;
+      const detail =
+        "detail" in error
+          ? error.detail
+          : error.cause instanceof Error
+            ? error.cause.message
+            : null;
+      return presence(entry.path, "failed", detail || "The clone failed.");
+    }).pipe(
+      Effect.ensuring(
+        Effect.promise(async () => {
+          try {
+            if (staging !== undefined)
+              await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
+          } finally {
+            if (input.clone) cloning.delete(folder);
+          }
+        }),
+      ),
     );
+    results.push(result);
   }
   return {
     projectId: project.id,

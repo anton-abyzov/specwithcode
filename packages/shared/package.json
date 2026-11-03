@@ -119,6 +119,10 @@
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
     },
+    "./processExitState": {
+      "types": "./src/processExitState.ts",
+      "import": "./src/processExitState.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

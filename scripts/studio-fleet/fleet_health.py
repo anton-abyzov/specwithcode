@@ -29,6 +29,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -101,7 +102,34 @@ def ago(now, then):
     return '%dm%02ds' % (seconds // 60, seconds % 60) if seconds >= 60 else '%ds' % seconds
 
 
-def pid_alive(pid):
+def process_state(pid):
+    """The process state letters for pid (/proc on Linux, `ps -o stat=` elsewhere), or None."""
+    try:
+        with open('/proc/%d/stat' % pid) as stat:
+            text = stat.read()
+        fields = text[text.rindex(')') + 1:].split()
+        if fields:
+            return fields[0]
+    except (OSError, ValueError):
+        pass
+    if os.name == 'nt':
+        return None
+    try:
+        result = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True,
+                                timeout=2, env=dict(os.environ, LC_ALL='C', LANG='C'))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    state = result.stdout.strip()
+    return state if result.returncode == 0 and state else None
+
+
+def is_exiting_state(state):
+    """Z (zombie) or E (macOS: exiting, `?E` when stuck in the kernel) anywhere, or X (Linux: dead) first."""
+    state = state.strip()
+    return bool(re.search(r'[EZ]', state)) or state[:1] in ('X', 'x')
+
+
+def pid_alive(pid, read_state=process_state):
     if not isinstance(pid, int) or pid <= 0:
         return None
     try:
@@ -109,8 +137,10 @@ def pid_alive(pid):
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
-    return True
+        pass
+    # An exiting or zombie process still answers signal 0 but serves nothing.
+    state = read_state(pid)
+    return not (state is not None and is_exiting_state(state))
 
 
 def probe_host(host):

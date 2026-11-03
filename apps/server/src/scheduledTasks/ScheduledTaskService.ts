@@ -222,6 +222,13 @@ export const layer = Layer.effect(
     const serverSettings = Option.getOrUndefined(
       yield* Effect.serviceOption(ServerSettings.ServerSettingsService),
     );
+    // assertTaskAdmission reads Aide's switch from here.
+    const withAideSetting = <A, E, R>(admission: Effect.Effect<A, E, R>) =>
+      serverSettings === undefined
+        ? admission
+        : admission.pipe(
+            Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
+          );
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
@@ -606,7 +613,7 @@ export const layer = Layer.effect(
     const suspendedTasks = yield* Ref.make<ReadonlySet<string>>(new Set());
     const deferSuspendedRun = Effect.fn("ScheduledTaskService.deferSuspendedRun")(function* (
       task: ScheduledTask,
-      state: "archived" | "paused",
+      state: "archived" | "paused" | "assistant-off",
       now: DateTime.DateTime,
     ) {
       const next = nextRunAfter(task, now, false);
@@ -717,6 +724,7 @@ export const layer = Layer.effect(
         }
 
         const suspended = yield* assertTaskAdmission(active).pipe(
+          withAideSetting,
           Effect.provideService(ProjectStore.ProjectStoreV2, projects),
           Effect.provideService(SqlClient.SqlClient, sql),
           Effect.as(null),
@@ -960,6 +968,7 @@ export const layer = Layer.effect(
           admission.withLock(
             active.projectId,
             assertTaskAdmission({ ...active, threadId }).pipe(
+              withAideSetting,
               Effect.provideService(ProjectStore.ProjectStoreV2, projects),
               Effect.provideService(SqlClient.SqlClient, sql),
               // An unpinned run never moves its thread to another provider by
@@ -1036,6 +1045,7 @@ export const layer = Layer.effect(
           admission.withLock(
             active.projectId,
             assertTaskAdmission(active).pipe(
+              withAideSetting,
               Effect.provideService(ProjectStore.ProjectStoreV2, projects),
               Effect.provideService(SqlClient.SqlClient, sql),
               Effect.andThen(launchOwnThreadUnchecked(replacing)),
@@ -1606,6 +1616,7 @@ export const layer = Layer.effect(
           });
         }
         yield* assertTaskAdmission(task).pipe(
+          withAideSetting,
           Effect.provideService(ProjectStore.ProjectStoreV2, projects),
           Effect.provideService(SqlClient.SqlClient, sql),
         );

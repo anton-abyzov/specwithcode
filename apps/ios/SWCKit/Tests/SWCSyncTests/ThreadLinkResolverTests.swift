@@ -68,6 +68,14 @@ import Weave
     #expect(resolve(["nothing"], titles: ["nothing"]) == .missing)
   }
 
+  @Test func anExactRemoteTombstoneOutranksALocalTitle() {
+    let lists: [ThreadLinkResolver.Machine] = [
+      .init(environmentId: m4, threads: [.init(id: "unrelated", title: "Gone", isDeleted: false)]),
+      .init(environmentId: ministorm, threads: [.init(id: "t-gone", title: "Gone", isDeleted: true)]),
+    ]
+    #expect(resolve(["t-gone"], titles: ["Gone"], machines: lists) == .deleted)
+  }
+
   @Test func aMachineThatHasNotAnsweredOpensTheChatInstead() {
     let loading = [ThreadLinkResolver.Machine(environmentId: m4, threads: nil)]
     #expect(resolve(["t-any"], machines: loading) == .thread(ThreadRef(environmentId: m4, threadId: "t-any")))
@@ -90,6 +98,31 @@ import Weave
     #expect(resolve(["t-old"], machines: live) == .missing)
     let merged = ThreadLinkResolver.merging([.init(environmentId: ministorm, threads: [.init(id: "t-old", title: "Old", isDeleted: false)])], into: live)
     #expect(resolve(["t-old"], machines: merged) == .thread(ThreadRef(environmentId: ministorm, threadId: "t-old")))
+  }
+
+  @Test func firstLookupWaitsForAnArchiveWhenTheBareOriginIsUnloaded() {
+    let live: [ThreadLinkResolver.Machine] = [
+      .init(environmentId: m4, threads: nil),
+      .init(environmentId: ministorm, threads: [.init(id: "unrelated", title: "t-old", isDeleted: false)]),
+    ]
+    #expect(ThreadLinkResolver.resolve(candidates: ["t-old"], environmentId: nil, titles: [], origin: m4, machines: live, openUnloadedOrigin: false) == .stillLoading)
+    let archived: [ThreadLinkResolver.Machine] = [
+      .init(environmentId: ministorm, threads: [.init(id: "t-old", title: "Old", isDeleted: false)]),
+    ]
+    #expect(resolve(["t-old"], titles: ["t-old"], machines: ThreadLinkResolver.merging(archived, into: live)) == .thread(ThreadRef(environmentId: ministorm, threadId: "t-old")))
+  }
+
+  @MainActor @Test func anArchivedExactIdOutranksALiveTitleInAppModel() async throws {
+    let tests = LiveEngineTests()
+    let harness = try await tests.harness()
+    defer { harness.engine.setActive(false) }
+    #expect(await tests.loaded(harness))
+    let archived = FixtureJSON.threadShell
+      .replacingOccurrences(of: "thr_1", with: "Fix login")
+      .replacingOccurrences(of: #""title": "Fix login""#, with: #""title": "Archived thread""#)
+    harness.machine.answer("orchestration.getArchivedShellSnapshot", with: "{\"threads\":[\(archived)]}")
+    let link = try await harness.model.openThreadLink(threadId: "Fix login", environmentId: nil, from: tests.env)
+    #expect(link == ThreadRef(environmentId: tests.env, threadId: "Fix login"))
   }
 
   @Test func aLabelTitleIsTheLastResort() throws {

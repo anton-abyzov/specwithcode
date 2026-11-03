@@ -553,14 +553,14 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
   describe("searchContents", () => {
     it.effect("drops matches inside protected files", () =>
       Effect.gen(function* () {
-        const config = yield* ServerConfig.ServerConfig;
-        write(NodePath.join(config.secretsDir, "search.bin"), "needle-sk-test\n");
-        write(config.settingsPath, '{"needle":"sk-test"}\n');
-        write(NodePath.join(config.logsDir, "plain.txt"), "needle here\n");
+        const project = NodePath.join(scratch, "protected-matches");
+        write(NodePath.join(project, ".env"), "needle=sk-test\n");
+        write(NodePath.join(project, ".ssh", "id_search"), "needle PRIVATE KEY\n");
+        write(NodePath.join(project, "logs", "plain.txt"), "needle here\n");
 
         const entries = yield* WorkspaceEntries.WorkspaceEntries;
         const result = yield* entries.searchContents({
-          cwd: config.stateDir,
+          cwd: project,
           query: "needle",
           limit: 100,
           caseSensitive: false,
@@ -569,6 +569,32 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         });
 
         expect(result.matches.map((match) => match.path)).toEqual(["logs/plain.txt"]);
+      }),
+    );
+
+    it.effect("refuses to index a root that holds the live database", () =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        write(NodePath.join(config.logsDir, "plain.txt"), "needle here\n");
+        const entries = yield* WorkspaceEntries.WorkspaceEntries;
+        for (const cwd of [config.stateDir, NodePath.dirname(config.stateDir)]) {
+          const error = yield* entries
+            .searchContents({
+              cwd,
+              query: "needle",
+              limit: 100,
+              caseSensitive: false,
+              wholeWord: false,
+              useRegex: false,
+            })
+            .pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "WorkspaceSearchIndexCreateFailed",
+            reason: expect.stringContaining("it holds the service's database folder"),
+          });
+          const listError = yield* entries.list({ cwd }).pipe(Effect.flip);
+          expect(listError).toMatchObject({ _tag: "WorkspaceSearchIndexCreateFailed" });
+        }
       }),
     );
 
@@ -684,14 +710,15 @@ it.layer(layerTest, { excludeTestServices: true })("sensitive workspace paths", 
         write(NodePath.join(control, "keys", "id_oracle"), "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n");
         const config = yield* ServerConfig.ServerConfig;
         write(NodePath.join(config.secretsDir, "oracle.txt"), "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n");
-        // Readable files that sort after the secret store, so its match comes first.
-        write(NodePath.join(config.stateDir, "themes", "oracle-a.txt"), "github.com ssh-rsa\n");
-        write(NodePath.join(config.stateDir, "themes", "oracle-b.txt"), "github.com again\n");
         const home = homeDir;
+        // Readable files that sort after the key, so its match comes first. The
+        // state folder itself is never indexed (it holds the live database).
         write(NodePath.join(home, ".ssh", "id_oracle"), "b3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n");
+        write(NodePath.join(home, "themes", "oracle-a.txt"), "github.com ssh-rsa\n");
+        write(NodePath.join(home, "themes", "oracle-b.txt"), "github.com again\n");
 
         const entries = yield* WorkspaceEntries.WorkspaceEntries;
-        for (const cwd of [home, config.stateDir]) {
+        for (const cwd of [home]) {
           // Earlier tests indexed these roots; pick up the files written here.
           yield* entries.refresh(cwd);
           for (const limit of [1, 2, 100]) {

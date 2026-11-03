@@ -224,7 +224,9 @@ function containsWords(text: string, words: string): boolean {
 export function relayedReplyNotes<At>(
   coordinatorMessages: readonly (Message & { readonly createdAt?: At | undefined })[],
   thread: Pick<Worker, "id" | "environmentId">,
-  threadMessages: readonly (Pick<Message, "role" | "text"> & { readonly createdAt: At })[],
+  threadMessages: readonly (Pick<Message, "role" | "text" | "createdBy" | "senderThreadId"> & {
+    readonly createdAt: At;
+  })[],
   history: { readonly partial: boolean; readonly millis: (at: At) => number },
 ): (RoutedReplyNote & { readonly createdAt: At | null })[] {
   const times = threadMessages.map((message) => history.millis(message.createdAt));
@@ -239,7 +241,10 @@ export function relayedReplyNotes<At>(
     if (history.partial && (knownFrom === null || typedAt < knownFrom)) return [];
     const delivered = threadMessages.some(
       (other, index) =>
-        other.role === "user" && times[index]! >= typedAt && containsWords(other.text, words),
+        other.role === "user" &&
+        (other.createdBy === "agent" || other.senderThreadId !== undefined) &&
+        times[index]! >= typedAt &&
+        containsWords(other.text, words),
     );
     return delivered
       ? []

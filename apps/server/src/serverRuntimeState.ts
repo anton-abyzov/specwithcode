@@ -1,3 +1,8 @@
+import {
+  isProcessExiting,
+  readProcessState,
+  type ProcessStateReader,
+} from "@specweave-studio/shared/processExitState";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -125,15 +130,21 @@ export const clearPersistedServerRuntimeState = (path: string) =>
  * Report whether the pid recorded in a persisted runtime state is still
  * running. Signal 0 delivers nothing; it only reports whether the pid exists.
  * EPERM means it exists but belongs to another user, which still counts as
- * alive.
+ * alive. A process that is exiting or a zombie still answers signal 0 but
+ * serves nothing and never exits on its own when a thread is stuck in the
+ * kernel (macOS shows it as `?E`), so it counts as gone; otherwise a stuck
+ * server blocks every restart.
  */
-export const isProcessAlive = (pid: number): boolean => {
+export const isProcessAlive = (
+  pid: number,
+  readState: ProcessStateReader = readProcessState,
+): boolean => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
+    if (!(error instanceof Error && "code" in error && error.code === "EPERM")) return false;
   }
+  return !isProcessExiting(pid, readState);
 };
 
 export const readPersistedServerRuntimeState = (path: string) =>

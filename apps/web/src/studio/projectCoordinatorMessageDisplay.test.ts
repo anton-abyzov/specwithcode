@@ -536,7 +536,12 @@ describe("relayedReplyNotes", () => {
     targetThreadId: null,
     createdAt: typedAt,
   };
-  const threadMessage = (text: string, createdAt: string) => ({ role: "user", text, createdAt });
+  const threadMessage = (text: string, createdAt: string) => ({
+    role: "user",
+    createdBy: "agent",
+    text,
+    createdAt,
+  });
 
   it("finds only messages typed in this thread on its machine", () => {
     expect(
@@ -564,6 +569,17 @@ describe("relayedReplyNotes", () => {
         [threadMessage("From your coordinator: yes", "2026-11-03T01:00:05.000Z")],
         history,
       ),
+    ).toEqual([]);
+  });
+
+  it("keeps a relay note when a later direct user message repeats its words", () => {
+    const later = {
+      ...threadMessage("Do not say yes yet", "2026-11-03T01:00:05.000Z"),
+      createdBy: "user",
+    };
+    expect(relayedReplyNotes([mine], thread, [later], history)).toEqual([note]);
+    expect(
+      relayedReplyNotes([mine], thread, [{ ...later, senderThreadId: "coordinator" }], history),
     ).toEqual([]);
   });
 

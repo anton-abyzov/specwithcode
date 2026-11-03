@@ -167,7 +167,8 @@ it.effect("refuses a new assistant while Aide is off and keeps an existing one",
   Effect.gen(function* () {
     const service = yield* ProjectService.ProjectService;
     const settings = yield* ServerSettings.ServerSettingsService;
-    // Aide is off by default.
+    // Aide is on by default; this machine turned it off.
+    yield* settings.updateSettings({ aideEnabled: false });
     const refused = yield* createAssistant(service, "aide-off").pipe(Effect.flip);
     assert.equal(reasonOf(refused), "assistant_disabled");
     assert.equal(

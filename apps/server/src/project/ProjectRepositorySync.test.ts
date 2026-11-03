@@ -194,8 +194,9 @@ it("leaves an assistant's folder alone", async () => {
   }
 }, 30_000);
 
-it("updates and reports a real project's repositories in plain words", async () => {
+it("fetches and reports a real project's repositories without changing its checkout", async () => {
   const { base, root, head, origin } = folderWithCheckouts();
+  const before = head();
   try {
     const turn = await firstTurnIn(
       { id: "code", workspaceRoot: root },
@@ -203,9 +204,10 @@ it("updates and reports a real project's repositories in plain words", async () 
     );
     expect(turn.started).toBe(1);
     expect(turn.messages).toEqual([
-      "Updated from origin: behind.\nDidn't update dirty: it has 1 uncommitted change.",
+      "Didn't update behind: origin has 1 new commit. Pull when you are ready.\nDidn't update dirty: it has 1 uncommitted change.",
     ]);
-    expect(head()).toBe(origin);
+    expect(head()).toBe(before);
+    expect(head()).not.toBe(origin);
   } finally {
     NodeFS.rmSync(base, { recursive: true, force: true });
   }

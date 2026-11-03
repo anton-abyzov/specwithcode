@@ -385,7 +385,9 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued.find((row) => row.automatic !== true && row.steering !== true);
-      if (!next || !workflow?.canPromoteToSteer || actionsUnavailable !== null) return false;
+      // A different-model row has an explicit Run now action because it stops the active turn.
+      if (!next || next.pickedModel || !workflow?.canPromoteToSteer || actionsUnavailable !== null)
+        return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },

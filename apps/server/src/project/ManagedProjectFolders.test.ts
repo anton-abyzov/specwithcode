@@ -786,6 +786,8 @@ it.effect("refuses a new Personal assistant while Aide is off, leaving no folder
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
       const projects = yield* ProjectService.ProjectService;
       const fs = yield* FileSystem.FileSystem;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({ aideEnabled: false });
       const refused = yield* folders
         .createNamedProject({ name: "Aide", kind: "personal" })
         .pipe(Effect.flip);

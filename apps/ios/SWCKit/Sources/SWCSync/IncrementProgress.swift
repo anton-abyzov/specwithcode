@@ -88,7 +88,7 @@ extension AppModel {
   /// out. Only then the label: a valid ID outranks a live thread with the same title.
   public func openThreadLink(threadId: String, environmentId: String?, threadIds: [String] = [], title: String? = nil, label: String? = nil, from origin: String) async throws -> ThreadRef {
     let machines = threadLinkMachines()
-    let live = threadLinkResult(threadId: threadId, environmentId: environmentId, threadIds: threadIds, title: title, label: nil, from: origin, machines: machines)
+    let live = threadLinkResult(threadId: threadId, environmentId: environmentId, threadIds: threadIds, title: nil, label: nil, from: origin, machines: machines, allowTitleFallback: false)
     switch live {
     case .failure(.missing), .failure(.stillLoading): break
     default: return try live.get()
@@ -105,10 +105,10 @@ extension AppModel {
     }
   }
 
-  private func threadLinkResult(threadId: String, environmentId: String?, threadIds: [String], title: String?, label: String?, from origin: String, machines: [ThreadLinkResolver.Machine]) -> Result<ThreadRef, ThreadLinkError> {
+  private func threadLinkResult(threadId: String, environmentId: String?, threadIds: [String], title: String?, label: String?, from origin: String, machines: [ThreadLinkResolver.Machine], allowTitleFallback: Bool = true) -> Result<ThreadRef, ThreadLinkError> {
     let candidates = threadIds.isEmpty ? [threadId] : threadIds
-    let titles = [title].compactMap { $0 } + candidates + [label].compactMap { $0 }
-    switch ThreadLinkResolver.resolve(candidates: candidates, environmentId: environmentId, titles: titles, origin: origin, machines: machines) {
+    let titles = allowTitleFallback ? [title].compactMap { $0 } + candidates + [label].compactMap { $0 } : []
+    switch ThreadLinkResolver.resolve(candidates: candidates, environmentId: environmentId, titles: titles, origin: origin, machines: machines, openUnloadedOrigin: allowTitleFallback) {
     case let .thread(ref): return .success(ref)
     case .deleted: return .failure(.deleted)
     case .unpairedMachine: return .failure(.unpairedMachine)

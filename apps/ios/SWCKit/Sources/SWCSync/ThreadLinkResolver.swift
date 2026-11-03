@@ -39,23 +39,29 @@ public enum ThreadLinkResolver {
   ///   - environmentId: The machine the link names; a named machine is never left for another.
   ///   - titles: A thread's title where the ID belongs; only a title one thread has counts.
   ///   - origin: The machine whose conversation holds the link.
-  static func resolve(candidates: [String], environmentId: String?, titles: [String], origin: String, machines: [Machine]) -> Resolution {
+  static func resolve(candidates: [String], environmentId: String?, titles: [String], origin: String, machines: [Machine], openUnloadedOrigin: Bool = true) -> Resolution {
     if let environmentId {
       guard let machine = machines.first(where: { $0.environmentId == environmentId }) else {
         // A first segment that is not a machine ID is a title with a slash in it.
-        return looksLikeEnvironmentId(environmentId) ? .unpairedMachine : resolve(candidates: [], environmentId: nil, titles: titles.filter { !candidates.contains($0) }, origin: origin, machines: machines)
+        return looksLikeEnvironmentId(environmentId) ? .unpairedMachine : resolve(candidates: [], environmentId: nil, titles: titles.filter { !candidates.contains($0) }, origin: origin, machines: machines, openUnloadedOrigin: openUnloadedOrigin)
       }
       return exact(candidates, on: machine) ?? titled(titles, on: [machine]) ?? (machine.threads == nil ? open(candidates, on: machine) : .missing)
     }
     let local = machines.first { $0.environmentId == origin }
     if let local, let found = exact(candidates, on: local) { return found }
     // A coordinator names workers it started on another machine with a bare link.
+    var foundRemoteTombstone = false
     for machine in machines where machine.environmentId != origin {
-      if case let .thread(ref)? = exact(candidates, on: machine) { return .thread(ref) }
+      switch exact(candidates, on: machine) {
+      case let .thread(ref)?: return .thread(ref)
+      case .deleted?: foundRemoteTombstone = true
+      default: break
+      }
     }
+    if foundRemoteTombstone { return .deleted }
     if let local, let found = titled(titles, on: [local]) { return found }
     if let found = titled(titles, on: machines) { return found }
-    if let local, local.threads == nil { return open(candidates, on: local) }
+    if openUnloadedOrigin, let local, local.threads == nil { return open(candidates, on: local) }
     // Nothing can say the thread is missing until every machine has answered.
     return machines.contains { $0.threads == nil } ? .stillLoading : .missing
   }
