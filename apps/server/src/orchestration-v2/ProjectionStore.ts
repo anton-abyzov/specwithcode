@@ -1973,7 +1973,7 @@ function shellReportedWait(input: {
   return reportWaitReason(input.text);
 }
 
-function shellReportedBlocker(input: {
+export function shellReportedBlocker(input: {
   readonly text: string | null;
   readonly reportedAt: string | null;
   readonly latestUserMessageAt: string | null;

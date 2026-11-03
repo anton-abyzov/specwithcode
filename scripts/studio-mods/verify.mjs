@@ -273,18 +273,6 @@ try {
   await page.goto(origin + "/");
   await page.waitForTimeout(1500);
   // SpecWeave mods read the seeded increments through specweave:read.
-  const modStatus = page.getByLabel("Mod status");
-  const chip = modStatus.getByRole("button", { name: /Needs attention/ });
-  await chip.waitFor({ timeout: 15000 });
-  await chip.and(page.getByLabel(/1 Need verify/)).waitFor({ timeout: 15000 });
-  await chip.and(page.getByLabel(/1 Trace gaps/)).waitFor({ timeout: 15000 });
-  check("SpecWeave mods report the close queue and the trace gap", true);
-  await chip.click();
-  await page.getByRole("button", { name: /^Need verify/ }).click();
-  const verifyList = page.getByRole("dialog", { name: "Need verify" });
-  await verifyList.getByText("0001-retry-worker").waitFor({ timeout: 10000 });
-  check("a stat row opens its own list", true);
-  await page.keyboard.press("Escape");
   await page.keyboard.press("ControlOrMeta+k");
   await page.keyboard.type("waiting to be closed");
   await page.getByText("Show increments waiting to be closed").first().click();
@@ -300,13 +288,20 @@ try {
   await page.getByText("Show the standup from SpecWeave increments").first().click();
   const standup = page.getByRole("dialog");
   // 0001's task finished 30 hours ago: outside "Since yesterday", inside "Last week".
-  await standup.getByText("0 tasks done · 1 in progress · 0 blocked · 0 stale").waitFor({
+  await standup.getByText("0 tasks done · 1 in progress · 0 blocked").waitFor({
     timeout: 10000,
   });
   await standup.getByRole("button", { name: "Last week" }).click();
-  await standup.getByText("1 task done · 1 in progress · 0 blocked · 0 stale").waitFor();
+  await standup.getByText("1 task done · 1 in progress · 0 blocked").waitFor();
   await standup.getByText("T-01 Worker").waitFor();
   check("standup pane reads the ledger and its window buttons redraw it", true);
+  // They open from the palette and put no count in the sidebar: tasks and
+  // increments match nothing the sidebar lists.
+  const modStatus = page.getByLabel("Mod status");
+  check(
+    "SpecWeave mods report no sidebar count",
+    (await modStatus.getByLabel(/To verify|Trace gaps|Blocked|Ready to close/).count()) === 0,
+  );
   await page.screenshot({ path: NodePath.join(out, "mods-standup.png") });
   await page.keyboard.press("Escape");
 
@@ -320,10 +315,7 @@ try {
   // The palette keeps its last query; replace it.
   await page.locator("input:focus").fill("waiting on me");
   await page.getByText("Show sessions waiting on me").first().click();
-  await page
-    .getByRole("dialog")
-    .getByText("Nothing is waiting on you.")
-    .waitFor({ timeout: 10000 });
+  await page.getByRole("dialog").getByText("Nothing needs you.").waitFor({ timeout: 10000 });
   check("mod pane drawn by the host from its tree", true);
   await page.screenshot({ path: NodePath.join(out, "mods-pane.png") });
   await page.keyboard.press("Escape");

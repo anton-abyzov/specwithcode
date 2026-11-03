@@ -3919,6 +3919,12 @@ export const OrchestrationV2ThreadHistoryPage = Schema.Struct({
   ),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMoreHistory: Schema.Boolean,
+  /**
+   * The messages the page's rows show. A bounded snapshot keeps only the
+   * window's messages, so a view built from messages needs these to grow.
+   * Older servers omit it.
+   */
+  messages: Schema.optional(Schema.Array(OrchestrationV2ConversationMessage)),
 });
 export type OrchestrationV2ThreadHistoryPage = typeof OrchestrationV2ThreadHistoryPage.Type;
 

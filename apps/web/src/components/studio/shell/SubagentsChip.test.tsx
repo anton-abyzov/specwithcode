@@ -54,7 +54,7 @@ afterEach(() => {
 });
 
 describe("a subagent blocked on the person", () => {
-  it("reads as waiting on you in the chip's list, and is not counted working", async () => {
+  it("reads as needing you in the chip's list, and is not counted working", async () => {
     await act(() =>
       root.render(
         <SubagentsChip

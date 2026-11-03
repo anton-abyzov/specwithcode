@@ -447,18 +447,13 @@ describe("project coordinator surface", () => {
       group.getAttribute("data-group"),
       group.querySelectorAll(".sws-thread-row").length,
     ]);
-    // Finished work stays folded until it is asked for.
+    // Finished work stays folded until it is asked for; an empty group takes no room.
     expect(groups).toEqual([
-      ["Waiting on you", 1],
-      ["Working", 0],
-      ["Waiting", 0],
-      ["Unavailable", 0],
+      ["Needs you", 1],
       ["Idle", 1],
       ["Resolved", 0],
     ]);
-    expect(container.querySelector(".sws-threads-head")?.textContent).toContain(
-      "1 waiting on you.",
-    );
+    expect(container.querySelector(".sws-threads-head")?.textContent).toContain("1 needs you.");
     expect(container.querySelector(".sws-thread-status")?.textContent).toBe("Answer needed");
     const resolved = container.querySelector<HTMLButtonElement>(
       '[data-group="Resolved"] .sws-group-bar',

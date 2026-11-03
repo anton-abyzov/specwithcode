@@ -18,7 +18,7 @@ try {
     if (width < 768) await page.getByRole("button", { name: /^Overview,/ }).click();
     // This fixture declares report blockers on all six roots. Even with a
     // finished/failed runtime, every visible Blocked row must request attention.
-    const waiting = page.locator('[data-group="Waiting on you"]');
+    const waiting = page.locator('[data-group="Needs you"]');
     const idle = page.locator('[data-group="Idle"]');
     await waiting.locator(".sws-thread-row").first().waitFor();
     assert.equal(await waiting.locator(".sws-thread-row").count(), 5);
@@ -29,10 +29,10 @@ try {
         .textContent(),
       "6",
     );
-    assert.match(await page.locator(".sws-threads-head").textContent(), /6 waiting on you/);
+    assert.match(await page.locator(".sws-threads-head").textContent(), /6 need you/);
     await page.getByRole("button", { name: "baseline", exact: true }).click();
     await page.waitForFunction(
-      () => document.querySelectorAll('[data-group="Waiting on you"] .sws-thread-row').length === 0,
+      () => document.querySelectorAll('[data-group="Needs you"] .sws-thread-row').length === 0,
     );
     assert.equal(await page.locator('[aria-label="Project sidebar"] .sws-count').count(), 0);
     await page.getByRole("button", { name: "operational", exact: true }).click();

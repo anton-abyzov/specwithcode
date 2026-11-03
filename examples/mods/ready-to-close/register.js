@@ -1,7 +1,8 @@
 // The closure queue: open increments whose tasks are all done or skipped,
 // sorted by what stands between them and `specweave complete`. A ledger
 // "done" is an agent's claim; a green `specweave verify` that ran after the
-// last task finished is what makes an increment closable.
+// last task finished is what makes an increment closable. It reports no sidebar
+// count: increments match nothing the sidebar lists, so it opens from the palette.
 export function register(on) {
   const OPEN_ENDED = new Set(["completed", "abandoned", "archived", "cancelled", "closed"]);
   const FINISHED = new Set(["done", "skipped"]);
@@ -49,23 +50,6 @@ export function register(on) {
   const refresh = ($) => {
     const rows = queue();
     const closable = rows.filter((row) => row.state === "Ready");
-    const blocked = rows.length - closable.length;
-    $.ui.status([
-      {
-        glyph: "verify",
-        count: blocked,
-        label: "Need verify",
-        detail: "Increments with every task done but no passing verify since. Press to see them.",
-        onPress: () => $.ui.open({ id: "queue-verify", title: "Need verify" }),
-      },
-      {
-        glyph: "ready",
-        count: closable.length,
-        label: "Ready to close",
-        detail: "Increments with every task done and a passing verify. Press to see them.",
-        onPress: () => $.ui.open({ id: "queue-ready", title: "Ready to close" }),
-      },
-    ]);
     const ids = new Set(closable.map((row) => row.increment.id));
     if (ready !== null) {
       const fresh = [...ids].filter((id) => !ready.has(id));
@@ -128,17 +112,5 @@ export function register(on) {
 
   on("ui.render", { component: "Pane", requestId: "queue" }, () =>
     drawRows(queue(), "No open increment has all its tasks done yet."),
-  );
-  on("ui.render", { component: "Pane", requestId: "queue-verify" }, () =>
-    drawRows(
-      queue().filter((row) => row.state !== "Ready"),
-      "No increment is waiting on verify.",
-    ),
-  );
-  on("ui.render", { component: "Pane", requestId: "queue-ready" }, () =>
-    drawRows(
-      queue().filter((row) => row.state === "Ready"),
-      "No increment is ready to close.",
-    ),
   );
 }

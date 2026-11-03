@@ -73,7 +73,7 @@ export const COORDINATOR_SUSPEND_PATH = "/api/coordinator/v1/suspend";
 
 /** The silence, in minutes, after which an armed standby takes over the coordinator. */
 export const COORDINATOR_STANDBY_AFTER_MINUTES = [5, 15, 30, 60] as const;
-export const DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES = 15;
+export const DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES = 5;
 export const CoordinatorStandbyAfterMinutes = Schema.Literals(COORDINATOR_STANDBY_AFTER_MINUTES);
 export type CoordinatorStandbyAfterMinutes = typeof CoordinatorStandbyAfterMinutes.Type;
 

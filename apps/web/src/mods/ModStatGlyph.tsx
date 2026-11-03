@@ -9,8 +9,6 @@ type GlyphProps = Omit<SVGProps<SVGSVGElement>, "ref">;
 const GLYPH_PATHS: Record<ModStatGlyphName, ReadonlyArray<string>> = {
   // A closed circle with a bar across it: work that cannot move.
   blocked: ["M8 1.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 0 0 0-12.5Z", "M5 8h6"],
-  // A clock with its hands set: a claim nobody has touched for a while.
-  stale: ["M8 1.75a6.25 6.25 0 1 0 0 12.5a6.25 6.25 0 0 0 0-12.5Z", "M8 4.75V8l2.25 1.5"],
   // A check inside corner brackets: finished, waiting for proof.
   verify: [
     "M1.75 5V3.25a1.5 1.5 0 0 1 1.5-1.5H5",
@@ -32,7 +30,6 @@ const GLYPH_PATHS: Record<ModStatGlyphName, ReadonlyArray<string>> = {
 /** Each glyph's color, set by the host so a mod cannot make a count look alarming. */
 export const MOD_STAT_TONE_CLASS: Record<ModStatGlyphName, string> = {
   blocked: "text-destructive-foreground",
-  stale: "text-warning-foreground",
   verify: "text-warning-foreground",
   gap: "text-warning-foreground",
   waiting: "text-foreground",

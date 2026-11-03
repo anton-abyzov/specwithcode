@@ -1,4 +1,4 @@
-// Headless check and screenshots of the mod status chip: node shoot.mjs <site dir> <out dir>
+// Headless check and screenshots of the mod status icons: node shoot.mjs <site dir> <out dir>
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
 import * as NodeModule from "node:module";
@@ -50,34 +50,17 @@ for (const theme of ["light", "dark"]) {
     const tag = `${theme}-${width}`;
     await page.goto(`${origin}/?state=live&theme=${theme}&width=${width}`);
     const status = page.getByLabel("Mod status");
-    const chip = status.getByRole("button", { name: /Needs attention/ });
-    await chip.waitFor();
-    expect((await status.getByRole("button").count()) === 1, `${tag}: one chip only`);
-    expect((await chip.innerText()).includes("33"), `${tag}: chip total`);
-    expect(
-      (await chip.locator("[data-mod-stat-glyph]").getAttribute("data-mod-stat-glyph")) ===
-        "blocked",
-      `${tag}: chip leads with the most urgent glyph`,
-    );
+    const blocked = status.getByRole("button", { name: "8 Blocked" });
+    const verify = status.getByRole("button", { name: "6 To verify" });
+    await blocked.waitFor();
+    await verify.waitFor();
+    expect((await status.getByRole("button").count()) === 2, `${tag}: one icon per stat`);
+    expect((await status.innerText()).replace(/\s+/g, " ").trim() === "8 6", `${tag}: no words`);
+    expect((await page.locator("[data-mod-stat-glyph=ready]").count()) === 0, `${tag}: zero icon`);
     const statusBox = await status.boundingBox();
     expect(statusBox.width <= width, `${tag}: status wider than the sidebar`);
-    expect(!(await overflow(page, chip)), `${tag}: chip overflows`);
-    await page.screenshot({ path: NodePath.join(output, `chip-${tag}.png`) });
-
-    await chip.click();
-    const blocked = page.getByRole("button", { name: /^Blocked/ });
-    await blocked.waitFor();
-    for (const [name, count] of [
-      [/^Blocked/, "8"],
-      [/^Stale claims/, "19"],
-      [/^Need verify/, "6"],
-    ]) {
-      const text = await page.getByRole("button", { name }).innerText();
-      expect(text.includes(count), `${tag}: ${name} shows ${count}, got "${text}"`);
-    }
-    expect((await page.locator("[data-mod-stat-glyph=ready]").count()) === 0, `${tag}: zero row`);
-    await page.waitForTimeout(250);
-    await page.screenshot({ path: NodePath.join(output, `popover-${tag}.png`) });
+    expect(!(await overflow(page, blocked)), `${tag}: icon overflows`);
+    await page.screenshot({ path: NodePath.join(output, `icons-${tag}.png`) });
 
     await blocked.hover();
     await page.getByText("Tasks in open increments marked blocked").waitFor();
@@ -85,13 +68,12 @@ for (const theme of ["light", "dark"]) {
     await page.waitForTimeout(250);
     await page.screenshot({ path: NodePath.join(output, `tooltip-${tag}.png`) });
 
-    await page.getByRole("button", { name: /^Need verify/ }).click();
+    await verify.click();
     await page.getByRole("dialog", { name: "List 3" }).waitFor();
     expect(
       JSON.stringify(await page.evaluate(() => window.pressed)) === '["ready-to-close:3"]',
       `${tag}: press reached the wrong stat`,
     );
-    expect((await page.getByRole("button", { name: /^Blocked/ }).count()) === 0, `${tag}: open`);
     await page.close();
   }
   const page = await browser.newPage({
@@ -105,27 +87,21 @@ for (const theme of ["light", "dark"]) {
   await page.goto(`${origin}/?state=text&theme=${theme}`);
   await page.getByLabel("Mod status").getByText("Focus 25 min").waitFor();
   await page.screenshot({ path: NodePath.join(output, `with-text-pill-${theme}.png`) });
-  // The counts reach zero with the popover open, then return: it must stay closed.
-  const textChip = page.getByRole("button", { name: /Needs attention/ });
-  await textChip.click();
-  await page.getByRole("button", { name: /^Blocked/ }).waitFor();
+  // The counts reach zero and return while the sidebar stays mounted.
+  const textIcon = page.getByRole("button", { name: "8 Blocked" });
+  await textIcon.waitFor();
   await page.evaluate(() => {
     window.setCounts(false);
     window.clearVerify();
   });
-  await textChip.waitFor({ state: "detached" });
+  await textIcon.waitFor({ state: "detached" });
   await page.evaluate(() => window.setCounts(true));
-  await textChip.waitFor();
-  await page.waitForTimeout(300);
-  expect(
-    (await page.getByRole("button", { name: /^Blocked/ }).count()) === 0,
-    `${theme}: popover reopened by itself`,
-  );
+  await textIcon.waitFor();
 
   await page.goto(`${origin}/?state=large&theme=${theme}&width=200`);
-  const chip = page.getByRole("button", { name: /Needs attention/ });
-  await chip.waitFor();
-  expect((await chip.innerText()).includes("999+"), `${theme}: large totals cap`);
+  const large = page.getByRole("button", { name: "999+ Blocked" });
+  await large.waitFor();
+  expect((await large.innerText()).includes("999+"), `${theme}: large counts cap`);
   await page.screenshot({ path: NodePath.join(output, `large-${theme}.png`) });
   await page.close();
 }

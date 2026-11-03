@@ -59,11 +59,11 @@ try {
   NodeAssert.ok(here.length > 0 && here.length < before.length, "one click narrows the list");
   NodeAssert.ok(!here.includes("release"), "the other machine's threads leave the list");
   NodeAssert.ok(
-    (await page.getAttribute(choice("m4"), "aria-label")).includes("1 waiting on you"),
+    (await page.getAttribute(choice("m4"), "aria-label")).includes("1 needs you"),
     "the other machine still says a thread waits on the person",
   );
   NodeAssert.equal(await page.locator(`${choice("m4")} .sws-dot`).count(), 1);
-  NodeAssert.match(await page.locator(".sws-threads-head p").first().innerText(), /waiting on you/);
+  NodeAssert.match(await page.locator(".sws-threads-head p").first().innerText(), /needs? you/);
   await shot(page, "filters-this-machine-light");
 
   await page.reload();

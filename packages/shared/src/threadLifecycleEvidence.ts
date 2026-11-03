@@ -211,10 +211,10 @@ export function evaluateLifecycleEvidence(
 /** A wait's owner/reason is preserved; this never resumes a stopped thread. */
 export function lifecycleWaitGroup(
   obligation: LifecycleObligation,
-): "Stopped" | "Unknown" | "Waiting on you" | "Operational wait" | "Agent work" {
+): "Stopped" | "Unknown" | "Needs you" | "Operational wait" | "Agent work" {
   if (obligation.kind === "stopped") return "Stopped";
   if (obligation.kind === "unknown") return "Unknown";
-  if (obligation.needsUserOutput) return "Waiting on you";
+  if (obligation.needsUserOutput) return "Needs you";
   return obligation.kind === "agent_work" || obligation.kind === "nested_work"
     ? "Agent work"
     : "Operational wait";
@@ -270,7 +270,7 @@ export interface LifecycleDeliveryStatus {
 }
 
 const WAIT_GROUP_ORDER = [
-  "Waiting on you",
+  "Needs you",
   "Stopped",
   "Unknown",
   "Operational wait",

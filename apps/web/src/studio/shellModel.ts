@@ -205,7 +205,7 @@ export const DEFAULT_CHAT_LIST_OPTIONS: ChatListOptions = {
 };
 
 export const CHAT_OPTION_LABELS = {
-  status: { all: "All", active: "Active", waiting: "Waiting on you", resolved: "Resolved" },
+  status: { all: "All", active: "Active", waiting: "Needs you", resolved: "Resolved" },
   activity: { any: "Any time", "1d": "Last day", "7d": "Last 7 days", "30d": "Last 30 days" },
   projectThreads: { hide: "Hide", show: "Show" },
   groupBy: { date: "Date", project: "Project", machine: "Machine", status: "Status", none: "None" },
@@ -298,7 +298,7 @@ export function dateBucket(iso: string, now: number): DateBucket {
 function matchesStatus(thread: EnvironmentThreadShell, status: ChatStatusFilter): boolean {
   if (status === "all") return true;
   const group = projectThreadGroup(thread);
-  if (status === "waiting") return group === "Waiting on you";
+  if (status === "waiting") return group === "Needs you";
   if (status === "resolved") return group === "Resolved";
   return group !== "Resolved";
 }
@@ -331,10 +331,9 @@ export type ChatGroup = {
 };
 
 const STATUS_GROUP_ORDER: readonly ProjectThreadGroup[] = [
-  "Waiting on you",
+  "Needs you",
   "Working",
-  "Waiting",
-  "Unavailable",
+  "Offline",
   "Idle",
   "Resolved",
 ];
@@ -452,7 +451,7 @@ export function buildThreadPaneGroups(
   query = "",
   /** Working subagents per `environmentId:threadId`: an idle thread with one is still working. */
   runningSubagents?: ReadonlyMap<string, number>,
-  /** Hosts that cannot be reached now; their threads are listed as unavailable. */
+  /** Hosts that cannot be reached now; their threads are listed as offline. */
   unreachable?: ReadonlySet<string>,
   attention?: ProjectAttention,
 ): ThreadPaneGroup[] {
@@ -460,12 +459,11 @@ export function buildThreadPaneGroups(
     const root = attention?.roots.find(
       (r) => r.thread.environmentId === thread.environmentId && r.thread.id === thread.id,
     );
-    if (root?.actions.length) return "Waiting on you";
+    if (root?.actions.length) return "Needs you";
     if (thread.settledOverride === "settled")
       return projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
-    if (root && root.freshness !== "live") return "Unavailable";
-    if (root?.working) return "Working";
-    if (root?.waits?.length) return "Waiting";
+    if (root && root.freshness !== "live") return "Offline";
+    if (root?.working || root?.waits?.length) return "Working";
     const group = projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
     return group === "Idle" &&
       (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0
@@ -483,14 +481,7 @@ export function buildThreadPaneGroups(
         ? compareByActivity
         : compareChats(sortBy);
   const groups: ThreadPaneGroup[] = [];
-  for (const group of [
-    "Waiting on you",
-    "Working",
-    "Waiting",
-    "Unavailable",
-    "Idle",
-    "Resolved",
-  ] as const) {
+  for (const group of ["Needs you", "Working", "Offline", "Idle", "Resolved"] as const) {
     const rows = threads
       .filter(
         (thread) =>
@@ -509,8 +500,7 @@ export function waitingCount(
 ): number {
   return threads.filter(
     (thread) =>
-      projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) ===
-      "Waiting on you",
+      projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) === "Needs you",
   ).length;
 }
 
@@ -528,8 +518,10 @@ export function threadsSummary(
   if (unattended)
     return `Automated project. Nothing here alerts you.${attention?.working ? ` ${attention.working} working.` : ""}`;
   const dependencyCount =
-    attention?.roots.filter((root) => !root.actions.length && !root.working && root.waits?.length)
-      .length ?? 0;
+    // The coordinator is not a row, so counting it would say more than the list shows.
+    attention?.roots.filter(
+      (root) => !root.coordinator && !root.actions.length && !root.working && root.waits?.length,
+    ).length ?? 0;
   const coordinatorCount =
     attention?.roots.filter((root) => root.coordinator && root.actions.length > 0).length ?? 0;
   const countedScope =
@@ -537,7 +529,7 @@ export function threadsSummary(
       ? ` (${coordinatorCount} coordinator${coordinatorCount === 1 ? "" : "s"}${attention.count > coordinatorCount ? `, ${attention.count - coordinatorCount} worker${attention.count - coordinatorCount === 1 ? "" : "s"}` : ""})`
       : "";
   if (attention)
-    return `${attention.complete && attention.count === 0 ? "Nothing is waiting on you" : attention.label}${countedScope}${attention.working > 0 ? ` · ${attention.working} working` : ""}${dependencyCount > 0 ? ` · ${dependencyCount} waiting on dependencies` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
+    return `${attention.complete && attention.count === 0 ? "Nothing needs you" : attention.label}${countedScope}${attention.working + dependencyCount > 0 ? ` · ${attention.working + dependencyCount} working` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
   const waiting = waitingCount(threads, unreachable);
   const working = threads.filter(
     (thread) =>
@@ -553,11 +545,11 @@ export function threadsSummary(
   const parts = [
     waiting === 0
       ? unreachable?.size
-        ? "Attention unavailable on disconnected hosts"
-        : "Nothing is waiting on you"
+        ? "Some machines are offline"
+        : "Nothing needs you"
       : waiting === 1
-        ? "1 thread is waiting on you"
-        : `${waiting} threads are waiting on you`,
+        ? "1 thread needs you"
+        : `${waiting} threads need you`,
     working === 0 ? null : `${working} working`,
   ].filter((part): part is string => part !== null);
   return `${parts.join(" · ")}.`;
@@ -565,6 +557,7 @@ export function threadsSummary(
 
 const ATTENTION_WORDS = {
   input: "Answer needed",
+  message: "Reply needed",
   signin: "Sign-in needed",
   held: "Queue held",
   plan: "Plan ready",
@@ -577,7 +570,7 @@ export const attentionActionWord = (reason: keyof typeof ATTENTION_WORDS): strin
 
 /**
  * What a row says when the project's attention, not the thread itself, puts it
- * under Waiting on you: a subagent asks something, so the row names that one, or
+ * under Needs you: a subagent asks something, so the row names that one, or
  * counts them. Null when the thread's own status word already says it.
  */
 export function threadAttentionWord(
@@ -594,20 +587,6 @@ export function threadAttentionWord(
   if (!first) return null;
   if (rest.length > 0) return `${root.actions.length} subagents need your input`;
   return `${attentionActionWord(first.reason)} · ${first.title || "subagent"}`;
-}
-
-/**
- * What an empty group says. While some threads could not be read, "none" would
- * claim more than is known, so it is limited to the threads that were read.
- */
-export function emptyThreadGroupCopy(
-  group: ProjectThreadGroup,
-  attention: ProjectAttention | undefined,
-): string {
-  if (attention && !attention.complete && group !== "Idle" && group !== "Resolved")
-    return "None among the threads read so far.";
-  if (group === "Waiting on you") return "No decisions or replies requested.";
-  return group === "Waiting" ? "No dependency waits." : "Nothing here.";
 }
 
 /** Groups a person has dealt with stay folded until they ask for them. */
@@ -633,10 +612,10 @@ export function threadTone(thread: EnvironmentThreadShell, hostOffline = false):
   if (group === "Resolved") return "resolved";
   if (hostOffline) return "unknown";
   if (status === "failed") return "failed";
-  if (group === "Waiting on you") return "waiting";
-  if (group === "Working" || threadRuntimeIsActive(thread.runtime)) return "working";
-  if (group === "Waiting") return "background";
-  return "idle";
+  if (group === "Needs you") return "waiting";
+  if (threadRuntimeIsActive(thread.runtime)) return "working";
+  if (threadDependencyWait(thread)) return "background";
+  return group === "Working" ? "working" : "idle";
 }
 
 /**
@@ -663,12 +642,12 @@ export function threadStatusWord(
   if (threadHeldQueue(thread) !== null) return "Queue held";
   if (threadBlocker(thread) !== null) return "Blocked";
   const tone = threadTone(thread);
-  if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Waiting on you";
+  if (tone === "waiting") return thread.hasActionableProposedPlan ? "Plan ready" : "Needs you";
   return tone === "working" ? "Working" : null;
 }
 
 export const THREAD_TONE_LABELS: Record<ThreadTone, string> = {
-  waiting: "Waiting on you",
+  waiting: "Needs you",
   working: "Working",
   background: "Waiting for background work",
   failed: "Run failed",

@@ -44,11 +44,11 @@ describe("remote worker cards", () => {
     );
   });
 
-  it("shows a worker held on a question over there as waiting on you", () => {
+  it("shows a worker held on a question over there as needing you", () => {
     const held = { ...worker, lastStatus: "waiting_on_you" };
     expect(remoteWorkerCardStatus(held)).toEqual({
       tone: "waiting",
-      label: "Last observed: waiting on you on M1",
+      label: "Last observed: needs you on M1",
     });
     // Out of touch, its last word is stale: it says the machine is unreachable instead.
     expect(remoteWorkerCardStatus({ ...held, reachable: false }).label).toContain("unreachable");

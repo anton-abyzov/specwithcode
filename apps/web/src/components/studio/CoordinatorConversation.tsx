@@ -78,6 +78,7 @@ import {
   useThreadStatus,
 } from "../../state/entities";
 import { ShellRunTargetContext, type ShellRunTarget } from "../chat/InlineShellRun";
+import { AsyncResult } from "effect/reactivity";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -118,6 +119,8 @@ const EMPTY_IDS: readonly ThreadId[] = [];
  */
 export const COORDINATOR_MESSAGE_WINDOW = 30;
 const COORDINATOR_MESSAGE_WINDOW_STEP = 40;
+/** Older pages one "Load earlier messages" may fetch while they hold no message to show. */
+const COORDINATOR_HISTORY_PAGES_PER_LOAD = 10;
 /** How many messages each coordinator conversation mounted, for the page's lifetime. */
 const keptMessageWindows = new Map<string, number>();
 
@@ -510,6 +513,67 @@ export function CoordinatorConversation({
     keepDistanceFromEnd(scope, kept.fromEnd);
   }, [windowSize, scope]);
   const hasEarlier = firstShown > 0;
+  const firstRowId: string | undefined = rows[0]?.message.id;
+  // A page can hold only tool steps of one long turn, or messages this view
+  // hides, so a load keeps fetching until an older message shows, and shows
+  // every message it brought instead of asking for "Show earlier" next.
+  const [reveal, setReveal] = useState<{
+    /** The oldest row when the load began; an older one ahead of it ends the load. */
+    readonly first: string | undefined;
+    readonly pages: number;
+    readonly waiting: boolean;
+  } | null>(null);
+  const loadPage = useCallback(
+    (first: string | undefined, pages: number) => {
+      setReveal({ first, pages, waiting: true });
+      void load({
+        environmentId: project.environmentId,
+        input: { threadId: coordinatorId },
+      }).then((result) =>
+        setReveal((current) =>
+          current === null || current.pages !== pages
+            ? current
+            : AsyncResult.isSuccess(result) && result.value._tag === "loaded"
+              ? { ...current, waiting: false }
+              : null,
+        ),
+      );
+    },
+    [load, project.environmentId, coordinatorId],
+  );
+  const loadEarlierMessages = useCallback(() => {
+    if (scope !== null)
+      keptPlace.current = { fromEnd: scope.scrollHeight - scope.scrollTop, windowSize };
+    loadPage(firstRowId, 1);
+  }, [scope, windowSize, loadPage, firstRowId]);
+  useLayoutEffect(() => {
+    if (reveal === null || reveal.waiting || history.loading) return;
+    // A live reply grows the rows too, so only a new oldest row counts.
+    if (firstRowId !== reveal.first) {
+      setReveal(null);
+      if (windowSize < rows.length) {
+        setWindowSize(rows.length);
+      } else if (keptPlace.current !== null && scope !== null) {
+        // Every message was already mounted, so no window step restores the place.
+        keepDistanceFromEnd(scope, keptPlace.current.fromEnd);
+        keptPlace.current = null;
+      }
+    } else if (history.hasMoreHistory && reveal.pages < COORDINATOR_HISTORY_PAGES_PER_LOAD) {
+      loadPage(reveal.first, reveal.pages + 1);
+    } else {
+      setReveal(null);
+    }
+  }, [
+    reveal,
+    firstRowId,
+    rows.length,
+    history.loading,
+    history.hasMoreHistory,
+    loadPage,
+    windowSize,
+    scope,
+  ]);
+  const revealing = reveal !== null;
   // Scrolling near the top mounts the next older messages. The marker is keyed by
   // the window, so each step observes it afresh and keeps going while the top stays
   // in view. The conversation is the scroller: the margin reaches above its own
@@ -550,15 +614,10 @@ export function CoordinatorConversation({
           <Button
             variant="outline"
             size="sm"
-            disabled={history.loading}
-            onClick={() =>
-              void load({
-                environmentId: project.environmentId,
-                input: { threadId: coordinatorId },
-              })
-            }
+            disabled={history.loading || revealing}
+            onClick={loadEarlierMessages}
           >
-            {history.loading ? "Loading…" : "Load earlier messages"}
+            {history.loading || revealing ? "Loading…" : "Load earlier messages"}
           </Button>
         ) : null}
         {history.error && <p role="alert">{history.error}</p>}

@@ -1,5 +1,4 @@
-import { ChevronUpIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
 import {
@@ -10,7 +9,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../components/ui/dialog";
-import { Popover, PopoverPopup, PopoverTrigger } from "../components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { cn } from "../lib/utils";
 import { MOD_STAT_TONE_CLASS, ModStatGlyph } from "./ModStatGlyph";
@@ -134,41 +132,40 @@ export function orderModStats(
     .toSorted((a, b) => MOD_STAT_GLYPHS.indexOf(a.glyph) - MOD_STAT_GLYPHS.indexOf(b.glyph));
 }
 
-function ModStatRowItem({ stat, onPressed }: { stat: ModStatRow; onPressed: () => void }) {
+/** One stat as a glyph and a count; its word is the tooltip and pressing it opens its list. */
+function ModStatIcon({ stat }: { stat: ModStatRow }) {
   const channel = useModsStore((state) => state.channels[stat.mod]);
   const handler = stat.handler;
-  const content = (
-    <>
-      <ModStatGlyph name={stat.glyph} className={cn("size-3.5", MOD_STAT_TONE_CLASS[stat.glyph])} />
-      <span className="min-w-0 flex-1 truncate">{stat.label}</span>
-      <span className="shrink-0 text-muted-foreground tabular-nums">
-        {formatModStatCount(stat.count)}
-      </span>
-    </>
-  );
-  const rowClass =
-    "flex w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm";
+  const count = formatModStatCount(stat.count);
+  const iconClass =
+    "flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-foreground tabular-nums";
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           handler === null ? (
-            <div className={rowClass} />
+            <span className={iconClass} role="img" aria-label={`${count} ${stat.label}`} />
           ) : (
             <button
               type="button"
-              className={cn(rowClass, "cursor-pointer hover:bg-accent focus-visible:bg-accent")}
-              onClick={() => {
-                onPressed();
-                channel?.pressStat(handler);
-              }}
+              aria-label={`${count} ${stat.label}`}
+              className={cn(
+                iconClass,
+                "cursor-pointer hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring",
+              )}
+              onClick={() => channel?.pressStat(handler)}
             />
           )
         }
       >
-        {content}
+        <ModStatGlyph
+          name={stat.glyph}
+          className={cn("size-3.5", MOD_STAT_TONE_CLASS[stat.glyph])}
+        />
+        {count}
       </TooltipTrigger>
-      <TooltipPopup side="right" className="max-w-64">
+      <TooltipPopup side="top" className="max-w-64">
+        <div className="font-medium">{stat.label}</div>
         {stat.detail === null ? null : <div>{stat.detail}</div>}
         <div className="text-muted-foreground">From the {stat.mod} mod</div>
       </TooltipPopup>
@@ -176,47 +173,7 @@ function ModStatRowItem({ stat, onPressed }: { stat: ModStatRow; onPressed: () =
   );
 }
 
-/** One chip for every mod count, present only while a count is above zero. */
-function ModStatsChip({ rows }: { rows: ReadonlyArray<ModStatRow> }) {
-  const [open, setOpen] = useState(false);
-  const top = rows[0];
-  if (top === undefined) return null;
-  const total = formatModStatCount(rows.reduce((sum, stat) => sum + stat.count, 0));
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`Needs attention: ${rows
-              .map((stat) => `${stat.count} ${stat.label}`)
-              .join(", ")}`}
-            className="flex h-6 min-w-0 cursor-pointer items-center gap-1.5 rounded-md bg-muted px-1.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring aria-expanded:text-foreground"
-          />
-        }
-      >
-        <ModStatGlyph name={top.glyph} className={cn("size-3.5", MOD_STAT_TONE_CLASS[top.glyph])} />
-        <span className="min-w-0 truncate">Needs attention</span>
-        <span className="shrink-0 font-medium text-foreground tabular-nums">{total}</span>
-        <ChevronUpIcon aria-hidden className="size-3 shrink-0 opacity-70" />
-      </PopoverTrigger>
-      <PopoverPopup side="top" align="start" padding="compact" width="sm">
-        <div className="px-2 pb-1 text-xs text-muted-foreground">Needs attention</div>
-        <div className="flex flex-col">
-          {rows.map((stat) => (
-            <ModStatRowItem
-              key={`${stat.mod}:${stat.glyph}:${stat.label}`}
-              stat={stat}
-              onPressed={() => setOpen(false)}
-            />
-          ))}
-        </div>
-      </PopoverPopup>
-    </Popover>
-  );
-}
-
-/** Mods' counts as one chip and their plain status text as pills, for the sidebar footer. */
+/** Mods' counts as icons and their plain status text as pills, for the sidebar footer. */
 export function ModStatusItems() {
   const status = useModsStore((state) => state.status);
   const stats = useModsStore((state) => state.stats);
@@ -225,8 +182,9 @@ export function ModStatusItems() {
   if (entries.length === 0 && rows.length === 0) return null;
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1 px-2 pb-1" aria-label="Mod status">
-      {/* Unmounted at zero, so a popover left open cannot reappear with the next count. */}
-      {rows.length > 0 ? <ModStatsChip rows={rows} /> : null}
+      {rows.map((stat) => (
+        <ModStatIcon key={`${stat.mod}:${stat.glyph}:${stat.label}`} stat={stat} />
+      ))}
       {entries.map(([mod, text]) => (
         <Tooltip key={mod}>
           <TooltipTrigger

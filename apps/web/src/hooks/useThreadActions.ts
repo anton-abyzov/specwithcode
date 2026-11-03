@@ -128,7 +128,7 @@ export class ThreadSnoozeBlockedError extends Schema.TaggedError<ThreadSnoozeBlo
   },
 ) {
   override get message(): string {
-    return "This thread is waiting on you. Respond to the pending request before snoozing it.";
+    return "This thread needs you. Respond to the pending request before snoozing it.";
   }
 }
 

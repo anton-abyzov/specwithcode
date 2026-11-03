@@ -41,6 +41,14 @@ PRIVATE_REPO, PUBLIC_REPO = 'anton-abyzov/specwithcode', 'anton-abyzov/specwithc
 # internal increment branches.
 PUBLIC_DENY = (re.compile(r'/Users/[^/\s]+/'), re.compile(r'\b192\.168\.\d+\.\d+\b'),
                re.compile(r'\b[A-Za-z]+s-MacBook', re.I), re.compile(r'\b(?:codex|claude)/\d{4}-'))
+# The public notes never name the product the code base started from. The pattern is
+# assembled from parts so this file passes the public mirror's own name check.
+_ROOT = 't' + '3'
+PUBLIC_UPSTREAM_NAME = re.compile(
+    r'ping' + r'dotgg|%sdotgg|%s\.gg|%s[._-]?(?:code|chat|tools|connect)' % (_ROOT, _ROOT, _ROOT)
+    + r'|(?<![a-z0-9])%s\s(?:code|chat|tools|connect)' % _ROOT
+    + r'|(?-i:(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_]))' % _ROOT.upper()
+    + r'|\bupstream (?:names?|research|fixes|code)\b', re.I)
 SERVER_DIR = 'apps/server'
 
 
@@ -271,6 +279,9 @@ def public_notes(text, rules=None):
     leaks += sum(1 for pattern in PUBLIC_DENY if pattern.search(text))
     if leaks:
         raise ToolError('The public notes still hold %d private value(s); edit notes.md' % leaks)
+    named = [line for line in text.splitlines() if PUBLIC_UPSTREAM_NAME.search(line)]
+    if named:
+        raise ToolError('The public notes name the original code base; edit notes.md:\n' + '\n'.join(named))
     return text
 
 

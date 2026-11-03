@@ -77,7 +77,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           kind={activeEnvironment?.machine ?? "server"}
           className={displayMode === "panel" ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3 shrink-0"}
         />
-        <ComposerContextLabel displayMode={displayMode}>
+        <ComposerContextLabel displayMode={displayMode} keepWhenCompact>
           {activeEnvironment?.label ?? "Run on"}
         </ComposerContextLabel>
       </span>
@@ -126,7 +126,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               }
             />
           )}
-          <ComposerContextLabel displayMode={displayMode}>
+          <ComposerContextLabel displayMode={displayMode} keepWhenCompact>
             <SelectValue />
           </ComposerContextLabel>
         </TooltipTrigger>

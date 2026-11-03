@@ -15,21 +15,21 @@ export function register(on) {
       {
         glyph: "waiting",
         count: waiting().length,
-        label: "Waiting on you",
+        label: "Needs you",
         detail: "Sessions waiting for an approval, an answer or a plan review. Press to see them.",
-        onPress: () => $.ui.open({ id: "queue", title: "Waiting on you" }),
+        onPress: () => $.ui.open({ id: "queue", title: "Needs you" }),
       },
     ]);
     return next(e);
   });
 
   on("command.run", { name: "review-queue" }, ($) =>
-    $.ui.open({ id: "queue", title: "Waiting on you" }),
+    $.ui.open({ id: "queue", title: "Needs you" }),
   );
 
   on("ui.render", { component: "Pane", requestId: "queue" }, ($) => {
     const rows = waiting();
-    if (rows.length === 0) return h("Text", { tone: "muted" }, "Nothing is waiting on you.");
+    if (rows.length === 0) return h("Text", { tone: "muted" }, "Nothing needs you.");
     return h(
       "Box",
       { gap: 2 },

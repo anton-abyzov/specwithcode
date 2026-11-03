@@ -118,7 +118,7 @@ describe("recorded turn timing", () => {
   it("names active user/tool waits and keeps elapsed explicitly separate from active work", () => {
     const active = turn("active", 20, null, "waiting");
     expect(view(active, [], { awaitingPerson: "answer" })).toMatchObject({
-      label: "Waiting on you",
+      label: "Needs you",
       elapsedMs: 10 * 60_000,
     });
     expect(

@@ -27,7 +27,7 @@ struct ProjectOverviewView: View {
       if groups.isEmpty {
         emptyState.plainListRow()
       } else {
-        section("Waiting on you", groups.needsYou)
+        section("Needs you", groups.needsYou)
         section("Working", groups.working)
         section("Idle", groups.idle)
         if !groups.resolved.isEmpty {

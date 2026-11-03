@@ -1,3 +1,5 @@
+import type { ProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
+import { PROJECT_THREAD_GROUPS } from "./projectWorkspaceModel";
 import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import {
@@ -21,7 +23,6 @@ import {
   threadStatusWord,
   threadTone,
   waitingCount,
-  emptyThreadGroupCopy,
   threadToneShowsDot,
 } from "./shellModel";
 import { unreachableEnvironmentIds } from "../state/environments";
@@ -64,6 +65,12 @@ const now = new Date(2026, 9, 10, 12, 0, 0).getTime();
 const at = (daysAgo: number, hour = 9) =>
   new Date(2026, 9, 10 - daysAgo, 0, Math.round(hour * 60), 0).toISOString();
 const projectLabel = (t: EnvironmentThreadShell) => String(t.projectId);
+
+describe("thread group words", () => {
+  it("has one word for each thing a reader does next", () => {
+    expect(PROJECT_THREAD_GROUPS).toEqual(["Needs you", "Working", "Offline", "Idle", "Resolved"]);
+  });
+});
 
 describe("machine names", () => {
   it("drops the owner so a row keeps room for the model", () => {
@@ -239,7 +246,7 @@ describe("chats in the sidebar", () => {
           projectLabel,
         },
       ).map((g) => g.label),
-    ).toEqual(["Waiting on you", "Working", "Idle"]);
+    ).toEqual(["Needs you", "Working", "Idle"]);
   });
   it("sorts by name or creation when asked", () => {
     const rows = [
@@ -455,20 +462,18 @@ describe("a project's Threads pane", () => {
     expect(
       buildThreadPaneGroups(rows, "activity").map((g) => [g.group, g.threads.map((t) => t.id)]),
     ).toEqual([
-      ["Waiting on you", ["ask"]],
+      ["Needs you", ["ask"]],
       ["Working", ["busy"]],
-      ["Waiting", []],
-      ["Unavailable", []],
+      ["Offline", []],
       ["Idle", ["idle-new", "idle-old"]],
       ["Resolved", ["done", "stored"]],
     ]);
   });
   it("shows every lifecycle heading even when empty", () => {
     expect(buildThreadPaneGroups([thread()], "activity").map((g) => g.group)).toEqual([
-      "Waiting on you",
+      "Needs you",
       "Working",
-      "Waiting",
-      "Unavailable",
+      "Offline",
       "Idle",
       "Resolved",
     ]);
@@ -517,7 +522,7 @@ describe("a project's Threads pane", () => {
   });
   it("summarises what needs the person first", () => {
     expect(waitingCount(rows)).toBe(1);
-    expect(threadsSummary(rows)).toBe("1 thread is waiting on you · 1 working.");
+    expect(threadsSummary(rows)).toBe("1 thread needs you · 1 working.");
     expect(threadsSummary(rows, 0, undefined, undefined, undefined, true)).toBe(
       "Automated project. Nothing here alerts you.",
     );
@@ -526,12 +531,31 @@ describe("a project's Threads pane", () => {
         thread({ id: "a", hasPendingUserInput: true }),
         thread({ id: "b", hasPendingApprovals: true }),
       ]),
-    ).toBe("2 threads are waiting on you.");
-    expect(threadsSummary([thread()])).toBe("Nothing is waiting on you.");
+    ).toBe("2 threads need you.");
+    expect(threadsSummary([thread()])).toBe("Nothing needs you.");
     expect(threadsSummary([])).toBe("No threads yet. Ask the coordinator to start one.");
     // Workers on another machine are not threads here, but the project is not empty.
     expect(threadsSummary([], 1)).toBe("One worker runs on another machine.");
     expect(threadsSummary([], 2)).toBe("2 workers run on another machine.");
+  });
+  it("counts as working only what the list shows, never the coordinator's own wait", () => {
+    const wait = {
+      coordinator: false,
+      working: false,
+      waits: ["Waiting for CI"],
+      actions: [],
+    } as unknown as ProjectAttention["roots"][number];
+    const attention = {
+      roots: [wait, { ...wait, coordinator: true }],
+      working: 2,
+      count: 0,
+      complete: true,
+      staleCount: 0,
+      label: "",
+    } as unknown as ProjectAttention;
+    expect(threadsSummary([], 0, undefined, undefined, attention)).toBe(
+      "Nothing needs you · 3 working.",
+    );
   });
   it("leads a row with a status word only when the thread wants something", () => {
     expect(threadStatusWord(thread({ hasPendingApprovals: true }))).toBe("Approval requested");
@@ -542,7 +566,7 @@ describe("a project's Threads pane", () => {
     expect(threadStatusWord(thread({ heldQueuedCount: 3 }))).toBe("Queue held");
     expect(threadTone(thread({ heldQueuedCount: 3 }))).toBe("waiting");
   });
-  it("names the subagent that puts a quiet parent under Waiting on you", () => {
+  it("names the subagent that puts a quiet parent under Needs you", () => {
     const parent = thread({ id: "parent" });
     const action = (threadId: string, title: string) => ({
       key: threadId,
@@ -570,7 +594,7 @@ describe("a project's Threads pane", () => {
       working: 0,
       complete: true,
       staleCount: 0,
-      label: "1 waiting on you",
+      label: "1 needs you",
     });
     expect(threadAttentionWord(parent, attention([action("child", "1048 fresh review")]))).toBe(
       "Answer needed · 1048 fresh review",
@@ -654,7 +678,7 @@ describe("failed runs", () => {
 describe("blocked threads", () => {
   const blocked = thread({ reportedBlocker: "Ship 1.0.20 today, or wait for the signer?" });
 
-  it("names a quiet thread whose report has a blocker Blocked, waiting on you", () => {
+  it("names a quiet thread whose report has a blocker Blocked, needing you", () => {
     expect(threadStatusWord(blocked)).toBe("Blocked");
     expect(threadTone(blocked)).toBe("waiting");
   });
@@ -723,9 +747,7 @@ describe("threads on an unreachable host", () => {
     expect(threadStatusWord(blocked, true)).toBe("Host offline");
     expect(threadTone(blocked, true)).toBe("unknown");
     expect(waitingCount([blocked], offline)).toBe(0);
-    expect(threadsSummary([blocked], 0, offline)).toBe(
-      "Attention unavailable on disconnected hosts.",
-    );
+    expect(threadsSummary([blocked], 0, offline)).toBe("Some machines are offline.");
   });
 
   it("lists it as idle rather than working from a stale runtime", () => {
@@ -743,8 +765,8 @@ describe("threads on an unreachable host", () => {
       undefined,
       offline,
     );
-    expect(groups.find((g) => g.group === "Unavailable")?.threads).toHaveLength(2);
-    expect(groups.find((g) => g.group === "Waiting on you")?.threads).toHaveLength(0);
+    expect(groups.find((g) => g.group === "Offline")?.threads).toHaveLength(2);
+    expect(groups.find((g) => g.group === "Needs you")?.threads).toHaveLength(0);
   });
 
   it("keeps a resolved thread resolved and is unchanged once the host is back", () => {
@@ -764,7 +786,7 @@ describe("dependency waiting", () => {
   ])("keeps %s separate from user attention", (reason) => {
     const row = thread({ reportedBlocker: reason });
     expect(
-      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Waiting")?.threads,
+      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Working")?.threads,
     ).toEqual([row]);
     expect(waitingCount([row])).toBe(0);
     expect(threadStatusWord(row)).toBe(reason);
@@ -804,7 +826,7 @@ describe("a turn that ended with live background work", () => {
   it("never reads Idle or Done on any surface", () => {
     const row = worker();
     expect(
-      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Waiting")?.threads,
+      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Working")?.threads,
     ).toEqual([row]);
     expect(
       buildThreadPaneGroups([row], "activity").find((g) => g.group === "Idle")?.threads,
@@ -828,8 +850,8 @@ describe("a turn that ended with live background work", () => {
   });
 
   it.each([
-    ["a real blocker", { reportedBlocker: "Which channel should this go to?" }, "Waiting on you"],
-    ["a held queue", { heldQueuedCount: 1 }, "Waiting on you"],
+    ["a real blocker", { reportedBlocker: "Which channel should this go to?" }, "Needs you"],
+    ["a held queue", { heldQueuedCount: 1 }, "Needs you"],
     ["a settled mark", { settledOverride: "settled" }, "Resolved"],
   ] as const)("lets %s outrank the wait", (_name, overrides, group) => {
     const row = worker(overrides as unknown as ThreadOverrides);
@@ -877,23 +899,6 @@ it("marks background and unknown rows with a dot, but not quiet ones", () => {
   expect(threadToneShowsDot("resolved")).toBe(false);
 });
 
-describe("empty groups while some threads could not be read", () => {
-  const attention = (complete: boolean) =>
-    ({ complete, roots: [], count: 0, working: 0, staleCount: 0, label: "" }) as never;
-  it("limits the claim to the threads that were read", () => {
-    expect(emptyThreadGroupCopy("Waiting on you", attention(false))).toBe(
-      "None among the threads read so far.",
-    );
-    expect(emptyThreadGroupCopy("Working", attention(false))).toBe(
-      "None among the threads read so far.",
-    );
-    expect(emptyThreadGroupCopy("Waiting on you", attention(true))).toBe(
-      "No decisions or replies requested.",
-    );
-    expect(emptyThreadGroupCopy("Idle", attention(false))).toBe("Nothing here.");
-  });
-});
-
 it("a working parent's child dependency cannot replace its own working status", () => {
   const parent = thread({ runtime: running });
   const attention = {
@@ -910,7 +915,7 @@ it("a working parent's child dependency cannot replace its own working status", 
     working: 1,
     complete: true,
     staleCount: 0,
-    label: "0 waiting on you",
+    label: "0 need you",
   } as never;
   expect(threadAttentionWord(parent, attention)).toBeNull();
   expect(threadTone(parent)).toBe("working");
@@ -926,10 +931,10 @@ it("explains coordinator inclusion in the same total used by project badges", ()
     working: 0,
     complete: true,
     staleCount: 0,
-    label: "2 waiting on you",
+    label: "2 need you",
   } as never;
   expect(threadsSummary([], 0, undefined, undefined, attention)).toBe(
-    "2 waiting on you (1 coordinator, 1 worker).",
+    "2 need you (1 coordinator, 1 worker).",
   );
   const answered = {
     ...(attention as unknown as Record<string, unknown>),
@@ -938,9 +943,9 @@ it("explains coordinator inclusion in the same total used by project badges", ()
       { coordinator: false, actions: [{}] },
     ],
     count: 1,
-    label: "1 waiting on you",
+    label: "1 needs you",
   } as never;
-  expect(threadsSummary([], 0, undefined, undefined, answered)).toBe("1 waiting on you.");
+  expect(threadsSummary([], 0, undefined, undefined, answered)).toBe("1 needs you.");
 });
 
 it("keeps resolved parents resolved despite stale own runtime or live child counts", () => {

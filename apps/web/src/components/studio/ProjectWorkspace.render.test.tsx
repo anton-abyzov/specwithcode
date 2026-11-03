@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 // The fixtures install their module stand-ins first, so they load before anything they replace.
-import { state, container, render, prompt } from "./ProjectWorkspace.test-fixtures";
+import { state, container, render, prompt, shell } from "./ProjectWorkspace.test-fixtures";
 import { setConversationFindState } from "../find/conversationFindStore";
 import { COORDINATOR_MESSAGE_WINDOW } from "./CoordinatorConversation";
 
@@ -22,6 +22,61 @@ function conversation(count: number) {
   }));
 }
 const shownMessages = () => container.querySelectorAll(".project-message").length;
+
+describe("the coordinator's ask in the Threads pane", () => {
+  const ask = () => container.querySelector<HTMLButtonElement>("[data-coordinator-ask]");
+  const requestsDialog = () =>
+    [...document.querySelectorAll("[role=dialog]")].some((dialog) =>
+      dialog.textContent?.includes("Coordinator requests"),
+    );
+
+  it("takes a question asked only in its message to that message, not an empty dialog", async () => {
+    state.messages = conversation(4);
+    state.shells = [
+      shell("coord", { reportedBlocker: "Pair Chrome, or skip the check?" }),
+      shell("worker"),
+    ];
+    const rects = vi
+      .spyOn(HTMLElement.prototype, "getClientRects")
+      .mockReturnValue([{}] as unknown as DOMRectList);
+    const scrolled: Element[] = [];
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      scrolled.push(this);
+    });
+    const frame = vi.spyOn(window, "requestAnimationFrame").mockImplementation((run) => {
+      run(0);
+      return 0;
+    });
+    try {
+      await render();
+      expect(ask()?.textContent).toContain("Coordinator · Reply needed");
+      await act(async () => ask()!.click());
+      expect(requestsDialog()).toBe(false);
+      expect(scrolled.at(-1)?.getAttribute("data-follow-anchor")).toBe("message-3");
+    } finally {
+      rects.mockRestore();
+      scroll.mockRestore();
+      frame.mockRestore();
+    }
+  });
+
+  it("goes once the question is answered, because the shell stops reporting it", async () => {
+    state.messages = conversation(4);
+    state.shells = [shell("coord", { reportedBlocker: null }), shell("worker")];
+    await render();
+    expect(ask()).toBeNull();
+  });
+
+  it("still opens the requests dialog for a native request", async () => {
+    state.shells = [shell("coord", { hasPendingApprovals: true }), shell("worker")];
+    await render();
+    expect(ask()?.textContent).toContain("Approval requested");
+    await act(async () => ask()!.click());
+    expect(requestsDialog()).toBe(true);
+  });
+});
 
 describe("coordinator conversation rendering", () => {
   it("renders no message while the person types", async () => {

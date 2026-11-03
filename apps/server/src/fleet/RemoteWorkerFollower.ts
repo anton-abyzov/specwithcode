@@ -117,7 +117,7 @@ export function remoteWorkerWaitingOnYou(input: {
     notification: {
       source: { kind: "background_task" },
       outcome: "unknown",
-      summary: `${link} on ${input.machineLabel} is waiting on you.`,
+      summary: `${link} on ${input.machineLabel} needs you.`,
     },
   };
 }

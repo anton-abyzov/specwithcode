@@ -40,11 +40,22 @@ const child = (id: string, parent: string, props: Partial<EnvironmentThreadShell
     ...props,
   });
 const active = { runtime: { status: "running" } as EnvironmentThreadShell["runtime"] };
+describe("threadDependencyWait", () => {
+  it("does not let a failed run's last report pass for a wait", () => {
+    const failed = { status: "failed" } as EnvironmentThreadShell["runtime"];
+    expect(threadDependencyWait(thread("t", { reportedWait: "Waiting for CI" }))).toBe(
+      "Waiting for CI",
+    );
+    expect(
+      threadDependencyWait(thread("t", { reportedWait: "Waiting for CI", runtime: failed })),
+    ).toBeNull();
+  });
+});
 describe("project conversation aggregation", () => {
   it("counts a report asking for feedback once, with or without a native request", () => {
     const root = thread("root", { reportedBlocker: "Upload the signing key or skip signing?" });
     const actions = classifyProjectActions(observeProjectThread(root));
-    expect(actions).toMatchObject([{ threadId: "root", reason: "input" }]);
+    expect(actions).toMatchObject([{ threadId: "root", reason: "message" }]);
     expect(
       classifyProjectActions(observeProjectThread({ ...root, hasPendingUserInput: true })),
     ).toHaveLength(1);
@@ -53,7 +64,7 @@ describe("project conversation aggregation", () => {
     ).toMatchObject({ count: 1, working: 0, complete: true });
   });
   // October 27: "Review 0734 and 0850 closure", a delegate_task child that a
-  // worker started on October 21, still held its worker under Waiting on you.
+  // worker started on October 21, still held its worker under Needs you.
   it("leaves an app-launched child's report with the worker that started it", () => {
     const root = thread("root");
     const review = child("review", "root", {
@@ -83,7 +94,7 @@ describe("project conversation aggregation", () => {
       source: { creationSource: "mcp", pendingRuntimeRequest: null },
     } as unknown as Partial<EnvironmentThreadShell>);
     expect(classifyProjectActions(observeProjectThread(worker))).toMatchObject([
-      { threadId: "worker", reason: "input" },
+      { threadId: "worker", reason: "message" },
     ]);
     expect(
       aggregateProjectAttention({ members: [member], roots: [worker], threads: [worker] }),
@@ -142,7 +153,7 @@ describe("project conversation aggregation", () => {
   });
   // October 26: finished Claude Code subagents ("Close increment 1054", a
   // close review from October 25) ended their reports with Blockers and kept
-  // their parents under Waiting on you, even while the parent ran.
+  // their parents under Needs you, even while the parent ran.
   describe("a provider-native subagent's report", () => {
     const native = (id: string, props: Partial<EnvironmentThreadShell> = {}) =>
       child(id, "root", {
@@ -183,7 +194,7 @@ describe("project conversation aggregation", () => {
     it("leaves the parent's own report blocker waiting on the person", () => {
       const root = thread("root", { reportedBlocker: "Close 1054 now, or re-run verify?" });
       expect(aggregate(root, closer).roots[0]?.actions).toMatchObject([
-        { threadId: "root", reason: "input" },
+        { threadId: "root", reason: "message" },
       ]);
     });
   });
@@ -339,7 +350,7 @@ describe("project conversation aggregation", () => {
         complete: false,
         count: 0,
         staleCount: 1,
-        label: "Attention unavailable",
+        label: "Some machines are offline",
       });
       expect(
         aggregateProjectAttention({ members: [member], roots, threads: [thread("a")] }),
@@ -514,7 +525,7 @@ describe("remote follower aliases", () => {
         roots: [root],
         threads: [root],
       }),
-    ).toMatchObject({ count: 1, complete: false, label: "1 waiting on you · partial" });
+    ).toMatchObject({ count: 1, complete: false, label: "1 needs you · partial" });
   });
 });
 
@@ -587,6 +598,20 @@ describe("dependency waiting is not user attention", () => {
       source: { pendingRuntimeRequest: null },
     } as unknown as Partial<EnvironmentThreadShell>);
     expect(classifyProjectActions(observeProjectThread(root))).toEqual([]);
+  });
+  it("does not let a subagent's wait hide that its root's run failed", () => {
+    const root = thread("root", {
+      runtime: { status: "failed" } as EnvironmentThreadShell["runtime"],
+    });
+    const waiting = child("child", "root", {
+      runtime: { status: "waiting" } as EnvironmentThreadShell["runtime"],
+    });
+    const result = aggregateProjectAttention({
+      members: [member],
+      roots: [root],
+      threads: [root, waiting],
+    });
+    expect(result.roots[0]?.waits).toEqual([]);
   });
   it("does not carry a dependency through root settlement", () => {
     const root = thread("root", { settledOverride: "settled", settledAt: "2026-10-27T00:00:00Z" });

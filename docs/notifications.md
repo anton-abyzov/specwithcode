@@ -17,7 +17,7 @@ Each project's row menu in the sidebar has a Notifications item with four levels
 - All new messages: every thread's alerts, including the workers a coordinator delegated to.
 - Coordinator and requests (the default): the coordinator and any thread the person started or forked, plus any request from a worker. A request is an approval, a question, a plan to review, a sign-in or a held queue, the same things the row's waiting count counts. A worker finishing, failing or going quiet does not alert; the coordinator reports it.
 - Only requests: requests from any thread, nothing else.
-- Nothing: no alerts from the project, and its row hides the waiting count and shows a muted bell. Threads inside still read "Waiting on you".
+- Nothing: no alerts from the project, and its row hides the waiting count and shows a muted bell. Threads inside still read "Needs you".
 
 Phones receive only main threads (workers project no activity), so on the phone the first two levels are the same. The server marks a state its project's level keeps quiet, and the relay skips the alert while still updating Live Activities and widgets. A relay that predates the flag ignores it and alerts as before. A temporary agent token cannot change a project's level.
 

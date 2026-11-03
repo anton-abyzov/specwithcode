@@ -34,7 +34,7 @@ export const PROJECT_NOTIFICATION_LEVEL_COPY: Record<
   coordinator: {
     label: "Coordinator and requests",
     short: "Coordinator",
-    description: "The main chat and anything waiting on you",
+    description: "The main chat and anything that needs you",
   },
   requests: {
     label: "Only requests",

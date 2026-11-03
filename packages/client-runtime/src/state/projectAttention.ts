@@ -86,10 +86,19 @@ export function threadBackgroundWait(thread: BackgroundWaitInput): string | null
     : "Waiting for background work";
 }
 
-/** A dependency is separate from an actual pending request or held queue. */
+/** "1 needs you", "2 need you": the one way a count of attention is said. */
+export function needsYouLabel(count: number): string {
+  return `${count} ${count === 1 ? "needs" : "need"} you`;
+}
+
+/**
+ * A dependency is separate from an actual pending request or held queue. A failed
+ * run waits on nothing: whatever its last report said, the failure is its state.
+ */
 export function threadDependencyWait(thread: EnvironmentThreadShell): string | null {
   if (thread.archivedAt != null || thread.deletedAt != null || thread.settledOverride === "settled")
     return null;
+  if (thread.runtime?.status === "failed") return null;
   const background = threadBackgroundWait(thread);
   if (background) return background;
   if (
@@ -146,7 +155,7 @@ export function observeProjectThread(
     !person
   )
     requests.push({
-      reason: "input",
+      reason: "message",
       id: `blocker:${thread.reportedBlocker}`,
       createdAt: null,
     });
@@ -304,7 +313,11 @@ export function aggregateProjectAttention(input: {
     const actions = classifyProjectActions(observation);
     if (member.freshness === "live") {
       root.actions.push(...actions);
-      const wait = observation.settled ? null : threadDependencyWait(thread);
+      // A root whose own run failed reads as failed, even with a subagent still waiting.
+      const wait =
+        observation.settled || root.thread.runtime?.status === "failed"
+          ? null
+          : threadDependencyWait(thread);
       if (wait && !root.waits.includes(wait)) root.waits.push(wait);
       const executionActive =
         thread.lineage?.relationshipToParent !== "subagent" ||
@@ -343,11 +356,11 @@ export function aggregateProjectAttention(input: {
     working: result.filter((root) => !root.coordinator && root.working && root.actions.length === 0)
       .length,
     label: complete
-      ? `${count} waiting on you`
+      ? needsYouLabel(count)
       : count > 0
-        ? `${count} waiting on you · partial`
+        ? `${needsYouLabel(count)} · partial`
         : everyMemberLive && input.members.length > 0
           ? "Some threads could not be read"
-          : "Attention unavailable",
+          : "Some machines are offline",
   };
 }

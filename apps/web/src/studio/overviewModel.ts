@@ -18,6 +18,7 @@ import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 export type AttentionKind =
   | "approval"
   | "input"
+  | "message"
   | "signin"
   | "plan"
   | "held"
@@ -36,6 +37,7 @@ export type SessionView = {
 const ATTENTION_LABELS: Record<AttentionKind, string> = {
   approval: "Approval requested",
   input: "Answer needed",
+  message: "Reply needed",
   signin: "Sign-in needed",
   plan: "Plan ready to review",
   held: "Queued messages held",

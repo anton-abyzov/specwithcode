@@ -461,7 +461,7 @@ describe("native shells and explicit instance selection", () => {
     // Another thread's work is that thread's progress, not this one stalling.
     expect(byId("waits-on-worker")?.attention).toBeNull();
   });
-  it("lists a worker held for hours on a request as waiting on you, never as stalled", () => {
+  it("lists a worker held for hours on a request as needing you, never as stalled", () => {
     const now = Date.parse("2026-10-15T12:00:00.000Z");
     const running = { status: "running" } as EnvironmentThreadShell["runtime"];
     const asked = "2026-10-14T21:00:00.000Z";

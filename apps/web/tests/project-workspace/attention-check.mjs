@@ -14,7 +14,7 @@ export function checkAttention(expected) {
   // Each waiting thread is one row (a subagent's question marks its parent's row), and
   // the coordinator, which has no row, asks from the header.
   const actions =
-    document.querySelectorAll('[data-group="Waiting on you"] .sws-thread-row').length +
+    document.querySelectorAll('[data-group="Needs you"] .sws-thread-row').length +
     document.querySelectorAll("[data-coordinator-ask]").length;
   if (!summary.includes(expected.summary)) throw new Error(`Summary mismatch: ${summary}`);
   if (expected.badge === null ? badge !== "" : !badge.includes(expected.badge))

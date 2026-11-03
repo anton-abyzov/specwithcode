@@ -65,7 +65,7 @@ describe("Project thread lifecycle", () => {
   );
   it("waits on the user while a quiet thread holds queued messages", () => {
     const held = thread({ heldQueuedCount: 13, settledOverride: "settled" });
-    expect(projectThreadGroup(held)).toBe("Waiting on you");
+    expect(projectThreadGroup(held)).toBe("Needs you");
     expect(threadHeldQueue(held)).toBe("13 queued messages held");
     expect(threadAttentionNote(held)).toBe(
       "13 queued messages held. Open the thread to resume or discard them.",
@@ -84,8 +84,8 @@ describe("Project thread lifecycle", () => {
     expect(
       projectThreadGroup(thread({ settledOverride: "settled", hasPendingApprovals: true })),
     ).toBe("Resolved");
-    expect(projectThreadGroup(thread({ hasPendingUserInput: true }))).toBe("Waiting on you");
-    expect(projectThreadGroup(thread({ hasActionableProposedPlan: true }))).toBe("Waiting on you");
+    expect(projectThreadGroup(thread({ hasPendingUserInput: true }))).toBe("Needs you");
+    expect(projectThreadGroup(thread({ hasActionableProposedPlan: true }))).toBe("Needs you");
     expect(
       projectThreadGroup(
         thread({ runtime: { status: "running" } as EnvironmentThreadShell["runtime"] }),

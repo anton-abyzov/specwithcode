@@ -1,3 +1,4 @@
+import { needsYouLabel } from "@specweave-studio/client-runtime/state/projectAttention";
 import { useProjectReturnSearch } from "../../../studio/projectReturnNavigation";
 /**
  * The sidebar's Projects list: pinned projects, a divider, then the rest. A
@@ -720,20 +721,18 @@ export function ProjectRow(props: {
               {waiting > 0 ? (
                 <span
                   className="sws-count sws-count-waiting"
-                  title={props.attentionLabel ?? `${waiting} waiting on you`}
+                  title={props.attentionLabel ?? needsYouLabel(waiting)}
                 >
                   <span aria-hidden="true">{waiting}</span>
-                  <span className="sr-only">
-                    {props.attentionLabel ?? `${waiting} waiting on you`}
-                  </span>
+                  <span className="sr-only">{props.attentionLabel ?? needsYouLabel(waiting)}</span>
                 </span>
               ) : null}
               {!quiet && props.attentionComplete === false ? (
                 <span
                   className="sws-project-coverage"
                   role="img"
-                  aria-label={props.attentionLabel ?? "Attention unavailable"}
-                  title={props.attentionLabel ?? "Attention unavailable"}
+                  aria-label={props.attentionLabel ?? "Some machines are offline"}
+                  title={props.attentionLabel ?? "Some machines are offline"}
                 />
               ) : null}
             </span>

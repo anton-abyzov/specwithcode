@@ -29,7 +29,7 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
         return { tone: "unknown", label: `${worker.machineLabel} unreachable, retrying` };
       // Its run asked the person something on that machine; it is not working meanwhile.
       return worker.lastStatus === REMOTE_WORKER_WAITING_ON_YOU
-        ? { tone: "waiting", label: `Last observed: waiting on you on ${worker.machineLabel}` }
+        ? { tone: "waiting", label: `Last observed: needs you on ${worker.machineLabel}` }
         : { tone: "working", label: "Working" };
     case "wake_pending":
       return { ...(finished ?? { tone: "done", label: "Finished" }) };

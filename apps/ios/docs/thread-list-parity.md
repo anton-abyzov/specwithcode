@@ -2,7 +2,7 @@
 
 Recent chats use local calendar days: Today, Yesterday, Previous 7 days (2–7), Previous 30 days (8–30), Older. Future timestamps count as Today. Empty groups stay hidden. The drawer initially shows eight chats and offers Show all for the retained thirty-chat window.
 
-Project threads use Waiting on you, Working, Idle and Resolved. Pending input and proposed plans need attention; active work takes precedence over a resolved mark. A quiet held queue needs attention even if resolved. Quiet failures and unresolved blockers wait on the user. Unreachable threads appear in Idle with their last-known status explicitly marked Unknown on the row. Resolved history remains expandable.
+Project threads use Needs you, Working, Idle and Resolved. Pending input and proposed plans need attention; active work takes precedence over a resolved mark. A quiet held queue needs attention even if resolved. Quiet failures and unresolved blockers wait on the user. Unreachable threads appear in Idle with their last-known status explicitly marked Unknown on the row. Resolved history remains expandable.
 
 Date grouping and row ordering use creation, latest user message and latest run request, so streaming output does not repeatedly move a row. Pinning is retained within project state groups. The existing Threads control opens the project's grouped list; choosing a project still opens its coordinator.
 

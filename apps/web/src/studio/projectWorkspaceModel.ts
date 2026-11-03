@@ -20,10 +20,9 @@ import {
 } from "./studioThreadLinks";
 
 export const PROJECT_THREAD_GROUPS = [
-  "Waiting on you",
+  "Needs you",
   "Working",
-  "Waiting",
-  "Unavailable",
+  "Offline",
   "Idle",
   "Resolved",
 ] as const;
@@ -64,19 +63,21 @@ export function threadAttentionNote(thread: EnvironmentThreadShell): string | nu
 /**
  * A thread whose host cannot be reached keeps the state it had when the host
  * dropped, which is stale: it is neither waiting on the person (nothing can be
- * answered there) nor known to be working, so it is listed as unavailable.
+ * answered there) nor known to be working, so it is listed as offline. A thread
+ * waiting on subagents, CI or a merge is still moving and asks nothing of the
+ * reader: it is working, and its row names what it waits for.
  */
 export function projectThreadGroup(
   thread: EnvironmentThreadShell,
   hostOffline = false,
 ): ProjectThreadGroup {
   if (thread.archivedAt !== null) return "Resolved";
-  if (hostOffline) return thread.settledOverride === "settled" ? "Resolved" : "Unavailable";
-  if (classifyProjectActions(observeProjectThread(thread)).length > 0) return "Waiting on you";
+  if (hostOffline) return thread.settledOverride === "settled" ? "Resolved" : "Offline";
+  if (classifyProjectActions(observeProjectThread(thread)).length > 0) return "Needs you";
   // Undelivered messages outrank a resolved mark: nothing else will start them.
-  if (threadHeldQueue(thread) !== null) return "Waiting on you";
+  if (threadHeldQueue(thread) !== null) return "Needs you";
   if (thread.settledOverride === "settled") return "Resolved";
-  if (threadDependencyWait(thread)) return "Waiting";
+  if (threadDependencyWait(thread)) return "Working";
   if (threadRuntimeIsActive(thread.runtime)) return "Working";
   return "Idle";
 }

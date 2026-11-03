@@ -32,7 +32,7 @@ export const turnMessages = [
   {
     id: "t2",
     role: "assistant",
-    text: "The review asked for **three changes**: a shorter hero line, one primary button instead of two, and the pricing table moved above the FAQ.\n\n[Review the landing page](studio://thread/review) is waiting on your call about the hero line.",
+    text: "The review asked for **three changes**: a shorter hero line, one primary button instead of two, and the pricing table moved above the FAQ.\n\n[Review the landing page](studio://thread/review) needs your call about the hero line.",
     createdAt: minutesAgo(26 * 60, 9),
     updatedAt: minutesAgo(26 * 60, 41),
     attachments: [],

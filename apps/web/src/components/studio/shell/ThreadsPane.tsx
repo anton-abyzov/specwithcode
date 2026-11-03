@@ -7,6 +7,7 @@ import type { ProjectAttention } from "@specweave-studio/client-runtime/state/pr
  */
 import type { DesignSummary, EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import type { AttentionReason } from "@specweave-studio/shared/projectAttention";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
 import { useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
@@ -52,7 +53,6 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environ
 import {
   buildThreadPaneGroups,
   threadToneShowsDot,
-  emptyThreadGroupCopy,
   compactAge,
   modelLabel,
   nowFromMinute,
@@ -144,7 +144,7 @@ export function ThreadsPane({
   /** A check's project: its summary counts nothing as waiting on the person. */
   unattended?: boolean | undefined;
   /** Opens where an attention action is answered, such as the coordinator's own page. */
-  onOpenAction?: (id: ThreadId, environmentId: EnvironmentId) => void;
+  onOpenAction?: (id: ThreadId, environmentId: EnvironmentId, reason: AttentionReason) => void;
   canChange: boolean;
   findRef: RefObject<HTMLInputElement | null>;
   onOpen: (id: ThreadId, environmentId?: EnvironmentId) => void;
@@ -433,8 +433,7 @@ export function ThreadsPane({
       unreachable,
       props.attention,
     );
-    for (const thread of unsearched.find((entry) => entry.group === "Waiting on you")?.threads ??
-      []) {
+    for (const thread of unsearched.find((entry) => entry.group === "Needs you")?.threads ?? []) {
       const facts = threadFacts.get(`${thread.environmentId}:${thread.id}`);
       if (!facts || threadMatchesPaneFilters(facts, filters)) continue;
       waiting.set(facts.machine, (waiting.get(facts.machine) ?? 0) + 1);
@@ -463,8 +462,6 @@ export function ThreadsPane({
     : groups;
   const matches = shownGroups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
-  // Searching or filtering drops empty groups.
-  const narrowed = searching || showUnplannedOnly || anyFilter;
   // A filter is a lasting focus, so Resolved stays folded and paging stays on. A search or
   // the unplanned list looks inside everything, because a hidden match would read as none.
   const openEverything = searching || showUnplannedOnly;
@@ -631,6 +628,7 @@ export function ThreadsPane({
                 (props.onOpenAction ?? props.onOpen)(
                   coordinatorAsk.threadId as ThreadId,
                   coordinatorAsk.environmentId as EnvironmentId,
+                  coordinatorAsk.reason,
                 )
               }
             >
@@ -673,7 +671,7 @@ export function ThreadsPane({
                           type="button"
                           className="sws-filter-choice"
                           aria-pressed={machineFilter === choice.machineId}
-                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${choice.count === 1 ? "thread" : "threads"}${waiting > 0 ? `, ${waiting} waiting on you` : ""}`}
+                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${choice.count === 1 ? "thread" : "threads"}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
                           data-machine-choice={choice.machineId}
                           data-current={choice.current || undefined}
                           onClick={() =>
@@ -843,7 +841,8 @@ export function ThreadsPane({
         ) : null}
         {offerStarters ? props.starters : null}
         {(offerStarters ? [] : shownGroups).map(({ group, threads }) => {
-          if (narrowed && threads.length === 0) return null;
+          // A group with nothing in it takes no room; the summary line says what is quiet.
+          if (threads.length === 0) return null;
           const limit = openEverything ? threads.length : (limits[group] ?? THREAD_GROUP_PAGE);
           const rows = threads.slice(0, limit);
           const hidden = threads.length - rows.length;
@@ -879,11 +878,7 @@ export function ThreadsPane({
                   </span>
                 </button>
               </h3>
-              {isFolded ? null : rows.length === 0 ? (
-                <p className="sws-empty" id={listId}>
-                  {emptyThreadGroupCopy(group, props.attention)}
-                </p>
-              ) : (
+              {isFolded ? null : (
                 <div className="sws-thread-list" id={listId}>
                   {rows.map((thread) => {
                     const subagentsWorking =
@@ -893,7 +888,7 @@ export function ThreadsPane({
                     // A subagent's question puts its parent here; the row says which one.
                     const attentionWord = threadAttentionWord(thread, props.attention);
                     const tone = attentionWord
-                      ? group === "Waiting"
+                      ? group === "Working"
                         ? "background"
                         : "waiting"
                       : subagentsWorking > 0 && ownTone === "idle"
@@ -910,7 +905,7 @@ export function ThreadsPane({
                     const settled = thread.settledOverride === "settled";
                     const archived = thread.archivedAt !== null;
                     const action = archived || settled ? "Reopen" : "Resolve";
-                    // The group heading already says "Working" or "Waiting on you"; a row
+                    // The group heading already says "Working" or "Needs you"; a row
                     // names only a more specific state, such as "Answer needed".
                     const statusWord =
                       attentionWord ??
@@ -937,7 +932,7 @@ export function ThreadsPane({
                         <article
                           className="sws-thread-row project-thread-card"
                           data-tone={tone}
-                          data-attention={group === "Waiting on you" ? "" : undefined}
+                          data-attention={group === "Needs you" ? "" : undefined}
                           data-thread-id={thread.id}
                           data-thread-environment={thread.environmentId}
                         >
@@ -963,7 +958,7 @@ export function ThreadsPane({
                                             className="sws-thread-status"
                                             data-tone={tone}
                                             style={
-                                              group === "Waiting"
+                                              tone === "background"
                                                 ? { color: "var(--muted-foreground)" }
                                                 : undefined
                                             }
@@ -1053,11 +1048,7 @@ export function ThreadsPane({
                               </Tooltip>
                             ) : null}
                             <span className="sr-only">
-                              ,{" "}
-                              {group === "Waiting"
-                                ? "Waiting on dependencies"
-                                : THREAD_TONE_LABELS[tone]}
-                              , {label.full}, updated
+                              , {THREAD_TONE_LABELS[tone]}, {label.full}, updated
                             </span>
                             <time className="sws-thread-age" dateTime={sessionStateSince(thread)}>
                               {compactAge(sessionStateSince(thread), now)}
@@ -1151,11 +1142,13 @@ export function ThreadsPane({
                                         (props.onOpenAction ?? props.onOpen)(
                                           request.threadId as ThreadId,
                                           request.environmentId as EnvironmentId,
+                                          request.reason,
                                         )
                                       }
                                     >
                                       {attentionActionWord(request.reason)} ·{" "}
-                                      {request.title || "Subagent"}. Open request
+                                      {request.title || "Subagent"}. Open{" "}
+                                      {request.reason === "message" ? "message" : "request"}
                                     </button>
                                   </li>
                                 ))}

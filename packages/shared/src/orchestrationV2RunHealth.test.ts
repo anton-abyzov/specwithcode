@@ -103,7 +103,11 @@ describe("waits on other threads", () => {
       ],
       toMillis: (time: number) => time,
     });
-    expect(work).toEqual({ label: "another thread", startedAt: 900, waitThreadId: "release-worker" });
+    expect(work).toEqual({
+      label: "another thread",
+      startedAt: 900,
+      waitThreadId: "release-worker",
+    });
   });
 
   it("never calls a wait on another thread stalled", () => {
@@ -128,7 +132,7 @@ describe("waits on other threads", () => {
 describe("turns waiting on the person", () => {
   const hours = (count: number) => count * 60 * 60_000;
 
-  it("reads a turn blocked on an approval for 15 hours as waiting on you, not stalled", () => {
+  it("reads a turn blocked on an approval for 15 hours as needing you, not stalled", () => {
     const health = classifyRunHealth({
       running: true,
       lastActivityMs: 0,

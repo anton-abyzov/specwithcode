@@ -555,7 +555,12 @@ export function parseIncrementMetadata(text: string | null): Record<string, unkn
 export interface SpecweaveProject {
   readonly title: string;
   readonly workspaceRoot: string;
+  readonly workspaceSettings?: { readonly archived?: boolean | undefined } | null | undefined;
 }
+
+/** An archived project is done with: its open increments ask nothing of anyone. */
+const liveProjects = (projects: ReadonlyArray<SpecweaveProject>) =>
+  projects.filter((project) => project.workspaceSettings?.archived !== true);
 
 /** Reads the SpecWeave increments of the given projects. Never fails: unreadable parts are left out. */
 export const readSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>, at?: number) =>
@@ -592,7 +597,7 @@ export const readSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>,
     let truncated = false;
     const seenRoots = new Set<string>();
 
-    for (const project of projects.slice(0, MAX_PROJECTS)) {
+    for (const project of liveProjects(projects).slice(0, MAX_PROJECTS)) {
       if (increments.length >= MAX_INCREMENTS) {
         truncated = true;
         break;
@@ -739,6 +744,10 @@ const sharedProgress = makeSharedRead<ModSpecweaveResult, never>(SHARED_PROGRESS
 /** `readSpecweaveProgress` for the app's poll: shared by every caller of the same projects. */
 export const readSharedSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>) =>
   sharedProgress(
-    JSON.stringify(projects.slice(0, MAX_PROJECTS).map((p) => [p.title, p.workspaceRoot])),
+    JSON.stringify(
+      liveProjects(projects)
+        .slice(0, MAX_PROJECTS)
+        .map((p) => [p.title, p.workspaceRoot]),
+    ),
     readSpecweaveProgress(projects),
   );

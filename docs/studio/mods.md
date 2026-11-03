@@ -12,7 +12,7 @@ A mod belongs to a SpecWithCode host. Every client of that host (browser, deskto
 
 A mod runs only after you approve its exact contents. Editing `mod.json` or the module afterwards pauses the mod ("Changed, paused") until you approve again. **Turn off** stops a mod without deleting it. Approvals are stored in `<studio home>/userdata/mod-approvals.json`, outside the mods folder, so a mod cannot approve itself.
 
-Examples ship in [`examples/mods`](../../examples/mods): `review-queue` (sessions waiting on you), `focus-timer` (needs no permissions), and three that read SpecWeave progress: `ac-trace-lint`, `increment-standup` and `ready-to-close`.
+Examples ship in [`examples/mods`](../../examples/mods): `review-queue` (sessions that need you), `focus-timer` (needs no permissions), and three that read SpecWeave progress: `ac-trace-lint`, `increment-standup` and `ready-to-close`.
 
 ## Write a mod
 
@@ -85,7 +85,7 @@ Open panes redraw after every event and after a button press.
 | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `$.command.register({ name, description })`                      | Adds a palette entry (up to 16)                                          |
 | `$.ui.status(text)`                                              | Short sidebar status (40 characters); `undefined` clears it              |
-| `$.ui.status(stats)`                                             | Counts for the sidebar's attention chip; see Stats                       |
+| `$.ui.status(stats)`                                             | Counts as sidebar icons; see Stats                                       |
 | `$.ui.toast(text)`                                               | A toast; at most three per ten seconds                                   |
 | `$.ui.open({ id, title })`, `$.ui.close(id)`, `$.ui.redraw(id?)` | Panes (up to four per mod)                                               |
 | `$.threads.list()`                                               | Needs `threads:read`                                                     |
@@ -95,15 +95,15 @@ Open panes redraw after every event and after a button press.
 
 ### Stats
 
-Report counts as a list instead of text. Every mod's counts share one sidebar chip, which opens a popover with one row per stat. The chip exists only while a count is above zero.
+Report counts as a list instead of text. Each stat is a glyph and a count in the sidebar: its label and detail are the tooltip, and pressing it runs `onPress`. An icon exists only while its count is above zero. A count must open exactly what it counts and match something the user can see. The SpecWeave examples count ledger tasks and increments, which the sidebar never lists, so they open from the palette and report no count.
 
 ```js
 $.ui.status([
   {
-    glyph: "blocked", // blocked, stale, verify, gap, waiting or ready
+    glyph: "blocked", // blocked, verify, gap, waiting or ready
     count: 8,
     label: "Blocked", // 40 characters
-    detail: "Tasks in open increments marked blocked.", // the row's tooltip, 160 characters
+    detail: "Tasks in open increments marked blocked.", // part of the tooltip, 160 characters
     onPress: () => $.ui.open({ id: "blocked", title: "Blocked tasks" }), // optional
   },
 ]);
@@ -125,7 +125,7 @@ A mod names a glyph and never ships artwork; the host picks its color and order.
 
 ### SpecWeave progress
 
-With `specweave:read` a mod sees the increments under `<project>/.specweave/increments/` of every project on the host: open ones, plus those closed in the last seven days (up to 25 per project and 60 in all). The server reads `metadata.json`, `spec.md` (or an older increment's `tasks.md`), `ledger.jsonl` and `reports/verify.json`; it never runs the SpecWeave CLI and never writes. Task state follows the ledger's rules: a claim older than two hours is `stale`, and done or skipped is final. The summary is re-read every 30 seconds while such a mod runs.
+With `specweave:read` a mod sees the increments under `<project>/.specweave/increments/` of every project on the host that is not archived: open ones, plus those closed in the last seven days (up to 25 per project and 60 in all). The server reads `metadata.json`, `spec.md` (or an older increment's `tasks.md`), `ledger.jsonl` and `reports/verify.json`; it never runs the SpecWeave CLI and never writes. Task state follows the ledger's rules: a claim older than two hours is `stale`, and done or skipped is final. The summary is re-read every 30 seconds while such a mod runs.
 
 ```ts
 {

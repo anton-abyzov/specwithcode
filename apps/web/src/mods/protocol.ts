@@ -20,7 +20,7 @@ export const MOD_STAT_LABEL_LENGTH = 40;
 export const MOD_STAT_DETAIL_LENGTH = 160;
 
 /** The glyphs a stat can use, most urgent first. A mod names one; it never ships artwork. */
-export const MOD_STAT_GLYPHS = ["blocked", "stale", "verify", "gap", "waiting", "ready"] as const;
+export const MOD_STAT_GLYPHS = ["blocked", "verify", "gap", "waiting", "ready"] as const;
 export type ModStatGlyphName = (typeof MOD_STAT_GLYPHS)[number];
 
 /** One count a mod reports; zero never reaches the host's state. */

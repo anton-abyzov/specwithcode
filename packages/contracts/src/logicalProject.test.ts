@@ -150,6 +150,7 @@ describe("coordinator standby", () => {
     expect(projectCoordinatorIsFenced({ coordinatorBinding: binding })).toBe(false);
     expect(COORDINATOR_STANDBY_AFTER_MINUTES).toEqual([5, 15, 30, 60]);
     expect(COORDINATOR_STANDBY_AFTER_MINUTES).toContain(DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES);
+    expect(DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES).toBe(5);
   });
 
   it("rejects delays outside 5, 15, 30 or 60 minutes", () => {

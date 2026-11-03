@@ -708,7 +708,14 @@ export const useEnvironmentQuery = (q) => ({
   isPending: false,
 });
 window.__projectCalls = [];
-export const useAtomCommand = (command) => async (args) => {
+// One function per command, like the real hook's useCallback: an effect depending on it
+// would otherwise rerun on every render and spin the page.
+const atomCommands = new Map();
+export const useAtomCommand = (command) => {
+  if (!atomCommands.has(command)) atomCommands.set(command, runAtomCommand(command));
+  return atomCommands.get(command);
+};
+const runAtomCommand = (command) => async (args) => {
   window.__projectCalls.push({ command, args });
   if (command === "knowledgeSearch")
     return { _tag: "Success", value: knowledgeSearchResult(args.input.query) };
@@ -1456,6 +1463,9 @@ export function setAttentionScenario(scenario: string) {
     shells[1] = { ...shells[1], runtime: null, hasPendingUserInput: true };
   }
   if (scenario === "coordinator") shells[0] = { ...shells[0], hasPendingUserInput: true };
+  // A decision asked only in the coordinator's last message: no native request to open.
+  if (scenario === "coordinator-report")
+    shells[0] = { ...shells[0], reportedBlocker: "Pair Chrome, or skip the live check?" };
   if (scenario === "disk-answer")
     shells = [
       shell("coord", "Project coordinator"),
@@ -1494,7 +1504,7 @@ export function setAttentionScenario(scenario: string) {
     shells = shells.map((s) => ({
       ...s,
       runtime: { status: "failed", lastErrorClass: "usage_limit" },
-      reportedBlocker: "Waiting for CI",
+      reportedBlocker: "Ship now, or wait for the fix?",
     }));
   // November 2 screenshot: a delegated worker's turn ended with live background
   // commands, while a slow remote worker read leaves coverage incomplete.

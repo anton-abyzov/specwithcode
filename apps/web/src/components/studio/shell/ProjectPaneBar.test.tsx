@@ -14,7 +14,7 @@ const props = (overrides: Partial<ProjectPaneBarProps> = {}): ProjectPaneBarProp
   tab: "threads",
   onTabChange: vi.fn(),
   counts: {
-    threads: { value: 2, label: "waiting on you", tone: "waiting" },
+    threads: { value: 2, label: "need you", tone: "waiting" },
     designs: { value: 1, label: "designs" },
   },
   onNewThread: vi.fn(),
@@ -44,9 +44,14 @@ describe("the project panel's header row", () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect([...row.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent?.trim())).toEqual(
-      ["Threads2 waiting on you", "Designs1 designs", "Library", "PRs", "Routines"],
+      ["Threads2 need you", "Designs1 designs", "Library", "PRs", "Routines"],
     );
-    for (const label of ["Ask the coordinator for a thread", "Find a thread", "Expand panel", "Hide overview"])
+    for (const label of [
+      "Ask the coordinator for a thread",
+      "Find a thread",
+      "Expand panel",
+      "Hide overview",
+    ])
       expect(row.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
     expect(row.classList.contains("drag-region")).toBe(false);
   });

@@ -1,3 +1,4 @@
+import { needsYouLabel } from "@specweave-studio/client-runtime/state/projectAttention";
 import { answeredRuntimeRequestCopy } from "@specweave-studio/shared/projectAttention";
 import * as DateTime from "effect/DateTime";
 import { environmentShell } from "../../state/shell";
@@ -14,6 +15,7 @@ import { createCoordinatorSelectionTracker } from "../../studio/coordinatorConti
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
 import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
+import { noteReaderScrollAround } from "../../lib/readerScroll";
 import { settleAfter, settleCaught } from "../../lib/settle";
 import { CoordinatorComposer } from "./CoordinatorComposer";
 import { CoordinatorQuestionCard, focusCoordinatorPrompt } from "./CoordinatorQuestionCard";
@@ -199,6 +201,28 @@ const SEND_NOTICES: ReadonlySet<string> = new Set([QUEUED_NOTICE, SENT_WITH_CONT
  * group is keyed by machine and path, and the key moves to the repository once
  * git answers; a link opened early still names the old key.
  */
+/**
+ * Brings the coordinator's latest message into view on the page being shown (pages
+ * left for another project stay mounted, hidden) and marks it, since the reader may
+ * already be there. Its end is where a report's question sits.
+ */
+function revealLatestCoordinatorMessage(): void {
+  const message = [...document.querySelectorAll<HTMLElement>("article.project-message-assistant")]
+    .filter((row) => row.getClientRects().length > 0)
+    .at(-1);
+  if (!message) return;
+  noteReaderScrollAround(message);
+  message.scrollIntoView({ block: "end" });
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  message.animate?.(
+    [
+      { backgroundColor: "color-mix(in srgb, currentColor 12%, transparent)" },
+      { backgroundColor: "transparent" },
+    ],
+    { duration: 1200, easing: "ease-out" },
+  );
+}
+
 function missingModelMessage(modelsLoading: boolean): string {
   return modelsLoading
     ? "Models are still loading from this host. Try again in a moment."
@@ -381,9 +405,7 @@ export function ProjectWorkspaceSurface({
   const showCoordinator = useCallback(() => {
     if (phone) setOverviewOpen(false);
     requestAnimationFrame(() => {
-      document
-        .querySelector<HTMLElement>("[data-coordinator-end]")
-        ?.scrollIntoView({ block: "end" });
+      revealLatestCoordinatorMessage();
       if (!phone)
         document
           .querySelector<HTMLTextAreaElement>("#project-prompt")
@@ -1374,8 +1396,8 @@ export function ProjectWorkspaceSurface({
       threads: {
         value: waiting,
         label: projectAttention.complete
-          ? "waiting on you"
-          : "waiting on you · partial / unavailable",
+          ? needsYouLabel(waiting).replace(/^\d+ /, "")
+          : `${needsYouLabel(waiting).replace(/^\d+ /, "")} · partial`,
         tone: "waiting",
       },
       designs: { value: designs.count, label: designs.count === 1 ? "design" : "designs" },
@@ -1503,7 +1525,7 @@ export function ProjectWorkspaceSurface({
                   <button
                     type="button"
                     className="project-control sws-top-button sws-overview-toggle"
-                    aria-label={`Overview${!paneOpen && waiting > 0 ? `, ${waiting} waiting on you` : ""}`}
+                    aria-label={`Overview${!paneOpen && waiting > 0 ? `, ${needsYouLabel(waiting)}` : ""}`}
                     aria-pressed={paneOpen}
                     aria-controls={paneOpen ? "project-threads-pane" : undefined}
                     onClick={toggleOverview}
@@ -1924,10 +1946,12 @@ export function ProjectWorkspaceSurface({
                   threads={workers}
                   attention={projectAttention}
                   unattended={unattended}
-                  onOpenAction={(threadId, environmentId) => {
-                    if (threadId === mainCoordinatorId && environmentId === project.environmentId)
-                      openCoordinatorPage();
-                    else
+                  onOpenAction={(threadId, environmentId, reason) => {
+                    if (threadId === mainCoordinatorId && environmentId === project.environmentId) {
+                      // Asked only in its message: there is no request to open.
+                      if (reason === "message") openCoordinator();
+                      else openCoordinatorPage();
+                    } else
                       void navigate({
                         to: "/$environmentId/$threadId",
                         params: { environmentId, threadId },

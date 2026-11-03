@@ -25,7 +25,7 @@ final class ThreadListParityUITests: SWCUITestCase {
 
   private func verifyProject(appearance: String) throws {
     launch(fixture: "thread-lists", route: "overview", appearance: appearance)
-    waitFor(text(startingWith: "Waiting on you"))
+    waitFor(text(startingWith: "Needs you"))
     waitFor(text(startingWith: "Working"))
     XCTAssertTrue(button(startingWith: "Release 3.1 checklist").label.contains("Claude Code · Opus 5.5"))
     XCTAssertTrue(button(startingWith: "Write handoff docs").label.contains("Codex · GPT-6.1 Sol"))

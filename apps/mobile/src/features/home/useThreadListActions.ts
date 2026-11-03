@@ -309,7 +309,7 @@ export function useThreadListActions(): {
           Alert.alert(
             "Could not snooze thread",
             thread.hasPendingApprovals || thread.hasPendingUserInput
-              ? "This thread is waiting on you. Respond to the pending request before snoozing it."
+              ? "This thread needs you. Respond to the pending request before snoozing it."
               : "This thread is still starting a turn. Try again once it's running.",
           );
           return false;

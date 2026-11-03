@@ -44,6 +44,7 @@ import {
   EMPTY_THREAD_HISTORY_META,
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
+  mergeOlderMessagesIntoProjection,
   withWindowTurnStart,
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
@@ -810,10 +811,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               ];
             }
 
-            const merged = mergeOlderHistoryIntoProjection(
-              latest.data.value,
-              page.items,
-              latest.history.windowTurnStartKey,
+            const merged = mergeOlderMessagesIntoProjection(
+              mergeOlderHistoryIntoProjection(
+                latest.data.value,
+                page.items,
+                latest.history.windowTurnStartKey,
+              ),
+              page.messages,
             );
             const history = applyHistoryPageMeta(latest.history, page);
             return [

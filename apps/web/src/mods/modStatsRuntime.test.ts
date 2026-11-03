@@ -1,6 +1,7 @@
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "vite-plus/test";
 
+import acTraceLint from "../../../../examples/mods/ac-trace-lint/register.js?raw";
 import incrementStandup from "../../../../examples/mods/increment-standup/register.js?raw";
 import readyToClose from "../../../../examples/mods/ready-to-close/register.js?raw";
 import reviewQueue from "../../../../examples/mods/review-queue/register.js?raw";
@@ -34,7 +35,7 @@ export function register(on) {
   const publish = ($, first, second) =>
     $.ui.status([
       { glyph: "blocked", count: 2, label: "Blocked", onPress: () => $.ui.open({ id: first, title: first }) },
-      { glyph: "stale", count: 1, label: "Stale", onPress: () => $.ui.open({ id: second, title: second }) },
+      { glyph: "gap", count: 1, label: "Gap", onPress: () => $.ui.open({ id: second, title: second }) },
     ]);
   on("app.start", ($, e, next) => { publish($, "one", "two"); return next(e); });
   on("command.run", { name: "swap" }, ($) => publish($, "three", "four"));
@@ -68,7 +69,7 @@ describe("stats in the mod runtime", () => {
       statuses(sent)
         .at(-1)
         ?.stats?.map((stat) => stat.label),
-      ["Blocked", "Stale"],
+      ["Blocked", "Gap"],
     );
     await deliver({ type: "press", id: "$status", handler: handlerOf(sent, 1) });
     assert.deepEqual(opened(sent), ["two"]);
@@ -153,27 +154,57 @@ describe("example mods draw every stat's list", () => {
     return JSON.stringify(tree);
   };
 
+  const openFromPalette = async (source: string, e: unknown, name: string) => {
+    const { sent, deliver } = startMod(source);
+    await deliver({ type: "init", name: "example", surface: "web", permissions: [] });
+    await deliver({ type: "event", event: "specweave.changed", e });
+    await deliver({ type: "event", event: "command.run", e: { name } });
+    const tree = sent.findLast((message) => message.type === "ui.tree")?.tree;
+    assert.isNotNull(parseModTree(tree), `${name} is over a tree limit`);
+    return { tree: JSON.stringify(tree), sent };
+  };
+
+  // A sidebar count must open exactly what it counts; ledger tasks and increments
+  // are not threads, so the number could never match anything the sidebar lists.
+  it.each([
+    ["increment-standup", incrementStandup, "standup"],
+    ["ready-to-close", readyToClose, "close-queue"],
+    ["ac-trace-lint", acTraceLint, "trace-gaps"],
+  ])("%s reports no sidebar count", async (_name, source, command) => {
+    for (const status of ["blocked", "stale", "done"] as const) {
+      const { sent } = await openFromPalette(
+        source,
+        { increments: increments(status, 2), truncated: false },
+        command,
+      );
+      assert.deepEqual(statuses(sent).at(-1)?.stats ?? [], []);
+      assert.isNotOk(statuses(sent).at(-1)?.text);
+    }
+  });
+
   it.each([1, 2, 3, 40])("increment-standup with %i tasks per increment", async (tasksEach) => {
-    await openStat(
+    const { tree } = await openFromPalette(
       incrementStandup,
-      "specweave.changed",
       { increments: increments("blocked", tasksEach), truncated: false },
-      "Blocked",
+      "standup",
     );
-    await openStat(
+    assert.include(tree, "blocked");
+  });
+
+  it("increment-standup never lists a stale claim", async () => {
+    const { tree } = await openFromPalette(
       incrementStandup,
-      "specweave.changed",
-      { increments: increments("stale", tasksEach), truncated: false },
-      "Stale claims",
+      { increments: increments("stale", 2), truncated: false },
+      "standup",
     );
+    assert.notInclude(tree.toLowerCase(), "stale");
   });
 
   it("ready-to-close says how many it left out", async () => {
-    const tree = await openStat(
+    const { tree } = await openFromPalette(
       readyToClose,
-      "specweave.changed",
       { increments: increments("done", 2), truncated: false },
-      "Need verify",
+      "close-queue",
     );
     assert.include(tree, "40 more not shown.");
   });
@@ -188,7 +219,7 @@ describe("example mods draw every stat's list", () => {
       working: false,
       updatedAt: null,
     }));
-    const tree = await openStat(reviewQueue, "threads.changed", { threads }, "Waiting on you");
+    const tree = await openStat(reviewQueue, "threads.changed", { threads }, "Needs you");
     assert.include(tree, "960 more waiting.");
   });
 });

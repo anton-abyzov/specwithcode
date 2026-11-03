@@ -376,7 +376,7 @@ describe("a remote worker waiting on the person", () => {
     },
   });
 
-  it.live("shows it as waiting on you, tells the caller once, and goes back to working", () => {
+  it.live("shows it as needing you, tells the caller once, and goes back to working", () => {
     let pending = 1;
     let release = false;
     const { world, layer } = setup({
@@ -392,7 +392,7 @@ describe("a remote worker waiting on the person", () => {
         (current) => current[0]?.lastStatus === RemoteWorkerFollower.REMOTE_WORKER_WAITING_ON_YOU,
       );
       expect(held?.state).toBe("following");
-      // The page lists it as waiting on you, not as a run that is still working.
+      // The page lists it as needing you, not as a run that is still working.
       const listed = yield* workers.workersForProject(launchInput().localProject.id);
       expect(listed[0]).toMatchObject({ state: "following", lastStatus: "waiting_on_you" });
       // Several passes while it stays held: the caller hears about it once.
@@ -403,8 +403,7 @@ describe("a remote worker waiting on the person", () => {
       expect(world.notices).toEqual([
         {
           createdBy: "agent",
-          summary:
-            "[Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 is waiting on you.",
+          summary: "[Fix the flaky test](studio://thread/env-m1/b-thread-1) on M1 needs you.",
         },
       ]);
       // Answered over there: it reads as running again, then reports back as usual.

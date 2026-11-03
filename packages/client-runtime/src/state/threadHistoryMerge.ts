@@ -200,6 +200,31 @@ export function mergeOlderHistoryIntoProjection(
   };
 }
 
+/**
+ * Put an older page's messages ahead of the ones already held. A bounded
+ * snapshot only carries its window's messages, so a view built from messages
+ * (the project coordinator) shows nothing older until these arrive.
+ */
+export function mergeOlderMessagesIntoProjection(
+  projection: OrchestrationV2ThreadProjection,
+  olderMessages: ReadonlyArray<OrchestrationV2ThreadProjection["messages"][number]> | undefined,
+): OrchestrationV2ThreadProjection {
+  if (olderMessages === undefined || olderMessages.length === 0) return projection;
+  const held = new Map(projection.messages.map((message) => [String(message.id), message]));
+  if (olderMessages.every((message, index) => projection.messages[index]?.id === message.id))
+    return projection;
+  // A held copy keeps its newer content but moves to the page's place: a live
+  // update to a message outside the window appended it at the end.
+  const moved = new Set(olderMessages.map((message) => String(message.id)));
+  return {
+    ...projection,
+    messages: [
+      ...olderMessages.map((message) => held.get(String(message.id)) ?? message),
+      ...projection.messages.filter((message) => !moved.has(String(message.id))),
+    ],
+  };
+}
+
 export function applyHistoryPageMeta(
   current: ThreadHistoryMeta,
   page: {

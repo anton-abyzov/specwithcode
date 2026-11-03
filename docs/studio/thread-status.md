@@ -1,13 +1,13 @@
 # Thread status in SpecWithCode
 
-| Group          | Meaning                                                                                                                                  |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Waiting on you | A current approval, unanswered question, sign-in, proposed plan, held queue, or explicit decision in the latest report needs the person. |
-| Working        | A turn or a child has current execution evidence.                                                                                        |
-| Waiting        | Work depends on CI, a review, a PR merge, subagents, or background work. The row names the dependency.                                   |
-| Unavailable    | The host cannot provide current state.                                                                                                   |
-| Idle           | No current execution, dependency wait, or user request is known. A failed run keeps its failure label.                                   |
-| Resolved       | The conversation is settled.                                                                                                             |
+| Group       | Meaning                                                                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Needs you   | A current approval, unanswered question, sign-in, proposed plan, held queue, or explicit decision in the latest report needs the person. |
+| Working     | A turn or a child has current execution evidence.                                                                                        |
+| Waiting     | Work depends on CI, a review, a PR merge, subagents, or background work. The row names the dependency.                                   |
+| Unavailable | The host cannot provide current state.                                                                                                   |
+| Idle        | No current execution, dependency wait, or user request is known. A failed run keeps its failure label.                                   |
+| Resolved    | The conversation is settled.                                                                                                             |
 
 A dependency never adds to the user-attention count or creates an input notification. A genuine unanswered child request still does. Expand a row's requests to open the child that owns the current card.
 

@@ -41,7 +41,7 @@ const browser = await chromium.launch({
 const receipt = { headless: true, checks: [], screenshots: [] };
 const expected = {
   waiting: "Operational wait",
-  user: "Waiting on you",
+  user: "Needs you",
   pending: "Delivery not verified",
   expired: "Delivery evidence expired",
   verified: "Delivery verified",

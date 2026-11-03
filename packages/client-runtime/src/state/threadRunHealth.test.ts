@@ -37,7 +37,7 @@ const request = (
 });
 
 describe("threadRunHealth", () => {
-  it("reads a worker held 15 hours on a command approval as waiting on you, never stalled", () => {
+  it("reads a worker held 15 hours on a command approval as needing you, never stalled", () => {
     expect(threadRunHealth(quietRunningThread(request("command")), nowMs)).toEqual({
       state: "waiting",
       idleMs: hours(15),
@@ -47,7 +47,7 @@ describe("threadRunHealth", () => {
     });
   });
 
-  it("reads an open question and a sign-in as waiting on you too", () => {
+  it("reads an open question and a sign-in as needing you too", () => {
     expect(threadRunHealth(quietRunningThread(request("user_input")), nowMs)).toMatchObject({
       state: "waiting",
       label: "your answer",
@@ -90,7 +90,7 @@ describe("threadRunHealth", () => {
     }
   });
 
-  it("does not read a dynamic tool call the app answers as waiting on you", () => {
+  it("does not read a dynamic tool call the app answers as needing you", () => {
     const thread = quietRunningThread(request("dynamic_tool_call"));
     // Nothing for the person to answer, so Needs you shows no approval either.
     expect(thread.hasPendingApprovals).toBe(false);

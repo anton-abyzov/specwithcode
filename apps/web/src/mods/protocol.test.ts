@@ -57,15 +57,19 @@ describe("parseModStats", () => {
       parseModStats([
         null,
         { glyph: "<svg>", count: 1, label: "Art" },
-        { glyph: "stale", count: 0, label: "Zero" },
-        { glyph: "stale", count: -1, label: "Negative" },
-        { glyph: "stale", count: 1.5, label: "Fraction" },
-        { glyph: "stale", count: "3", label: "Text" },
-        { glyph: "stale", count: 3 },
-        { glyph: "stale", count: 3, label: "Kept", onPress: "x", style: "position:fixed" },
+        { glyph: "gap", count: 0, label: "Zero" },
+        { glyph: "gap", count: -1, label: "Negative" },
+        { glyph: "gap", count: 1.5, label: "Fraction" },
+        { glyph: "gap", count: "3", label: "Text" },
+        { glyph: "gap", count: 3 },
+        { glyph: "gap", count: 3, label: "Kept", onPress: "x", style: "position:fixed" },
       ]),
-      [{ glyph: "stale", count: 3, label: "Kept", detail: null, handler: null }],
+      [{ glyph: "gap", count: 3, label: "Kept", detail: null, handler: null }],
     );
+  });
+
+  it("drops the retired stale claims glyph an older mod copy still sends", () => {
+    assert.isNull(parseModStats([{ glyph: "stale", count: 17, label: "Stale claims" }]));
   });
 
   it("clears the status when every count is zero", () => {

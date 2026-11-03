@@ -30,7 +30,7 @@ run on Full access too, even when the project default is lower. A coordinator ne
 more access than it has, and a machine's access setting still caps workers there. A machine
 handoff carries the coordinator's mode to the project it moves to.
 
-A thread that waits on you shows **Waiting on you** and is listed in **Needs you**. A thread with
+A thread that waits on you shows **Needs you** and is listed in **Needs you**. A thread with
 nothing in progress that stays quiet for 30 minutes is listed as stalled. An approval or a
 question left for 30 minutes without activity no longer holds back an automatic update: the update
 stops that turn so it can continue later, and asks the question or approval again after the

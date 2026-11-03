@@ -34,7 +34,7 @@ try {
   await page.locator('[data-group="Idle"] .sws-thread-row').first().waitFor();
   const receipt = {
     summary: (await page.locator(".sws-threads-head [role=status]").textContent()) ?? "",
-    waiting: await rowsIn(page, "Waiting"),
+    waiting: await rowsIn(page, "Working"),
     idle: await rowsIn(page, "Idle"),
     tone: await page
       .locator('.sws-thread-row:has-text("Tournament chat video") .sws-dot')

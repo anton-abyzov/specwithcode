@@ -1,6 +1,9 @@
 // A standup written from the SpecWeave ledger instead of chat history: per
-// increment, what got done in the window you pick, what is claimed, what is
-// blocked (with the reason) and which claims went stale.
+// increment, what got done in the window you pick, what is claimed and what is
+// blocked (with the reason). An expired claim is not listed: nobody is working
+// that task and the next agent can take it, so there is nothing to act on.
+// It reports no sidebar count: a count of ledger tasks matches nothing the
+// sidebar lists, so the standup opens from the palette.
 export function register(on) {
   const CLOSED = new Set(["completed", "abandoned", "archived", "cancelled", "closed"]);
   const FINISHED = new Set(["done", "skipped"]);
@@ -36,51 +39,9 @@ export function register(on) {
           ),
           doing: live("claimed"),
           blocked: live("blocked"),
-          stale: live("stale"),
         };
       })
-      .filter(
-        (row) =>
-          row.closed ||
-          row.done.length + row.doing.length + row.blocked.length + row.stale.length > 0,
-      );
-  };
-
-  // One pane per stat: the same open tasks, without the rest of the standup.
-  const LISTS = {
-    "standup-blocked": {
-      key: "blocked",
-      title: "Blocked tasks",
-      tone: "danger",
-      empty: "Nothing is blocked.",
-    },
-    "standup-stale": {
-      key: "stale",
-      title: "Stale claims",
-      tone: "warning",
-      empty: "No claim went stale.",
-    },
-  };
-
-  const status = ($) => {
-    const rows = report();
-    const count = (key) => rows.reduce((sum, row) => sum + row[key].length, 0);
-    $.ui.status([
-      {
-        glyph: "blocked",
-        count: count("blocked"),
-        label: "Blocked",
-        detail: "Tasks in open increments marked blocked. Press to see each one and why.",
-        onPress: () => $.ui.open({ id: "standup-blocked", title: LISTS["standup-blocked"].title }),
-      },
-      {
-        glyph: "stale",
-        count: count("stale"),
-        label: "Stale claims",
-        detail: "Tasks claimed over two hours ago with no update since. Press to see them.",
-        onPress: () => $.ui.open({ id: "standup-stale", title: LISTS["standup-stale"].title }),
-      },
-    ]);
+      .filter((row) => row.closed || row.done.length + row.doing.length + row.blocked.length > 0);
   };
 
   on("app.start", ($, e, next) => {
@@ -95,48 +56,10 @@ export function register(on) {
 
   on("specweave.changed", ($, e, next) => {
     increments = e.increments;
-    status($);
     return next(e);
   });
 
   on("command.run", { name: "standup" }, ($) => $.ui.open({ id: "standup", title: "Standup" }));
-
-  for (const [id, list] of Object.entries(LISTS)) {
-    on("ui.render", { component: "Pane", requestId: id }, () => {
-      const rows = report().filter((row) => row[list.key].length > 0);
-      if (rows.length === 0) return h("Text", { tone: "muted" }, list.empty);
-      // The host draws at most 8000 characters of text and 400 nodes per pane.
-      let budget = 6000;
-      let nodes = 390;
-      let hidden = 0;
-      const blocks = [];
-      for (const row of rows) {
-        const lines = [];
-        for (const task of row[list.key]) {
-          const text = `${task.id} ${task.title.slice(0, 80)}${task.note ? ` (${task.note.slice(0, 120)})` : ""}`;
-          // A line is two nodes; the first in an increment also needs its heading's three.
-          const cost = lines.length === 0 ? 5 : 2;
-          if (budget < text.length + 100 || nodes < cost) {
-            hidden += 1;
-            continue;
-          }
-          budget -= text.length;
-          nodes -= cost;
-          lines.push(h("Text", { tone: list.tone }, text));
-        }
-        if (lines.length === 0) continue;
-        const heading = `${row.increment.id} · ${row.increment.project}`;
-        budget -= heading.length;
-        blocks.push(h("Box", { gap: 1 }, h("Text", { tone: "strong" }, heading), lines));
-      }
-      return h(
-        "Box",
-        { gap: 3 },
-        blocks,
-        hidden > 0 ? h("Text", { tone: "muted" }, `${hidden} more not shown.`) : null,
-      );
-    });
-  }
 
   on("ui.render", { component: "Pane", requestId: "standup" }, () => {
     const rows = report();
@@ -177,7 +100,7 @@ export function register(on) {
       h(
         "Text",
         { tone: "strong" },
-        `${doneCount} ${doneCount === 1 ? "task" : "tasks"} done · ${total("doing")} in progress · ${total("blocked")} blocked · ${total("stale")} stale`,
+        `${doneCount} ${doneCount === 1 ? "task" : "tasks"} done · ${total("doing")} in progress · ${total("blocked")} blocked`,
       ),
       rows.length === 0
         ? h("Text", { tone: "muted" }, "Nothing moved in the ledger in this window.")
@@ -206,7 +129,6 @@ export function register(on) {
                     `${task.id} ${task.title.slice(0, 80)}${task.note ? ` (${task.note.slice(0, 120)})` : ""}`,
                   ),
                 ),
-              row.stale.length > 0 ? line("warning", "Stale claim", titles(row.stale)) : null,
             ),
           ),
       rows.length > 8

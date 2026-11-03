@@ -4,26 +4,34 @@ import { pathToFileURL } from "node:url";
 const { chromium } = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href);
 const output = process.env.PROJECT_UI_OUTPUT ?? "/tmp/studio-resolution-resize";
 await fs.mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH });
+const browser = await chromium.launch({
+  headless: true,
+  executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+});
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
-  page.on("pageerror", e => errors.push(e.message));
+  page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(`http://127.0.0.1:${process.env.PROJECT_UI_PORT ?? 5799}/?resolution&routed`);
-  const group = name => page.locator(`.sws-thread-group[data-group="${name}"]`);
-  const row = id => page.locator(`.sws-thread-row[data-thread-id="${id}"]`);
+  const group = (name) => page.locator(`.sws-thread-group[data-group="${name}"]`);
+  const row = (id) => page.locator(`.sws-thread-row[data-thread-id="${id}"]`);
   await row("failed-worker").waitFor();
-  assert.deepEqual(await page.locator(".sws-thread-group").evaluateAll(nodes => nodes.map(n => n.dataset.group)), ["Waiting on you", "Working", "Idle", "Resolved"]);
+  assert.deepEqual(
+    await page
+      .locator(".sws-thread-group")
+      .evaluateAll((nodes) => nodes.map((n) => n.dataset.group)),
+    ["Needs you", "Working", "Idle", "Resolved"],
+  );
   for (const id of ["failed-worker", "limited-worker"]) {
     await row(id).getByRole("button", { name: "Resolve", exact: true }).click();
     await group("Resolved").locator(`[data-thread-id="${id}"]`).waitFor();
-    assert.equal(await group("Waiting on you").locator(`[data-thread-id="${id}"]`).count(), 0);
+    assert.equal(await group("Needs you").locator(`[data-thread-id="${id}"]`).count(), 0);
     assert.equal(await row(id).locator(".sws-thread-status").count(), 0);
   }
-  assert.match(await page.locator(".sws-threads-head").innerText(), /Nothing is waiting on you/);
+  assert.match(await page.locator(".sws-threads-head").innerText(), /Nothing needs you/);
   await page.screenshot({ path: `${output}/resolved.png` });
   await row("failed-worker").getByRole("button", { name: "Reopen", exact: true }).click();
-  await group("Waiting on you").locator('[data-thread-id="failed-worker"]').waitFor();
+  await group("Needs you").locator('[data-thread-id="failed-worker"]').waitFor();
   const panel = page.locator("#project-threads-pane");
   const divider = page.getByRole("separator", { name: "Resize project panel" });
   const width = async () => (await panel.boundingBox()).width;
@@ -46,11 +54,41 @@ try {
   await page.getByRole("button", { name: "Restore panel", exact: true }).click();
   assert.equal(await width(), after);
   await page.setViewportSize({ width: 900, height: 900 });
-  await page.waitForFunction(() => document.querySelector('#project-threads-pane').getBoundingClientRect().width <= document.querySelector('.sws-columns').clientWidth - 359);
+  await page.waitForFunction(
+    () =>
+      document.querySelector("#project-threads-pane").getBoundingClientRect().width <=
+      document.querySelector(".sws-columns").clientWidth - 359,
+  );
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForFunction(() => !document.querySelector('.sws-project-divider'));
+  await page.waitForFunction(() => !document.querySelector(".sws-project-divider"));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.screenshot({ path: `${output}/mobile.png` });
   assert.deepEqual(errors, []);
-  await fs.writeFile(`${output}/receipt.json`, JSON.stringify({ headless: true, before, after, checks: ["all groups", "resolve failures and limits", "reopen", "waiting badge", "drag", "reload", "worker", "expand", "clamp", "mobile"], errors }, null, 2));
-} finally { await browser.close(); }
+  await fs.writeFile(
+    `${output}/receipt.json`,
+    JSON.stringify(
+      {
+        headless: true,
+        before,
+        after,
+        checks: [
+          "all groups",
+          "resolve failures and limits",
+          "reopen",
+          "waiting badge",
+          "drag",
+          "reload",
+          "worker",
+          "expand",
+          "clamp",
+          "mobile",
+        ],
+        errors,
+      },
+      null,
+      2,
+    ),
+  );
+} finally {
+  await browser.close();
+}

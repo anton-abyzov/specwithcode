@@ -85,7 +85,7 @@ try {
       .locator('[role="menuitemradio"][aria-checked="true"]')
       .allTextContents();
     assert.deepEqual(checked, [
-      "Coordinator and requestsThe main chat and anything waiting on you",
+      "Coordinator and requestsThe main chat and anything that needs you",
     ]);
     await shot("submenu");
     await nothing.click();

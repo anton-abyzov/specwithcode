@@ -17,6 +17,7 @@ import {
   decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
+  messagesForHistoryPage,
   projectedRowBoundedSnapshotEncodedBytes,
   projectedRowEncodedBytes,
   selectHistoryPageFromCursor,
@@ -769,6 +770,51 @@ describe("threadHistoryPaging", () => {
     expect(Buffer.byteLength(JSON.stringify(bounded.projection), "utf8")).toBeLessThan(
       THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes + 100_000,
     );
+  });
+
+  it("sends an older page's own messages beside its rows", () => {
+    const items = [...humanTurn(2), ...humanTurn(2).map((row) => makeRow(row.position + 3))];
+    items[3] = humanTurnStart(items[3]!);
+    const projection = makeProjection(items);
+    const message = (id: string) => ({
+      id: MessageId.make(id),
+      threadId: THREAD,
+      runId: null,
+      nodeId: null,
+      role: "user" as const,
+      text: id,
+      attachments: [],
+      streaming: false,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+    const full = {
+      ...projection,
+      messages: [message("prompt-item-0"), message("prompt-item-3"), message("unrelated")],
+    } as typeof projection;
+    const bounded = buildBoundedThreadProjection({
+      projection: full,
+      snapshotSequence: 1,
+      policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: 1 },
+    });
+    expect(bounded.projection.messages.map((entry) => entry.id)).toEqual(["prompt-item-3"]);
+    const page = selectHistoryPageFromCursor({
+      items,
+      cursor: bounded.historyCursor!,
+      snapshotSequence: 1,
+    });
+
+    expect(messagesForHistoryPage(full, page.items).map((entry) => entry.id)).toEqual([
+      "prompt-item-0",
+    ]);
+    const inherited = page.items.map((row) => ({
+      ...row,
+      visibility: "inherited" as const,
+      sourceThreadId: ThreadId.make("parent"),
+    }));
+    expect(messagesForHistoryPage(full, inherited)).toEqual([]);
   });
 
   it("omits historical control details that remain available from history items", () => {

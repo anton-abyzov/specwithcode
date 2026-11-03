@@ -187,7 +187,7 @@ function Fixture(props: { readonly bench: BenchManifest | null }) {
             onOpenThread={() => undefined}
           />
           <p style={{ fontSize: 13, color: "var(--muted-foreground)", margin: "0 4px" }}>
-            3 threads · 1 waiting on you
+            3 threads · 1 needs you
           </p>
         </div>
       </div>

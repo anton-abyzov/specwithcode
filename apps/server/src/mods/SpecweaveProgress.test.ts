@@ -380,6 +380,25 @@ it.layer(NodeServices.layer)("readSpecweaveProgress", (it) => {
   const numbered = (number: number, slug: string) =>
     `${String(number).padStart(4, "0")}-${slug}-${number}`;
 
+  it.effect("leaves out archived projects", () =>
+    Effect.gen(function* () {
+      const metadata = { status: "active", lastActivity: hoursAgo(1) };
+      const archived = yield* seedProject([{ name: "0001-archived", metadata }]);
+      const live = yield* seedProject([{ name: "0001-live", metadata }]);
+      const result = yield* readSpecweaveProgress(
+        [
+          { title: "Old", workspaceRoot: archived, workspaceSettings: { archived: true } },
+          { title: "Now", workspaceRoot: live, workspaceSettings: { archived: false } },
+        ],
+        NOW,
+      );
+      assert.deepEqual(
+        result.increments.map((increment) => increment.id),
+        ["0001-live"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("finds an open increment older than hundreds of closed ones", () =>
     Effect.gen(function* () {
       const root = yield* seedProject([

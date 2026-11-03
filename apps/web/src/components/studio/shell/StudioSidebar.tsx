@@ -1076,7 +1076,9 @@ export default function StudioSidebar() {
                     {!automatedOpen && automatedWaiting > 0 ? (
                       <span className="sws-count sws-count-waiting">
                         {automatedWaiting}
-                        <span className="sr-only"> waiting on you</span>
+                        <span className="sr-only">
+                          {automatedWaiting === 1 ? " needs you" : " need you"}
+                        </span>
                       </span>
                     ) : null}
                   </button>

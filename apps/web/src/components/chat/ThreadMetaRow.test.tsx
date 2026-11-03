@@ -151,7 +151,7 @@ describe("ThreadMetaRow", () => {
     expect(html).toContain("Running · 3m elapsed");
   });
 
-  it("reads a turn blocked on the person as waiting on you, in the waiting tone", () => {
+  it("reads a turn blocked on the person as needing you, in the waiting tone", () => {
     const render = (awaitingPerson: "approval" | "answer" | "sign-in" | null) =>
       renderToStaticMarkup(
         <ThreadMetaRow
@@ -164,12 +164,12 @@ describe("ThreadMetaRow", () => {
         />,
       );
     const approval = render("approval");
-    expect(approval).toContain("Waiting on you");
+    expect(approval).toContain("Needs you");
     expect(approval).not.toContain("Running");
     expect(approval).toContain('data-run-state="waiting"');
     expect(approval).toContain("text-warning-foreground");
-    expect(render("answer")).toContain("Waiting on you");
-    expect(render("sign-in")).toContain("Waiting on you");
+    expect(render("answer")).toContain("Needs you");
+    expect(render("sign-in")).toContain("Needs you");
     // With nothing asked of the person the same turn is still running.
     const running = render(null);
     expect(running).toContain("Running · 15h 10m elapsed");
@@ -188,7 +188,7 @@ describe("ThreadMetaRow", () => {
       />,
     );
     expect(html).toContain("Last turn 31m");
-    expect(html).not.toContain("Waiting on you");
+    expect(html).not.toContain("Needs you");
   });
 
   it("renders nothing without anything to show", () => {

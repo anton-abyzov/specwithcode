@@ -129,7 +129,7 @@ describe("thread subagents", () => {
     expect(withRunningSubagents("Blocked", 0)).toBe("Blocked");
   });
 
-  it("shows a delegated task held on an approval as waiting on you, not working", () => {
+  it("shows a delegated task held on an approval as needing you, not working", () => {
     const running = { status: "running" } as EnvironmentThreadShell["runtime"];
     const held = shell("held", "native", { runtime: running, hasPendingApprovals: true });
     const asking = shell("asking", "native", { runtime: running, hasPendingUserInput: true });

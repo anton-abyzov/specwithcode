@@ -309,7 +309,7 @@ describe("projects and chats sidebar", () => {
       "Borealis",
     ]);
     expect(rows.map((row) => row.getAttribute("aria-current"))).toEqual([null, "page"]);
-    expect(rows[1]!.querySelector(".sws-count .sr-only")?.textContent).toBe("1 waiting on you");
+    expect(rows[1]!.querySelector(".sws-count .sr-only")?.textContent).toBe("1 needs you");
     expect(rows[0]!.querySelector(".sws-count")).toBeNull();
   });
   it("groups active chats by date and keeps coordinators and resolved chats out", async () => {
@@ -635,7 +635,7 @@ describe("projects and chats sidebar", () => {
     expect(chats()).toEqual(["Chat plain", "Chat mine"]);
     // The project row still counts what its threads need from the person.
     const atlas = container.querySelector('a[href="/projects/host:/a"]')!;
-    expect(atlas.querySelector(".sws-count .sr-only")?.textContent).toBe("1 waiting on you");
+    expect(atlas.querySelector(".sws-count .sr-only")?.textContent).toBe("1 needs you");
     // The person's own chat remains independent even in the same directory.
     const mine = [...container.querySelectorAll<HTMLButtonElement>(".sws-chat-row > button")].find(
       (button) => button.textContent?.includes("Chat mine"),
@@ -1045,7 +1045,7 @@ describe("projects and chats sidebar", () => {
     await render();
     expect(
       container.querySelector('a[href="/projects/host:/a"] .sws-count .sr-only')?.textContent,
-    ).toBe("2 waiting on you");
+    ).toBe("2 need you");
     expect(chats()).toContain("Chat mine");
   });
   it.each([false, true])(
@@ -1399,7 +1399,7 @@ describe("cleaning up the projects list", () => {
     const counts = rows.map(
       (row) => row.querySelector(".sws-side-row-end .sr-only")?.textContent ?? "",
     );
-    expect(counts).toEqual(["1 waiting on you", "", ""]);
+    expect(counts).toEqual(["1 needs you", "", ""]);
   });
 
   it("tells apart two projects listed under the same name", async () => {

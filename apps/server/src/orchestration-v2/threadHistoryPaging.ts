@@ -455,6 +455,24 @@ function messagesForBoundedProjection(
 }
 
 /**
+ * The messages an older history page shows: those its own rows point to.
+ * Inherited rows belong to another thread's messages and are left out.
+ */
+export function messagesForHistoryPage(
+  projection: OrchestrationV2ThreadProjection,
+  items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+): OrchestrationV2ThreadProjection["messages"] {
+  const messageIds = new Set<string>();
+  for (const row of items) {
+    if (isLocalProjectedRow(projection, row) && "messageId" in row.item) {
+      messageIds.add(String(row.item.messageId));
+    }
+  }
+  if (messageIds.size === 0) return [];
+  return projection.messages.filter((message) => messageIds.has(String(message.id)));
+}
+
+/**
  * Max local turn ordinal over the authoritative full projection turnItems.
  * Used as a cheap partial-timeline watermark so old missing turn-item updates
  * cannot append newest when the bounded window has no local rows.

@@ -2883,7 +2883,7 @@ function LegacyProjectFold(props: {
         {!props.open && (props.waiting ?? 0) > 0 ? (
           <span className="rounded-full bg-sidebar-accent px-1.5 font-medium text-sidebar-foreground">
             {props.waiting}
-            <span className="sr-only"> waiting on you</span>
+            <span className="sr-only">{props.waiting === 1 ? " needs you" : " need you"}</span>
           </span>
         ) : null}
       </button>

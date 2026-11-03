@@ -66,7 +66,7 @@ try {
       ]) {
         const card = page.locator(`[data-case="${id}"]`);
         assert.equal(await card.getAttribute("data-status"), "Blocked");
-        assert.equal(await card.getAttribute("data-group"), "Waiting on you");
+        assert.equal(await card.getAttribute("data-group"), "Needs you");
         const note = card.locator("[data-thread-blocker]");
         assert.equal(await note.count(), 1);
         assert.equal((await note.textContent())?.trim(), `Blocked: ${blocker}`);

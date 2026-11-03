@@ -186,7 +186,9 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
   const triggerContent = (
     <>
       {icon}
-      <ComposerContextLabel>
+      <ComposerContextLabel
+        keepWhenCompact={Boolean(autoEnvironmentLabel) || showEnvironmentIndicator}
+      >
         {autoEnvironmentLabel ??
           (showEnvironmentIndicator ? (activeEnvironment?.label ?? "Run on") : workspaceLabel)}
       </ComposerContextLabel>

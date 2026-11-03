@@ -1,5 +1,9 @@
 /** User action is independent of activity, failures, unread history and availability. */
-export type AttentionReason = "approval" | "input" | "signin" | "plan" | "held";
+/**
+ * "message" is a decision asked only in a thread's last message: there is no
+ * request to respond to, and replying to the thread clears it.
+ */
+export type AttentionReason = "approval" | "input" | "message" | "signin" | "plan" | "held";
 export type AttentionFreshness =
   | "empty"
   | "cached"

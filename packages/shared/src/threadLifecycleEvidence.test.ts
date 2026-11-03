@@ -142,7 +142,7 @@ describe("request-bound lifecycle evidence", () => {
     expect(lifecycleWaitGroup({ ...wait, kind: "unknown" })).toBe("Unknown");
     expect(lifecycleWaitGroup({ ...wait, kind: "authentication" })).toBe("Operational wait");
     expect(lifecycleWaitGroup({ ...wait, kind: "authentication", needsUserOutput: true })).toBe(
-      "Waiting on you",
+      "Needs you",
     );
   });
 });
@@ -258,7 +258,7 @@ describe("thread view delivery status", () => {
       },
     ];
     const status = lifecycleDeliveryStatus({ ...ready, obligations: waits }, bound, now);
-    expect(status?.title).toBe("Waiting on you");
+    expect(status?.title).toBe("Needs you");
     expect(status?.lines).toEqual([
       "Operational wait: ENOSPC stopped the test run. Owner: cleanup-owner. Next: verify free space.",
       "Choose the release channel. Owner: Anton. Next: his answer.",

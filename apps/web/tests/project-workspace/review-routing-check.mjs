@@ -32,8 +32,10 @@ try {
     await page.getByRole("button", { name: "review-routing", exact: true }).click();
     if (width < 768) await page.getByRole("button", { name: /^Overview,/ }).click();
     await page.locator('[data-group="Idle"] .sws-thread-row').first().waitFor();
-    const waiting = await rowsIn(page, "Waiting on you");
-    const dependencies = await rowsIn(page, "Waiting");
+    const waiting = await rowsIn(page, "Needs you");
+    // Waiting on CI, a review, a merge or subagents is Working; the row keeps the reason.
+    const working = await rowsIn(page, "Working");
+    const dependencies = working.filter((row) => !row.includes("Usage-aware model picker"));
     assert.equal(dependencies.length, 4, JSON.stringify(dependencies));
     for (const reason of [
       "Waiting for CI",
@@ -46,16 +48,16 @@ try {
         reason,
       );
     assert.ok(dependencies.every((row) => !/Answer needed|Blocked/.test(row)));
-    const working = await rowsIn(page, "Working");
     const idle = await rowsIn(page, "Idle");
     // Real requests: a subagent's pending approval and a worker's own report blocker.
     assert.equal(waiting.length, 2, JSON.stringify(waiting));
     assert.ok(waiting.some((row) => row.includes("Schedule Mac and mobile release")));
     assert.ok(waiting.some((row) => /Release 1\.0\.35.*Blocked/.test(row)));
     // A running parent of a finished subagent report is Working, not waiting.
-    assert.equal(working.length, 1, JSON.stringify(working));
-    assert.match(working[0], /Usage-aware model picker/);
-    assert.doesNotMatch(working[0], /Answer needed|Close increment 1054/);
+    assert.equal(working.length, 5, JSON.stringify(working));
+    const running = working.find((row) => row.includes("Usage-aware model picker"));
+    assert.ok(running, JSON.stringify(working));
+    assert.doesNotMatch(running, /Answer needed|Close increment 1054/);
     // Quiet parents of finished child reports (native and delegate_task) and the
     // failed Muse run are Idle.
     assert.equal(idle.length, 3, JSON.stringify(idle));
@@ -70,7 +72,7 @@ try {
         .textContent(),
       "2",
     );
-    assert.match(await page.locator(".sws-threads-head").textContent(), /2 waiting on you/);
+    assert.match(await page.locator(".sws-threads-head").textContent(), /2 need you/);
     for (const theme of ["light", "dark"]) {
       await page.evaluate(
         (dark) => document.documentElement.classList.toggle("dark", dark),

@@ -143,7 +143,7 @@ It is off until you turn it on, and only the SpecWithCode desktop app can turn
 it on, with full access to every machine involved.
 
 In **Settings > Project > Machines**, under **If this Mac goes quiet**, pick the
-copy in **Take over automatically on**, then pick **After**: 5, 15, 30 or 60
+copy in **Take over automatically on**, then pick **After**: 5 (the default), 15, 30 or 60
 minutes. The app then asks each machine that runs this project's workers to let
 that copy reach them. Each row shows **Ready** or **Not ready**, with the reason,
 such as a machine that did not answer. **Allow** tries again. Nothing is turned

@@ -231,6 +231,11 @@ class PublicNotes(Temporary):
                      'branch ' + 'codex' + '/0912-thing'):
             with self.assertRaises(release_tools.ToolError):
                 release_tools.public_notes('Note: %s\n' % leak, str(rules))
+        # Assembled too, so this file passes the mirror's upstream-name check.
+        for named in ('Fixes from ' + 'T' + '3 Code', 'Port ' + 'T' + '3 fixes', 'Keep upstream ' + 'names out'):
+            with self.assertRaises(release_tools.ToolError):
+                release_tools.public_notes('- %s\n' % named, str(rules))
+        self.assertEqual(release_tools.public_notes('- Restore thread t3\n', str(rules)), '- Restore thread t3\n')
 
 
 class ShardFailures(Temporary):

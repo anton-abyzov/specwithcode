@@ -114,7 +114,7 @@ export function deriveThreadTiming(input: ThreadTimingInput) {
       label = run.status === "preparing" ? "Preparing" : "Starting";
     else if (input.awaitingPerson) {
       state = "waiting";
-      label = "Waiting on you";
+      label = "Needs you";
     } else if (input.health?.state === "stalled") {
       state = "waiting";
       label = "No recent progress";

@@ -22,6 +22,7 @@ function Content() {
         {[
           "baseline",
           "coordinator",
+          "coordinator-report",
           "coordinator-worker",
           "children",
           "signin",

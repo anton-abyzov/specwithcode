@@ -8,6 +8,7 @@ import {
   clearActiveHistoryLoading,
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
+  mergeOlderMessagesIntoProjection,
   shouldShowLoadEarlierControl,
   withWindowTurnStart,
 } from "./threadHistoryMerge.ts";
@@ -180,6 +181,39 @@ describe("threadHistoryMerge", () => {
       "item-0",
       "item-1",
     ]);
+  });
+
+  it("puts an older page's messages ahead of the held ones without duplicates", () => {
+    const message = (id: string) =>
+      ({
+        id,
+        threadId: v2ThreadId,
+        runId: null,
+        nodeId: null,
+        role: "user",
+        text: id,
+        attachments: [],
+        streaming: false,
+        createdBy: "user",
+        creationSource: "web",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }) as unknown as (typeof v2Projection.messages)[number];
+    const projection = { ...v2Projection, messages: [message("m-3"), message("m-4")] };
+    const merged = mergeOlderMessagesIntoProjection(projection, [
+      message("m-1"),
+      message("m-2"),
+      message("m-3"),
+    ]);
+    expect(merged.messages.map((entry) => entry.id)).toEqual(["m-1", "m-2", "m-3", "m-4"]);
+    expect(mergeOlderMessagesIntoProjection(projection, undefined)).toBe(projection);
+    expect(mergeOlderMessagesIntoProjection(projection, [message("m-3")])).toBe(projection);
+    // A live update appended an old message at the end; its page puts it back in order.
+    const updated = { ...message("m-0"), text: "edited" };
+    const appended = { ...projection, messages: [...projection.messages, updated] };
+    const reordered = mergeOlderMessagesIntoProjection(appended, [message("m-0")]);
+    expect(reordered.messages.map((entry) => entry.id)).toEqual(["m-0", "m-3", "m-4"]);
+    expect(reordered.messages[0]?.text).toBe("edited");
   });
 
   it("retains live rows that arrived after the older page was fetched", () => {

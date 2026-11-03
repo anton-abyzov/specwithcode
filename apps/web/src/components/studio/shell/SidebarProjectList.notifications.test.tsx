@@ -124,7 +124,7 @@ describe("ProjectRow Notifications item", () => {
     const options = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
     expect(options.map((option) => option.textContent)).toEqual([
       "All new messagesIncludes replies in every thread",
-      "Coordinator and requestsThe main chat and anything waiting on you",
+      "Coordinator and requestsThe main chat and anything that needs you",
       "Only requestsApprovals, questions, plans and sign-ins",
       "NothingNo alerts and no waiting count",
     ]);

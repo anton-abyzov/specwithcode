@@ -492,6 +492,20 @@ describe("createEnvironmentThreadStateAtoms", () => {
           completedAt: THREAD.thread.createdAt,
           updatedAt: THREAD.thread.createdAt,
         };
+        const olderMessage = {
+          id: MessageId.make("socket-fallback-older-message"),
+          threadId: THREAD_ID,
+          runId: null,
+          nodeId: null,
+          role: "user" as const,
+          text: "Earlier request",
+          attachments: [],
+          streaming: false,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          createdAt: THREAD.thread.createdAt,
+          updatedAt: THREAD.thread.createdAt,
+        };
         yield* Deferred.succeed(request.response, {
           snapshotSequence: 12,
           items: [
@@ -505,6 +519,7 @@ describe("createEnvironmentThreadStateAtoms", () => {
           ],
           nextCursor: null,
           hasMoreHistory: false,
+          messages: [olderMessage],
         });
         expect(yield* Fiber.join(loading)).toEqual({ _tag: "loaded" });
 
@@ -512,6 +527,11 @@ describe("createEnvironmentThreadStateAtoms", () => {
         expect(
           Option.getOrThrow(state.data).visibleTurnItems.map((row) => row.sourceItemId),
         ).toEqual([olderItem.id]);
+        // A view built from messages, such as the project coordinator, shows it too.
+        expect(Option.getOrThrow(state.data).messages.map((message) => message.id)).toEqual([
+          olderMessage.id,
+          ...THREAD.messages.map((message) => message.id),
+        ]);
         expect(state.history).toMatchObject({
           historyCursor: null,
           hasMoreHistory: false,

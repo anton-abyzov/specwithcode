@@ -24,6 +24,7 @@ import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
+  messagesForHistoryPage,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
@@ -279,6 +280,7 @@ export const layer = HttpApiBuilder.group(
             items: pageOrError.page.items,
             nextCursor: pageOrError.page.nextCursor,
             hasMoreHistory: pageOrError.page.hasMoreHistory,
+            messages: messagesForHistoryPage(snapshot.projection, pageOrError.page.items),
           };
         }),
       );

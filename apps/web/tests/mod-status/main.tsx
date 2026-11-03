@@ -5,7 +5,7 @@ import { parseModStats } from "../../src/mods/protocol";
 import { Sidebar, SidebarFooter, SidebarProvider } from "../../src/components/ui/sidebar";
 import "./fixture.css";
 
-// The real sidebar chip and popover. Open with
+// The real sidebar icons. Open with
 // ?state=live|zero|text|large&theme=light|dark&width=<sidebar px>.
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
@@ -22,7 +22,7 @@ const channel = (mod: string) => ({
     useModsStore.getState().openPane(mod, `list-${handler}`, `List ${handler}`);
   },
 });
-const standup = (blocked: number, stale: number) =>
+const standup = (blocked: number) =>
   parseModStats([
     {
       glyph: "blocked",
@@ -31,21 +31,14 @@ const standup = (blocked: number, stale: number) =>
       detail: "Tasks in open increments marked blocked. Press to see each one and why.",
       onPress: 1,
     },
-    {
-      glyph: "stale",
-      count: stale,
-      label: "Stale claims",
-      detail: "Tasks claimed over two hours ago with no update since. Press to see them.",
-      onPress: 2,
-    },
   ]);
 const close = (verify: number) =>
   parseModStats([
     {
       glyph: "verify",
       count: verify,
-      label: "Need verify",
-      detail: "Increments with every task done but no passing verify since. Press to see them.",
+      label: "To verify",
+      detail: "Finished increments with no passing verify since. Press to see them.",
       onPress: 3,
     },
     { glyph: "ready", count: 0, label: "Ready to close", onPress: 4 },
@@ -53,12 +46,12 @@ const close = (verify: number) =>
 store.attach("increment-standup", channel("increment-standup"));
 store.attach("ready-to-close", channel("ready-to-close"));
 if (state === "live" || state === "text") {
-  store.setStatus("increment-standup", null, standup(8, 19));
+  store.setStatus("increment-standup", null, standup(8));
   store.setStatus("ready-to-close", null, close(6));
 }
-if (state === "large") store.setStatus("increment-standup", null, standup(4000, 9000));
+if (state === "large") store.setStatus("increment-standup", null, standup(4000));
 if (state === "zero") {
-  store.setStatus("increment-standup", null, standup(0, 0));
+  store.setStatus("increment-standup", null, standup(0));
   store.setStatus("ready-to-close", null, close(0));
 }
 if (state === "text") store.setStatus("focus-timer", "Focus 25 min", null);
@@ -66,7 +59,7 @@ if (state === "text") store.setStatus("focus-timer", "Focus 25 min", null);
 // Lets the check take counts to zero and back while the sidebar stays mounted.
 Object.assign(window, {
   setCounts: (on: boolean) =>
-    useModsStore.getState().setStatus("increment-standup", null, on ? standup(8, 19) : null),
+    useModsStore.getState().setStatus("increment-standup", null, on ? standup(8) : null),
   clearVerify: () => useModsStore.getState().setStatus("ready-to-close", null, null),
 });
 
