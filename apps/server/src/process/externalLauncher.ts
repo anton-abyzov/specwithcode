@@ -42,6 +42,8 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { recordUserOpenedApp } from "./userOpenedApps.ts";
+
 // ==============================
 // Definitions
 // ==============================
@@ -687,6 +689,7 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   const command = ChildProcess.make(launch.command, launch.args, launch.options);
 
   yield* spawner.spawn(command).pipe(
+    Effect.tap((handle) => Effect.sync(() => recordUserOpenedApp(Number(handle.pid)))),
     Effect.flatMap((handle) => handle.unref),
     Effect.asVoid,
     Effect.scoped,

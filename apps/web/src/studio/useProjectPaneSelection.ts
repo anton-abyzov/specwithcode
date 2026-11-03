@@ -4,6 +4,7 @@ import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
+import { toastManager } from "../components/ui/toast";
 import { readThreadShells } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
 import type { ProjectThreadOpenOptions } from "./projectMessageRouting";
@@ -182,13 +183,32 @@ export function useProjectPaneSelection(input: {
         : { kind: "close" as const }
     : paneSelectionCorrection(decision, threadsLoaded);
   const correctionEnvironment = correction.kind === "elsewhere" ? correction.environmentId : null;
+  // A thread the panel was showing closes quietly when it goes away. One a link
+  // just asked for says why the panel stayed shut.
+  const shownInPane = useRef<ThreadId | null>(null);
+  useEffect(() => {
+    if (selected === null) shownInPane.current = null;
+    else if (decision?.kind === "pane") shownInPane.current = selected;
+  }, [decision?.kind, selected]);
+  const closeReason = decision?.kind === "deleted" ? "deleted" : "missing";
+  const restoring = input.restoringThread === true;
   useEffect(() => {
     if (selected === null || correction.kind === "none") return;
     if (correction.kind === "coordinator") {
       setSelected(null, { replace: true });
       latest.current.onShowCoordinator();
-    } else if (correction.kind === "close") setSelected(null, { replace: true });
-    else if (correctionEnvironment !== null)
+    } else if (correction.kind === "close") {
+      if (!restoring && shownInPane.current !== selected)
+        toastManager.add({
+          type: "error",
+          title: "Could not open this thread",
+          description:
+            closeReason === "deleted"
+              ? "It was deleted."
+              : "No connected machine has it. It may have been removed, or its machine is not connected to this device.",
+        });
+      setSelected(null, { replace: true });
+    } else if (correctionEnvironment !== null)
       void navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(
@@ -196,7 +216,15 @@ export function useProjectPaneSelection(input: {
         ),
         replace: true,
       });
-  }, [correction.kind, correctionEnvironment, navigate, selected, setSelected]);
+  }, [
+    closeReason,
+    correction.kind,
+    correctionEnvironment,
+    navigate,
+    restoring,
+    selected,
+    setSelected,
+  ]);
 
   return { selectedThread, openThreadInPane, openThread };
 }

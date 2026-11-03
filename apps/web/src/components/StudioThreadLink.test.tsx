@@ -57,6 +57,7 @@ import {
   parseStudioThreadTarget,
 } from "../studio/studioThreadLinks";
 import { StudioThreadLink } from "./StudioThreadLink";
+import { toastManager } from "./ui/toast";
 
 let root: Root, container: HTMLDivElement;
 const DELEGATED = "thread:delegated-task:command%3Amcp%3Aa1%3Adelegate-task%3Afix-login";
@@ -164,11 +165,13 @@ describe("StudioThreadLink", () => {
     const chip = container.querySelector('[role="link"]')!;
     expect(chip.getAttribute("data-thread-link-dead")).toBe("deleted");
   });
-  it("reads as its label before this machine's threads have loaded", async () => {
+  it("waits rather than calling a thread missing before the threads have loaded", async () => {
     state.bootstrapped = false;
     await render("studio://thread/missing");
-    expect(container.querySelector('[role="link"]')).toBeNull();
     expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector('[role="link"]')?.getAttribute("data-thread-link-dead")).toBe(
+      "waiting",
+    );
     expect(container.textContent).toBe("Worker");
   });
   it("opens a worker on another machine this browser is connected to, keeping its machine", async () => {
@@ -280,6 +283,54 @@ describe("StudioThreadLink", () => {
     const chip = container.querySelector('[role="link"]')!;
     expect(chip.getAttribute("data-thread-link-dead")).toBe("elsewhere");
     expect(chip.getAttribute("aria-label")).toContain("Thread on another machine");
+  });
+  it("explains a link whose machine has not answered, and opens once it does", async () => {
+    state.bootstrapped = false;
+    const add = vi.spyOn(toastManager, "add");
+    const link = () => (
+      <StudioThreadLink
+        environmentId={"5b0c3c1e-8d4f-4a52-9f3e-2b7d6c1a9e40" as EnvironmentId}
+        candidates={["project-coordinator:9ce25d03"]}
+        label="specweave coordinator"
+        linkedEnvironment
+      />
+    );
+    await act(async () => root.render(link()));
+    const chip = container.querySelector('[role="link"]') as HTMLElement;
+    expect(chip.getAttribute("data-thread-link-dead")).toBe("waiting");
+    await act(async () => chip.click());
+    expect(state.navigate).not.toHaveBeenCalled();
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringContaining("has not answered") }),
+    );
+    add.mockRestore();
+    state.shells = [
+      {
+        id: "project-coordinator:9ce25d03",
+        environmentId: "5b0c3c1e-8d4f-4a52-9f3e-2b7d6c1a9e40",
+        title: "specweave coordinator",
+        deletedAt: null,
+        runtime: null,
+        latestRun: null,
+      },
+    ];
+    await act(async () => root.render(link()));
+    expect(container.querySelector("a")?.getAttribute("data-thread-chip")).toBe(
+      "project-coordinator:9ce25d03",
+    );
+  });
+  it("says why when a thread that cannot open is clicked", async () => {
+    const add = vi.spyOn(toastManager, "add");
+    await render("studio://thread/no-such-thread");
+    await act(async () => (container.querySelector('[role="link"]') as HTMLElement).click());
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        title: "Could not open Worker",
+        description: "Thread not found on this machine",
+      }),
+    );
+    add.mockRestore();
   });
   it("reads only a server UUID before the thread as another machine", () => {
     expect(looksLikeEnvironmentId("5b0c3c1e-8d4f-4a52-9f3e-2b7d6c1a9e40")).toBe(true);

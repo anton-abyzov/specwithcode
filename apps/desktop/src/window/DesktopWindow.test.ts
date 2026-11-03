@@ -1579,6 +1579,34 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("reloads a window whose renderer the kernel killed", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        const gone = fakeWindow.webContentsListeners.get("render-process-gone");
+        if (!gone) return yield* Effect.die("render-process-gone listener was not registered");
+        const loads = fakeWindow.loadURL.mock.calls.length;
+
+        gone({}, { reason: "killed", exitCode: 9 });
+        yield* TestClock.adjust(1_000);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, loads + 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it("treats only a clean exit as nothing to recover from", () => {
+    for (const reason of ["crashed", "oom", "abnormal-exit", "killed"] as const) {
+      assert.isTrue(DesktopWindow.isRecoverableRendererExit(reason));
+    }
+    assert.isFalse(DesktopWindow.isRecoverableRendererExit("clean-exit"));
+  });
+
   it("retries only transient failures for the development renderer", () => {
     assert.isTrue(
       DesktopWindow.isRetryableDevelopmentRendererLoadFailure({

@@ -12,6 +12,7 @@ import type { MouseEvent, ReactNode } from "react";
 import { threadCardStatus } from "../studio/projectThreadCards";
 import { useHostOffline } from "../studio/unreachableHosts";
 import { Tip } from "./studio/shell/Tip";
+import { toastManager } from "./ui/toast";
 
 function ChipFace(props: { title: string; tone?: string }) {
   return (
@@ -99,16 +100,22 @@ export function ThreadLinkChipLink(props: {
 /** A link to a thread that cannot open here, and why. */
 export function DeadThreadLinkChip(props: {
   label: string;
-  reason: "deleted" | "missing" | "elsewhere";
+  /** `waiting`: its machine has not answered yet; the chip opens the thread once it does. */
+  reason: "deleted" | "missing" | "elsewhere" | "waiting";
   copyMarkdown?: string | undefined;
 }): ReactNode {
   const why =
-    props.reason === "deleted"
-      ? "Thread was deleted"
-      : props.reason === "elsewhere"
-        ? "Thread on another machine; connect it in Settings > Connections to open it"
-        : "Thread not found on this machine";
+    props.reason === "waiting"
+      ? "Its machine has not answered yet; this link opens once it does"
+      : props.reason === "deleted"
+        ? "Thread was deleted"
+        : props.reason === "elsewhere"
+          ? "Thread on another machine; connect it in Settings > Connections to open it"
+          : "Thread not found on this machine";
   const title = props.label.trim() || "Thread";
+  // The tip only shows on hover: a click or Enter gets the same reason.
+  const explain = () =>
+    toastManager.add({ type: "error", title: `Could not open ${title}`, description: why });
   return (
     <Tip label={why} side="top">
       <span
@@ -119,6 +126,10 @@ export function DeadThreadLinkChip(props: {
         aria-label={`${title}, ${why}`}
         data-thread-link-dead={props.reason}
         data-markdown-copy={props.copyMarkdown}
+        onClick={explain}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") explain();
+        }}
       >
         <ChipFace title={title} />
       </span>

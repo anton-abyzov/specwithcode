@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { state, root, container, shell } from "../components/studio/ProjectWorkspace.test-fixtures";
 import { ProjectWorkspace } from "../components/studio/ProjectWorkspace";
 
+import { toastManager } from "../components/ui/toast";
 import { projectReturnSearch } from "./projectReturnNavigation";
 
 const selected = "worker" as never;
@@ -37,6 +38,50 @@ describe("remembered project pane selection", () => {
       expect(state.navigate).not.toHaveBeenCalled();
     },
   );
+  it.each([
+    ["deleted", [shell("worker", { deletedAt: "2026-10-23T00:00:00Z" })], "It was deleted."],
+    ["unknown", [], "No connected machine has it"],
+  ])("says why a linked %s thread cannot open in the panel", async (_kind, shells, reason) => {
+    const add = vi.spyOn(toastManager, "add");
+    state.shells = shells;
+    const select = vi.fn();
+    await act(async () =>
+      root.render(
+        <ProjectWorkspace projectKey="atlas" selectedThreadId={selected} onSelectThread={select} />,
+      ),
+    );
+    expect(select).toHaveBeenCalledWith(null, { replace: true });
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "error",
+        description: expect.stringContaining(reason),
+      }),
+    );
+    add.mockRestore();
+  });
+  it("closes quietly when the thread on screen goes away or a remembered one is gone", async () => {
+    const add = vi.spyOn(toastManager, "add");
+    state.shells = [shell("worker")];
+    const select = vi.fn();
+    const render = () =>
+      root.render(
+        <ProjectWorkspace projectKey="atlas" selectedThreadId={selected} onSelectThread={select} />,
+      );
+    await act(async () => render());
+    state.shells = [shell("worker", { deletedAt: "2026-10-23T00:00:00Z" })];
+    await act(async () => render());
+    expect(select).toHaveBeenCalledWith(null, { replace: true });
+    expect(add).not.toHaveBeenCalled();
+    // Asking for it again later is a new request: it says why.
+    await act(async () =>
+      root.render(
+        <ProjectWorkspace projectKey="atlas" selectedThreadId={null} onSelectThread={select} />,
+      ),
+    );
+    await act(async () => render());
+    expect(add).toHaveBeenCalledWith(expect.objectContaining({ description: "It was deleted." }));
+    add.mockRestore();
+  });
   it("records direct links without checkout under the resolved machine identity", async () => {
     state.shells = [shell("worker")];
     await act(async () =>

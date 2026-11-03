@@ -405,6 +405,49 @@ describe("chatNavigationTarget", () => {
   });
 });
 
+describe("chatNavigationTarget in a linked project", () => {
+  const group = {
+    projectKey: "logical",
+    memberProjects: [
+      {
+        environmentId: "m4",
+        id: "local",
+        workspaceSettings: { coordinatorThreadId: "project-coordinator:local", logicalProject: {} },
+      },
+      {
+        environmentId: "ministorm",
+        id: "remote",
+        workspaceSettings: {
+          coordinatorThreadId: "project-coordinator:remote",
+          logicalProject: {},
+        },
+      },
+    ],
+  };
+  const remote = (id: string, createdBy?: "agent") =>
+    ({
+      id,
+      environmentId: "ministorm",
+      projectId: "remote",
+      createdBy,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: id },
+    }) as unknown as Parameters<typeof chatNavigationTarget>[0];
+  it("opens another machine's coordinator on that machine, never the page already showing", () => {
+    expect(chatNavigationTarget(remote("project-coordinator:remote"), group)).toEqual({
+      to: "/projects/$projectKey",
+      params: { projectKey: "logical" },
+      search: { checkout: "ministorm:remote" },
+    });
+  });
+  it("opens another machine's worker in the panel with its machine", () => {
+    expect(chatNavigationTarget(remote("worker", "agent"), group)).toEqual({
+      to: "/projects/$projectKey",
+      params: { projectKey: "logical" },
+      search: { thread: "worker", threadEnvironment: "ministorm" },
+    });
+  });
+});
+
 describe("currentSidebarChatKey", () => {
   const chats = [
     { key: "host:a", id: "a", project: "atlas" },

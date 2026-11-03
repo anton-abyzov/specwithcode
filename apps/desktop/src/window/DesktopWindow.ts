@@ -314,6 +314,18 @@ export function isSameOriginRendererNavigation(input: {
   }
 }
 
+/**
+ * "killed" is what Electron reports when the kernel's OOM killer took the
+ * renderer: the machine ran out of memory, and the window is as dead as after a
+ * crash. A normal quit destroys windows first, so the isDestroyed check covers it;
+ * an external group SIGTERM can reload once against a stopping backend, harmlessly.
+ */
+export function isRecoverableRendererExit(reason: Electron.RenderProcessGoneDetails["reason"]) {
+  return (
+    reason === "crashed" || reason === "oom" || reason === "abnormal-exit" || reason === "killed"
+  );
+}
+
 export function isRetryableDevelopmentRendererLoadFailure(input: {
   readonly applicationUrl: string;
   readonly errorCode: number;
@@ -1042,10 +1054,7 @@ export const make = Effect.gen(function* () {
       },
     );
     window.webContents.on("render-process-gone", (_event, details) => {
-      const recoverable =
-        details.reason === "crashed" ||
-        details.reason === "oom" ||
-        details.reason === "abnormal-exit";
+      const recoverable = isRecoverableRendererExit(details.reason);
       // Long sessions can OOM the renderer (V8 heap exhaustion from
       // accumulated thread state). Without a reload the user is left staring
       // at a dead white window while agents keep running invisibly, so

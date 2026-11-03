@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   shell: null as any,
   draft: null as any,
   composer: null as any,
+  renderState: "ready",
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 vi.mock("../hooks/useSettings", () => ({ useLegacySidebarEnabled: () => state.legacy }));
@@ -68,7 +69,12 @@ vi.mock("../state/query", () => ({
 vi.mock("../state/shell", () => ({ environmentShell: { stateAtom: () => null } }));
 vi.mock("../threadRoutes", () => ({
   buildThreadRouteParams: (ref: any) => ref,
-  resolveThreadRouteRenderState: () => "ready",
+  resolveThreadRouteRenderState: () => state.renderState,
+}));
+vi.mock("./ThreadRouteProblem", () => ({
+  ThreadRouteProblem: (props: any) => (
+    <div data-problem={props.state} data-deleted={String(props.deleted)} />
+  ),
 }));
 import { ThreadRouteView } from "./ThreadRouteView";
 let root: Root, container: HTMLDivElement;
@@ -100,6 +106,7 @@ beforeEach(() => {
   state.composer = null;
   state.shell = null;
   state.ancestors = [];
+  state.renderState = "ready";
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -199,4 +206,44 @@ it("moves a human-created fork beside its coordinator when its agent ancestor ar
     search: { checkout: "remote:project", thread: fork },
     replace: true,
   });
+});
+
+it("says why a linked thread cannot open instead of leaving the page or showing nothing", async () => {
+  state.renderState = "missing";
+  await act(async () =>
+    root.render(
+      <ThreadRouteView
+        target={{ kind: "server", threadRef: { environmentId, threadId: ThreadId.make("gone") } }}
+      />,
+    ),
+  );
+  expect(state.navigate).not.toHaveBeenCalled();
+  expect(container.querySelector("[data-problem='missing']")).not.toBeNull();
+});
+
+it("shows the wait while a machine has not answered with no thread to show", async () => {
+  state.renderState = "loading";
+  await act(async () =>
+    root.render(
+      <ThreadRouteView
+        target={{ kind: "server", threadRef: { environmentId, threadId: ThreadId.make("late") } }}
+      />,
+    ),
+  );
+  expect(container.querySelector("[data-problem='loading']")).not.toBeNull();
+});
+
+it("leaves for Overview when the thread on screen goes away", async () => {
+  await render("manual", "user");
+  state.renderState = "missing";
+  state.shell = { ...state.shell, deletedAt: "2026-11-02T00:00:00Z" };
+  await act(async () =>
+    root.render(
+      <ThreadRouteView
+        target={{ kind: "server", threadRef: { environmentId, threadId: ThreadId.make("manual") } }}
+      />,
+    ),
+  );
+  expect(state.navigate).toHaveBeenCalledWith({ to: "/", replace: true });
+  expect(container.querySelector("[data-problem]")).toBeNull();
 });

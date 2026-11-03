@@ -9,6 +9,7 @@ import { projectWorkspaceSearch } from "../studio/projectPaneThreads";
 import { chatNavigationTarget } from "../studio/projectPaneThreads";
 
 import ChatView from "./ChatView";
+import { ThreadRouteProblem } from "./ThreadRouteProblem";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
 import { waitForDraftHeroTransition } from "./chat/draftHeroTransition";
 import { SidebarInset } from "./ui/sidebar";
@@ -21,7 +22,6 @@ import {
 } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import {
-  useEnvironmentThreadRefs,
   useThreadRefs,
   useThreadShell,
   useThreadShells,
@@ -158,7 +158,6 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     serverThreadRef === null ? null : environmentShell.stateAtom(serverThreadRef.environmentId),
   );
   const serverThreadShell = serverThread;
-  const environmentThreadRefs = useEnvironmentThreadRefs(serverThreadRef?.environmentId ?? null);
   const bootstrapComplete = shell.data?.snapshot._tag === "Some";
   const draftThread = useComposerDraftStore((store) =>
     serverThreadRef ? store.getDraftThreadByRef(serverThreadRef) : null,
@@ -182,9 +181,6 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   if (nextChatViewKey !== chatViewKey) {
     setChatViewKey(nextChatViewKey);
   }
-  const environmentHasDraftThreads = useComposerDraftStore((store) =>
-    serverThreadRef ? store.hasDraftThreadsInEnvironment(serverThreadRef.environmentId) : false,
-  );
   const renderState = resolveThreadRouteRenderState({
     bootstrapComplete,
     serverThreadExists: serverThreadShell !== null,
@@ -192,7 +188,12 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     draftThreadExists: draftThread !== null,
   });
   const serverThreadStarted = threadHasStarted(serverThreadShell);
-  const environmentHasAnyThreads = environmentThreadRefs.length > 0 || environmentHasDraftThreads;
+  // The thread this page was showing: if it goes away (deleted here) the page
+  // leaves. A link to a thread never seen stays and says why it cannot open.
+  const [shownThreadKey, setShownThreadKey] = useState<string | null>(null);
+  if (renderState === "ready" && shownThreadKey !== serverThreadKey) {
+    setShownThreadKey(serverThreadKey);
+  }
 
   useEffect(() => {
     if (!inferredThreadRef || draftSession?.promotedTo) {
@@ -238,11 +239,11 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
     if (renderState === "missing") {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(target.threadRef);
-      if (environmentHasAnyThreads) {
+      if (shownThreadKey === serverThreadKey) {
         void navigate({ to: "/", replace: true });
       }
     }
-  }, [bootstrapComplete, environmentHasAnyThreads, navigate, renderState, target]);
+  }, [bootstrapComplete, navigate, renderState, serverThreadKey, shownThreadKey, target]);
 
   useEffect(() => {
     if (target.kind !== "server" || !serverThreadStarted || !draftThread) {
@@ -275,6 +276,18 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
         environmentId={target.threadRef.environmentId}
         threadId={target.threadRef.threadId}
         routeKind="server"
+      />
+    );
+  } else if (
+    !projectNavigation &&
+    (renderState === "loading" || shownThreadKey !== serverThreadKey)
+  ) {
+    view = (
+      <ThreadRouteProblem
+        key={serverThreadKey}
+        environmentId={target.threadRef.environmentId}
+        state={renderState === "missing" ? "missing" : "loading"}
+        deleted={serverThreadShell?.deletedAt != null}
       />
     );
   }

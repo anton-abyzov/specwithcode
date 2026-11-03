@@ -22,8 +22,7 @@ export function StudioThreadLink(props: {
   const threads = useThreadShells(props.environmentId !== null);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { openInProject } = useOpenThread();
-  // Without an environment, or before this machine's threads have loaded, nothing
-  // can say the thread is missing yet: the link reads as its label.
+  // Without an environment nothing can say where the thread is: the link reads as its label.
   if (props.environmentId === null) return <span>{props.label}</span>;
   const scoped = resolveStudioThreadLink(
     threads,
@@ -43,7 +42,18 @@ export function StudioThreadLink(props: {
   // A link to another machine's thread keeps naming that machine when copied.
   const linkEnvironment = props.linkedEnvironment ? props.environmentId : undefined;
   if (resolved.kind !== "thread") {
-    if (resolved.kind !== "deleted" && !bootstrapped) return <span>{props.label}</span>;
+    if (resolved.kind !== "deleted" && !bootstrapped)
+      return (
+        <DeadThreadLinkChip
+          label={props.label}
+          reason="waiting"
+          copyMarkdown={formatStudioThreadLink(
+            props.candidates[0] ?? props.label,
+            props.label,
+            linkEnvironment,
+          )}
+        />
+      );
     const elsewhere =
       props.linkedEnvironment === true &&
       !threads.some((thread) => thread.environmentId === props.environmentId);

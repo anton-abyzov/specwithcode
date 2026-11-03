@@ -377,7 +377,9 @@ export function chatNavigationTarget(
     return {
       to: "/projects/$projectKey",
       params: { projectKey: group.projectKey },
-      search: projectWorkspaceSearch(null, checkout),
+      // A linked project's page otherwise stays on the machine last viewed, so a
+      // link to another machine's coordinator would land back on the same page.
+      search: projectWorkspaceSearch(null, `${member.environmentId}:${member.id}`),
     };
   const pane = chatProjectPaneTarget(thread, group, lookup);
   return pane
