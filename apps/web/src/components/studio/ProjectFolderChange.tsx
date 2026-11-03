@@ -14,6 +14,7 @@ import {
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectFolderCheck } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import { displayFolder } from "../../lib/displayFolder";
 import { workspaceGuidance } from "../../lib/folderLayoutGuidance";
 import { readLocalApi } from "../../localApi";
 import { projectEnvironment } from "../../state/projects";
@@ -27,11 +28,6 @@ function plural(count: number, noun: string) {
 /** "1 thread keeps", "2 threads keep". */
 function pluralVerb(count: number, noun: string, verb: string) {
   return `${plural(count, noun)} ${count === 1 ? `${verb}s` : verb}`;
-}
-
-/** The home folder as "~", so the part that differs between projects stays readable. */
-function displayFolder(path: string) {
-  return path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 }
 
 type Tone = "ok" | "warn" | "error" | "info";

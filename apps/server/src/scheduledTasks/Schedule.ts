@@ -151,6 +151,26 @@ export function isMissedFixedTimeRun(
   return lateMs - heldMs > MISSED_FIXED_TIME_GRACE_MS;
 }
 
+/**
+ * The note a routine shows after a daily or monthly run was skipped
+ * (isMissedFixedTimeRun): this machine was off or asleep at its time, or its
+ * project's coordinator was on hold, waiting on its standby or a handoff. The
+ * next run that starts clears it.
+ */
+export function missedRunNote(schedule: ScheduledTaskSchedule, why: "off" | "held"): string {
+  const when =
+    schedule.type === "monthly"
+      ? `the ${schedule.timeOfDay} run on day ${schedule.dayOfMonth}`
+      : schedule.type === "fixed_time"
+        ? `the ${schedule.timeOfDay} run`
+        : "a run";
+  const because =
+    why === "off"
+      ? "this machine was off or asleep at that time"
+      : "this project's coordinator was on hold at that time, waiting on its other machine";
+  return `Skipped ${when}: ${because}. It runs again at its next time.`;
+}
+
 function describeSchedule(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "manual") return "When asked";

@@ -187,9 +187,24 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...projection, thread: event.payload };
     case "run.created":
     case "run.updated": {
-      const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
+      // Only run.prompt-suggested sets the suggestion; a run snapshot keeps it.
+      const kept = base.runs.find((run) => run.id === event.payload.id)?.promptSuggestion;
+      const payload =
+        kept === undefined || event.payload.promptSuggestion !== undefined
+          ? event.payload
+          : { ...event.payload, promptSuggestion: kept };
+      const next = { ...base, runs: upsertEntity(base.runs, payload) };
       return { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
     }
+    case "run.prompt-suggested":
+      return {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.id === event.payload.runId
+            ? { ...run, promptSuggestion: event.payload.promptSuggestion }
+            : run,
+        ),
+      };
     case "run.background-work-cancelled":
       return {
         ...base,

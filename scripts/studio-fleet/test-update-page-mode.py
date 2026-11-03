@@ -39,7 +39,7 @@ class Pipeline(unittest.TestCase):
         self.addCleanup(self.flow.kept.clear)
         self.pid = 100
         self.calls = 0
-        def snapshot(identity, include_auth, reads=None):
+        def snapshot(identity, include_auth, reads=None, passing=None):
             self.calls += 1
             rows, auth, carried, capture = reads
             return {'rows': rows, 'databaseCapture': capture, 'servicePid': self.pid, 'observedAt': END}, auth, carried
@@ -117,9 +117,9 @@ class Pipeline(unittest.TestCase):
         self.flow.restart();self.pid = 101
         snapshot = mode.snapshot
         calls = []
-        def snapshot_then_heartbeat():
+        def snapshot_then_heartbeat(passing=None):
             calls.append(1)
-            value = snapshot()
+            value = snapshot(passing=passing)
             if len(calls) == 1:  # A reconnect heartbeat lands after the proof, before the watermark check.
                 self.flow.new.heartbeat('session-1', '2026-10-22T14:05:30Z')
             return value
@@ -143,12 +143,12 @@ class Pipeline(unittest.TestCase):
 
     def refusing(self, error, times, calls, then=None):
         def wrap(snapshot):
-            def refused_first():
+            def refused_first(passing=None):
                 calls.append(1)
                 if len(calls) <= times:
                     raise error
                 if then: then(len(calls))
-                return snapshot()
+                return snapshot(passing=passing)
             return refused_first
         return wrap
 
@@ -207,6 +207,119 @@ class Pipeline(unittest.TestCase):
         self.assertIsNotNone(value)
         self.assertEqual(mode.after_attempts, 2)  # The watermark moved during the wait, so that proof is discarded.
         self.assertIsNotNone(mode.verdict)
+
+    def child(self, pid, name='git', started='Tue Nov 3 19:30:00 2026'):
+        return {'pid': pid, 'parent': 101, 'uid': 501, 'startedAt': started, 'executable': '/usr/bin/' + name}
+
+    def with_children(self, children_per_call, alive, holders=()):
+        """Each capture sets aside its call's children; `alive(pids_seen, poll)` lists who still runs."""
+        captures, polls, held_asked = [], [], []
+        def wrap(snapshot):
+            def capture(passing=None):
+                captures.append(1)
+                children = children_per_call(len(captures))
+                if passing is not None:
+                    passing.extend(children)
+                return snapshot(passing=passing)
+            return capture
+        def processes():
+            polls.append(1)
+            return {item['pid']: item for item in alive(len(polls))}
+        def database_holders(state, pids):
+            held_asked.append(sorted(pids))
+            return set(pids) & set(holders)
+        def setup(mode):
+            mode.process_reader, mode.database_holders = processes, database_holders
+            return wrap(mode.snapshot)
+        return setup, captures, polls, held_asked
+
+    def restart_with_children(self, setup, **patches):
+        mode, before, auth = self.prepare()
+        self.flow.mark();self.flow.stop();self.flow.clone()
+        mode.stopped(self.flow.held, before, auth, START, 'browser-cookie')
+        self.flow.restart();self.pid = 101
+        mode.snapshot = setup(mode)
+        with patch.object(update_apply, 'PAGE_VERIFY_DESCENDANT_POLL_SECONDS', 0.01), \
+             patch.object(update_apply, 'PAGE_VERIFY_QUIET_SECONDS', 0.05), \
+             patch.multiple(update_apply, **{'PAGE_VERIFY_DESCENDANT_SECONDS': 30, **patches}):
+            return mode, mode.after(self.flow.held, START, 'browser-cookie')
+
+    def test_a_child_that_exits_within_the_grace_keeps_the_page_proof(self):
+        git = self.child(4123)
+        setup, captures, polls, held = self.with_children(lambda call: [git], lambda poll: [git] if poll < 3 else [])
+        mode, value = self.restart_with_children(setup)
+        self.assertIsNotNone(value)
+        self.assertIsNone(mode.fallback_reason)
+        self.assertIsNotNone(mode.verdict)
+        self.assertEqual((len(captures), len(polls), mode.child_waits), (1, 3, 2))
+        self.assertEqual(held, [[4123]])  # Asked whether it holds the database before waiting on it.
+
+    def test_children_starting_on_every_capture_no_longer_force_the_full_read(self):
+        """M4 after a restart: a new git or ps is always running, so no capture is ever empty."""
+        setup, captures, polls, _ = self.with_children(
+            lambda call: [self.child(5000 + call, 'ps')], lambda poll: [])
+        mode, value = self.restart_with_children(setup)
+        self.assertIsNotNone(value)
+        self.assertIsNone(mode.fallback_reason)
+        self.assertEqual(len(captures), 1)
+
+    def test_a_pid_reused_by_a_new_process_counts_as_exited(self):
+        git = self.child(4123)
+        setup, _, _, _ = self.with_children(lambda call: [git], lambda poll: [dict(git, startedAt='Tue Nov 3 19:31:00 2026')])
+        mode, value = self.restart_with_children(setup)
+        self.assertIsNotNone(value)
+
+    def test_an_unreaped_child_counts_as_exited(self):
+        git = self.child(4123)
+        setup, _, _, _ = self.with_children(lambda call: [git], lambda poll: [dict(git, executable='<defunct>')])
+        mode, value = self.restart_with_children(setup)
+        self.assertIsNotNone(value)
+
+    def test_a_child_that_stays_takes_the_full_read_and_names_itself(self):
+        claude = self.child(4200, 'claude')
+        setup, _, _, _ = self.with_children(lambda call: [claude], lambda poll: [claude])
+        mode, value = self.restart_with_children(setup, PAGE_VERIFY_DESCENDANT_SECONDS=0.05)
+        self.assertIsNone(value)
+        self.assertIsNone(mode.verdict)
+        self.assertEqual(mode.fallback_reason,
+                         'AssertionError:Owned service has unexpected descendants [pid 4200 claude (parent 101)]')
+        receipt = {}
+        mode.report(receipt)
+        self.assertEqual(receipt['pageFallback'], mode.fallback_reason)
+        self.assertIn('pid 4200 claude', receipt['pageChildRefusals'][0])
+
+    def test_a_child_holding_the_database_refuses_at_once(self):
+        tool = self.child(4300, 'sqlite3')
+        setup, captures, polls, _ = self.with_children(lambda call: [tool], lambda poll: [tool], holders=[4300])
+        mode, value = self.restart_with_children(setup)
+        self.assertIsNone(value)
+        self.assertEqual((len(captures), len(polls)), (1, 0))
+        self.assertEqual(mode.fallback_reason, 'AssertionError:' + update_apply.DATABASE_HELD_BY_CHILD
+                         + ' [pid 4300 sqlite3 (parent 101)]')
+
+    def test_a_write_while_a_child_exits_proves_again(self):
+        git = self.child(4123)
+        def alive(poll):
+            if poll == 1: self.flow.new.heartbeat('session-1', '2026-10-22T14:05:30Z')
+            return [git] if poll == 1 else []
+        setup, captures, _, _ = self.with_children(lambda call: [git] if call == 1 else [], alive)
+        mode, value = self.restart_with_children(setup)
+        self.assertIsNotNone(value)
+        self.assertEqual(mode.after_attempts, 2)  # The wait saw a write: that proof is discarded, not kept.
+
+    def test_every_waited_refusal_is_kept_with_its_processes(self):
+        calls = []
+        error = update_apply.quiescence.UnexpectedDescendants([self.child(4400, 'gh')])
+        mode, value = self.restart_with_snapshot(self.refusing(error, 2, calls))
+        self.assertIsNotNone(value)
+        receipt = {}
+        mode.report(receipt)
+        self.assertEqual(receipt['pageChildRefusals'],
+                         ['AssertionError:Owned service has unexpected descendants [pid 4400 gh (parent 101)]'] * 2)
+        self.assertNotIn('pageFallback', receipt)
+
+    def test_a_kernel_read_of_an_exited_child_is_waited_on(self):
+        self.passing_child(AssertionError('Process executable unavailable'))
 
     def test_no_heartbeat_opt_in_declines_page_verdict(self):
         mode, before, auth = self.prepare(heartbeat=False)
@@ -301,7 +414,7 @@ class ApplyBranches(unittest.TestCase):
             self.new = f.Writer(h.own / 'userdata/statev2.sqlite');self.addCleanup(self.new.close)
             self.new.commit(f.event(random.Random(9), 'apply-new-event', 't-1', 1000))
         h.on_restart = restarted
-        def metadata(identity, include_auth, since=None, widen_from=None, reads=None):
+        def metadata(identity, include_auth, since=None, widen_from=None, reads=None, passing=None):
             self.assertIsNotNone(reads, 'Page mode should supply its measured authority snapshot')
             value = h.snapshot(identity)
             value['rows'], auth, carried, value['databaseCapture'] = reads

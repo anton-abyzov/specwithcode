@@ -1245,6 +1245,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:google-account:remove",
       tag: WS_METHODS.googleAccountRemove,
     }),
+    setGoogleAccountLabel: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:google-account:set-label",
+      tag: WS_METHODS.googleAccountSetLabel,
+    }),
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,

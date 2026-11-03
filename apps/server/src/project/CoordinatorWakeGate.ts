@@ -23,7 +23,11 @@ import {
   CoordinatorLeaseStore,
   layer as CoordinatorLeaseStoreLayer,
 } from "./CoordinatorLeaseStore.ts";
-import { STANDBY_TICK_MS } from "./CoordinatorStandbyWatch.ts";
+import {
+  type MonotonicClock,
+  STANDBY_TICK_MS,
+  systemMonotonicClock,
+} from "./CoordinatorStandbyWatch.ts";
 
 /** Lease request timeout on the coordinator side (handoffPeers.ts TIMEOUT_MS). */
 const LEASE_TIMEOUT_MS = 10_000;
@@ -34,6 +38,9 @@ export const COORDINATOR_FENCE_MARGIN_MS = 2 * STANDBY_TICK_MS + LEASE_TIMEOUT_M
 
 export const COORDINATOR_FENCE_REFUSAL =
   "Checking with the standby Mac before running. It has not answered, so this Mac paused its coordinator. Choose Run here anyway to run it here. This turns off automatic takeover.";
+
+export const COORDINATOR_FENCE_UNREADABLE_REFUSAL =
+  "This Mac could not read its standby records, so it paused its coordinator rather than risk running beside the standby. Restart SpecWithCode; if this stays, turn the standby off in the project's settings.";
 
 const parse = (value: string | null | undefined) =>
   value === null || value === undefined ? Number.NaN : Date.parse(value);
@@ -47,13 +54,18 @@ const parse = (value: string | null | undefined) =>
 export function fenceAt(record: CoordinatorLeaseRecord): number | null {
   const target = record.target;
   if (target === null || record.standbyMissingAt !== null) return null;
-  const heard = Math.max(
-    ...[record.lastSuccessfulLeaseAt, record.lastPausedAnswerAt, target.enabledAt]
+  const heard = lastHeardAt(record);
+  if (!Number.isFinite(heard)) return Number.NEGATIVE_INFINITY;
+  return heard + target.afterMinutes * 60_000 - COORDINATOR_FENCE_MARGIN_MS;
+}
+
+/** The latest of the last confirmed lease, the last busy answer and when the standby was turned on. */
+function lastHeardAt(record: CoordinatorLeaseRecord): number {
+  return Math.max(
+    ...[record.lastSuccessfulLeaseAt, record.lastPausedAnswerAt, record.target?.enabledAt]
       .map(parse)
       .filter(Number.isFinite),
   );
-  if (!Number.isFinite(heard)) return Number.NEGATIVE_INFINITY;
-  return heard + target.afterMinutes * 60_000 - COORDINATOR_FENCE_MARGIN_MS;
 }
 
 /**
@@ -66,6 +78,54 @@ export function coordinatorFenced(record: CoordinatorLeaseRecord, nowMs: number)
   if (record.fencedSince !== null) return true;
   const at = fenceAt(record);
   return at !== null && nowMs >= at;
+}
+
+/**
+ * The last time silence was measured from, on the monotonic clock as well: a
+ * wall clock stepped backwards would otherwise move the fence past the
+ * standby's own deadline, which the standby measures on its clock.
+ */
+export interface MonotonicSilence {
+  /** The answers silence was measured from; any new one starts it again. */
+  readonly answers: string;
+  /** The monotonic time silence counts from. */
+  readonly heardMonoMs: number;
+}
+
+/**
+ * Where silence counts from on the monotonic clock: kept while the record's
+ * answers are unchanged, otherwise taken from the wall clock now. A last
+ * answer the wall clock places in the future counts from now, so a clock
+ * stepped backwards never fences a copy whose standby keeps answering.
+ */
+export function monotonicSilence(
+  previous: MonotonicSilence | undefined,
+  record: CoordinatorLeaseRecord,
+  sample: { readonly wallMs: number; readonly monoMs: number },
+): MonotonicSilence | undefined {
+  if (fenceAt(record) === null || record.target === null) return undefined;
+  const answers = JSON.stringify([
+    record.lastSuccessfulLeaseAt,
+    record.lastPausedAnswerAt,
+    record.target.enabledAt,
+  ]);
+  if (previous !== undefined && previous.answers === answers) return previous;
+  const heard = lastHeardAt(record);
+  const since = Number.isFinite(heard) ? Math.max(0, sample.wallMs - heard) : 0;
+  return { answers, heardMonoMs: sample.monoMs - since };
+}
+
+/** Whether the silence measured on the monotonic clock alone reached the fence. */
+export function monotonicFenceDue(
+  silence: MonotonicSilence,
+  record: CoordinatorLeaseRecord,
+  monoMs: number,
+): boolean {
+  if (record.target === null) return false;
+  return (
+    monoMs - silence.heardMonoMs >=
+    record.target.afterMinutes * 60_000 - COORDINATOR_FENCE_MARGIN_MS
+  );
 }
 
 /** Whether `threadId` is the coordinator of the copy `record` leases for. */
@@ -87,29 +147,50 @@ export class CoordinatorWakeGate extends Context.Reference<CoordinatorWakeGateSh
   { defaultValue: () => ({ check: () => Effect.succeed(null) }) },
 ) {}
 
-export const makeCheck =
-  (store: CoordinatorLeaseStore["Service"]): CoordinatorWakeGateShape["check"] =>
-  (threadId) =>
+/**
+ * The gate. When the records file cannot be read, the last records this
+ * process read decide, as if no answer came since, so a fence due by then
+ * holds. Before any read succeeded every turn starts, as it always did: the
+ * coordinator of a project without a standby must never be blocked by it.
+ */
+export const makeCheck = (
+  store: CoordinatorLeaseStore["Service"],
+): CoordinatorWakeGateShape["check"] => {
+  let lastRead: ReadonlyArray<CoordinatorLeaseRecord> | null = null;
+  const decide = (
+    records: ReadonlyArray<CoordinatorLeaseRecord>,
+    threadId: ThreadId,
+    nowMs: number,
+  ) => {
+    const record = records.find(
+      (candidate) => candidate.target !== null && isRecordCoordinatorThread(candidate, threadId),
+    );
+    if (record === undefined) return null;
+    return coordinatorFenced(record, nowMs) ? COORDINATOR_FENCE_REFUSAL : null;
+  };
+  return (threadId) =>
     Effect.gen(function* () {
       const records = yield* store.list;
-      const record = records.find(
-        (candidate) => candidate.target !== null && isRecordCoordinatorThread(candidate, threadId),
-      );
-      if (record === undefined) return null;
-      return coordinatorFenced(record, yield* Clock.currentTimeMillis)
-        ? COORDINATOR_FENCE_REFUSAL
-        : null;
+      lastRead = records;
+      return decide(records, threadId, yield* Clock.currentTimeMillis);
     }).pipe(
-      // A records file that cannot be read never blocks work: the lease loop logs it.
       Effect.catchCause((cause) =>
-        Effect.logWarning("Coordinator wake gate could not read the lease records", {
-          cause,
-        }).pipe(Effect.as(null)),
+        Effect.gen(function* () {
+          yield* Effect.logWarning("Coordinator wake gate could not read the lease records", {
+            cause,
+          });
+          if (lastRead === null) return null;
+          const refusal = decide(lastRead, threadId, yield* Clock.currentTimeMillis);
+          return refusal === null ? null : COORDINATOR_FENCE_UNREADABLE_REFUSAL;
+        }),
       ),
     );
+};
 
 export interface FenceSweepDeps {
   readonly store: CoordinatorLeaseStore["Service"];
+  /** The clock that never steps backwards; tests move it by hand. */
+  readonly monotonic?: MonotonicClock | undefined;
   readonly loadProject: (projectId: Project["id"]) => Effect.Effect<Project | undefined>;
   /** Interrupts the project's coordinator turn and the local children it started. */
   readonly stopCoordinator: (project: Project, reason: string) => Effect.Effect<void>;
@@ -118,14 +199,25 @@ export interface FenceSweepDeps {
 /**
  * Runs after every lease round: raises the fence where silence passed the
  * threshold, persists it, and interrupts the coordinator turn running there.
+ * Silence is measured on the wall clock and, within this process, on the
+ * monotonic clock too; the fence goes up when either reaches it.
  */
-export const makeFenceSweep =
-  (deps: FenceSweepDeps) => (records: ReadonlyArray<CoordinatorLeaseRecord>) =>
+export const makeFenceSweep = (deps: FenceSweepDeps) => {
+  const monotonic = deps.monotonic ?? systemMonotonicClock;
+  const silences = new Map<string, MonotonicSilence>();
+  return (records: ReadonlyArray<CoordinatorLeaseRecord>) =>
     Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
+      const sample = { wallMs: nowMs, monoMs: monotonic.nowMs() };
       for (const record of records) {
         if (record.target === null || record.fencedSince !== null) continue;
-        if (!coordinatorFenced(record, nowMs)) continue;
+        const silence = monotonicSilence(silences.get(record.projectId), record, sample);
+        if (silence === undefined) silences.delete(record.projectId);
+        else silences.set(record.projectId, silence);
+        const due =
+          coordinatorFenced(record, nowMs) ||
+          (silence !== undefined && monotonicFenceDue(silence, record, sample.monoMs));
+        if (!due) continue;
         const at = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
         const raised = yield* deps.store.modify(record.projectId, (current) =>
           current === undefined || current.target === null || current.fencedSince !== null
@@ -147,6 +239,7 @@ export const makeFenceSweep =
     }).pipe(
       Effect.catchCause((cause) => Effect.logWarning("Coordinator fence sweep failed", { cause })),
     );
+};
 
 /** The gate over this server's lease records. */
 export const layer = Layer.effect(

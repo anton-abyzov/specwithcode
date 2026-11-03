@@ -88,7 +88,7 @@ it("a fresh user can use free macOS speech with no ElevenLabs key, after consent
   expect(call.state.phase).toBe("listening");
 });
 
-it.each(["win32", "linux"])("shows no call controls in the %s app", async (platform) => {
+it.each(["win32"])("shows no call controls in the %s app", async (platform) => {
   bridge.getClientPlatform = () => platform;
   await mount();
   expect(call.available).toBe(false);
@@ -174,4 +174,26 @@ it("shows native setup failures without recording or switching to cloud speech",
   expect(container.textContent).toContain("On-device speech is not available in this build.");
   expect(state.openMicrophone).not.toHaveBeenCalled();
   expect(bridge.synthesizeVoice).not.toHaveBeenCalled();
+});
+
+it("shows voice on Linux and names the machine correctly", async () => {
+  window.desktopBridge = { ...bridge, getClientPlatform: () => "linux" } as DesktopBridge;
+  state.allowed = false;
+  await mount();
+  expect(container.querySelector('[aria-label="Start voice call"]')).not.toBeNull();
+  const { voiceHostName, canHostVoiceCall } = await import("../../studio/voiceCallSupport");
+  expect(voiceHostName()).toBe("this computer");
+  expect(canHostVoiceCall()).toBe(true);
+  expect(canHostVoiceCall({ ...bridge, getClientPlatform: () => "win32" } as DesktopBridge)).toBe(
+    false,
+  );
+});
+
+it("asks before a download even when calls were already allowed", async () => {
+  state.allowed = true;
+  bridge.getVoiceStatus = vi.fn(async () => ({ ...ready, setupBytes: 1000 }));
+  await mount();
+  await act(async () => call.start());
+  expect(call.consentOpen).toBe(true);
+  expect(bridge.requestVoiceAccess).not.toHaveBeenCalled();
 });

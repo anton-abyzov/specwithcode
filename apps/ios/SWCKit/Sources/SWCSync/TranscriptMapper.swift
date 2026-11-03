@@ -113,6 +113,15 @@ public enum TranscriptMapper {
     projection.activeRun != nil
   }
 
+  /// The latest run's predicted next prompt, once that run has completed,
+  /// as the machine's Suggested prompts setting allows.
+  public static func promptSuggestion(_ projection: ThreadProjection, mode: String = "all") -> String? {
+    guard mode != "off", let run = projection.latestRun, run.status == .completed else { return nil }
+    if mode == "native", run.promptSuggestion?.source == "generated" { return nil }
+    let text = run.promptSuggestion?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return text.isEmpty ? nil : text
+  }
+
   public static func queuedCount(_ projection: ThreadProjection) -> Int {
     projection.runs.filter { $0.status == .queued }.count
   }

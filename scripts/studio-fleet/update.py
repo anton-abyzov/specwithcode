@@ -5,7 +5,6 @@ if not __debug__:
 
 import argparse
 import contextlib
-import copy
 import datetime
 import errno
 import hashlib
@@ -16,11 +15,9 @@ import re
 import shlex
 import shutil
 import signal
-import socket
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
 import traceback
 import urllib.error
@@ -35,9 +32,10 @@ from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness, rows_hash,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (SERVICE_EXITED, VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
-                        reap_descendants, idle_providers, idle_provider_trees, started_before)
+                        reap_descendants, idle_providers, idle_provider_trees, started_before, offender_names)
 from release_retention import held_state_backups, prune_releases, prune_state_backups, prune_update_leftovers
 import after_proof
+import update_admission
 import update_apply
 import database_continuity as continuity
 import database_restart
@@ -128,9 +126,9 @@ SERVICE_RESTARTED = ('Guarded prestate changed: the SpecWithCode service restart
 
 SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
 
-def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
+def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None, passing=None):
     """`reads`, an earlier _read_state result for the same `since`, stands in for the database read
-    (snapshot_reusing); every service, file, process and listener check runs again."""
+    (snapshot_reusing); every service, file, process and listener check runs again. `passing`: capture_quiescence's."""
     service = _service(identity)
     home, own, installation, receipt, label, plist, wrapper, launcher, content, node, runtime = (service[key] for key in SERVICE_KEYS)
     protected = {'launcher': launcher, 'plist': plist, 'wrapper': wrapper, 'installation': installation,
@@ -140,9 +138,9 @@ def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
         assert path.is_file() and not path.is_symlink(), 'A protected Studio file is missing or is a link'
     contents = {name: path.read_bytes() for name, path in protected.items()}
     file_hashes = {name: digest(data) for name, data in contents.items()}
-    def service_quiescence():
+    def service_quiescence(passing=None):
         try:
-            return capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments'])
+            return capture_quiescence(runtime['pid'], service['owner'].uid, str(node), content['ProgramArguments'], **({} if passing is None else {'passing': passing}))
         except AssertionError as error:
             # The recorded process is gone. Rows read from it prove nothing about a successor,
             # so this snapshot refuses; the next one starts over from the new runtime record.
@@ -168,7 +166,7 @@ def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
         service_quiescence()
     rows, auth, carried, database = reads or _read_state(own / 'userdata', include_auth, since, True, widen_from)
     other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
-    owned, process_quiescence = service_owns_listener(other, runtime['pid'], read_processes()), service_quiescence()
+    owned, process_quiescence = service_owns_listener(other, runtime['pid'], read_processes()), service_quiescence(passing)
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
             'fileHashes': file_hashes,
@@ -192,8 +190,8 @@ def snapshot(identity, request=None):
     updates = studio_paths.identity_home(pathlib.Path.home().resolve(), identity) / 'updates'
     waits = {'waitsForFolderCopies': True} if request is None or folder_work.request_waits(updates, request) else {}
     assert not waits or not folder_work.in_progress(updates), folder_work.REFUSAL
-    if request is None:
-        return {**_snapshot(identity, False)[0], **waits}
+    if request is None:  # On a large database an admission read (update_admission), not the full read.
+        return {**update_admission.snapshot(identity, _snapshot, _service), **waits}
     # Update now already holds this service. The helper's apply takes the full baseline;
     # the agent needs only admission, identity and idle evidence, not a duplicate row hash.
     service = _service(identity)
@@ -202,7 +200,7 @@ def snapshot(identity, request=None):
     except (AssertionError, OSError, ValueError, TypeError):
         # A forced CLI request need not have a service hold. Its original full
         # snapshot remains safe; only a proven matching hold permits the shortcut.
-        return {**_snapshot(identity, False)[0], **waits}
+        return {**update_admission.snapshot(identity, _snapshot, _service), **waits}
     db = live_database.connect(service['own'] / 'userdata' / 'statev2.sqlite')
     try:
         db.execute('BEGIN')
@@ -243,67 +241,12 @@ def reap(identity, request, report=None, stale=False):
     report.update(result='reaped', observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
     return dict(report)
 
-IDLE_WINDOW_RESETS = {'Native work is not idle', idle_agents.NOT_ALLOWED, 'Owned service has unexpected descendants',
-                      'Owned service has unexpected or missing descendants'}
+IDLE_WINDOW_RESETS = idle_agents.WINDOW_RESETS
 
 def idle_agent_refusal(identity, error, report=None, now=None):
-    """A normal update's fallback when a snapshot refused for processes beneath the service
-    (idle_agents): the service's own idle provider servers, and nothing else, are stopped once
-    the database has shown no work and the same row counts for the quiet window. Returns the
-    REFUSAL line, or None to keep refusal_line's; raises when the fallback does not apply. The
-    snapshot still refuses: the next one decides. `report` holds the reap's record."""
-    home = pathlib.Path.home().resolve()
-    marker_path = safe_path(studio_paths.identity_home(home, identity) / 'updates' / idle_agents.MARKER, home)
-
-    def restart_window(reason):
-        """Work, a terminal or anything else this cannot stop: the quiet window starts again.
-        A slow or busy reading says nothing about work and keeps it."""
-        message = str(reason) if isinstance(reason, AssertionError) else ''
-        if message in IDLE_WINDOW_RESETS and os.path.lexists(str(marker_path)):
-            marker_path.unlink()
-    if not isinstance(error, AssertionError) or 'descendants' not in str(error):
-        restart_window(error)
-        return None
-    service = _service(identity)
-    own, pid = service['own'], service['runtime']['pid']
-    uid, node, arguments = service['owner'].uid, str(service['node']), service['content']['ProgramArguments']
-    assert marker_path == safe_path(own / 'updates' / idle_agents.MARKER, home), 'Owned service home changed'
-    config_path = safe_path(own / 'updates' / 'config.json', home)
-    runtime_path = safe_path(own / 'userdata' / 'server-runtime.json', home)
-
-    def settled():  # Checked first, and again right before every signal.
-        assert (idle_agents.read_json(runtime_path) or {}).get('pid') == pid, 'Owned service process identity changed'
-        config = idle_agents.read_json(config_path)
-        assert idle_agents.allowed(config) and idle_agents.idle(native_work_counts(own / 'userdata')), \
-            idle_agents.NOT_ALLOWED
-        return config
-    try:
-        config = settled()
-        digest = idle_agents.work_digest(guarded_row_counts(own / 'userdata'))
-        providers = idle_providers(pid, uid, node, arguments)
-    except BaseException as reason:
-        restart_window(reason)
-        raise
-    now = now or datetime.datetime.now(datetime.timezone.utc)
-    marker, left = idle_agents.observe(idle_agents.read_json(marker_path), pid, digest, now,
-                                       idle_agents.quiet_minutes(config))
-    if left:
-        _write_private(marker_path, (json.dumps(marker, indent=2) + '\n').encode())
-        return idle_agents.refusal(providers, wait=left)
-    marker_path.unlink()
-    report = {} if report is None else report
-    report.update(schemaVersion=1, identity=identity, reason=idle_agents.CODE, servicePid=pid, providers=providers,
-                  result='refused')
-    receipts = safe_path(own / 'updates' / 'receipts', home)
-    receipts.mkdir(mode=0o700, exist_ok=True)
-    record = safe_path(receipts / ('idle-agents-%s-%s.json' % (now.strftime('%Y%m%dT%H%M%SZ'), uuid.uuid4().hex[:8])), home)
-    try:
-        reap_descendants(pid, uid, node, arguments, report=report, guard=settled, select=idle_provider_trees)
-        report['result'] = 'reaped'
-    finally:  # Whatever was signalled is recorded, even when the reap stopped part way.
-        report['observedAt'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        _write_private(record, (json.dumps(report, indent=2) + '\n').encode())
-    return idle_agents.refusal(providers, stopped=len(report['signals']))
+    """idle_agents.refusal_fallback over this module's checks: a normal update's fallback when a
+    snapshot refused for processes beneath the service."""
+    return idle_agents.refusal_fallback(database_restart.Names(globals()), identity, error, report, now)
 
 DATABASE_RESTART_REASONS = {LOCKS_LOST: 'locks-lost', DETACHED_DATABASE: 'detached'}
 
@@ -741,8 +684,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     # is taken first, so a commit at any point after it shows; the -wal position too, so a re-read
     # can read only what committed since (read_delta). `base` is the last exact read.
     before_mark = watermark.take()
-    held_snapshot = expected.get('snapshotMode') == 'held-service'
-    assert expected.get('snapshotMode') in (None, 'held-service'), 'Unknown snapshot mode'
+    held_snapshot, admitted = (expected.get('snapshotMode') == mode for mode in ('held-service', update_admission.MODE))
+    assert expected.get('snapshotMode') in (None, 'held-service', update_admission.MODE), 'Unknown snapshot mode'
     if held_snapshot:
         assert_held(_service(identity), expected.get('installRequestedAt'))
     page_report = {}
@@ -752,11 +695,15 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     # Its lines, for the proof after the restart, kept on disk only while the backup's space is left.
     with after_proof.keeping(own / 'userdata' / 'statev2.sqlite', backup_space_needed(own, home, _clonefile())[0]) as kept:
         before, original_auth, carried = (page_mode.snapshot() if page_mode else
-            snapshot_since(identity, None if held_snapshot else expected['rows'], capture_auth))
+            snapshot_since(identity, None if held_snapshot else update_admission.since(expected) if admitted else expected['rows'], capture_auth))
     if held_snapshot:
         service = _service(identity)
         assert service['runtime']['pid'] == before['servicePid'], HOLD_REFUSAL
         assert_held(service, expected.get('installRequestedAt'))
+    elif admitted:  # The admission's facts in this read; then this read is the baseline, as when held.
+        update_admission.assert_admitted(expected['admissionProof'], before, carried)
+        carried = None
+    if held_snapshot or admitted:
         # Only database evidence is rebased. Every identity, pointer, file and process
         # comparison against the agent's admission still runs below.
         expected = {**expected, 'rows': before['rows']}
@@ -1133,7 +1080,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         if page_mode and page_after is None:
             progress_file.expect(False, _database_bytes(own))  # Before the clone's full read, not after it.
             before, original_auth = page_mode.full_baseline(held, before)
-            progress['pageFallback'] = page_mode.fallback_reason
+            page_mode.report(progress)  # pageFallback, and every process refusal it waited through.
             widen = ({'widen_from': before['databaseCapture']['schema']['columns']} if allow_project_migrations else {})
         reads = (None if page_mode else after_proof.decide(
             own / 'userdata', held, kept, base['before'], before['rows'], capture_auth, progress, lap))
@@ -1197,7 +1144,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                   'settingsContinuity': settings_continuity_report,
                   'stateBackup': progress['stateBackup'], 'prunedStateBackups': progress['prunedStateBackups']}
         if page_mode and page_mode.verdict: page_mode.receipt(result)
-        if page_mode and page_mode.fallback_reason: result['pageFallback'] = page_mode.fallback_reason
+        if page_mode: page_mode.report(result)
         if migration_cells is not None:
             result['migrationProtectedCells'] = migration_cells
         if widenings:
@@ -1396,14 +1343,14 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
 BUSY_REFUSALS = {'Owned process identities changed during inventory', 'Owned service process identity changed',
                  SERVICE_EXITED, SERVICE_RESTARTED} | VANISHED_READS
 
-def _refusal_detail(code, own):
+def _refusal_detail(code, own, error=None):
     """Counts or names for a refusal, read again after the failed check; '' when unreadable."""
     try:
         if code == 'native-work':
             counts = native_work_counts(own / 'userdata')
             return ' '.join('%s=%d' % (key, counts[key]) for key in ('runs', 'queued', 'requests', 'effects', 'sessions', 'held'))
-        pid = json.loads((own / 'userdata/server-runtime.json').read_text())['pid']
-        return descendant_names(int(pid), read_processes(), str(own))
+        return offender_names(error) or descendant_names(  # The processes that refused, else a fresh read.
+            int(json.loads((own / 'userdata/server-runtime.json').read_text())['pid']), read_processes(), str(own))
     except Exception:
         return ''
 
@@ -1420,7 +1367,7 @@ def refusal_line(identity, error):
     if message == 'Native work is not idle' or 'descendants' in message:
         code = 'native-work' if message == 'Native work is not idle' else 'descendants'
         own = studio_paths.identity_home(pathlib.Path.home().resolve(), identity)
-        return ('REFUSAL %s %s' % (code, _refusal_detail(code, own))).rstrip()
+        return ('REFUSAL %s %s' % (code, _refusal_detail(code, own, error))).rstrip()
     if isinstance(error, sqlite3.OperationalError) or message in BUSY_REFUSALS:
         return 'REFUSAL busy ' + type(error).__name__
     if message == folder_work.REFUSAL:

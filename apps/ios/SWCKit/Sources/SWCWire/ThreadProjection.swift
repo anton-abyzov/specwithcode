@@ -26,11 +26,14 @@ public struct Run: Codable, Hashable, Sendable, Identifiable {
   public var workStartedAt: Date?
   public var sourcePlanRef: PlanRef?
   public var workspacePreparation: WorkspaceStrategy?
+  /// The predicted next prompt, set only by `run.prompt-suggested`.
+  public var promptSuggestion: PromptSuggestion?
 
   enum CodingKeys: String, CodingKey {
     case id, threadId, ordinal, providerInstanceId, modelSelection, providerThreadId, userMessageId, rootNodeId
     case activeAttemptId, status, queuePosition, queueHeld, cancelledForUpdate, requestedAt, startedAt, completedAt
     case checkpointId, contextHandoffId, restartContinuationOfRunId, workStartedAt, sourcePlanRef, workspacePreparation
+    case promptSuggestion
   }
 
   public init(from decoder: Decoder) throws {
@@ -57,10 +60,23 @@ public struct Run: Codable, Hashable, Sendable, Identifiable {
     workStartedAt = try c.decodeIfPresent(Date.self, forKey: .workStartedAt)
     sourcePlanRef = try? c.decodeIfPresent(PlanRef.self, forKey: .sourcePlanRef)
     workspacePreparation = try? c.decodeIfPresent(WorkspaceStrategy.self, forKey: .workspacePreparation)
+    promptSuggestion = try? c.decodeIfPresent(PromptSuggestion.self, forKey: .promptSuggestion)
   }
 
   /// When the work this run belongs to started; a wake counts from the prompt that started it.
   public var workStartDate: Date { workStartedAt ?? startedAt ?? requestedAt }
+}
+
+/// A predicted next user prompt for a finished run.
+public struct PromptSuggestion: Codable, Hashable, Sendable {
+  public var text: String
+  /// "provider" or "generated".
+  public var source: String
+
+  public init(text: String, source: String) {
+    self.text = text
+    self.source = source
+  }
 }
 
 /// A plan in another thread, for runs and messages that carry one out.

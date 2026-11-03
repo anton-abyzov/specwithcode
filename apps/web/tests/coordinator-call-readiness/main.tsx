@@ -1,5 +1,11 @@
 import { createRoot } from "react-dom/client";
+import { useState } from "react";
 import { useVoiceCall, VoiceCallButton, VoiceCallBar } from "../../src/components/studio/VoiceCall";
+import {
+  useVoiceDictation,
+  VoiceDictationBar,
+  VoiceDictationButton,
+} from "../../src/components/studio/VoiceDictation";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { applyThemePalette } from "../../src/themePalette";
 import { mode } from "./mocks";
@@ -14,7 +20,9 @@ const status = {
 if (mode !== "browser")
   window.desktopBridge = {
     ...(mode === "windows" ? { getClientPlatform: () => "win32" } : {}),
-    getVoiceStatus: async () => status,
+    ...(mode === "linux" ? { getClientPlatform: () => "linux" } : {}),
+    getVoiceStatus: async () =>
+      mode === "linux" ? { ...status, setupBytes: 279_751_666, setupPercent: 40 } : status,
     requestVoiceAccess: async () => {
       document.body.dataset.prepare = "called";
       return mode === "missing-helper"
@@ -26,11 +34,13 @@ if (mode !== "browser")
         : status;
     },
     setVoiceCallActive: async () => {},
-    transcribeVoice: async () => "",
+    transcribeVoice: async () => (mode === "linux" ? "merge the SpecWeave pull request" : ""),
     synthesizeVoice: async () => new Uint8Array(),
     openMicrophoneSettings: async () => {},
   } as unknown as DesktopBridge;
 function App() {
+  const [message, setMessage] = useState("");
+  const dictation = useVoiceDictation(setMessage as never, "fixture");
   const call = useVoiceCall(
     async () => null,
     mode === "provider-missing"
@@ -56,7 +66,8 @@ function App() {
           No account credentials, microphone recording or paid requests are used in this fixture.
         </p>
         <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <VoiceCallButton call={call} disabled={false} />
+          <VoiceDictationButton dictation={dictation} disabled={call.active} />
+          <VoiceCallButton call={call} disabled={dictation.active} />
           <span id="readiness">
             {call.unavailableReason ??
               "Ready. Free macOS speech; your selected coordinator provider."}
@@ -64,6 +75,8 @@ function App() {
         </div>
         <div style={{ marginTop: 24 }}>
           <VoiceCallBar call={call} />
+          <VoiceDictationBar dictation={dictation} />
+          <textarea id="project-prompt" readOnly value={message} style={{ width: "100%" }} />
         </div>
         <output id="phase">{call.state.phase}</output>
       </main>

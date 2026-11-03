@@ -234,7 +234,10 @@ export const make = Effect.gen(function* () {
             wantsContent:
               held === null ||
               held.digest !== request.contentDigest ||
-              held.from.environmentId !== record.coordinator.environmentId,
+              held.from.environmentId !== record.coordinator.environmentId ||
+              // A coordinator that sends routines; one that predates them sends no digest.
+              (request.routinesDigest !== undefined &&
+                held.routinesDigest !== request.routinesDigest),
             standbySleeping: verdict.record.standbySleeping,
             receivedAt,
           };
@@ -257,6 +260,8 @@ export const make = Effect.gen(function* () {
               instructions: request.instructions,
               notes: request.notes,
               notesTruncated: request.notesTruncated,
+              routines: request.routines,
+              routinesDigest: request.routinesDigest,
             },
           })
           .pipe(

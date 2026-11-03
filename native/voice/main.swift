@@ -1,10 +1,10 @@
-// studio-voice: on-device speech helper for SpecWithCode voice calls (macOS).
+// studio-voice: on-device speech helper for SpecWithCode voice (macOS).
 //
 // Protocol: one JSON object per line on stdin, one JSON reply per line on stdout.
 //   {"id":1,"op":"status"}                          -> {"id":1,"ok":true,"speech":"authorized|denied|restricted|notDetermined","engine":"analyzer|recognizer"}
 //   {"id":2,"op":"authorize"}                       -> same shape as status, after the system prompt
 //   {"id":5,"op":"prepare","locale":"en-US"}       -> {"id":5,"ok":true} (loads the speech model)
-//   {"id":3,"op":"transcribe","path":"/x.wav","locale":"en-US"} -> {"id":3,"ok":true,"text":"..."}
+//   {"id":3,"op":"transcribe","path":"/x.wav","locale":"en-US","contextualStrings":["SpecWeave"]} -> {"id":3,"ok":true,"text":"..."}
 //   {"id":4,"op":"speak","text":"...","path":"/y.wav","voice":"<identifier>"}  -> {"id":4,"ok":true}
 // Audio never leaves the Mac: transcription and speech run on-device.
 
@@ -20,6 +20,7 @@ struct Request: Decodable {
   let text: String?
   let voice: String?
   let rate: Float?
+  let contextualStrings: [String]?
 }
 
 struct HelperError: Error {
@@ -61,7 +62,7 @@ func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus
 }
 
 @available(macOS 26.0, *)
-func transcribeWithAnalyzer(url: URL, localeId: String) async throws -> String {
+func transcribeWithAnalyzer(url: URL, localeId: String, hints: [String]) async throws -> String {
   let requested = Locale(identifier: localeId)
   guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requested) else {
     throw HelperError(message: "unsupported-locale")
@@ -72,6 +73,11 @@ func transcribeWithAnalyzer(url: URL, localeId: String) async throws -> String {
     try await request.downloadAndInstall()
   }
   let analyzer = SpeechAnalyzer(modules: [transcriber])
+  if !hints.isEmpty {
+    let context = AnalysisContext()
+    context.contextualStrings = [.general: hints]
+    try await analyzer.setContext(context)
+  }
   let collector = Task { () throws -> String in
     var text = ""
     for try await result in transcriber.results where result.isFinal {
@@ -104,7 +110,7 @@ func prepareAnalyzer(localeId: String) async throws {
   await analyzer.cancelAndFinishNow()
 }
 
-func transcribeWithRecognizer(url: URL, localeId: String) async throws -> String {
+func transcribeWithRecognizer(url: URL, localeId: String, hints: [String]) async throws -> String {
   guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeId)),
     recognizer.isAvailable
   else {
@@ -112,6 +118,7 @@ func transcribeWithRecognizer(url: URL, localeId: String) async throws -> String
   }
   let request = SFSpeechURLRecognitionRequest(url: url)
   request.shouldReportPartialResults = false
+  request.contextualStrings = hints
   guard recognizer.supportsOnDeviceRecognition else {
     throw HelperError(message: "local-recognition-unavailable")
   }
@@ -139,14 +146,14 @@ func transcribeWithRecognizer(url: URL, localeId: String) async throws -> String
   }
 }
 
-func transcribe(path: String, localeId: String) async throws -> String {
+func transcribe(path: String, localeId: String, hints: [String]) async throws -> String {
   let url = URL(fileURLWithPath: path)
   if #available(macOS 26.0, *) {
-    return try await transcribeWithAnalyzer(url: url, localeId: localeId)
+    return try await transcribeWithAnalyzer(url: url, localeId: localeId, hints: hints)
   }
   let status = await requestSpeechAuthorization()
   guard status == .authorized else { throw HelperError(message: "speech-not-authorized") }
-  return try await transcribeWithRecognizer(url: url, localeId: localeId)
+  return try await transcribeWithRecognizer(url: url, localeId: localeId, hints: hints)
 }
 
 /// The highest-quality installed voice for the language; novelty and Personal Voice are skipped.
@@ -264,7 +271,9 @@ func handle(_ request: Request) async {
       reply(["id": request.id, "ok": true])
     case "transcribe":
       guard let path = request.path else { throw HelperError(message: "missing-path") }
-      let text = try await transcribe(path: path, localeId: request.locale ?? Locale.current.identifier)
+      let text = try await transcribe(
+        path: path, localeId: request.locale ?? Locale.current.identifier,
+        hints: request.contextualStrings ?? [])
       reply(["id": request.id, "ok": true, "text": text])
     case "speak":
       guard let path = request.path, let text = request.text else {

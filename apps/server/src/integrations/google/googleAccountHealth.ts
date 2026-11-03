@@ -36,6 +36,20 @@ export const GoogleProjectStatus = Schema.Struct({
   guidance: Schema.String,
   checkedAt: Schema.NullOr(Schema.String),
   serviceChecks: Schema.Array(GoogleServiceCheck),
+  /**
+   * When the project may read more than one Google account: each with what it may
+   * read there. `email` and the checks above describe the default one.
+   */
+  accounts: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        account: Schema.String,
+        label: Schema.NullOr(Schema.String),
+        default: Schema.Boolean,
+        services: Schema.Array(GoogleService),
+      }),
+    ),
+  ),
 });
 export type GoogleProjectStatus = typeof GoogleProjectStatus.Type;
 

@@ -723,10 +723,13 @@ private struct ChatScreen: View {
         placeholder: session.isRunning ? nil : placeholder,
         blockedReason: session.machineOnline ? session.sendBlockedReason : "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
+        // Set only from a thread's runs, so chats without runs offer none.
+        suggestion: session.isStale ? nil : session.promptSuggestion,
         focus: $composerFocused,
         onSend: { send() },
         onStop: session.isStale ? nil : { stop() },
-        onAttach: { choosingAttachment = true }
+        onAttach: { choosingAttachment = true },
+        onAcceptSuggestion: { draft.wrappedValue = $0 }
       )
     }
     .frame(maxWidth: WeaveSize.readableColumn)

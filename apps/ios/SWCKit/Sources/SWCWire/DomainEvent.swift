@@ -11,6 +11,8 @@ public struct DomainEvent: Codable, Hashable, Sendable, Identifiable {
     case thread(AppThread)
     /// `run.created` and `run.updated`.
     case run(Run)
+    /// `run.prompt-suggested`.
+    case promptSuggestion(RunPromptSuggestion)
     case message(ConversationMessage)
     case turnItem(TurnItem)
     case plan(PlanArtifact)
@@ -50,7 +52,7 @@ public struct DomainEvent: Codable, Hashable, Sendable, Identifiable {
 
   /// Every type decoded into a typed payload.
   public static let typedEventTypes: Set<String> = threadEventTypes.union([
-    "run.created", "run.updated", "message.updated", "turn-item.updated", "plan.updated", "runtime-request.updated",
+    "run.created", "run.updated", "run.prompt-suggested", "message.updated", "turn-item.updated", "plan.updated", "runtime-request.updated",
   ])
 
   enum CodingKeys: String, CodingKey { case id, threadId, runId, nodeId, driver, providerInstanceId, rawEventId, occurredAt, type, payload }
@@ -74,6 +76,8 @@ public struct DomainEvent: Codable, Hashable, Sendable, Identifiable {
     switch type {
     case "run.created", "run.updated":
       payload = .run(try c.decode(Run.self, forKey: .payload))
+    case "run.prompt-suggested":
+      payload = .promptSuggestion(try c.decode(RunPromptSuggestion.self, forKey: .payload))
     case "message.updated":
       payload = .message(try c.decode(ConversationMessage.self, forKey: .payload))
     case "turn-item.updated":
@@ -119,6 +123,7 @@ public struct DomainEvent: Codable, Hashable, Sendable, Identifiable {
     switch payload {
     case let .thread(v): try c.encode(v, forKey: .payload)
     case let .run(v): try c.encode(v, forKey: .payload)
+    case let .promptSuggestion(v): try c.encode(v, forKey: .payload)
     case let .message(v): try c.encode(v, forKey: .payload)
     case let .turnItem(v): try c.encode(v, forKey: .payload)
     case let .plan(v): try c.encode(v, forKey: .payload)
@@ -130,6 +135,17 @@ public struct DomainEvent: Codable, Hashable, Sendable, Identifiable {
   public var isUnknown: Bool {
     if case .unknown = payload { return true }
     return false
+  }
+}
+
+/// The payload of `run.prompt-suggested`.
+public struct RunPromptSuggestion: Codable, Hashable, Sendable {
+  public var runId: String
+  public var promptSuggestion: PromptSuggestion
+
+  public init(runId: String, promptSuggestion: PromptSuggestion) {
+    self.runId = runId
+    self.promptSuggestion = promptSuggestion
   }
 }
 

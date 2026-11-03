@@ -164,9 +164,65 @@ export interface ServiceInstallRequest {
 
 /**
  * An install request the agent has not started within this long lapses
- * (`update_request.py` REQUEST_TTL), so it never installs at a later idle moment.
+ * (`update_request.py` REQUEST_TTL), so it never installs at a later idle moment,
+ * unless the agent keeps a forced one waiting (SERVICE_INSTALL_REQUEST_TTL_MAX_MS).
  */
 export const SERVICE_INSTALL_REQUEST_TTL_MS = 10 * 60_000;
+
+/**
+ * `update_request.py` REQUEST_TTL_MAX and WAITING_FRESH: the agent keeps a
+ * forced request whose last pass, within WAITING_FRESH, ended waiting for
+ * running work past SERVICE_INSTALL_REQUEST_TTL_MS, up to this long after it
+ * was written. The app must count it as pending for as long, or the agent
+ * installs at a moment the app no longer shows an install for.
+ */
+export const SERVICE_INSTALL_REQUEST_TTL_MAX_MS = 30 * 60_000;
+const SERVICE_INSTALL_WAITING_FRESH_MS = 11 * 60_000;
+// update_request.py CLOCK_SKEW.
+const AGENT_CLOCK_SKEW_MS = 5 * 60_000;
+
+function parsedRecord(text: string | null | undefined): Record<string, unknown> | null {
+  if (!text) return null;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The agent keeps this forced, version-bound request past
+ * SERVICE_INSTALL_REQUEST_TTL_MS (`update_request.py` _verdict with
+ * waiting_on): its last pass answered this request and ended
+ * "waiting-for-quiet" with a message within WAITING_FRESH, and the request is
+ * at most SERVICE_INSTALL_REQUEST_TTL_MAX_MS old.
+ */
+export function agentKeepsWaitingRequest(
+  config: Partial<ServiceAgentConfig> | null,
+  agentState: Record<string, unknown> | null,
+  nowMs: number,
+): boolean {
+  if (config === null || agentState === null || config.installMode !== "force") return false;
+  const requestedAt = config.installRequestedAt;
+  const bound = installRequestRecord(config.installRequest);
+  const requested = isoMillis(requestedAt);
+  if (bound === null || bound.at !== requestedAt || requested === null) return false;
+  if (nowMs - requested > SERVICE_INSTALL_REQUEST_TTL_MAX_MS) return false;
+  const seen = isoMillis(agentState.updatedAt);
+  const message = agentState.message;
+  return (
+    agentState.status === "waiting-for-quiet" &&
+    agentState.answeredInstallRequestAt === requestedAt &&
+    typeof message === "string" &&
+    message.trim().length > 0 &&
+    seen !== null &&
+    nowMs - SERVICE_INSTALL_WAITING_FRESH_MS <= seen &&
+    seen <= nowMs + AGENT_CLOCK_SKEW_MS
+  );
+}
 
 const RELEASE_VERSION = /^(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})\.(?:0|[1-9]\d{0,8})$/;
 
@@ -354,10 +410,16 @@ export function cancelServiceInstallChange(at: string): ServiceAgentConfigChange
 }
 
 /**
- * A forced install is pending and its hold has not passed: the app quit or
- * restarted before the agent was started for it, so start it now.
+ * A forced install is pending and its hold has not passed, or the agent keeps
+ * it waiting for running work (`agentKeepsWaitingRequest`, from the agent's
+ * `state.json`): the app quit or restarted before the agent was started for
+ * it, so start it now.
  */
-export function hasPendingForcedInstall(configText: string | null, nowMs: number): boolean {
+export function hasPendingForcedInstall(
+  configText: string | null,
+  nowMs: number,
+  stateText: string | null = null,
+): boolean {
   if (configText === null) return false;
   let config: Partial<ServiceAgentConfig> | null;
   try {
@@ -376,13 +438,9 @@ export function hasPendingForcedInstall(configText: string | null, nowMs: number
     bound.at === config.installRequestedAt &&
     requested !== null &&
     nowMs - requested > SERVICE_INSTALL_REQUEST_TTL_MS;
-  return (
-    requested !== null &&
-    holdUntil !== null &&
-    holdUntil > nowMs &&
-    !lapsed &&
-    (cancelled === null || cancelled <= requested)
-  );
+  if (requested === null || (cancelled !== null && cancelled > requested)) return false;
+  if (agentKeepsWaitingRequest(config, parsedRecord(stateText), nowMs)) return true;
+  return holdUntil !== null && holdUntil > nowMs && !lapsed;
 }
 
 export function buildServiceAgentConfig(
@@ -494,6 +552,8 @@ export function pendingServiceInstall(input: {
   readonly status: StudioServiceUpdateStatus;
   /** The release the agent fetched: the one it installs while "installing". */
   readonly downloadedVersion?: string | null;
+  /** The agent's parsed `state.json`: decides whether it keeps a waiting request. */
+  readonly agentState?: Record<string, unknown> | null;
   readonly nowMs: number;
 }): StudioServicePendingInstall | null {
   if (!input.configText) return null;
@@ -522,7 +582,8 @@ export function pendingServiceInstall(input: {
       requested + SERVICE_INSTALL_REQUEST_TTL_MS,
       isoMillis(holdUntil) ?? Number.NEGATIVE_INFINITY,
     );
-    if (input.nowMs > servedUntil) return null;
+    const kept = agentKeepsWaitingRequest(config, input.agentState ?? null, input.nowMs);
+    if (input.nowMs > servedUntil && !kept) return null;
   }
   return { requestedAt, mode, version, holdUntil, handled };
 }
@@ -564,12 +625,14 @@ export function toServiceUpdateState(input: {
     status: StudioServiceUpdateStatus,
     handledAt: unknown,
     downloadedVersion: string | null = null,
+    agentState: Record<string, unknown> | null = null,
   ) =>
     pendingServiceInstall({
       configText: input.configText,
       handledAt,
       status,
       downloadedVersion,
+      agentState,
       nowMs,
     });
   if (input.stateText === null) {
@@ -618,7 +681,7 @@ export function toServiceUpdateState(input: {
     message: stringOrNull(record.message),
     lastInstall,
     updatedAt: stringOrNull(record.updatedAt),
-    pendingInstall: pending(status, record.handledInstallRequestAt, downloadedVersion),
+    pendingInstall: pending(status, record.handledInstallRequestAt, downloadedVersion, record),
     ...(input.run ? { run: input.run } : {}),
     ...automaticPauseField(record.automaticPauseAt, input.configText),
   };
@@ -1120,6 +1183,7 @@ export function makeServiceUpdateController(input: {
       return hasPendingForcedInstall(
         readTextOrNull(Path.join(updatesDir(target), "config.json")),
         nowMs,
+        readTextOrNull(Path.join(updatesDir(target), "state.json")),
       );
     },
     runFiles: () => {

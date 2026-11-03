@@ -83,7 +83,25 @@ export interface MachineProject {
   readonly roleHelp: string;
   /** The other machines that hold a copy. */
   readonly alsoOn: readonly string[];
+  /** Those copies in full: each machine, how this app sees it, its folder and role. */
+  readonly elsewhere: readonly MachineProjectCopy[];
   readonly folder: string | null;
+}
+
+/** A copy of a project on another machine. */
+export interface MachineProjectCopy {
+  readonly environmentId: EnvironmentId;
+  readonly name: string;
+  readonly seen: MachineSeen;
+  /** Null when this app cannot see that copy, so its folder is unknown here. */
+  readonly folder: string | null;
+  /** Null when this app cannot see that copy. */
+  readonly roleLabel: string | null;
+}
+
+export interface MachineSeen {
+  readonly state: MachineSeenState;
+  readonly text: string;
 }
 
 /** A machine's projects, split as the sidebar splits them. */
@@ -124,7 +142,7 @@ export interface MachineRowModel {
   readonly label: string;
   /** The machine's own name when it differs from the label. */
   readonly machineName: string | null;
-  readonly seen: { readonly state: MachineSeenState; readonly text: string };
+  readonly seen: MachineSeen;
   readonly fleetMachine: StudioFleetMachine | null;
   /** Connect, for a private machine this app cannot see yet. */
   readonly connect: MachineConnectAction | null;
@@ -216,19 +234,32 @@ export function fleetConnectAction(
   return { enabled: true, label: "Connect" };
 }
 
-function otherMachines(
+function otherCopies(
   environmentId: EnvironmentId,
   project: MachineProjectInput,
-  nameOf: (environmentId: EnvironmentId) => string,
-): string[] {
+  projects: readonly MachineProjectInput[],
+  machineOf: (environmentId: EnvironmentId) => { name: string; seen: MachineSeen },
+): MachineProjectCopy[] {
   const members = project.workspaceSettings?.logicalProject?.members ?? [];
-  return [
-    ...new Set(
-      members
-        .filter((member) => member.environmentId !== environmentId)
-        .map((member) => nameOf(member.environmentId)),
-    ),
-  ];
+  const seen = new Set<string>([environmentId]);
+  const copies: MachineProjectCopy[] = [];
+  for (const member of members) {
+    if (seen.has(member.environmentId)) continue;
+    seen.add(member.environmentId);
+    const copy = projects.find(
+      (candidate) =>
+        candidate.environmentId === member.environmentId && candidate.id === member.projectId,
+    );
+    copies.push({
+      environmentId: member.environmentId,
+      ...machineOf(member.environmentId),
+      folder: copy?.workspaceRoot ?? null,
+      roleLabel: copy
+        ? ROLE_LABELS[sharedProjectRole(copy.workspaceSettings?.coordinatorBinding)]
+        : null,
+    });
+  }
+  return copies;
 }
 
 /** Shared copies first, then by name, so the same project sits in the same place on each machine. */
@@ -249,7 +280,7 @@ function projectsOn(
   environmentId: EnvironmentId,
   seen: boolean,
   projects: readonly MachineProjectInput[],
-  nameOf: (environmentId: EnvironmentId) => string,
+  machineOf: (environmentId: EnvironmentId) => { name: string; seen: MachineSeen },
   scratchRootFor: (environmentId: EnvironmentId) => string | null | undefined,
 ): MachineProjects {
   const lists: Record<keyof MachineProjects, MachineProject[]> = {
@@ -268,13 +299,15 @@ function projectsOn(
       const role = shared
         ? sharedProjectRole(project.workspaceSettings?.coordinatorBinding)
         : "only-here";
+      const elsewhere = shared ? otherCopies(environmentId, project, projects, machineOf) : [];
       lists[projectListOf(project)].push({
         key: project.workspaceSettings?.logicalProject?.id ?? project.id,
         title: logicalProjectTitle(project),
         role,
         roleLabel: ROLE_LABELS[role],
         roleHelp: ROLE_HELP[role],
-        alsoOn: shared ? otherMachines(environmentId, project, nameOf) : [],
+        alsoOn: elsewhere.map((copy) => copy.name),
+        elsewhere,
         folder: project.workspaceRoot,
       });
     }
@@ -287,6 +320,7 @@ function projectsOn(
       if (!logical || !isSharedProject(project) || seenIdentities.has(logical.id)) continue;
       if (!logical.members.some((member) => member.environmentId === environmentId)) continue;
       seenIdentities.add(logical.id);
+      const elsewhere = otherCopies(environmentId, project, projects, machineOf);
       // That machine's own copy is out of sight, so the copies in sight decide together.
       const copies = projects.filter(
         (copy) => copy.workspaceSettings?.logicalProject?.id === logical.id,
@@ -302,7 +336,8 @@ function projectsOn(
         role: null,
         roleLabel: "Connect to see its role",
         roleHelp: "This app cannot see this machine, so it cannot tell what this copy does.",
-        alsoOn: otherMachines(environmentId, project, nameOf),
+        alsoOn: elsewhere.map((copy) => copy.name),
+        elsewhere,
         folder: null,
       });
     }
@@ -394,6 +429,22 @@ export function buildMachineRows(input: {
     const label = labels.get(environmentId) ?? "another machine";
     return input.displayName?.(environmentId, label) ?? label;
   };
+  const environmentsById = new Map(
+    input.environments.map((environment) => [environment.environmentId, environment] as const),
+  );
+  const seenOf = (environmentId: EnvironmentId): MachineSeen => {
+    if (environmentId === input.primaryEnvironmentId)
+      return { state: "this-machine", text: "This machine" };
+    const environment = environmentsById.get(environmentId);
+    if (!environment) return { state: "not-connected", text: "This app cannot see it" };
+    return environment.phase === "connected"
+      ? { state: "connected", text: "This app can see it" }
+      : { state: "elsewhere", text: environment.statusText };
+  };
+  const machineOf = (environmentId: EnvironmentId) => ({
+    name: nameOf(environmentId),
+    seen: seenOf(environmentId),
+  });
   const scratchRootFor = input.scratchRootFor ?? (() => null);
   const ordered = input.environments.toSorted(
     (left, right) =>
@@ -407,11 +458,7 @@ export function buildMachineRows(input: {
       ? null
       : (fleetByEnvironment.get(environment.environmentId) ?? null);
     const connected = environment.phase === "connected";
-    const seen = isThisMachine
-      ? { state: "this-machine" as const, text: "This machine" }
-      : connected
-        ? { state: "connected" as const, text: "This app can see it" }
-        : { state: "elsewhere" as const, text: environment.statusText };
+    const seen = seenOf(environment.environmentId);
     return {
       environmentId: environment.environmentId,
       label: environment.label,
@@ -428,7 +475,13 @@ export function buildMachineRows(input: {
           : null,
       workers: fleetMachine ? workerGrant(fleetMachine) : null,
       workHere: isThisMachine ? null : workHereFor(environment.environmentId, input.workGrants),
-      projects: projectsOn(environment.environmentId, true, input.projects, nameOf, scratchRootFor),
+      projects: projectsOn(
+        environment.environmentId,
+        true,
+        input.projects,
+        machineOf,
+        scratchRootFor,
+      ),
       accounts: accountsOn(environment.environmentId, input.hostBlocks),
       connectBothWays: fleetMachine !== null && connected,
       ...(isThisMachine
@@ -461,7 +514,7 @@ export function buildMachineRows(input: {
       connect: fleetConnectAction(machine, input.canPair),
       workers: workerGrant(machine),
       workHere: workHereFor(machine.environmentId, input.workGrants),
-      projects: projectsOn(machine.environmentId, false, input.projects, nameOf, scratchRootFor),
+      projects: projectsOn(machine.environmentId, false, input.projects, machineOf, scratchRootFor),
       accounts: null,
       connectBothWays: false,
       ...peerRulesFields(machine.label, undefined, machine),

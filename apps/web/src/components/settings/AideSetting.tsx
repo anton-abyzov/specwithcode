@@ -1,5 +1,5 @@
 /**
- * "Personal assistant (beta)": shows or hides Aide, the machine's personal
+ * "Personal assistant": shows or hides Aide, the machine's personal
  * assistant, on every surface. Saved in this machine's server settings and on
  * by default. Off hides it and stops new setups; nothing is deleted.
  *
@@ -29,7 +29,7 @@ export function AideSetting() {
           checked={aideEnabled}
           disabled={!available}
           onCheckedChange={(checked) => void updateSettings({ aideEnabled: Boolean(checked) })}
-          aria-label="Personal assistant (beta)"
+          aria-label="Personal assistant"
         />
       }
     />

@@ -59,6 +59,13 @@ describe("searchSettings", () => {
     expect(searchSettings(query).map((item) => item.id)).toContain("send-shortcut");
   });
 
+  it.each(["suggested prompts", "next prompt", "ghost"])(
+    "finds Suggested prompts for %s",
+    (query) => {
+      expect(searchSettings(query).map((item) => item.id)).toContain("prompt-suggestions");
+    },
+  );
+
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);

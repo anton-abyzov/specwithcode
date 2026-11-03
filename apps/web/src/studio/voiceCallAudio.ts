@@ -1,5 +1,7 @@
 import type { VoiceCallMicrophone } from "@specweave-studio/client-runtime/voice-call";
 
+import { isLinuxVoiceHost } from "./voiceCallSupport";
+
 const FRAME_SIZE = 1024;
 
 /**
@@ -28,11 +30,20 @@ export async function openCallMicrophone(
     const name = error instanceof DOMException ? error.name : "";
     if (name === "NotAllowedError" || name === "SecurityError") {
       throw new Error(
-        "Microphone access is off for SpecWithCode. Turn it on in System Settings › Privacy & Security › Microphone.",
+        isLinuxVoiceHost()
+          ? "Your desktop refused SpecWithCode the microphone. Check the input in Sound settings, then try again."
+          : "Microphone access is off for SpecWithCode. Turn it on in System Settings › Privacy & Security › Microphone.",
         { cause: error },
       );
     }
-    if (name === "NotFoundError") throw new Error("No microphone was found.", { cause: error });
+    if (name === "NotFoundError") {
+      throw new Error(
+        isLinuxVoiceHost()
+          ? "No microphone was found. Plug in a headset or USB microphone, or choose an input in Sound settings, then try again."
+          : "No microphone was found.",
+        { cause: error },
+      );
+    }
     throw new Error("Could not open the microphone.", { cause: error });
   }
   let context: AudioContext | null = null;

@@ -31,6 +31,38 @@ import time
 
 import relay_ownership
 
+UNEXPECTED_DESCENDANTS = 'Owned service has unexpected descendants'
+OFFENDERS_SHOWN = 8
+
+
+class UnexpectedDescendants(AssertionError):
+    """A refusal that names the processes that tripped it: pid, parent pid and the executable's
+    basename from ps comm, never argv. str() stays the fixed message every caller matches."""
+
+    def __init__(self, offenders=(), message=UNEXPECTED_DESCENDANTS):
+        super().__init__(message)
+        offenders = list(offenders)
+        self.total = len(offenders)
+        self.offenders = [{'pid': item['pid'], 'parent': item['parent'],
+                           'name': re.sub(r'[^A-Za-z0-9._+-]', '_', posixpath.basename(item['executable']))[:40] or '_'}
+                          for item in offenders[:OFFENDERS_SHOWN]]
+
+    def detail(self):
+        shown = ', '.join('pid %d %s (parent %d)' % (item['pid'], item['name'], item['parent']) for item in self.offenders)
+        more = self.total - len(self.offenders)
+        return shown + (' and %d more' % more if more > 0 else '')
+
+
+def offender_names(error):
+    """`name=count ... pid:N ...` for a refusal that names its processes (UnexpectedDescendants), as
+    update.py's REFUSAL line carries them; '' for any other error."""
+    offenders = getattr(error, 'offenders', None) or []
+    names = {}
+    for item in offenders:
+        names[item['name']] = names.get(item['name'], 0) + 1
+    pairs = ' '.join('%s=%d' % pair for pair in sorted(names.items()))
+    return (pairs + ' ' + ' '.join('pid:%d' % item['pid'] for item in offenders)).strip()
+
 
 def parse_processes(value):
     processes = {}
@@ -187,20 +219,20 @@ def _server_browsers(processes, root_pid, uid, home, candidates):
     """
     executable = _server_browser_executable(home)
     browsers = [item for item in candidates if item['parent'] == root_pid]
-    assert len(browsers) <= SERVER_BROWSER_MAX_BROWSERS and len(candidates) <= SERVER_BROWSER_MAX_PROCESSES, \
-        'Owned service has unexpected descendants'
-    for browser in browsers:
-        assert browser['uid'] == uid and executable.fullmatch(browser['executable']), \
-            'Owned service has unexpected descendants'
-    owner = {item['pid'] for item in browsers}
+    if len(browsers) > SERVER_BROWSER_MAX_BROWSERS or len(candidates) > SERVER_BROWSER_MAX_PROCESSES:
+        raise UnexpectedDescendants(candidates)
+    wrong = [item for item in browsers if not (item['uid'] == uid and executable.fullmatch(item['executable']))]
+    owner = {item['pid'] for item in browsers} - {item['pid'] for item in wrong}
     for item in candidates:
-        if item['pid'] in owner:
+        if item['pid'] in owner or item in wrong:
             continue
         top = item
         while top['parent'] != root_pid:
             top = processes[top['parent']]
-        assert top['pid'] in owner and item['uid'] == uid and item['executable'] == top['executable'], \
-            'Owned service has unexpected descendants'
+        if not (top['pid'] in owner and item['uid'] == uid and item['executable'] == top['executable']):
+            wrong.append(item)
+    if wrong:
+        raise UnexpectedDescendants(sorted(wrong, key=lambda item: item['pid']))
     return browsers
 
 
@@ -246,9 +278,10 @@ def _assert_managed_tunnel(arguments, kernel_executable, tunnel, home):
     kernel the resolved file, so only that listed path is resolved before comparing."""
     listed = tunnel['executable']
     expected = listed if _managed_tunnel_executable(home).fullmatch(listed) else posixpath.realpath(listed)
-    assert isinstance(arguments, list) and len(arguments) == 1 + len(MANAGED_TUNNEL_ARGUMENTS) \
-        and posixpath.basename(arguments[0]) == 'cloudflared' and arguments[1:] == MANAGED_TUNNEL_ARGUMENTS \
-        and listed.startswith('/') and kernel_executable == expected, 'Owned service has unexpected descendants'
+    if not (isinstance(arguments, list) and len(arguments) == 1 + len(MANAGED_TUNNEL_ARGUMENTS)
+            and posixpath.basename(arguments[0]) == 'cloudflared' and arguments[1:] == MANAGED_TUNNEL_ARGUMENTS
+            and listed.startswith('/') and kernel_executable == expected):
+        raise UnexpectedDescendants([tunnel])
 
 
 # The two ways the recorded service process can be gone. Both refuse. An exited one (stopped,
@@ -258,7 +291,10 @@ SERVICE_EXITED = 'Owned service process exited'
 SERVICE_CHANGED = 'Owned service process identity changed'
 
 
-def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True, supervisor_of=None):
+def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True, supervisor_of=None, passing=None):
+    """With a `passing` list (the page proof after a restart, update_apply), the service user's own
+    descendants outside its server browser and tunnel go into it instead of refusing, for the caller
+    to see exit (update_apply PageMode._children_exit); every other check is unchanged."""
     root = processes.get(pid)
     assert pid > 0, SERVICE_CHANGED
     assert root is not None, SERVICE_EXITED
@@ -296,6 +332,10 @@ def _owned_tree(processes, pid, uid, executable, home=None, check_browsers=True,
     # The service's own tunnel is set apart: it is neither work nor stopped (_managed_tunnels).
     tunnels = _managed_tunnels(pid, uid, home, others)
     others = [item for item in others if item not in tunnels]
+    if passing is not None and others:
+        spared = _spared_browsers(processes, pid, uid, home, others)
+        passing.extend(item for item in others if item['pid'] not in spared and item['uid'] == uid)
+        others = [item for item in others if item['pid'] in spared or item['uid'] != uid]
     browsers = _server_browsers(processes, pid, uid, home, others) if others and check_browsers else []
     return (root, parent, supervisor, browsers, sorted(others, key=lambda item: item['pid']),
             sorted(tunnels, key=lambda item: item['pid']))
@@ -310,15 +350,20 @@ def _identity(process):
             'identitySha256': _hash(process)}
 
 
-def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader, executable_reader=None):
-    """The verified tree plus the server-browser processes found in it (kept private)."""
+def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader, executable_reader=None, passing=None):
+    """The verified tree plus the server-browser processes found in it (kept private). With a
+    `passing` list, the owned children _owned_tree sets aside in either inventory are added to it."""
     assert type(uid) is int and uid > 0 and isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
     assert executable.startswith('/') and supervisor_argv[:2] == ['/usr/bin/caffeinate', '-s'] and len(supervisor_argv) == 3
     assert supervisor_argv[2].startswith('/'), 'Supervisor launch path must be absolute'
     home = studio_home_of(supervisor_argv)
     process_reader = process_reader or read_processes
     argv_reader = argv_reader or read_argv
-    first = _owned_tree(process_reader(), pid, uid, executable, home)
+    def tree(found=None):
+        return _owned_tree(process_reader(), pid, uid, executable, home,
+                           passing=None if passing is None else found if found is not None else [])
+    seen_first, seen_second = [], []
+    first = tree(seen_first)
     executable_reader = executable_reader or read_executable
 
     def kernel(reader, target):
@@ -326,8 +371,7 @@ def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader,
             return reader(target)
         except AssertionError:
             # A listed process that exited or was replaced before its read is churn, not a fault.
-            assert _owned_tree(process_reader(), pid, uid, executable, home) == first, \
-                'Owned process identities changed during inventory'
+            assert tree() == first, 'Owned process identities changed during inventory'
             raise
     assert kernel(argv_reader, first[2]['pid']) == supervisor_argv, 'Supervisor arguments differ from the verified LaunchAgent'
     for browser in first[3]:
@@ -336,9 +380,16 @@ def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader,
         _assert_managed_tunnel(kernel(argv_reader, tunnel['pid']), kernel(executable_reader, tunnel['pid']), tunnel, home)
     for item in first[4]:
         # ps reports a name the process chose; the kernel resolves the file it actually runs.
-        assert kernel(executable_reader, item['pid']) == item['executable'], 'Owned service has unexpected descendants'
-    second = _owned_tree(process_reader(), pid, uid, executable, home)
+        if kernel(executable_reader, item['pid']) != item['executable']:
+            raise UnexpectedDescendants([item])
+    second = tree(seen_second)
     assert first == second, 'Owned process identities changed during inventory'
+    if passing is not None:
+        known = {(item['pid'], item['startedAt']) for item in passing}
+        for item in seen_first + seen_second:
+            if (item['pid'], item['startedAt']) not in known:
+                known.add((item['pid'], item['startedAt']))
+                passing.append(item)
     root, parent, supervisor, browsers, others, _ = second
     proof = {'root': _identity(root), 'parentIdentitySha256': _hash(parent),
              'supervisor': _identity(supervisor), 'treeSha256': _hash([root, parent, supervisor]),
@@ -352,8 +403,8 @@ def _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader,
 
 
 def capture_quiescence(pid, uid, executable, supervisor_argv, *, process_reader=None, argv_reader=None,
-                       executable_reader=None):
-    return _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader, executable_reader)[0]
+                       executable_reader=None, passing=None):
+    return _capture(pid, uid, executable, supervisor_argv, process_reader, argv_reader, executable_reader, passing)[0]
 
 
 def quiescence_core(value):
@@ -572,7 +623,6 @@ def _reap_inventory(pid, uid, executable, supervisor_argv, process_reader, argv_
 IDLE_PROVIDER_SERVERS = {'codex': 'app-server'}
 IDLE_PROVIDER_MAX_SERVERS = 8
 IDLE_PROVIDER_MAX_PROCESSES = 256
-UNEXPECTED_DESCENDANTS = 'Owned service has unexpected descendants'
 
 
 def idle_provider_server(arguments, kernel):
@@ -602,12 +652,14 @@ def idle_provider_trees(processes, root_pid, uid, others, spared, argv_reader, e
         while top['parent'] != root_pid:
             top = processes[top['parent']]
         if top['pid'] not in servers:
-            assert top['uid'] == uid, UNEXPECTED_DESCENDANTS
+            if top['uid'] != uid:
+                raise UnexpectedDescendants([top])
             servers[top['pid']] = idle_provider_server(argv_reader(top['pid']), executable_reader(top['pid']))
-        assert servers[top['pid']] is not None and item['uid'] == uid, UNEXPECTED_DESCENDANTS
+        if servers[top['pid']] is None or item['uid'] != uid:
+            raise UnexpectedDescendants([item])
         found[item['pid']] = servers[top['pid']]
-    assert len(servers) <= IDLE_PROVIDER_MAX_SERVERS and len(found) <= IDLE_PROVIDER_MAX_PROCESSES, \
-        UNEXPECTED_DESCENDANTS
+    if len(servers) > IDLE_PROVIDER_MAX_SERVERS or len(found) > IDLE_PROVIDER_MAX_PROCESSES:
+        raise UnexpectedDescendants([item for item in others if item['pid'] in found])
     return found
 
 

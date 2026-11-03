@@ -95,6 +95,18 @@ export interface HandoffNoteGenerationInput {
   modelSelection: ModelSelection;
 }
 
+export interface PromptSuggestionGenerationInput {
+  cwd: string;
+  /** The person's latest message and the agent's reply. */
+  transcript: string;
+  modelSelection: ModelSelection;
+}
+
+export interface PromptSuggestionGenerationResult {
+  /** Empty when the model sees no clear next step. */
+  suggestion: string;
+}
+
 export interface HandoffNoteGenerationResult {
   done: string;
   next: string;
@@ -140,6 +152,14 @@ export class TextGeneration extends Context.Service<
     readonly generateHandoffNote?: (
       input: HandoffNoteGenerationInput,
     ) => Effect.Effect<HandoffNoteGenerationResult, TextGenerationError>;
+
+    /**
+     * Predict the person's next prompt after a reply. Optional: a provider
+     * without it leaves the run without a suggestion.
+     */
+    readonly generatePromptSuggestion?: (
+      input: PromptSuggestionGenerationInput,
+    ) => Effect.Effect<PromptSuggestionGenerationResult, TextGenerationError>;
   }
 >()("specweave-studio/textGeneration/TextGeneration") {}
 
@@ -148,7 +168,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateHandoffNote";
+  | "generateHandoffNote"
+  | "generatePromptSuggestion";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -242,6 +263,19 @@ export const make = Effect.gen(function* () {
                 }),
               )
             : textGeneration.generateHandoffNote(input),
+        ),
+      ),
+    generatePromptSuggestion: (input) =>
+      admittedInstance("generatePromptSuggestion", input).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generatePromptSuggestion === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "generatePromptSuggestion",
+                  detail: "This provider cannot suggest prompts.",
+                }),
+              )
+            : textGeneration.generatePromptSuggestion(input),
         ),
       ),
   });

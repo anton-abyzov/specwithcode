@@ -1,9 +1,14 @@
-import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  TextGenerationError,
+  type CodexSettings,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
+import type { PromptSuggestionGenerationInput } from "../../textGeneration/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { chatGptModels } from "../CodexChatGptModels.ts";
 import { makeCodexManagedRuntime } from "../CodexManagedRuntime.ts";
@@ -257,6 +262,12 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateBranchName", nativeGeneration.generateBranchName(value)),
     generateThreadTitle: (value) =>
       protect("generateThreadTitle", nativeGeneration.generateThreadTitle(value)),
+    ...(nativeGeneration.generatePromptSuggestion === undefined
+      ? {}
+      : {
+          generatePromptSuggestion: (value: PromptSuggestionGenerationInput) =>
+            protect("generatePromptSuggestion", nativeGeneration.generatePromptSuggestion!(value)),
+        }),
   };
   return {
     instanceId,

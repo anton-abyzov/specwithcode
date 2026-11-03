@@ -61,6 +61,14 @@ CHECK_INTERVAL = datetime.timedelta(minutes=60)
 # A request dated this far ahead of the agent's clock was not written by this computer's app.
 CLOCK_SKEW = datetime.timedelta(minutes=5)
 EXPIRED = 'The update request expired before it could start; choose Update now again.'
+# An explicit Update now (installMode force) whose last pass ended waiting on known running work
+# (waiting-for-quiet, with the work it named) is kept past REQUEST_TTL while passes keep serving it,
+# up to REQUEST_TTL_MAX after it was written. A pass that served it longer than WAITING_FRESH ago
+# (update_agent's 600 s StartInterval, plus a minute) is no longer serving it, so it lapses as before.
+# 1.0.160 and 1.0.173 on M4 lapsed at 10 minutes with running turns left and said only EXPIRED.
+REQUEST_TTL_MAX = datetime.timedelta(minutes=30)
+WAITING_FRESH = datetime.timedelta(minutes=11)
+_ATTEMPT = re.compile(r' \(attempt \d{1,6}\)$')
 _SEMVER = re.compile(r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})')
 
 
@@ -92,32 +100,62 @@ def bound(config):
     return record if record['at'] == config.get('installRequestedAt') else None
 
 
-def _verdict(config, state, installed, now, cancelled, ttl_until=None):
+def waiting_on(config, state, now, within=WAITING_FRESH):
+    """What the last pass serving the pending install request was waiting for, in the words it
+    showed (its waiting-for-quiet message without the attempt count); None when that pass ended
+    otherwise, answered another request, or (with `within`) ended longer ago than that."""
+    requested = config.get('installRequestedAt')
+    message, seen = state.get('message'), _time(state.get('updatedAt'))
+    if (not requested or state.get('status') != 'waiting-for-quiet' or state.get('answeredInstallRequestAt') != requested
+            or not isinstance(message, str) or not message.strip() or seen is None
+            or not (within is None or now - within <= seen) or seen > now + CLOCK_SKEW):
+        return None
+    return _ATTEMPT.sub('', message.strip())[:300]
+
+
+def expired_message(waited, waiting):
+    """EXPIRED, then how long the request waited and for what when a pass said (waiting_on)."""
+    if not waiting:
+        return EXPIRED
+    minutes = max(1, int(waited.total_seconds() // 60))
+    return '%s It waited %d minute%s; last: %s' % (EXPIRED, minutes, '' if minutes == 1 else 's', waiting.rstrip('.') + '.')
+
+
+def _verdict(config, state, installed, now, cancelled, ttl_until=None, note=None):
     """(pending, message) for the settings' install request; `installed` is the installed version
     as a tuple, or None. A request that is not pending is settled (copied into
     handledInstallRequestAt); message says why when the user should know. `ttl_until`, the
-    deadline of the update run that owns the request, replaces REQUEST_TTL for it."""
+    deadline of the update run that owns the request, replaces REQUEST_TTL for it. A forced
+    request still waiting on running work is kept up to REQUEST_TTL_MAX, and `note(text)` says so."""
     requested = config.get('installRequestedAt')
     if requested is None or requested == state.get('handledInstallRequestAt'):
         return False, None
     record = bound(config)
-    settled, expired = cancelled(config) or record is False, False
+    settled, expired, waiting = cancelled(config) or record is False, False, None
     if record:
         at, wanted = _time(record['at']), _version(record['version'])
         settled = settled or at > now + CLOCK_SKEW
         settled = settled or (installed is not None and wanted <= installed)
         expired = not settled and (now > ttl_until if ttl_until is not None else now - at > REQUEST_TTL)
+        waiting = waiting_on(config, state, now) if expired else None
+        if waiting and ttl_until is None and config.get('installMode') == 'force' and now - at <= REQUEST_TTL_MAX:
+            expired = False
+            if note:
+                note('keeping the install request of %s past %d minutes, until %s at most: %s' % (
+                    requested, REQUEST_TTL.total_seconds() // 60, _iso(at + REQUEST_TTL_MAX), waiting))
     if settled or expired:
         state['handledInstallRequestAt'] = requested
-    return not (settled or expired), EXPIRED if expired else None
+    # The lapse says what the request last waited for, however long ago a pass said it.
+    return not (settled or expired), expired_message(now - at, waiting_on(config, state, now, None)) if expired else None
 
 
-def pending(config, state, installed, now, cancelled, failure, ttl_until=None):
+def pending(config, state, installed, now, cancelled, failure, ttl_until=None, note=None):
     """True while the settings hold an install request this pass should act on. A request that
     was cancelled, has a malformed record or asks for a version already installed is settled
-    here and never acted on later. One that lapsed is settled too, and raises failure(EXPIRED)
-    so the pass ends saying why instead of with an unrelated status."""
-    waiting, message = _verdict(config, state, installed, now, cancelled, ttl_until)
+    here and never acted on later. One that lapsed is settled too, and raises failure(EXPIRED,
+    with what it last waited for: expired_message) so the pass ends saying why instead of with an
+    unrelated status. `note` is _verdict's."""
+    waiting, message = _verdict(config, state, installed, now, cancelled, ttl_until, note)
     if message:
         raise failure(message)
     return waiting

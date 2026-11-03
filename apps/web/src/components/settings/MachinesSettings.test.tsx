@@ -278,10 +278,65 @@ describe("Settings > Machines", () => {
     expect(html).toContain("Workers allowed");
     expect(html).toContain("EasyChamp");
     expect(html).toContain("Runs workers only");
-    expect(html).toContain("/Users/a/easychamp");
-    expect(html).toContain("someone@example.com · also on M4MAX");
+    // The row keeps the folder short; the button says it in full.
+    expect(html).toContain("~/easychamp");
+    expect(html).toContain(
+      'aria-label="EasyChamp: Also on M4MAX (This machine). Folder /Users/a/easychamp. Show every copy"',
+    );
+    expect(html).toContain("someone@example.com");
+    expect(html).toContain('<span class="sr-only">also on M4MAX</span>');
     expect(html).toContain("Connect to see its accounts.");
     expect(html).toContain("Connect both ways");
+  });
+
+  it("names two other machines as chips, folds the rest into +N and reads them all aloud", () => {
+    setUp();
+    const m2 = EnvironmentId.make("env-m2");
+    runtime.environments = [...runtime.environments, environment(m2, "ministorm")];
+    runtime.projects = [
+      {
+        environmentId: m4,
+        id: "p-wide",
+        title: "wide",
+        workspaceRoot: "/Users/you/Projects/github/specweave-umb",
+        workspaceSettings: {
+          kind: "code",
+          logicalProject: {
+            id: "logical-wide",
+            title: "Umbrella",
+            coordinatorId: "c",
+            members: [
+              member(m4, "p-wide"),
+              member(m3, "p-3"),
+              member(m2, "p-2"),
+              member(m1, "p-1"),
+            ],
+          },
+        },
+      },
+    ];
+    runtime.blocks = [
+      {
+        environmentId: m4,
+        providers: [
+          {
+            key: "claude",
+            label: "Claude",
+            identity: "admin@example.com",
+            sharedWith: ["MacBook Pro", "M1Max", "ministorm"],
+          },
+        ],
+      },
+    ];
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).toContain('aria-label="Same account on MacBook Pro, M1Max, ministorm"');
+    // Home as "~", and the folder's own name kept whole however narrow the row.
+    expect(html).toContain('~/Projects/github/</span><span class="shrink-0">specweave-umb');
+    expect(html).toContain(">+1<");
+    expect(html).toContain(
+      "Umbrella: Also on MacBook Pro (This app can see it); ministorm (This app can see it); M1Max (This app cannot see it). Folder /Users/you/Projects/github/specweave-umb. Show every copy",
+    );
+    expect(html).not.toContain("Also on MacBook Pro, ministorm");
   });
 
   it("names each machine by its nickname, keeps the host name beside it and offers Rename", () => {

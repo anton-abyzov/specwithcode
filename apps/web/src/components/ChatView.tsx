@@ -1,6 +1,7 @@
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { modelLabel as threadIdentityLabel } from "../studio/shellModel";
 import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
+import { latestRunPromptSuggestion } from "./chat/composerGhostSuggestion";
 import { resolveLeadingSkillCommand } from "../providerSkillSearch";
 import type {
   ChatViewProps,
@@ -2518,6 +2519,14 @@ function useChatViewState(props: ChatViewProps) {
   const serverLatestRun = useMemo(
     () => (serverProjection === null ? null : deriveLatestThreadRun(serverProjection)),
     [serverProjection],
+  );
+  const promptSuggestionsMode = settings.promptSuggestions;
+  const composerGhostSuggestion = useMemo(
+    () =>
+      serverProjection === null
+        ? null
+        : latestRunPromptSuggestion(serverProjection.runs, promptSuggestionsMode),
+    [serverProjection, promptSuggestionsMode],
   );
   const serverActivityRun = useMemo(
     () => (serverProjection === null ? null : deriveThreadActivityRun(serverProjection)),
@@ -5177,6 +5186,7 @@ function useChatViewState(props: ChatViewProps) {
     activeComposerTaskSteps,
     activeComposerTasksProgress,
     activeContextWindow,
+    composerGhostSuggestion,
     activeCoordinatorShell,
     activeDraftLogicalProjectKey,
     activeEnvironmentConnectionPhase,
@@ -9688,6 +9698,7 @@ export default function ChatView(props: ChatViewProps) {
     continueElsewhereTarget,
     openScratchProject,
     activeActivityRun,
+    composerGhostSuggestion,
     activeComposerTaskSteps,
     activeComposerTasksProgress,
     activeContextWindow,
@@ -15976,6 +15987,7 @@ export default function ChatView(props: ChatViewProps) {
                               onFileOpen={openFileAttachment}
                               editingQueuedAttachments={composerEditingQueuedAttachments}
                               onRemoveEditingQueuedAttachment={removeEditingQueuedAttachment}
+                              ghostSuggestion={isServerThread ? composerGhostSuggestion : null}
                             />
                           )}
                         </div>

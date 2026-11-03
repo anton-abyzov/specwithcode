@@ -29,6 +29,9 @@ import {
   DESKTOP_EXTRA_RESOURCES,
   MAC_VOICE_EXTRA_RESOURCES,
   LINUX_CAPTURE_EXTRA_RESOURCES,
+  LINUX_VOICE_EXTRA_RESOURCES,
+  LINUX_WHISPER_COMMIT,
+  linuxWhisperCmakeArgs,
   LINUX_BROWSER_SECRET_EXTRA_RESOURCES,
   LINUX_FILE_EXCLUSIONS,
   MAC_FILE_EXCLUSIONS,
@@ -798,6 +801,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(linux.extraResources, [
         ...DESKTOP_EXTRA_RESOURCES,
         ...LINUX_CAPTURE_EXTRA_RESOURCES,
+        ...LINUX_VOICE_EXTRA_RESOURCES,
         { from: "apps/desktop/prod-resources/browser-secret", to: "browser-secret" },
       ]);
       assert.deepStrictEqual(win.extraResources, [
@@ -2683,4 +2687,14 @@ it("puts the workspace bin and cargo on PATH for direct script runs", () => {
     `${workspaceBin}${sep}/bin`,
   );
   assert.strictEqual(withBuildToolsOnPath(undefined, "/missing", "/nohome", exists), "");
+});
+
+it("pins whisper.cpp to a full commit and never builds for the build machine's CPU", () => {
+  assert.match(LINUX_WHISPER_COMMIT, /^[0-9a-f]{40}$/);
+  const args = linuxWhisperCmakeArgs("x64");
+  assert.ok(args.includes("-DGGML_NATIVE=OFF"));
+  assert.ok(args.includes("-DGGML_AVX2=ON"));
+  assert.ok(args.includes("-DGGML_OPENMP=OFF"));
+  assert.ok(args.some((arg) => arg.includes("-static-libstdc++")));
+  assert.ok(!linuxWhisperCmakeArgs("arm64").includes("-DGGML_AVX2=ON"));
 });

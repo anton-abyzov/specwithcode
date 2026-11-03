@@ -401,6 +401,10 @@ const layerProjectActionRequestsProvided = ProjectActionRequests.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+// One instance: ProjectLink and the lease receiver publish role changes to it,
+// and other server code reads and subscribes to it.
+const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(layerProjectService));
+
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -409,8 +413,15 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       layerSecretRequestsProvided,
       layerProjectCoordinatorProvided,
       ProcessRunner.layer,
+      // Routines fire only where this machine coordinates their project.
+      layerCoordinatorRoleProvided,
+      CoordinatorWakeGate.layer,
     ),
   ),
+);
+// The routines a coordinator sends its standby, served by the scheduler above.
+const layerRoutineCopiesProvided = ScheduledTaskService.layerRoutineCopies.pipe(
+  Layer.provide(layerScheduledTaskProvided),
 );
 const layerProviderContinuationWorkerProvided = ProviderContinuationService.layer.pipe(
   Layer.provide(
@@ -478,10 +489,6 @@ const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, HandoffTurnGate.layer)),
 );
 
-// One instance: ProjectLink and the lease receiver publish role changes to it,
-// and other server code reads and subscribes to it.
-const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(layerProjectService));
-
 const layerProjectLinkProvided = ProjectLink.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -491,6 +498,8 @@ const layerProjectLinkProvided = ProjectLink.layer.pipe(
       CoordinatorReplicas.layer,
       CoordinatorStandbyStore.layer,
       layerCoordinatorRoleProvided,
+      // The standby keeps the routines its coordinator sends.
+      layerRoutineCopiesProvided,
     ),
   ),
 );
@@ -570,6 +579,8 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
+  // The coordinator's lease loop reads the routines it sends its standby.
+  layerRoutineCopiesProvided,
   layerSecretRequestsProvided,
   layerProjectFolderProvided,
   layerProjectActionRequestsProvided,

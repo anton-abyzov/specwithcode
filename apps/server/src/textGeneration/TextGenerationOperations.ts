@@ -24,6 +24,7 @@ import {
   buildCommitMessagePrompt,
   buildHandoffNotePrompt,
   buildPrContentPrompt,
+  buildPromptSuggestionPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -36,6 +37,7 @@ export type Operation = keyof TextGeneration.TextGeneration["Service"];
 
 type Service = TextGeneration.TextGeneration["Service"];
 type GenerateHandoffNote = NonNullable<Service["generateHandoffNote"]>;
+type GeneratePromptSuggestion = NonNullable<Service["generatePromptSuggestion"]>;
 
 /** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
@@ -194,11 +196,24 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
     },
   );
 
+  const generatePromptSuggestion: GeneratePromptSuggestion = Effect.fn(
+    `${name}.generatePromptSuggestion`,
+  )(function* (input) {
+    const generated = yield* run({
+      operation: "generatePromptSuggestion",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildPromptSuggestionPrompt({ transcript: input.transcript }),
+    });
+    return { suggestion: cleanGeneratedText(generated.suggestion).trim() };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateHandoffNote,
+    generatePromptSuggestion,
   } satisfies Service;
 }

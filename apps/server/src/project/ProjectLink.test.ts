@@ -1192,6 +1192,63 @@ describe("ProjectLink", () => {
           "Ship on Fridays only.",
         );
       });
+      it("keeps the coordinator's routines on the standby, sent again only when they change", async () => {
+        const { pair, logicalProjectId, replica } = await armed();
+        await pair.m3.run((service) =>
+          service.replicate({ projectId: pair.joining.projectId, replica }),
+        );
+        const pushed = {
+          goal: replica.goal,
+          instructions: replica.instructions,
+          notes: replica.notes,
+          notesTruncated: false,
+        };
+        const routine = {
+          id: "daily-review",
+          title: "Daily review",
+          prompt: "Review open pull requests",
+          enabled: true,
+          schedule: { type: "fixed_time", timeOfDay: "09:00" },
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "fixture" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "user",
+        } as const;
+        const push = (routines: ReadonlyArray<typeof routine>, routinesDigest: string) =>
+          pair.m3.run((service) =>
+            service.replicateFromPeer({
+              logicalProjectId,
+              callerEnvironmentId: "m4",
+              epoch: 0,
+              content: {
+                ...pushed,
+                digest: ProjectLink.coordinatorContentDigest(pushed),
+                routines: routines as never,
+                routinesDigest,
+              },
+            }),
+          );
+        expect((await push([routine], "a".repeat(64))).replayed).toBe(false);
+        expect(pair.m3.keptRoutines.get(pair.joining.projectId)).toEqual({
+          logicalProjectId,
+          ids: ["daily-review"],
+        });
+        expect(pair.m3.replicas.get(pair.joining.projectId)?.routinesDigest).toBe("a".repeat(64));
+        // The same content and routines replay; changed routines are kept again.
+        expect((await push([routine], "a".repeat(64))).replayed).toBe(true);
+        expect((await push([], "b".repeat(64))).replayed).toBe(false);
+        expect(pair.m3.keptRoutines.get(pair.joining.projectId)?.ids).toEqual([]);
+        // The app's own replica write keeps the routines digest the coordinator sent.
+        await pair.m3.run((service) =>
+          service.replicate({ projectId: pair.joining.projectId, replica }),
+        );
+        expect(pair.m3.replicas.get(pair.joining.projectId)?.routinesDigest).toBe("b".repeat(64));
+        expect(
+          (await pair.m3.run((service) => service.digest({ projectId: pair.joining.projectId })))
+            .replica?.routinesDigest,
+        ).toBe("b".repeat(64));
+      });
     });
   });
 

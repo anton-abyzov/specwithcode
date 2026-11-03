@@ -182,6 +182,13 @@ export function world(
       case "node.updated":
         current.nodes = replace(current.nodes, event.payload);
         return;
+      case "run.prompt-suggested":
+        current.runs = current.runs.map((entry) =>
+          entry.id === event.payload.runId
+            ? { ...entry, promptSuggestion: event.payload.promptSuggestion }
+            : entry,
+        );
+        return;
       case "run.background-work-cancelled":
         current.runs = current.runs.map((entry) =>
           entry.id === event.payload.runId

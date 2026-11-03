@@ -8,6 +8,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  CoordinatorRoutineCopies,
   CoordinatorStandbyAfterMinutes,
   EnvironmentId,
   HandoffCheckpoint,
@@ -236,6 +237,12 @@ export const CoordinatorLeaseRequest = Schema.Struct({
   afterMinutes: CoordinatorStandbyAfterMinutes,
   /** `coordinatorContentDigest` of the coordinator's notes, goal and instructions. */
   contentDigest: text(128),
+  /**
+   * `coordinatorRoutinesDigest` of the routines the coordinator would send.
+   * Optional so either side may predate routine copies; neither changes the
+   * protocol version, since an older peer only ignores them.
+   */
+  routinesDigest: Schema.optional(text(128)),
   runningThreads: Schema.Array(Schema.Struct({ threadId: ThreadId, title: text(500) })).check(
     Schema.isMaxLength(200),
   ),
@@ -270,6 +277,9 @@ export const CoordinatorReplicaRequest = Schema.Struct({
   instructions: text(PROJECT_INSTRUCTIONS_MAX_LENGTH),
   notes: Schema.Array(ProjectLinkNote).check(Schema.isMaxLength(4096)),
   notesTruncated: Schema.Boolean,
+  /** The coordinator's routines for the standby to keep (see CoordinatorRoutineCopy). */
+  routines: Schema.optional(CoordinatorRoutineCopies),
+  routinesDigest: Schema.optional(text(128)),
 });
 export type CoordinatorReplicaRequest = typeof CoordinatorReplicaRequest.Type;
 export const CoordinatorReplicaResponse = Schema.Struct({

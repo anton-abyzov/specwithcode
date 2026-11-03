@@ -4,6 +4,7 @@ import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildPrContentPrompt,
+  buildPromptSuggestionPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
@@ -12,6 +13,7 @@ import {
   toJsonSchemaObject,
 } from "./TextGenerationUtils.ts";
 import { TextGenerationError } from "@specweave-studio/contracts";
+import * as Schema from "effect/Schema";
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {
@@ -382,5 +384,24 @@ describe("normalizeCliError", () => {
 
     expect(result.detail).toBe("Failed to generate a commit message");
     expect(result.message).not.toContain("secret-token");
+  });
+});
+
+describe("buildPromptSuggestionPrompt", () => {
+  it("asks for the person's next message from the latest exchange", () => {
+    const result = buildPromptSuggestionPrompt({
+      transcript: "Person:\nFix the build\n\nAgent:\nFixed. Want me to run the tests?",
+    });
+    expect(result.prompt).toContain("next message a person will send");
+    expect(result.prompt).toContain("Want me to run the tests?");
+    expect(result.prompt).toContain("an empty string when there is no clear next step");
+  });
+
+  it("reads a missing suggestion as none", () => {
+    const { outputSchema } = buildPromptSuggestionPrompt({ transcript: "Agent:\nDone." });
+    expect(Schema.decodeUnknownSync(outputSchema)({})).toEqual({ suggestion: "" });
+    expect(Schema.decodeUnknownSync(outputSchema)({ suggestion: "ship it" })).toEqual({
+      suggestion: "ship it",
+    });
   });
 });

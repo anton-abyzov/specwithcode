@@ -3,7 +3,9 @@ import * as Schema from "effect/Schema";
 import { ProjectId } from "./baseSchemas.ts";
 
 /**
- * Google account: Gmail, Calendar and Drive for chosen projects. Every service
+ * Google accounts: Gmail, Calendar and Drive for chosen projects. A host can
+ * keep several Google accounts; each has its own sign-in, services and project
+ * switches, and a project names the account its agents use by default. Every service
  * reads only, except Gmail drafts, which saves reply drafts for the person to
  * review and send; nothing in Studio can send mail.
  *
@@ -48,6 +50,34 @@ export const GoogleProjectAccess = Schema.Struct({
 });
 export type GoogleProjectAccess = typeof GoogleProjectAccess.Type;
 
+/** One saved Google account. */
+export const GoogleConnectedAccount = Schema.Struct({
+  /** Stable id: `primary` for the account a host had first, else random hex. */
+  id: Schema.String,
+  email: Schema.NullOr(Schema.String),
+  label: Schema.NullOr(Schema.String),
+  /** Its refresh token is saved and was accepted the last time it was used. */
+  connected: Schema.Boolean,
+  services: Schema.Array(GoogleService),
+  projects: Schema.Array(GoogleProjectAccess),
+  lastError: Schema.NullOr(Schema.String),
+});
+export type GoogleConnectedAccount = typeof GoogleConnectedAccount.Type;
+
+export const GoogleProjectDefaultAccount = Schema.Struct({
+  projectId: ProjectId,
+  account: Schema.String,
+});
+export type GoogleProjectDefaultAccount = typeof GoogleProjectDefaultAccount.Type;
+
+/** Most Google accounts one host keeps. */
+export const GOOGLE_MAX_ACCOUNTS = 10;
+export const GOOGLE_ACCOUNT_LABEL_MAX = 40;
+
+/**
+ * The top-level `connected`, `email`, `services` and `projects` describe the
+ * first account, as they did when a host kept only one; `accounts` lists them all.
+ */
 export const GoogleAccountStatus = Schema.Struct({
   /** Sign-in can start: Studio ships a client, or the person saved their own. */
   clientConfigured: Schema.Boolean,
@@ -75,6 +105,10 @@ export const GoogleAccountStatus = Schema.Struct({
   ),
   /** The last failure talking to Google, without request contents. */
   lastError: Schema.NullOr(Schema.String),
+  /** Every saved account, in the order they were connected. Absent from older servers. */
+  accounts: Schema.optionalKey(Schema.Array(GoogleConnectedAccount)),
+  /** The account each project uses when its agents name none. */
+  defaults: Schema.optionalKey(Schema.Array(GoogleProjectDefaultAccount)),
 });
 export type GoogleAccountStatus = typeof GoogleAccountStatus.Type;
 
@@ -86,6 +120,11 @@ export type GoogleAccountConfigureClientInput = typeof GoogleAccountConfigureCli
 
 export const GoogleAccountStartSignInInput = Schema.Struct({
   services: Schema.Array(GoogleService).check(Schema.isMinLength(1)),
+  /**
+   * Reconnect this saved account (its id); Google preselects its address.
+   * Without it, whichever account the person picks is added, or reconnected when saved.
+   */
+  account: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
 });
 export type GoogleAccountStartSignInInput = typeof GoogleAccountStartSignInInput.Type;
 
@@ -95,8 +134,29 @@ export const GoogleAccountCompleteSignInInput = Schema.Struct({
 });
 export type GoogleAccountCompleteSignInInput = typeof GoogleAccountCompleteSignInInput.Type;
 
-export const GoogleAccountSetProjectAccessInput = GoogleProjectAccess;
+export const GoogleAccountSetProjectAccessInput = Schema.Struct({
+  ...GoogleProjectAccess.fields,
+  /** The account these switches are for, by id; the first account when absent. */
+  account: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+  /** Also make it the project's default account. */
+  makeDefault: Schema.optionalKey(Schema.Boolean),
+});
 export type GoogleAccountSetProjectAccessInput = typeof GoogleAccountSetProjectAccessInput.Type;
+
+export const GoogleAccountDisconnectInput = Schema.Struct({
+  /** One account by id; every account when absent, as older clients expect. */
+  account: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+  /** Also forget the account with its project switches, instead of keeping them for the next sign-in. */
+  forget: Schema.optionalKey(Schema.Boolean),
+});
+export type GoogleAccountDisconnectInput = typeof GoogleAccountDisconnectInput.Type;
+
+export const GoogleAccountSetLabelInput = Schema.Struct({
+  account: Schema.String.check(Schema.isMaxLength(64)),
+  /** A short name such as "Work"; null clears it. */
+  label: Schema.NullOr(Schema.String.check(Schema.isMaxLength(GOOGLE_ACCOUNT_LABEL_MAX))),
+});
+export type GoogleAccountSetLabelInput = typeof GoogleAccountSetLabelInput.Type;
 
 export class GoogleAccountError extends Schema.TaggedError<GoogleAccountError>()(
   "GoogleAccountError",

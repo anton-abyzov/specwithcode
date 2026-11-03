@@ -45,6 +45,7 @@ import {
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
   type ResponseStreamingMode,
+  PromptSuggestionsMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
@@ -73,7 +74,7 @@ import {
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { isElectron } from "../../env";
-import { canHostVoiceCall } from "../../studio/voiceCallSupport";
+import { canHostVoiceCall, voiceHostName } from "../../studio/voiceCallSupport";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import { useCustomThemes } from "../../hooks/useCustomThemes";
 import {
@@ -196,6 +197,18 @@ const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
 const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string> = {
   turn: "Text appears once the agent finishes its turn.",
   paragraph: "Each paragraph or code block appears as soon as it is complete.",
+};
+
+const PROMPT_SUGGESTIONS_MODE_LABELS: Record<PromptSuggestionsMode, string> = {
+  all: "All providers",
+  native: "Claude's own only",
+  off: "Off",
+};
+
+const PROMPT_SUGGESTIONS_MODE_DESCRIPTIONS: Record<PromptSuggestionsMode, string> = {
+  all: "Suggest a next prompt after each reply: Claude's own, or one written by the text generation model for other providers. Press Tab to use it.",
+  native: "Suggest a next prompt only when Claude sends one with its reply. Press Tab to use it.",
+  off: "Never suggest a next prompt.",
 };
 
 const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string> = {
@@ -671,6 +684,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
+      ...(settings.promptSuggestions !== DEFAULT_UNIFIED_SETTINGS.promptSuggestions
+        ? ["Suggested prompts"]
+        : []),
       ...(settings.responseStreamingMode !== DEFAULT_UNIFIED_SETTINGS.responseStreamingMode
         ? ["Response streaming"]
         : []),
@@ -734,6 +750,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.composerRichTextEnabled,
       settings.sendShortcut,
       settings.followUpBehavior,
+      settings.promptSuggestions,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -866,6 +883,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
+      promptSuggestions: DEFAULT_UNIFIED_SETTINGS.promptSuggestions,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
@@ -2248,6 +2266,7 @@ export function GeneralSettingsPanel() {
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
+  const mixedPromptSuggestions = useScopedSettingsMixed(["promptSuggestions"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -2536,7 +2555,7 @@ export function GeneralSettingsPanel() {
         {canHostVoiceCall() ? (
           <SettingsRow
             {...searchableSetting("voice-calls")}
-            description="Call a project's coordinator and talk instead of typing. The microphone is on only during a call, speech is turned into text on this Mac, and the text is sent as your message."
+            description={`Call a project's coordinator and talk, or dictate into its message box. The microphone is on only during a call or dictation, and speech is turned into text on ${voiceHostName()}.`}
             control={
               <Switch
                 checked={settings.voiceCallsAllowed}
@@ -2965,6 +2984,52 @@ export function GeneralSettingsPanel() {
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem value="queue">Queue</SelectItem>
                 <SelectItem value="steer">Steer</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          settingKeys={["promptSuggestions"]}
+          {...searchableSetting("prompt-suggestions")}
+          description={
+            mixedPromptSuggestions
+              ? "The selected targets suggest prompts differently."
+              : PROMPT_SUGGESTIONS_MODE_DESCRIPTIONS[settings.promptSuggestions]
+          }
+          resetAction={
+            settings.promptSuggestions !== DEFAULT_UNIFIED_SETTINGS.promptSuggestions ? (
+              <SettingResetButton
+                label="suggested prompts"
+                onClick={() =>
+                  updateSettings({ promptSuggestions: DEFAULT_UNIFIED_SETTINGS.promptSuggestions })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={mixedPromptSuggestions ? null : settings.promptSuggestions}
+              onValueChange={(value) => {
+                if (Schema.is(PromptSuggestionsMode)(value)) {
+                  updateSettings({ promptSuggestions: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Suggested prompts">
+                <SelectValue>
+                  {(value: PromptSuggestionsMode | null) =>
+                    value === null ? "Mixed" : PROMPT_SUGGESTIONS_MODE_LABELS[value]
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {PromptSuggestionsMode.literals.map((mode) => (
+                  <SelectItem hideIndicator key={mode} value={mode}>
+                    {PROMPT_SUGGESTIONS_MODE_LABELS[mode]}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }
@@ -3485,7 +3550,7 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection id="beta" title="Beta">
+      <SettingsSection id="personal-assistant" title="Assistant">
         <AideSetting />
       </SettingsSection>
 

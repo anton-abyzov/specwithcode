@@ -985,7 +985,59 @@ class BoundRequest(AgentCase):
         self.assertEqual(self.run_agent(), 1)
         self.assertEqual(self.state()['handledInstallRequestAt'], at)
         self.assertEqual(self.apply_calls(), [])
-        self.assertEqual((self.state()['status'], self.state()['message']), ('error', update_request.EXPIRED))
+        # A plain Update is not kept past ten minutes; its lapse says what it waited for.
+        self.assertEqual((self.state()['status'], self.state()['message']), ('error', update_request.EXPIRED
+                         + ' It waited 11 minutes; last: Waiting for running tasks, queued messages and open questions to finish.'))
+
+    WAITING = 'Waiting for running tasks, queued messages and open questions to finish'
+
+    def wait_out_the_hold(self):
+        """Update now while work runs: the pass retries until the service's hold ends (15 minutes)."""
+        self.fake.add_release()
+        at = self.request()
+        self.control(snapshotFail=True)
+        self.run_agent()
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt']), ('waiting-for-quiet', None))
+        self.assertTrue(state['message'].startswith(self.WAITING), state['message'])
+        self.assertGreaterEqual(self.offset, datetime.timedelta(minutes=14))
+        return at
+
+    def test_update_now_waiting_on_running_work_stays_alive_and_installs_when_it_ends(self):
+        at = self.wait_out_the_hold()
+        self.offset = datetime.timedelta(minutes=21)
+        self.assertEqual(self.run_agent(), 0)  # Past REQUEST_TTL, but its last pass waited on known work.
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt']), ('waiting-for-quiet', None))
+        self.assertIn('keeping the install request of %s past 10 minutes' % at, self.log)
+        self.assertIn(self.WAITING, self.log.split('keeping the install request')[1])
+        self.control()  # The running work ended.
+        self.offset = datetime.timedelta(minutes=29)
+        self.assertEqual(self.run_agent(), 0, self.state().get('message'))
+        self.assertEqual((self.state()['status'], self.state()['installedVersion']), ('installed', '0.2.0'))
+
+    def test_update_now_lapses_at_thirty_minutes_and_says_what_it_waited_for(self):
+        at = self.wait_out_the_hold()
+        for minutes in (21, 29):
+            self.offset = datetime.timedelta(minutes=minutes)
+            self.run_agent()
+            self.assertIsNone(self.state()['handledInstallRequestAt'])
+        self.offset = datetime.timedelta(minutes=31)
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt']), ('error', at))
+        self.assertEqual(state['message'], update_request.EXPIRED + ' It waited 31 minutes; last: ' + self.WAITING + '.')
+        self.assertIn('error: ' + update_request.EXPIRED + ' It waited 31 minutes', self.log)
+        self.assertEqual(self.apply_calls(), [])
+
+    def test_update_now_no_pass_served_lately_lapses_as_before(self):
+        at = self.wait_out_the_hold()
+        self.offset = datetime.timedelta(minutes=27)  # The last pass ended 12 minutes ago: nothing follows it.
+        self.assertEqual(self.run_agent(), 1)
+        state = self.state()
+        self.assertEqual((state['status'], state['handledInstallRequestAt']), ('error', at))
+        self.assertTrue(state['message'].startswith(update_request.EXPIRED + ' It waited 27 minutes; last: '))
+        self.assertNotIn('keeping the install request', self.log)
 
     def test_a_refused_apply_whose_retry_never_applies_never_lapses_as_unstarted(self):
         self.fake.add_release()

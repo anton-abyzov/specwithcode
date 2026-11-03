@@ -223,6 +223,8 @@ import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
 import * as StrandedSubagents from "./orchestration-v2/StrandedSubagents.ts";
 import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
+import * as PromptSuggestionReactor from "./orchestration-v2/PromptSuggestionReactor.ts";
+import * as PromptSuggestions from "./orchestration-v2/PromptSuggestions.ts";
 import * as CoordinatorLease from "./project/CoordinatorLease.ts";
 import * as CoordinatorStandbyLoop from "./project/CoordinatorStandbyLoop.ts";
 import * as CoordinatorStandbyStore from "./project/CoordinatorStandbyStore.ts";
@@ -708,6 +710,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(CoordinatorStandbyStore.layer),
     Layer.provide(RemoteWorkers.layerFleetWorkers),
   ),
+  // Suggested next prompts: Claude's own (same offers layer as the adapters') or generated.
+  Layer.effectDiscard(PromptSuggestionReactor.start).pipe(Layer.provide(PromptSuggestions.layer)),
   // Records a routine turn that fails after its message was dispatched.
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Wakes the thread that launched a worker on this machine when the worker's run ends.

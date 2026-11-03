@@ -50,6 +50,8 @@ const makeHarness = (
   let scope = SCOPE_GMAIL_CALENDAR;
   let unauthorizedOnce = false;
   let listed: ReadonlyArray<unknown> = [];
+  /** Who the next sign-in is; each address gets its own refresh token. */
+  let signInEmail = "me@example.com";
   const posts: Array<{ operation: string; url: string; body: unknown }> = [];
   const nextAccess = () => Redacted.make(`access-${++accessCounter}`);
 
@@ -61,9 +63,11 @@ const makeHarness = (
         ? Effect.succeed({
             accessToken: nextAccess(),
             expiresInSeconds: 3600,
-            refreshToken: Redacted.make("refresh-1"),
+            refreshToken: Redacted.make(
+              signInEmail === "me@example.com" ? "refresh-1" : `refresh-${signInEmail}`,
+            ),
             scope,
-            idToken: idToken("me@example.com"),
+            idToken: idToken(signInEmail),
           })
         : Effect.fail(
             new GoogleApi.GoogleApiError({
@@ -201,6 +205,9 @@ const makeHarness = (
     },
     listProjects: (rows: ReadonlyArray<unknown>) => {
       listed = rows;
+    },
+    signInAs: (email: string) => {
+      signInEmail = email;
     },
   };
 };
@@ -553,6 +560,7 @@ it.effect("saves a threaded reply draft only with Gmail drafts on, and never sen
       assert.deepStrictEqual(draft, {
         draftId: "d1",
         threadId: "t1",
+        from: "me@example.com",
         to: "Ann <ann@example.com>",
         subject: "Re: Dinner",
         link: "https://mail.google.com/mail/#drafts?compose=dm1",
@@ -607,7 +615,7 @@ it.effect("forgets the sign-in when Google revokes it, and on disconnect", () =>
       harness.failRefresh(null);
       yield* signIn;
       assert.isTrue((yield* google.status).connected);
-      const disconnected = yield* google.disconnect;
+      const disconnected = yield* google.disconnect();
       assert.isFalse(disconnected.connected);
       assert.deepStrictEqual(harness.revoked, ["refresh-1"]);
       // Project switches survive a disconnect; they apply again after the next sign-in.
@@ -765,6 +773,7 @@ it.effect("reads a draft back and sends it only through Gmail drafts", () =>
         to: "Ann <ann@example.com>",
         subject: "Re: Dinner",
         body: "Thursday works.",
+        from: "me@example.com",
       });
       assert.include(
         failureDetail(yield* Effect.exit(google.gmailSendDraft(PROJECT, "../send"))),
@@ -825,5 +834,263 @@ it.effect("a new account starts with only live personal projects switched on", (
       // Reconnecting the same account keeps what the person chose.
       assert.deepStrictEqual((yield* google.status).projects, []);
     }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+const WORK = "work@example.com";
+
+it.effect("keeps a second account beside the first, each with its own sign-in", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    harness.listProjects([
+      { projectId: PROJECT, deletedAt: null, workspaceSettings: { kind: "personal" } },
+    ]);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      yield* connectForHealth(google);
+      harness.signInAs(WORK);
+      const added = yield* google.startSignIn({ services: ["gmail"] });
+      // The account chooser lets the person pick a second account at Google.
+      assert.strictEqual(
+        new URL(added.signIn!.authorizationUrl).searchParams.get("prompt"),
+        "select_account consent",
+      );
+      yield* connectForHealth(google);
+
+      const status = yield* google.status;
+      assert.deepStrictEqual(
+        status.accounts?.map((account) => [account.email, account.connected, account.projects]),
+        [
+          ["me@example.com", true, [{ projectId: PROJECT, services: ["gmail", "calendar"] }]],
+          [WORK, true, [{ projectId: PROJECT, services: ["gmail", "calendar"] }]],
+        ],
+      );
+      // Older clients still see the first account at the top level.
+      assert.strictEqual(status.email, "me@example.com");
+      assert.notInclude(JSON.stringify(status), `refresh-${WORK}`);
+      const workId = status.accounts![1]!.id;
+      assert.match(workId, /^[0-9a-f]{12}$/u);
+
+      // Without an account, the project's default is used: the first one.
+      const first = (yield* google.gmailSearch(PROJECT, { query: "x" })) as {
+        account: string;
+        messages: ReadonlyArray<{ id: string }>;
+      };
+      assert.deepStrictEqual(
+        { account: first.account, ids: first.messages.map((message) => message.id) },
+        { account: "me@example.com", ids: ["m1"] },
+      );
+      const work = (yield* google.gmailSearch(PROJECT, { query: "x", account: WORK })) as {
+        account: string;
+        messages: ReadonlyArray<{ id: string }>;
+      };
+      assert.deepStrictEqual(
+        { account: work.account, ids: work.messages.map((message) => message.id) },
+        { account: WORK, ids: [`${workId}:m1`] },
+      );
+      const all = (yield* google.gmailSearch(PROJECT, { query: "x", account: "all" })) as {
+        accounts: ReadonlyArray<{ account: string }>;
+      };
+      assert.deepStrictEqual(
+        all.accounts.map((entry) => entry.account),
+        ["me@example.com", WORK],
+      );
+      assert.include(
+        failureDetail(
+          yield* Effect.exit(google.gmailSearch(PROJECT, { query: "x", account: "boss@x.com" })),
+        ),
+        `It may use: me@example.com, ${WORK}`,
+      );
+
+      // A read with a work id uses the work account's token, never the first one's.
+      const tokensBefore = harness.calls.length;
+      yield* google.gmailRead(PROJECT, `${workId}:m1`);
+      const workToken = harness.calls[tokensBefore]!.token;
+      assert.notStrictEqual(workToken, harness.calls[0]!.token);
+      // A project without that account is not told whose account the id names.
+      const refused = failureDetail(
+        yield* Effect.exit(google.gmailRead(OTHER_PROJECT, `${workId}:m1`)),
+      );
+      assert.include(refused, "Gmail is not turned on for this project.");
+      assert.notInclude(refused, WORK);
+      assert.include(
+        failureDetail(yield* Effect.exit(google.gmailRead(PROJECT, "fedcba987654:m1"))),
+        "no longer saved here",
+      );
+
+      // A label names the account for agents; making it the default changes where calls go.
+      yield* google.setLabel({ account: workId, label: "  Work  " });
+      yield* google.setProjectAccess({
+        projectId: PROJECT,
+        account: workId,
+        services: ["gmail"],
+        makeDefault: true,
+      });
+      const byDefault = (yield* google.gmailSearch(PROJECT, { query: "x" })) as {
+        account: string;
+      };
+      assert.strictEqual(byDefault.account, `Work (${WORK})`);
+      const access = yield* google.projectAccess(PROJECT);
+      assert.strictEqual(access.email, WORK);
+      assert.deepStrictEqual(
+        access.accounts?.map((entry) => [entry.account, entry.label, entry.default]),
+        [
+          ["me@example.com", null, false],
+          [WORK, "Work", true],
+        ],
+      );
+      assert.strictEqual(
+        (
+          (yield* google.gmailSearch(PROJECT, { query: "x", account: "work" })) as {
+            account: string;
+          }
+        ).account,
+        `Work (${WORK})`,
+      );
+
+      // Disconnecting one account leaves the other working, a sign-in in progress
+      // for another account included, and keeps where the briefing was set up.
+      yield* google.markBriefingSetUp(PROJECT);
+      yield* google.startSignIn({ services: ["gmail"] });
+      yield* google.disconnect({ account: workId });
+      assert.notStrictEqual((yield* google.status).signIn, null);
+      assert.deepStrictEqual((yield* google.briefingState).briefingSetUp, [PROJECT]);
+      assert.deepStrictEqual(harness.revoked, [`refresh-${WORK}`]);
+      const afterDisconnect = yield* google.status;
+      assert.deepStrictEqual(
+        afterDisconnect.accounts?.map((account) => account.connected),
+        [true, false],
+      );
+      assert.strictEqual(
+        ((yield* google.gmailSearch(PROJECT, { query: "x" })) as { account: string }).account,
+        "me@example.com",
+      );
+      // Signing in again to it keeps its switches and label.
+      yield* connectForHealth(google);
+      const reconnected = (yield* google.status).accounts![1]!;
+      assert.deepStrictEqual(
+        { label: reconnected.label, projects: reconnected.projects },
+        { label: "Work", projects: [{ projectId: PROJECT, services: ["gmail"] }] },
+      );
+
+      // Remove forgets it with its switches and default.
+      const removed = yield* google.disconnect({ account: workId, forget: true });
+      assert.deepStrictEqual(
+        removed.accounts?.map((account) => account.email),
+        ["me@example.com"],
+      );
+      assert.deepStrictEqual(removed.defaults, []);
+    }).pipe(Effect.provide(harness.layer));
+    assert.isFalse(
+      [...harness.secrets.keys()].some((name) => name.startsWith("google-refresh-token-")),
+    );
+    assert.isTrue(harness.secrets.has("google-refresh-token"));
+  }),
+);
+
+it.effect("drafts and sends from the mailbox that received the message", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    harness.grantDrafts();
+    harness.listProjects([
+      { projectId: PROJECT, deletedAt: null, workspaceSettings: { kind: "personal" } },
+    ]);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      yield* connectForHealth(google);
+      harness.signInAs(WORK);
+      yield* connectForHealth(google);
+      const workId = (yield* google.status).accounts![1]!.id;
+      yield* google.setProjectAccess({
+        projectId: PROJECT,
+        account: workId,
+        services: ["gmail", "gmailDrafts"],
+      });
+
+      const draft = yield* google.gmailCreateDraft(PROJECT, {
+        messageId: `${workId}:m1`,
+        body: "Thursday works.",
+      });
+      assert.deepStrictEqual(
+        { id: draft.draftId, from: draft.from },
+        { id: `${workId}:d1`, from: WORK },
+      );
+      const shown = yield* google.gmailDraft(PROJECT, draft.draftId);
+      assert.strictEqual(shown.from, WORK);
+      const sent = yield* google.gmailSendDraft(PROJECT, draft.draftId);
+      assert.strictEqual(sent.from, WORK);
+      const send = harness.posts.at(-1)!;
+      assert.deepStrictEqual(send.body, { id: "d1" });
+      // Both calls went out with the work account's token.
+      const workCalls = harness.calls.slice(-2).map((call) => call.token);
+      assert.strictEqual(new Set(workCalls).size, 1);
+      // The first sign-in got access-1, the work sign-in access-2.
+      assert.strictEqual(workCalls[0], "access-2");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("an update keeps the one saved account, its switches and its briefing", () =>
+  Effect.gen(function* () {
+    const secrets = new Map<string, Uint8Array>();
+    const encoder = new TextEncoder();
+    secrets.set("google-refresh-token", encoder.encode("refresh-1"));
+    secrets.set(
+      "google-account-state",
+      encoder.encode(
+        JSON.stringify({
+          version: 1,
+          email: "me@example.com",
+          clientId: CLIENT_ID,
+          services: ["gmail", "calendar"],
+          projects: [{ projectId: PROJECT, services: ["gmail"] }],
+          briefingSetUp: [PROJECT],
+        }),
+      ),
+    );
+    secrets.set(
+      "google-oauth-client",
+      encoder.encode(JSON.stringify({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET })),
+    );
+    const harness = makeHarness(null, secrets);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      const status = yield* google.status;
+      assert.deepStrictEqual(
+        { connected: status.connected, email: status.email, projects: status.projects },
+        {
+          connected: true,
+          email: "me@example.com",
+          projects: [{ projectId: PROJECT, services: ["gmail"] }],
+        },
+      );
+      assert.deepStrictEqual(
+        status.accounts?.map((account) => account.id),
+        ["primary"],
+      );
+      assert.deepStrictEqual((yield* google.briefingState).briefingSetUp, [PROJECT]);
+      // Ids from before the update are bare and still reach the same mailbox.
+      const found = (yield* google.gmailSearch(PROJECT, { query: "x" })) as {
+        messages: ReadonlyArray<{ id: string }>;
+      };
+      assert.deepStrictEqual(
+        found.messages.map((message) => message.id),
+        ["m1"],
+      );
+      yield* google.gmailRead(PROJECT, "m1");
+    }).pipe(Effect.provide(harness.layer));
+
+    // A restart reads the saved accounts back.
+    harness.signInAs(WORK);
+    const restarted = makeHarness(null, secrets);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      assert.deepStrictEqual(
+        (yield* google.status).accounts?.map((account) => account.email),
+        ["me@example.com"],
+      );
+    }).pipe(Effect.provide(restarted.layer));
   }),
 );

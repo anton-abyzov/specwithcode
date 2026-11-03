@@ -44,9 +44,21 @@ export const draftQuestionId = (draftId: string) => `draft:${draftId}`;
 
 export interface CardDraft {
   readonly draftId: string;
+  /** The address it is sent from; named on the card so the person sees which mailbox. */
+  readonly from?: string | null | undefined;
   readonly to: string | null;
   readonly subject: string | null;
   readonly body: string;
+}
+
+const HEADER_LIMIT = 120;
+
+/** "Reply to X from Y", shortening the recipient so the sending mailbox always shows. */
+function sendHeader(draft: CardDraft): string {
+  const from = draft.from ? ` from ${draft.from}` : "";
+  const room = Math.max(HEADER_LIMIT - "Reply to ".length - from.length, 12);
+  const to = draft.to ?? "unknown recipient";
+  return `Reply to ${to.length > room ? `${to.slice(0, room - 1)}…` : to}${from}`;
 }
 
 export function sendQuestions(
@@ -57,10 +69,15 @@ export function sendQuestions(
       draft.body.length > BODY_PREVIEW ? `${draft.body.slice(0, BODY_PREVIEW)}…` : draft.body;
     return {
       id: draftQuestionId(draft.draftId),
-      header: `Reply to ${draft.to ?? "unknown recipient"}`.slice(0, 120),
+      header: sendHeader(draft),
       question: `${draft.subject ?? "(no subject)"}\n\n${body.trim() || "(empty reply)"}`,
       options: [
-        { label: SEND_LABEL, description: "Send this reply from your Gmail now." },
+        {
+          label: SEND_LABEL,
+          description: draft.from
+            ? `Send this reply from ${draft.from} now.`
+            : "Send this reply from your Gmail now.",
+        },
         {
           label: SKIP_LABEL,
           description: "Keep it as a draft in Gmail. To change it, reply in chat instead.",
@@ -216,6 +233,7 @@ export const proposeSend = Effect.fn("mcp.google.proposeSend")(function* (
     status: "asked" as const,
     drafts: drafts.map((draft) => ({
       draftId: draft.draftId,
+      from: draft.from,
       to: draft.to,
       subject: draft.subject,
     })),

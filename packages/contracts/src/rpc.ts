@@ -193,7 +193,9 @@ import {
 import {
   GoogleAccountCompleteSignInInput,
   GoogleAccountConfigureClientInput,
+  GoogleAccountDisconnectInput,
   GoogleAccountError,
+  GoogleAccountSetLabelInput,
   GoogleAccountSetProjectAccessInput,
   GoogleAccountStartSignInInput,
   GoogleAccountStatus,
@@ -602,6 +604,7 @@ export const WS_METHODS = {
   googleAccountSetProjectAccess: "googleAccount.setProjectAccess",
   googleAccountDisconnect: "googleAccount.disconnect",
   googleAccountRemove: "googleAccount.remove",
+  googleAccountSetLabel: "googleAccount.setLabel",
 
   // Scheduled tasks
   scheduledTasksList: "scheduledTasks.list",
@@ -1042,13 +1045,19 @@ const WsGoogleAccountSetProjectAccessRpc = Rpc.make(WS_METHODS.googleAccountSetP
 });
 
 const WsGoogleAccountDisconnectRpc = Rpc.make(WS_METHODS.googleAccountDisconnect, {
-  payload: Schema.Struct({}),
+  payload: GoogleAccountDisconnectInput,
   success: GoogleAccountStatus,
   error: Schema.Union([GoogleAccountError, EnvironmentAuthorizationError]),
 });
 
 const WsGoogleAccountRemoveRpc = Rpc.make(WS_METHODS.googleAccountRemove, {
   payload: Schema.Struct({}),
+  success: GoogleAccountStatus,
+  error: Schema.Union([GoogleAccountError, EnvironmentAuthorizationError]),
+});
+
+const WsGoogleAccountSetLabelRpc = Rpc.make(WS_METHODS.googleAccountSetLabel, {
+  payload: GoogleAccountSetLabelInput,
   success: GoogleAccountStatus,
   error: Schema.Union([GoogleAccountError, EnvironmentAuthorizationError]),
 });
@@ -2078,6 +2087,7 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsGoogleAccountSetProjectAccessRpc,
   WsGoogleAccountDisconnectRpc,
   WsGoogleAccountRemoveRpc,
+  WsGoogleAccountSetLabelRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
   WsServerGetProcessResourceHistoryRpc,

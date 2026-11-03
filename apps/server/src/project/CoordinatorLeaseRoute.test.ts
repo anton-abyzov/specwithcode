@@ -177,6 +177,59 @@ describe("CoordinatorLeaseReceiver", () => {
     expect(lease).toMatchObject({ ok: true, value: { wantsContent: false } });
   });
 
+  it("asks again when the coordinator's routines changed, and hands them to the standby's copy", async () => {
+    const { pair, m4, request, onM3, logicalProjectId, digest } = await armed();
+    const owner = await pair.m4.run((service) =>
+      service.preview({ projectId: pair.kept.projectId }),
+    );
+    const content = {
+      goal: owner.goal,
+      instructions: owner.instructions,
+      notes: owner.notes,
+      notesTruncated: owner.notesTruncated,
+    };
+    const routines = [
+      {
+        id: "daily-review",
+        title: "Daily review",
+        prompt: "Review open pull requests",
+        enabled: true,
+        schedule: { type: "fixed_time", timeOfDay: "09:00" },
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: "codex", model: "fixture" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+      },
+    ] as never;
+    const routinesDigest = "c".repeat(64);
+    const pushed = await onM3((receiver) =>
+      receiver.replica(m4, {
+        protocolVersion: COORDINATOR_LEASE_PROTOCOL_VERSION,
+        logicalProjectId,
+        epoch: 0,
+        digest,
+        ...content,
+        routines,
+        routinesDigest,
+      }),
+    );
+    expect(pushed).toMatchObject({ ok: true, value: { replayed: false } });
+    expect(pair.m3.keptRoutines.get(pair.joining.projectId)?.ids).toEqual(["daily-review"]);
+    const lease = (patch: Partial<CoordinatorLeaseRequest>) =>
+      onM3((receiver) => receiver.lease(m4, request({ seq: 2, ...patch })));
+    expect(await lease({ routinesDigest })).toMatchObject({
+      ok: true,
+      value: { wantsContent: false },
+    });
+    expect(await lease({ seq: 3, routinesDigest: "d".repeat(64) })).toMatchObject({
+      ok: true,
+      value: { wantsContent: true },
+    });
+    // A coordinator from before routine copies sends no routines digest: nothing to ask for.
+    expect(await lease({ seq: 4 })).toMatchObject({ ok: true, value: { wantsContent: false } });
+  });
+
   it("disarms on release, on a grant that no longer covers it, and on a revoked grant", async () => {
     const released = await armed();
     // A release at another epoch is ignored; at the registered one it disarms.

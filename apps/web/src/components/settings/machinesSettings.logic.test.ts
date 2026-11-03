@@ -191,8 +191,20 @@ describe("machine rows", () => {
       role: "coordinator",
       roleLabel: "Main copy",
       alsoOn: ["MacBook Pro"],
+      elsewhere: [
+        {
+          environmentId: m3,
+          name: "MacBook Pro",
+          seen: { state: "connected", text: "This app can see it" },
+          folder: "/Users/a/easychamp",
+          roleLabel: "Runs workers only",
+        },
+      ],
       folder: "/Users/a/Projects/sw-easychamp",
     });
+    expect(rows[1]?.projects.own[0]?.elsewhere).toMatchObject([
+      { name: "M4MAX", seen: { state: "this-machine" }, roleLabel: "Main copy" },
+    ]);
     expect(rows[1]?.projects.own.map((project) => project.roleLabel)).toEqual([
       "Runs workers only",
     ]);
@@ -213,6 +225,14 @@ describe("machine rows", () => {
         role: null,
         roleLabel: "Connect to see its role",
         folder: null,
+        elsewhere: [
+          {
+            name: "M4MAX",
+            seen: { state: "this-machine" },
+            folder: "/Users/a/Projects/sw-easychamp",
+            roleLabel: "Moving main copy",
+          },
+        ],
       },
     ]);
     expect(hidden[1]?.accounts).toBeNull();

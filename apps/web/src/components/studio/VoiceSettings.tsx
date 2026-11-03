@@ -13,7 +13,7 @@ import { Dialog, DialogPopup, DialogTitle, DialogDescription } from "../ui/dialo
 import { Button } from "../ui/button";
 import { Tip } from "./shell/Tip";
 import { playCallAudio } from "../../studio/voiceCallAudio";
-import { canHostVoiceCall } from "../../studio/voiceCallSupport";
+import { canHostVoiceCall, isLinuxVoiceHost, voiceHostName } from "../../studio/voiceCallSupport";
 
 let legacyImport: Promise<void> | null = null;
 
@@ -56,7 +56,7 @@ function importLegacyVoiceSettings(
 
 const fieldClass = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm";
 /**
- * One voice for every project on this Mac: saved in the primary server's
+ * One voice for every project on this machine: saved in the primary server's
  * settings, with the ElevenLabs key in that server's secret store. The key is
  * write-only here; the server only reports whether one is saved.
  */
@@ -76,6 +76,8 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [vocabulary, setVocabulary] = useState("");
+  const savedVocabulary = useRef("");
   const preview = useRef<AbortController | null>(null);
   // Waits for the server's real settings, so defaults are never mistaken for "untouched".
   const settingsLoaded = useAtomValue(primaryServerConfigAtom) !== null;
@@ -100,6 +102,14 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
     if (!open || !bridge) return;
     let alive = true;
     void bridge
+      .readVoiceVocabulary?.()
+      .then((stored) => {
+        if (!alive) return;
+        savedVocabulary.current = stored.text;
+        setVocabulary(stored.text);
+      })
+      .catch(() => undefined);
+    void bridge
       .listLocalVoices?.()
       .then((list) => {
         if (alive)
@@ -122,6 +132,8 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
     };
   }, [open, bridge]);
   if (!bridge?.synthesizeVoice || !canHostVoiceCall(bridge)) return null;
+  const host = voiceHostName(bridge);
+  const linux = isLinuxVoiceHost(bridge);
   const save = async () => {
     if (environmentId === null) return;
     const key = apiKey.trim();
@@ -159,10 +171,26 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
         return;
       }
       if (result.value.voice.provider !== value.provider) {
-        setError("Update the SpecWithCode service on this Mac to save voice settings.");
+        setError(`Update the SpecWithCode service on ${host} to save voice settings.`);
         return;
       }
       setApiKey("");
+      if (vocabulary !== savedVocabulary.current && bridge.saveVoiceVocabulary) {
+        const stored = await bridge.saveVoiceVocabulary({ text: vocabulary }).catch(() => null);
+        if (stored === null) {
+          setError("Could not save your vocabulary. Try again.");
+          return;
+        }
+        savedVocabulary.current = stored.text;
+        setVocabulary(stored.text);
+        if (stored.refused > 0) {
+          // The refused lines are gone from the box; keep the dialog open to say so.
+          setError(
+            `${stored.refused} ${stored.refused === 1 ? "line looks" : "lines look"} like a secret or ${stored.refused === 1 ? "is" : "are"} too long, and ${stored.refused === 1 ? "was" : "were"} not saved.`,
+          );
+          return;
+        }
+      }
       setOpen(false);
     } finally {
       setBusy(false);
@@ -182,7 +210,14 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
       });
       await playCallAudio(audio, controller.signal);
     } catch {
-      if (!controller.signal.aborted) setError("Could not preview the voice. Try Automatic.");
+      if (!controller.signal.aborted) {
+        const status = linux ? await bridge.getVoiceStatus?.().catch(() => null) : null;
+        setError(
+          (status?.setupBytes ?? 0) > 0
+            ? "The free voice downloads with your first call or dictation."
+            : "Could not preview the voice. Try Automatic.",
+        );
+      }
     } finally {
       if (preview.current === controller) {
         preview.current = null;
@@ -226,13 +261,13 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
                 setValue({ ...value, provider: e.target.value as "local" | "elevenlabs" })
               }
             >
-              <option value="local">On this Mac · Free</option>
+              <option value="local">{linux ? "On this computer" : "On this Mac"} · Free</option>
               <option value="elevenlabs">ElevenLabs · Your own key</option>
             </select>
           </label>
           {value.provider === "local" ? (
             <>
-              <label className="block space-y-1 text-sm">
+              <label className="block space-y-1 text-sm" hidden={linux}>
                 Local voice
                 <select
                   className={fieldClass}
@@ -263,8 +298,9 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
                 </select>
               </label>
               <p className="text-sm text-muted-foreground">
-                Audio is generated on this Mac. For richer voices, download an Enhanced or Premium
-                voice in macOS Accessibility → Read &amp; Speak (Spoken Content on older macOS).
+                {linux
+                  ? "Audio is generated on this computer with Piper, in English."
+                  : "Audio is generated on this Mac. For richer voices, download an Enhanced or Premium voice in macOS Accessibility → Read & Speak (Spoken Content on older macOS)."}
               </p>
               <Button
                 variant="outline"
@@ -279,7 +315,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
             <>
               <p className="text-sm text-muted-foreground">
                 ElevenLabs receives reply text and charges your ElevenLabs account. Your microphone
-                audio stays on this Mac. SpecWithCode does not cover these charges.
+                audio stays on {host}. SpecWithCode does not cover these charges.
               </p>
               <label className="block space-y-1 text-sm">
                 Your ElevenLabs API key
@@ -313,7 +349,7 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
               </label>
               <p className="text-xs text-muted-foreground">
                 One setting for every project. The key stays in the SpecWithCode service's secret
-                store on this Mac and is never shown again or synced to other machines.
+                store on {host} and is never shown again or synced to other machines.
               </p>
             </>
           )}
@@ -328,6 +364,23 @@ export function VoiceSettings({ disabled = false }: { disabled?: boolean }) {
             >
               Remove saved key and use free voice
             </Button>
+          ) : null}
+          {bridge.saveVoiceVocabulary ? (
+            <label className="block space-y-1 text-sm">
+              Your vocabulary
+              <textarea
+                className={`${fieldClass} min-h-28 font-mono text-xs`}
+                aria-label="Your vocabulary"
+                spellCheck={false}
+                value={vocabulary}
+                onChange={(e) => setVocabulary(e.target.value)}
+                placeholder={"SpecWeave\npasta => Postiz"}
+              />
+              <span className="block text-xs text-muted-foreground">
+                Names and terms to recognize, one per line, or heard =&gt; written. Earlier lines
+                count most. Kept only on {host}. Lines that look like passwords or keys are refused.
+              </span>
+            </label>
           ) : null}
           <div className="rounded-lg border border-border p-3 text-sm">
             <span className="font-medium">Managed premium voice</span>

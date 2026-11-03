@@ -152,6 +152,14 @@ export const SERVICE_REQUEST_EXPIRED =
   "The update request expired before it could start; choose Update now again.";
 
 /**
+ * The agent's lapse message. A current agent adds how long the request waited
+ * and what it last waited for after it (update_request.expired_message).
+ */
+export function isServiceRequestExpired(message: string | null | undefined): boolean {
+  return typeof message === "string" && message.startsWith(SERVICE_REQUEST_EXPIRED);
+}
+
+/**
  * The error is the desktop's own: it could not start the update agent (or
  * save the request), and the agent has written nothing since. The desktop
  * this renderer ships with flags every state; one without the flag is none.
@@ -178,7 +186,7 @@ export function isServiceErrorWithRelease(
   return (
     state?.status === "error" &&
     !isAgentStartFailure(state) &&
-    (RESTART_NEEDED_REFUSALS.has(message) || message === SERVICE_REQUEST_EXPIRED) &&
+    (RESTART_NEEDED_REFUSALS.has(message) || isServiceRequestExpired(message)) &&
     isOlderRelease(state.installedVersion, state.downloadedVersion)
   );
 }

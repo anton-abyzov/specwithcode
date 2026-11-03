@@ -14,6 +14,7 @@ import {
   cancelServiceInstallChange,
   findManagedServiceInstallations,
   hasPendingForcedInstall,
+  SERVICE_INSTALL_REQUEST_TTL_MAX_MS,
   launchdFailureReason,
   LINUX_SERVICE_REPAIR_MESSAGE,
   LINUX_SERVICE_UPDATES_MESSAGE,
@@ -549,6 +550,52 @@ describe("studioServiceUpdates", () => {
     ).toBe(true);
   });
 
+  it("starts the agent for a forced request it keeps waiting past the lapse", () => {
+    const at = "2026-10-12T20:00:00.000Z";
+    const atMs = Date.parse(at);
+    const config = JSON.stringify({
+      installRequestedAt: at,
+      installMode: "force",
+      installHoldUntil: "2026-10-12T20:05:00.000Z",
+      installCancelledAt: null,
+      installRequest: { at, version: "1.0.7" },
+    });
+    const now = atMs + 20 * 60_000;
+    const waiting = (overrides: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        status: "waiting-for-quiet",
+        answeredInstallRequestAt: at,
+        message: "Waiting for running tasks to finish (attempt 3)",
+        updatedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 4 * 60_000)),
+        ...overrides,
+      });
+    expect(SERVICE_INSTALL_REQUEST_TTL_MAX_MS).toBe(30 * 60_000);
+    expect(hasPendingForcedInstall(config, now)).toBe(false);
+    expect(hasPendingForcedInstall(config, now, waiting())).toBe(true);
+    // Not past REQUEST_TTL_MAX, nor on a stale pass, another request's pass or a cancel.
+    expect(
+      hasPendingForcedInstall(config, atMs + SERVICE_INSTALL_REQUEST_TTL_MAX_MS + 1, waiting()),
+    ).toBe(false);
+    expect(
+      hasPendingForcedInstall(
+        config,
+        now,
+        waiting({ updatedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 12 * 60_000)) }),
+      ),
+    ).toBe(false);
+    expect(
+      hasPendingForcedInstall(config, now, waiting({ answeredInstallRequestAt: "other" })),
+    ).toBe(false);
+    expect(hasPendingForcedInstall(config, now, waiting({ status: "error" }))).toBe(false);
+    expect(
+      hasPendingForcedInstall(
+        JSON.stringify({ ...JSON.parse(config), installCancelledAt: "2026-10-12T20:01:00.000Z" }),
+        now,
+        waiting(),
+      ),
+    ).toBe(false);
+  });
+
   it("writes the agent config privately, with the forced request", () => {
     const home = NodeFS.mkdtempSync(Path.join(NodeOS.tmpdir(), "service-updates-"));
     try {
@@ -867,6 +914,40 @@ describe("studioServiceUpdates", () => {
           state({ status: "installed", handledInstallRequestAt: "2026-10-20T04:02:30.000Z" }),
           atMs + 20 * 60_000,
         ),
+      ).toBe(null);
+    });
+
+    it("keeps a forced request the agent keeps waiting for running work, up to its limit", () => {
+      const now = atMs + 20 * 60_000;
+      const waiting = (overrides: Record<string, unknown> = {}) =>
+        state({
+          answeredInstallRequestAt: at,
+          message: "Waiting for running tasks to finish (attempt 4)",
+          updatedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 60_000)),
+          ...overrides,
+        });
+      // Past both the 10-minute lapse and the hold: the agent still installs it.
+      expect(pending(forced(), waiting(), now)).toMatchObject({
+        handled: false,
+        mode: "force",
+        version: "0.2.0",
+      });
+      expect(pending(forced(), state(), now)).toBe(null);
+      expect(pending(forced({ installMode: "normal" }), waiting(), now)).toBe(null);
+      expect(pending(forced(), waiting(), atMs + SERVICE_INSTALL_REQUEST_TTL_MAX_MS + 1)).toBe(
+        null,
+      );
+      expect(
+        pending(
+          forced(),
+          waiting({ updatedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 12 * 60_000)) }),
+          now,
+        ),
+      ).toBe(null);
+      expect(pending(forced(), waiting({ message: " " }), now)).toBe(null);
+      // Once the agent lets it lapse, its handled mark ends it.
+      expect(
+        pending(forced(), waiting({ handledInstallRequestAt: at, status: "error" }), now),
       ).toBe(null);
     });
 

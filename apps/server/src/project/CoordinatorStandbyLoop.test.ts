@@ -229,17 +229,36 @@ describe("the standby loop the server runs", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("waits while a service update holds this machine", () =>
+  it.effect("waits while a service update holds this machine, then counts from its end", () =>
+    Effect.gen(function* () {
+      const hold = { held: true };
+      const f = yield* start({ hold });
+      yield* f.lease;
+      // While held, M4's leases are answered busy and M4 stays unfenced.
+      for (let elapsed = 0; elapsed < 30 * MINUTE; elapsed += STANDBY_TICK_MS) yield* f.step;
+      expect(f.binding().state).toBe("transferred");
+      // The hold ends without a restart: the silence before it never counts, but
+      // a coordinator that died during it is still taken over, 15 minutes on.
+      hold.held = false;
+      expect(yield* f.stepsUntilActive(30 * MINUTE)).toBe(15 * MINUTE + STANDBY_TICK_MS);
+      expect(f.binding()).toMatchObject({ state: "active", epoch: 1 });
+      expect(f.adoptions).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("after a hold, a lease that arrives keeps it the standby", () =>
     Effect.gen(function* () {
       const hold = { held: true };
       const f = yield* start({ hold });
       yield* f.lease;
       for (let elapsed = 0; elapsed < 30 * MINUTE; elapsed += STANDBY_TICK_MS) yield* f.step;
-      expect(f.binding().state).toBe("transferred");
       hold.held = false;
-      yield* f.step;
-      expect(f.binding()).toMatchObject({ state: "active", epoch: 1 });
-      expect(f.adoptions).toHaveLength(1);
+      for (let elapsed = 0; elapsed < 60 * MINUTE; elapsed += STANDBY_TICK_MS) {
+        yield* f.lease;
+        yield* f.step;
+      }
+      expect(f.binding().state).toBe("transferred");
+      expect(f.adoptions).toEqual([]);
     }).pipe(Effect.scoped),
   );
 });

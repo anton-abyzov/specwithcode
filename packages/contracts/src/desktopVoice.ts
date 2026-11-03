@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 
 /**
- * Voice calls with the project coordinator (macOS). `microphone` mirrors the
+ * Voice with the project coordinator (macOS and Linux). `microphone` mirrors the
  * system privacy state; `speech` says whether on-device speech is ready.
  */
 export const DesktopVoiceAccessSchema = Schema.Literals([
@@ -18,12 +18,27 @@ export const DesktopVoiceStatusSchema = Schema.Struct({
   microphone: DesktopVoiceAccessSchema,
   /** Why calls cannot run here, when `supported` is false. */
   reason: Schema.NullOr(Schema.String),
+  /** Linux: bytes the first use still has to download. */
+  setupBytes: Schema.optionalKey(Schema.Number),
+  /** Linux: download progress from 0 to 100, while it runs. */
+  setupPercent: Schema.optionalKey(Schema.NullOr(Schema.Number)),
 });
 export type DesktopVoiceStatus = typeof DesktopVoiceStatusSchema.Type;
 
 /** At most about two minutes of 16 kHz 16-bit mono audio per utterance. */
 export const DESKTOP_VOICE_MAX_AUDIO_BYTES = 4 * 1024 * 1024;
 export const DESKTOP_VOICE_MAX_SPOKEN_CHARACTERS = 4_000;
+
+/** The vocabulary as editable text, and how many saved lines were refused as secret-like. */
+export const DesktopVoiceVocabularySchema = Schema.Struct({
+  text: Schema.String,
+  count: Schema.Number,
+  refused: Schema.Number,
+});
+export type DesktopVoiceVocabulary = typeof DesktopVoiceVocabularySchema.Type;
+export const DesktopVoiceVocabularySaveInputSchema = Schema.Struct({
+  text: Schema.String.check(Schema.isMaxLength(256 * 1024)),
+});
 
 export const DesktopVoiceTranscribeInputSchema = Schema.Struct({
   audio: Schema.Uint8Array,
@@ -35,7 +50,7 @@ const SpokenText = Schema.String.check(
   Schema.isMaxLength(DESKTOP_VOICE_MAX_SPOKEN_CHARACTERS),
 );
 
-/** Local macOS speech; the voice and pace come from the server's voice settings. */
+/** Local speech; the voice and pace come from the server's voice settings. */
 export const DesktopVoiceSynthesizeInputSchema = Schema.Struct({
   text: SpokenText,
   voiceId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),

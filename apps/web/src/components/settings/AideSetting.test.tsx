@@ -61,7 +61,7 @@ describe("AideSetting", () => {
   it("reads off when saved off and turns Aide on in this machine's server settings", () => {
     render();
     expect(renderer.root.findByProps({ "data-title": true }).children).toEqual([
-      "Personal assistant (beta)",
+      "Personal assistant",
     ]);
     expect(toggle().props["aria-checked"]).toBe(false);
     act(() => toggle().props.onClick());

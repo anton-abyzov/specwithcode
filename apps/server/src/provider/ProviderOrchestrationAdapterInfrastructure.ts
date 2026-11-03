@@ -5,6 +5,7 @@ import * as CodexAdapterV2 from "../orchestration-v2/Adapters/CodexAdapterV2.ts"
 import * as CursorAgentSdk from "../orchestration-v2/Adapters/CursorAgentSdk.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import * as ProviderContinuationRequests from "../orchestration-v2/ProviderContinuationRequests.ts";
+import * as PromptSuggestions from "../orchestration-v2/PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../orchestration-v2/SubagentLaunchCheckpoints.ts";
 
 export type ProviderOrchestrationAdapterInfrastructure =
@@ -18,7 +19,8 @@ export type ProviderOrchestrationAdapterInfrastructure =
  * instances. `providerContinuationRequestsLayer` must be the same layer
  * reference the orchestration runtime provides to its continuation worker so
  * Effect layer memoization yields one shared queue. `SubagentLaunchCheckpoints`
- * is shared the same way with the handoff reactor that serves it.
+ * is shared the same way with the handoff reactor that serves it, and
+ * `PromptSuggestions` with the reactor that records the offers.
  */
 export const layer = Layer.mergeAll(
   ClaudeAdapterV2.layerQueryRunner,
@@ -27,4 +29,5 @@ export const layer = Layer.mergeAll(
   IdAllocator.layer,
   ProviderContinuationRequests.layer,
   SubagentLaunchCheckpoints.layer,
+  PromptSuggestions.layer,
 );

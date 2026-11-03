@@ -78,6 +78,17 @@ describe("restoring V2 settings", () => {
     expect(state.update.mock.calls[0]?.[0][key]).toBe(DEFAULT_UNIFIED_SETTINGS[key]);
   });
 
+  it("restores Suggested prompts", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, promptSuggestions: "off" };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+
+    expect(restore.changedSettingLabels).toEqual(["Suggested prompts"]);
+    await restore.restoreDefaults();
+
+    expect(state.update.mock.calls[0]?.[0].promptSuggestions).toBe("all");
+  });
+
   it("does not reset settings after cancellation", async () => {
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, autoResumeLimitedThreads: true };
     state.confirm.mockResolvedValue(false);

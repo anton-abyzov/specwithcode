@@ -236,5 +236,26 @@ export const makeStandbyWatch = (monotonic: MonotonicClock = systemMonotonicCloc
         return { restarted, due };
       },
     );
-    return { tick } as const;
+    /**
+     * After a service update hold: the coordinator's leases were answered busy
+     * while it lasted and it stayed unfenced, so silence counts from now, as
+     * after a planned pause. A lease accepted before the hold still counts as
+     * heard while watching, so a coordinator that died during the hold is
+     * still taken over `afterMinutes` from now.
+     */
+    const resumeAfterHold: Effect.Effect<void, CoordinatorStandbyStoreError> = Effect.gen(
+      function* () {
+        const nowMs = (yield* sample).wallMs;
+        for (const record of yield* store.list)
+          yield* store.modify(record.logicalProjectId, (current) => {
+            if (current === undefined) return undefined;
+            const pausedMs =
+              current.pausedUntil === null ? Number.NaN : Date.parse(current.pausedUntil);
+            return Number.isFinite(pausedMs) && pausedMs >= nowMs
+              ? undefined
+              : { ...current, pausedUntil: isoAt(nowMs), updatedAt: isoAt(nowMs) };
+          });
+      },
+    );
+    return { tick, resumeAfterHold } as const;
   });

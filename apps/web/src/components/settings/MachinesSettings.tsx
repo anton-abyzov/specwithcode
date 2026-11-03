@@ -20,6 +20,7 @@ import {
   createServerPairingCredential,
   readPrimaryEnvironmentTarget,
 } from "../../environments/primary";
+import { displayFolder } from "../../lib/displayFolder";
 import { machineStatus } from "../../lib/machineStatus";
 import { desktopNetworkAccessStateAtom } from "../../state/desktopNetworkAccess";
 import { useProjects, useServerConfigs } from "../../state/entities";
@@ -35,6 +36,8 @@ import { useHostLimitBlocks } from "../studio/shell/HostLimits";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { MiddleTruncate } from "../ui/middle-truncate";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ArchivedDisclosure } from "./ArchivedDisclosure";
 import { RenameMachineDialog } from "./RenameMachineDialog";
@@ -45,6 +48,7 @@ import {
   pairingLinkBaseUrl,
   type MachineProject,
   type MachineRowModel,
+  type MachineSeen,
   type MachineWorkerGrant,
   type MachineWorkHere,
 } from "./machinesSettings.logic";
@@ -311,11 +315,6 @@ const ROLE_BADGE: Readonly<
   "only-here": "outline",
 };
 
-function projectWhere(project: MachineProject): string {
-  const alsoOn = project.alsoOn.length > 0 ? `Also on ${project.alsoOn.join(", ")}` : null;
-  return [alsoOn, project.folder].filter((part) => part !== null).join(" · ");
-}
-
 /** Text that may be cut short, in full on hover: paths run long, Windows paths longest. */
 function HoverText({ text, className }: { text: string; className: string }) {
   if (!text) return <span className={className} />;
@@ -331,8 +330,187 @@ function HoverText({ text, className }: { text: string; className: string }) {
   );
 }
 
+/** Machines named on a row before the rest fold into "+N", so a long list never crowds it. */
+const MAX_MACHINE_CHIPS = 2;
+
+/** The machine a copy is on, as "ministorm (This app can see it)", so its dot is never the only clue. */
+function spokenMachine(machine: { name: string; seen: MachineSeen }): string {
+  return `${machine.name} (${machine.seen.text})`;
+}
+
+/** The folder's own name, so a Windows path keeps it whole too: MiddleTruncate splits on "/" only. */
+function folderNameTail(folder: string): { tail?: number } {
+  if (folder.includes("/")) return {};
+  const name = folder.split("\\").pop() ?? "";
+  return name.length > 0 && name.length < folder.length ? { tail: name.length } : {};
+}
+
+/** Why a copy's folder is missing: a machine this app sees has simply not sent it yet. */
+function missingFolderText(seen: MachineSeen): string {
+  return seen.state === "this-machine" || seen.state === "connected"
+    ? "Folder not loaded yet"
+    : "Connect to see its folder";
+}
+
+/** What the "where" button reads aloud: every machine and the folder, though the row shows fewer. */
+function projectWhereLabel(project: MachineProject): string {
+  const elsewhere =
+    project.elsewhere.length > 0
+      ? `Also on ${project.elsewhere.map(spokenMachine).join("; ")}`
+      : "On this machine only";
+  const folder = project.folder ? `. Folder ${project.folder}` : "";
+  return `${project.title}: ${elsewhere}${folder}. Show every copy`;
+}
+
+function MachineChip({ name, seen }: { name: string; seen: MachineSeen }) {
+  return (
+    <span className="inline-flex min-w-0 max-w-32 items-center gap-1 rounded-full border border-border/70 px-1.5 py-px text-foreground/80">
+      <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[seen.state]}`} />
+      <span className="truncate">{name}</span>
+    </span>
+  );
+}
+
+/**
+ * Where a project lives, at a glance: the other machines as chips with their
+ * status dot, the first few by name and the rest as "+N", then this copy's
+ * folder with the home folder as "~" and the end kept. Pressing it lists every
+ * copy with its machine, status, role and full folder.
+ */
+function ProjectWhere({
+  project,
+  here,
+}: {
+  project: MachineProject;
+  here: { name: string; seen: MachineSeen };
+}) {
+  const shown = project.elsewhere.slice(0, MAX_MACHINE_CHIPS);
+  const folded = project.elsewhere.length - shown.length;
+  const copies = [
+    {
+      key: "here",
+      name: here.name,
+      seen: here.seen,
+      folder: project.folder,
+      roleLabel: project.role ? project.roleLabel : null,
+    },
+    ...project.elsewhere.map((copy) => ({ key: copy.environmentId, ...copy })),
+  ];
+  return (
+    <Popover>
+      <PopoverTrigger
+        openOnHover
+        delay={300}
+        closeDelay={100}
+        render={
+          <button
+            type="button"
+            aria-label={projectWhereLabel(project)}
+            className="col-span-2 flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-left text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:col-span-1"
+          />
+        }
+      >
+        {shown.map((copy) => (
+          <MachineChip key={copy.environmentId} name={copy.name} seen={copy.seen} />
+        ))}
+        {folded > 0 ? (
+          <span className="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-foreground/80">
+            +{folded}
+          </span>
+        ) : null}
+        {project.folder ? (
+          <MiddleTruncate
+            value={displayFolder(project.folder)}
+            {...folderNameTail(displayFolder(project.folder))}
+            showTitle={false}
+            className="min-w-0 flex-1"
+          />
+        ) : null}
+      </PopoverTrigger>
+      <PopoverPopup side="top" align="start" width="md" padding="compact">
+        <PopoverTitle className="text-xs font-medium">
+          {copies.length === 1
+            ? `${project.title} is on this machine only`
+            : `${project.title} is on ${copies.length} machines`}
+        </PopoverTitle>
+        <ul className="mt-2 space-y-2 text-xs">
+          {copies.map((copy) => (
+            <li key={copy.key} className="min-w-0 space-y-0.5">
+              <p className="flex min-w-0 items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[copy.seen.state]}`}
+                />
+                <span className="truncate font-medium text-foreground">{copy.name}</span>
+                <span className="shrink-0 text-muted-foreground">
+                  {[copy.seen.text, copy.roleLabel].filter(Boolean).join(" · ")}
+                </span>
+              </p>
+              <p className="select-text break-all pl-3 font-mono text-[11px] text-muted-foreground">
+                {copy.folder ?? missingFolderText(copy.seen)}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+/**
+ * The other machines signed in to the same account, as chips like a project's.
+ * The rest fold into "+N", a button whose tooltip names them all; a screen
+ * reader hears every name either way.
+ */
+function AccountAlsoOn({ names }: { names: readonly string[] }) {
+  const shown = names.slice(0, MAX_MACHINE_CHIPS);
+  const rest = names.slice(MAX_MACHINE_CHIPS);
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="sr-only">also on {names.join(", ")}</span>
+      <span aria-hidden className="shrink-0">
+        also on
+      </span>
+      {shown.map((name) => (
+        <span
+          key={name}
+          aria-hidden
+          className="min-w-0 max-w-32 truncate rounded-full border border-border/70 px-1.5 py-px text-foreground/80"
+        >
+          {name}
+        </span>
+      ))}
+      {rest.length > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={
+              <button
+                type="button"
+                aria-label={`Same account on ${names.join(", ")}`}
+                className="shrink-0 cursor-help rounded-full border border-border/70 px-1.5 py-px text-foreground/80 outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            }
+          >
+            +{rest.length}
+          </TooltipTrigger>
+          <TooltipPopup side="top" className="max-w-72">
+            Same account on {names.join(", ")}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </span>
+  );
+}
+
 /** One grid, so names, labels and folders line up however long a name or path is. */
-function ProjectList({ projects }: { projects: readonly MachineProject[] }) {
+function ProjectList({
+  projects,
+  here,
+}: {
+  projects: readonly MachineProject[];
+  here: { name: string; seen: MachineSeen };
+}) {
   return (
     <ul className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs sm:grid-cols-[minmax(0,14rem)_auto_minmax(0,1fr)]">
       {projects.map((project) => (
@@ -351,10 +529,7 @@ function ProjectList({ projects }: { projects: readonly MachineProject[] }) {
               {project.roleHelp}
             </TooltipPopup>
           </Tooltip>
-          <HoverText
-            text={projectWhere(project)}
-            className="col-span-2 min-w-0 truncate text-muted-foreground sm:col-span-1"
-          />
+          <ProjectWhere project={project} here={here} />
         </li>
       ))}
     </ul>
@@ -380,6 +555,7 @@ export function MachineRow({
   const hostNames = [row.label === nickname ? null : row.label, row.machineName]
     .filter((name): name is string => name !== null)
     .join(" · ");
+  const here = { name: nickname, seen: row.seen };
   return (
     <li className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4" aria-label={nickname}>
       <div className="flex min-w-0 items-center gap-3">
@@ -488,7 +664,7 @@ export function MachineRow({
         help="This machine's projects. For a machine this app cannot see, only those it shares with one it can. Automated ones were made by checks or agents; archived ones are kept but out of your lists. Both stay collapsed, as in the sidebar."
       >
         {row.projects.own.length > 0 ? (
-          <ProjectList projects={row.projects.own} />
+          <ProjectList projects={row.projects.own} here={here} />
         ) : (
           <p className="text-xs text-muted-foreground">
             {seen ? "No projects of your own here." : "Connect to see its projects."}
@@ -500,12 +676,12 @@ export function MachineRow({
           className="-ml-3 sm:-ml-4"
         >
           <div className="pl-3 sm:pl-4">
-            <ProjectList projects={row.projects.automated} />
+            <ProjectList projects={row.projects.automated} here={here} />
           </div>
         </ArchivedDisclosure>
         <ArchivedDisclosure count={row.projects.archived.length} className="-ml-3 sm:-ml-4">
           <div className="pl-3 sm:pl-4">
-            <ProjectList projects={row.projects.archived} />
+            <ProjectList projects={row.projects.archived} here={here} />
           </div>
         </ArchivedDisclosure>
       </DetailLine>
@@ -518,9 +694,15 @@ export function MachineRow({
         ) : (
           <ul className="space-y-0.5">
             {row.accounts.map((account) => (
-              <li key={account.key} className="truncate text-xs text-muted-foreground">
-                <span className="text-foreground/80">{account.provider}</span> · {account.identity}
-                {account.alsoOn.length > 0 ? ` · also on ${account.alsoOn.join(", ")}` : null}
+              <li
+                key={account.key}
+                className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
+              >
+                <span className="min-w-0 truncate">
+                  <span className="text-foreground/80">{account.provider}</span> ·{" "}
+                  {account.identity}
+                </span>
+                {account.alsoOn.length > 0 ? <AccountAlsoOn names={account.alsoOn} /> : null}
               </li>
             ))}
           </ul>

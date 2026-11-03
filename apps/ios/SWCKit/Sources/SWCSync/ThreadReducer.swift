@@ -17,10 +17,18 @@ public enum ThreadReducer {
       if event.type != "thread.visited", event.type != "thread.marked-unread" {
         next.updatedAt = event.occurredAt
       }
-    case let .run(run):
+    case var .run(run):
+      // Only run.prompt-suggested sets the suggestion; a run snapshot keeps it.
+      if run.promptSuggestion == nil {
+        run.promptSuggestion = next.runs.first { $0.id == run.id }?.promptSuggestion
+      }
       next.updatedAt = event.occurredAt
       next.runs = upsert(next.runs, run)
       next.visibleTurnItems = activeVisibleTurnItems(next)
+    case let .promptSuggestion(suggested):
+      guard let index = next.runs.firstIndex(where: { $0.id == suggested.runId }) else { return projection }
+      next.updatedAt = event.occurredAt
+      next.runs[index].promptSuggestion = suggested.promptSuggestion
     case let .message(message):
       next.updatedAt = event.occurredAt
       next.messages = upsert(next.messages, message)

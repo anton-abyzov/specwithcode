@@ -4,7 +4,9 @@
 // pointed at a local fake Google (consent screen, token, revoke). Saves an
 // OAuth client from Settings > Google, signs in through the fake consent
 // redirect, turns Gmail on for a Personal project, opens the morning briefing
-// template, signs in again by pasting the redirect address, and disconnects.
+// template, signs in again by pasting the redirect address, adds a second
+// account with a label and makes it a project's default, removes it again,
+// and disconnects.
 // No real Google account, provider turn or personal browser is involved.
 //
 // Usage: node scripts/studio-google/verify.mjs /absolute/report-dir
@@ -38,6 +40,8 @@ const CLIENT_ID = "123456789012-verifystudio.apps.googleusercontent.com";
 const CLIENT_SECRET = "GOCSPX-verify-client-secret-01";
 const REFRESH_TOKEN = "1//verify-refresh-token-value";
 const EMAIL = "verifier@example.com";
+const WORK_EMAIL = "work-verifier@example.com";
+const WORK_REFRESH_TOKEN = "1//verify-work-refresh-token";
 const freePort = () =>
   new Promise((done, reject) => {
     const socket = NodeNet.createServer();
@@ -51,7 +55,7 @@ const freePort = () =>
 // A fake Google: the consent screen approves at once and redirects back with
 // a code; the token endpoint checks the client, the redirect and PKCE.
 const challenges = new Map();
-const google = { authorizations: [], exchanges: 0, revoked: [] };
+const google = { authorizations: [], exchanges: 0, revoked: [], signInAs: EMAIL };
 const base64Url = (buffer) => buffer.toString("base64url");
 const googlePort = await freePort();
 const fakeGoogle = NodeHttp.createServer((request, response) => {
@@ -98,12 +102,12 @@ const fakeGoogle = NodeHttp.createServer((request, response) => {
       return json(200, {
         access_token: `access-${google.exchanges}`,
         expires_in: 3599,
-        refresh_token: REFRESH_TOKEN,
+        refresh_token: google.signInAs === EMAIL ? REFRESH_TOKEN : WORK_REFRESH_TOKEN,
         scope: issued.scope
           .split(" ")
           .filter((scope) => scope.startsWith("https://"))
           .join(" "),
-        id_token: `h.${base64Url(Buffer.from(JSON.stringify({ email: EMAIL })))}.s`,
+        id_token: `h.${base64Url(Buffer.from(JSON.stringify({ email: google.signInAs })))}.s`,
       });
     }
     if (url.pathname === "/revoke") {
@@ -620,9 +624,71 @@ try {
   );
   receipt.checks.push({ pastedSignIn: true, singleUseState: true, forgedCallbackRefused: true });
 
+  // A second account: added beside the first through Google's account chooser, labelled,
+  // made the personal project's default, then removed without touching the first.
+  google.signInAs = WORK_EMAIL;
+  const [workConsent] = await Promise.all([
+    context.waitForEvent("page"),
+    page.getByRole("button", { name: "Add another Google account" }).click(),
+  ]);
+  await workConsent.getByText("Google account connected").waitFor({ timeout: 15000 });
+  await workConsent.close();
+  NodeAssert.equal(google.authorizations.at(-1).prompt, "select_account consent");
+  const twoAccounts = await rpc(context, "googleAccount.status");
+  const labelInput = page.getByLabel(`Label for ${WORK_EMAIL}`, { exact: true });
+  await labelInput.waitFor({ timeout: 15000 });
+  NodeAssert.deepEqual(
+    twoAccounts.accounts.map((account) => [account.email, account.connected]),
+    [
+      [EMAIL, true],
+      [WORK_EMAIL, true],
+    ],
+  );
+  NodeAssert.equal(twoAccounts.email, EMAIL);
+  const workAccount = twoAccounts.accounts[1];
+  NodeAssert.ok(workAccount.services.includes("gmail"));
+  // A new account starts on for the personal project with what it granted.
+  NodeAssert.deepEqual(workAccount.projects, [
+    { projectId: project.projectId, services: workAccount.services },
+  ]);
+  await labelInput.fill("Work");
+  await page.getByRole("button", { name: "Save label" }).click();
+  const workButton = page.getByRole("button", { name: `Work · ${WORK_EMAIL}`, exact: true });
+  await workButton.waitFor({ timeout: 15000 });
+  await workButton.click();
+  await page
+    .getByRole("button", { name: `Make Work · ${WORK_EMAIL} the default for Errands`, exact: true })
+    .click();
+  await page.getByText("Default account", { exact: true }).waitFor({ timeout: 15000 });
+  const withDefault = await rpc(context, "googleAccount.status");
+  NodeAssert.deepEqual(withDefault.defaults, [
+    { projectId: project.projectId, account: workAccount.id },
+  ]);
+  NodeAssert.equal(withDefault.accounts[1].label, "Work");
+  for (const secret of [WORK_REFRESH_TOKEN, REFRESH_TOKEN]) {
+    NodeAssert.equal(JSON.stringify(withDefault).includes(secret), false);
+  }
+  await shot("6-google-two-accounts.png");
+  await page.getByRole("button", { name: `Remove Work · ${WORK_EMAIL}`, exact: true }).click();
+  await labelInput.waitFor({ state: "detached", timeout: 15000 });
+  const backToOne = await rpc(context, "googleAccount.status");
+  NodeAssert.deepEqual(
+    backToOne.accounts.map((account) => account.email),
+    [EMAIL],
+  );
+  NodeAssert.deepEqual(backToOne.defaults, []);
+  NodeAssert.deepEqual(google.revoked, [WORK_REFRESH_TOKEN]);
+  receipt.checks.push({
+    secondAccountAdded: true,
+    accountChooser: true,
+    labelSaved: true,
+    projectDefault: true,
+    secondAccountRemovedAlone: true,
+  });
+
   await page.getByRole("button", { name: "Disconnect" }).click();
   await page.getByRole("button", { name: "Connect Google" }).waitFor({ timeout: 15000 });
-  NodeAssert.deepEqual(google.revoked, [REFRESH_TOKEN]);
+  NodeAssert.deepEqual(google.revoked, [WORK_REFRESH_TOKEN, REFRESH_TOKEN]);
   await page.getByRole("button", { name: "Remove" }).click();
   if (hasBuiltInClient) {
     await page
@@ -638,7 +704,7 @@ try {
   NodeAssert.deepEqual(removed.projects, []);
   NodeAssert.deepEqual(errors, []);
   receipt.checks.push({ revokedOnDisconnect: true, removed: true, pageErrors: errors });
-  for (const secret of [CLIENT_SECRET, REFRESH_TOKEN, "code-1", "code-2"]) {
+  for (const secret of [CLIENT_SECRET, REFRESH_TOKEN, WORK_REFRESH_TOKEN, "code-1", "code-2"]) {
     NodeAssert.equal(serverLog.includes(secret), false, `the server log never contains ${secret}`);
   }
   receipt.checks.push({ secretsNotLogged: true });

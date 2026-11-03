@@ -2516,8 +2516,9 @@ const layerWsRpc = (
         [WS_METHODS.googleAccountCompleteSignIn]: (input) => googleAccount.completeSignIn(input),
         [WS_METHODS.googleAccountSetProjectAccess]: (input) =>
           googleAccount.setProjectAccess(input),
-        [WS_METHODS.googleAccountDisconnect]: (_input) => googleAccount.disconnect,
+        [WS_METHODS.googleAccountDisconnect]: (input) => googleAccount.disconnect(input),
         [WS_METHODS.googleAccountRemove]: (_input) => googleAccount.remove,
+        [WS_METHODS.googleAccountSetLabel]: (input) => googleAccount.setLabel(input),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           TraceDiagnostics.readTraceDiagnostics({
             traceFilePath: config.serverTracePath,

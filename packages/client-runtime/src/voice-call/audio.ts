@@ -122,6 +122,17 @@ export class UtteranceDetector {
     this.chunks = [];
   }
 
+  /** Ends the utterance in progress, for a caller stopping before the silence does. */
+  flush(): UtteranceEvent[] {
+    if (!this.speaking || this.chunks.length === 0) {
+      this.reset();
+      return [];
+    }
+    const samples = concatFrames(this.chunks);
+    this.reset();
+    return [{ type: "utterance", samples, sampleRate: this.sampleRate }];
+  }
+
   /** Feeds one frame; returns the events it caused. */
   push(frame: Float32Array): UtteranceEvent[] {
     const frameMs = (frame.length / this.sampleRate) * 1000;

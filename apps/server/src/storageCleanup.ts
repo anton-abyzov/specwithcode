@@ -14,6 +14,7 @@ import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
@@ -68,6 +69,39 @@ const decodeCleanupThread = Schema.decodeUnknownEffect(
 );
 
 const DAY_MS = 86_400_000;
+
+/**
+ * Sweeps wait this long after the service starts. On M4 the first sweep took
+ * 24.2 s, with 359 git commands in the first 30 s, while clients were still
+ * catching up; the first scheduled sweep now starts once that is over, and a
+ * sweep an event asks for before then is left to it.
+ */
+export const STARTUP_SWEEP_DELAY_MS = 5 * 60_000;
+
+/**
+ * `storage-cleanup.json` in the state folder: when the orphan-worktree sweep
+ * last ran, so a restart does not run it again within the hour.
+ */
+export const STORAGE_CLEANUP_STATE_FILE = "storage-cleanup.json";
+/** A recorded sweep further ahead than this is a clock that moved back: sweep anyway. */
+const ORPHAN_SWEEP_FUTURE_SKEW_MS = 60_000;
+
+const StorageCleanupState = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  /** When the orphan-worktree sweep last started. */
+  orphanSweepAt: Schema.String,
+});
+const decodeStorageCleanupState = Schema.decodeUnknownOption(
+  Schema.fromJsonString(StorageCleanupState),
+);
+const encodeStorageCleanupState = Schema.encodeSync(Schema.fromJsonString(StorageCleanupState));
+
+/** Whether the orphan sweep may run at `now`, given when it last started (null: never). */
+export function orphanSweepDue(lastSweepAt: number | null, now: number): boolean {
+  if (lastSweepAt === null || !Number.isFinite(lastSweepAt)) return true;
+  if (lastSweepAt > now + ORPHAN_SWEEP_FUTURE_SKEW_MS) return true;
+  return now - lastSweepAt >= ORPHAN_SWEEP_INTERVAL_MS;
+}
 
 const worktreeCleanupEnabled = (rules: WorktreeCleanupRules) =>
   rules.worktreeAfterDays !== null ||
@@ -670,15 +704,47 @@ export const make = Effect.gen(function* () {
     return found;
   });
 
-  let lastOrphanSweepAt = Number.NEGATIVE_INFINITY;
+  const cleanupStatePath = path.join(config.stateDir, STORAGE_CLEANUP_STATE_FILE);
+  /** undefined until read from `storage-cleanup.json`; null when no sweep is recorded. */
+  let lastOrphanSweepAt: number | null | undefined;
+  const readLastOrphanSweepAt = fs.readFileString(cleanupStatePath).pipe(
+    Effect.map((text) =>
+      Option.match(decodeStorageCleanupState(text), {
+        onNone: () => null,
+        onSome: (state) => {
+          const at = Date.parse(state.orphanSweepAt);
+          return Number.isFinite(at) ? at : null;
+        },
+      }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+  const recordOrphanSweep = (now: number) =>
+    Effect.gen(function* () {
+      const temporary = `${cleanupStatePath}.tmp`;
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      yield* fs.writeFileString(
+        temporary,
+        encodeStorageCleanupState({
+          schemaVersion: 1,
+          orphanSweepAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+        }),
+      );
+      yield* fs.rename(temporary, cleanupStatePath);
+    }).pipe(
+      // Unrecorded, the next start sweeps again: slower, never unsafe.
+      Effect.catch((error) => Effect.logWarning("storage cleanup state write failed", { error })),
+    );
   const cleanOrphanWorktrees = Effect.fn("StorageCleanup.cleanOrphanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
   ) {
     if (!anyWorktreePolicy(serverSettings, (rules) => rules.worktreeOnMerge)) return;
-    // Hourly at most: each candidate can cost a pull request lookup.
-    if (now - lastOrphanSweepAt < ORPHAN_SWEEP_INTERVAL_MS) return;
+    // Hourly at most, across restarts: each candidate can cost a pull request lookup.
+    if (lastOrphanSweepAt === undefined) lastOrphanSweepAt = yield* readLastOrphanSweepAt;
+    if (!orphanSweepDue(lastOrphanSweepAt, now)) return;
     lastOrphanSweepAt = now;
+    yield* recordOrphanSweep(now);
     // Another instance on this base dir (a dev server) shares its worktree and
     // Scratch folders but records its threads in its own database, so their
     // folders would look unowned here: sweep only when this is the only one.
@@ -910,10 +976,18 @@ export const make = Effect.gen(function* () {
     yield* visit(realRoot);
   });
 
+  /** Set by `start`: sweeps before it are left to the first scheduled one. */
+  let sweepsNotBefore = Number.NEGATIVE_INFINITY;
   const sweep = Effect.fn("StorageCleanup.sweep")(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    if (now < sweepsNotBefore) {
+      yield* Effect.logDebug("storage cleanup deferred until startup settles", {
+        remainingMs: sweepsNotBefore - now,
+      });
+      return;
+    }
     const serverSettings = yield* settingsService.getSettings;
     const settings = serverSettings.storageCleanup;
-    const now = yield* Clock.currentTimeMillis;
     yield* cleanWorktrees(serverSettings, now).pipe(
       Effect.catch((error) => Effect.logWarning("worktree cleanup failed", { error })),
     );
@@ -960,14 +1034,16 @@ export const make = Effect.gen(function* () {
     const changes = yield* settingsService.subscribeChanges;
     const events = engine.streamDomainEvents;
     let lastSettings = yield* settingsService.getSettings.pipe(Effect.orDie);
+    sweepsNotBefore = (yield* Clock.currentTimeMillis) + STARTUP_SWEEP_DELAY_MS;
     yield* forkParked(
-      worker
-        .enqueue(undefined)
-        .pipe(
-          Effect.andThen(worker.drain),
-          Effect.repeat(Schedule.spaced("1 hour")),
-          Effect.asVoid,
+      Effect.sleep(Duration.millis(STARTUP_SWEEP_DELAY_MS)).pipe(
+        Effect.andThen(
+          worker
+            .enqueue(undefined)
+            .pipe(Effect.andThen(worker.drain), Effect.repeat(Schedule.spaced("1 hour"))),
         ),
+        Effect.asVoid,
+      ),
     );
     yield* forkParked(
       Stream.runForEach(changes, (settings) => {

@@ -621,6 +621,21 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+/** A predicted next prompt for the user, offered once the run finishes. */
+export const OrchestrationV2PromptSuggestion = Schema.Struct({
+  text: TrimmedNonEmptyString,
+  /** `provider` came with the reply (Claude); `generated` is the text-generation fallback. */
+  source: Schema.Literals(["provider", "generated"]),
+});
+export type OrchestrationV2PromptSuggestion = typeof OrchestrationV2PromptSuggestion.Type;
+
+/** Records a finished run's suggested next prompt without touching its lifecycle. */
+export const OrchestrationV2RunPromptSuggested = Schema.Struct({
+  runId: RunId,
+  promptSuggestion: OrchestrationV2PromptSuggestion,
+});
+export type OrchestrationV2RunPromptSuggested = typeof OrchestrationV2RunPromptSuggested.Type;
+
 /**
  * The checkout a worktree launch targets: the id of one of the project's
  * environment repositories, or the absolute path of that repository's checkout.
@@ -753,6 +768,8 @@ export const OrchestrationV2Run = Schema.Struct({
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
   /** How a launch prepares this run's workspace; prepared-run.retry repeats it. */
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  /** Set by run.prompt-suggested only, so a run snapshot never erases it. */
+  promptSuggestion: Schema.optional(OrchestrationV2PromptSuggestion),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -2031,6 +2048,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.prompt-suggested"),
+    payload: OrchestrationV2RunPromptSuggested,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run-attempt.created"),
     payload: OrchestrationV2RunAttempt,
   }),
@@ -2946,6 +2968,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.prompt-suggested"),
+    payload: OrchestrationV2RunPromptSuggested,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run-attempt.created"),
     payload: OrchestrationV2RunAttemptJson,
   }),
@@ -3540,6 +3567,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** A finished run's suggested next prompt; dropped unless the run is still the latest. */
+  Schema.Struct({
+    type: Schema.Literal("run.prompt-suggestion.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    promptSuggestion: OrchestrationV2PromptSuggestion,
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.deferred-resolution.request"),
     commandId: CommandId,

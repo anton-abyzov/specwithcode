@@ -32,3 +32,4 @@ export const playCallAudio = async () => {};
 export const VoiceSettings = () => (
   <span style={{ color: "#929292", fontSize: 13 }}>Voice settings</span>
 );
+export const COORDINATOR_PROMPT_ID = "project-prompt";

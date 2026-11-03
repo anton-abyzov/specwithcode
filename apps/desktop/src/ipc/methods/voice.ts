@@ -13,6 +13,8 @@ import {
   DesktopVoiceStatusSchema,
   DesktopVoiceSynthesizeInputSchema,
   DesktopVoiceTranscribeInputSchema,
+  DesktopVoiceVocabularySchema,
+  DesktopVoiceVocabularySaveInputSchema,
   type DesktopVoiceAccess,
   type DesktopVoiceStatus,
 } from "@specweave-studio/contracts";
@@ -26,7 +28,16 @@ import {
   readLegacyVoicePreferences,
   removeLegacyVoicePreferences,
 } from "../../voice/legacyVoicePreferences.ts";
+import { LinuxSpeech, LinuxSpeechError } from "../../voice/linuxSpeech.ts";
 import { prepareVoiceCall } from "../../voice/voiceReadiness.ts";
+import { VoiceVocabularyStore } from "../../voice/vocabularyStore.ts";
+import {
+  acceptTranscript,
+  contextualStrings,
+  correctTranscript,
+  wavPeak,
+  whisperPrompt,
+} from "../../voice/vocabulary.ts";
 import { VoiceHelper, VoiceHelperError } from "../../voice/VoiceHelper.ts";
 import { allowMediaPermission, MICROPHONE_SETTINGS_URL } from "../../voice/voicePermission.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -41,10 +52,15 @@ import {
   VOICE_SET_CALL_ACTIVE_CHANNEL,
   VOICE_SYNTHESIZE_CHANNEL,
   VOICE_TRANSCRIBE_CHANNEL,
+  VOICE_VOCABULARY_READ_CHANNEL,
+  VOICE_VOCABULARY_SAVE_CHANNEL,
 } from "../channels.ts";
 
 export const VOICE_HELPER_EXECUTABLE_NAME = "studio-voice";
+export const LINUX_WHISPER_EXECUTABLE_NAME = "whisper-cli";
 const VOICE_PREPARE_TIMEOUT_MS = 15 * 60_000;
+const VOICE_PREVIEW_TEXT =
+  "Hello. I am ready when you are. We can review your projects, or start something new.";
 
 /** Results cross IPC as values so the renderer sees a plain message, never an Effect failure. */
 const VoiceTextResult = Schema.Union([
@@ -75,7 +91,7 @@ function defaultLocale(): string {
 }
 
 function messageOf(error: unknown, fallback: string): string {
-  if (error instanceof VoiceHelperError) return error.message;
+  if (error instanceof VoiceHelperError || error instanceof LinuxSpeechError) return error.message;
   return error instanceof Error && error.message ? `${fallback} ${error.message}` : fallback;
 }
 
@@ -122,10 +138,40 @@ async function resolveHelperPath(input: {
   return output;
 }
 
+/** Opens the desktop's own sound settings; only GNOME and KDE have a known way in. */
+function openLinuxSoundSettings(desktop: string): void {
+  const command = /gnome|unity|cinnamon/i.test(desktop)
+    ? ["gnome-control-center", "sound"]
+    : /kde/i.test(desktop)
+      ? ["systemsettings", "kcm_pulseaudio"]
+      : null;
+  if (command === null) return;
+  const [file, ...args] = command as [string, ...string[]];
+  const child = NodeChildProcess.spawn(file, args, { detached: true, stdio: "ignore" });
+  child.once("error", () => undefined);
+  child.unref();
+}
+
 export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const isMac = environment.platform === "darwin";
+  const isLinux = environment.platform === "linux";
+  const voiceDir = NodePath.join(environment.baseDir, "voice");
+  const vocabulary = new VoiceVocabularyStore(NodePath.join(voiceDir, "vocabulary.json"));
+  const linux = isLinux
+    ? new LinuxSpeech({
+        voiceDir,
+        arch: environment.processArch,
+        whisperPath: environment.isPackaged
+          ? NodePath.join(environment.resourcesPath, "voice", LINUX_WHISPER_EXECUTABLE_NAME)
+          : NodePath.join(
+              environment.rootDir,
+              "native/voice/.build",
+              LINUX_WHISPER_EXECUTABLE_NAME,
+            ),
+      })
+    : null;
   const activeCalls = new Set<number>();
   const speechRequests = new Map<number, AbortController>();
   const watched = new Set<number>();
@@ -195,13 +241,34 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       result: VoiceAudioResult,
       handler: ({ voiceId, rate }) =>
         Effect.promise(async () => {
-          if (!isMac) return { ok: false as const, error: "Local voice preview needs macOS." };
+          if (linux !== null) {
+            if ((await linux.missingBytes()) > 0) {
+              return {
+                ok: false as const,
+                error: "The free voice downloads with your first call or dictation.",
+              };
+            }
+            try {
+              const audio = await withTempFile("wav", async (path) => {
+                await linux.speak(VOICE_PREVIEW_TEXT, path, rate);
+                return new Uint8Array(await NodeFSP.readFile(path));
+              });
+              return { ok: true as const, audio };
+            } catch (error) {
+              return {
+                ok: false as const,
+                error: messageOf(error, "Could not preview the voice."),
+              };
+            }
+          }
+          if (!isMac)
+            return { ok: false as const, error: "Local voice preview is not available here." };
           try {
             const voice = await getHelper();
             const audio = await withTempFile("wav", async (path) => {
               await voice.request({
                 op: "speak",
-                text: "Hello. I am ready when you are. We can review your projects, or start something new.",
+                text: VOICE_PREVIEW_TEXT,
                 voice: voiceId || undefined,
                 rate,
                 path,
@@ -219,14 +286,27 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
     }),
   );
 
-  const status = (): DesktopVoiceStatus =>
-    isMac
-      ? { supported: true, microphone: microphoneAccess(), reason: null }
-      : {
-          supported: false,
-          microphone: "unknown",
-          reason: "Voice calls need the SpecWithCode app on macOS.",
-        };
+  const status = async (): Promise<DesktopVoiceStatus> => {
+    if (isMac) return { supported: true, microphone: microphoneAccess(), reason: null };
+    if (linux === null) {
+      return {
+        supported: false,
+        microphone: "unknown",
+        reason: "Voice needs the SpecWithCode app on macOS or Linux.",
+      };
+    }
+    const reason = await linux.unsupportedReason();
+    if (reason !== null) return { supported: false, microphone: "unknown", reason };
+    // Linux has no system privacy switch to read: the app's own consent dialog
+    // and the per-window permission handler below are the gate.
+    return {
+      supported: true,
+      microphone: "granted",
+      reason: null,
+      setupBytes: await linux.missingBytes(),
+      setupPercent: linux.progressPercent(),
+    };
+  };
 
   const endCall = (senderId: number) => {
     activeCalls.delete(senderId);
@@ -257,7 +337,7 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       channel: VOICE_GET_STATUS_CHANNEL,
       payload: Schema.Void,
       result: DesktopVoiceStatusSchema,
-      handler: () => Effect.sync(status),
+      handler: () => Effect.promise(status),
     }),
   );
 
@@ -268,11 +348,12 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       result: DesktopVoiceStatusSchema,
       handler: () =>
         Effect.promise(async () => {
+          if (linux !== null) return prepareVoiceCall(await status(), () => linux.prepare());
           if (!isMac) return status();
           if (microphoneAccess() === "not-determined") {
             await Electron.systemPreferences.askForMediaAccess("microphone").catch(() => false);
           }
-          return prepareVoiceCall(status(), async () => {
+          return prepareVoiceCall(await status(), async () => {
             const voice = await getHelper();
             await voice.request(
               { op: "prepare", locale: defaultLocale() },
@@ -321,7 +402,9 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       result: VoiceTextResult,
       handler: ({ audio, locale }, event) =>
         Effect.promise(async () => {
-          if (!isMac) return { ok: false as const, error: status().reason ?? "Unsupported." };
+          if (!isMac && linux === null) {
+            return { ok: false as const, error: (await status()).reason ?? "Unsupported." };
+          }
           if (event === undefined || !activeCalls.has(event.sender.id)) {
             return { ok: false as const, error: "No voice call is active in this window." };
           }
@@ -329,16 +412,21 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
             return { ok: false as const, error: "That recording was too long to transcribe." };
           }
           try {
-            const voice = await getHelper();
-            const text = await withTempFile("wav", async (path) => {
+            const terms = await vocabulary.terms();
+            const prompt = linux === null ? "" : whisperPrompt(terms);
+            const heard = await withTempFile("wav", async (path) => {
               await NodeFSP.writeFile(path, audio, { mode: 0o600 });
+              if (linux !== null) return linux.transcribe(path, prompt);
+              const voice = await getHelper();
               const reply = await voice.request({
                 op: "transcribe",
                 path,
                 locale: locale ?? defaultLocale(),
+                contextualStrings: contextualStrings(terms),
               });
               return reply.text ?? "";
             });
+            const text = correctTranscript(acceptTranscript(heard, prompt, wavPeak(audio)), terms);
             return { ok: true as const, text };
           } catch (error) {
             return { ok: false as const, error: messageOf(error, "Could not transcribe.") };
@@ -354,7 +442,9 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       result: VoiceAudioResult,
       handler: ({ text, voiceId, rate }, event) =>
         Effect.promise(async () => {
-          if (!isMac) return { ok: false as const, error: status().reason ?? "Unsupported." };
+          if (!isMac && linux === null) {
+            return { ok: false as const, error: (await status()).reason ?? "Unsupported." };
+          }
           if (event === undefined || !activeCalls.has(event.sender.id)) {
             return { ok: false as const, error: "No voice call is active in this window." };
           }
@@ -363,17 +453,21 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
           const request = new AbortController();
           speechRequests.set(senderId, request);
           try {
-            const voice = await getHelper();
+            const voice = linux === null ? await getHelper() : null;
             if (request.signal.aborted) return { ok: false as const, error: "Voice call ended." };
             const audio = await withTempFile("wav", async (path) => {
               if (request.signal.aborted) throw new Error("Voice call ended.");
-              await voice.request({
-                op: "speak",
-                text,
-                path,
-                voice: voiceId || undefined,
-                rate,
-              });
+              if (linux !== null) {
+                await linux.speak(text, path, rate, request.signal);
+              } else {
+                await voice?.request({
+                  op: "speak",
+                  text,
+                  path,
+                  voice: voiceId || undefined,
+                  rate,
+                });
+              }
               return new Uint8Array(await NodeFSP.readFile(path));
             });
             return request.signal.aborted
@@ -400,7 +494,25 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
         Effect.promise(async () => {
           if (isMac)
             await Electron.shell.openExternal(MICROPHONE_SETTINGS_URL).catch(() => undefined);
+          if (isLinux) openLinuxSoundSettings(process.env.XDG_CURRENT_DESKTOP ?? "");
         }),
+    }),
+  );
+
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: VOICE_VOCABULARY_READ_CHANNEL,
+      payload: Schema.Void,
+      result: DesktopVoiceVocabularySchema,
+      handler: () => Effect.promise(() => vocabulary.read()),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: VOICE_VOCABULARY_SAVE_CHANNEL,
+      payload: DesktopVoiceVocabularySaveInputSchema,
+      result: DesktopVoiceVocabularySchema,
+      handler: ({ text }) => Effect.promise(() => vocabulary.save(text)),
     }),
   );
 

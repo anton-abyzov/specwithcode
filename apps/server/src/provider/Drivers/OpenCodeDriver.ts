@@ -32,7 +32,10 @@ import * as OpenCodeAdapterV2 from "../../orchestration-v2/Adapters/OpenCodeAdap
 import * as OpenCode2AdapterV2 from "../../orchestration-v2/Adapters/OpenCode2AdapterV2.ts";
 import type { ProviderAdapterV2Shape } from "../../orchestration-v2/ProviderAdapter.ts";
 import * as ServerSettings from "../../serverSettings.ts";
-import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
+import type {
+  PromptSuggestionGenerationInput,
+  TextGeneration,
+} from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { readOpenCodeGoUsageLimits } from "../openCodeUsageLimits.ts";
 import {
@@ -168,6 +171,15 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateThreadTitle(input),
         v2: v2.generateThreadTitle(input),
       }),
+    ...(v1.generatePromptSuggestion === undefined || v2.generatePromptSuggestion === undefined
+      ? {}
+      : {
+          generatePromptSuggestion: (input: PromptSuggestionGenerationInput) =>
+            byOpenCodeRuntime(probe.get, {
+              v1: v1.generatePromptSuggestion!(input),
+              v2: v2.generatePromptSuggestion!(input),
+            }),
+        }),
   };
 }
 

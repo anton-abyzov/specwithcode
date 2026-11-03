@@ -308,6 +308,11 @@ import {
   ComposerSelectControl,
 } from "./ComposerControl";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
+import {
+  composerGhostSuggestionKeyAction,
+  visibleComposerGhostSuggestion,
+  type ComposerGhostSuggestion,
+} from "./composerGhostSuggestion";
 import { ThreadMachineComposerChip } from "./ThreadMachineComposerChip";
 import type { ThreadMachine } from "./threadMachine";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
@@ -1735,6 +1740,8 @@ export interface ChatComposerProps {
     readonly url: string | null;
   }> | null;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
+  /** The latest completed run's suggested next prompt, shown grey in an empty composer. */
+  ghostSuggestion?: ComposerGhostSuggestion | null | undefined;
 
   // Callbacks
   onCompactContext: () => void;
@@ -1886,6 +1893,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFileOpen,
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
+    ghostSuggestion = null,
   } = props;
   const projectRouting = useProjectMessageRouting();
   const routesProjectMessage = routesViaCoordinator(projectRouting) && !activePendingProgress;
@@ -3151,6 +3159,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerSuggestionsVisible = composerMenuOpen && !isComposerApprovalState;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
+  // The run whose suggestion the user waved off; a newer run offers its own.
+  const [dismissedGhostRunId, setDismissedGhostRunId] = useState<string | null>(null);
+  const visibleGhostSuggestion = visibleComposerGhostSuggestion({
+    suggestion: canOperateThread ? ghostSuggestion : null,
+    dismissedRunId: dismissedGhostRunId,
+    phase,
+    isSendBusy,
+    isConnecting,
+    isApprovalState: isComposerApprovalState,
+    hasPendingUserInput: pendingUserInputs.length > 0 || activePendingProgress !== null,
+    showPlanFollowUpPrompt,
+    environmentUnavailable: environmentUnavailable !== null,
+    projectSelectionRequired,
+    isEditingQueuedMessage,
+    draftHasUserContent: composerDraftHasUserContent(composerDraft),
+    prompt,
+  });
   // Question cards link file paths (opened in the app) and URLs (opened outside).
   const renderPendingQuestionText = useCallback<QuestionTextRenderer>(
     (text, variant) => (
@@ -4715,6 +4740,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
+    const ghostAction = composerGhostSuggestionKeyAction(event, {
+      ghostVisible: visibleGhostSuggestion !== null && promptRef.current === "",
+      menuIsActive,
+      hasSubmissionIntent: submissionIntent !== null,
+    });
+    if (ghostAction !== null && visibleGhostSuggestion !== null) {
+      if (ghostAction === "dismiss") {
+        setDismissedGhostRunId(visibleGhostSuggestion.runId);
+        return true;
+      }
+      return applyPromptReplacement(0, promptRef.current.length, visibleGhostSuggestion.text);
+    }
     if (key === "Escape") {
       if (!menuIsActive || event.isComposing || event.keyCode === 229) return false;
       dismissComposerTrigger(trigger);
@@ -7855,6 +7892,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPageScrollRelease={onPageScrollRelease}
                     onCitationSubmitAndSend={submitCitationAndSend}
                     onPaste={onComposerPaste}
+                    ghostSuggestion={visibleGhostSuggestion?.text ?? null}
                     placeholder={
                       isComposerApprovalState
                         ? "Resolve this approval request to continue"

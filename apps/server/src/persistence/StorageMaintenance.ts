@@ -26,6 +26,11 @@
  * is one page, so it commits well within the helper's settle time. A pass that
  * meets an update stops and is retried later.
  *
+ * Each pass, and each check between passes, also deletes auth rows nothing can
+ * use again (`AuthRowPruning`: sessions and pairing links revoked or expired
+ * over a week ago, never a renewable worker grant), in batches behind the same
+ * per-statement gate. The update helper hashes those tables too.
+ *
  * Deleted pages go to the free list, where new writes reuse them. Only a
  * database with `auto_vacuum = INCREMENTAL` returns them to the file system
  * here, in small `incremental_vacuum` steps; see `specweave-studio db reclaim`
@@ -55,6 +60,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeFS from "node:fs";
 
 import * as ServerConfig from "../config.ts";
+import * as AuthRowPruning from "./AuthRowPruning.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -216,6 +222,8 @@ export interface StorageMaintenanceRun {
   readonly blocker: MaintenanceBlocker | null;
   readonly mode: "full" | "incremental" | null;
   readonly compaction: ProjectionMaintenance.CompactEventStoreResult | null;
+  /** Expired and revoked auth rows deleted; null when the pass never reached that step. */
+  readonly authPruning: AuthRowPruning.PruneAuthRowsResult | null;
   readonly reclaimedPages: number;
 }
 
@@ -231,6 +239,8 @@ export interface StorageMaintenanceOptions {
   readonly intervalMs?: number;
   readonly fullPassIntervalMs?: number;
   readonly pagePause?: Duration.Input;
+  /** How long an expired or revoked auth row stays: AuthRowPruning.AUTH_ROW_RETENTION_MS. */
+  readonly authRowRetentionMs?: number;
 }
 
 /** After 25 ms of work, rest nine times its duration, outside the connection lock. */
@@ -347,6 +357,38 @@ export const make = (options: StorageMaintenanceOptions) =>
         return reclaimed;
       });
 
+    /** Deletes dead auth rows in batches; stops, like compaction, when an update begins. */
+    const pruneAuthWith = (gate: {
+      readonly check: Effect.Effect<boolean>;
+      readonly mayDelete: () => boolean;
+      readonly reason: () => MaintenanceBlocker | null;
+    }) =>
+      Effect.gen(function* () {
+        if (!(yield* gate.check)) return null;
+        const startedAt = yield* Clock.currentTimeMillis;
+        const result = yield* AuthRowPruning.pruneAuthRows({
+          cutoff: AuthRowPruning.authPruneCutoff(
+            startedAt,
+            options.authRowRetentionMs ?? AuthRowPruning.AUTH_ROW_RETENTION_MS,
+          ),
+          shouldContinue: gate.check,
+          mayDelete: gate.mayDelete,
+          betweenBatches: yield* makeCompactionPacer,
+          pauseBetweenBatches: pagePause,
+        });
+        if (
+          result.deletedSessionCount > 0 ||
+          result.deletedPairingLinkCount > 0 ||
+          result.interrupted
+        )
+          yield* Effect.logInfo("storage-maintenance.auth-rows.pruned", {
+            ...result,
+            blocker: gate.reason(),
+            elapsedMs: (yield* Clock.currentTimeMillis) - startedAt,
+          });
+        return result;
+      });
+
     /** One pass now, whether due or not; still never while an update blocks it. */
     const runNow = (input?: { readonly forceFull?: boolean }) =>
       permit.withPermit(
@@ -358,6 +400,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               blocker: gate.reason(),
               mode: null,
               compaction: null,
+              authPruning: null,
               reclaimedPages: 0,
             } satisfies StorageMaintenanceRun;
           }
@@ -389,6 +432,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               blocker: gate.reason(),
               mode: full ? "full" : "incremental",
               compaction,
+              authPruning: null,
               reclaimedPages: 0,
             } satisfies StorageMaintenanceRun;
           }
@@ -405,6 +449,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               Effect.logWarning("storage-maintenance.state.write-failed", { cause }),
             ),
           );
+          const authPruning = yield* pruneAuthWith(gate);
           const reclaimedPages = yield* reclaimWith(gate);
           yield* Effect.logInfo("storage-maintenance.compaction.completed", {
             mode: full ? "full" : "incremental",
@@ -420,9 +465,10 @@ export const make = (options: StorageMaintenanceOptions) =>
           });
           return {
             status: "completed",
-            blocker: null,
+            blocker: gate.reason(),
             mode: full ? "full" : "incremental",
             compaction,
+            authPruning,
             reclaimedPages,
           } satisfies StorageMaintenanceRun;
         }),
@@ -434,19 +480,31 @@ export const make = (options: StorageMaintenanceOptions) =>
       const now = yield* Clock.currentTimeMillis;
       if (Option.isSome(state) && now - epochOf(state.value.completedAt) < intervalMs) {
         const gate = yield* makeGate;
-        const reclaimedPages = yield* permit.withPermit(reclaimWith(gate));
+        const { authPruning, reclaimedPages } = yield* permit.withPermit(
+          Effect.gen(function* () {
+            const authPruning = yield* pruneAuthWith(gate);
+            return { authPruning, reclaimedPages: yield* reclaimWith(gate) };
+          }),
+        );
         return {
           status: "not-due",
           blocker: gate.reason(),
           mode: null,
           compaction: null,
+          authPruning,
           reclaimedPages,
         } satisfies StorageMaintenanceRun;
       }
       return yield* runNow();
     });
 
-    return { runNow, runIfDue, blocker } as const;
+    return {
+      runNow,
+      runIfDue,
+      blocker,
+      /** Only the auth-row step, under the same gate: for tests and tools. */
+      pruneAuthRows: permit.withPermit(Effect.flatMap(makeGate, pruneAuthWith)),
+    } as const;
   });
 
 /** Starts the schedule in the server: first check after FIRST_CHECK_DELAY_MS, then every CHECK_INTERVAL_MS. */

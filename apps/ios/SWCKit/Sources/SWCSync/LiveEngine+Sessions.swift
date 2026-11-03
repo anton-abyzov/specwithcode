@@ -431,6 +431,7 @@ extension LiveEngine {
       rows = TranscriptMapper.rows(for: projection, environmentId: controller.environmentId)
       assign(session, \.isRunning, TranscriptMapper.isRunning(projection))
       assign(session, \.queuedCount, TranscriptMapper.queuedCount(projection))
+      assign(session, \.promptSuggestion, TranscriptMapper.promptSuggestion(projection, mode: machines[controller.environmentId]?.settings?.promptSuggestions ?? "all"))
       assign(session, \.plan, TranscriptMapper.planProgress(projection))
       assign(session, \.isLoaded, true)
       assign(session, \.loadError, nil)

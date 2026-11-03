@@ -159,6 +159,28 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(archivedAt);
   });
 
+  it("records a run's prompt suggestion and keeps it through a later run snapshot", () => {
+    const promptSuggestion = { text: "run the tests", source: "generated" as const };
+    const suggested = applyOrchestrationV2ProjectionEvent({ ...emptyProjection, runs: [run] }, {
+      id: "event-suggested",
+      type: "run.prompt-suggested",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: { runId, promptSuggestion },
+    } as OrchestrationV2DomainEvent);
+    expect(suggested?.runs[0]?.promptSuggestion).toEqual(promptSuggestion);
+    const updated = applyOrchestrationV2ProjectionEvent(suggested, {
+      id: "event-run-updated",
+      type: "run.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: run,
+    } as OrchestrationV2DomainEvent);
+    expect(updated?.runs[0]?.promptSuggestion).toEqual(promptSuggestion);
+  });
+
   it("ignores events for another thread", () => {
     const event = {
       id: "event-other",

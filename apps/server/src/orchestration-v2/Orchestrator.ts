@@ -187,6 +187,7 @@ import {
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
+import { acceptsPromptSuggestion } from "./PromptSuggestions.ts";
 import { makeProviderFailure, shouldHoldQueueAfterFailure } from "./ProviderFailure.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
@@ -704,6 +705,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.delete":
     case "thread.deferred-resolution.request":
     case "thread.deferred-resolution.finish":
+    case "run.prompt-suggestion.record":
     case "thread.lifecycle-receipt.record":
     case "thread.settle":
     case "thread.auto-settle":
@@ -12568,6 +12570,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         break;
       }
+      case "run.prompt-suggestion.record": {
+        const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        const run = projection.runs.find((candidate) => candidate.id === command.runId);
+        if (
+          run === undefined ||
+          !acceptsPromptSuggestion(projection.runs, command.runId, command.promptSuggestion)
+        )
+          break;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.prompt-suggested",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: yield* DateTime.now,
+          payload: { runId: run.id, promptSuggestion: command.promptSuggestion },
+        });
+        break;
+      }
       case "thread.deferred-resolution.finish": {
         const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
         const intent = projection.thread.deferredResolution;
@@ -12995,6 +13018,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "queued-message.steer-settle" ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.deferred-resolution.finish" ||
+        command.type === "run.prompt-suggestion.record" ||
         command.type === "thread.stop" ||
         command.type === "thread.project-move.record" ||
         command.type === "thread.execution.record" ||

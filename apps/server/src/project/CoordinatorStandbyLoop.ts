@@ -40,14 +40,21 @@ import { ProjectLink } from "./ProjectLink.ts";
  * are named after the old coordinator's rows. A restart re-checks each armed
  * project once, so a follow-up the old process owed is not lost.
  *
- * Nothing starts while a service update holds this machine.
+ * Nothing starts while a service update holds this machine. While held, the
+ * lease route answers busy and the coordinator stays unfenced, so on the
+ * round after the hold ends silence counts from then, as after a planned
+ * pause.
  */
 
 /** The longest wait between two tries of a follow-up still owed. */
 const FOLLOW_UP_BACKOFF_MAX_MS = 30 * 60_000;
 
 export interface StandbyTakeoverDeps {
-  readonly watch: { readonly tick: Effect.Effect<StandbyWatchTick, CoordinatorStandbyStoreError> };
+  readonly watch: {
+    readonly tick: Effect.Effect<StandbyWatchTick, CoordinatorStandbyStoreError>;
+    /** Counts silence from now; run on the first round after a hold ends. */
+    readonly resumeAfterHold: Effect.Effect<void, CoordinatorStandbyStoreError>;
+  };
   readonly store: Pick<CoordinatorStandbyStore["Service"], "list">;
   readonly autoTakeover: ProjectLink["Service"]["autoTakeover"];
   readonly selfEnvironmentId: string;
@@ -93,6 +100,8 @@ export const makeStandbyTakeover = (deps: StandbyTakeoverDeps) => {
   const checked = new Set<string>();
   /** Registrations whose last try failed, and when the next may run. */
   const retry = new Map<string, { readonly failures: number; readonly atMs: number }>();
+  /** Whether the last round found this machine held by a service update. */
+  let wasHeld = false;
 
   const failed = (key: string, nowMs: number, message: string, detail: object) =>
     Effect.gen(function* () {
@@ -108,7 +117,14 @@ export const makeStandbyTakeover = (deps: StandbyTakeoverDeps) => {
   const round: Effect.Effect<StandbyRoundResult> = Effect.gen(function* () {
     const takenOver: Array<StandbyRoundResult["takenOver"][number]> = [];
     const followedUp: Array<StandbyRoundResult["followedUp"][number]> = [];
-    if (yield* deps.held) return { takenOver, followedUp };
+    if (yield* deps.held) {
+      wasHeld = true;
+      return { takenOver, followedUp };
+    }
+    if (wasHeld) {
+      yield* deps.watch.resumeAfterHold;
+      wasHeld = false;
+    }
     const { due } = yield* deps.watch.tick;
     const dueIds = new Set(due.map((record) => record.logicalProjectId));
     const nowMs = yield* Clock.currentTimeMillis;

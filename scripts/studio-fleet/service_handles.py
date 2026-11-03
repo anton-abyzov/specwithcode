@@ -74,3 +74,31 @@ def assert_database_locked(state):
     the "last" user, and no snapshot is safe to take."""
     locks = live_database.service_locks(state / 'statev2.sqlite')
     assert locks['database'] is not None and locks['index'] is not None, LOCKS_LOST
+
+def database_holders(state, pids):
+    """The pids among `pids` that hold statev2.sqlite, -wal or -shm open, by path or by inode (lsof,
+    one call for all of them). A pid that has exited holds nothing; an unreadable listing raises."""
+    pids = sorted({int(pid) for pid in pids})
+    if not pids:
+        return set()
+    paths = {str(state / name) for name in DATABASE_FILES}
+    inodes = set()
+    for path in paths:
+        try:
+            inodes.add(os.stat(path).st_ino)
+        except FileNotFoundError:
+            continue
+    result = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-p', ','.join(map(str, pids)), '-Fpin'],
+                            capture_output=True, text=True, timeout=LSOF_TIMEOUT_SECONDS)
+    assert result.returncode in {0, 1}, 'Open service files could not be read'
+    held, pid, inode = set(), None, None
+    for line in result.stdout.splitlines():
+        if line[:1] == 'p' and line[1:].isdigit():
+            pid, inode = int(line[1:]), None
+        elif line[:1] == 'f':
+            inode = None
+        elif line[:1] == 'i' and line[1:].isdigit():
+            inode = int(line[1:])
+        elif line[:1] == 'n' and pid in pids and (line[1:] in paths or (inode is not None and inode in inodes)):
+            held.add(pid)
+    return held

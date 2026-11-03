@@ -111,6 +111,20 @@ describe("sendRefusal", () => {
     });
     expect(question?.options.map((option) => option.label)).toEqual(["Send", "Don't send"]);
   });
+
+  it("names the mailbox a reply is sent from", () => {
+    const [question] = sendQuestions([
+      {
+        draftId: "0123456789ab:d1",
+        from: "work@example.com",
+        to: "Dana <dana@example.com>",
+        subject: "Re: Lunch",
+        body: "Friday works.",
+      },
+    ]);
+    expect(question?.header).toBe("Reply to Dana <dana@example.com> from work@example.com");
+    expect(question?.options[0]?.description).toBe("Send this reply from work@example.com now.");
+  });
 });
 
 const scope: Context.McpInvocationScope = {
@@ -139,11 +153,17 @@ const fixture = (requests: ReadonlyArray<ReturnType<typeof request>>) => {
           to: "dana@example.com",
           subject: "Re: Lunch",
           body: `Reply ${draftId}`,
+          from: "me@example.com",
         }),
       gmailSendDraft: (_projectId, draftId) =>
         Effect.sync(() => {
           sent.push(draftId);
-          return { sent: true as const, messageId: "sent-1", threadId: "t1" };
+          return {
+            sent: true as const,
+            from: "me@example.com",
+            messageId: "sent-1",
+            threadId: "t1",
+          };
         }),
     }),
     Layer.mock(Threads.ThreadManagementService)({

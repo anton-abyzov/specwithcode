@@ -1,7 +1,13 @@
-import type { GoogleService, ProjectId } from "@specweave-studio/contracts";
+import type {
+  GoogleAccountStatus,
+  GoogleConnectedAccount,
+  GoogleService,
+  ProjectId,
+} from "@specweave-studio/contracts";
 import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
+  GOOGLE_ACCOUNT_LABEL_MAX,
   GOOGLE_CLIENT_ID_PATTERN,
   GOOGLE_CLIENT_SECRET_PATTERN,
   GOOGLE_READ_SERVICES,
@@ -50,6 +56,29 @@ const SERVICE_LABELS: Record<GoogleService, string> = {
 const listServices = (services: ReadonlyArray<GoogleService>) =>
   services.map((service) => SERVICE_LABELS[service]).join(", ");
 
+/** The saved accounts; a server from before several accounts reports one at the top level. */
+const accountsOf = (status: GoogleAccountStatus | null): ReadonlyArray<GoogleConnectedAccount> => {
+  if (status === null) return [];
+  if (status.accounts !== undefined) return status.accounts;
+  if (!status.connected && status.projects.length === 0) return [];
+  return [
+    {
+      id: "primary",
+      email: status.email,
+      label: null,
+      connected: status.connected,
+      services: status.services,
+      projects: status.projects,
+      lastError: status.lastError,
+    },
+  ];
+};
+
+const accountTitle = (account: GoogleConnectedAccount) =>
+  account.label
+    ? `${account.label} · ${account.email ?? "Google account"}`
+    : (account.email ?? "Google account");
+
 export function GoogleAccountSettingsPanel() {
   const returnTo = useLocation({ select: (location) => location.href });
   const environmentId = usePrimaryEnvironmentId();
@@ -80,17 +109,52 @@ export function GoogleAccountSettingsPanel() {
     reportFailure: false,
   });
   const remove = useAtomCommand(serverEnvironment.removeGoogleAccount, { reportFailure: false });
+  const setLabel = useAtomCommand(serverEnvironment.setGoogleAccountLabel, {
+    reportFailure: false,
+  });
+
+  // Several accounts: the project switches below are for the one picked here.
+  const accounts = accountsOf(status);
+  const multiAccount = status?.accounts !== undefined;
+  const [pickedAccount, setPickedAccount] = useState<string | null>(null);
+  const selected =
+    accounts.find((account) => account.id === pickedAccount) ??
+    accounts.find((account) => account.connected) ??
+    accounts[0] ??
+    null;
+  const scopedServices = selected?.connected ? selected.services : [];
+  const scopedProjects = selected?.projects ?? [];
+  const accountInput = multiAccount && selected !== null ? { account: selected.id } : {};
+  const [labels, setLabels] = useState<ReadonlyMap<string, string>>(() => new Map());
+  /** The account a project uses when its agents name none: its chosen one, else the first it may read. */
+  const defaultAccountOf = (projectId: ProjectId) => {
+    const chosen = status?.defaults?.find((entry) => entry.projectId === projectId)?.account;
+    const readable = accounts.filter(
+      (account) =>
+        account.connected &&
+        account.projects.some(
+          (entry) =>
+            entry.projectId === projectId &&
+            entry.services.some((service) => account.services.includes(service)),
+        ),
+    );
+    return (readable.find((account) => account.id === chosen) ?? readable[0])?.id ?? null;
+  };
 
   const allProjects = useProjects();
   const scratchRoot = config?.scratchWorkspaceRoot ?? null;
   const aideEnabled = useAideEnabled();
+  const statusAccounts = status?.accounts;
   const statusProjects = status?.projects;
   const projectsWithAccess = useMemo(
-    () =>
-      (statusProjects ?? [])
-        .filter((entry) => entry.services.length > 0)
-        .map((entry) => entry.projectId),
-    [statusProjects],
+    () => [
+      ...new Set(
+        [...(statusAccounts?.flatMap((account) => account.projects) ?? statusProjects ?? [])]
+          .filter((entry) => entry.services.length > 0)
+          .map((entry) => entry.projectId),
+      ),
+    ],
+    [statusAccounts, statusProjects],
   );
   const {
     active: projects,
@@ -113,13 +177,15 @@ export function GoogleAccountSettingsPanel() {
   // so reconnecting to add Gmail drafts keeps every service already approved.
   const [choices, setChoices] = useState<ReadonlyMap<GoogleService, boolean>>(() => new Map());
   const granted = status?.connected ? status.services : [];
-  const wanted = new Set(
-    GOOGLE_SERVICES.filter(
-      (service) =>
-        choices.get(service) ??
-        (granted.includes(service) || GOOGLE_READ_SERVICES.includes(service)),
-    ),
-  );
+  const wantedFrom = (base: ReadonlyArray<GoogleService>) =>
+    new Set(
+      GOOGLE_SERVICES.filter(
+        (service) =>
+          choices.get(service) ??
+          (base.includes(service) || GOOGLE_READ_SERVICES.includes(service)),
+      ),
+    );
+  const wanted = wantedFrom(granted);
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -188,12 +254,24 @@ export function GoogleAccountSettingsPanel() {
     });
   };
 
-  const beginSignIn = () => {
+  /** Signs in again to `accountId`, or adds whichever account the person picks at Google. */
+  const beginSignIn = (accountId?: string) => {
     if (environmentId === null) return;
     // Opened inside the click so the browser allows it; pointed at Google once the host answers.
     const tab = window.open("about:blank", "_blank");
+    // Reconnecting keeps what that account granted; a new account starts from reading.
+    const base =
+      accountId === undefined
+        ? []
+        : (accountsOf(status).find((account) => account.id === accountId)?.services ?? granted);
     void run("Could not start Google sign-in", () =>
-      startSignIn({ environmentId, input: { services: [...wanted] } }),
+      startSignIn({
+        environmentId,
+        input: {
+          services: [...wantedFrom(base)],
+          ...(accountId === undefined || !multiAccount ? {} : { account: accountId }),
+        },
+      }),
     ).then((result) => {
       const url = result?._tag === "Success" ? result.value.signIn?.authorizationUrl : undefined;
       if (url && tab) tab.location.href = url;
@@ -212,13 +290,40 @@ export function GoogleAccountSettingsPanel() {
 
   const toggleService = (projectId: ProjectId, service: GoogleService, on: boolean) => {
     if (environmentId === null || status === null) return;
-    const current = status.projects.find((entry) => entry.projectId === projectId)?.services ?? [];
+    const current = scopedProjects.find((entry) => entry.projectId === projectId)?.services ?? [];
     const services = on
       ? [...new Set([...current, service])]
       : current.filter((entry) => entry !== service);
     void run("Could not change project access", () =>
-      setProjectAccess({ environmentId, input: { projectId, services } }),
+      setProjectAccess({ environmentId, input: { projectId, services, ...accountInput } }),
     );
+  };
+
+  const makeDefault = (projectId: ProjectId) => {
+    if (environmentId === null || selected === null) return;
+    const services = scopedProjects.find((entry) => entry.projectId === projectId)?.services ?? [];
+    void run("Could not change the default account", () =>
+      setProjectAccess({
+        environmentId,
+        input: { projectId, services: [...services], account: selected.id, makeDefault: true },
+      }),
+    );
+  };
+
+  const saveLabel = (account: GoogleConnectedAccount) => {
+    const label = labels.get(account.id);
+    if (environmentId === null || label === undefined) return;
+    void run("Could not rename the account", () =>
+      setLabel({ environmentId, input: { account: account.id, label: label.trim() || null } }),
+    ).then((result) => {
+      // A refused rename keeps what the person typed.
+      if (result === null) return;
+      setLabels((current) => {
+        const next = new Map(current);
+        next.delete(account.id);
+        return next;
+      });
+    });
   };
 
   const applyChanges = async (
@@ -231,7 +336,7 @@ export function GoogleAccountSettingsPanel() {
       for (const change of changes) {
         const result = await setProjectAccess({
           environmentId,
-          input: { projectId: change.projectId, services: [...change.services] },
+          input: { projectId: change.projectId, services: [...change.services], ...accountInput },
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
@@ -262,20 +367,18 @@ export function GoogleAccountSettingsPanel() {
       : [...activeIds, ...[...automatedProjects, ...archivedProjects].map((project) => project.id)];
     void applyChanges(
       on ? "Could not enable access" : "Could not disable access",
-      bulkServiceChanges(status.projects, ids, service, on),
+      bulkServiceChanges(scopedProjects, ids, service, on),
     );
   };
   // One click grants reading only; Gmail drafts writes, so it stays a per-project choice.
-  const grantedReads =
-    status === null
-      ? []
-      : status.services.filter((service) => GOOGLE_READ_SERVICES.includes(service));
+  const grantedReads = scopedServices.filter((service) => GOOGLE_READ_SERVICES.includes(service));
   const enableAllPending =
-    status === null ? [] : enableAllChanges(status.projects, activeIds, grantedReads);
+    status === null ? [] : enableAllChanges(scopedProjects, activeIds, grantedReads);
 
   const renderProjectRow = (project: (typeof projects)[number]) => {
     if (status === null) return null;
-    const enabled = status.projects.find((entry) => entry.projectId === project.id)?.services ?? [];
+    const enabled = scopedProjects.find((entry) => entry.projectId === project.id)?.services ?? [];
+    const isDefault = selected !== null && defaultAccountOf(project.id) === selected.id;
     return (
       <li
         key={project.id}
@@ -290,7 +393,7 @@ export function GoogleAccountSettingsPanel() {
         <TeamRulesInert lock={teamRulesLock}>
           <div className="flex flex-wrap items-center gap-4">
             {GOOGLE_SERVICES.map((service) => {
-              const granted = status.services.includes(service);
+              const granted = scopedServices.includes(service);
               return (
                 <label
                   key={service}
@@ -307,6 +410,21 @@ export function GoogleAccountSettingsPanel() {
                 </label>
               );
             })}
+            {accounts.length > 1 && enabled.length > 0 && selected?.connected === true ? (
+              isDefault ? (
+                <Badge variant="secondary">Default account</Badge>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  disabled={!canWrite || busy}
+                  aria-label={`Make ${selected === null ? "this account" : accountTitle(selected)} the default for ${project.title}`}
+                  onClick={() => makeDefault(project.id)}
+                >
+                  Make default
+                </Button>
+              )
+            ) : null}
             {enabled.length > 0 ? (
               <Button
                 size="xs"
@@ -448,7 +566,108 @@ export function GoogleAccountSettingsPanel() {
               </div>
             ) : null}
 
-            {status.connected ? (
+            {accounts.length > 1 ? (
+              <ul className="flex flex-col gap-2">
+                {accounts.map((account) => {
+                  const draft = labels.get(account.id);
+                  return (
+                    <li
+                      key={account.id}
+                      className="flex flex-col gap-2 rounded-md border px-3 py-2 text-sm"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="min-w-0 truncate">
+                          <span className="font-medium">{accountTitle(account)}</span>
+                          <span className="text-muted-foreground">
+                            {" "}
+                            ·{" "}
+                            {account.connected
+                              ? `reads ${listServices(account.services) || "nothing"}`
+                              : "not connected"}
+                          </span>
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          <TeamRulesInert lock={teamRulesLock}>
+                            <Button
+                              size="xs"
+                              variant="ghost-muted"
+                              disabled={!canWrite || busy || wanted.size === 0}
+                              aria-label={`${account.connected ? "Reconnect" : "Connect"} ${accountTitle(account)}`}
+                              onClick={() => beginSignIn(account.id)}
+                            >
+                              {account.connected ? "Reconnect" : "Connect"}
+                            </Button>
+                          </TeamRulesInert>
+                          {account.connected ? (
+                            <Button
+                              size="xs"
+                              variant="ghost-muted"
+                              disabled={!canWrite || busy || environmentId === null}
+                              aria-label={`Disconnect ${accountTitle(account)}`}
+                              onClick={() => {
+                                if (environmentId === null) return;
+                                void run("Could not disconnect", () =>
+                                  disconnect({ environmentId, input: { account: account.id } }),
+                                );
+                              }}
+                            >
+                              Disconnect
+                            </Button>
+                          ) : null}
+                          <Button
+                            size="xs"
+                            variant="ghost-muted"
+                            disabled={!canWrite || busy || environmentId === null}
+                            aria-label={`Remove ${accountTitle(account)}`}
+                            onClick={() => {
+                              if (environmentId === null) return;
+                              void run("Could not remove the account", () =>
+                                disconnect({
+                                  environmentId,
+                                  input: { account: account.id, forget: true },
+                                }),
+                              );
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Input
+                          size="sm"
+                          aria-label={`Label for ${account.email ?? "this account"}`}
+                          placeholder="Label, such as Work or Personal"
+                          maxLength={GOOGLE_ACCOUNT_LABEL_MAX}
+                          value={draft ?? account.label ?? ""}
+                          disabled={!canWrite || busy}
+                          onChange={(event) =>
+                            setLabels((current) =>
+                              new Map(current).set(account.id, event.target.value),
+                            )
+                          }
+                        />
+                        {draft !== undefined && draft.trim() !== (account.label ?? "") ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={!canWrite || busy}
+                            onClick={() => saveLabel(account)}
+                          >
+                            Save label
+                          </Button>
+                        ) : null}
+                      </div>
+                      {account.lastError ? (
+                        <span className="text-destructive-foreground text-xs">
+                          {account.lastError}
+                        </span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : status.connected ? (
               <div className="flex flex-col gap-1 text-sm">
                 <span>
                   Signed in as <span className="font-medium">{status.email ?? "your account"}</span>
@@ -488,17 +707,31 @@ export function GoogleAccountSettingsPanel() {
             </TeamRulesInert>
 
             <div className="flex flex-wrap gap-2">
-              <TeamRulesInert lock={teamRulesLock}>
-                <Button
-                  size="sm"
-                  variant={status.connected ? "outline" : "default"}
-                  disabled={!canWrite || busy || wanted.size === 0}
-                  onClick={beginSignIn}
-                >
-                  {status.connected ? "Reconnect" : "Connect Google"}
-                </Button>
-              </TeamRulesInert>
-              {status.connected ? (
+              {accounts.length <= 1 ? (
+                <TeamRulesInert lock={teamRulesLock}>
+                  <Button
+                    size="sm"
+                    variant={status.connected ? "outline" : "default"}
+                    disabled={!canWrite || busy || wanted.size === 0}
+                    onClick={() => beginSignIn(accounts[0]?.id)}
+                  >
+                    {status.connected ? "Reconnect" : "Connect Google"}
+                  </Button>
+                </TeamRulesInert>
+              ) : null}
+              {multiAccount && status.connected ? (
+                <TeamRulesInert lock={teamRulesLock}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!canWrite || busy || wanted.size === 0}
+                    onClick={() => beginSignIn()}
+                  >
+                    Add another Google account
+                  </Button>
+                </TeamRulesInert>
+              ) : null}
+              {status.connected && accounts.length <= 1 ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -569,10 +802,32 @@ export function GoogleAccountSettingsPanel() {
         {status?.connected ? (
           <div className="flex flex-col border-t">
             <div className="flex flex-col gap-1 px-3 pt-4 pb-2 sm:px-4">
-              <span className="font-medium text-sm">Projects that may read it</span>
+              <span className="font-medium text-sm">
+                {accounts.length > 1
+                  ? "Projects that may read each account"
+                  : "Projects that may read it"}
+              </span>
               <span className="text-muted-foreground text-xs">
                 Agents in a project see only the services you turn on for it.
+                {accounts.length > 1
+                  ? " Agents use the default account unless asked for another, and may read every account turned on here."
+                  : ""}
               </span>
+              {accounts.length > 1 ? (
+                <div role="group" aria-label="Google account" className="flex flex-wrap gap-1 pt-1">
+                  {accounts.map((account) => (
+                    <Button
+                      key={account.id}
+                      size="xs"
+                      variant={account.id === selected?.id ? "default" : "outline"}
+                      aria-pressed={account.id === selected?.id}
+                      onClick={() => setPickedAccount(account.id)}
+                    >
+                      {accountTitle(account)}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
             </div>
             {offerEnableAll && enableAllPending.length > 0 ? (
               <div
@@ -609,19 +864,19 @@ export function GoogleAccountSettingsPanel() {
               </p>
             ) : (
               <>
-                {status.services.length > 0 && projects.length > 0 ? (
+                {scopedServices.length > 0 && projects.length > 0 ? (
                   <div className="flex flex-col gap-1 border-b px-3 pb-2 sm:px-4">
-                    {GOOGLE_SERVICES.filter((service) => status.services.includes(service)).map(
+                    {GOOGLE_SERVICES.filter((service) => scopedServices.includes(service)).map(
                       (service) => {
                         const label = SERVICE_LABELS[service];
                         const onCount = projects.filter((project) =>
-                          status.projects
+                          scopedProjects
                             .find((entry) => entry.projectId === project.id)
                             ?.services.includes(service),
                         ).length;
                         const anyOn =
                           bulkServiceChanges(
-                            status.projects,
+                            scopedProjects,
                             [...projects, ...automatedProjects, ...archivedProjects].map(
                               (project) => project.id,
                             ),
@@ -701,7 +956,7 @@ export function GoogleAccountSettingsPanel() {
         {status?.connected || usesOwnClient || (status?.projects.length ?? 0) > 0 ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-3 sm:px-4">
             <span className="text-muted-foreground text-xs">
-              Remove forgets the sign-in, your own OAuth client if you saved one, and every
+              Remove forgets every sign-in, your own OAuth client if you saved one, and every
               project&apos;s access on this machine.
             </span>
             <Button

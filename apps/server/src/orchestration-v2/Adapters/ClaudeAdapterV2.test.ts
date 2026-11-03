@@ -75,6 +75,7 @@ import {
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import type { PromptSuggestionOffer } from "../PromptSuggestions.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import {
@@ -2761,6 +2762,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const offeredMessages: Array<SDKUserMessage> = [];
       const permissionModeChanges: Array<string> = [];
       const continuationRequests: Array<ProviderContinuationRequest> = [];
+      const promptSuggestionOffers: Array<PromptSuggestionOffer> = [];
+      const promptSuggestionsWanted = { current: true };
       const terminalReceipts =
         yield* Queue.unbounded<Extract<ProviderAdapterV2Event, { type: "turn.terminal" }>>();
       const providerThreadReceipts =
@@ -2787,6 +2790,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             Effect.sync(() => {
               continuationRequests.push(request);
             }),
+        },
+        promptSuggestions: {
+          offer: (offer) =>
+            Effect.sync(() => {
+              promptSuggestionOffers.push(offer);
+            }),
+          wanted: Effect.sync(() => promptSuggestionsWanted.current),
         },
         queryRunner: {
           allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
@@ -2877,6 +2887,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         offeredMessages,
         permissionModeChanges,
         continuationRequests,
+        promptSuggestionOffers,
+        promptSuggestionsWanted,
         events,
         terminalReceipts,
         providerThreadReceipts,
@@ -2887,6 +2899,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect("asks for prompt suggestions and offers the one after result for that run", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("prompt-suggestion"),
+        text: "Fix the build",
+        attachments: [],
+      });
+      yield* harness.runtime.startTurn(input);
+      assert.equal(harness.getOpenedOptions()?.promptSuggestions, true);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "suggestion-terminal", result: "Fixed" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "prompt_suggestion",
+          suggestion: "run the tests",
+          uuid: "suggestion-after-result",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // One per finished turn: a repeat has nothing left to attach to.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "prompt_suggestion",
+          suggestion: "again",
+          uuid: "suggestion-repeat",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.deepEqual(harness.promptSuggestionOffers, [
+        { threadId: harness.threadId, runId: input.runId, text: "run the tests" },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("does not ask for prompt suggestions when the setting is off", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      harness.promptSuggestionsWanted.current = false;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("prompt-suggestion-off"),
+          text: "Fix the build",
+          attachments: [],
+        }),
+      );
+      assert.equal(harness.getOpenedOptions()?.promptSuggestions, undefined);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect.each([
     { name: "paired and preferred", paired: true, prefer: undefined, browser: true, hidden: true },

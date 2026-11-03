@@ -149,6 +149,19 @@ class RefusalLine(unittest.TestCase):
             self.assertEqual(update.refusal_line('m4', AssertionError('Owned service has unexpected descendants')),
                              'REFUSAL descendants')
 
+    def test_a_refusal_that_names_its_processes_reports_those_not_a_later_read(self):
+        """A short-lived git that tripped the check has usually exited by the time a second read runs,
+        which then named nothing; the refusal's own processes are reported, with their pids."""
+        import quiescence
+        error = quiescence.UnexpectedDescendants([process(4123, 100, '/usr/bin/git'), process(4124, 4123, '/bin/ps')])
+        with patch.object(update, 'read_processes', side_effect=AssertionError('a second read is not needed')):
+            line = update.refusal_line('m4', error)
+        self.assertEqual(line, 'REFUSAL descendants git=1 ps=1 pid:4123 pid:4124')
+        self.assert_safe(line)
+        import update_agent_pause
+        self.assertEqual(update_agent_pause.refusal_reason(line, 'refused'),
+                         ('waiting-for-quiet', 'Waiting for open SpecWithCode terminals and agent processes to close (git, ps)'))
+
     def test_the_service_s_own_server_browser_is_not_named_while_something_else_is(self):
         """It is stopped by the update itself (M4, 1.0.86: "chrome-headless-shell x8, node"
         named eight browsers that never kept the update waiting)."""

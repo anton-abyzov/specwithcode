@@ -77,8 +77,10 @@ import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
+import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
 import {
   CoordinatorReleaseGuard,
+  keptRoutinesDigest,
   makeProjectLinkStandby,
   type PeerReplicaContent,
   peerReplicaMark,
@@ -262,6 +264,7 @@ const make = Effect.gen(function* () {
   const replicas = yield* CoordinatorReplicas.CoordinatorReplicas;
   const standbyStore = yield* CoordinatorStandbyStore;
   const publishRole = yield* CoordinatorRole.publisher;
+  const routineCopies = Option.getOrUndefined(yield* Effect.serviceOption(RoutineCopies));
 
   const load = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -767,11 +770,12 @@ const make = Effect.gen(function* () {
         digest: yield* contentDigest(projectId),
         replica: Option.match(replica, {
           onNone: () => null,
-          onSome: ({ from, digest, fromEpoch, replicatedAt }) => ({
+          onSome: ({ from, digest, fromEpoch, replicatedAt, routinesDigest }) => ({
             from,
             digest,
             ...(fromEpoch === undefined ? {} : { fromEpoch }),
             replicatedAt,
+            ...(routinesDigest === undefined ? {} : { routinesDigest }),
           }),
         }),
       };
@@ -810,9 +814,9 @@ const make = Effect.gen(function* () {
           return yield* fail("superseded_conflict");
         const replicatedAt = DateTime.formatIso(yield* DateTime.now);
         // Only this machine records that a peer pushed a copy; the app never claims it.
-        const { peer: _peer, ...written } = replica;
+        const { peer: _peer, routinesDigest: _routines, ...written } = replica;
         yield* replicas
-          .write(projectId, { ...written, replicatedAt })
+          .write(projectId, { ...written, replicatedAt, ...keptRoutinesDigest(held, replica.from) })
           .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
         return { replicatedAt, replayed: false };
       }),
@@ -878,6 +882,7 @@ const make = Effect.gen(function* () {
             instructions: input.content.instructions,
             notes: [...input.content.notes],
             notesTruncated: input.content.notesTruncated,
+            ...keptRoutinesDigest(held, from),
             peer: peerReplicaMark(held, input.content, replicatedAt),
           })
           .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
@@ -1194,6 +1199,13 @@ const make = Effect.gen(function* () {
     selfMember,
     readReplica,
     coordinatorContentDigest,
+    keepRoutines:
+      routineCopies === undefined
+        ? undefined
+        : (input) =>
+            routineCopies
+              .replace(input)
+              .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" }))),
     publishRole,
     writeOwnership: (project, commandPrefix, operationId, ownership) =>
       writeOwnership(project, commandPrefix, operationId, ownership),

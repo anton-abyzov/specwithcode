@@ -17,8 +17,11 @@ public struct ServerSettings: Codable, Hashable, Sendable {
   /// Whether Aide, the personal assistant, is shown. Off by default; older
   /// servers omit it, so Aide stays hidden there.
   public var aideEnabled: Bool
+  /// Suggested prompts: "all", "native" (the provider's own only) or "off".
+  /// Older servers omit it and show every suggestion they record.
+  public var promptSuggestions: String
 
-  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:], aideEnabled: Bool = false) {
+  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:], aideEnabled: Bool = false, promptSuggestions: String = "all") {
     self.defaultRuntimeMode = defaultRuntimeMode
     self.defaultModelSelection = defaultModelSelection
     self.textGenerationModelSelection = textGenerationModelSelection
@@ -28,11 +31,13 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     self.environmentIcon = environmentIcon
     self.machineNicknames = machineNicknames
     self.aideEnabled = aideEnabled
+    self.promptSuggestions = promptSuggestions
   }
 
   enum CodingKeys: String, CodingKey {
     case defaultRuntimeMode, defaultModelSelection, textGenerationModelSelection, sidebarProjectOrder
     case providerInstances, defaultThreadEnvMode, environmentIcon, machineNicknames, aideEnabled
+    case promptSuggestions
   }
 
   public init(from decoder: Decoder) throws {
@@ -46,6 +51,7 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     environmentIcon = try? c.decodeIfPresent(String.self, forKey: .environmentIcon)
     machineNicknames = Self.decodeNicknames(c)
     aideEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .aideEnabled)) ?? false
+    promptSuggestions = (try? c.decodeIfPresent(String.self, forKey: .promptSuggestions)) ?? "all"
   }
 
   /// Drops a malformed entry rather than failing the whole settings snapshot.

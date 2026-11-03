@@ -164,6 +164,7 @@ import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
 import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar, VoiceCallButton } from "./VoiceCall";
+import { useVoiceDictation, VoiceDictationBar, VoiceDictationButton } from "./VoiceDictation";
 import { ProjectIconButton } from "./ProjectIconEditor";
 import { ProjectMoreMenu } from "./shell/ProjectMoreMenu";
 import { randomUUID } from "../../lib/utils";
@@ -1066,6 +1067,7 @@ export function ProjectWorkspaceSurface({
           ? "Connect a provider in Settings > Providers and choose a coordinator model first."
           : null),
   );
+  const dictation = useVoiceDictation(setPrompt, project.id);
   const hostCapabilities = environment?.serverConfig?.environment.capabilities;
   const uploadsSupported = hostCapabilities?.attachmentUploads === true;
   // Coordinator turns carry files the way thread turns do: the agent gets each one's path.
@@ -1733,13 +1735,15 @@ export function ProjectWorkspaceSurface({
                         </p>
                       )}
                     <VoiceCallBar call={voiceCall} />
+                    <VoiceDictationBar dictation={dictation} />
                   </>
                 }
                 meta={
                   <>
+                    <VoiceDictationButton dictation={dictation} disabled={voiceCall.active} />
                     <VoiceCallButton
                       call={voiceCall}
-                      disabled={Boolean(blocked) || (!model && !coordinatorId)}
+                      disabled={Boolean(blocked) || (!model && !coordinatorId) || dictation.active}
                     />
                     {coordinator && coordinatorTone ? (
                       <Tip

@@ -6,6 +6,7 @@
  * @module googleAccountLogic
  */
 import { GOOGLE_SERVICES, type GoogleService } from "@specweave-studio/contracts";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 /**
@@ -73,6 +74,8 @@ export function buildAuthorizationUrl(input: {
   readonly services: ReadonlyArray<GoogleService>;
   readonly state: string;
   readonly codeChallenge: string;
+  /** The address to preselect when reconnecting one saved account. */
+  readonly loginHint?: string | null | undefined;
 }): string {
   const url = new URL(input.authorizeUrl);
   const scopes = [
@@ -86,9 +89,11 @@ export function buildAuthorizationUrl(input: {
   url.searchParams.set("state", input.state);
   url.searchParams.set("code_challenge", input.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
-  // A refresh token is only returned with offline access and a fresh consent.
+  // A refresh token is only returned with offline access and a fresh consent. The
+  // account chooser lets the person add a second account while signed in to the first.
   url.searchParams.set("access_type", "offline");
-  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("prompt", "select_account consent");
+  if (input.loginHint) url.searchParams.set("login_hint", input.loginHint);
   return url.toString();
 }
 
@@ -151,44 +156,197 @@ export function describeCallbackError(error: string): string {
   return `Google sign-in failed: ${error}.`;
 }
 
-export const GoogleAccountState = Schema.Struct({
+const ServiceList = Schema.Array(Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"]));
+
+/** The one-account state saved before several accounts were supported. */
+export const GoogleAccountStateV1 = Schema.Struct({
   version: Schema.Literal(1),
   email: Schema.NullOr(Schema.String),
   /** The client that obtained the saved refresh token; absent in state saved before it was kept. */
   clientId: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"])),
+  services: ServiceList,
   projects: Schema.Array(
     Schema.Struct({
       projectId: Schema.String,
-      services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"])),
+      services: ServiceList,
     }),
   ),
+  briefingSetUp: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type GoogleAccountStateV1 = typeof GoogleAccountStateV1.Type;
+
+/**
+ * The account a host had before several were supported. It keeps the original
+ * refresh-token secret and returns bare message and draft ids, so ids agents saw
+ * before the update still work.
+ */
+export const PRIMARY_ACCOUNT_ID = "primary";
+
+export const GoogleStoredAccount = Schema.Struct({
+  /** `primary`, or random lowercase hex for every account added after it. */
+  id: Schema.String,
+  email: Schema.NullOr(Schema.String),
+  /** A short name the person gave it, such as "Work". */
+  label: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The client that obtained this account's refresh token. */
+  clientId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** Services Google granted at this account's last sign-in. */
+  services: ServiceList,
   /**
    * Personal projects the proactive briefing was already set up for with this account,
-   * so a briefing the person deleted is not set up again. A new account starts empty.
+   * so a briefing the person deleted is not set up again.
    */
   briefingSetUp: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type GoogleStoredAccount = typeof GoogleStoredAccount.Type;
+
+export const GoogleAccountState = Schema.Struct({
+  version: Schema.Literal(2),
+  /** In the order they were connected; the first is where older clients' calls go. */
+  accounts: Schema.Array(GoogleStoredAccount),
+  /** Which services of which account each project's agents may read. */
+  projects: Schema.Array(
+    Schema.Struct({
+      projectId: Schema.String,
+      account: Schema.String,
+      services: ServiceList,
+    }),
+  ),
+  /** The account a project's agents use when they name none. */
+  defaults: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ projectId: Schema.String, account: Schema.String })),
+  ),
 });
 export type GoogleAccountState = typeof GoogleAccountState.Type;
 
 export const EMPTY_GOOGLE_ACCOUNT_STATE: GoogleAccountState = {
-  version: 1,
-  email: null,
-  services: [],
+  version: 2,
+  accounts: [],
   projects: [],
 };
 
-/** Replaces one project's services; a project with none is dropped. */
+const decodeV2 = Schema.decodeUnknownExit(Schema.fromJsonString(GoogleAccountState));
+const decodeV1 = Schema.decodeUnknownExit(Schema.fromJsonString(GoogleAccountStateV1));
+
+/**
+ * Saved state in either version. One saved account becomes the primary account
+ * with every switch it had. `hasPrimaryToken` keeps a sign-in whose address
+ * Google did not return.
+ */
+export function readGoogleAccountState(
+  json: string | null,
+  hasPrimaryToken: boolean,
+): GoogleAccountState {
+  if (json !== null) {
+    const v2 = decodeV2(json);
+    if (Exit.isSuccess(v2)) return v2.value;
+    const v1 = decodeV1(json);
+    if (Exit.isSuccess(v1)) return migrateGoogleAccountState(v1.value, hasPrimaryToken);
+  }
+  return hasPrimaryToken
+    ? {
+        ...EMPTY_GOOGLE_ACCOUNT_STATE,
+        accounts: [{ id: PRIMARY_ACCOUNT_ID, email: null, services: [] }],
+      }
+    : EMPTY_GOOGLE_ACCOUNT_STATE;
+}
+
+export function migrateGoogleAccountState(
+  v1: GoogleAccountStateV1,
+  hasPrimaryToken: boolean,
+): GoogleAccountState {
+  const used =
+    hasPrimaryToken ||
+    v1.email !== null ||
+    v1.services.length > 0 ||
+    v1.projects.length > 0 ||
+    (v1.briefingSetUp?.length ?? 0) > 0;
+  if (!used) return EMPTY_GOOGLE_ACCOUNT_STATE;
+  return {
+    version: 2,
+    accounts: [
+      {
+        id: PRIMARY_ACCOUNT_ID,
+        email: v1.email,
+        ...(v1.clientId === undefined ? {} : { clientId: v1.clientId }),
+        services: v1.services,
+        ...(v1.briefingSetUp === undefined ? {} : { briefingSetUp: v1.briefingSetUp }),
+      },
+    ],
+    projects: v1.projects.map((entry) => ({
+      projectId: entry.projectId,
+      account: PRIMARY_ACCOUNT_ID,
+      services: entry.services,
+    })),
+  };
+}
+
+const sameAddress = (a: string | null | undefined, b: string | null | undefined) =>
+  a != null && b != null && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/**
+ * The saved account a new sign-in belongs to: the account Reconnect named, else the same
+ * address. With nothing else saved, the one disconnected account Google never named is
+ * reused, as a single-account host always did; with several, an unnamed sign-in is a new
+ * account so it never inherits another account's project switches.
+ */
+export function accountForSignIn(
+  state: GoogleAccountState,
+  email: string | null,
+  connected: ReadonlySet<string>,
+  target: string | null = null,
+): GoogleStoredAccount | undefined {
+  const named =
+    target === null ? undefined : state.accounts.find((account) => account.id === target);
+  if (
+    named !== undefined &&
+    (named.email === null || email === null || sameAddress(named.email, email))
+  ) {
+    return named;
+  }
+  const same = state.accounts.find((account) => sameAddress(account.email, email));
+  if (same) return same;
+  const only = state.accounts.length === 1 ? state.accounts[0] : undefined;
+  return only !== undefined && only.email === null && !connected.has(only.id) ? only : undefined;
+}
+
+/** Replaces one project's services for one account; an entry with none is dropped. */
 export function withProjectAccess(
   state: GoogleAccountState,
   projectId: string,
+  accountId: string,
   services: ReadonlyArray<GoogleService>,
 ): GoogleAccountState {
-  const others = state.projects.filter((entry) => entry.projectId !== projectId);
+  const others = state.projects.filter(
+    (entry) => !(entry.projectId === projectId && entry.account === accountId),
+  );
   const ordered = orderedServices(services);
   return {
     ...state,
-    projects: ordered.length === 0 ? others : [...others, { projectId, services: ordered }],
+    projects:
+      ordered.length === 0
+        ? others
+        : [...others, { projectId, account: accountId, services: ordered }],
+  };
+}
+
+/** Sets the account a project uses when its agents name none. */
+export function withProjectDefault(
+  state: GoogleAccountState,
+  projectId: string,
+  accountId: string,
+): GoogleAccountState {
+  const others = (state.defaults ?? []).filter((entry) => entry.projectId !== projectId);
+  return { ...state, defaults: [...others, { projectId, account: accountId }] };
+}
+
+/** Forgets one account with its switches and defaults. */
+export function withoutAccount(state: GoogleAccountState, accountId: string): GoogleAccountState {
+  return {
+    ...state,
+    accounts: state.accounts.filter((account) => account.id !== accountId),
+    projects: state.projects.filter((entry) => entry.account !== accountId),
+    defaults: (state.defaults ?? []).filter((entry) => entry.account !== accountId),
   };
 }
 
@@ -205,6 +363,7 @@ export function personalProjectAccess(
       | null
       | undefined;
   }>,
+  accountId: string,
   services: ReadonlyArray<GoogleService>,
 ): GoogleAccountState["projects"] {
   const ordered = orderedServices(services);
@@ -216,16 +375,72 @@ export function personalProjectAccess(
         project.workspaceSettings?.kind === "personal" &&
         project.workspaceSettings.archived !== true,
     )
-    .map((project) => ({ projectId: project.projectId, services: ordered }));
+    .map((project) => ({ projectId: project.projectId, account: accountId, services: ordered }));
 }
 
-/** What a project may read now: its switches limited to what Google granted. */
-export function projectServices(state: GoogleAccountState, projectId: string): GoogleService[] {
-  const entry = state.projects.find((candidate) => candidate.projectId === projectId);
-  if (!entry) return [];
-  const granted = new Set(state.services);
+/** What a project may read now with one account: its switches limited to what Google granted. */
+export function projectServices(
+  state: GoogleAccountState,
+  projectId: string,
+  accountId: string,
+): GoogleService[] {
+  const entry = state.projects.find(
+    (candidate) => candidate.projectId === projectId && candidate.account === accountId,
+  );
+  const account = state.accounts.find((candidate) => candidate.id === accountId);
+  if (!entry || !account) return [];
+  const granted = new Set(account.services);
   return entry.services.filter((service) => granted.has(service));
 }
+
+/** The account a project uses when its agents name none: its chosen one, else the first it may read. */
+export function projectDefaultAccount(
+  state: GoogleAccountState,
+  projectId: string,
+  usable: (accountId: string) => boolean,
+): GoogleStoredAccount | undefined {
+  const chosen = state.defaults?.find((entry) => entry.projectId === projectId)?.account;
+  const candidates = state.accounts.filter((account) => usable(account.id));
+  return candidates.find((account) => account.id === chosen) ?? candidates[0];
+}
+
+/** How an agent may name an account: its address, its label, or its id. */
+export function matchAccount(
+  accounts: ReadonlyArray<GoogleStoredAccount>,
+  name: string,
+): GoogleStoredAccount | undefined {
+  const wanted = name.trim().toLowerCase();
+  if (wanted === "") return undefined;
+  return (
+    accounts.find((account) => sameAddress(account.email, wanted)) ??
+    accounts.find((account) => account.id === wanted) ??
+    accounts.find((account) => (account.label ?? "").trim().toLowerCase() === wanted)
+  );
+}
+
+/** What agents call an account: its label and address when both are known. */
+export const accountName = (account: GoogleStoredAccount): string =>
+  account.label && account.email
+    ? `${account.label} (${account.email})`
+    : (account.email ?? account.label ?? "the Google account");
+
+/**
+ * Ids agents receive carry their account, so a read or reply always reaches the
+ * mailbox the message came from. The primary account's ids stay bare.
+ */
+export const qualifiedId = (accountId: string, id: string): string =>
+  accountId === PRIMARY_ACCOUNT_ID ? id : `${accountId}:${id}`;
+
+export function splitQualifiedId(value: string): { readonly account: string; readonly id: string } {
+  const at = value.indexOf(":");
+  return at === -1
+    ? { account: PRIMARY_ACCOUNT_ID, id: value }
+    : { account: value.slice(0, at), id: value.slice(at + 1) };
+}
+
+export const ACCOUNT_ID_PATTERN = /^(primary|[0-9a-f]{12})$/u;
+export const MAX_GOOGLE_ACCOUNTS = 10;
+export const ACCOUNT_LABEL_LIMIT = 40;
 
 // --- Shapes agents receive -------------------------------------------------
 

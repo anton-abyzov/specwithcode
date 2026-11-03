@@ -384,3 +384,34 @@ export function buildHandoffNotePrompt(input: HandoffNotePromptInput) {
   });
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Prompt suggestion
+// ---------------------------------------------------------------------------
+
+export interface PromptSuggestionPromptInput {
+  /** The person's latest message and the agent's reply, already trimmed by the caller. */
+  transcript: string;
+}
+
+/** The message the person is most likely to send next, shown as ghost text they accept with Tab. */
+export function buildPromptSuggestionPrompt(input: PromptSuggestionPromptInput) {
+  const prompt = [
+    "You predict the next message a person will send to their coding agent, right after its latest reply.",
+    "Return a JSON object with key suggestion.",
+    "Rules:",
+    "- write it as the person would type it to the agent: short, direct, imperative, in their language",
+    "- at most 12 words, one line, no quotes around it",
+    "- pick the obvious next step the reply sets up (answer its question, approve its plan, run or check what it built, take the follow-up it names)",
+    "- never invent facts, file names or numbers that the reply does not mention",
+    "- an empty string when there is no clear next step or the work is plainly finished",
+    PLAIN_TEXT_RULE,
+    "",
+    "Conversation (latest messages):",
+    preserveMessageEnd(input.transcript),
+  ].join("\n");
+  const outputSchema = Schema.Struct({
+    suggestion: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  });
+  return { prompt, outputSchema };
+}

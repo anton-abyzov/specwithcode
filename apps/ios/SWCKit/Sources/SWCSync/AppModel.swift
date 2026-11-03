@@ -370,6 +370,8 @@ public final class ChatSession: Identifiable {
   public var isStale = false
   public var isRunning = false
   public var queuedCount = 0
+  /// The predicted next prompt: set when the latest run completed with one.
+  public var promptSuggestion: String?
   public var plan: PlanProgress?
   public var machineLabel: String
   public var machineOnline: Bool

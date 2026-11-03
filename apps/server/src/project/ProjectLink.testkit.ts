@@ -29,6 +29,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectRow } from "../orchestration-v2/ProjectStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
 import * as CoordinatorRole from "./CoordinatorRole.ts";
+import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
 import {
   type CoordinatorStandbyRecord,
   CoordinatorStandbyStore,
@@ -80,6 +81,8 @@ export function machine(environment: string) {
   /** This machine's standby records, and whether it says it can stand by. */
   const standby = new Map<string, CoordinatorStandbyRecord>();
   const capabilities = { coordinatorStandby: true };
+  /** Routine copies this machine was asked to keep, by its project. */
+  const keptRoutines = new Map<string, { logicalProjectId: string; ids: string[] }>();
   const toRow = (project: Project): ProjectRow =>
     ({
       projectId: project.id,
@@ -231,6 +234,20 @@ export function machine(environment: string) {
             }),
         } as unknown as ProjectWorkspaceService.ProjectWorkspaceService["Service"]),
         Layer.succeed(
+          RoutineCopies,
+          RoutineCopies.of({
+            snapshot: () => Effect.die("not used by the project link"),
+            replace: ({ projectId, logicalProjectId, routines }) =>
+              Effect.sync(
+                () =>
+                  void keptRoutines.set(projectId, {
+                    logicalProjectId,
+                    ids: routines.map((routine) => routine.id),
+                  }),
+              ),
+          }),
+        ),
+        Layer.succeed(
           CoordinatorReplicas.CoordinatorReplicas,
           CoordinatorReplicas.CoordinatorReplicas.of({
             read: (projectId) => Effect.sync(() => Option.fromNullishOr(replicas.get(projectId))),
@@ -314,6 +331,7 @@ export function machine(environment: string) {
     ownershipModes,
     runs,
     replicas,
+    keptRoutines,
     standby,
     layer,
     capabilities,

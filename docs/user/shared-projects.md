@@ -177,10 +177,24 @@ While it is on:
   to it. Threads in handoff mode continue there from their last copy. Other
   threads wait for the old machine. Edits that were never copied stay on the old
   machine.
+- Routines go with the coordinator. The coordinator copies its routines (the
+  ones with a thread of their own) to the standby along with its notes. On the
+  standby they show **Not run on this machine: another machine runs this
+  project's coordinator.** and skip their runs until it takes over; from then on they run
+  there. Webhook routines and routines bound to a worker's thread stay on their
+  own machine, and so do a webhook's URL and signing secret.
 - When the old machine comes back, it gives way and runs workers. Its row says
   **<standby> took over while this Mac was away.** Choose **Review turns** to see
   what it ran meanwhile, or **Make this Mac the coordinator again** to hand the
-  coordinator back. Nothing hands it back on its own.
+  coordinator back. Nothing hands it back on its own. Its routines rest from
+  then on, so each routine runs on one machine only; until it hears that it gave
+  way, they wait instead of running. A routine deleted on the new coordinator is
+  also removed from the old machine's copy once it stands by again.
+- A daily or monthly routine whose time passed while its Mac was off or asleep
+  is skipped, and shows **Skipped the 09:00 run: this machine was off or asleep
+  at that time.** until its next run; one that waited for the standby says so
+  instead. A routine that repeats every few minutes or
+  hours runs once when the Mac wakes.
 
 **The standby must stay awake.** The coordinator pauses itself shortly before
 the standby could act if it cannot reach the standby, so two coordinators never

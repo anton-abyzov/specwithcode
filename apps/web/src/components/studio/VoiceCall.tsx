@@ -38,7 +38,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { CoordinatorReplyWaiter, type CoordinatorReplySnapshot } from "../../studio/voiceCallReply";
 import { openCallMicrophone, playCallAudio } from "../../studio/voiceCallAudio";
-import { canHostVoiceCall } from "../../studio/voiceCallSupport";
+import { canHostVoiceCall, isLinuxVoiceHost, voiceHostName } from "../../studio/voiceCallSupport";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -238,7 +238,7 @@ export function useVoiceCall(
     };
   }, [bridge]);
   const unavailableReason = !bridge
-    ? "Voice calls need the SpecWithCode app on macOS."
+    ? "Voice needs the SpecWithCode app on macOS or Linux."
     : (coordinatorProblem ??
       (!settingsLoaded
         ? "Voice settings are still loading…"
@@ -249,7 +249,7 @@ export function useVoiceCall(
             : voice.provider === "elevenlabs" &&
                 (!voice.elevenLabsApiKey.trim() ||
                   !/^[a-zA-Z0-9_-]+$/.test(voice.elevenLabsVoiceId))
-              ? "Add your ElevenLabs API key and voice ID in Voice settings, or select the free macOS voice."
+              ? `Add your ElevenLabs API key and voice ID in Voice settings, or select the free ${isLinuxVoiceHost() ? "local" : "macOS"} voice.`
               : null));
   const [consentOpen, setConsentOpen] = useState(false);
   const [microphoneBlocked, setMicrophoneBlocked] = useState(false);
@@ -331,7 +331,7 @@ export function useVoiceCall(
           // speech recognition one names its own place in System Settings.
           setMicrophoneBlocked(
             /microphone/i.test(next.error ?? "") &&
-              (next.error?.includes("System Settings") ?? false),
+              /System Settings|Sound settings/.test(next.error ?? ""),
           );
           if (controller.current === call) controller.current = null;
           void bridge.setVoiceCallActive({ active: false }).catch(() => undefined);
@@ -345,9 +345,12 @@ export function useVoiceCall(
     await call.start();
   }, [bridge, unavailableReason]);
 
-  const start = useCallback(() => {
+  const start = useCallback(async () => {
     if (!bridge) return;
-    if (!allowed) {
+    // A download never starts unasked, even after an earlier yes or the Settings switch.
+    const status = await bridge.getVoiceStatus().catch(() => null);
+    if (status) setHostStatus(status);
+    if (!allowed || status === null || (status.setupBytes ?? 0) > 0) {
       setConsentOpen(true);
       return;
     }
@@ -362,6 +365,7 @@ export function useVoiceCall(
 
   const cancelConsent = useCallback(() => setConsentOpen(false), []);
   const dismiss = useCallback(() => setState(IDLE), []);
+  const setupPercent = useVoiceSetupPercent(bridge, state.phase === "connecting");
   const toggleMute = useCallback(() => {
     const call = controller.current;
     call?.setMuted(!call.getState().muted);
@@ -377,6 +381,8 @@ export function useVoiceCall(
     unavailableReason,
     active,
     state,
+    setupPercent,
+    hostStatus,
     consentOpen,
     microphoneBlocked,
     setLevelTarget,
@@ -389,6 +395,83 @@ export function useVoiceCall(
     interrupt,
     openMicrophoneSettings,
   };
+}
+
+/** Asks during the first download on Linux how far it has got. */
+export function useVoiceSetupPercent(
+  bridge: Pick<DesktopBridge, "getVoiceStatus"> | null,
+  watching: boolean,
+): number | null {
+  const [percent, setPercent] = useState<number | null>(null);
+  useEffect(() => {
+    if (!watching || !bridge?.getVoiceStatus) return;
+    const timer = window.setInterval(() => {
+      void bridge
+        .getVoiceStatus?.()
+        .then((status) => setPercent(status.setupPercent ?? null))
+        .catch(() => undefined);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [bridge, watching]);
+  return watching ? percent : null;
+}
+
+/**
+ * The one consent for the microphone, for calls and dictation alike. On Linux
+ * there is no system prompt behind it, so this dialog is the whole question.
+ */
+export function VoiceConsentDialog({
+  open,
+  setupBytes,
+  onCancel,
+  onAllow,
+  allowLabel,
+}: {
+  open: boolean;
+  setupBytes: number;
+  onCancel: () => void;
+  onAllow: () => void;
+  allowLabel: string;
+}) {
+  const host = voiceHostName();
+  const linux = isLinuxVoiceHost();
+  const setupMegabytes = Math.ceil(setupBytes / (1024 * 1024));
+  return (
+    <AlertDialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+    >
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Allow voice?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Call the coordinator and hear it answer, or dictate into the message box. The microphone
+            is on only during a call or dictation, and you can stop at any time.
+          </AlertDialogDescription>
+          <AlertDialogDescription>
+            What you say is turned into text on {host}. In a call that text is sent as your message,
+            so it shows in the conversation like anything you type. Microphone audio stays on {host}
+            . When ElevenLabs is selected, reply text is sent to ElevenLabs and uses your paid
+            ElevenLabs credits. Otherwise replies use free {linux ? "local" : "macOS"} speech. Your
+            selected AI provider still handles coordinator messages under its own subscription or
+            billing settings.{linux ? "" : " macOS will ask once for microphone access."}
+          </AlertDialogDescription>
+          {setupMegabytes > 0 ? (
+            <AlertDialogDescription>
+              First use downloads about {setupMegabytes} MB of free speech files once, from Hugging
+              Face and GitHub. After that voice works offline.
+            </AlertDialogDescription>
+          ) : null}
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogClose render={<Button variant="outline" />}>Not now</AlertDialogClose>
+          <Button onClick={onAllow}>{allowLabel}</Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
 }
 
 /** The phone button beside Attach in the coordinator composer. */
@@ -409,40 +492,19 @@ export function VoiceCallButton({ call, disabled }: { call: VoiceCall; disabled:
           aria-label={call.active ? "End voice call" : "Start voice call"}
           aria-pressed={call.active}
           disabled={(disabled || call.unavailableReason !== null) && !call.active}
-          onClick={call.active ? call.end : call.start}
+          onClick={call.active ? call.end : () => void call.start()}
         >
           {call.active ? <PhoneOffIcon aria-hidden /> : <PhoneIcon aria-hidden />}
         </button>
       </Tip>
       <VoiceSettings disabled={call.active} />
-      <AlertDialog
+      <VoiceConsentDialog
         open={call.consentOpen}
-        onOpenChange={(open) => {
-          if (!open) call.cancelConsent();
-        }}
-      >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Allow voice calls?</AlertDialogTitle>
-            <AlertDialogDescription>
-              You talk, the coordinator answers out loud. The microphone is on only while a call is
-              open, and you can mute or hang up at any time.
-            </AlertDialogDescription>
-            <AlertDialogDescription>
-              What you say is turned into text on this Mac and sent as your message, so it shows in
-              the conversation like anything you type. Microphone audio stays on this Mac. When
-              ElevenLabs is selected, reply text is sent to ElevenLabs and uses your paid ElevenLabs
-              credits. Otherwise replies use free macOS speech. Your selected AI provider still
-              handles coordinator messages under its own subscription or billing settings. macOS
-              will ask once for microphone access.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Not now</AlertDialogClose>
-            <Button onClick={call.allow}>Allow and call</Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
+        setupBytes={call.hostStatus?.setupBytes ?? 0}
+        onCancel={call.cancelConsent}
+        onAllow={call.allow}
+        allowLabel="Allow and call"
+      />
     </>
   );
 }
@@ -483,6 +545,9 @@ export function VoiceCallBar({ call }: { call: VoiceCall }) {
     );
   }
   const caption =
+    (state.phase === "connecting" && call.setupPercent !== null
+      ? `Downloading free speech files: ${call.setupPercent}%`
+      : null) ??
     state.notice ??
     (state.phase === "speaking" && state.spoken
       ? state.spoken

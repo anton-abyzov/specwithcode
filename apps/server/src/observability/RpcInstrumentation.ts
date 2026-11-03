@@ -219,6 +219,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.googleAccountSetProjectAccess]: "googleAccount",
   [WS_METHODS.googleAccountDisconnect]: "googleAccount",
   [WS_METHODS.googleAccountRemove]: "googleAccount",
+  [WS_METHODS.googleAccountSetLabel]: "googleAccount",
   [WS_METHODS.serverGetProcessDiagnostics]: "server",
   [WS_METHODS.serverGetHostResources]: "server",
   [WS_METHODS.serverGetProcessResourceHistory]: "server",

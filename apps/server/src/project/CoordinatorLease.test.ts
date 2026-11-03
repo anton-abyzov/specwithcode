@@ -1,4 +1,9 @@
-import { EnvironmentId, type ProjectId, ProjectLinkError } from "@specweave-studio/contracts";
+import {
+  type CoordinatorRoutineCopy,
+  EnvironmentId,
+  type ProjectId,
+  ProjectLinkError,
+} from "@specweave-studio/contracts";
 import type { StudioWorkGrantProjects } from "@specweave-studio/contracts/studioFleet";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
@@ -21,6 +26,10 @@ import * as CoordinatorLeaseRoute from "./CoordinatorLeaseRoute.ts";
 import { makeMemory } from "./CoordinatorLeaseStore.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectLink from "./ProjectLink.ts";
+import {
+  coordinatorRoutinesDigest,
+  type RoutineCopiesSnapshot,
+} from "../scheduledTasks/ScheduledTaskCopies.ts";
 import { legacyPair, link, removeCheckouts } from "./ProjectLink.testkit.ts";
 
 afterEach(removeCheckouts);
@@ -91,6 +100,8 @@ const armed = async () => {
     replicas: 0,
     interrupted: [] as string[],
     stoppedRows: 0,
+    /** The coordinator's routines as RoutineCopies would read them; null sends none. */
+    routines: null as RoutineCopiesSnapshot | null,
   };
   const memory = makeMemory();
   const deps = await Effect.runPromise(
@@ -131,6 +142,7 @@ const armed = async () => {
             return 2;
           }),
         plannedPauseUntil: Effect.sync(() => state.plannedPauseUntil),
+        routines: () => Effect.sync(() => state.routines),
       };
       return result;
     }).pipe(Effect.provide(Layer.merge(pair.m4.layer, ProjectAdmission.layer))),
@@ -195,6 +207,38 @@ describe("CoordinatorLease", () => {
     await tick();
     expect(sent[2]!.seq).toBeGreaterThan(sent[1]!.seq);
     expect(standbyRecord()?.lastSeq).toBe(sent[2]!.seq);
+  });
+
+  it("sends its routines with the content, and again only when they change", async () => {
+    const { tick, sent, state, pair } = await armed();
+    const routine = {
+      id: "daily-review",
+      title: "Daily review",
+      prompt: "Review open pull requests",
+      enabled: true,
+      schedule: { type: "fixed_time", timeOfDay: "09:00" },
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: "codex", model: "fixture" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+    } as unknown as CoordinatorRoutineCopy;
+    const snapshot = (routines: CoordinatorRoutineCopy[]) => ({
+      routines,
+      digest: coordinatorRoutinesDigest(routines),
+    });
+    state.routines = snapshot([routine]);
+    await tick();
+    expect(sent[0]?.routinesDigest).toBe(state.routines.digest);
+    expect(state.replicas).toBe(1);
+    expect(pair.m3.keptRoutines.get(pair.joining.projectId)?.ids).toEqual(["daily-review"]);
+    await tick();
+    expect(state.replicas).toBe(1);
+    // The routine was deleted on the coordinator: the standby's copy follows.
+    state.routines = snapshot([]);
+    await tick();
+    expect(state.replicas).toBe(2);
+    expect(pair.m3.keptRoutines.get(pair.joining.projectId)?.ids).toEqual([]);
   });
 
   it("releases a standby it no longer leases to on the next round", async () => {

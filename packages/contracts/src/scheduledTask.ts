@@ -355,6 +355,35 @@ export const ScheduledTask = Schema.Struct({
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
+/**
+ * A coordinator-owned routine as the coordinator sends it to its armed
+ * standby: the definition only, without its thread, run state or webhook
+ * credentials. The standby keeps it under the same id as a routine of its
+ * own copy of the project, resting until that copy coordinates.
+ */
+export const CoordinatorRoutineCopy = Schema.Struct({
+  id: ScheduledTaskId,
+  title: TrimmedNonEmptyString,
+  prompt: TrimmedNonEmptyString,
+  enabled: Schema.Boolean,
+  schedule: ScheduledTaskSchedule,
+  workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  createdBy: OrchestrationV2Actor,
+  modelPinned: Schema.optional(ScheduledTaskModelPinned),
+  check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
+  brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
+});
+export type CoordinatorRoutineCopy = typeof CoordinatorRoutineCopy.Type;
+/** At most this many routines travel with one replica. */
+export const COORDINATOR_ROUTINE_COPIES_MAX = 200;
+/** A routine a newer coordinator sends that this version cannot read is left out, not the replica. */
+export const CoordinatorRoutineCopies = ForwardCompatibleArray(CoordinatorRoutineCopy).check(
+  Schema.isMaxLength(COORDINATOR_ROUTINE_COPIES_MAX),
+);
+
 export const ScheduledTaskListInput = Schema.Struct({});
 export type ScheduledTaskListInput = typeof ScheduledTaskListInput.Type;
 

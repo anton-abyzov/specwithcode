@@ -1670,6 +1670,9 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+export const PromptSuggestionsMode = Schema.Literals(["all", "native", "off"]);
+export type PromptSuggestionsMode = typeof PromptSuggestionsMode.Type;
+
 export const ServerSettings = Schema.Struct({
   agentInstructions: AgentInstructions.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_INSTRUCTIONS)),
@@ -1817,6 +1820,12 @@ export const ServerSettings = Schema.Struct({
    * from being created. Existing assistants and their threads are kept.
    */
   aideEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Suggested next prompts after each reply: `all` takes the provider's own
+   * (Claude) and writes one with the text-generation model for the rest,
+   * `native` keeps only the provider's own, `off` shows none.
+   */
+  promptSuggestions: PromptSuggestionsMode.pipe(Schema.withDecodingDefault(Effect.succeed("all"))),
   /** Whether the server-local Device panel setup flow has been completed. */
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -2334,6 +2343,7 @@ export const ServerSettingsPatch = Schema.Struct({
   preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   aideEnabled: Schema.optionalKey(Schema.Boolean),
+  promptSuggestions: Schema.optionalKey(PromptSuggestionsMode),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   maxBootedDevices: Schema.optionalKey(Schema.NullOr(MaxBootedDevices)),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

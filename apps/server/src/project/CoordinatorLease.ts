@@ -45,6 +45,10 @@ import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { coordinatorContentDigest, ProjectLink } from "./ProjectLink.ts";
 import { CoordinatorReleaseGuard, type ReleaseBeforeChangeInput } from "./ProjectLinkStandby.ts";
 import * as ProjectService from "./ProjectService.ts";
+import {
+  RoutineCopies,
+  type RoutineCopiesSnapshot,
+} from "../scheduledTasks/ScheduledTaskCopies.ts";
 
 /**
  * The coordinator's side of automatic takeover. Every 30 seconds it sends a
@@ -151,6 +155,13 @@ export interface CoordinatorLeaseDeps {
   readonly stopCoordinatorWorkers: (project: Project, reason: string) => Effect.Effect<number>;
   /** When a planned stop (a service update) ends, while one is under way. */
   readonly plannedPauseUntil: Effect.Effect<number | null>;
+  /**
+   * The routines the standby keeps (RoutineCopies), or null when they cannot
+   * be read or are too large to send; absent on a server without a scheduler, which sends none.
+   */
+  readonly routines?:
+    | ((project: Project) => Effect.Effect<RoutineCopiesSnapshot | null>)
+    | undefined;
   /** Runs after every tick with the records it left; the wake gate fences from them. */
   readonly afterTick?: (records: ReadonlyArray<CoordinatorLeaseRecord>) => Effect.Effect<void>;
 }
@@ -299,6 +310,10 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
               Effect.map((digest) => digest.digest),
               Effect.orElseSucceed(() => ""),
             );
+      const routines =
+        project === undefined || body.kind === "release" || deps.routines === undefined
+          ? null
+          : yield* deps.routines(project);
       const seq = yield* nextSeq(record.projectId);
       if (seq === undefined) return { kind: "skipped" } as SendOutcome;
       const running =
@@ -311,6 +326,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           protocolVersion: COORDINATOR_LEASE_PROTOCOL_VERSION,
           seq,
           contentDigest,
+          ...(routines === null ? {} : { routinesDigest: routines.digest }),
           runningThreads: running.slice(0, LEASES_MAX).map(({ threadId, title }) => ({
             threadId: threadId as never,
             title: title.slice(0, 500),
@@ -495,6 +511,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
     quiet(
       Effect.gen(function* () {
         const preview = yield* link.preview({ projectId: project.id });
+        const routines = deps.routines === undefined ? null : yield* deps.routines(project);
         const content = {
           goal: preview.goal,
           instructions: preview.instructions,
@@ -507,6 +524,9 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
           epoch: target.epoch,
           digest: coordinatorContentDigest(content),
           ...content,
+          ...(routines === null
+            ? {}
+            : { routines: routines.routines, routinesDigest: routines.digest }),
         });
       }),
       "Coordinator could not send its content to the standby",
@@ -713,6 +733,8 @@ const makeLive = Effect.gen(function* () {
           yield* interrupt(thread.id, thread.activeRunId, reason);
     });
 
+  const routineCopies = Option.getOrUndefined(yield* Effect.serviceOption(RoutineCopies));
+
   return makeCoordinatorLease({
     store,
     peers,
@@ -724,6 +746,21 @@ const makeLive = Effect.gen(function* () {
       Effect.orElseSucceed(() => []),
     ),
     loadProject,
+    routines:
+      routineCopies === undefined
+        ? undefined
+        : (project) => {
+            const logicalProjectId = project.workspaceSettings?.logicalProject?.id;
+            if (logicalProjectId === undefined) return Effect.succeed(null);
+            return routineCopies.snapshot({ projectId: project.id, logicalProjectId }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not read the routines to send the standby", {
+                  projectId: project.id,
+                  cause,
+                }).pipe(Effect.as(null)),
+              ),
+            );
+          },
     runningThreads: (project) =>
       Effect.map(shells, (threads) =>
         threads

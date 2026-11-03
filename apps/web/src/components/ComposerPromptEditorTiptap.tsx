@@ -24,6 +24,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -73,6 +74,7 @@ import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
+import { Kbd } from "./ui/kbd";
 import { ContextChip } from "./ContextChip";
 import {
   ComposerContextActionsContext,
@@ -129,6 +131,8 @@ export interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  /** Suggested next prompt shown in place of the placeholder; Tab accepts it. */
+  ghostSuggestion?: string | null | undefined;
   ariaLabel?: string | undefined;
   /** Identifies an editor with suggestions, even while its list is closed. */
   suggestionListId?: string | undefined;
@@ -623,6 +627,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     skills,
     disabled,
     placeholder,
+    ghostSuggestion,
     ariaLabel,
     suggestionListId,
     activeSuggestionId,
@@ -703,6 +708,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
+  const ghostSuggestionId = useId();
+  const ghostSuggestionShown = isEmpty && contextRecords.size === 0 && Boolean(ghostSuggestion);
 
   const citationCommentActions = useMemo(
     () => ({
@@ -803,8 +810,19 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           }
         : {}),
       "aria-placeholder": placeholder,
+      ...(ghostSuggestionShown ? { "aria-describedby": ghostSuggestionId } : {}),
     }),
-    [activeSuggestionId, ariaLabel, className, disabled, placeholder, richText, suggestionListId],
+    [
+      activeSuggestionId,
+      ariaLabel,
+      className,
+      disabled,
+      ghostSuggestionId,
+      ghostSuggestionShown,
+      placeholder,
+      richText,
+      suggestionListId,
+    ],
   );
 
   const editor = useEditor(
@@ -1414,7 +1432,24 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               onCopyCapture={(event) => handleCopyCut(event, false)}
               onCutCapture={(event) => handleCopyCut(event, true)}
             />
-            {isEmpty && contextRecords.size === 0 && placeholder ? (
+            {ghostSuggestionShown ? (
+              <div
+                id={ghostSuggestionId}
+                data-testid="composer-ghost-suggestion"
+                className={cn(
+                  "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
+                  placeholderClassName,
+                )}
+              >
+                <span className="line-clamp-3 whitespace-pre-wrap wrap-break-word">
+                  {ghostSuggestion}
+                  <Kbd aria-hidden="true" className="ms-1.5">
+                    Tab
+                  </Kbd>
+                  <span className="sr-only">. Suggested prompt, press Tab to use it.</span>
+                </span>
+              </div>
+            ) : isEmpty && contextRecords.size === 0 && placeholder ? (
               <div
                 className={cn(
                   "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",

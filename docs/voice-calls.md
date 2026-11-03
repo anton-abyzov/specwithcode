@@ -1,4 +1,18 @@
-# Voice calls
+# Voice calls and dictation
+
+Voice is in the coordinator composer of the Mac and Linux desktop apps. The phone button starts a call. The microphone button dictates: press it, talk, and each finished phrase lands at the cursor in the message box, unsent, until you press it again. The microphone is open only during a call or dictation, after one in-app consent. Windows has no voice controls yet.
+
+## Linux
+
+Speech to text is whisper.cpp, bundled in the app, with the Whisper `small` q5_1 model. Replies use Piper with the `en_US-lessac-medium` voice unless ElevenLabs is selected. The first call or dictation downloads about 267 MB, after consent, from pinned URLs checked by SHA-256, into `~/.specwithcode/voice`. After that no network call is made and audio never leaves the machine. Language is detected per phrase. Spoken replies are English only. Linux has no system microphone switch for the app to read, so the in-app consent and the per-window permission check are the gate.
+
+If no microphone is found, plug in a headset or USB microphone and check the input in Sound settings.
+
+## Your vocabulary
+
+In Voice settings, **Your vocabulary** lists names and terms, one per line, or `heard => written`. Earlier lines count most. On Linux the first terms, about 500 characters, go to Whisper as a hint. On Mac the first 100 go to Apple's engine as contextual strings, whose effect is not guaranteed. On both, every term corrects casing and split forms ("spec weave" becomes "SpecWeave"), and `heard => written` lines replace text. The list stays in `vocabulary.json` in the voice folder, per machine, and is never sent to a server. Lines that look like passwords, keys, emails or phone numbers are refused. On Linux the hint terms are passed to `whisper-cli` as a command-line argument, which other users on a shared machine can see in the process list while a phrase is transcribed.
+
+## Spoken replies on Mac
 
 Voice replies default to free on-device speech. The native helper chooses the highest-quality installed voice for the system language, prefers natural Siri voices and modern Apple voices over legacy synthesizers at equal quality, and speaks at a calm conversational rate. No speech API key or subscription is needed. Normal agent text usage still applies.
 

@@ -161,6 +161,11 @@ export const ProjectCoordinatorReplica = Schema.Struct({
   notes: Schema.Array(ProjectLinkNote).check(Schema.isMaxLength(4096)),
   notesTruncated: Schema.Boolean,
   /**
+   * Which routines the standby last copied from the coordinator's lease
+   * loop (`coordinatorRoutinesDigest`). Absent when none were sent.
+   */
+  routinesDigest: Schema.optional(bounded(128)),
+  /**
    * Set when the coordinator pushed this copy itself (automatic takeover)
    * rather than the owner's app. `instructionsChangedAt` is when the goal or
    * instructions first differed from the last copy the app wrote; null when
@@ -338,6 +343,7 @@ export const ProjectLinkDigest = Schema.Struct({
       digest: bounded(128),
       fromEpoch: Schema.optional(NonNegativeInt),
       replicatedAt: IsoDateTime,
+      routinesDigest: Schema.optional(bounded(128)),
     }),
   ),
 });

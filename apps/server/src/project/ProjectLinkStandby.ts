@@ -6,6 +6,7 @@ import {
   type ProjectAcceptStandbyInput,
   type ProjectAcceptStandbyResult,
   type ProjectCoordinatorBinding,
+  type CoordinatorRoutineCopy,
   type ProjectCoordinatorReplica,
   type ProjectId,
   type ProjectLinkError,
@@ -48,6 +49,13 @@ export interface PeerReplicaContent {
   readonly instructions: string;
   readonly notes: ReadonlyArray<ProjectLinkNote>;
   readonly notesTruncated: boolean;
+  /**
+   * The coordinator's routines and their `coordinatorRoutinesDigest`, both
+   * absent from a coordinator that predates routine copies. Not in `digest`,
+   * so a standby that predates them still accepts the rest.
+   */
+  readonly routines?: ReadonlyArray<CoordinatorRoutineCopy> | undefined;
+  readonly routinesDigest?: string | undefined;
 }
 
 export interface ReplicateFromPeerInput {
@@ -114,6 +122,11 @@ export class CoordinatorReleaseGuard extends Context.Service<
   }
 >()("specweave-studio/project/ProjectLinkStandby/CoordinatorReleaseGuard") {}
 
+const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
+  a.environmentId === b.environmentId &&
+  a.projectId === b.projectId &&
+  a.coordinatorThreadId === b.coordinatorThreadId;
+
 /** `auto:` + 32 hex of the logical project + `:` + the new epoch; at most 128 characters. */
 export function autoTakeoverOperationId(logicalProjectId: string, epoch: number): string {
   return `auto:${sha256([logicalProjectId]).toString("hex").slice(0, 32)}:${epoch}`;
@@ -129,6 +142,20 @@ export function goalDigest(content: { readonly goal: string; readonly instructio
  * owner's app wrote, and a peer's copies carry it on, so a takeover can say
  * the goal or instructions changed since the owner's app last saw them.
  */
+/**
+ * The routines digest a replica write keeps: the held copy's, while it came
+ * from the same member. Only the coordinator's lease loop sends routines; the
+ * app's and the server-driven copies carry none, and must not make the
+ * standby ask for them again.
+ */
+export function keptRoutinesDigest(
+  held: Option.Option<ProjectCoordinatorReplica>,
+  from: LogicalProjectMember,
+): { readonly routinesDigest?: string } {
+  if (Option.isNone(held) || held.value.routinesDigest === undefined) return {};
+  return sameMember(held.value.from, from) ? { routinesDigest: held.value.routinesDigest } : {};
+}
+
 export function peerReplicaMark(
   held: Option.Option<ProjectCoordinatorReplica>,
   content: { readonly goal: string; readonly instructions: string },
@@ -144,11 +171,6 @@ export function peerReplicaMark(
     : null;
   return { receivedAt: replicatedAt, clientGoalDigest, instructionsChangedAt };
 }
-
-const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
-  a.environmentId === b.environmentId &&
-  a.projectId === b.projectId &&
-  a.coordinatorThreadId === b.coordinatorThreadId;
 
 export interface ProjectLinkStandbyDeps {
   readonly admission: ProjectAdmission.ProjectAdmission["Service"];
@@ -166,6 +188,17 @@ export interface ProjectLinkStandbyDeps {
     project: Project,
   ) => Effect.Effect<Option.Option<ProjectCoordinatorReplica>, ProjectLinkError>;
   readonly coordinatorContentDigest: (content: PeerReplicaContent) => string;
+  /**
+   * Keeps the coordinator's routines as this copy's own (RoutineCopies);
+   * absent when this server has no scheduler, so routines are not kept.
+   */
+  readonly keepRoutines?:
+    | ((input: {
+        readonly projectId: ProjectId;
+        readonly logicalProjectId: string;
+        readonly routines: ReadonlyArray<CoordinatorRoutineCopy>;
+      }) => Effect.Effect<void, ProjectLinkError>)
+    | undefined;
   /** Publishes this machine's coordinator role changes (CoordinatorRole). */
   readonly publishRole: CoordinatorRoleShape["publish"];
   readonly writeOwnership: (
@@ -366,13 +399,28 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
           if (deps.coordinatorContentDigest(input.content) !== input.content.digest)
             return yield* fail("invalid");
           const held = yield* deps.readReplica(project);
+          // A server without a scheduler records the digest all the same, so
+          // the coordinator does not send the same routines on every lease.
+          const routines =
+            input.content.routines !== undefined && input.content.routinesDigest !== undefined
+              ? { list: input.content.routines, digest: input.content.routinesDigest }
+              : null;
           if (
             Option.isSome(held) &&
             held.value.peer !== undefined &&
             held.value.digest === input.content.digest &&
-            sameMember(held.value.from, record.coordinator)
+            sameMember(held.value.from, record.coordinator) &&
+            (routines === null || held.value.routinesDigest === routines.digest)
           )
             return { replicatedAt: held.value.replicatedAt, replayed: true };
+          // Kept before the replica records their digest: a failure here is
+          // answered, and the coordinator sends them again on its next lease.
+          if (routines !== null && deps.keepRoutines !== undefined)
+            yield* deps.keepRoutines({
+              projectId: project.id,
+              logicalProjectId: record.logicalProjectId,
+              routines: routines.list,
+            });
           const replicatedAt = yield* nowIso;
           yield* replicas
             .write(project.id, {
@@ -385,6 +433,9 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
               instructions: input.content.instructions,
               notes: [...input.content.notes],
               notesTruncated: input.content.notesTruncated,
+              ...(routines !== null
+                ? { routinesDigest: routines.digest }
+                : keptRoutinesDigest(held, record.coordinator)),
               peer: peerReplicaMark(held, input.content, replicatedAt),
             })
             .pipe(Effect.catch(storeFailed));

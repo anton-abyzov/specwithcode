@@ -55,6 +55,11 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
+import * as CoordinatorRole from "../project/CoordinatorRole.ts";
+import { CoordinatorWakeGate } from "../project/CoordinatorWakeGate.ts";
+import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
+import { makeRunSkips } from "./ScheduledTaskSkips.ts";
+import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
@@ -185,6 +190,8 @@ export class ScheduledTaskService extends Context.Service<
       readonly requestedAt: DateTime.DateTime;
       readonly error: string;
     }) => Effect.Effect<"recorded" | "running" | "stale", ScheduledTaskError>;
+    /** The routines a coordinator sends its standby, and the standby keeps (ScheduledTaskCopies). */
+    readonly routineCopies?: () => Effect.Effect<RoutineCopies["Service"]>;
     /**
      * Verifies, logs and dispatches one webhook request. Returns as soon as the
      * delivery is logged; the run itself continues in the background so senders
@@ -230,12 +237,31 @@ export const layer = Layer.effect(
             Effect.provideService(ServerSettings.ServerSettingsService, serverSettings),
           );
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
+    // Coordinator-owned routines fire only on the copy that coordinates (see
+    // ScheduledTaskCoordinatorGate). Without the role service the project's
+    // own binding is read; without lease records nothing is fenced.
+    const role = Option.getOrUndefined(
+      yield* Effect.serviceOption(CoordinatorRole.CoordinatorRole),
+    );
+    const coordinatorHold = makeRoutineCoordinatorGate({
+      role,
+      wakeGate: yield* CoordinatorWakeGate,
+      projects,
+    });
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
     // latest signal — an unbounded backlog would just grow memory.
     const changesPubSub = yield* PubSub.sliding<void>(1);
-    const notifyChanged = PubSub.publish(changesPubSub, undefined).pipe(Effect.asVoid);
+    // Counts changes, so routine copies are read again only after one.
+    const generation = yield* Ref.make(0);
+    const notifyChanged = Ref.update(generation, (n) => n + 1).pipe(
+      Effect.andThen(PubSub.publish(changesPubSub, undefined)),
+      Effect.asVoid,
+    );
+    const { restRun, skipMissedRun, clearRestingNotes } = yield* makeRunSkips({
+      notifyChanged,
+    }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
 
     const selectAllRows = () => sql<ScheduledTaskRow>`
       SELECT
@@ -438,7 +464,13 @@ export const layer = Layer.effect(
           thread_id = excluded.thread_id,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
-          run_policy_json = excluded.run_policy_json,
+          -- A copy kept from the coordinator (ScheduledTaskCopies) stays one across edits.
+          run_policy_json = CASE
+            WHEN json_extract(scheduled_tasks.run_policy_json, '$.copiedFrom') IS NULL
+              THEN excluded.run_policy_json
+            ELSE json_set(COALESCE(excluded.run_policy_json, '{}'), '$.copiedFrom',
+              json_extract(scheduled_tasks.run_policy_json, '$.copiedFrom'))
+          END,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
@@ -721,6 +753,16 @@ export const layer = Layer.effect(
                   ? "The task was paused before this delivery ran."
                   : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
+        }
+
+        const hold = yield* coordinatorHold(active);
+        if (hold !== null) {
+          // A copy at rest never writes `running`; one that waits stays due.
+          if (trigger === "scheduled")
+            return hold.kind === "rest" ? yield* restRun(active, hold.note, startedAt) : active;
+          return yield* taskError(hold.kind === "rest" ? hold.note : hold.reason, {
+            taskId: active.id,
+          });
         }
 
         const suspended = yield* assertTaskAdmission(active).pipe(
@@ -1190,31 +1232,6 @@ export const layer = Layer.effect(
       );
     });
 
-    // A due fixed-time run that is long past its slot (server was off or
-    // asleep) is skipped and re-aimed at its next occurrence, not fired late.
-    const rescheduleMissedRun = Effect.fn("ScheduledTaskService.rescheduleMissedRun")(function* (
-      task: ScheduledTask,
-      now: DateTime.DateTime,
-    ) {
-      const next = nextRunAt(task, now);
-      yield* Effect.logInfo("Skipping missed schedule task run", {
-        taskId: task.id,
-        missedRunAt: task.nextRunAt,
-        rescheduledTo: next,
-      });
-      yield* sql`
-        UPDATE scheduled_tasks
-        SET next_run_at = ${next},
-            updated_at = ${iso(now)}
-        WHERE task_id = ${task.id}
-      `.pipe(
-        Effect.mapError((cause) =>
-          taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
-        ),
-      );
-      yield* notifyChanged;
-    });
-
     // A fire reports what its run came to, not that it was posted (see
     // followDispatchedOccurrences). Settled occurrences are pruned hourly.
     const prunedAt = yield* Ref.make(Number.NEGATIVE_INFINITY);
@@ -1284,9 +1301,16 @@ export const layer = Layer.effect(
                 ? pendingOccurrence(task).pipe(
                     Effect.provideService(SqlClient.SqlClient, sql),
                     Effect.orElseSucceed(() => null),
+                    // A copy at rest was not off: runTask moves its run on with its own note.
                     Effect.flatMap((waiting) =>
                       waiting === null
-                        ? rescheduleMissedRun(task, now)
+                        ? coordinatorHold(task).pipe(
+                            Effect.flatMap((hold) =>
+                              hold?.kind === "rest"
+                                ? runTask(task, "scheduled")
+                                : skipMissedRun(task, now, hold !== null),
+                            ),
+                          )
                         : runTask(task, "scheduled"),
                     ),
                   )
@@ -1343,6 +1367,21 @@ export const layer = Layer.effect(
     } else {
       yield* recoverInterruptedRuns;
     }
+
+    // A copy that takes over drops the note its routines showed while at rest.
+    if (role !== undefined)
+      yield* role.changes.pipe(
+        Stream.runForEach((change) =>
+          change.kind !== "took-over"
+            ? Effect.void
+            : clearRestingNotes(change.projectId).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not clear resting routine notes", { cause }),
+                ),
+              ),
+        ),
+        Effect.forkScoped,
+      );
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
 
@@ -1620,6 +1659,12 @@ export const layer = Layer.effect(
           Effect.provideService(ProjectStore.ProjectStoreV2, projects),
           Effect.provideService(SqlClient.SqlClient, sql),
         );
+        // Refused here with its own reason, not wrapped as a failed run below.
+        const hold = yield* coordinatorHold(task);
+        if (hold !== null)
+          return yield* taskError(hold.kind === "rest" ? hold.note : hold.reason, {
+            taskId: task.id,
+          });
         // Before the receipt below: nothing is written while an update is in progress.
         yield* refuseWhileUpdating(task.id);
         if (input.commandId !== undefined) {
@@ -1679,6 +1724,16 @@ export const layer = Layer.effect(
         return { task: yield* loadTask(input.id) };
       });
 
+    const routineCopies = yield* makeRoutineCopies({
+      generation: Ref.get(generation),
+      listTasks: listRows().pipe(
+        Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
+      ),
+      findTask,
+      upsert,
+      remove: (id) => deleteTask({ id }),
+    }).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+
     const webhooks = yield* makeWebhookTrigger({
       getRows,
       runTask: (task, webhook) => runTask(task, "webhook", webhook),
@@ -1696,6 +1751,17 @@ export const layer = Layer.effect(
       getWebhookDelivery: webhooks.getWebhookDelivery,
       triggerWebhook: webhooks.triggerWebhook,
       recordTurnFailure,
+      routineCopies: () => Effect.succeed(routineCopies),
     });
   }),
 ).pipe(Layer.provide(ProjectAdmission.layer));
+
+/** RoutineCopies, served by this service, for the project link and the lease loop. */
+export const layerRoutineCopies = Layer.effect(
+  RoutineCopies,
+  Effect.gen(function* () {
+    const copies = (yield* ScheduledTaskService).routineCopies;
+    if (copies === undefined) return yield* Effect.die("This scheduler keeps no routine copies.");
+    return yield* copies();
+  }),
+);

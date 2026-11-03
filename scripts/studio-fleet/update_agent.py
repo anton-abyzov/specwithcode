@@ -1241,8 +1241,8 @@ class Agent(object):
                     self.clear_available()
                 state[key] = None
         self.serving = config['installRequestedAt']  # An expired request's failure names it too.
-        install_request = update_request.pending(config, state, installed, utcnow(), install_cancelled, AgentError,
-                                                 ttl_until=runs.ttl_until(self))
+        install_request = update_request.pending(config, state, installed, utcnow(), install_cancelled, AgentError,  # note: agent.log
+                                                 ttl_until=runs.ttl_until(self), note=lambda text: self.out('update-agent %s: %s' % (self.identity, text)))
         self.serving = config['installRequestedAt'] if install_request else ''  # An automatic pass serves none.
         check_request = config['checkRequestedAt'] is not None and \
             config['checkRequestedAt'] != state.get('handledCheckRequestAt')

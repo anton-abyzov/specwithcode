@@ -81,8 +81,8 @@ import {
   isRestartRefusalWithRelease,
   markServiceRestarted,
   retryServiceUpdateProgress,
+  isServiceRequestExpired,
   serviceFailureKey,
-  SERVICE_REQUEST_EXPIRED,
   serviceUpdateToast,
   type ServiceUpdateProgress,
   startServiceUpdateProgress,
@@ -349,7 +349,7 @@ function updateProgress(
   // again instead of failing, while the person is still following it.
   if (
     next?.phase === "failed" &&
-    next.message === SERVICE_REQUEST_EXPIRED &&
+    isServiceRequestExpired(next.message) &&
     (previous.phase === "waiting" || previous.phase === "requesting") &&
     installOptions !== undefined &&
     !cancelling &&
@@ -365,7 +365,7 @@ function updateProgress(
   // already written is followed instead.
   const lapsedForFollower =
     next?.phase === "failed" &&
-    next.message === SERVICE_REQUEST_EXPIRED &&
+    isServiceRequestExpired(next.message) &&
     isWaitingPhase(previous) &&
     installOptions === undefined;
   if (lapsedForFollower && !cancelling && lastAgentState !== null) {
@@ -1204,7 +1204,7 @@ function endOvertakenFailure(serviceState: StudioServiceUpdateState): boolean {
   if (published !== null && seen !== null && published < seen) return false;
   // This window only followed the request the agent let lapse: the window
   // that pressed renewed it since, and this one follows the renewal.
-  const lapsed = progress.message === SERVICE_REQUEST_EXPIRED && installOptions === undefined;
+  const lapsed = isServiceRequestExpired(progress.message) && installOptions === undefined;
   if (lapsed && followRenewal(serviceState, progress)) return false;
   // An install the window gave up on (it timed out) is not a new one.
   const installing =

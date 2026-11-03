@@ -175,6 +175,7 @@ import {
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as PromptSuggestions from "../PromptSuggestions.ts";
 import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
 import {
   makeSubagentChildThread,
@@ -971,6 +972,8 @@ export function makeClaudeQueryOptions(input: {
   readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
   readonly responseStyle?: ResponseStyle | undefined;
   readonly subagentPromptFileContents?: string | undefined;
+  /** Ask the SDK for a suggested next prompt after each reply. */
+  readonly promptSuggestions?: boolean;
   /** The user's Claude Code default for Claude in Chrome. */
   readonly claudeInChromeDefault?: boolean;
   /**
@@ -1076,6 +1079,8 @@ export function makeClaudeQueryOptions(input: {
         ? "bypassPermissions"
         : (input.permissionMode ?? "default")),
     includePartialMessages: true,
+    // A predicted next prompt after each reply, nearly free on the parent's cache.
+    ...(input.promptSuggestions === true ? { promptSuggestions: true } : {}),
     settingSources: ["user", "project", "local"],
     ...(compiledSelection.effort === undefined
       ? {}
@@ -3583,6 +3588,11 @@ export interface ClaudeAdapterV2Options {
     SubagentLaunchCheckpoints.SubagentLaunchCheckpointsShape,
     "checkpoint"
   >;
+  /** Sink for the SDK's suggested next prompts; defaults to dropping them. */
+  readonly promptSuggestions?: Pick<
+    PromptSuggestions.PromptSuggestionOffersShape,
+    "offer" | "wanted"
+  >;
 }
 
 export function makeClaudeAdapterV2(
@@ -3636,6 +3646,9 @@ export function makeClaudeAdapterV2(
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
+        // The SDK's prompt suggestion arrives after `result`, once the turn is gone.
+        const lastCompletedTurn =
+          yield* Ref.make<ProviderAdapter.ProviderAdapterV2TurnInput | null>(null);
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         // The last reset each window reported in this session. A rejection
@@ -5866,6 +5879,10 @@ export function makeClaudeAdapterV2(
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          yield* Ref.set(
+            lastCompletedTurn,
+            input.status === "completed" ? input.context.input : null,
+          );
           yield* Ref.update(interruptedTurns, (current) => {
             const next = new Set(current);
             next.delete(input.context.providerTurnId);
@@ -6334,6 +6351,16 @@ export function makeClaudeAdapterV2(
             yield* Ref.update(nestedSubagentTaskIds, (current) =>
               current.has(message.task_id) ? current : new Set(current).add(message.task_id),
             );
+          }
+          if (message.type === "prompt_suggestion") {
+            const turn = yield* Ref.getAndSet(lastCompletedTurn, null);
+            if (turn === null || (yield* Ref.get(activeTurn)) !== null) return;
+            yield* (adapterOptions.promptSuggestions?.offer ?? (() => Effect.void))({
+              threadId: turn.threadId,
+              runId: turn.runId,
+              text: message.suggestion,
+            });
+            return;
           }
           if (message.type === "rate_limit_event") {
             const rateLimitInfo = message.rate_limit_info;
@@ -8268,6 +8295,9 @@ export function makeClaudeAdapterV2(
             claudeWorkflowMode: turnInput.runtimePolicy.claudeWorkflowMode,
             responseStyle: turnInput.runtimePolicy.responseStyle,
             subagentPromptFileContents,
+            promptSuggestions: yield* (
+              adapterOptions.promptSuggestions?.wanted ?? Effect.succeed(false)
+            ),
             claudeInChromeDefault,
             hideClaudeInChrome,
             claudeInChromeRefused,
@@ -9248,6 +9278,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const launchCheckpoints = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
+    const promptSuggestions = yield* PromptSuggestions.PromptSuggestionOffers;
     const baseEnvironment = mergeNativeSubscriptionEnvironment(
       environment,
       hostEnvironment,
@@ -9289,6 +9320,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       queryRunner,
       continuationRequests,
       launchCheckpoints,
+      promptSuggestions,
       ...hooks,
     });
   },
@@ -9326,6 +9358,7 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
   const serverConfig = yield* ServerConfig.ServerConfig;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const launchCheckpoints = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
+  const promptSuggestions = yield* PromptSuggestions.PromptSuggestionOffers;
   // Claude Code's own file tools only; see the driver above and AgentProtectedPaths.ts.
   const agentSecretDeny = yield* claudeAgentSecretDenyForConfig({
     fileSystem,
@@ -9352,6 +9385,7 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
     queryRunner,
     continuationRequests,
     launchCheckpoints,
+    promptSuggestions,
   });
 });
 

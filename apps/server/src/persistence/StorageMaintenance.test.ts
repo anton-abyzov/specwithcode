@@ -310,6 +310,62 @@ it.layer(layerTest)("storage maintenance", (it) => {
       ),
   );
 
+  it.effect("prunes dead auth rows with each pass and check, never while held", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { hold, service } = yield* setup;
+        const sql = yield* SqlClient.SqlClient;
+        const nowMs = yield* Clock.currentTimeMillis;
+        const iso = (offsetDays: number) =>
+          DateTime.formatIso(DateTime.makeUnsafe(nowMs + offsetDays * 86_400_000));
+        const addExpired = (id: string) =>
+          Effect.gen(function* () {
+            yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
+              VALUES (${id}, 'browser', '[]', 'browser-session-cookie', ${iso(-60)}, ${iso(-30)})`;
+            yield* sql`INSERT INTO auth_pairing_links (id, credential, method, scopes, subject, created_at, expires_at)
+              VALUES (${id}, ${`credential-${id}`}, 'one-time-token', '[]', 'phone', ${iso(-60)}, ${iso(-30)})`;
+          });
+        const counts = Effect.gen(function* () {
+          const sessions = yield* sql<{
+            readonly count: number;
+          }>`SELECT COUNT(*) AS count FROM auth_sessions WHERE session_id LIKE 'auth-prune-%'`;
+          const links = yield* sql<{
+            readonly count: number;
+          }>`SELECT COUNT(*) AS count FROM auth_pairing_links WHERE id LIKE 'auth-prune-%'`;
+          return [sessions[0]?.count ?? 0, links[0]?.count ?? 0];
+        });
+        yield* addExpired("auth-prune-1");
+        yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
+          VALUES ('auth-prune-live', 'browser', '[]', 'browser-session-cookie', ${iso(-1)}, ${iso(29)})`;
+
+        yield* hold.acquire({ reason: "install" });
+        const held = yield* service.runNow();
+        assert.equal(held.status, "skipped");
+        assert.isNull(held.authPruning);
+        assert.isNull(yield* service.pruneAuthRows);
+        assert.deepEqual(yield* counts, [2, 1]);
+
+        yield* hold.release("test");
+        const pass = yield* service.runNow();
+        assert.equal(pass.status, "completed");
+        assert.deepEqual(pass.authPruning, {
+          deletedSessionCount: 1,
+          deletedPairingLinkCount: 1,
+          interrupted: false,
+        });
+        assert.deepEqual(yield* counts, [1, 0]);
+
+        // Between passes, the ten-minute check prunes as well.
+        yield* addExpired("auth-prune-2");
+        const check = yield* service.runIfDue;
+        assert.equal(check.status, "not-due");
+        assert.equal(check.authPruning?.deletedSessionCount, 1);
+        assert.equal(check.authPruning?.deletedPairingLinkCount, 1);
+        assert.deepEqual(yield* counts, [1, 0]);
+      }),
+    ),
+  );
+
   it.effect("persists the last pass: not due again, then incremental", () =>
     Effect.scoped(
       Effect.gen(function* () {

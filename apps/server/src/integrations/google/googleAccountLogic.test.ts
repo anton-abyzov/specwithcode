@@ -1,18 +1,27 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  accountForSignIn,
   buildAuthorizationUrl,
   buildGmailReplyDraft,
   driveQuery,
   emailFromIdToken,
   EMPTY_GOOGLE_ACCOUNT_STATE,
   googleEndpoints,
+  matchAccount,
   parseCallback,
+  PRIMARY_ACCOUNT_ID,
+  projectDefaultAccount,
   projectServices,
+  qualifiedId,
   readGmailMessage,
+  readGoogleAccountState,
+  splitQualifiedId,
   servicesFromScope,
   summarizeCalendarEvent,
+  withoutAccount,
   withProjectAccess,
+  withProjectDefault,
 } from "./googleAccountLogic.ts";
 
 const encode = (text: string) => Buffer.from(text, "utf8").toString("base64url");
@@ -35,7 +44,7 @@ describe("sign-in", () => {
     );
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
     expect(url.searchParams.get("access_type")).toBe("offline");
-    expect(url.searchParams.get("prompt")).toBe("consent");
+    expect(url.searchParams.get("prompt")).toBe("select_account consent");
   });
 
   it("points every endpoint at one test server when overridden", () => {
@@ -80,16 +89,120 @@ describe("sign-in", () => {
 });
 
 describe("project access", () => {
-  it("limits each project to what was granted and drops empty entries", () => {
+  it("limits each project to what its account granted and drops empty entries", () => {
     const granted = {
       ...EMPTY_GOOGLE_ACCOUNT_STATE,
-      services: ["gmail" as const, "calendar" as const],
+      accounts: [
+        {
+          id: PRIMARY_ACCOUNT_ID,
+          email: "me@example.com",
+          services: ["gmail" as const, "calendar" as const],
+        },
+        { id: "0123456789ab", email: "work@example.com", services: ["drive" as const] },
+      ],
     };
-    const withAccess = withProjectAccess(granted, "p1", ["drive", "gmail"]);
-    expect(withAccess.projects).toEqual([{ projectId: "p1", services: ["gmail", "drive"] }]);
-    expect(projectServices(withAccess, "p1")).toEqual(["gmail"]);
-    expect(projectServices(withAccess, "p2")).toEqual([]);
-    expect(withProjectAccess(withAccess, "p1", []).projects).toEqual([]);
+    const withAccess = withProjectAccess(granted, "p1", PRIMARY_ACCOUNT_ID, ["drive", "gmail"]);
+    expect(withAccess.projects).toEqual([
+      { projectId: "p1", account: PRIMARY_ACCOUNT_ID, services: ["gmail", "drive"] },
+    ]);
+    expect(projectServices(withAccess, "p1", PRIMARY_ACCOUNT_ID)).toEqual(["gmail"]);
+    expect(projectServices(withAccess, "p1", "0123456789ab")).toEqual([]);
+    expect(projectServices(withAccess, "p2", PRIMARY_ACCOUNT_ID)).toEqual([]);
+    const both = withProjectAccess(withAccess, "p1", "0123456789ab", ["drive"]);
+    expect(projectServices(both, "p1", "0123456789ab")).toEqual(["drive"]);
+    expect(withProjectAccess(both, "p1", PRIMARY_ACCOUNT_ID, []).projects).toEqual([
+      { projectId: "p1", account: "0123456789ab", services: ["drive"] },
+    ]);
+  });
+
+  it("migrates one saved account to the primary account with every switch", () => {
+    const v1 = JSON.stringify({
+      version: 1,
+      email: "me@example.com",
+      clientId: "client-1",
+      services: ["gmail", "calendar"],
+      projects: [{ projectId: "p1", services: ["gmail"] }],
+      briefingSetUp: ["p1"],
+    });
+    expect(readGoogleAccountState(v1, true)).toEqual({
+      version: 2,
+      accounts: [
+        {
+          id: PRIMARY_ACCOUNT_ID,
+          email: "me@example.com",
+          clientId: "client-1",
+          services: ["gmail", "calendar"],
+          briefingSetUp: ["p1"],
+        },
+      ],
+      projects: [{ projectId: "p1", account: PRIMARY_ACCOUNT_ID, services: ["gmail"] }],
+    });
+    // Nothing saved: nothing to migrate. A token Google gave no address for is kept.
+    expect(readGoogleAccountState(null, false)).toEqual(EMPTY_GOOGLE_ACCOUNT_STATE);
+    expect(readGoogleAccountState(null, true).accounts.map((account) => account.id)).toEqual([
+      PRIMARY_ACCOUNT_ID,
+    ]);
+    expect(readGoogleAccountState("not json", false)).toEqual(EMPTY_GOOGLE_ACCOUNT_STATE);
+    // Saved again, the new version reads back as it was.
+    const v2 = readGoogleAccountState(v1, true);
+    expect(readGoogleAccountState(JSON.stringify(v2), true)).toEqual(v2);
+  });
+
+  it("finds accounts by address, id or label, and picks the project's default", () => {
+    const state = {
+      ...EMPTY_GOOGLE_ACCOUNT_STATE,
+      accounts: [
+        { id: PRIMARY_ACCOUNT_ID, email: "Me@Example.com", services: [] },
+        { id: "0123456789ab", email: "work@example.com", label: "Work", services: [] },
+      ],
+    };
+    expect(matchAccount(state.accounts, "me@example.com")?.id).toBe(PRIMARY_ACCOUNT_ID);
+    expect(matchAccount(state.accounts, " work ")?.id).toBe("0123456789ab");
+    expect(matchAccount(state.accounts, "0123456789ab")?.id).toBe("0123456789ab");
+    expect(matchAccount(state.accounts, "nobody")).toBeUndefined();
+    expect(projectDefaultAccount(state, "p1", () => true)?.id).toBe(PRIMARY_ACCOUNT_ID);
+    const chosen = withProjectDefault(state, "p1", "0123456789ab");
+    expect(projectDefaultAccount(chosen, "p1", () => true)?.id).toBe("0123456789ab");
+    // A default the project can no longer read gives way to one it can.
+    expect(projectDefaultAccount(chosen, "p1", (id) => id === PRIMARY_ACCOUNT_ID)?.id).toBe(
+      PRIMARY_ACCOUNT_ID,
+    );
+    expect(accountForSignIn(state, "ME@example.com", new Set())?.id).toBe(PRIMARY_ACCOUNT_ID);
+    expect(accountForSignIn(state, "new@example.com", new Set())).toBeUndefined();
+    expect(withoutAccount(chosen, "0123456789ab")).toEqual({
+      ...EMPTY_GOOGLE_ACCOUNT_STATE,
+      accounts: [state.accounts[0]],
+      defaults: [],
+    });
+  });
+
+  it("never hands an unnamed sign-in another account's switches once several are saved", () => {
+    const unnamed = {
+      id: PRIMARY_ACCOUNT_ID,
+      email: null,
+      label: null,
+      clientId: "c",
+      services: ["gmail" as const],
+      briefingSetUp: [],
+    };
+    const work = { ...unnamed, id: "0123456789ab", email: "work@example.com" };
+    const one = { ...EMPTY_GOOGLE_ACCOUNT_STATE, accounts: [unnamed] };
+    const two = { ...EMPTY_GOOGLE_ACCOUNT_STATE, accounts: [unnamed, work] };
+    // One saved account behaves as before: the next sign-in takes it over.
+    expect(accountForSignIn(one, "me@example.com", new Set())?.id).toBe(PRIMARY_ACCOUNT_ID);
+    expect(accountForSignIn(two, null, new Set(["0123456789ab"]))).toBeUndefined();
+    expect(accountForSignIn(two, "me@example.com", new Set())).toBeUndefined();
+    // Reconnect names the account, so it is reused whatever Google returns for the address.
+    expect(accountForSignIn(two, null, new Set(), PRIMARY_ACCOUNT_ID)?.id).toBe(PRIMARY_ACCOUNT_ID);
+    // Picking another address at Google's chooser is that address, not the one Reconnect named.
+    expect(accountForSignIn(two, "other@example.com", new Set(), "0123456789ab")).toBeUndefined();
+  });
+
+  it("keeps primary ids bare and carries every other account in the id", () => {
+    expect(qualifiedId(PRIMARY_ACCOUNT_ID, "m1")).toBe("m1");
+    expect(qualifiedId("0123456789ab", "m1")).toBe("0123456789ab:m1");
+    expect(splitQualifiedId("m1")).toEqual({ account: PRIMARY_ACCOUNT_ID, id: "m1" });
+    expect(splitQualifiedId("0123456789ab:r-42")).toEqual({ account: "0123456789ab", id: "r-42" });
   });
 });
 

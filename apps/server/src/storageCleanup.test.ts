@@ -17,6 +17,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
@@ -218,55 +219,99 @@ const cleanupFixture = Effect.gen(function* () {
     });
   const removed: Array<string> = [];
   const hooks = { onPullRequest: Effect.void as Effect.Effect<unknown, SqlError> };
-  const sweep = StorageCleanup.make.pipe(
-    Effect.flatMap((cleanup) => cleanup.runOnce),
-    Effect.provide(
-      Layer.mergeAll(
-        Layer.mock(Settings.ServerSettingsService)({
-          getSettings: Effect.succeed({
-            ...DEFAULT_SERVER_SETTINGS,
-            storageCleanup: {
-              ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-              worktreeAfterDays: null,
-              worktreeOnMerge: true,
-              worktreeOnDelete: false,
-              worktreeUnchanged: false,
-            },
-          }),
-        }),
-        Layer.mock(ProjectStore.ProjectStoreV2)({
-          listShells: () => Effect.succeed([{ id: PROJECT_ID, workspaceRoot: repo }] as never),
-        }),
-        Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
-        Layer.mock(ProjectionStore.ProjectionStoreV2)({
-          getShellSnapshot: (options) =>
-            Effect.succeed({
-              schemaVersion: 1,
-              snapshotSequence: 0,
-              threads: threads.filter(
-                (thread) => (thread.archivedAt !== null) === (options?.location === "archive"),
-              ),
-              archivedThreads: [],
+  const provideCleanup = <A, E>(
+    effect: Effect.Effect<
+      A,
+      E,
+      | ServerConfig.ServerConfig
+      | Settings.ServerSettingsService
+      | ProjectStore.ProjectStoreV2
+      | Orchestrator.OrchestratorV2
+      | ProjectionStore.ProjectionStoreV2
+      | SqlClient.SqlClient
+      | GitVcsDriver.GitVcsDriver
+      | GitManager.GitManager
+      | TerminalManager.TerminalManager
+      | FileSystem.FileSystem
+      | Path.Path
+      | Scope.Scope
+    >,
+  ) =>
+    effect.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(Settings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              storageCleanup: {
+                ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+                worktreeAfterDays: null,
+                worktreeOnMerge: true,
+                worktreeOnDelete: false,
+                worktreeUnchanged: false,
+              },
             }),
-        }),
-        Layer.mock(GitManager.GitManager)({
-          branchPullRequest: () =>
-            Effect.suspend(() => hooks.onPullRequest).pipe(
-              Effect.orDie,
-              Effect.as({ state: "merged" } as never),
-            ),
-          invalidateStatus: () => Effect.void,
-        }),
-        Layer.mock(TerminalManager.TerminalManager)({}),
+            subscribeChanges: Effect.succeed(Stream.never),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([{ id: PROJECT_ID, workspaceRoot: repo }] as never),
+          }),
+          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getShellSnapshot: (options) =>
+              Effect.succeed({
+                schemaVersion: 1,
+                snapshotSequence: 0,
+                threads: threads.filter(
+                  (thread) => (thread.archivedAt !== null) === (options?.location === "archive"),
+                ),
+                archivedThreads: [],
+              }),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: () =>
+              Effect.suspend(() => hooks.onPullRequest).pipe(
+                Effect.orDie,
+                Effect.as({ state: "merged" } as never),
+              ),
+            invalidateStatus: () => Effect.void,
+          }),
+          Layer.mock(TerminalManager.TerminalManager)({
+            subscribeMetadata: () => Effect.succeed(() => undefined),
+          }),
+        ),
       ),
-    ),
-    Effect.provideService(GitVcsDriver.GitVcsDriver, {
-      ...git,
-      removeWorktree: (input) =>
-        Effect.sync(() => removed.push(input.path)).pipe(Effect.andThen(git.removeWorktree(input))),
-    }),
+      Effect.provideService(GitVcsDriver.GitVcsDriver, {
+        ...git,
+        removeWorktree: (input) =>
+          Effect.sync(() => removed.push(input.path)).pipe(
+            Effect.andThen(git.removeWorktree(input)),
+          ),
+      }),
+    );
+  /** A sweep by a freshly made service, as after a restart. */
+  const sweep = provideCleanup(
+    StorageCleanup.make.pipe(Effect.flatMap((cleanup) => cleanup.runOnce)),
   );
-  return { fs, path, sql, repo, run, addWorktree, realSpelling, addThread, removed, hooks, sweep };
+  /** A freshly made service, started as the server starts it. */
+  const started = provideCleanup(
+    StorageCleanup.make.pipe(Effect.tap((cleanup) => cleanup.start())),
+  );
+  return {
+    fs,
+    path,
+    sql,
+    config,
+    repo,
+    run,
+    addWorktree,
+    realSpelling,
+    addThread,
+    removed,
+    hooks,
+    sweep,
+    started,
+  };
 });
 
 describe("storage cleanup keeps folders of open threads", () => {
@@ -590,6 +635,106 @@ describe("storage cleanup removes finished worktrees no thread records", () => {
       yield* f.sweep;
       expect(f.removed).toEqual([]);
       expect(yield* f.fs.exists(f.path.join(worktree, "node_modules", "kept.txt"))).toBe(true);
+    }).pipe(Effect.provide(cleanupLayer)),
+  );
+});
+
+describe("storage cleanup sweeps are not repeated by a restart", () => {
+  const age = Effect.fn("test.ageForRestart")(function* (
+    f: Effect.Success<typeof cleanupFixture>,
+    worktree: string,
+  ) {
+    const marker = f.path.join(f.repo, ".git", "clock");
+    yield* f.fs.writeFileString(marker, "");
+    const now = Option.getOrThrow((yield* f.fs.stat(marker)).mtime).getTime();
+    const gitDir = (yield* f.run(worktree, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+    const old = (now - 2 * DAY_MS) / 1000;
+    const reflog = f.path.join(gitDir, "logs", "HEAD");
+    if (yield* f.fs.exists(reflog)) {
+      const entries = yield* f.fs.readFileString(reflog);
+      yield* f.fs.writeFileString(
+        reflog,
+        entries.replace(/ \d+ ([+-]\d{4})\t/g, ` ${Math.floor(old)} $1\t`),
+      );
+    }
+    for (const target of [
+      worktree,
+      f.path.join(gitDir, "HEAD"),
+      reflog,
+      ...(yield* f.fs.readDirectory(worktree)).map((name) => f.path.join(worktree, name)),
+    ])
+      yield* f.fs.utimes(target, old, old);
+    return now;
+  });
+
+  it("decides when the orphan sweep is due from the recorded time", () => {
+    const now = NOW_MS;
+    expect(StorageCleanup.orphanSweepDue(null, now)).toBe(true);
+    expect(StorageCleanup.orphanSweepDue(now - 60_000, now)).toBe(false);
+    expect(StorageCleanup.orphanSweepDue(now - 3_600_000, now)).toBe(true);
+    // A clock that moved back does not hold sweeps off until it catches up.
+    expect(StorageCleanup.orphanSweepDue(now + DAY_MS, now)).toBe(true);
+  });
+
+  EffectVitest.it.effect("remembers the last orphan sweep across a restart", () =>
+    Effect.gen(function* () {
+      const f = yield* cleanupFixture;
+      const first = yield* f.addWorktree("agent-first");
+      yield* TestClock.setTime(yield* age(f, first));
+      yield* f.sweep;
+      expect(f.removed).toEqual([first]);
+      const recorded = JSON.parse(
+        yield* f.fs.readFileString(
+          f.path.join(f.config.stateDir, StorageCleanup.STORAGE_CLEANUP_STATE_FILE),
+        ),
+      );
+      expect(Date.parse(recorded.orphanSweepAt)).toBe(yield* Clock.currentTimeMillis);
+
+      // A new service, as after a restart, reads the time and waits out the hour.
+      const second = yield* f.addWorktree("agent-second");
+      yield* age(f, second);
+      yield* f.sweep;
+      expect(f.removed).toEqual([first]);
+
+      yield* TestClock.adjust("61 minutes");
+      yield* f.sweep;
+      expect(f.removed).toEqual([first, second]);
+    }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect("sweeps an unreadable record as never swept", () =>
+    Effect.gen(function* () {
+      const f = yield* cleanupFixture;
+      yield* f.fs.makeDirectory(f.config.stateDir, { recursive: true });
+      yield* f.fs.writeFileString(
+        f.path.join(f.config.stateDir, StorageCleanup.STORAGE_CLEANUP_STATE_FILE),
+        "{not json",
+      );
+      const worktree = yield* f.addWorktree("agent-broken-record");
+      yield* TestClock.setTime(yield* age(f, worktree));
+      yield* f.sweep;
+      expect(f.removed).toEqual([worktree]);
+    }).pipe(Effect.provide(cleanupLayer)),
+  );
+
+  EffectVitest.it.effect("waits a few minutes after start before the first sweep", () =>
+    Effect.gen(function* () {
+      const f = yield* cleanupFixture;
+      const worktree = yield* f.addWorktree("agent-after-start");
+      yield* TestClock.setTime(yield* age(f, worktree));
+      const cleanup = yield* f.started;
+      // A sweep asked for while the service catches up is left to the scheduled one.
+      yield* cleanup.runOnce;
+      yield* TestClock.adjust(StorageCleanup.STARTUP_SWEEP_DELAY_MS - 1_000);
+      yield* cleanup.drain;
+      expect(f.removed).toEqual([]);
+
+      yield* TestClock.adjust("1 second");
+      for (let attempt = 0; attempt < 500 && f.removed.length === 0; attempt++) {
+        yield* cleanup.drain;
+        yield* TestClock.withLive(Effect.sleep("10 millis"));
+      }
+      expect(f.removed).toEqual([worktree]);
     }).pipe(Effect.provide(cleanupLayer)),
   );
 });

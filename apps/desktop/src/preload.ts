@@ -166,14 +166,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_COMPUTER_USE_CHANNEL, undefined),
       }
     : {}),
-  // Voice calls run on a macOS speech helper; other platforms get no voice bridge,
-  // so the app shows no call controls there.
+  // Voice settings only an earlier Mac build ever saved.
   ...(clientPlatform === "darwin"
     ? {
-        listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),
         readLegacyVoicePreferences: () => ipcRenderer.invoke(IpcChannels.VOICE_READ_LEGACY_CHANNEL),
         forgetLegacyVoicePreferences: () =>
           ipcRenderer.invoke(IpcChannels.VOICE_FORGET_LEGACY_CHANNEL),
+      }
+    : {}),
+  // Voice runs on Apple's on-device speech on macOS and on whisper.cpp and Piper
+  // on Linux; other platforms get no voice bridge, so the app shows no controls.
+  ...(clientPlatform === "darwin" || clientPlatform === "linux"
+    ? {
+        listLocalVoices: () => ipcRenderer.invoke(IpcChannels.VOICE_LIST_LOCAL_CHANNEL),
+        readVoiceVocabulary: () => ipcRenderer.invoke(IpcChannels.VOICE_VOCABULARY_READ_CHANNEL),
+        saveVoiceVocabulary: (input) =>
+          ipcRenderer.invoke(IpcChannels.VOICE_VOCABULARY_SAVE_CHANNEL, input),
         previewLocalVoice: async (input) => {
           const result = await ipcRenderer.invoke(IpcChannels.VOICE_PREVIEW_LOCAL_CHANNEL, input);
           if (!result.ok) throw new Error(result.error);

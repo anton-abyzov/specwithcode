@@ -311,6 +311,54 @@ const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   assert.deepEqual(updated?.restartCancelledBackgroundWork, work);
 });
 
+// A suggestion lands after the run completed, then a run snapshot from before it.
+const promptSuggestionSurvivesStaleRunUpdate = Effect.gen(function* () {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const threadId = yield* addRolledBackRecoveryCandidate("prompt-suggestion-stale-update");
+  const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+  const now = yield* DateTime.now;
+  const completed = { ...run, status: "completed" as const, completedAt: now };
+  yield* store.apply({
+    id: EventId.make("event:prompt-suggestion-stale-update:completed"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: completed,
+  });
+  const promptSuggestion = { text: "run the tests", source: "provider" as const };
+  yield* store.apply({
+    id: EventId.make("event:prompt-suggestion-stale-update:suggested"),
+    type: "run.prompt-suggested",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: { runId: run.id, promptSuggestion },
+  });
+  assert.deepEqual(
+    (yield* store.getThreadProjection(threadId)).runs[0]?.promptSuggestion,
+    promptSuggestion,
+  );
+  yield* store.apply({
+    id: EventId.make("event:prompt-suggestion-stale-update:stale"),
+    type: "run.updated",
+    threadId,
+    runId: run.id,
+    providerInstanceId,
+    occurredAt: now,
+    payload: completed,
+  });
+  const updated = (yield* store.getThreadProjection(threadId)).runs[0];
+  assert.equal(updated?.status, "completed");
+  assert.deepEqual(updated?.promptSuggestion, promptSuggestion);
+});
+
+it.effect("memory projection keeps a prompt suggestion through a stale run.updated", () =>
+  promptSuggestionSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 it.effect("memory projection keeps restart-cancelled work through a stale run.updated", () =>
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
@@ -337,6 +385,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect(
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
+  );
+  it.effect(
+    "keeps a prompt suggestion through a stale run.updated",
+    () => promptSuggestionSurvivesStaleRunUpdate,
   );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {

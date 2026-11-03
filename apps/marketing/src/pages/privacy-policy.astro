@@ -213,11 +213,13 @@ const sections = [
 
           <h3>Google Account Data</h3>
           <p>
-            If you connect a Google account under Settings &gt; Google account, SpecWithCode
-            asks Google only for read-only access to the Gmail, Google Calendar and Google Drive
-            services you choose, plus your email address. The SpecWithCode service on your own machine
-            stores the sign-in in that machine's secret store and reads your Google data only when
-            an agent in a project you turned that service on for asks for it. That data goes to the
+            If you connect one or more Google accounts under Settings &gt; Google account,
+            SpecWithCode asks Google only for read-only access to the Gmail, Google Calendar and
+            Google Drive services you choose, plus your email address, and, if you turn on Gmail
+            drafts, permission to save reply drafts and send the ones you approve. The SpecWithCode
+            service on your own machine stores each account's sign-in in that machine's secret store
+            and reads your Google data only when an agent in a project you turned that service on
+            for, for that account, asks for it. That data goes to the
             coding-agent and artificial-intelligence providers you configured, as part of the
             agent's work for you. It is not sent to the SpecWithCode operator, not sold, not used
             for advertising, and not used to train AI models. You can disconnect at any time in

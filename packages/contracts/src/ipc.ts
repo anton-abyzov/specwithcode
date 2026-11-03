@@ -1018,6 +1018,7 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
 export * from "./desktopVoice.ts";
 import type {
   DesktopVoiceStatus,
+  DesktopVoiceVocabulary,
   DesktopLocalVoice,
   DesktopLegacyVoicePreferences,
 } from "./desktopVoice.ts";
@@ -1144,9 +1145,9 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   relaunchForComputerUse?: () => Promise<void>;
   /** Voice calls; all absent on desktop builds predating them. */
   getVoiceStatus?: () => Promise<DesktopVoiceStatus>;
-  /** Shows the macOS microphone prompt when the user has not answered it yet. */
+  /** Shows the macOS microphone prompt when unanswered; on Linux downloads the speech files. */
   requestVoiceAccess?: () => Promise<DesktopVoiceStatus>;
-  /** The window may open the microphone only while its call is active. */
+  /** The window may open the microphone only while its call or dictation is active. */
   setVoiceCallActive?: (state: { active: boolean }) => Promise<void>;
   /** On-device speech to text for a 16 kHz mono WAV. */
   transcribeVoice?: (input: { audio: Uint8Array; locale?: string }) => Promise<string>;
@@ -1156,7 +1157,10 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   /** Deletes those files once the server has the settings. */
   forgetLegacyVoicePreferences?: () => Promise<void>;
   previewLocalVoice?: (input: { voiceId: string; rate: number }) => Promise<Uint8Array>;
-  /** On-device macOS speech. ElevenLabs replies come from the server (`voice.synthesize`). */
+  /** The user's own words for speech recognition, kept on this machine only. */
+  readVoiceVocabulary?: () => Promise<DesktopVoiceVocabulary>;
+  saveVoiceVocabulary?: (input: { text: string }) => Promise<DesktopVoiceVocabulary>;
+  /** On-device speech. ElevenLabs replies come from the server (`voice.synthesize`). */
   synthesizeVoice?: (input: {
     text: string;
     voiceId?: string;

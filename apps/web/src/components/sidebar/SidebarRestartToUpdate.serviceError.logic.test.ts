@@ -7,6 +7,7 @@ import {
   isAgentStartFailure,
   isRestartRefusalWithRelease,
   isServiceErrorWithRelease,
+  isServiceRequestExpired,
   SERVICE_REQUEST_EXPIRED,
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceInstallTarget,
@@ -277,6 +278,18 @@ describe("a service whose install request lapsed before it could start", () => {
       ].join(" "),
     );
     expect(serviceInstallTarget(lapsed, "1.0.63")).toBe("1.0.63");
+  });
+
+  it("still offers Update now when the agent says what the request waited for", () => {
+    const waited: StudioServiceUpdateState = {
+      ...failed,
+      message: `${SERVICE_REQUEST_EXPIRED} It waited 30 minutes; last: Waiting for running tasks, queued messages and open questions to finish (2 running tasks).`,
+    };
+    expect(isServiceRequestExpired(waited.message)).toBe(true);
+    expect(isServiceErrorWithRelease(waited)).toBe(true);
+    expect(getRestartToUpdateView(appCurrent, waited)?.description).toContain("(2 running tasks).");
+    expect(isServiceRequestExpired("Expired: The update request expired")).toBe(false);
+    expect(isServiceRequestExpired(null)).toBe(false);
   });
 
   it("offers only a check with nothing on disk, or when the desktop could not start the agent", () => {

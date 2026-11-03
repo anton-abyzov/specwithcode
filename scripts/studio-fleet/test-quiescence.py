@@ -664,5 +664,68 @@ class ManagedTunnelQuiescence(unittest.TestCase):
         self.assertEqual(record['processCount'], 1)
         self.assertEqual(table.values, with_tunnel())
 
+
+class PassingChildren(unittest.TestCase):
+    """After a restart the page proof sets the service's own short-lived children aside (update_apply
+    PageMode._children_exit waits for each); every refusal names the processes that caused it."""
+
+    def capture(self, first, second=None, passing=None):
+        values = iter([first, copy.deepcopy(second if second is not None else first)] + [copy.deepcopy(first)] * 4)
+        return quiescence.capture_quiescence(100, 501, NODE, ARGS, process_reader=lambda: next(values),
+                                             argv_reader=lambda pid: ARGS if pid == 101 else BROWSER_ARGV,
+                                             executable_reader=lambda pid: first[pid]['executable'], passing=passing)
+
+    def test_a_refusal_names_the_pid_and_command_but_keeps_its_fixed_text(self):
+        values = fixture(); values[102] = process(102, 100, '/usr/bin/git'); values[103] = process(103, 102, '/bin/ps')
+        with self.assertRaises(quiescence.UnexpectedDescendants) as caught:
+            self.capture(values)
+        self.assertEqual(str(caught.exception), quiescence.UNEXPECTED_DESCENDANTS)
+        self.assertIsInstance(caught.exception, AssertionError)
+        self.assertEqual(caught.exception.detail(), 'pid 102 git (parent 100), pid 103 ps (parent 102)')
+        self.assertEqual(quiescence.offender_names(caught.exception), 'git=1 ps=1 pid:102 pid:103')
+        self.assertEqual(quiescence.offender_names(AssertionError('x')), '')
+
+    def test_a_named_refusal_never_carries_argv_or_paths(self):
+        values = fixture(); values[102] = process(102, 100, '/private/secret dir/tool --token=abc')
+        with self.assertRaises(quiescence.UnexpectedDescendants) as caught:
+            self.capture(values)
+        self.assertNotIn('/', caught.exception.detail())
+        self.assertNotIn(' ', quiescence.offender_names(caught.exception).split(' pid:')[0])
+
+    def test_owned_children_are_set_aside_only_when_asked(self):
+        values = with_browser(); values[102] = process(102, 100, '/usr/bin/git'); values[103] = process(103, 102, '/bin/ps')
+        values[304] = process(304, 300, '/bin/sh')  # Beneath the browser, but not the browser: work too.
+        passing = []
+        proof = self.capture(values, passing=passing)
+        self.assertEqual(sorted(item['pid'] for item in passing), [102, 103, 304])
+        self.assertEqual(proof['serverBrowser']['processCount'], 3)
+        with self.assertRaises(quiescence.UnexpectedDescendants):
+            self.capture(values)
+
+    def test_children_coming_and_going_between_the_inventories_are_all_followed(self):
+        first, second = fixture(), fixture()
+        first[102] = process(102, 100, '/usr/bin/git')
+        second[103] = process(103, 100, '/bin/ps')
+        passing = []
+        self.capture(first, second, passing=passing)
+        self.assertEqual([item['pid'] for item in passing], [102, 103])
+
+    def test_a_child_of_another_user_still_refuses_when_children_pass(self):
+        values = fixture(); values[102] = process(102, 100, '/usr/bin/git', uid=0)
+        with self.assertRaises(quiescence.UnexpectedDescendants) as caught:
+            self.capture(values, passing=[])
+        self.assertEqual(caught.exception.offenders[0]['pid'], 102)
+
+    def test_the_supervisor_and_service_checks_are_unchanged_when_children_pass(self):
+        for change in ['missing', 'duplicate', 'owner']:
+            with self.subTest(change=change):
+                values = fixture()
+                if change == 'missing': del values[101]
+                if change == 'duplicate': values[102] = process(102, 100, '/usr/bin/caffeinate')
+                if change == 'owner': values[101]['uid'] = 0
+                with self.assertRaises(AssertionError):
+                    self.capture(values, passing=[])
+
+
 if __name__ == '__main__':
     unittest.main()

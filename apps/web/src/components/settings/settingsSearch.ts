@@ -64,6 +64,8 @@ export interface SettingsSearchItem {
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
+  /** Offered on macOS and Linux only. */
+  readonly notOnWindows?: boolean;
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
@@ -493,7 +495,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["voice call talk speak microphone mic dictation speech audio phone"],
     desktopOnly: true,
-    macOnly: true,
+    notOnWindows: true,
   },
   {
     id: "time-format",
@@ -567,6 +569,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Follow-up behavior",
     to: "/settings/general",
     searchTerms: ["queue steer running turn send default behavior composer"],
+  },
+  {
+    id: "prompt-suggestions",
+    title: "Suggested prompts",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: [
+      "next prompt suggestion ghost grey tab autocomplete predicted follow-up claude composer",
+    ],
   },
   // A provider name should lead to setup before background update controls.
   {
@@ -696,7 +707,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "aide-enabled",
-    title: "Personal assistant (beta)",
+    title: "Personal assistant",
     to: "/settings/general",
     searchTerms: ["aide assistant private routines briefing show hide"],
   },
@@ -1430,6 +1441,7 @@ function isSettingsSearchItemOnPlatform(item: SettingsSearchItem, platform: stri
   if (!isElectron && item.desktopOnly === true) return false;
   if (item.macOnly && !isMacPlatform(platform)) return false;
   if (item.windowsOnly && !isWindowsPlatform(platform)) return false;
+  if (item.notOnWindows && isWindowsPlatform(platform)) return false;
   return true;
 }
 

@@ -23,6 +23,7 @@ import {
 import {
   COORDINATOR_FENCE_MARGIN_MS,
   COORDINATOR_FENCE_REFUSAL,
+  COORDINATOR_FENCE_UNREADABLE_REFUSAL,
   coordinatorFenced,
   fenceAt,
   makeCheck,
@@ -118,15 +119,137 @@ describe("CoordinatorWakeGate check", () => {
     expect(await run("project-coordinator:another")).toBeNull();
   });
 
-  it("never blocks work when the records cannot be read", async () => {
+  it("fails closed from the last records read when they cannot be read again", async () => {
+    const unreadable = Effect.fail(
+      new CoordinatorLeaseStoreError({ operation: "read", cause: "disk" }),
+    );
     const check = makeCheck({
-      list: Effect.fail(new CoordinatorLeaseStoreError({ operation: "read", cause: "disk" })),
+      list: unreadable,
       get: () => Effect.undefined,
       modify: () => Effect.undefined,
     });
-    expect(
-      await Effect.runPromise(check(ThreadId.make("project-coordinator:easychamp-m4"))),
-    ).toBeNull();
+    const run = (threadId: string) => Effect.runPromise(check(ThreadId.make(threadId)));
+    // Never read: nothing is known of a standby, so every turn starts.
+    expect(await run("project-coordinator:easychamp-m4")).toBeNull();
+    expect(await run("thread-worker")).toBeNull();
+
+    // Read once, then unreadable: the last records read decide.
+    const { records, service } = makeMemory();
+    let broken = false;
+    const flaky = makeCheck({
+      ...service,
+      list: Effect.suspend(() => (broken ? unreadable : service.list)),
+    });
+    const runFlaky = (threadId: string) => Effect.runPromise(flaky(ThreadId.make(threadId)));
+    records.set(
+      "easychamp-m4",
+      record({ projectId: "easychamp-m4", lastSuccessfulLeaseAt: iso(nowMs() - 20 * MINUTE) }),
+    );
+    records.set(
+      "easychamp-m3",
+      record({ projectId: "easychamp-m3", lastSuccessfulLeaseAt: iso(nowMs()) }),
+    );
+    expect(await runFlaky("project-coordinator:easychamp-m3")).toBeNull();
+    broken = true;
+    expect(await runFlaky("project-coordinator:easychamp-m4")).toBe(
+      COORDINATOR_FENCE_UNREADABLE_REFUSAL,
+    );
+    expect(await runFlaky("project-coordinator:easychamp-m3")).toBeNull();
+    expect(await runFlaky("project-coordinator:another")).toBeNull();
+  });
+});
+
+describe("fence on the monotonic clock", () => {
+  it("raises the fence when the wall clock stood still or stepped back", async () => {
+    const { records, service } = makeMemory();
+    const mono = { now: 0 };
+    const stopped: string[] = [];
+    const project = { id: ProjectId.make("easychamp-m4") } as unknown as Project;
+    const sweep = makeFenceSweep({
+      store: service,
+      monotonic: { nowMs: () => mono.now },
+      loadProject: () => Effect.succeed(project),
+      stopCoordinator: (stopping) =>
+        Effect.sync(() => {
+          stopped.push(stopping.id);
+        }),
+    });
+    const heard = iso(nowMs());
+    records.set("easychamp-m4", record({ lastSuccessfulLeaseAt: heard }));
+    const run = () => Effect.runPromise(sweep([...records.values()]));
+    await run();
+    // 12 minutes pass on the monotonic clock while the wall clock barely moves.
+    mono.now = 12 * MINUTE;
+    await run();
+    expect(records.get("easychamp-m4")?.fencedSince).toBeNull();
+    mono.now = 15 * MINUTE - COORDINATOR_FENCE_MARGIN_MS;
+    await run();
+    expect(records.get("easychamp-m4")?.fencedSince).not.toBeNull();
+    expect(stopped).toEqual(["easychamp-m4"]);
+  });
+
+  it("never fences a copy whose standby keeps answering while its clock is behind", async () => {
+    const { records, service } = makeMemory();
+    const mono = { now: 0 };
+    const sweep = makeFenceSweep({
+      store: service,
+      monotonic: { nowMs: () => mono.now },
+      loadProject: () => Effect.succeed(undefined),
+      stopCoordinator: () => Effect.void,
+    });
+    // Turned on 20 minutes ahead of this copy's wall clock, which was stepped back.
+    const enabledAt = iso(nowMs() + 20 * MINUTE);
+    const target = { ...record().target!, enabledAt };
+    for (let minute = 0; minute <= 30; minute += 1) {
+      mono.now = minute * MINUTE;
+      records.set(
+        "easychamp-m4",
+        record({ target, lastSuccessfulLeaseAt: iso(nowMs() - 30_000 + minute) }),
+      );
+      await Effect.runPromise(sweep([...records.values()]));
+      expect(records.get("easychamp-m4")?.fencedSince).toBeNull();
+    }
+  });
+
+  it("keeps measuring across a round whose records could not be read", async () => {
+    const { records, service } = makeMemory();
+    const mono = { now: 0 };
+    const sweep = makeFenceSweep({
+      store: service,
+      monotonic: { nowMs: () => mono.now },
+      loadProject: () => Effect.succeed(undefined),
+      stopCoordinator: () => Effect.void,
+    });
+    records.set("easychamp-m4", record({ lastSuccessfulLeaseAt: iso(nowMs()) }));
+    await Effect.runPromise(sweep([...records.values()]));
+    mono.now = 5 * MINUTE;
+    await Effect.runPromise(sweep([]));
+    mono.now = 15 * MINUTE - COORDINATOR_FENCE_MARGIN_MS;
+    await Effect.runPromise(sweep([...records.values()]));
+    expect(records.get("easychamp-m4")?.fencedSince).not.toBeNull();
+  });
+
+  it("measures again from a new answer", async () => {
+    const { records, service } = makeMemory();
+    const mono = { now: 0 };
+    const sweep = makeFenceSweep({
+      store: service,
+      monotonic: { nowMs: () => mono.now },
+      loadProject: () => Effect.succeed(undefined),
+      stopCoordinator: () => Effect.void,
+    });
+    records.set("easychamp-m4", record({ lastSuccessfulLeaseAt: iso(nowMs() - MINUTE) }));
+    const run = () => Effect.runPromise(sweep([...records.values()]));
+    await run();
+    mono.now = 10 * MINUTE;
+    records.set("easychamp-m4", record({ lastSuccessfulLeaseAt: iso(nowMs()) }));
+    await run();
+    mono.now = 20 * MINUTE;
+    await run();
+    expect(records.get("easychamp-m4")?.fencedSince).toBeNull();
+    mono.now = 10 * MINUTE + 15 * MINUTE - COORDINATOR_FENCE_MARGIN_MS;
+    await run();
+    expect(records.get("easychamp-m4")?.fencedSince).not.toBeNull();
   });
 });
 

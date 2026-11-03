@@ -331,6 +331,8 @@ export const LINUX_DESKTOP_BUILD_PREREQUISITES = [
   { id: "rust-target", description: "Requested Rust standard library", packages: [] },
   { id: "cc", description: "C/C++ build toolchain", packages: ["build-essential"] },
   { id: "make", description: "Make", packages: ["build-essential"] },
+  { id: "cmake", description: "CMake, for the voice helper", packages: ["cmake"] },
+  { id: "git", description: "Git, for the voice helper's source", packages: ["git"] },
   {
     id: "libsecret",
     description: "libsecret development headers and pkg-config",
@@ -1161,6 +1163,32 @@ export const MAC_VOICE_EXTRA_RESOURCES = [
   },
 ] as const;
 export const MAC_VOICE_HELPER_EXECUTABLE_NAME = "studio-voice";
+// Speech recognition for the Linux app: whisper.cpp at a pinned commit. Piper and
+// the models are downloaded by the app after the user's consent, not bundled.
+export const LINUX_VOICE_EXTRA_RESOURCES = [
+  {
+    from: "apps/desktop/prod-resources/voice",
+    to: "voice",
+  },
+] as const;
+export const LINUX_WHISPER_EXECUTABLE_NAME = "whisper-cli";
+export const LINUX_WHISPER_TAG = "v1.9.5";
+export const LINUX_WHISPER_COMMIT = "d1be6fde11ac6e0407606b4e42fe72d34add8037";
+/** No -march=native, so it runs on any machine with these; the app checks for AVX2 first. */
+export function linuxWhisperCmakeArgs(arch: string): string[] {
+  return [
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DGGML_NATIVE=OFF",
+    "-DGGML_OPENMP=OFF",
+    "-DWHISPER_BUILD_TESTS=OFF",
+    "-DWHISPER_BUILD_EXAMPLES=ON",
+    "-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc",
+    ...(arch === "x64"
+      ? ["-DGGML_AVX=ON", "-DGGML_AVX2=ON", "-DGGML_FMA=ON", "-DGGML_F16C=ON", "-DGGML_BMI2=ON"]
+      : []),
+  ];
+}
 /** Oldest macOS the helper runs on; newer speech APIs are gated with #available. */
 export const MAC_VOICE_HELPER_DEPLOYMENT_TARGET = "12.0";
 /**
@@ -1875,6 +1903,8 @@ export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild"
       "rust-target": needsRust ? rustTargetIsInstalled(rustTarget) : Effect.succeed(true),
       cc: desktopBuildProbeSucceeds(ChildProcess.make("cc", ["--version"]), "cc"),
       make: desktopBuildProbeSucceeds(ChildProcess.make("make", ["--version"]), "make"),
+      cmake: desktopBuildProbeSucceeds(ChildProcess.make("cmake", ["--version"]), "cmake"),
+      git: desktopBuildProbeSucceeds(ChildProcess.make("git", ["--version"]), "git"),
       libsecret: desktopBuildProbeSucceeds(
         ChildProcess.make("pkg-config", ["--exists", "libsecret-1"]),
         "libsecret",
@@ -2261,6 +2291,59 @@ const verifyPackagedBundleIsSelfContained = Effect.fn("verifyPackagedBundleIsSel
     );
   },
 );
+
+export const stageLinuxVoiceHelper = Effect.fn("stageLinuxVoiceHelper")(function* (input: {
+  readonly destinationDirectory: string;
+  readonly arch: typeof BuildArch.Type;
+  readonly verbose: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const workDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "whisper-cli-" });
+  const source = path.join(workDirectory, "whisper.cpp");
+  const build = path.join(workDirectory, "build");
+  yield* runCommand(
+    ChildProcess.make("git", [
+      "clone",
+      "--quiet",
+      "--depth",
+      "1",
+      "--branch",
+      LINUX_WHISPER_TAG,
+      "https://github.com/ggml-org/whisper.cpp.git",
+      source,
+    ]),
+    { label: "clone whisper.cpp", verbose: input.verbose },
+  );
+  // A moved tag must fail the release, not ship different code.
+  yield* runCommand(
+    ChildProcess.make("git", ["-C", source, "cat-file", "-e", `${LINUX_WHISPER_COMMIT}^{commit}`]),
+    { label: "check whisper.cpp pin", verbose: input.verbose },
+  );
+  yield* runCommand(
+    ChildProcess.make("git", [
+      "-C",
+      source,
+      "merge-base",
+      "--is-ancestor",
+      LINUX_WHISPER_COMMIT,
+      "HEAD",
+    ]),
+    { label: "check whisper.cpp head", verbose: input.verbose },
+  );
+  yield* runCommand(
+    ChildProcess.make("cmake", ["-S", source, "-B", build, ...linuxWhisperCmakeArgs(input.arch)]),
+    { label: "configure whisper.cpp", verbose: input.verbose },
+  );
+  yield* runCommand(
+    ChildProcess.make("cmake", ["--build", build, "-j4", "--target", "whisper-cli"]),
+    { label: "build whisper-cli", verbose: input.verbose },
+  );
+  yield* fs.makeDirectory(input.destinationDirectory, { recursive: true });
+  const destination = path.join(input.destinationDirectory, LINUX_WHISPER_EXECUTABLE_NAME);
+  yield* fs.copyFile(path.join(build, "bin", LINUX_WHISPER_EXECUTABLE_NAME), destination);
+  yield* fs.chmod(destination, 0o755);
+}, Effect.scoped);
 
 export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(function* (input: {
   readonly backend: "kde" | "hyprland";
@@ -2944,6 +3027,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(platform === "mac" ? MAC_SERVICE_UPDATER_EXTRA_RESOURCES : []),
       ...(platform === "mac" ? MAC_VOICE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
+      ...(platform === "linux" ? LINUX_VOICE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
       ...(platform === "win" && wslRuntimeBundled ? WSL_RUNTIME_EXTRA_RESOURCES : []),
@@ -3989,6 +4073,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     );
     yield* stageMacVoiceHelper({
       repoRoot,
+      destinationDirectory: path.join(stageProdResourcesDir, "voice"),
+      arch: options.arch,
+      verbose: options.verbose,
+    });
+  }
+  if (options.platform === "linux") {
+    yield* stageLinuxVoiceHelper({
       destinationDirectory: path.join(stageProdResourcesDir, "voice"),
       arch: options.arch,
       verbose: options.verbose,
