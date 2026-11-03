@@ -112,3 +112,17 @@ test("workflow keeps limits, base, artifacts and required aggregate coverage", (
   assert.match(workflow, /List failing test files per OS\n\s+if: always\(\)/);
   assert.match(workflow, /set -e\n\s+if reaches apps\/server packages/);
 });
+test("pull requests run only with the windows-tests label, and nightly stays", () => {
+  assert.ok(workflow.includes("types: [opened, synchronize, reopened, labeled]"));
+  const plan = workflow.slice(workflow.indexOf("  plan:\n"), workflow.indexOf("    runs-on:"));
+  assert.ok(plan.includes("github.event_name != 'pull_request'"));
+  assert.ok(plan.includes("github.event.label.name == 'windows-tests'"));
+  assert.ok(plan.includes("contains(github.event.pull_request.labels.*.name, 'windows-tests')"));
+  assert.ok(plan.includes("github.event.action != 'labeled'"));
+  assert.ok(workflow.includes('- cron: "41 6 * * *"'));
+  // Another label's run must not cancel a test run already in progress.
+  assert.match(
+    workflow,
+    /group: platform-tests-\$\{\{ \(github\.event\.action == 'labeled' && github\.event\.label\.name != 'windows-tests'\) && github\.run_id/,
+  );
+});

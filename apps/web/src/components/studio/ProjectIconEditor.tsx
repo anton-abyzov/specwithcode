@@ -9,6 +9,7 @@ import {
 } from "@specweave-studio/contracts";
 import { useMemo, useState, type ReactElement, type ReactNode } from "react";
 
+import { withSharedProjectIcon } from "../../sidebarProjectGrouping";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import {
@@ -167,7 +168,7 @@ export function useProjectIconEditor({
       <ProjectIconPicker
         trigger={trigger}
         tooltip={tooltip}
-        current={project.projectIcon ?? null}
+        current={withSharedProjectIcon(project, members).projectIcon ?? null}
         customized={customized}
         projectName={project.title}
         disabled={locked}
@@ -197,7 +198,12 @@ export function ProjectIconButton({
     ...(checkouts ? { checkouts } : {}),
     disabled,
   });
-  const icon = <ProjectFavicon project={project} className={className} />;
+  const icon = (
+    <ProjectFavicon
+      project={withSharedProjectIcon(project, checkouts ?? [])}
+      className={className}
+    />
+  );
   if (disabled || editor.blocked) return icon;
   return (
     <>

@@ -1,4 +1,8 @@
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@specweave-studio/contracts";
+import {
+  hasSavedProjectIcon,
+  isPortableProjectFaviconPath,
+} from "@specweave-studio/shared/projectFavicon";
 import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
 import type { Project } from "./types";
 
@@ -24,6 +28,29 @@ export interface SidebarProjectSnapshot extends Project {
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
+}
+
+type ProjectIconFields = Pick<Project, "projectIcon" | "faviconPath" | "workspaceRoot">;
+
+/**
+ * A project shares one icon across its checkouts, but a copy linked before links
+ * carried the icon saved none. Such a checkout shows the icon another one saved.
+ */
+export function withSharedProjectIcon<TProject extends ProjectIconFields>(
+  project: TProject,
+  checkouts: ReadonlyArray<ProjectIconFields>,
+): TProject {
+  if (hasSavedProjectIcon(project)) return project;
+  const saved = checkouts.find(
+    ({ projectIcon, faviconPath }) =>
+      projectIcon != null || (faviconPath != null && isPortableProjectFaviconPath(faviconPath)),
+  );
+  if (!saved) return project;
+  return {
+    ...project,
+    projectIcon: saved.projectIcon,
+    faviconPath: saved.projectIcon != null ? null : saved.faviconPath,
+  };
 }
 
 export function projectGroupsSpanEnvironments(
@@ -81,9 +108,10 @@ export function buildSidebarProjectSnapshots(input: {
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
   }).map((group): SidebarProjectSnapshot => {
+    const checkouts = group.members.map(({ project }) => project);
     const members = group.members.map(
       ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({
-        ...project,
+        ...withSharedProjectIcon(project, checkouts),
         physicalProjectKey,
         environmentLabel: input.resolveEnvironmentLabel(project.environmentId),
       }),

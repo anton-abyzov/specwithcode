@@ -629,6 +629,7 @@ export async function linkCopyAsWorkers(
         logicalProject: prepared.logicalProject,
         coordinatorBinding: prepared.coordinatorBinding,
         keptFingerprint: prepared.fingerprint,
+        ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
       },
     }),
   );

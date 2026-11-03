@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   LogicalProject,
+  type Project,
   type LogicalProjectMember,
   ProjectId,
   ThreadId,
@@ -101,6 +102,90 @@ describe("ProjectLink", () => {
     });
     expect(pair.m4.ownershipModes).toEqual(["link-member"]);
     expect(pair.m3.ownershipModes).toEqual(["join-as-member"]);
+  });
+
+  const linkWithIcons = async (
+    keptIcon: Pick<Project, "projectIcon" | "faviconPath">,
+    joiningIcon: (
+      workspaceRoot: string,
+    ) => Pick<Project, "projectIcon" | "faviconPath"> = () => ({}),
+  ) => {
+    const pair = legacyPair();
+    pair.m4.projects.set(pair.kept.projectId, {
+      ...pair.m4.projects.get(pair.kept.projectId)!,
+      ...keptIcon,
+    });
+    pair.m3.projects.set(pair.joining.projectId, {
+      ...pair.m3.projects.get(pair.joining.projectId)!,
+      ...joiningIcon(pair.m3.projects.get(pair.joining.projectId)!.workspaceRoot),
+    });
+    const prepared = await pair.m4.run((service) =>
+      service.prepare({ operationId, projectId: pair.kept.projectId, joining: pair.joining }),
+    );
+    await pair.m3.run((service) =>
+      service.accept({
+        operationId,
+        projectId: pair.joining.projectId,
+        kept: prepared.kept,
+        logicalProject: prepared.logicalProject,
+        coordinatorBinding: prepared.coordinatorBinding,
+        keptFingerprint: prepared.fingerprint,
+        ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
+      }),
+    );
+    return { prepared, joined: pair.m3.projects.get(pair.joining.projectId)! };
+  };
+  const dna = { kind: "lucide", name: "dna", color: "yellow" } as const;
+
+  it("gives a joining copy with no icon the icon the kept copy saved", async () => {
+    const { joined } = await linkWithIcons({ projectIcon: dna });
+    expect(joined.projectIcon).toEqual(dna);
+    expect(joined.faviconPath ?? null).toBeNull();
+  });
+
+  it("keeps the icon a joining copy already saved", async () => {
+    const own = { kind: "lucide", name: "rocket", color: "blue" } as const;
+    const { joined } = await linkWithIcons({ projectIcon: dna }, () => ({ projectIcon: own }));
+    expect(joined.projectIcon).toEqual(own);
+  });
+
+  it("replaces an automatic favicon on the joining copy with the saved icon", async () => {
+    const { joined } = await linkWithIcons({ projectIcon: dna }, (root) => ({
+      faviconPath: `${root}/public/favicon.svg`,
+    }));
+    expect(joined.projectIcon).toEqual(dna);
+  });
+
+  it("links without an icon when the saved icon path is not an image", async () => {
+    const { prepared, joined } = await linkWithIcons({ faviconPath: "assets/logo" });
+    expect(prepared.sharedIcon).toBeUndefined();
+    expect(joined.faviconPath ?? null).toBeNull();
+  });
+
+  it("refuses an absolute icon path sent to the joining copy", async () => {
+    const pair = legacyPair();
+    const prepared = await pair.m4.run((service) =>
+      service.prepare({ operationId, projectId: pair.kept.projectId, joining: pair.joining }),
+    );
+    await pair.m3.run((service) =>
+      service.accept({
+        operationId,
+        projectId: pair.joining.projectId,
+        kept: prepared.kept,
+        logicalProject: prepared.logicalProject,
+        coordinatorBinding: prepared.coordinatorBinding,
+        keptFingerprint: prepared.fingerprint,
+        sharedIcon: { projectIcon: null, faviconPath: "/home/anton/.ssh/shot.png" },
+      }),
+    );
+    expect(pair.m3.projects.get(pair.joining.projectId)!.faviconPath ?? null).toBeNull();
+  });
+
+  it("does not hand a joining copy an icon file only the kept machine has", async () => {
+    const { prepared } = await linkWithIcons({ faviconPath: "/Users/anton/Pictures/icon.png" });
+    expect(prepared.sharedIcon).toBeUndefined();
+    const relative = await linkWithIcons({ faviconPath: "assets/brand.svg" });
+    expect(relative.joined.faviconPath).toBe("assets/brand.svg");
   });
 
   it("leaves no state that blocks sending when the kept machine drops before commit", async () => {

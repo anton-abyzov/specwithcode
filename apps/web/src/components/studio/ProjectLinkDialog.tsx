@@ -323,6 +323,7 @@ export function ProjectLinkDialog({
           logicalProject: prepared.value.logicalProject,
           coordinatorBinding: prepared.value.coordinatorBinding,
           keptFingerprint: prepared.value.fingerprint,
+          ...(prepared.value.sharedIcon ? { sharedIcon: prepared.value.sharedIcon } : {}),
         },
       });
       if (accepted._tag === "Failure") throw squashAtomCommandFailure(accepted);

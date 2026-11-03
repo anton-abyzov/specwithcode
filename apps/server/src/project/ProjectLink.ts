@@ -26,7 +26,9 @@ import {
   type ProjectLinkDigestInput,
   ProjectLinkError,
   type ProjectLinkNote,
+  ProjectFaviconPath,
   type ProjectLinkNoteWrite,
+  type ProjectLinkSharedIcon,
   type ProjectLinkPrepareInput,
   type ProjectLinkPrepareResult,
   type ProjectLinkPreview,
@@ -49,6 +51,10 @@ import {
   WS_METHODS,
   WsProjectLinkRpcGroup,
 } from "@specweave-studio/contracts";
+import {
+  hasSavedProjectIcon,
+  isPortableProjectFaviconPath,
+} from "@specweave-studio/shared/projectFavicon";
 import { teamRulesMachineLinkRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
@@ -56,6 +62,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { sha256 } from "../nodeCrypto.ts";
@@ -151,6 +158,20 @@ const withOwnRoot = (identity: LogicalProject, self: LogicalProjectMember): Logi
     member.workspaceRoot === undefined && sameMember(member, self) ? self : member,
   ),
 });
+
+/** An absolute icon path names a file on one machine, so it never crosses a link. */
+const sharedIconOf = (
+  project: Pick<Project, "projectIcon" | "faviconPath">,
+): ProjectLinkSharedIcon | undefined => {
+  const projectIcon = project.projectIcon ?? null;
+  const faviconPath =
+    project.faviconPath &&
+    isPortableProjectFaviconPath(project.faviconPath) &&
+    Schema.is(ProjectFaviconPath)(project.faviconPath)
+      ? project.faviconPath
+      : null;
+  return projectIcon === null && faviconPath === null ? undefined : { projectIcon, faviconPath };
+};
 
 /** Members keyed by machine and project, newest entry kept. */
 const mergeMembers = (...lists: ReadonlyArray<ReadonlyArray<LogicalProjectMember>>) => [
@@ -475,6 +496,7 @@ const make = Effect.gen(function* () {
             coordinatorBinding: binding,
           });
         }
+        const sharedIcon = sharedIconOf(project);
         return {
           operationId: input.operationId,
           kept,
@@ -483,6 +505,7 @@ const make = Effect.gen(function* () {
           coordinatorBinding: binding,
           fingerprint: yield* fingerprintOf(project.workspaceRoot),
           adopted,
+          ...(sharedIcon ? { sharedIcon } : {}),
         };
       }),
     );
@@ -540,6 +563,17 @@ const make = Effect.gen(function* () {
           logicalProject,
           coordinatorBinding: relinquished,
         });
+        // A project shares one icon. This never fails the link: the icon only decorates it.
+        const sharedIcon = input.sharedIcon && sharedIconOf(input.sharedIcon);
+        if (sharedIcon && !hasSavedProjectIcon(project)) {
+          yield* projects
+            .update({
+              projectId: project.id,
+              commandId: CommandId.make(`project-link-icon:${input.operationId}`),
+              ...sharedIcon,
+            })
+            .pipe(Effect.ignore);
+        }
         return {
           operationId: input.operationId,
           member: self,

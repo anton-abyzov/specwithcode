@@ -133,6 +133,8 @@ export function machine(environment: string) {
       const next = {
         ...current,
         workspaceSettings: payload.workspaceSettings ?? current.workspaceSettings,
+        ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
+        ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
       };
       projects.set(input.projectId, next);
       receipts.set(input.commandId, Result.succeed(next));

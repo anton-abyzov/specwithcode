@@ -276,6 +276,7 @@ const linkCopy = Effect.fn("mcp.addToMachine.linkCopy")(function* (input: {
         logicalProject: prepared.logicalProject,
         coordinatorBinding: prepared.coordinatorBinding,
         keptFingerprint: prepared.fingerprint,
+        ...(prepared.sharedIcon ? { sharedIcon: prepared.sharedIcon } : {}),
       },
       timeoutMs: LINK_TIMEOUT_MS,
     });

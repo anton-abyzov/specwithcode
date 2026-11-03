@@ -522,3 +522,63 @@ describe("environment grouping", () => {
     expect(groups.map((group) => group.displayName)).toEqual(["separate", "shared-repo"]);
   });
 });
+
+describe("the icon a project shares across its checkouts", () => {
+  const dna = { kind: "lucide", name: "dna", color: "yellow" } as const;
+  const snapshotOf = (local: Partial<Project>, remote: Partial<Project>) =>
+    buildSidebarProjectSnapshots({
+      projects: [
+        makeProject({ repositoryIdentity, ...local }),
+        makeProject({
+          id: ProjectId.make("project-remote"),
+          environmentId: remoteEnvironmentId,
+          repositoryIdentity,
+          ...remote,
+        }),
+      ],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    })[0]!;
+
+  it("shows the icon another checkout saved on a copy that has none", () => {
+    const group = snapshotOf({ projectIcon: null, faviconPath: null }, { projectIcon: dna });
+    expect(group.projectIcon).toEqual(dna);
+    expect(group.memberProjects.map((member) => member.projectIcon)).toEqual([dna, dna]);
+  });
+
+  it("prefers the saved icon over a favicon this checkout found automatically", () => {
+    const group = snapshotOf(
+      { workspaceRoot: "/home/anton/repo", faviconPath: "/home/anton/repo/public/favicon.svg" },
+      { projectIcon: dna },
+    );
+    expect(group.memberProjects[0]!.projectIcon).toEqual(dna);
+  });
+
+  it("keeps an icon file this checkout saved from outside the repository", () => {
+    const group = snapshotOf(
+      { workspaceRoot: "/home/anton/repo", faviconPath: "/home/anton/Pictures/mine.png" },
+      { projectIcon: dna },
+    );
+    expect(group.memberProjects[0]!.projectIcon ?? null).toBeNull();
+  });
+
+  it("keeps the icon a checkout saved for itself", () => {
+    const own = { kind: "lucide", name: "rocket", color: "blue" } as const;
+    const group = snapshotOf({ projectIcon: own }, { projectIcon: dna });
+    expect(group.projectIcon).toEqual(own);
+  });
+
+  it("never borrows an icon file only another machine has", () => {
+    const group = snapshotOf({}, { faviconPath: "/Users/anton/Pictures/icon.png" });
+    expect(group.memberProjects[0]!.faviconPath ?? null).toBeNull();
+    const shared = snapshotOf({}, { faviconPath: "assets/brand.svg" });
+    expect(shared.memberProjects[0]!.faviconPath).toBe("assets/brand.svg");
+  });
+
+  it("leaves a project with no saved icon on its automatic icon", () => {
+    const group = snapshotOf({}, {});
+    expect(group.projectIcon ?? null).toBeNull();
+    expect(group.faviconPath ?? null).toBeNull();
+  });
+});

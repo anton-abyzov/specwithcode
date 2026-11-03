@@ -6,6 +6,7 @@ import {
   ProjectCoordinatorBinding,
 } from "./logicalProject.ts";
 import { MACHINE_HANDOFF_MAX_BYTES } from "./machineHandoff.ts";
+import { ProjectFaviconPath, ReceivedProjectIcon } from "./project.ts";
 import {
   PROJECT_GOAL_MAX_LENGTH,
   PROJECT_INSTRUCTIONS_MAX_LENGTH,
@@ -206,6 +207,16 @@ export const ProjectLinkPreview = Schema.Struct({
 });
 export type ProjectLinkPreview = typeof ProjectLinkPreview.Type;
 
+/**
+ * The icon the kept copy saved, for a joining copy that has none of its own. A kind
+ * from a newer machine decodes as no icon, so it can never fail the link.
+ */
+export const ProjectLinkSharedIcon = Schema.Struct({
+  projectIcon: Schema.NullOr(ReceivedProjectIcon),
+  faviconPath: Schema.NullOr(ProjectFaviconPath),
+});
+export type ProjectLinkSharedIcon = typeof ProjectLinkSharedIcon.Type;
+
 /** Kept machine: make sure the kept copy has a shared identity (adopting one if needed). */
 export const ProjectLinkPrepareInput = Schema.Struct({
   operationId: ProjectLinkOperationId,
@@ -221,6 +232,7 @@ export const ProjectLinkPrepareResult = Schema.Struct({
   fingerprint: RepositoryFingerprint,
   /** This step gave the kept copy its first shared identity. */
   adopted: Schema.Boolean,
+  sharedIcon: Schema.optionalKey(ProjectLinkSharedIcon),
 });
 export type ProjectLinkPrepareResult = typeof ProjectLinkPrepareResult.Type;
 
@@ -232,6 +244,7 @@ export const ProjectLinkAcceptInput = Schema.Struct({
   logicalProject: LogicalProject,
   coordinatorBinding: ProjectCoordinatorBinding,
   keptFingerprint: RepositoryFingerprint,
+  sharedIcon: Schema.optionalKey(ProjectLinkSharedIcon),
 });
 export type ProjectLinkAcceptInput = typeof ProjectLinkAcceptInput.Type;
 export const ProjectLinkAcceptResult = Schema.Struct({
