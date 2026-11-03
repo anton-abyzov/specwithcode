@@ -21,13 +21,19 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     // Wide outer-display landscape can still have compact traits. The native
     // component tests enforce the trait/width policy; verify each visible mode here.
     if !button("Menu").exists {
-      XCTAssertGreaterThanOrEqual(app.frame.width, 760)
+      XCTAssertGreaterThanOrEqual(max(app.frame.width, app.frame.height), 760)
       waitForHittable(search)
       waitForHittable(field("Message"))
       XCTAssertFalse(button("Close menu").exists)
       let input = field("Message").frame
       XCTAssertGreaterThan(input.minX, search.frame.minX, "Expanded navigation must sit beside the composer")
-      // Sidebar rows are list cells; selecting one swaps the detail in place.
+      // A machine chip leaves every project reachable.
+      tap(button(startingWith: "Office Mac"))
+      waitForHittable(button(startingWith: "Recipe app"))
+      tap(button("All"))
+      // A project row goes down a level in the column; its first row opens the coordinator.
+      tap(button(startingWith: "Recipe app"))
+      waitForHittable(app.buttons["sidebar.all-projects"])
       let recipe = app.cells.containing(titled("Recipe app")).firstMatch.exists
         ? app.cells.containing(titled("Recipe app")).firstMatch
         : app.descendants(matching: .any).matching(titled("Recipe app")).firstMatch
@@ -47,6 +53,50 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
       waitForHittable(field("Message"))
     }
     attachScreenshot("Adaptive navigation")
+  }
+
+  /// The whole height of the header's first control has to work on an unfolded
+  /// Duo, where the system takes touches along the top edge of the screen.
+  func testTopLeftControlAnswersAlongItsWholeHeight() throws {
+    launch(route: "thread", coordinatorBeside: true)
+    let hide = app.descendants(matching: .any).matching(identifier: "sidebar.collapse").firstMatch
+    try XCTSkipUnless(hide.waitForExistence(timeout: 5), "No wide column on this display; run it unfolded")
+    let reopen = app.buttons["chrome.show-sidebar"]
+    settle()
+    XCTAssertGreaterThanOrEqual(hide.frame.minY, 18)
+    for height in [0.02, 0.5, 0.98] {
+      hide.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: height)).tap()
+      waitForHittable(reopen, "A tap \(height) of the way down the control did nothing")
+      attachScreenshot("Hidden column with a way back")
+      tap(reopen)
+      // The column cross-fades; the control has no hit point until it settles.
+      settle()
+      waitForHittable(hide)
+    }
+    tap(app.buttons["column.threads"])
+    settle()
+    attachScreenshot("Threads and rail on the unfolded display")
+    tap(app.buttons["column.coordinator"])
+    settle()
+    waitForHittable(hide)
+  }
+
+  func testCoordinatorSitsBesideTheThreadWhenWide() throws {
+    launch(route: "thread", coordinatorBeside: true)
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let threads = app.buttons["column.threads"]
+    waitForHittable(threads)
+    XCTAssertLessThan(threads.frame.minX, app.frame.width / 2, "The switch belongs in the left column")
+    attachScreenshot("Coordinator beside thread")
+
+    tap(threads)
+    let coordinator = app.buttons["column.coordinator"]
+    waitForHittable(coordinator)
+    attachScreenshot("Threads in the column")
+    tap(coordinator)
+    waitForHittable(threads)
   }
 
   func testBothLandscapeRotationsPreserveDraftAndSelectedChat() throws {

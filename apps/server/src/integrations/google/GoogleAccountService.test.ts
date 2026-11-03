@@ -107,6 +107,23 @@ const makeHarness = (
             },
           };
         }
+        if (url.endsWith("/users/me/drafts/d1")) {
+          return {
+            id: "d1",
+            message: {
+              id: "dm1",
+              threadId: "t1",
+              payload: {
+                mimeType: "text/plain",
+                headers: [
+                  { name: "To", value: "Ann <ann@example.com>" },
+                  { name: "Subject", value: "Re: Dinner" },
+                ],
+                body: { data: Buffer.from("Thursday works.", "utf8").toString("base64url") },
+              },
+            },
+          };
+        }
         if (url.includes("/calendars/primary/events")) {
           return {
             timeZone: "Europe/Berlin",
@@ -719,6 +736,68 @@ it.effect("drops a saved sign-in after a restart with a different SpecWithCode c
     );
     assert.include(dropped.lastError ?? "", "Connect again");
     assert.isFalse(first.secrets.has("google-refresh-token"));
+  }),
+);
+
+it.effect("reads a draft back and sends it only through Gmail drafts", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      harness.grantDrafts();
+      const signIn = yield* google.startSignIn({ services: ["gmail", "gmailDrafts"] });
+      const authorize = new URL(signIn.signIn!.authorizationUrl);
+      yield* google.completeSignIn({
+        callbackUrl: `?code=good-code&state=${authorize.searchParams.get("state")}`,
+      });
+      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail"] });
+      assert.include(
+        failureDetail(yield* Effect.exit(google.gmailSendDraft(PROJECT, "d1"))),
+        "Gmail drafts is not turned on for this project",
+      );
+      assert.strictEqual(harness.posts.length, 0);
+      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail", "gmailDrafts"] });
+      assert.deepStrictEqual(yield* google.gmailDraft(PROJECT, "d1"), {
+        draftId: "d1",
+        messageId: "dm1",
+        threadId: "t1",
+        to: "Ann <ann@example.com>",
+        subject: "Re: Dinner",
+        body: "Thursday works.",
+      });
+      assert.include(
+        failureDetail(yield* Effect.exit(google.gmailSendDraft(PROJECT, "../send"))),
+        "not a Gmail draft id",
+      );
+      yield* google.gmailSendDraft(PROJECT, "d1");
+      assert.deepStrictEqual(harness.posts.at(-1), {
+        operation: "Gmail send",
+        url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
+        body: { id: "d1" },
+      });
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("remembers where the briefing was set up until another account connects", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    harness.listProjects([
+      { projectId: PROJECT, deletedAt: null, workspaceSettings: { kind: "personal" } },
+    ]);
+    yield* Effect.gen(function* () {
+      const google = yield* GoogleAccountService.GoogleAccountService;
+      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+      yield* connectForHealth(google);
+      assert.deepStrictEqual((yield* google.briefingState).briefingSetUp, []);
+      yield* google.markBriefingSetUp(PROJECT);
+      yield* google.markBriefingSetUp(PROJECT);
+      assert.deepStrictEqual((yield* google.briefingState).briefingSetUp, [PROJECT]);
+      // Reconnecting the same account keeps it.
+      yield* connectForHealth(google);
+      assert.deepStrictEqual((yield* google.briefingState).briefingSetUp, [PROJECT]);
+    }).pipe(Effect.provide(harness.layer));
   }),
 );
 

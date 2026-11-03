@@ -18,11 +18,11 @@ class SWCUITestCase: XCTestCase {
   }
 
   @discardableResult
-  func launch(fixture: String = "default", route: String? = nil, appearance: String = "light", aide: Bool = true) -> XCUIApplication {
+  func launch(fixture: String = "default", route: String? = nil, appearance: String = "light", aide: Bool = true, coordinatorBeside: Bool = false) -> XCUIApplication {
     app?.terminate()
     let app = XCUIApplication()
     // A sidebar hidden on this simulator earlier must not change the layout under test.
-    var arguments = ["-SWCFixture", fixture, "-SWCAppearance", appearance, "-swc.sidebarCollapsed", "NO", "-swc.sidebarWidth", "0"]
+    var arguments = ["-SWCFixture", fixture, "-SWCAppearance", appearance, "-swc.sidebarCollapsed", "NO", "-swc.listColumnWidth", "0", "-swc.chatColumnWidth", "0", "-swc.coordinatorBeside", coordinatorBeside ? "YES" : "NO"]
     if let route { arguments += ["-SWCRoute", route] }
     if !aide { arguments += ["-SWCAide", "off"] }
     app.launchArguments = arguments

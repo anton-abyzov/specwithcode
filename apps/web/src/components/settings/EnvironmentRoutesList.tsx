@@ -45,9 +45,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
  */
 export function EnvironmentRoutesList({
   environment,
+  destinationLabel = environment.label,
   onAddRoute,
 }: {
   readonly environment: EnvironmentPresentation;
+  readonly destinationLabel?: string;
   readonly onAddRoute: () => void;
 }) {
   const saved = connectionRoutes(environment.entry);
@@ -109,6 +111,14 @@ export function EnvironmentRoutesList({
 
   return (
     <div className="mt-2 rounded-md border border-border/70">
+      <div className="border-b border-border/70 p-3 text-xs">
+        <p className="font-medium">Connection paths to {destinationLabel}</p>
+        <p className="mt-1 text-muted-foreground">
+          Tried in preference order. If one cannot connect, another is tried. Drag to change the
+          order. An address may forward through another machine; the destination identity must still
+          match.
+        </p>
+      </div>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -121,6 +131,7 @@ export function EnvironmentRoutesList({
               <SortableRouteRow
                 key={connectionRouteId(route.target)}
                 route={route}
+                destinationLabel={destinationLabel}
                 position={index + 1}
                 inUse={connectionRouteId(route.target) === activeRouteId}
                 // The last route goes with the machine; that is "Remove from
@@ -136,7 +147,7 @@ export function EnvironmentRoutesList({
       <div className="border-t border-border/70 px-1 py-1">
         <Button size="xs" variant="ghost-muted" onClick={onAddRoute}>
           <PlusIcon className="size-3" />
-          Add route
+          Add connection path
         </Button>
       </div>
     </div>
@@ -145,12 +156,14 @@ export function EnvironmentRoutesList({
 
 function SortableRouteRow({
   route,
+  destinationLabel,
   position,
   inUse,
   removable,
   onRemove,
 }: {
   readonly route: ConnectionRoute;
+  readonly destinationLabel: string;
   readonly position: number;
   readonly inUse: boolean;
   readonly removable: boolean;
@@ -158,7 +171,6 @@ function SortableRouteRow({
 }) {
   const id = connectionRouteId(route.target);
   const label = connectionRouteLabel(route);
-  const address = connectionRouteAddress(route);
   const {
     attributes,
     listeners,
@@ -188,22 +200,12 @@ function SortableRouteRow({
       >
         <GripVerticalIcon className="size-3.5" />
       </button>
-      <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-          {label}
-          {inUse ? (
-            <span className="rounded-sm bg-success/12 px-1 text-2xs font-normal text-success-foreground">
-              In use
-            </span>
-          ) : null}
-        </p>
-        {address !== null ? (
-          <p className="truncate text-2xs text-muted-foreground">
-            {address}
-            {isLearned(route) ? " · found automatically" : ""}
-          </p>
-        ) : null}
-      </div>
+      <ConnectionPathDetails
+        route={route}
+        destinationLabel={destinationLabel}
+        position={position}
+        inUse={inUse}
+      />
       {removable ? (
         <Tooltip>
           <TooltipTrigger
@@ -223,5 +225,49 @@ function SortableRouteRow({
         </Tooltip>
       ) : null}
     </li>
+  );
+}
+
+/** A saved address is not proof of reachability; only the active session verifies identity. */
+export function ConnectionPathDetails({
+  route,
+  destinationLabel,
+  position,
+  inUse,
+}: {
+  readonly route: ConnectionRoute;
+  readonly destinationLabel: string;
+  readonly position: number;
+  readonly inUse: boolean;
+}) {
+  const address = connectionRouteAddress(route);
+  return (
+    <div className="min-w-0 flex-1 py-1">
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-foreground">
+        <span>
+          {position}. {connectionRouteLabel(route)}
+        </span>
+        <span
+          className={cn(
+            "text-2xs font-normal",
+            inUse ? "text-success-foreground" : "text-muted-foreground",
+          )}
+        >
+          {inUse ? "In use" : "Saved alternative"}
+        </span>
+      </p>
+      <p className="mt-1 text-xs">
+        {inUse ? "Connected to" : "Destination"}: {destinationLabel}
+      </p>
+      {address !== null && (
+        <p className="mt-1 break-all text-2xs text-muted-foreground">Address: {address}</p>
+      )}
+      <p className="mt-1 text-2xs text-muted-foreground">
+        {inUse
+          ? "Identity verified by the current connection."
+          : "Used when selected by connection order and availability. Identity checked when connecting."}
+        {isLearned(route) ? " Found automatically." : ""}
+      </p>
+    </div>
   );
 }

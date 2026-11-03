@@ -72,6 +72,7 @@ import {
   orderedServices,
   parseCallback,
   projectServices,
+  readGmailDraft,
   readGmailMessage,
   servicesFromScope,
   SIGN_IN_TTL_MS,
@@ -180,10 +181,35 @@ export class GoogleAccountService extends Context.Service<
       },
       GoogleAccountError
     >;
+    /** One saved draft, read so the person sees exactly what would be sent. */
+    readonly gmailDraft: (
+      projectId: ProjectId,
+      draftId: string,
+    ) => Effect.Effect<NonNullable<ReturnType<typeof readGmailDraft>>, GoogleAccountError>;
+    /**
+     * Sends a saved draft. Only the reply card's Send answer may lead here: the
+     * caller checks that answer before calling, and nothing else in Studio sends mail.
+     */
+    readonly gmailSendDraft: (
+      projectId: ProjectId,
+      draftId: string,
+    ) => Effect.Effect<
+      { readonly sent: true; readonly messageId: string | null; readonly threadId: string | null },
+      GoogleAccountError
+    >;
     readonly calendarEvents: (
       projectId: ProjectId,
       input: CalendarEventsInput,
     ) => Effect.Effect<unknown, GoogleAccountError>;
+    /** The account, the projects' switches and where the briefing was set up. */
+    readonly briefingState: Effect.Effect<{
+      readonly email: string | null;
+      readonly projects: GoogleAccountState["projects"];
+      readonly services: GoogleAccountState["services"];
+      readonly briefingSetUp: ReadonlyArray<string>;
+    }>;
+    /** Records that the briefing was set up for this project with the current account. */
+    readonly markBriefingSetUp: (projectId: ProjectId) => Effect.Effect<void, GoogleAccountError>;
     readonly driveSearch: (
       projectId: ProjectId,
       input: DriveSearchInput,
@@ -523,6 +549,7 @@ const make = Effect.gen(function* () {
           clientId: client.value.clientId,
           services,
           projects: projectAccess,
+          briefingSetUp: newAccount ? [] : (previous.briefingSetUp ?? []),
         });
         yield* Ref.set(lastErrorRef, null);
         return yield* status;
@@ -784,6 +811,61 @@ const make = Effect.gen(function* () {
       };
     });
 
+  const gmailDraft = (projectId: ProjectId, draftId: string) =>
+    Effect.gen(function* () {
+      yield* requireService(projectId, "gmailDrafts");
+      if (!GOOGLE_ID.test(draftId)) return yield* fail("That is not a Gmail draft id.");
+      const draft = yield* withToken((token) =>
+        api.getJson({
+          operation: "Gmail draft",
+          url: `${api.endpoints.gmail}/users/me/drafts/${draftId}`,
+          query: { format: "full" },
+          accessToken: token,
+        }),
+      );
+      const read = readGmailDraft(draft as { id?: string; message?: GmailMessage });
+      if (read === null) return yield* fail("Gmail did not return that draft.");
+      return read;
+    });
+
+  const gmailSendDraft = (projectId: ProjectId, draftId: string) =>
+    Effect.gen(function* () {
+      yield* requireService(projectId, "gmailDrafts");
+      if (!GOOGLE_ID.test(draftId)) return yield* fail("That is not a Gmail draft id.");
+      const sent = (yield* withToken((token) =>
+        api.postJson({
+          operation: "Gmail send",
+          url: `${api.endpoints.gmail}/users/me/drafts/send`,
+          body: { id: draftId },
+          accessToken: token,
+        }),
+      )) as { id?: string; threadId?: string };
+      return {
+        sent: true as const,
+        messageId: typeof sent.id === "string" ? sent.id : null,
+        threadId: typeof sent.threadId === "string" ? sent.threadId : null,
+      };
+    });
+
+  const briefingState = Ref.get(stateRef).pipe(
+    Effect.map((state) => ({
+      email: state.email,
+      projects: state.projects,
+      services: state.services,
+      briefingSetUp: state.briefingSetUp ?? [],
+    })),
+  );
+
+  const markBriefingSetUp = (projectId: ProjectId) =>
+    writes.withPermits(1)(
+      Effect.gen(function* () {
+        const state = yield* Ref.get(stateRef);
+        const done = state.briefingSetUp ?? [];
+        if (done.includes(projectId)) return;
+        yield* persistState({ ...state, briefingSetUp: [...done, projectId] });
+      }),
+    );
+
   const validTime = (value: string | undefined, fallback: number) =>
     value === undefined
       ? Effect.succeed(isoAt(fallback))
@@ -989,7 +1071,11 @@ const make = Effect.gen(function* () {
     gmailSearch,
     gmailRead,
     gmailCreateDraft,
+    gmailDraft,
+    gmailSendDraft,
     calendarEvents,
+    briefingState,
+    markBriefingSetUp,
     driveSearch,
     driveRead,
   });

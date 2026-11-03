@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- drives the plain relay hub with a fake extension.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import {
   encodePairingCode,
@@ -157,6 +158,56 @@ describe("ChromeTools", () => {
     expect(noProfileHint({ label: "Work", at: 0, reason: "x" }, 5 * 60_000)).toContain(
       '"Work" disconnected 5 min ago (1970-01-01T00:00:00.000Z): x.',
     );
+  });
+
+  describe("upload", () => {
+    const scratch = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "chrome-upload-"));
+    const first = NodePath.join(scratch, "a.jpg");
+    const second = NodePath.join(scratch, "b.png");
+    NodeFS.writeFileSync(first, Buffer.alloc(2_000_000, 7));
+    NodeFS.writeFileSync(second, "two");
+    afterAll(() => NodeFS.rmSync(scratch, { recursive: true, force: true }));
+    const scripts = (fake: ReturnType<typeof connectFake>) =>
+      fake.calls
+        .filter((call) => call.method === "chrome.debugger.sendCommand")
+        .map((call) => String((call.params?.[2] as { expression?: string })?.expression ?? ""));
+
+    it("streams every file in chunks, then sets them on the input in order", async () => {
+      const { extension, token } = setup();
+      const fake = connectFake(extension, token);
+      const tools = new ChromeTools(extension.hub);
+      await tools.open("t1", { url: "https://example.com" });
+      await tools.upload("t1", { paths: [first, second] });
+      const sent = scripts(fake);
+      expect(sent.filter((s) => s.includes("atob(")).length).toBe(4);
+      const set = sent.find((s) => s.includes("new DataTransfer"))!;
+      expect(set.indexOf("a.jpg")).toBeLessThan(set.indexOf("b.png"));
+      expect(set).toContain("image/jpeg");
+      expect(set).toContain("'change'");
+    });
+
+    it("refuses a bad path before the page gets anything", async () => {
+      const { extension, token } = setup();
+      const fake = connectFake(extension, token);
+      const tools = new ChromeTools(extension.hub);
+      await tools.open("t1", { url: "https://example.com" });
+      for (const path of ["relative.jpg", scratch, NodePath.join(scratch, "missing.jpg")])
+        await expect(tools.upload("t1", { paths: [path] })).rejects.toMatchObject({
+          code: "invalid_request",
+        });
+      expect(scripts(fake).some((s) => s.includes("atob("))).toBe(false);
+    });
+
+    it("refuses more than the size limit", async () => {
+      const { extension, token } = setup();
+      connectFake(extension, token);
+      const tools = new ChromeTools(extension.hub);
+      await tools.open("t1", { url: "https://example.com" });
+      const big = NodePath.join(scratch, "big.mov");
+      NodeFS.closeSync(NodeFS.openSync(big, "w"));
+      NodeFS.truncateSync(big, 100 * 1024 * 1024 + 1);
+      await expect(tools.upload("t1", { paths: [big] })).rejects.toThrow("100 MiB");
+    });
   });
 
   it("opens, reads, clicks, types, screenshots and closes in one profile", async () => {

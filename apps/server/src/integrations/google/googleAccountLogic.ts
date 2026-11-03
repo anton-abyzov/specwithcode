@@ -163,6 +163,11 @@ export const GoogleAccountState = Schema.Struct({
       services: Schema.Array(Schema.Literals(["gmail", "calendar", "drive", "gmailDrafts"])),
     }),
   ),
+  /**
+   * Personal projects the proactive briefing was already set up for with this account,
+   * so a briefing the person deleted is not set up again. A new account starts empty.
+   */
+  briefingSetUp: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type GoogleAccountState = typeof GoogleAccountState.Type;
 
@@ -323,6 +328,27 @@ export function readGmailMessage(message: GmailMessage) {
         mimeType: p.mimeType ?? null,
         size: p.body?.size ?? null,
       })),
+  };
+}
+
+/** A saved draft as the person will see it on the card that asks to send it. */
+export function readGmailDraft(draft: { readonly id?: string; readonly message?: GmailMessage }): {
+  readonly draftId: string;
+  readonly messageId: string | null;
+  readonly threadId: string | null;
+  readonly to: string | null;
+  readonly subject: string | null;
+  readonly body: string;
+} | null {
+  if (typeof draft.id !== "string" || draft.message === undefined) return null;
+  const message = readGmailMessage(draft.message);
+  return {
+    draftId: draft.id,
+    messageId: message.id ?? null,
+    threadId: message.threadId,
+    to: message.to,
+    subject: message.subject,
+    body: message.body,
   };
 }
 

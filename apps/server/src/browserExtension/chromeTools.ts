@@ -1,10 +1,13 @@
-// @effect-diagnostics globalDate:off globalTimers:off -- plain async helpers over the relay hub, driven by tests with a fake extension.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- plain async helpers over the relay hub, driven by tests with a fake extension.
 /**
  * What the `chrome_*` tools on studio-code do in a paired Chrome profile.
  * Plain async functions over the relay hub, so tests can drive them with a
  * fake extension. Threads share a profile and each drives only its own tabs;
  * every action lands in the audit list Settings › Chrome shows.
  */
+import * as NodeFS from "node:fs/promises";
+import * as NodePath from "node:path";
+
 import {
   BrowserRelayError,
   type BrowserRelayHub,
@@ -12,18 +15,40 @@ import {
   type RelayProfile,
 } from "./relayHub.ts";
 import {
+  appendChunkScript,
+  CLEAR_UPLOAD_SCRIPT,
   type ElementTarget,
   domClickScript,
+  findFileInputScript,
   keyDefinition,
   locateScript,
   PAGE_IDENTITY_SCRIPT,
   READY_STATE_SCRIPT,
+  setFilesScript,
   snapshotScript,
 } from "./pageScripts.ts";
 
 const LOAD_TIMEOUT_MS = 15_000;
 const SETTLE_MS = 300;
 const DEFAULT_TEXT_CHARS = 12_000;
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** A multiple of 3, so each chunk is valid base64 on its own. */
+const UPLOAD_CHUNK_BYTES = 768 * 1024;
+const UPLOAD_TYPES: Readonly<Record<string, string>> = {
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".m4v": "video/mp4",
+  ".mov": "video/quicktime",
+  ".mp4": "video/mp4",
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".webm": "video/webm",
+  ".webp": "image/webp",
+};
 
 interface ChromeTab {
   readonly id?: number;
@@ -67,6 +92,28 @@ export function checkUrl(url: string): string {
       "Only http and https pages can be opened in the user's Chrome.",
     );
   return parsed.href;
+}
+
+/** Checks every path before the page gets anything. */
+async function uploadFiles(paths: ReadonlyArray<string>) {
+  let total = 0;
+  const files = [];
+  for (const path of paths) {
+    if (!NodePath.isAbsolute(path))
+      throw new BrowserRelayError("invalid_request", `Not an absolute path: ${path}`);
+    const info = await NodeFS.stat(path).catch(() => null);
+    if (!info?.isFile()) throw new BrowserRelayError("invalid_request", `Not a file: ${path}`);
+    total += info.size;
+    files.push({
+      path,
+      size: info.size,
+      name: NodePath.basename(path),
+      type: UPLOAD_TYPES[NodePath.extname(path).toLowerCase()] ?? "application/octet-stream",
+    });
+  }
+  if (total > MAX_UPLOAD_BYTES)
+    throw new BrowserRelayError("invalid_request", "One upload can carry 100 MiB at most.");
+  return files;
 }
 
 export class ChromeTools {
@@ -437,6 +484,76 @@ export class ChromeTools {
     const tabId = await this.useTab(profile, threadId, input.tabId);
     await this.pressKey(profile, tabId, input.key);
     await sleep(SETTLE_MS);
+    return this.page(profile, tabId);
+  }
+
+  async upload(
+    threadId: string,
+    input: ElementTarget & {
+      paths: ReadonlyArray<string>;
+      tabId?: number | undefined;
+      profile?: string | undefined;
+    },
+  ) {
+    const profile = this.begin(input.profile, threadId, "chrome_upload");
+    const tabId = await this.useTab(profile, threadId, input.tabId);
+    const files = await uploadFiles(input.paths);
+    const refused = (found: { missing?: boolean; error?: string | null } | undefined) =>
+      found?.missing
+        ? new BrowserRelayError(
+            "element_not_found",
+            "That element is gone. Take a new snapshot and try again.",
+          )
+        : found?.error
+          ? new BrowserRelayError("invalid_request", found.error)
+          : null;
+    const usable = await this.evaluate<{ missing?: boolean; error?: string; href?: string }>(
+      profile,
+      tabId,
+      findFileInputScript(input, files.length),
+    );
+    const notUsable = refused(usable);
+    if (notUsable) throw notUsable;
+    const href = usable?.href ?? "";
+    // Bytes a failed or earlier attempt left behind must never join this one.
+    await this.evaluate(profile, tabId, CLEAR_UPLOAD_SCRIPT);
+    let set: { missing?: boolean; error?: string; given?: number } | undefined;
+    try {
+      for (const [index, file] of files.entries()) {
+        const handle = await NodeFS.open(file.path, "r");
+        try {
+          const buffer = Buffer.alloc(UPLOAD_CHUNK_BYTES);
+          for (;;) {
+            const { bytesRead } = await handle.read(buffer, 0, UPLOAD_CHUNK_BYTES);
+            if (bytesRead === 0) break;
+            const base64 = buffer.subarray(0, bytesRead).toString("base64");
+            await this.evaluate(profile, tabId, appendChunkScript(index, base64, href));
+          }
+        } finally {
+          await handle.close();
+        }
+      }
+      set = await this.evaluate(
+        profile,
+        tabId,
+        setFilesScript(
+          input,
+          files.map(({ name, type, size }) => ({ name, type, size })),
+          href,
+        ),
+      );
+    } catch (error) {
+      await this.evaluate(profile, tabId, CLEAR_UPLOAD_SCRIPT).catch(() => {});
+      throw error;
+    }
+    const notSet = refused(set);
+    if (notSet) throw notSet;
+    if (set?.given !== files.length)
+      throw new BrowserRelayError(
+        "page_error",
+        `The page took ${set?.given ?? 0} of ${files.length} files.`,
+      );
+    await this.waitForLoad(profile, tabId);
     return this.page(profile, tabId);
   }
 

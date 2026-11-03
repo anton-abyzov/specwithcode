@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import Weave
+import SWCSync
 @testable import SWCFeatures
 
 /// Native component resizing is not a substitute for Duo pose acceptance.
@@ -8,7 +9,7 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
   override func setUp() {
     super.setUp()
     // A width dragged in an earlier run would replace the automatic width.
-    UserDefaults.standard.removeObject(forKey: "swc.sidebarWidth")
+    UserDefaults.standard.removeObject(forKey: "swc.listColumnWidth")
   }
 
   @MainActor func testResizePreservesDraftAndFitsBothColumns() throws {
@@ -67,11 +68,11 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
   @MainActor func testAsymmetricInsetsOnlyConsumeOverlappingEdges() throws {
     // Scene width, leading/trailing system regions, expected navigation/detail widths.
     let cases: [(Double, CGFloat, CGFloat, CGFloat, CGFloat, LayoutDirection)] = [
-      (1000, 0, 84, 320, 596, .leftToRight),
+      (1000, 0, 84, 420, 496, .leftToRight),
       // Below the breakpoint the open drawer is modal over full-width content.
       (669, 0, 84, 340, 585, .leftToRight),
       (320, 0, 84, 236, 236, .leftToRight),
-      (1000, 84, 0, 236, 680, .rightToLeft),
+      (1000, 84, 0, 336, 580, .rightToLeft),
     ]
     for (width, leading, trailing, navigationWidth, detailWidth, direction) in cases {
       let host = UIHostingController(rootView: DrawerContainer(
@@ -106,6 +107,43 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
       XCTAssertEqual(navigation.bounds.width, navigationWidth, accuracy: 1)
       XCTAssertEqual(detail.bounds.width, detailWidth, accuracy: 1)
     }
+  }
+
+  /// Dragging the list as wide as it goes still leaves the chat its 340
+  /// points beside the Duo's status rail.
+  @MainActor func testWidestListLeavesTheChatItsWidthBesideTheRail() throws {
+    UserDefaults.standard.set(440.0, forKey: "swc.listColumnWidth")
+    defer { UserDefaults.standard.removeObject(forKey: "swc.listColumnWidth") }
+    let host = UIHostingController(rootView: DrawerContainer(
+      isOpen: .constant(true), sceneInsets: EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 84)
+    ) {
+      DraftProbe(name: "navigation")
+    } content: {
+      DraftProbe(name: "detail")
+    }
+    .environment(\.horizontalSizeClass, .regular)
+    .ignoresSafeArea())
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    let container = UIViewController()
+    window.rootViewController = container
+    container.addChild(host)
+    container.view.addSubview(host.view)
+    host.didMove(toParent: container)
+    window.makeKeyAndVisible()
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      previous?.makeKey()
+    }
+    host.view.frame = CGRect(x: 0, y: 0, width: 760, height: 700)
+    host.view.layoutIfNeeded()
+    XCTAssertTrue(waitUntil { self.findField(in: host.view, name: "detail") != nil })
+    let navigation = try XCTUnwrap(findField(in: host.view, name: "navigation"))
+    let detail = try XCTUnwrap(findField(in: host.view, name: "detail"))
+    XCTAssertEqual(navigation.bounds.width, 336, accuracy: 1)
+    XCTAssertEqual(detail.bounds.width, 340, accuracy: 1)
   }
 
   /// The Duo can report a compact class at full width, so width alone
@@ -143,8 +181,8 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
         XCTAssertEqual(detail.bounds.width, 1000, accuracy: 1)
       } else {
         let navigation = try XCTUnwrap(findField(in: host.view, name: "navigation"))
-        XCTAssertEqual(navigation.bounds.width, 320, accuracy: 1)
-        XCTAssertEqual(detail.bounds.width, 680, accuracy: 1)
+        XCTAssertEqual(navigation.bounds.width, 420, accuracy: 1)
+        XCTAssertEqual(detail.bounds.width, 580, accuracy: 1)
       }
     }
   }
@@ -153,6 +191,74 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
   /// whole window. The column sits far from the rail, so a navigation stack
   /// inside it must still fill the column: the rail once left an empty strip
   /// of its own width between the sidebar and the chat.
+  /// The real root view with a thread open, at the Duo's unfolded landscape
+  /// size: coordinator on the left, thread on the right, each with a composer.
+  /// Upright at 669 points the column does not exist and one composer remains.
+  @MainActor func testCoordinatorSitsBesideTheOpenThreadWhenUnfolded() throws {
+    for key in ["swc.chatColumnWidth", "swc.sidebarCollapsed", AppRouter.coordinatorBesideKey] {
+      UserDefaults.standard.removeObject(forKey: key)
+    }
+    let engine = FixtureEngine(scenario: .default)
+    engine.latency = .zero
+    engine.streamDelay = .zero
+    let model = AppModel(engine: engine)
+    XCTAssertTrue(waitUntil { model.projects.contains { !model.threads(in: $0.ref).isEmpty } })
+    let project = try XCTUnwrap(model.projects.first { !model.threads(in: $0.ref).isEmpty })
+    let thread = try XCTUnwrap(model.threads(in: project.ref).first)
+    AppBootstrap.router(for: model).open(.thread(thread.ref))
+
+    let host = UIHostingController(rootView: RootView(model: model))
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previous = scene.windows.first(where: \.isKeyWindow)
+    let window = UIWindow(windowScene: scene)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer {
+      window.isHidden = true
+      window.rootViewController = nil
+      previous?.makeKey()
+    }
+
+    func composers() -> [CGRect] {
+      func walk(_ view: UIView) -> [UITextView] {
+        if let text = view as? UITextView, text.isEditable, !text.isHidden, text.window != nil { return [text] }
+        return view.subviews.flatMap(walk)
+      }
+      return walk(host.view).map { $0.convert($0.bounds, to: host.view) }.sorted { $0.minX < $1.minX }
+    }
+    func attach(_ name: String) {
+      let image = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+      }
+      let attachment = XCTAttachment(image: image)
+      attachment.name = name
+      attachment.lifetime = .keepAlways
+      add(attachment)
+    }
+
+    host.view.frame = CGRect(x: 0, y: 0, width: 951, height: 669)
+    host.view.layoutIfNeeded()
+    // The column springs from the list's width to half the scene, so the
+    // composers settle into place rather than start there.
+    XCTAssertTrue(waitUntil {
+      let frames = composers()
+      return frames.count == 2 && frames[0].maxX <= 951 / 2 + 1 && frames[1].minX >= 951 / 2 - 1
+    }, "composers at 951: \(composers())")
+    RunLoop.current.run(until: Date().addingTimeInterval(1))
+    attach("Coordinator beside thread 951x669")
+
+    let router = AppBootstrap.router(for: model)
+    router.showsCoordinatorBeside = false
+    XCTAssertTrue(waitUntil { composers().count == 1 }, "composers with the list: \(composers())")
+    router.showsCoordinatorBeside = true
+    XCTAssertTrue(waitUntil { composers().count == 2 }, "composers after the list: \(composers())")
+
+    host.view.frame = CGRect(x: 0, y: 0, width: 669, height: 951)
+    host.view.layoutIfNeeded()
+    XCTAssertTrue(waitUntil { composers().count == 1 }, "composers at 669: \(composers())")
+    attach("Thread alone 669x951")
+  }
+
   @MainActor func testTrailingRailDoesNotNarrowTheColumnStack() throws {
     let width = 951.0
     let host = UIHostingController(rootView: GeometryReader { proxy in
@@ -216,7 +322,7 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
 
   /// The column's width at a scene width, or 0 below the breakpoint.
   private static func columnWidth(_ width: Double) -> Double {
-    width >= Double(WeaveSize.sidebarBreakpoint) ? min(max(width * 0.32, 288), 340) : 0
+    width >= Double(WeaveSize.sidebarBreakpoint) ? min(max(width * 0.42, 288), 420) : 0
   }
 
   @MainActor private func waitUntil(_ predicate: () -> Bool) -> Bool {

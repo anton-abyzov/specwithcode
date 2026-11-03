@@ -18,6 +18,7 @@ import {
 } from "@specweave-studio/contracts";
 import {
   coordinatorSelectionProblem,
+  coordinatorUnavailableDetail,
   resolveCoordinatorModelSelection,
 } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -174,6 +175,14 @@ const make = Effect.gen(function* () {
           });
           if (!modelSelection) return yield* fail(input.projectId, "model_required");
           const problem = coordinatorSelectionProblem(modelSelection, providers);
+          if (problem === "provider_unavailable")
+            return yield* new ProjectWorkspaceError({
+              projectId: input.projectId,
+              code: problem,
+              detail: coordinatorUnavailableDetail(modelSelection, providers, {
+                nothingElseHasRoom: false,
+              }),
+            });
           if (problem) return yield* fail(input.projectId, problem);
           if (
             !isProjectModelSelectionCompatible({
@@ -250,6 +259,8 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const saved = settings.coordinatorModelSelection;
+      // Set when the saved provider cannot run and no fallback had room either.
+      let nothingElseHasRoom = false;
       const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
       const found = yield* projects.getById(projectId);
       if (Option.isNone(found)) return yield* fail(projectId, "not_found");
@@ -342,6 +353,7 @@ const make = Effect.gen(function* () {
           savedStoppedAtMs: savedStop?.at ?? null,
           savedStopWasPlanLimit: savedStop?.planLimit === true,
         });
+        nothingElseHasRoom = decision.reason === "saved-unavailable";
         if (decision.reason !== "saved")
           yield* Effect.logInfo("project.coordinator.turn-model", {
             projectId,
@@ -358,6 +370,14 @@ const make = Effect.gen(function* () {
       const effectiveSelection = selection ?? shell?.modelSelection;
       if (effectiveSelection) {
         const problem = coordinatorSelectionProblem(effectiveSelection, providers);
+        if (problem === "provider_unavailable")
+          return yield* new ProjectWorkspaceError({
+            projectId,
+            code: problem,
+            detail: coordinatorUnavailableDetail(effectiveSelection, providers, {
+              nothingElseHasRoom,
+            }),
+          });
         if (problem) return yield* fail(projectId, problem);
       }
       if (

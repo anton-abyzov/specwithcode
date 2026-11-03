@@ -188,7 +188,7 @@ extension LiveEngine {
       controller.namedCoordinator = id
       bind(controller, to: id)
     case let .needsStart(fallback):
-      guard entry.canOperate else {
+      guard entry.canOperate, controller.session.startsCoordinator else {
         bind(controller, to: fallback)
         return
       }

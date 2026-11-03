@@ -2,31 +2,35 @@ import SwiftUI
 import SWCSync
 import Weave
 
-/// The expanded layout's navigation column: Aide, projects with their threads
-/// nested under them, recent threads and machines in a native sidebar list.
-/// Selection reads from and writes to the router, the same state the compact
-/// drawer uses. Tapping a project opens its coordinator and unfolds its
-/// threads; tapping the open project again folds them.
+/// The expanded layout's navigation column, a native sidebar list on two
+/// levels: all projects with Aide, recent threads and machines, or one
+/// project's coordinator and threads. Going into a project brings its
+/// coordinator up beside the list unless one of its chats is already there, so
+/// both columns are about the same project. Every thread row leads with its
+/// status. Selection reads from and writes to the router, the same state the
+/// compact drawer uses.
 struct SidebarView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
+  @Environment(\.headerTopPadding) private var headerTopPadding
   @State private var showAllProjects = false
   @State private var showAllRecents = false
   @State private var showAutomated = false
   @State private var showArchived = false
   @State private var settingUpAide = false
-  @State private var expanded: Set<ProjectRef> = []
+  @State private var statusFilter = StatusFilter.all
 
   private static let collapsedProjectCount = 8
   private static let recentCount = 12
-  private static let nestedThreadCount = 5
+
+  private enum StatusFilter { case all, needsYou, working, offline }
 
   var body: some View {
     @Bindable var router = router
     Group {
       if router.isDrawerSearching {
         DrawerSearchView(isPresented: $router.isDrawerSearching)
-          .padding(.top, WeaveSpacing.s2)
+          .padding(.top, max(WeaveSpacing.s2, headerTopPadding))
       } else {
         list
       }
@@ -48,74 +52,157 @@ struct SidebarView: View {
         .accessibilityHidden(true)
     }
     .tint(Color.weave.iris)
-    .onAppear { revealSelection() }
-    .onChange(of: router.sidebarSelection(in: model)) { revealSelection() }
   }
 
   // MARK: Header
 
-  /// The wordmark with round search and collapse buttons, as in the Claude
-  /// and Codex sidebars.
   private var header: some View {
-    HStack(spacing: WeaveSpacing.s2) {
-      // The mark, with the name beside it only when it fits whole: a narrow
-      // column showed "Spec…" with the wordmark cut off.
-      ViewThatFits(in: .horizontal) {
-        HStack(spacing: WeaveSpacing.s2) {
-          WeaveLogo(size: 30)
-          Text("SpecWithCode")
-            .font(.system(size: 20, weight: .semibold, design: .serif))
-            .foregroundStyle(Color.weave.ink)
-            .lineLimit(1)
-            .fixedSize()
-        }
-        WeaveLogo(size: 30)
+    VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
+      ColumnHeader {
+        ColumnActions()
+      } modeTrailing: {
+        EmptyView()
       }
-      .accessibilityElement(children: .ignore)
-      .accessibilityLabel("SpecWithCode")
-      .accessibilityAddTraits(.isHeader)
-      Spacer(minLength: 0)
-      WeaveIconButton("magnifyingglass", label: "Search projects and threads") {
-        withAnimation(.snappy) { router.isDrawerSearching = true }
-      }
-      WeaveIconButton("sidebar.left", label: "Hide sidebar") {
-        router.isSidebarCollapsed = true
-      }
-      .accessibilityIdentifier("sidebar.collapse")
+      if model.machines.count > 1, router.sidebarScope(in: model) == nil { machineChips }
     }
-    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
-    .padding(.leading, WeaveSpacing.s6)
-    .padding(.trailing, WeaveSpacing.s4)
-    .padding(.top, WeaveSpacing.s1)
+    .padding(.horizontal, WeaveSpacing.s4)
+    .padding(.top, headerTopPadding)
     .padding(.bottom, WeaveSpacing.s2)
     .background(Color.weave.sunken)
   }
 
-  /// Unfolds the project of the chat on screen, so its row and the open
-  /// thread are visible.
-  private func revealSelection() {
-    guard case let .chat(target)? = router.sidebarSelection(in: model) else { return }
-    let ref: ProjectRef?
-    switch target {
-    case let .project(project): ref = model.project(project)?.ref
-    case let .thread(thread): ref = model.thread(thread)?.projectRef.flatMap { model.project($0)?.ref }
-    case .aide: ref = nil
+  /// All, then one chip per machine with its status.
+  private var machineChips: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: WeaveSpacing.s1) {
+        machineChip(nil) {
+          Text("All").font(.weave(.callout, weight: .medium))
+        }
+        ForEach(model.machines) { machine in
+          machineChip(machine.id) {
+            HStack(spacing: WeaveSpacing.s1) {
+              MachineBadge(status: machine.displayStatus, size: 15)
+              Text(machine.displayName).font(.weave(.callout, weight: .medium))
+            }
+          }
+          .accessibilityLabel("\(machine.displayName), \(machine.statusLabel)")
+        }
+      }
     }
-    if let ref, !expanded.contains(ref) {
-      withAnimation(.snappy) { _ = expanded.insert(ref) }
+    .accessibilityIdentifier("sidebar.machine-chips")
+  }
+
+  private func machineChip<Label: View>(_ machine: String?, @ViewBuilder label: () -> Label) -> some View {
+    ColumnChip(selected: router.activeSidebarMachine(in: model) == machine) {
+      withAnimation(.snappy) { router.sidebarMachine = machine }
+    } label: {
+      label()
     }
   }
 
   private var list: some View {
     List {
-      aideSection
-      projectsSection
-      recentsSection
-      machinesSection
+      if let scope = router.sidebarScope(in: model).flatMap({ model.project($0) }) {
+        projectSections(scope)
+      } else {
+        aideSection
+        projectsSection
+        recentsSection
+        if router.activeSidebarMachine(in: model) == nil { machinesSection }
+      }
     }
     .listStyle(.sidebar)
     .scrollContentBackground(.hidden)
     .environment(\.defaultMinListRowHeight, WeaveSize.minTap)
+    // A filter ends with what it filtered, so the list never narrows by itself.
+    .onChange(of: router.sidebarScope(in: model)) { statusFilter = .all }
+    .onChange(of: statusFilterIsEmpty) { _, empty in
+      if empty { statusFilter = .all }
+    }
+  }
+
+  private var statusFilterIsEmpty: Bool {
+    let groups = ThreadGroups(router.sidebarThreads(in: model))
+    return switch statusFilter {
+    case .all: false
+    case .needsYou: groups.needsYou.isEmpty
+    case .working: groups.working.isEmpty
+    case .offline: groups.offline.isEmpty
+    }
+  }
+
+  // MARK: One project
+
+  /// The project's coordinator, then its threads in a steady order, with what
+  /// needs attention one tap away.
+  @ViewBuilder private func projectSections(_ project: ProjectSummary) -> some View {
+    // With a thread open, the switch above already leads to the coordinator.
+    let hasModes = router.openThreadCoordinator(in: model) != nil
+    if !hasModes {
+      Section {
+        SidebarRow(title: project.title, subtitle: "Coordinator") {
+          ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
+        } trailing: {
+          ProjectStatusGlyphs(project: project)
+        }
+        .accessibilityValue(ProjectStatusGlyphs.spoken(project))
+        .sidebarItem(.chat(.project(project.ref)))
+      }
+    }
+    let threads = router.sidebarThreads(in: model)
+    let groups = ThreadGroups(threads)
+    let filter = statusFilterIsEmpty ? StatusFilter.all : statusFilter
+    let shown: [ThreadSummary] = switch filter {
+    case .all: threads
+    case .needsYou: threads.filter { groups.needsYou.map(\.ref).contains($0.ref) }
+    case .working: threads.filter { groups.working.map(\.ref).contains($0.ref) }
+    case .offline: threads.filter { groups.offline.map(\.ref).contains($0.ref) }
+    }
+    let machines = Set(threads.map(\.ref.environmentId))
+    Section {
+      if !groups.needsYou.isEmpty || !groups.working.isEmpty || !groups.offline.isEmpty {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: WeaveSpacing.s1) {
+            statusChip("All", count: threads.count, value: .all, current: filter)
+            if !groups.needsYou.isEmpty { statusChip("Needs you", count: groups.needsYou.count, value: .needsYou, current: filter) }
+            if !groups.working.isEmpty { statusChip("Working", count: groups.working.count, value: .working, current: filter) }
+            if !groups.offline.isEmpty { statusChip("Offline", count: groups.offline.count, value: .offline, current: filter) }
+          }
+        }
+        .sidebarRowStyle(selected: false)
+      }
+      threadRows(shown) { thread in machines.count > 1 ? (nil, thread.placement.owner) : (nil, nil) }
+    } header: {
+      if !hasModes { Text("Threads") }
+    }
+  }
+
+  private func statusChip(_ title: String, count: Int, value: StatusFilter, current: StatusFilter) -> some View {
+    ColumnChip(selected: current == value) {
+      withAnimation(.snappy) { statusFilter = value }
+    } label: {
+      Text("\(title) \(count)").font(.weave(.callout, weight: .medium))
+    }
+  }
+
+  /// Thread rows folded to a screenful. `details` gives each row's second line and trailing machine.
+  @ViewBuilder private func threadRows(_ threads: [ThreadSummary], details: @escaping (ThreadSummary) -> (String?, String?)) -> some View {
+    let visible = showAllRecents ? threads : Array(threads.prefix(Self.recentCount))
+    ForEach(visible) { thread in
+      let (detail, machine) = details(thread)
+      ThreadLine(thread: thread, detail: detail, machine: machine)
+        .sidebarItem(.chat(.thread(thread.ref)))
+        .threadRowActions(thread)
+    }
+    if threads.count > Self.recentCount {
+      foldButton(showAllRecents ? "Show fewer chats" : "Show all \(threads.count) chats") { showAllRecents.toggle() }
+    }
+    if threads.isEmpty {
+      Text("No threads here")
+        .font(.weave(.callout))
+        .foregroundStyle(Color.weave.muted)
+        .sidebarRowStyle(selected: false)
+    }
   }
 
   // MARK: Aide
@@ -191,62 +278,39 @@ struct SidebarView: View {
     }
   }
 
-  @ViewBuilder private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
-    let item = SidebarItem.chat(.project(project.ref))
-    let selected = router.sidebarSelection(in: model) == item
-    let threads = model.threads(in: project.ref).filter { !$0.isResolved }
-    let open = expanded.contains(project.ref)
-    Button {
-      withAnimation(.snappy) {
-        if selected, !threads.isEmpty {
-          if open { expanded.remove(project.ref) } else { expanded.insert(project.ref) }
-        } else {
-          expanded.insert(project.ref)
-          router.select(item)
-        }
-      }
+  /// One project: what needs you and what is running, then the way in.
+  private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
+    let selected = router.followedProject(in: model) == project.ref
+    let waiting = ThreadGroups(model.threads(in: project.ref).filter { !$0.isResolved }).needsYou.count
+    return Button {
+      withAnimation(.snappy) { router.showProject(project.ref, in: model) }
     } label: {
       SidebarRow(title: project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil) {
         ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
       } trailing: {
         HStack(spacing: WeaveSpacing.s2) {
-          ProjectStatusGlyphs(project: project)
-          if !threads.isEmpty {
-            Image(systemName: "chevron.right")
-              .font(.system(size: 11, weight: .semibold))
-              .foregroundStyle(Color.weave.muted)
-              .rotationEffect(.degrees(open ? 90 : 0))
-              .accessibilityHidden(true)
+          if waiting > 0 {
+            HStack(spacing: 3) {
+              Image(systemName: "bubble.left.fill").font(.system(size: 12, weight: .semibold))
+              Text("\(waiting)").font(.weave(.caption, weight: .semibold))
+            }
+            .foregroundStyle(Color.weave.warn)
+            .accessibilityHidden(true)
           }
+          ProjectStatusGlyphs(project: project)
+          Image(systemName: "chevron.right")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Color.weave.muted)
+            .accessibilityHidden(true)
         }
       }
     }
     .buttonStyle(.plain)
-    .accessibilityValue(ProjectStatusGlyphs.spoken(project))
+    .accessibilityValue(([waiting > 0 ? needsYouLabel(waiting) : nil, ProjectStatusGlyphs.spoken(project)] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
     .accessibilityAddTraits(selected ? .isSelected : [])
-    .accessibilityHint(threads.isEmpty ? "" : open ? "Folds its threads" : "Shows its threads")
+    .accessibilityHint("Opens it and shows its threads")
     .sidebarRowStyle(selected: selected)
     .projectRowActions(project)
-    if open {
-      ForEach(threads.prefix(Self.nestedThreadCount)) { thread in
-        NestedThreadRow(thread: thread)
-          .sidebarItem(.chat(.thread(thread.ref)))
-          .threadRowActions(thread)
-          .transition(.opacity.combined(with: .move(edge: .top)))
-      }
-      if threads.count > Self.nestedThreadCount {
-        Button { router.push(.overview(project.ref)) } label: {
-          Text("All \(threads.count) threads")
-            .font(.weave(.callout))
-            .foregroundStyle(Color.weave.muted)
-            .padding(.leading, 28 + WeaveSpacing.s3)
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .sidebarRowStyle(selected: false)
-      }
-    }
   }
 
   private func foldButton(_ title: String, toggle: @escaping () -> Void) -> some View {
@@ -267,35 +331,12 @@ struct SidebarView: View {
   // MARK: Recents
 
   @ViewBuilder private var recentsSection: some View {
-    let grouped = RecentChatGroups(model.recentThreads)
-    let all = grouped.groups.flatMap(\.threads)
-    let visible = Set((showAllRecents ? all : Array(all.prefix(Self.recentCount))).map(\.ref))
-    ForEach(Array(grouped.groups.enumerated()), id: \.element.label) { index, group in
-      let rows = group.threads.filter { visible.contains($0.ref) }
-      if !rows.isEmpty {
-        Section {
-          ForEach(rows) { thread in
-            SidebarRow(title: thread.title, subtitle: thread.identity.label + "\n" + ([thread.projectTitle, thread.placement.subtitle()].compactMap(\.self).joined(separator: " · "))) {
-              ThreadIdentityMarks(identity: thread.identity)
-            } trailing: {
-              RecentThreadGlyph(thread: thread)
-            }
-            .accessibilityValue(RecentThreadGlyph.spoken(thread))
-            .sidebarItem(.chat(.thread(thread.ref)))
-            .threadRowActions(thread)
-          }
-          if group.label == grouped.groups.last(where: { g in g.threads.contains { visible.contains($0.ref) } })?.label,
-             model.recentThreads.count > Self.recentCount {
-            foldButton(showAllRecents ? "Show fewer chats" : "Show all \(model.recentThreads.count) chats") { showAllRecents.toggle() }
-          }
-        } header: {
-          if index == 0 {
-            SidebarRecentsHeader(group: group.label, updating: !model.staleMachines.isEmpty)
-          } else {
-            Text(group.label)
-          }
-        }
+    Section {
+      threadRows(router.sidebarThreads(in: model)) { thread in
+        ([thread.projectTitle, thread.placement.subtitle()].compactMap(\.self).joined(separator: " · "), nil)
       }
+    } header: {
+      SidebarRecentsHeader(updating: !model.staleMachines.isEmpty)
     }
   }
 
@@ -326,33 +367,11 @@ struct SidebarView: View {
         router.sheet = .globalSettings
       }
       Spacer(minLength: 0)
-      Button { router.startNewChat(in: model) } label: {
-        Label("New chat", systemImage: "square.and.pencil")
-          .font(.weave(.headline, weight: .medium))
-          .foregroundStyle(Color.weave.canvas)
-          .lineLimit(1)
-          .padding(.horizontal, WeaveSpacing.s4)
-          .frame(minHeight: 44)
-          .background(Color.weave.ink, in: Capsule())
-          .contentShape(Capsule())
-      }
-      .buttonStyle(PressableStyle())
-      .disabled(model.machines.isEmpty)
     }
     .dynamicTypeSize(...DynamicTypeSize.xxLarge)
     .padding(.horizontal, WeaveSpacing.s4)
     .padding(.vertical, WeaveSpacing.s2)
-    .background {
-      VStack(spacing: 0) {
-        LinearGradient(colors: [Color.weave.sunken.opacity(0), Color.weave.sunken], startPoint: .top, endPoint: .bottom)
-          .frame(height: WeaveSpacing.s4)
-        Color.weave.sunken
-      }
-      .padding(.top, -WeaveSpacing.s4)
-      .ignoresSafeArea(edges: .bottom)
-      .allowsHitTesting(false)
-      .accessibilityHidden(true)
-    }
+    .background(Color.weave.sunken)
   }
 
   private func isSelected(_ target: ChatTarget) -> Bool {
@@ -369,7 +388,7 @@ extension View {
 
   fileprivate func sidebarRowStyle(selected: Bool) -> some View {
     self
-      .listRowInsets(EdgeInsets(top: 0, leading: WeaveSpacing.s4, bottom: 0, trailing: WeaveSpacing.s4))
+      .listRowInsets(EdgeInsets(top: 0, leading: WeaveSpacing.s4, bottom: 0, trailing: WeaveSpacing.s3))
       .listRowSeparator(.hidden)
       .listRowBackground(
         RoundedRectangle(cornerRadius: WeaveRadius.lg, style: .continuous)
@@ -428,37 +447,52 @@ private struct SidebarRow<Icon: View, Trailing: View>: View {
   }
 }
 
-/// A thread under its project: indented title, one line, with its status.
-private struct NestedThreadRow: View {
+/// One thread: its status first, then the title using the whole row.
+private struct ThreadLine: View {
   let thread: ThreadSummary
+  var detail: String?
+  var machine: String?
 
   var body: some View {
     HStack(spacing: WeaveSpacing.s2) {
-      Text(thread.title)
-        .font(.weave(.callout))
-        .foregroundStyle(Color.weave.ink)
-        .lineLimit(1)
-        .truncationMode(.tail)
-      Spacer(minLength: WeaveSpacing.s2)
-      RecentThreadGlyph(thread: thread)
+      ThreadStatusMark(thread: thread)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(thread.title)
+          .font(.weave(.callout))
+          .foregroundStyle(Color.weave.ink)
+          .lineLimit(1)
+          .truncationMode(.tail)
+        if let detail, !detail.isEmpty {
+          Text(detail)
+            .font(.weave(.footnote))
+            .foregroundStyle(Color.weave.muted)
+            .lineLimit(1)
+        }
+      }
+      Spacer(minLength: 0)
+      if let machine {
+        Text(machine)
+          .font(.weave(.footnote))
+          .foregroundStyle(Color.weave.muted)
+          .lineLimit(1)
+      }
+      if thread.isUnread { UnreadDot() }
     }
-    .padding(.leading, 28 + WeaveSpacing.s3)
     .frame(minHeight: 36)
     .contentShape(Rectangle())
     .accessibilityElement(children: .combine)
     .accessibilityLabel(thread.title)
-    .accessibilityValue(RecentThreadGlyph.spoken(thread))
+    .accessibilityValue(([ThreadStatusMark.state(of: thread).label, machine ?? detail, thread.isUnread ? "Unread" : nil] as [String?]).compactMap { $0 }.joined(separator: ", "))
   }
 }
 
-/// The first recents header: "Recents", the day group and a sync note.
+/// The recents header and a sync note.
 private struct SidebarRecentsHeader: View {
-  let group: String
   let updating: Bool
 
   var body: some View {
     HStack(spacing: WeaveSpacing.s2) {
-      Text("Recents · \(group)")
+      Text("Recents")
       Spacer(minLength: 0)
       if updating {
         ProgressView().controlSize(.mini)
@@ -466,6 +500,6 @@ private struct SidebarRecentsHeader: View {
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(updating ? "Recents, \(group), Updating" : "Recents, \(group)")
+    .accessibilityLabel(updating ? "Recents, Updating" : "Recents")
   }
 }

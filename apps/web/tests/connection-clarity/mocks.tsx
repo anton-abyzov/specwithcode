@@ -1,0 +1,11 @@
+import * as Option from "effect/Option";
+export const managedUpdates = {};
+export const environmentCatalog = {};
+export const useEnvironmentQuery = () => ({});
+export const useEnvironmentScope = () => false;
+export const usePreparedConnection = () => Option.none();
+export const useAtomCommand = () => async () => ({ _tag: "Success" });
+export const requestConfirmDialog = async () => false;
+export const ServerUpdateProgress = () => null;
+export const beginConnectRouteRemoval = () => {};
+export const endConnectRouteRemoval = () => {};

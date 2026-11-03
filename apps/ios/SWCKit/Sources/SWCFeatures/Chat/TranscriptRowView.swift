@@ -70,7 +70,7 @@ struct TranscriptRowView: View {
     case let .question(_, prompt, resolved):
       QuestionCard(prompt: prompt, resolved: resolved)
 
-    case let .subagent(title, child):
+    case let .subagent(title, child, _):
       SubagentRow(title: title, child: child, onOpen: onOpenThread)
         .padding(.leading, Self.textInset)
 

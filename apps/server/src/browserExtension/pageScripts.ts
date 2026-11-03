@@ -172,3 +172,81 @@ export function keyDefinition(name: string): KeyDefinition | null {
   }
   return null;
 }
+
+/** Where file bytes wait in the page until `setFilesScript` turns them into files. */
+const UPLOAD_BUFFER = "__swcUploadParts";
+
+export const CLEAR_UPLOAD_SCRIPT = `delete window.${UPLOAD_BUFFER}`;
+
+/** Finds the input into `input`, or says why not in `error`, or `missing` for a stale target. */
+const FILE_INPUT_OF = (target: ElementTarget) => `
+  const ref = ${JSON.stringify(target.ref ?? null)};
+  const selector = ${JSON.stringify(target.selector ?? null)};
+  let input = null;
+  let error = null;
+  let missing = false;
+  try {
+    if (ref || selector) {
+      const el = ref ? document.querySelector('[data-swc-ref="' + CSS.escape(ref) + '"]') : document.querySelector(selector);
+      if (!el) missing = true;
+      else if (el.tagName === 'INPUT' && el.type === 'file') input = el;
+      else input = (el.control && el.control.type === 'file' && el.control) || el.querySelector('input[type=file]');
+      if (el && !input) error = 'That element is not a file input. Omit ref and selector to use the upload input on the page.';
+    } else {
+      const inputs = [...document.querySelectorAll('input[type=file]')];
+      if (inputs.length === 0) error = 'This page has no file input yet. Click its upload button first, then try again.';
+      else if (inputs.length > 1) error = 'This page has ' + inputs.length + ' file inputs. Pass selector to choose one.';
+      else input = inputs[0];
+    }
+  } catch (caught) {
+    error = String((caught && caught.message) || caught);
+  }`;
+
+/** Checks the target, or the page's only upload input, can take `count` files, and notes the page. */
+export function findFileInputScript(target: ElementTarget, count: number): string {
+  return `(() => {
+  ${FILE_INPUT_OF(target)}
+  if (missing || error) return { missing, error };
+  if (!input.multiple && ${JSON.stringify(count)} > 1)
+    return { error: 'That file input takes one file. Pass one path, or the input that takes several.' };
+  return { href: location.href };
+})()`;
+}
+
+/** Decodes one base64 chunk of file `index`; refuses if the page moved, so bytes never reach another page. */
+export function appendChunkScript(index: number, base64: string, href: string): string {
+  return `(() => {
+  if (location.href !== ${JSON.stringify(href)}) throw new Error('The page navigated during the upload. The files were not attached.');
+  const parts = (window.${UPLOAD_BUFFER} ??= []);
+  const binary = atob(${JSON.stringify(base64)});
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  (parts[${JSON.stringify(index)}] ??= []).push(bytes);
+})()`;
+}
+
+/** Builds the buffered bytes into files and gives them to the input, as a person choosing them would. */
+export function setFilesScript(
+  target: ElementTarget,
+  files: ReadonlyArray<{ readonly name: string; readonly type: string; readonly size: number }>,
+  href: string,
+): string {
+  return `(() => {
+  ${FILE_INPUT_OF(target)}
+  const parts = window.${UPLOAD_BUFFER} ?? [];
+  delete window.${UPLOAD_BUFFER};
+  if (missing || error) return { missing, error };
+  if (location.href !== ${JSON.stringify(href)}) return { error: 'The page navigated during the upload. The files were not attached.' };
+  const transfer = new DataTransfer();
+  for (const [index, file] of ${JSON.stringify(files)}.entries()) {
+    const built = new File(parts[index] ?? [], file.name, { type: file.type });
+    if (built.size !== file.size) return { error: file.name + ' arrived incomplete. The files were not attached.' };
+    transfer.items.add(built);
+  }
+  input.files = transfer.files;
+  const given = input.files.length;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return { given };
+})()`;
+}

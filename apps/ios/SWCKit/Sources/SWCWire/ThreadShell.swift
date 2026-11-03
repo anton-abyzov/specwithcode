@@ -50,6 +50,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   public var hasActionableProposedPlan: Bool
   public var planProgress: ThreadPlanProgress?
   public var reportedBlocker: String?
+  public var reportedWait: String?
   public var pendingBackgroundTasks: [PendingBackgroundTask]
   public var providerInstanceHistory: [String]
   public var goal: ProviderGoal?
@@ -91,7 +92,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     case activeProviderThreadId, historyOrigin, origin, latestRunId, latestRunRequestedAt, latestRunStartedAt, latestRunCompletedAt
     case activeRunId, activityRunStartedAt, activityRunStatus, activeWork, status, lastError, lastErrorClass, usageLimitResetAt
     case pendingRuntimeRequest, latestVisibleMessage, latestUserMessageAt, latestUserAuthoredMessageAt, hasActionableProposedPlan
-    case planProgress, reportedBlocker, pendingBackgroundTasks, providerInstanceHistory, goal, heldQueuedCount
+    case planProgress, reportedBlocker, reportedWait, pendingBackgroundTasks, providerInstanceHistory, goal, heldQueuedCount
     case itemCount, visibleItemCount, createdAt, updatedAt, archivedAt, settledOverride, settledAt, unsettledAt
     case snoozedUntil, snoozedAt, limitRecovery, pinnedAt, autoSettleDisabledAt, pinOrderKey, activeOrderKey
     case lastVisitedAt, titleRegeneration, deletedAt
@@ -139,6 +140,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     hasActionableProposedPlan = try c.decodeIfPresent(Bool.self, forKey: .hasActionableProposedPlan) ?? false
     planProgress = try? c.decodeIfPresent(ThreadPlanProgress.self, forKey: .planProgress)
     reportedBlocker = try c.decodeIfPresent(String.self, forKey: .reportedBlocker)
+    reportedWait = try? c.decodeIfPresent(String.self, forKey: .reportedWait)
     pendingBackgroundTasks = try c.decodeLossyArray(PendingBackgroundTask.self, forKey: .pendingBackgroundTasks)
     providerInstanceHistory = try c.decodeLossyArray(String.self, forKey: .providerInstanceHistory)
     goal = try? c.decodeIfPresent(ProviderGoal.self, forKey: .goal)

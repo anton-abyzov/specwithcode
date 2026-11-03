@@ -685,6 +685,7 @@ export function ProjectWorkspaceSurface({
         ),
         spent: runningFallback.spent,
         live: runningFallback.live,
+        setup: runningFallback.reason?.setup === true,
       }
     : null;
   // "Switch back" puts the coordinator on its saved model; the host still moves it
@@ -765,6 +766,7 @@ export function ProjectWorkspaceSurface({
               returnsTo: coordinatorFallback?.reason ? coordinatorFallback.saved.provider : null,
               offPick: coordinatorFallback !== null,
               reason: coordinatorFallback?.reason ?? null,
+              setup: coordinatorFallback?.setup === true,
               // The picker header always offers the way back; the composer line only
               // once the pick has room again.
               onSwitchBack:

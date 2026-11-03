@@ -88,7 +88,7 @@ struct FixtureEngineTests {
     #expect(session.rows.contains { if case .approval(_, _, false, _, _) = $0.kind { true } else { false } })
     #expect(session.rows.contains { if case let .assistant(text, false) = $0.kind { text.count > 1_200 && text.contains("```bash") } else { false } })
     #expect(session.rows.contains { if case .tool = $0.kind { true } else { false } })
-    #expect(session.rows.contains { if case .subagent(_, .some) = $0.kind { true } else { false } })
+    #expect(session.rows.contains { if case .subagent(_, .some, _) = $0.kind { true } else { false } })
     #expect(model.thread(release)?.isUnread == false)
   }
 

@@ -1,6 +1,6 @@
 /**
  * What Auto model routing or Model lanes decided for a thread: a small chip beside the model
- * badge ("Auto · Translation" or "Lanes · Complex · Code"), and on click the provider, model,
+ * badge ("Auto · Translation" or "Tiers · Hardest · Code"), and on click the provider, model,
  * lane, skipped entries, reason, billing and learned rule feedback.
  */
 import type {
@@ -46,10 +46,10 @@ function selectionLabel(entries: Entries, selection: TaskRoutingDecision["select
 /** The chip face: whether Auto or Lanes routed the thread, and its lane or task class. */
 export function routingChipText(decision: TaskRoutingDecision): string {
   if (decision.lane) {
-    const laneName = decision.lane === "complex" ? "Complex" : "Routine";
+    const laneName = decision.lane === "complex" ? "Hardest" : "Everyday";
     return decision.taskClass === "general"
-      ? "Lanes · " + laneName
-      : "Lanes · " + laneName + " · " + TASK_CLASS_LABELS[decision.taskClass];
+      ? "Tiers · " + laneName
+      : "Tiers · " + laneName + " · " + TASK_CLASS_LABELS[decision.taskClass];
   }
   return "Auto · " + TASK_CLASS_LABELS[decision.taskClass];
 }
@@ -138,13 +138,13 @@ export function RoutingDecisionChip(props: {
       <PopoverPopup side="bottom" align="start" width="lg" padding="none">
         <div className="sws-routing-popover" data-routing-decision>
           <header>
-            <strong>{decision.lane ? "Model lane routing" : "Auto model routing"}</strong>
+            <strong>{decision.lane ? "Model tier routing" : "Auto model routing"}</strong>
             <span>{decision.moved ? "Moved" : "Kept"}</span>
           </header>
           <dl>
             {decision.lane ? (
               <>
-                <dt>Model lane</dt>
+                <dt>Model tier</dt>
                 <dd>{LANE_LABELS[decision.lane]}</dd>
               </>
             ) : null}
@@ -240,7 +240,7 @@ export function RoutingDecisionChip(props: {
                       onClick={() => handleFeedback("complex")}
                       disabled={savingFeedback || writeMode === null}
                     >
-                      Treat as Complex
+                      Treat as hardest work
                     </Button>
                   ) : null}
                   {decision.lane !== "routine" ? (
@@ -250,7 +250,7 @@ export function RoutingDecisionChip(props: {
                       onClick={() => handleFeedback("routine")}
                       disabled={savingFeedback || writeMode === null}
                     >
-                      Treat as Routine
+                      Treat as everyday work
                     </Button>
                   ) : null}
                 </div>

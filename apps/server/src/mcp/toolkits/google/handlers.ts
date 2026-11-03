@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Google from "../../../integrations/google/GoogleAccountService.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
+import { proposeSend, sendApproved } from "./sendApproval.ts";
 import { GoogleToolkit } from "./tools.ts";
 
 /**
@@ -62,9 +63,25 @@ export const layer = Access.toLayer(GoogleToolkit, {
   studio_google_gmail_read: Access.reads((input) =>
     read((service, projectId) => service.gmailRead(projectId, input.messageId)),
   ),
-  // Saves a draft in the user's own mailbox, never sends; only a live project thread may.
+  // Saves a draft in the user's own mailbox and never sends it; only a live project thread may.
   studio_google_gmail_create_draft: Access.actsAsCaller((input) =>
     read((service, projectId) => service.gmailCreateDraft(projectId, input)),
+  ),
+  // Shows the reply card in the caller's own thread.
+  studio_google_gmail_propose_send: Access.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const projectId = yield* callerProject();
+      const service = yield* Google.GoogleAccountService;
+      return yield* proposeSend(service, projectId, input.draftIds);
+    }),
+  ),
+  // Sends only what the person answered Send for on that card.
+  studio_google_gmail_send_draft: Access.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const projectId = yield* callerProject();
+      const service = yield* Google.GoogleAccountService;
+      return yield* sendApproved(service, projectId, input);
+    }),
   ),
   studio_google_calendar_events: Access.reads((input) =>
     read((service, projectId) => service.calendarEvents(projectId, input)),

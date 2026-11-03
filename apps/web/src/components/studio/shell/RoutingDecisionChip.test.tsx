@@ -105,7 +105,7 @@ describe("RoutingDecisionChip", () => {
       skipped: ["Copilot managed · Opus 5.5: at its usage limit"],
       preferenceId: "pref-custom-123",
     };
-    expect(routingChipText(laneDecision)).toBe("Lanes · Complex · Translation");
+    expect(routingChipText(laneDecision)).toBe("Tiers · Hardest · Translation");
     const html = renderToStaticMarkup(
       <RoutingDecisionChip
         routing={laneDecision}
@@ -113,9 +113,9 @@ describe("RoutingDecisionChip", () => {
         projectId={"proj-1" as any}
       />,
     );
-    expect(html).toContain("Model lane routing");
-    expect(html).toContain("Model lane");
-    expect(html).toContain("Complex and creative");
+    expect(html).toContain("Model tier routing");
+    expect(html).toContain("Model tier");
+    expect(html).toContain("Hardest work");
     expect(html).toContain("Skipped in lane");
     expect(html).toContain("Copilot managed · Opus 5.5: at its usage limit");
     expect(html).toContain("Applied rule pref-custom-123");

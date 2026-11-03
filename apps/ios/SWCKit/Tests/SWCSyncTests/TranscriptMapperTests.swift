@@ -147,8 +147,19 @@ import SWCWire
     #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .approval(requestId: "req_1", prompt: "Allow this command?", resolved: false, kind: "command", options: fixtureOptions))
   }
 
+  @Test func aSubagentRunsWhileItsItemIsInFlight() throws {
+    var item = try TestData.turnItem("ti_sub")
+    func row() throws -> TranscriptRow {
+      TranscriptRow(id: "a", kind: try #require(TranscriptMapper.kind(for: item, environmentId: "env")))
+    }
+    item.status = .init(.running)
+    #expect(try row().isRunningSubagent)
+    item.status = .init(.completed)
+    #expect(try !row().isRunningSubagent)
+  }
+
   @Test func subagentErrorAndNotices() throws {
-    #expect(try kind("ti_sub") == .subagent(title: "Audit the API", child: ThreadRef(environmentId: "env", threadId: "thr_child")))
+    #expect(try kind("ti_sub") == .subagent(title: "Audit the API", child: ThreadRef(environmentId: "env", threadId: "thr_child"), isRunning: true))
     #expect(try kind("ti_err") == .error(message: "Usage limit reached"))
     #expect(try kind("ti_notice") == .notice(text: "Context compacted"))
     #expect(try kind("ti_note") == .notice(text: "Audit finished"))

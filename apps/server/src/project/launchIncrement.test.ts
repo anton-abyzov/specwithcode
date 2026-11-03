@@ -9,8 +9,11 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   ENFORCED_INCREMENT_MESSAGE,
   NEW_INCREMENT_BRIEF,
+  INCREMENT_LAUNCH_INSTRUCTION,
+  INCREMENT_SIZING_RULE,
   NO_INCREMENT_BRIEF,
   REMINDED_INCREMENT_MESSAGE,
+  UNPLANNED_BRIEF,
   launchIncrementFields,
   resolveLaunchIncrement,
   seedLaunchBinding,
@@ -157,6 +160,28 @@ describe("resolveLaunchIncrement", () => {
     });
   });
 
+  it("tells a worker with no increment to plan one before work grows past a small fix", () => {
+    // A question launched with "none" can become a deploy through later messages.
+    for (const brief of [NO_INCREMENT_BRIEF, UNPLANNED_BRIEF]) {
+      expect(brief).toContain('`specweave small-fix "<why>"`');
+      expect(brief).toContain(INCREMENT_SIZING_RULE);
+    }
+    for (const phrase of [
+      "a new endpoint or command",
+      "a deploy or release",
+      "edits across several files",
+      "turns a question into a build",
+      '`specweave create-increment "<title>"`',
+      "Recommended, not required.",
+    ]) {
+      expect(INCREMENT_SIZING_RULE).toContain(phrase);
+    }
+    expect(INCREMENT_LAUNCH_INSTRUCTION).toContain('"new" for anything past a small fix');
+    expect(INCREMENT_LAUNCH_INSTRUCTION).toContain(
+      '"none" only for a question, review or small fix',
+    );
+  });
+
   it("lets a worker's child inherit its open binding, but never the coordinator's", async () => {
     const root = await project();
     const home = await temp("launch-increment-home-");
@@ -174,10 +199,13 @@ describe("resolveLaunchIncrement", () => {
       },
     });
     expect(inherited.ok && inherited.value.brief).toContain("specweave pickup 0996-connect");
-    expect(await launch(root, { home, isCoordinator: true })).toEqual({ ok: true, value: {} });
+    expect(await launch(root, { home, isCoordinator: true })).toEqual({
+      ok: true,
+      value: { brief: UNPLANNED_BRIEF },
+    });
     // A closed increment is not passed on.
     await bind(home, "worker", root, "0990-shipped");
-    expect(await launch(root, { home })).toEqual({ ok: true, value: {} });
+    expect(await launch(root, { home })).toEqual({ ok: true, value: { brief: UNPLANNED_BRIEF } });
   });
 
   it("passes on a binding in the caller's own worktree only to a thread that can read it", async () => {
@@ -203,6 +231,7 @@ describe("resolveLaunchIncrement", () => {
     expect(await launch(root, { caller })).toEqual({
       ok: true,
       value: {
+        brief: UNPLANNED_BRIEF,
         warning:
           "Increment 1001-feature was not passed on: the new thread's checkout does not have it. Pass increment to name one it has.",
       },
@@ -240,16 +269,17 @@ describe("resolveLaunchIncrement", () => {
     });
     expect(await launch(enforced, { home })).toEqual({
       ok: true,
-      value: { warning: ENFORCED_INCREMENT_MESSAGE },
+      value: { brief: UNPLANNED_BRIEF, warning: ENFORCED_INCREMENT_MESSAGE },
     });
     const reminded = await project("remind");
     expect(await launch(reminded, { home, isCoordinator: true })).toEqual({
       ok: true,
-      value: { warning: REMINDED_INCREMENT_MESSAGE },
+      value: { brief: UNPLANNED_BRIEF, warning: REMINDED_INCREMENT_MESSAGE },
     });
+    // The suggestion does not depend on the guard: off still gets it.
     expect(await launch(await project(), { home, isCoordinator: true })).toEqual({
       ok: true,
-      value: {},
+      value: { brief: UNPLANNED_BRIEF },
     });
   });
 
@@ -358,6 +388,7 @@ describe("seedLaunchBinding", () => {
     expect(await launch(root, { home })).toEqual({
       ok: true,
       value: {
+        brief: UNPLANNED_BRIEF,
         warning:
           "Increment 1009-shared was not passed on: the new thread's checkout does not have it. Pass increment to name one it has.",
       },

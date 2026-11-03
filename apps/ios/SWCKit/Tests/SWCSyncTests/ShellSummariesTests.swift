@@ -78,6 +78,61 @@ import SWCWire
     let idle = ShellSummaries.threadSummary(thread, environmentId: "env", projectTitle: nil, machineLabel: "M4", machineOnline: true)
     #expect(idle.workStartedAt == nil)
     #expect(idle.planProgress == nil)
+    #expect(!idle.isDone)
+
+    thread.status = .completed
+    let done = ShellSummaries.threadSummary(thread, environmentId: "env", projectTitle: nil, machineLabel: "M4", machineOnline: true)
+    #expect(done.activity == .idle)
+    #expect(done.isDone)
+  }
+
+  @Test func countsAreSaidOneWay() {
+    #expect(needsYouLabel(1) == "1 needs you")
+    #expect(needsYouLabel(2) == "2 need you")
+  }
+
+  @Test func onlyAnExplicitDependencyIsAWait() {
+    #expect(ThreadAttention.reportWaitReason("Merged locally. Waiting for CI on the branch.") == "Waiting for CI")
+    #expect(ThreadAttention.reportWaitReason("Blocked by the review from a teammate.") == "Waiting for review")
+    #expect(ThreadAttention.reportWaitReason("Waiting on PR #12 to land.") == "Waiting for PR merge")
+    #expect(ThreadAttention.reportWaitReason("Now waiting for subagents.") == "Waiting for subagents")
+    #expect(ThreadAttention.reportWaitReason("Waiting for your decision on the tests.") == nil)
+    #expect(ThreadAttention.reportWaitReason("Waiting for CI?") == nil)
+    #expect(ThreadAttention.reportWaitReason("Pick a logo.") == nil)
+    #expect(ThreadAttention.reportWaitReason("Waiting for CI.\n\nPick a logo.") == nil)
+  }
+
+  @Test func aLastMessageAskNeedsAReplyAndAWaitDoesNot() throws {
+    var thread = try TestData.thread()
+    thread.status = .completed
+    func summary() -> ThreadSummary {
+      ShellSummaries.threadSummary(thread, environmentId: "env", projectTitle: nil, machineLabel: "M4", machineOnline: true)
+    }
+
+    thread.reportedBlocker = "Pick a logo."
+    #expect(summary().waitsOnUser)
+    #expect(summary().preview == "Reply needed")
+    #expect(summary().waitReason == nil)
+
+    thread.reportedBlocker = "Waiting for CI."
+    #expect(!summary().waitsOnUser)
+    #expect(summary().waitReason == "Waiting for CI")
+    #expect(summary().preview == "Waiting for CI")
+
+    thread.reportedBlocker = nil
+    thread.reportedWait = "Waiting for review"
+    #expect(summary().waitReason == "Waiting for review")
+    thread.status = .failed
+    #expect(summary().waitReason == nil)
+    #expect(summary().activity == .failed)
+    thread.status = .completed
+    thread.reportedWait = nil
+
+    // A provider's subagent reports to its parent, not the person.
+    thread.reportedBlocker = "Pick a logo."
+    thread.lineage = ThreadLineage(parentThreadId: "parent", relationshipToParent: .subagent, rootThreadId: "parent")
+    #expect(!summary().waitsOnUser)
+    #expect(summary().preview != "Reply needed")
   }
 
   @Test func previewFollowsActivity() throws {
@@ -91,9 +146,9 @@ import SWCWire
     #expect(ShellSummaries.preview(thread) == "Running tests")
 
     thread.pendingRuntimeRequest = PendingRuntimeRequestSummary(id: "r", kind: .command, createdAt: Date())
-    #expect(ShellSummaries.preview(thread) == "Waiting for your approval")
+    #expect(ShellSummaries.preview(thread) == "Approval requested")
     thread.pendingRuntimeRequest = PendingRuntimeRequestSummary(id: "r", kind: .userInput, createdAt: Date())
-    #expect(ShellSummaries.preview(thread) == "Waiting for your answer")
+    #expect(ShellSummaries.preview(thread) == "Answer needed")
 
     thread.pendingRuntimeRequest = nil
     thread.status = .failed

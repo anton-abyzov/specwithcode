@@ -1671,7 +1671,7 @@ function SavedBackendListRow({
             onClick={() => setRoutesOpen((open) => !open)}
             className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
           >
-            {routeCount === 1 ? "Routes" : `${routeCount} routes`}
+            {routeCount === 1 ? "Connection path" : `${routeCount} connection paths`}
             <ChevronRightIcon
               aria-hidden
               className={cn(
@@ -1692,16 +1692,19 @@ function SavedBackendListRow({
               retryable={status.retryable}
             />
           ) : null}
-          <ManagedConnectionUpdates environment={environment} state={serverUpdateState} />
         </>
       }
       detail={
-        routesOpen ? (
-          <EnvironmentRoutesList
-            environment={environment}
-            onAddRoute={() => onAddRoute(environment)}
-          />
-        ) : null
+        <>
+          <ManagedConnectionUpdates environment={environment} state={serverUpdateState} />
+          {routesOpen && (
+            <EnvironmentRoutesList
+              environment={environment}
+              destinationLabel={nickname}
+              onAddRoute={() => onAddRoute(environment)}
+            />
+          )}
+        </>
       }
     >
       {unsupported &&
@@ -1728,22 +1731,27 @@ function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || unsupported}
-              aria-label={`${enabled ? "Switch off" : "Switch on"} ${environment.label}`}
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {unsupported ? "Client not supported" : enabled ? "Switch off" : "Switch on"}
-        </TooltipPopup>
-      </Tooltip>
+      <label className="flex max-w-28 items-center gap-2 text-xs text-muted-foreground sm:max-w-40">
+        <span>Connect from this device</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Switch
+                size="sm"
+                checked={enabled}
+                disabled={isRemoving || unsupported}
+                aria-label={`Connect to ${nickname} from this device`}
+                onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
+              />
+            }
+          />
+          <TooltipPopup side="top">
+            {unsupported
+              ? "This client cannot connect to this machine."
+              : "Controls this device's connection. Does not stop work on the other machine or change its permissions."}
+          </TooltipPopup>
+        </Tooltip>
+      </label>
       <Menu>
         <MenuTrigger
           render={
@@ -4232,7 +4240,7 @@ export function ConnectionsSettings() {
       {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}
-        title="Environments"
+        title="Machine connections"
         headerAction={
           <div className="flex items-center gap-1">
             {savedServerUpdateTargets.length > 0 ? (

@@ -9,6 +9,7 @@ import {
   isGitHubCopilotIcon,
   isPaidModelBilling,
   isProviderAvailable,
+  type ModelLanes,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -20,6 +21,14 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { describeModel, sameModelOn } from "./modelIdentity.ts";
+import {
+  effectiveFallbackOrder,
+  fallbackModelOrder,
+  fallbackSelectionKey,
+  tierNamesInstance,
+} from "./modelTiers.ts";
+import { providerSetupProblem } from "./providerSetup.ts";
+export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
 
 export interface ProviderFallbackRule {
@@ -51,6 +60,8 @@ export interface ProviderFallbackRule {
    * tries every provider that lists it.
    */
   readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | undefined;
+  /** The ranked model tiers: the fallback chain when no explicit order is set (see `modelTiers`). */
+  readonly modelLanes?: ModelLanes | null | undefined;
 }
 
 /** A model the user keeps out of automatic limit continuation. */
@@ -334,13 +345,15 @@ export function isUnknownBillingAgent(
  * order. That is the consent an unknown-billing agent needs.
  */
 function ruleNamesInstance(
-  rule: Pick<
-    ProviderFallbackRule,
-    | "providerLimitFallbackModelSelection"
-    | "providerLimitFallbackModels"
-    | "defaultModelSelection"
-    | "defaultModelProviders"
-  >,
+  rule: {
+    readonly [
+      K in
+        | "providerLimitFallbackModelSelection"
+        | "providerLimitFallbackModels"
+        | "defaultModelSelection"
+        | "defaultModelProviders"
+    ]?: ProviderFallbackRule[K] | undefined;
+  },
   instanceId: ProviderInstanceId,
 ): boolean {
   return (
@@ -565,23 +578,6 @@ export function resolveApiCreditSelection(input: {
  * the project's default model names it, or through
  * `resolveApiCreditSelection` when the rule allows API credits.
  */
-/** The user's fallback order: the list, else the legacy single model, else nothing. */
-export function fallbackModelOrder(
-  rule: Pick<
-    ProviderFallbackRule,
-    "providerLimitFallbackModels" | "providerLimitFallbackModelSelection"
-  >,
-): ReadonlyArray<ModelSelection> {
-  if (rule.providerLimitFallbackModels && rule.providerLimitFallbackModels.length > 0)
-    return rule.providerLimitFallbackModels;
-  return rule.providerLimitFallbackModelSelection ? [rule.providerLimitFallbackModelSelection] : [];
-}
-
-/** A fallback order entry's identity, for sets of entries already tried. */
-export function fallbackSelectionKey(selection: ModelSelection): string {
-  return `${selection.instanceId}\u0000${selection.model}`;
-}
-
 /** Why an entry of the fallback order cannot take the thread now. */
 export type FallbackOrderUnavailable =
   | "current"
@@ -606,38 +602,44 @@ export interface FallbackOrderEntry {
   readonly unavailable: FallbackOrderUnavailable | null;
   /** When a full entry's windows reset, if every one names a time. */
   readonly resetAt: number | null;
+  /** A tier entry on an unnamed provider that reports no usage: verified room goes first. */
+  readonly guess?: boolean;
 }
 
 /**
- * Each entry of the user's fallback order with whether it can take a thread
- * running on `currentInstanceId` now, in order. The thread's own instance and
+ * Each entry of the fallback order (else the model tiers) with whether it can
+ * take a thread on `currentInstanceId` now, in order. The thread's own and
  * limited instances are skipped, so one order serves Claude to Codex and back.
  */
 export function describeFallbackOrder(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly currentInstanceId: ProviderInstanceId;
+  /** The thread's model: picks which tier the tiers chain starts with. */
+  readonly currentModel?: string | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
     | "providerLimitFallbackModels"
     | "providerLimitFallbackModelSelection"
     | "providerLimitExcludedModels"
-  >;
+    | "modelLanes"
+    | "defaultModelProviders"
+  > & { readonly defaultModelSelection?: ModelSelection | null | undefined };
   readonly nowMs: number;
   readonly belowPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   readonly contextFit?: ContextFitRequirement | undefined;
 }): ReadonlyArray<FallbackOrderEntry> {
-  return fallbackModelOrder(input.rule).map((selection) => {
+  const chain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers);
+  // Tier expansions onto unnamed providers get no more trust than "same model elsewhere".
+  const named = (id: ProviderInstanceId) =>
+    !chain.fromTiers || ruleNamesInstance(input.rule, id) || tierNamesInstance(input.rule, id);
+  return chain.order.map((selection) => {
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
     const entry = (
       unavailable: FallbackOrderUnavailable | null,
-      resetAt: number | null = null,
-    ) => ({
-      selection,
-      provider,
-      unavailable,
-      resetAt,
-    });
+      resetAt = null as number | null,
+      guess = false,
+    ) => ({ selection, provider, unavailable, resetAt, ...(guess ? { guess } : {}) });
     if (selection.instanceId === input.currentInstanceId) return entry("current");
     if (
       provider === undefined ||
@@ -646,10 +648,13 @@ export function describeFallbackOrder(input: {
       return entry("missing");
     if (!fitsContext(input.contextFit, selection)) return entry("too-small");
     if (input.limitedInstanceIds?.has(provider.instanceId)) return entry("limited");
-    // This list is the person's own order: naming a Gemini spend model here
-    // is their spending consent, so it is judged on readiness like any
-    // other entry. Every unnamed path still refuses it (see `usable`).
-    if (isPaidModelOn(provider, selection.model) && !isGeminiSpendProvider(provider))
+    // Naming a Gemini spend model in an explicit order is consent; tiers rank work, not spending.
+    if (
+      isPaidModelOn(provider, selection.model) &&
+      (chain.fromTiers || !isGeminiSpendProvider(provider))
+    )
+      return entry("per-token");
+    if (!named(provider.instanceId) && isUnknownBillingAgent(provider, selection.model))
       return entry("per-token");
     if (!canTakeTurn(provider)) {
       if (provider.auth.status === "unauthenticated") return entry("signed-out");
@@ -668,7 +673,7 @@ export function describeFallbackOrder(input: {
       )
     )
       return entry("excluded");
-    if (reportsNoUsage(provider)) return entry(null);
+    if (reportsNoUsage(provider)) return entry(null, null, !named(provider.instanceId));
     const used = providerUsedPercent(provider, input.nowMs, selection.model);
     const threshold = input.belowPercent ?? 100;
     if (used !== null && used >= threshold)
@@ -716,6 +721,7 @@ function resolveProviderFallbackPass(input: {
     | "providerLimitExcludedModels"
     | "defaultModelSelection"
     | "defaultModelProviders"
+    | "modelLanes"
   >;
   readonly nowMs: number;
   readonly belowPercent?: number | null;
@@ -778,6 +784,7 @@ function resolveProviderFallbackPass(input: {
     describeFallbackOrder({
       providers: input.providers,
       currentInstanceId: input.currentInstanceId,
+      currentModel: input.currentModel,
       rule: input.rule,
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
@@ -786,6 +793,7 @@ function resolveProviderFallbackPass(input: {
     }).find(
       (entry) =>
         entry.unavailable === null &&
+        !(verifiedOnly && entry.guess === true) &&
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
     )?.selection;
   const home = (allowUnreported = !verifiedOnly) => {
@@ -809,9 +817,13 @@ function resolveProviderFallbackPass(input: {
   // of intent. The legacy single model keeps its old place, after the same
   // model elsewhere and ahead of the project default.
   // "Only these models" makes even the legacy single model the whole chain.
-  const listOnly =
-    input.rule.providerLimitFallbackListOnly === true && fallbackModelOrder(input.rule).length > 0;
-  const explicitOrder = (input.rule.providerLimitFallbackModels?.length ?? 0) > 0 || listOnly;
+  // With no order set, ranked model tiers are the chain (see `modelTiers`).
+  const chain = effectiveFallbackOrder(input.rule, input.currentModel);
+  const listOnly = input.rule.providerLimitFallbackListOnly === true && chain.order.length > 0;
+  const explicitOrder =
+    (input.rule.providerLimitFallbackModels?.length ?? 0) > 0 ||
+    listOnly ||
+    (chain.fromTiers && chain.order.length > 0);
   const legacyOnly = !explicitOrder && fallbackModelOrder(input.rule).length > 0;
   if (explicitOrder) {
     const ordered = firstAvailable();
@@ -1281,7 +1293,9 @@ export type CoordinatorTurnSelectionReason =
   | "staying-on-fallback"
   | "fallback"
   | "rule-steps-first"
-  | "no-fallback";
+  | "no-fallback"
+  /** The saved provider cannot run at all and nothing else has room: the turn is refused. */
+  | "saved-unavailable";
 
 /** How long a failed run on the saved model keeps a coordinator off it without a newer usage read. */
 export const COORDINATOR_LIMIT_STOP_MAX_AGE_MS = 5 * 60 * 60_000;
@@ -1353,9 +1367,14 @@ export function resolveCoordinatorTurnSelection(input: {
     stoppedAt !== null &&
     input.nowMs - stoppedAt < COORDINATOR_LIMIT_STOP_MAX_AGE_MS &&
     !readSinceStop;
-  if (!stoppedRecently && !full(savedProvider, input.saved.model))
+  // A saved provider that cannot run at all (not prepared, off, signed out)
+  // has no limit to wait out: the coordinator runs elsewhere until it can.
+  const savedBroken =
+    savedProvider !== undefined && providerSetupProblem(savedProvider, input.saved.model) !== null;
+  if (!savedBroken && !stoppedRecently && !full(savedProvider, input.saved.model))
     return { selection: input.saved, reason: "saved" };
   if (
+    !savedBroken &&
     !stoppedRecently &&
     !limited.has(input.saved.instanceId) &&
     usageResetsSoon({
@@ -1393,29 +1412,34 @@ export function resolveCoordinatorTurnSelection(input: {
     )
       return { selection: thread, reason: "staying-on-fallback" };
   }
-  if (input.rule.providerLimitAction !== "switch")
+  // The limit rule's action and its redeem and credit steps are about a full
+  // saved provider; none of them makes a broken one run.
+  if (!savedBroken && input.rule.providerLimitAction !== "switch")
     return { selection: input.saved, reason: "no-fallback" };
   // Redeeming a banked reset or spending credits keeps the saved model: the
   // limit sweep runs those steps on the stop before it switches.
   if (
-    input.rule.providerLimitRedeemResets === true ||
-    input.rule.providerLimitSpendCredits === true
+    !savedBroken &&
+    (input.rule.providerLimitRedeemResets === true || input.rule.providerLimitSpendCredits === true)
   )
     return { selection: input.saved, reason: "rule-steps-first" };
-  const target = resolveProviderFallback({
-    providers: input.providers,
-    currentInstanceId: input.saved.instanceId,
-    currentModel: input.saved.model,
-    currentOptions: input.saved.options,
-    rule: input.rule,
-    nowMs: input.nowMs,
-    belowPercent: threshold,
-    anyReady: true,
-    limitedInstanceIds: limited,
-  });
-  return target === null
-    ? { selection: input.saved, reason: "no-fallback" }
-    : { selection: target, reason: "fallback" };
+  const fallback = (belowPercent: number) =>
+    resolveProviderFallback({
+      providers: input.providers,
+      currentInstanceId: input.saved.instanceId,
+      currentModel: input.saved.model,
+      currentOptions: input.saved.options,
+      rule: input.rule,
+      nowMs: input.nowMs,
+      belowPercent,
+      anyReady: true,
+      limitedInstanceIds: limited,
+    });
+  // With the saved provider broken, a fallback past the switch threshold but
+  // not spent still beats refusing every message.
+  const target = fallback(threshold) ?? (savedBroken && threshold < 100 ? fallback(100) : null);
+  if (target !== null) return { selection: target, reason: "fallback" };
+  return { selection: input.saved, reason: savedBroken ? "saved-unavailable" : "no-fallback" };
 }
 
 /**
@@ -1442,14 +1466,17 @@ export function coordinatorOnLimitFallback(input: {
 export interface CoordinatorFallbackReason {
   /** `weekly limit reached`, `session at 96% used`, `returned a usage limit`. */
   readonly text: string;
+  /** The saved provider cannot run at all (not prepared, off, signed out): no limit to wait out. */
+  readonly setup?: true;
   /** When the saved model gets room again, if the reading says. */
   readonly resetsAt: number | null;
 }
 
 /**
- * The reason behind a limit fallback, read from the same windows the switch
- * used: a spent window that applies to the saved model, one past the rule's
- * threshold, a usage-limit response, or the provider refusing new usage.
+ * The reason behind a fallback, read from the same state the switch used:
+ * the saved provider unable to run at all (its own status message), a spent
+ * window that applies to the saved model, one past the rule's threshold, a
+ * usage-limit response, or the provider refusing new usage.
  */
 export function coordinatorFallbackReason(input: {
   readonly saved: ModelSelection;
@@ -1459,6 +1486,8 @@ export function coordinatorFallbackReason(input: {
   readonly limitedInstanceIds?: ReadonlySet<string>;
 }): CoordinatorFallbackReason {
   const provider = input.providers.find((entry) => entry.instanceId === input.saved.instanceId);
+  const broken = provider ? providerSetupProblem(provider, input.saved.model) : null;
+  if (broken) return { text: broken, resetsAt: null, setup: true };
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const windows = (provider?.usageLimits?.windows ?? []).filter(
     (window) =>

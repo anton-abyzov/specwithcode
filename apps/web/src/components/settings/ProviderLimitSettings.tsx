@@ -89,6 +89,11 @@ export function ProviderLimitSettings() {
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
   const fallbackOrder = fallbackModelOrder(settings);
+  // With no order set, the ranked model tiers are where a limited thread continues.
+  const tierCount =
+    (settings.modelLanes?.complex?.length ?? 0) + (settings.modelLanes?.routine?.length ?? 0);
+  const usesTiers = fallbackOrder.length === 0 && tierCount > 0;
+  const chainSet = fallbackOrder.length > 0 || tierCount > 0;
   // The list is the setting; its first entry keeps older clients' single fallback in step.
   const saveFallbackOrder = (order: ReadonlyArray<ModelSelection>) =>
     updateSettings({
@@ -193,11 +198,21 @@ export function ProviderLimitSettings() {
         id="provider-limit-fallback"
         title="Fallback order"
         description={`The models a limited thread continues on, best first. The first one that is signed in and has room takes the thread; a thread already on one skips it, so Codex threads can fall back to Claude from the same list. ${
-          settings.providerLimitFallbackListOnly && fallbackOrder.length > 0
+          tierCount > 0
+            ? "Leave it empty to follow your model tiers instead; a list here replaces them for limits. "
+            : ""
+        }${
+          settings.providerLimitFallbackListOnly && chainSet
             ? "When none of these has room, the thread waits."
             : "After these, SpecWithCode tries any other ready provider."
         }`}
-        status={fallbackOrder.length === 0 && !mixedFallback ? "Any ready provider" : undefined}
+        status={
+          fallbackOrder.length === 0 && !mixedFallback
+            ? usesTiers
+              ? "Uses your model tiers"
+              : "Any ready provider"
+            : undefined
+        }
         resetAction={
           fallbackOrder.length > 0 ? (
             <SettingResetButton label="fallback order" onClick={() => saveFallbackOrder([])} />
@@ -230,14 +245,16 @@ export function ProviderLimitSettings() {
           onChange={saveFallbackOrder}
         />
       </SettingsRow>
-      {fallbackOrder.length > 0 ? (
+      {chainSet ? (
         <SettingsRow
           serverScoped
           settingKeys={["providerLimitFallbackListOnly"]}
           mixed={mixedListOnly}
           id="provider-limit-fallback-list-only"
           title="Only these models"
-          description="Never continue a limited thread on a model outside the fallback order. When none of them has room, the thread waits for its reset."
+          description={`Never continue a limited thread on a model outside ${
+            usesTiers ? "your model tiers" : "the fallback order"
+          }. When none of them has room, the thread waits for its reset.`}
           resetAction={
             settings.providerLimitFallbackListOnly ? (
               <SettingResetButton

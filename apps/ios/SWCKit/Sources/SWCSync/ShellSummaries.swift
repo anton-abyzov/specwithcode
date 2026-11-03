@@ -454,13 +454,18 @@ public enum ShellSummaries {
   public static func preview(_ thread: ThreadShell) -> String? {
     switch activity(thread) {
     case .needsYou:
-      return thread.pendingRuntimeRequest?.kind.isUserInput == true ? "Waiting for your answer" : "Waiting for your approval"
+      if thread.pendingRuntimeRequest == nil { return "Plan ready" }
+      if thread.pendingRuntimeRequest?.kind.isUserInput == true { return "Answer needed" }
+      return thread.pendingRuntimeRequest?.kind == .authRefresh ? "Sign-in needed" : "Approval requested"
     case .working:
+      if let wait = ThreadAttention.dependencyWait(thread) { return wait }
       if let label = thread.activeWork?.label, !label.isEmpty { return oneLine(label) }
     case .failed:
       if let error = thread.lastError, !error.isEmpty { return oneLine(error) }
     case .idle:
-      break
+      if ThreadAttention.needsReply(thread) { return "Reply needed" }
+      if (thread.heldQueuedCount ?? 0) > 0 { return "Queue held" }
+      if let wait = ThreadAttention.dependencyWait(thread) { return wait }
     }
     if let text = thread.latestVisibleMessage?.text, !text.isEmpty { return oneLine(text) }
     if let blocker = thread.reportedBlocker, !blocker.isEmpty { return oneLine(blocker) }
@@ -471,7 +476,7 @@ public enum ShellSummaries {
     let activity = activity(thread)
     let working = activity == .working || activity == .needsYou
     let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
-    return ThreadSummary(
+    var summary = ThreadSummary(
       ref: ThreadRef(environmentId: environmentId, threadId: thread.id),
       projectRef: ProjectRef(environmentId: environmentId, projectId: thread.projectId),
       projectTitle: projectTitle,
@@ -488,8 +493,11 @@ public enum ShellSummaries {
       planProgress: thread.planProgress.flatMap { $0.total > 0 ? PlanProgress(completed: $0.completed, total: $0.total) : nil },
       activityAt: [thread.createdAt, thread.latestRunRequestedAt, thread.latestUserMessageAt].compactMap { $0 }.max(),
       identity: ThreadIdentity(selection: thread.modelIdentity?.current ?? thread.modelSelection, providers: providers),
-      waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || (!thread.isSettled && thread.reportedBlocker?.isEmpty == false)
+      waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || ThreadAttention.needsReply(thread)
     )
+    summary.isDone = thread.status == .completed
+    summary.waitReason = ThreadAttention.dependencyWait(thread)
+    return summary
   }
 
   // MARK: - Projects
@@ -508,7 +516,7 @@ public enum ShellSummaries {
       paused: project.isPaused,
       archived: project.isArchived,
       isAutomated: project.isAutomated,
-      workingCount: threads.filter { !$0.isUnknown && ($0.activity == .working || $0.activity == .needsYou) }.count,
+      workingCount: threads.filter { !$0.isUnknown && ($0.activity == .working || $0.activity == .needsYou || $0.waitReason != nil) }.count,
       hasUnread: threads.contains { $0.isUnread }
     )
   }

@@ -10,6 +10,7 @@ struct OrchestratorSwitcher: View {
 
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
+  @Environment(\.isBesideCoordinator) private var isBesideCoordinator
 
   var body: some View {
     let members = Self.choices(model.project(current)?.members ?? [], current: current)
@@ -19,7 +20,9 @@ struct OrchestratorSwitcher: View {
         Section("Orchestrator") {
           ForEach(members) { member in
             Button {
-              if member.ref != current { router.open(.project(member.ref)) }
+              if member.ref != current {
+                if isBesideCoordinator { router.chosenCoordinator = member.ref } else { router.open(.project(member.ref)) }
+              }
             } label: {
               if member.ref == current {
                 Label(Self.title(member, among: members), systemImage: "checkmark")

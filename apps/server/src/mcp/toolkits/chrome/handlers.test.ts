@@ -258,6 +258,30 @@ describe("Chrome on another machine", () => {
     }),
   );
 
+  it.effect("keeps chrome_upload on this machine, from either side", () =>
+    Effect.gen(function* () {
+      const b = machineB();
+      const a = machineA(b);
+      const unnamed = yield* a.exit("t-upload", "chrome_upload", { paths: ["/tmp/a.jpg"] });
+      expect(JSON.stringify(unnamed)).toContain("not_connected");
+      const named = yield* a.exit("t-upload", "chrome_upload", {
+        paths: ["/tmp/a.jpg"],
+        machine: "b",
+      });
+      expect(JSON.stringify(named)).toContain("this machine's Chrome only");
+      expect(b.calls).toHaveLength(0);
+
+      const peered = yield* Effect.exit(
+        b.answer({
+          action: "chrome_upload",
+          input: { paths: ["/etc/hosts"] },
+          caller: { environmentId: "env-a", machine: "Studio A", threadId: "t", title: "t" },
+        }),
+      );
+      expect(JSON.stringify(peered)).toContain("this machine's Chrome only");
+    }),
+  );
+
   it.effect("says it is not connected when no machine has Chrome", () =>
     Effect.gen(function* () {
       const a = machineA(null);

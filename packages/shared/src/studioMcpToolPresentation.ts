@@ -289,6 +289,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   chrome_click: tool(["Click", "Clicking", "Clicked", "in Chrome"], "browser", "browser"),
   chrome_type: tool(["Type", "Typing", "Typed", "in Chrome"], "browser", "browser"),
   chrome_press: tool(["Press", "Pressing", "Pressed", "a key in Chrome"], "browser", "browser"),
+  chrome_upload: tool(["Upload", "Uploading", "Uploaded", "files in Chrome"], "browser", "browser"),
   chrome_screenshot: tool(
     ["Capture", "Capturing", "Captured", "a Chrome tab"],
     "browser",

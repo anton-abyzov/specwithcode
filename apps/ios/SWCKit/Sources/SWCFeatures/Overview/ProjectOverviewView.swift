@@ -29,6 +29,7 @@ struct ProjectOverviewView: View {
       } else {
         section("Needs you", groups.needsYou)
         section("Working", groups.working)
+        section("Offline", groups.offline)
         section("Idle", groups.idle)
         if !groups.resolved.isEmpty {
           resolvedToggle(count: groups.resolved.count).plainListRow()

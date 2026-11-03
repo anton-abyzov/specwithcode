@@ -56,38 +56,38 @@ const props = {
 describe("managed updates permission and reachability", () => {
   it("keeps existing automatic updates distinct from absent remote permission", () => {
     const html = renderToStaticMarkup(<ManagedUpdatesView {...props} />);
-    expect(html).toContain("Automatic updates: enabled");
-    expect(html).toContain("no update permission");
+    expect(html).toContain("Automatic updates on Office Mac: enabled");
+    expect(html).toContain("Update permission: Not granted");
     expect(html).toContain("administrator must approve");
-    expect(html).toMatch(/disabled="">Allow this connection/);
-    expect(html).toMatch(/disabled="">Check only/);
+    expect(html).not.toContain("Grant update permission");
+    expect(html).not.toContain(">Check for updates</button>");
     expect(props.onAllow).not.toHaveBeenCalled();
   });
   it("never labels unreachable or failed reads as unenrolled", () => {
     for (const changes of [{ reachable: false }, { error: true }]) {
       const html = renderToStaticMarkup(<ManagedUpdatesView {...props} {...changes} />);
-      expect(html).not.toContain("no update permission");
-      expect(html).not.toContain("Allow this connection");
+      expect(html).not.toContain("Update permission: Not granted");
+      expect(html).not.toContain("Grant update permission");
     }
   });
   it("offers check-only and revocation for an approved reachable destination", () => {
     const html = renderToStaticMarkup(
       <ManagedUpdatesView {...props} canManage status={{ ...status, remoteConsent: "enrolled" }} />,
     );
-    expect(html).toContain("Revoke permission");
-    expect(html).not.toMatch(/disabled="">Check only/);
+    expect(html).toContain("Revoke update permission");
+    expect(html).toContain(">Check for updates</button>");
     expect(html).toContain("does not download or install");
   });
   it("does not offer mutation for unmanaged installs or unavailable updater defaults", () => {
     const html = renderToStaticMarkup(
       <ManagedUpdatesView {...props} status={{ ...status, support: "unmanaged" }} />,
     );
-    expect(html).not.toContain("Allow this connection");
+    expect(html).not.toContain("Grant update permission");
     const absent = renderToStaticMarkup(
       <ManagedUpdatesView {...props} status={{ ...status, localAutomation: "unavailable" }} />,
     );
     expect(absent).toContain("updater not installed");
-    expect(absent).not.toContain("Automatic updates: enabled");
+    expect(absent).not.toContain("Automatic updates on Office Mac: enabled");
   });
 });
 
@@ -112,7 +112,7 @@ it("requires explicit confirmation and sends the displayed destination and revis
   const allow = () =>
     rendered!.root
       .findAllByType("button")
-      .find((button) => button.props.children === "Allow this connection")!;
+      .find((button) => button.props.children === "Grant update permission")!;
   mock.confirm.mockResolvedValue(false);
   await act(async () => allow().props.onClick());
   expect(mock.enroll).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ it("native cancellation never falls through to a remote administrator request", 
   await act(async () =>
     rendered!.root
       .findAllByType("button")
-      .find((button) => button.props.children === "Revoke permission")!
+      .find((button) => button.props.children === "Revoke update permission")!
       .props.onClick(),
   );
   expect(mock.native).toHaveBeenCalledWith({
@@ -160,13 +160,13 @@ describe("this Mac's own service and its update agent", () => {
   it("says the local service is managed by this Mac's updater instead of asking for permission", () => {
     const html = renderToStaticMarkup(<ManagedUpdatesView {...props} local />);
     expect(html).toContain("Managed by this Mac&#x27;s updater.");
-    expect(html).not.toContain("no update permission");
-    expect(html).not.toContain("Allow this connection");
+    expect(html).not.toContain("Update permission: Not granted");
+    expect(html).not.toContain("Grant update permission");
     expect(html).not.toContain("administrator must approve");
-    expect(html).not.toContain("Check only");
+    expect(html).not.toContain("Check for updates");
     // A remote connection still shows its permission.
     expect(renderToStaticMarkup(<ManagedUpdatesView {...props} />)).toContain(
-      "Allow this connection",
+      "Update permission: Not granted",
     );
   });
 
@@ -302,7 +302,7 @@ it("check-only sends no enrollment, configuration or installation request", asyn
   await act(async () =>
     rendered!.root
       .findAllByType("button")
-      .find((button) => button.props.children === "Check only")!
+      .find((button) => button.props.children === "Check for updates")!
       .props.onClick(),
   );
   expect(mock.check).toHaveBeenCalledWith({

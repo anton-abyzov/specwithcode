@@ -13,7 +13,7 @@ nonisolated final class AdaptiveSplitTests: XCTestCase {
     engine.streamDelay = .zero
     // A sidebar hidden on this simulator earlier must not change the layout under test.
     UserDefaults.standard.removeObject(forKey: "swc.sidebarCollapsed")
-    UserDefaults.standard.removeObject(forKey: "swc.sidebarWidth")
+    UserDefaults.standard.removeObject(forKey: "swc.listColumnWidth")
     let host = UIHostingController(rootView: RootView(model: AppModel(engine: engine)))
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.windows.first(where: \.isKeyWindow)

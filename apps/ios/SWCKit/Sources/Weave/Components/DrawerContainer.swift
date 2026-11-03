@@ -19,6 +19,9 @@ import SwiftUI
 public struct DrawerContainer<Drawer: View, Content: View>: View {
   @Binding var isOpen: Bool
   @Binding var isCollapsed: Bool
+  /// The column holds a conversation rather than a list, so it opens at half
+  /// the scene, on the Duo's hinge, and may grow further.
+  let isChatColumn: Bool
   let edgeSwipeEnabled: Bool
   let sceneInsets: EdgeInsets
   let drawer: Drawer
@@ -27,7 +30,14 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
   @State private var drag: CGFloat = 0
   @State private var dragging = false
   /// The column width the person dragged to; 0 follows the scene width.
-  @AppStorage("swc.sidebarWidth") private var chosenWidth: Double = 0
+  @AppStorage("swc.listColumnWidth") private var chosenListWidth: Double = 0
+  @AppStorage("swc.chatColumnWidth") private var chosenChatWidth: Double = 0
+  private var chosenWidth: Double {
+    get { isChatColumn ? chosenChatWidth : chosenListWidth }
+    nonmutating set {
+      if isChatColumn { chosenChatWidth = newValue } else { chosenListWidth = newValue }
+    }
+  }
   /// How far the divider has moved in the drag in progress. Gesture state
   /// resets itself when the drag ends or is cancelled (a fold, a rotation, a
   /// system gesture), so a lost drag never leaves a stale width behind.
@@ -36,9 +46,10 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.layoutDirection) private var layoutDirection
 
-  public init(isOpen: Binding<Bool>, isCollapsed: Binding<Bool> = .constant(false), edgeSwipeEnabled: Bool = true, sceneInsets: EdgeInsets = EdgeInsets(), @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
+  public init(isOpen: Binding<Bool>, isCollapsed: Binding<Bool> = .constant(false), isChatColumn: Bool = false, edgeSwipeEnabled: Bool = true, sceneInsets: EdgeInsets = EdgeInsets(), @ViewBuilder drawer: () -> Drawer, @ViewBuilder content: () -> Content) {
     self._isOpen = isOpen
     self._isCollapsed = isCollapsed
+    self.isChatColumn = isChatColumn
     self.edgeSwipeEnabled = edgeSwipeEnabled
     self.sceneInsets = sceneInsets
     self.drawer = drawer()
@@ -142,6 +153,7 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
       .background(Color.weave.sunken.ignoresSafeArea())
       .animation(dragging ? nil : animation, value: isOpen)
       .animation(collapseAnimation, value: isCollapsed)
+      .animation(collapseAnimation, value: isChatColumn && wide)
       .transaction { if resizing { $0.animation = nil } }
       .onChange(of: isCollapsed) { _, _ in
         // Hiding the column must not reveal a modal drawer left open earlier.
@@ -166,20 +178,27 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
     EdgeInsets(top: 0, leading: sceneInsets.leading, bottom: 0, trailing: max(0, width - (scene - sceneInsets.trailing)))
   }
 
-  /// Width bounds of the wide column: wide enough for project names, never
-  /// more than 45% of the scene so the chat keeps a readable column.
-  private static var minColumn: CGFloat { 240 }
-  private static func maxColumn(scene: CGFloat) -> CGFloat { max(minColumn, min(440, scene * 0.45)) }
+  /// Width bounds of the wide column: a list stays wide enough for project
+  /// names and at most 45% of the scene; a chat may take up to 62%. Both always
+  /// leave 340 points for the chat beside them.
+  private var minColumn: CGFloat { isChatColumn ? 280 : 240 }
+  private func maxColumn(scene: CGFloat) -> CGFloat {
+    let limit = isChatColumn ? scene * 0.62 : min(440, scene * 0.45)
+    return max(minColumn, min(limit, scene - 340 - sceneInsets.trailing))
+  }
 
   private var savedWidth: CGFloat? { chosenWidth > 0 ? CGFloat(chosenWidth) : nil }
 
   private func clampColumn(_ wanted: CGFloat, scene: CGFloat) -> CGFloat {
-    min(max(wanted, Self.minColumn), Self.maxColumn(scene: scene))
+    min(max(wanted, minColumn), maxColumn(scene: scene))
+  }
+
+  private func restingWidth(scene: CGFloat) -> CGFloat {
+    savedWidth ?? (isChatColumn ? scene * 0.5 : min(max(scene * 0.42, 288), 420))
   }
 
   private func columnWidth(scene: CGFloat) -> CGFloat {
-    let resting = savedWidth ?? min(max(scene * 0.32, 288), 340)
-    return clampColumn(resting + (resizeDrag ?? 0), scene: scene)
+    clampColumn(clampColumn(restingWidth(scene: scene), scene: scene) + (resizeDrag ?? 0), scene: scene)
   }
 
   /// Drag the divider to resize the column; drag it well past the narrowest
@@ -190,9 +209,8 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
         state = value.translation.width * direction
       }
       .onEnded { value in
-        let resting = savedWidth ?? min(max(scene * 0.32, 288), 340)
-        let target = resting + value.translation.width * direction
-        if target < Self.minColumn - 72 {
+        let target = clampColumn(restingWidth(scene: scene), scene: scene) + value.translation.width * direction
+        if target < minColumn - 72 {
           withAnimation(collapseAnimation) { isCollapsed = true }
         } else {
           chosenWidth = Double(clampColumn(target, scene: scene))

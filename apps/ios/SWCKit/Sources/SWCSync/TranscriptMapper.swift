@@ -92,7 +92,7 @@ public enum TranscriptMapper {
 
     case let .subagent(subagent):
       let title = item.title ?? firstLine(subagent.prompt)
-      return .subagent(title: title.isEmpty ? "Subagent" : title, child: subagent.childThreadId.map { ThreadRef(environmentId: environmentId, threadId: $0) })
+      return .subagent(title: title.isEmpty ? "Subagent" : title, child: subagent.childThreadId.map { ThreadRef(environmentId: environmentId, threadId: $0) }, isRunning: item.isInFlight)
 
     case let .error(report):
       return .error(message: report.failure.message.isEmpty ? "Something went wrong." : report.failure.message)

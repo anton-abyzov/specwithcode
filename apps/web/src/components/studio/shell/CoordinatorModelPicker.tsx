@@ -116,6 +116,8 @@ export function CoordinatorModelPicker(props: {
     /** The coordinator is off its saved pick (not just running before one is saved). */
     offPick?: boolean;
     reason?: string | null;
+    /** The saved pick cannot run at all (not prepared, off, signed out), rather than limited. */
+    setup?: boolean;
     onSwitchBack?: (() => void) | null;
     switching?: boolean;
   } | null;
@@ -167,7 +169,7 @@ export function CoordinatorModelPicker(props: {
                 instance: shownEntry?.displayName ?? shown.instanceId,
               }
             : null,
-          reason: running.returnsTo ? "usage limit" : null,
+          reason: running.returnsTo ? (running.setup ? "not set up" : "usage limit") : null,
           detail: running.reason ?? null,
         })
       : null;
@@ -177,7 +179,7 @@ export function CoordinatorModelPicker(props: {
     ? [
         running?.reason,
         running?.returnsTo
-          ? `The next turn after it has room goes back to ${fallbackState.pickModel} on its own.`
+          ? `The next turn after it ${running.setup ? "can run" : "has room"} goes back to ${fallbackState.pickModel} on its own.`
           : null,
       ]
         .filter(Boolean)
@@ -198,7 +200,7 @@ export function CoordinatorModelPicker(props: {
         returns: running?.returnsTo
           ? {
               mode: "auto" as const,
-              text: `Goes back to ${fallbackState.pickModel} on its own once it has room.`,
+              text: `Goes back to ${fallbackState.pickModel} on its own once it ${running?.setup ? "can run" : "has room"}.`,
             }
           : {
               mode: "manual" as const,

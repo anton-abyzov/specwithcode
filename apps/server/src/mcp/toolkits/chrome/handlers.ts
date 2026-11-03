@@ -20,6 +20,7 @@ import {
   ChromeTabsResult,
   type ChromeToolName,
   ChromeTypeInput,
+  ChromeUploadInput,
   OrchestratorMcpFailure,
   type OrchestratorMcpMachineRef,
 } from "@specweave-studio/contracts";
@@ -103,6 +104,7 @@ const actions = {
   chrome_click: { input: ChromeClickInput, success: ChromePageResult },
   chrome_type: { input: ChromeTypeInput, success: ChromePageResult },
   chrome_press: { input: ChromePressInput, success: ChromePageResult },
+  chrome_upload: { input: ChromeUploadInput, success: ChromePageResult },
   chrome_screenshot: { input: ChromeScreenshotInput, success: ChromeScreenshotResult },
   chrome_evaluate: { input: ChromeEvaluateInput, success: ChromeEvaluateResult },
   chrome_close: { input: ChromeCloseInput, success: ChromeCloseResult },
@@ -139,6 +141,8 @@ const perform = (tools: ChromeTools, threadId: string, action: ChromeToolName, i
       return tools.type(threadId, input);
     case "chrome_press":
       return tools.press(threadId, input);
+    case "chrome_upload":
+      return tools.upload(threadId, input);
     case "chrome_screenshot":
       return tools.screenshot(threadId, input);
     case "chrome_evaluate":
@@ -394,6 +398,13 @@ const machineGone = (error: unknown, action: ChromeToolName) =>
       /not connected|no chrome profile is paired/i.test(error.message))) ||
   (isChromeFailure(error) && error.code === "not_connected");
 
+/** The other machine would read its own disk for a caller it only lends Chrome to. */
+const uploadStaysLocal = new BrowserExtensionToolError({
+  code: "invalid_request",
+  reason:
+    "chrome_upload works with this machine's Chrome only. Pair a Chrome profile here, or run the thread on the machine that has the Chrome.",
+});
+
 /** Runs one chrome_* action as the calling thread, here or on the machine with the Chrome. */
 const run = <N extends ChromeToolName>(action: N, input: Record<string, unknown>) =>
   Effect.gen(function* () {
@@ -401,6 +412,16 @@ const run = <N extends ChromeToolName>(action: N, input: Record<string, unknown>
     const threadId = scope.thread.threadId;
     const named = typeof input.machine === "string" ? input.machine : undefined;
     if (action === "chrome_profiles") return (yield* listProfiles(threadId, named)) as Answer<N>;
+    if (action === "chrome_upload") {
+      // Never looks for Chrome elsewhere, and leaves the thread's machine as it was.
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const target =
+        named === undefined
+          ? ({ kind: "local" } as const)
+          : yield* workers.resolveMachine(named).pipe(Effect.mapError(asToolFailure));
+      if (target.kind === "remote") return yield* uploadStaysLocal;
+      return yield* runLocal(threadId, action, input);
+    }
     const target = yield* route(threadId, named);
     if (target.kind === "local") return yield* runLocal(threadId, action, input);
     if (!target.remembered || !movable(action, input))
@@ -473,6 +494,7 @@ export const peerThreadKey = (caller: ChromePeerInput["caller"]) =>
 const peer = (payload: ChromePeerInput) =>
   Effect.gen(function* () {
     const client = yield* requirePeer(payload.caller);
+    if (payload.action === "chrome_upload") return yield* uploadStaysLocal;
     const input: unknown = yield* decodeInput[payload.action](payload.input).pipe(
       Effect.mapError(
         () =>
@@ -518,6 +540,7 @@ const handlers = {
   chrome_click: McpToolAccess.actsAsCaller((input) => run("chrome_click", input)),
   chrome_type: McpToolAccess.actsAsCaller((input) => run("chrome_type", input)),
   chrome_press: McpToolAccess.actsAsCaller((input) => run("chrome_press", input)),
+  chrome_upload: McpToolAccess.actsAsCaller((input) => run("chrome_upload", input)),
   chrome_screenshot: McpToolAccess.readsAsCaller((input) => run("chrome_screenshot", input)),
   chrome_evaluate: McpToolAccess.actsAsCaller((input) => run("chrome_evaluate", input)),
   chrome_close: McpToolAccess.actsAsCaller((input) => run("chrome_close", input)),

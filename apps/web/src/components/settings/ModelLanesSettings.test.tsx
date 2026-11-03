@@ -61,8 +61,18 @@ vi.mock("./useScopedSettings", () => ({
   useClearProjectOverrides: () => vi.fn(),
 }));
 vi.mock("../ui/button", () => ({
-  Button: ({ children, onClick, ...props }: { children: ReactNode; onClick?: () => void; [key: string]: unknown }) => (
-    <button onClick={onClick} {...props}>{children}</button>
+  Button: ({
+    children,
+    onClick,
+    ...props
+  }: {
+    children: ReactNode;
+    onClick?: () => void;
+    [key: string]: unknown;
+  }) => (
+    <button onClick={onClick} {...props}>
+      {children}
+    </button>
   ),
 }));
 vi.mock("../chat/ProviderModelPicker", () => ({
@@ -74,11 +84,7 @@ vi.mock("../ui/tooltip", () => ({
   TooltipTrigger: ({ children, render }: any) => render ?? <>{children}</>,
 }));
 
-import {
-  addLaneModel,
-  moveLaneModel,
-  ModelLanesSettings,
-} from "./ModelLanesSettings";
+import { addLaneModel, moveLaneModel, ModelLanesSettings } from "./ModelLanesSettings";
 
 const claude = ProviderInstanceId.make("claudeAgent");
 const copilot = ProviderInstanceId.make("copilot-0889");
@@ -163,8 +169,9 @@ describe("ModelLanesSettings", () => {
       });
       const root = renderer!.root;
       const text = JSON.stringify(renderer!.toJSON());
-      expect(text).toContain("Complex and creative lane");
-      expect(text).toContain("Routine lane");
+      expect(text).toContain("Hardest work");
+      expect(text).toContain("Everyday work");
+      expect(text.indexOf("Everyday work")).toBeLessThan(text.indexOf("Hardest work"));
       expect(text).toContain("No models configured for this lane");
       expect(text).toContain("No learned model preferences yet");
     });
@@ -198,7 +205,7 @@ describe("ModelLanesSettings", () => {
       expect(text).toContain("user note");
     });
 
-    it("seeds favorites into complex lane when clicked", () => {
+    it("seeds favorites into hardest work when clicked", () => {
       act(() => {
         renderer = create(<ModelLanesSettings />);
       });
@@ -206,11 +213,14 @@ describe("ModelLanesSettings", () => {
       const allButtons = root.findAllByType("button");
       const seedButtons = allButtons.filter((btn) => {
         const c = btn.props.children;
-        return Array.isArray(c) ? c.some((child) => typeof child === "string" && child.includes("Seed from favorites")) : typeof c === "string" && c.includes("Seed from favorites");
+        return Array.isArray(c)
+          ? c.some((child) => typeof child === "string" && child.includes("Seed from favorites"))
+          : typeof c === "string" && c.includes("Seed from favorites");
       });
       expect(seedButtons.length).toBeGreaterThan(0);
       act(() => {
-        seedButtons[0]?.props.onClick();
+        // Everyday work is listed first; the second button seeds hardest work.
+        seedButtons[1]?.props.onClick();
       });
       expect(state.update).toHaveBeenCalledWith({
         modelLanes: {

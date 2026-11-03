@@ -9453,6 +9453,7 @@ function useChatViewActions(
       ? describeFallbackOrder({
           providers: providerStatuses,
           currentInstanceId: activeThreadShell.providerInstanceId,
+          currentModel: activeThreadShell.modelSelection.model,
           rule: activeProjectSettings.settings,
           nowMs: renderNowMs,
           belowPercent: 100,
@@ -10902,6 +10903,7 @@ export default function ChatView(props: ChatViewProps) {
               ? describeFallbackOrder({
                   providers: providerStatuses,
                   currentInstanceId: activeThreadShell.providerInstanceId,
+                  currentModel: activeThreadShell.modelSelection.model,
                   rule: activeProjectSettings.settings,
                   nowMs: approachingNowMs,
                   belowPercent: 100,

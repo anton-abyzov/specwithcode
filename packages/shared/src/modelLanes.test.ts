@@ -330,7 +330,7 @@ describe("resolveLaneRouting", () => {
       "codex · GPT-6.1 Sol: at 97% usage",
       "claudeAgent · Claude Fable 5.1: signed out",
     ]);
-    expect(decision?.reason).toMatch(/^No Complex and creative model can run now/);
+    expect(decision?.reason).toMatch(/^No Hardest work model can run now/);
   });
 
   it("never picks Gemini or Vertex spend, even from a lane", () => {

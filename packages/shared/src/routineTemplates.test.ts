@@ -34,11 +34,15 @@ describe("routine templates", () => {
     expect(routineTemplate("email-triage")?.prompt).toContain("do not send");
   });
 
-  it("briefs proactively without noise, guessed urgency or sending", () => {
+  it("briefs proactively without noise, guessed urgency or unapproved sending", () => {
     const prompt = routineTemplate("proactive-briefing")!.prompt;
     expect(prompt).toContain("at most 5");
     expect(prompt).toContain("Nothing needs you right now.");
-    expect(prompt).toContain("Drafts saved: N. Nothing was sent.");
+    expect(prompt).toContain("Drafts saved: N. Nothing is sent until you choose Send.");
+    // Replies go out only from the card the person answers.
+    expect(prompt).toContain("studio_google_gmail_propose_send");
+    expect(prompt).toContain("for each draft I chose Send for, and nothing else");
+    expect(prompt).toContain("Never send mail except a draft I chose Send for on that card");
     expect(prompt).toContain("Never invent or inflate urgency");
     expect(prompt).toContain("studio_google_gmail_create_draft");
     expect(prompt).toContain("Briefing preferences");

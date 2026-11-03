@@ -40,7 +40,7 @@ const REF_HINT = 'an open NNNN, a full increment folder name, "new" or "none"';
 
 /** The one sentence the orchestration block and the three launch tools carry. */
 export const INCREMENT_LAUNCH_INSTRUCTION =
-  'In a SpecWeave project, for feature work pass increment (NNNN, "new" or "none") to delegate_task, create_threads and studio_thread_launch; workers inherit yours when omitted; post the returned spec as [NNNN](<specPath>).';
+  'In a SpecWeave project, for feature work pass increment (NNNN, "new" or "none") to delegate_task, create_threads and studio_thread_launch: "new" for anything past a small fix, "none" only for a question, review or small fix; workers inherit yours when omitted; post the returned spec as [NNNN](<specPath>).';
 
 export const ENFORCED_INCREMENT_MESSAGE =
   'This project requires an increment for each worker: pass increment (an open NNNN, "new", or "none").';
@@ -108,7 +108,19 @@ function existingBrief(increment: {
 export const NEW_INCREMENT_BRIEF =
   'Plan it first: `specweave create-increment "<title>"` with the title the user or this task gives the work (not this thread\'s title), fill spec.md, then edit code.';
 
-export const NO_INCREMENT_BRIEF = 'If you change code, run `specweave small-fix "<why>"` first.';
+/**
+ * When a thread with no increment should plan one. A worker launched for a
+ * question can be turned into a build by the user's later messages, so the
+ * rule names that case: the launch brief is read once, and a passive notice
+ * after the code changed was the only signal before.
+ */
+export const INCREMENT_SIZING_RULE =
+  'If the work grows past a small fix (a new endpoint or command, a schema or data change, a deploy or release, or edits across several files), including when a later message turns a question into a build, plan it first: `specweave create-increment "<title>"` named for the work, fill spec.md, then change code. Recommended, not required.';
+
+export const NO_INCREMENT_BRIEF = `If you change code, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
+
+/** A worker in a SpecWeave project that neither named nor inherited an increment. */
+export const UNPLANNED_BRIEF = `No increment is linked to this thread. For a small code change, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
 
 /**
  * Whether a thread starting in `worktreePath` (null: the project) reads
@@ -290,7 +302,13 @@ export async function resolveLaunchIncrement(input: {
           ? [REMINDED_INCREMENT_MESSAGE]
           : []),
     ];
-    return { ok: true, value: warnings.length === 0 ? {} : { warning: warnings.join(" ") } };
+    return {
+      ok: true,
+      value: {
+        brief: UNPLANNED_BRIEF,
+        ...(warnings.length === 0 ? {} : { warning: warnings.join(" ") }),
+      },
+    };
   } catch {
     return { ok: true, value: {} };
   }

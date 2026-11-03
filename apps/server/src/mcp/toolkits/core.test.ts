@@ -757,7 +757,14 @@ it.effect("a caller cannot interrupt a thread that runs above its own modes", ()
   ),
 );
 
-it.effect("an agent cannot answer a project approval card", () =>
+it.effect.each([
+  { card: "a project approval card", requestId: "project-action:card" },
+  { card: "a reply card that sends mail", requestId: "gmail-send:full-access-thread:0123abcd" },
+  {
+    card: "a reopened reply card",
+    requestId: "update-reopen:gmail-send:full-access-thread:0123abcd",
+  },
+])("an agent cannot answer $card", ({ requestId }) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const result = yield* server
@@ -765,7 +772,7 @@ it.effect("an agent cannot answer a project approval card", () =>
         name: "studio_pending_request_respond",
         arguments: {
           threadId: "full-access-thread",
-          requestId: "project-action:card",
+          requestId,
           answers: { approval: "Approve" },
         },
       })

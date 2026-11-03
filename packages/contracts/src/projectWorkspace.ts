@@ -303,6 +303,8 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
     projectId: ProjectId,
     /** With `update_in_progress`: the update is installed and its release is being checked. */
     verifying: Schema.optional(Schema.Boolean),
+    /** With `provider_unavailable`: which provider cannot run and why, in a sentence or two. */
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
@@ -326,6 +328,7 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       model_required:
         "Connect a provider in Settings > Providers, then choose a coordinator model or a default project model.",
       provider_unavailable:
+        this.detail ??
         "The coordinator provider is unavailable. Enable it, install its CLI and sign in under Settings > Providers, or choose another coordinator model.",
       coordinator_tools_required:
         "This model cannot call tools to coordinate work. Choose a coordinator model with tool support.",

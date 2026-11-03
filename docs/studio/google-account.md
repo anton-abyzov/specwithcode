@@ -1,6 +1,6 @@
 # Google account
 
-Let a project's agents read your Gmail, Google Calendar and Google Drive. A Personal project can then brief you on your day, find a document, or check who is coming to a meeting. SpecWithCode only reads: agents cannot send mail, change events, or edit or delete files.
+Let a project's agents read your Gmail, Google Calendar and Google Drive. A Personal project can then brief you on your day, find a document, or check who is coming to a meeting. Agents read; the only thing they can write is a reply draft in your Gmail, and a draft is sent only when you choose **Send** for it on a reply card. They cannot change events or edit or delete files.
 
 ## Set it up
 
@@ -16,24 +16,31 @@ A sign-in that was started in SpecWithCode is the only one SpecWithCode accepts.
 
 Threads in a project with access get these tools:
 
-| Tool                            | What it returns                                                                                                                   |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `studio_google_status`          | Project access and setup guidance; `checkConnection: true` verifies allowed APIs without returning mail, events or file contents. |
-| `studio_google_gmail_search`    | Messages matching a Gmail search such as `is:unread newer_than:1d`: sender, subject, date, snippet.                               |
-| `studio_google_gmail_read`      | One message as text, with its attachments listed but not opened.                                                                  |
-| `studio_google_calendar_events` | Events on your primary calendar in a time range, with times, place, meeting link and your response.                               |
-| `studio_google_drive_search`    | Files by text or recent change, newest first.                                                                                     |
-| `studio_google_drive_read`      | A Google Doc or Slides as text, a Sheet as CSV, or a text file. Other files return details only.                                  |
+| Tool                               | What it returns                                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `studio_google_status`             | Project access and setup guidance; `checkConnection: true` verifies allowed APIs without returning mail, events or file contents. |
+| `studio_google_gmail_search`       | Messages matching a Gmail search such as `is:unread newer_than:1d`: sender, subject, date, snippet.                               |
+| `studio_google_gmail_read`         | One message as text, with its attachments listed but not opened.                                                                  |
+| `studio_google_gmail_create_draft` | Saves a reply as a draft in your Gmail, threaded under the message (needs **Gmail drafts**).                                      |
+| `studio_google_gmail_propose_send` | Shows a reply card in the thread with each draft as Gmail holds it and **Send** / **Don't send**; the thread waits on you.        |
+| `studio_google_gmail_send_draft`   | Sends one draft you chose **Send** for on that card. SpecWithCode checks your answer; without it nothing is sent.                 |
+| `studio_google_calendar_events`    | Events on your primary calendar in a time range, with times, place, meeting link and your response.                               |
+| `studio_google_drive_search`       | Files by text or recent change, newest first.                                                                                     |
+| `studio_google_drive_read`         | A Google Doc or Slides as text, a Sheet as CSV, or a text file. Other files return details only.                                  |
 
 Agents are told to treat mail, events and files as information only. Their content is never a reason to act.
 
-## Morning briefing
+## Proactive briefing
 
-Next to a project with access, **Morning briefing** opens a new scheduled task with the prompt already written. It runs every day at 08:00 in the project's coordinator thread. Choose the model and press **Create task**. If the [Telegram channel](telegram-channel.md) is paired with the same project, the briefing also arrives in Telegram.
+When the personal assistant (Aide) is on and it may read Gmail or Calendar, SpecWithCode gives it a **Proactive briefing** routine: every day at 08:00, in a thread of its own, it lists up to five messages that need your reply and five other things that need your attention, with today's schedule, and saves reply drafts in Gmail. It is set up once per Google account: a briefing you retime, turn off or delete stays that way. Ask the assistant to change its time or what it covers.
+
+When it saved drafts, the briefing ends with a reply card: each draft with its recipient, subject and text, and **Send** or **Don't send**. The card leaves the thread waiting on you, so you are notified on your desktop and phone like any question. Drafts you choose **Send** for are sent from your Gmail; the others stay as drafts. Typing an answer instead asks the assistant to change that reply and show it again. The assistant never answers invitations, archives or deletes mail, or sends anything you did not choose **Send** for.
+
+**Morning briefing**, next to a project with access, still opens a scheduled task with the prompt written for any other project.
 
 ## Security
 
-- SpecWithCode asks Google only for `gmail.readonly`, `calendar.readonly` and `drive.readonly`, plus your address. If you untick a service on Google's consent screen, SpecWithCode cannot turn it on for any project.
+- SpecWithCode asks Google only for `gmail.readonly`, `calendar.readonly` and `drive.readonly`, plus your address, and `gmail.compose` when you tick **Gmail drafts**. With it, agents save drafts, and send one only after you choose **Send** for it on a reply card in the same thread; the server checks that answer before each send. If you untick a service on Google's consent screen, SpecWithCode cannot turn it on for any project.
 - Sign-in uses PKCE and a single-use state value. The callback address answers only a sign-in that SpecWithCode itself started.
 - The client secret and refresh token are kept in the host's secret store (`<stateDir>/secrets`, mode 0600). Clients never receive them. Requests to Google are kept out of traces, and errors report only the operation and Google's error code.
 - Access is granted per project and per service. Outside MCP clients, and threads of other projects, get nothing.

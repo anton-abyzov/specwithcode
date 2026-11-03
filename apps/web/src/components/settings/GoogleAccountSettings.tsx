@@ -351,10 +351,11 @@ export function GoogleAccountSettingsPanel() {
             can brief you on your day, find a document or check who is coming to a meeting.
           </p>
           <p className="text-xs">
-            Access is read-only: agents cannot send, change or delete anything. SpecWithCode talks
-            Google from this machine, keeps the sign-in in a private file on this machine, and gives
-            a project nothing until you turn it on below. Only your Personal project starts with
-            access.
+            Agents read. With Gmail drafts on they save reply drafts, and send one only when you
+            choose Send for it on a reply card; they never change or delete anything. SpecWithCode
+            talks Google from this machine, keeps the sign-in in a private file on this machine, and
+            gives a project nothing until you turn it on below. Only your Personal project starts
+            with access.
           </p>
           {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
         </div>

@@ -320,6 +320,18 @@ export const ChromeClickInput = Schema.Struct({
   machine: MachineParam,
 });
 
+export const ChromeUploadInput = Schema.Struct({
+  paths: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(20)).annotate({
+    description:
+      "Absolute paths of the files on this machine, in the order the page should get them.",
+  }),
+  ref: RefParam,
+  selector: SelectorParam,
+  tabId: TabParam,
+  profile: ProfileParam,
+  machine: MachineParam,
+});
+
 export const ChromeTypeInput = Schema.Struct({
   text: Schema.String.annotate({ description: "Text to type into the element." }),
   ref: RefParam,
@@ -398,6 +410,7 @@ export const CHROME_TOOL_NAMES = [
   "chrome_click",
   "chrome_type",
   "chrome_press",
+  "chrome_upload",
   "chrome_screenshot",
   "chrome_evaluate",
   "chrome_close",

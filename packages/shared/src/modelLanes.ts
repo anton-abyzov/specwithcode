@@ -43,11 +43,10 @@ import {
   TIER_LABELS,
   type TaskClassification,
 } from "./taskRouting.ts";
+import { MODEL_TIER_LABELS } from "./modelTiers.ts";
 
-export const LANE_LABELS: Record<ModelLane, string> = {
-  complex: "Complex and creative",
-  routine: "Routine",
-};
+/** The lanes as the person ranks them: model tiers (see `modelTiers`). */
+export const LANE_LABELS: Record<ModelLane, string> = MODEL_TIER_LABELS;
 
 // ── Lane classification ──────────────────────────────────────────────
 

@@ -27,6 +27,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { isProjectActionRequestId } from "../../../project/projectActionRequestId.ts";
+import { isGmailSendRequestId } from "../google/sendApproval.ts";
 import {
   assertAccountInGrant,
   assertProjectReadable,
@@ -329,8 +330,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_pending_request_respond: writesThread((input) =>
     Effect.gen(function* () {
-      // Approval cards for project changes are the user's alone to answer.
-      if (isProjectActionRequestId(input.requestId))
+      // Approval cards for project changes, and reply cards whose Send sends
+      // mail, are the user's alone to answer.
+      if (isProjectActionRequestId(input.requestId) || isGmailSendRequestId(input.requestId))
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "Only the user can answer an approval card. Wait for their answer.",

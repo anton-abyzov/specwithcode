@@ -26,6 +26,30 @@ Width alone decides the layout now: from `WeaveSize.sidebarBreakpoint` (760 poin
 
 A phone build made with an iOS 26 SDK runs on Duo as a compatibility layout, scaled and letterboxed, and rotation rescales it. The copy installed on October 31 was such a build (DTSDKName iphoneos26.2), which explains "not using the full width". `Tools/device.sh` refuses an SDK older than 27.1; build device copies with `DEVELOPER_DIR=/Applications/Xcode-27.2.app`.
 
+## Coordinator beside a thread, November 2
+
+From `WeaveSize.sidebarBreakpoint`, with a project or Aide thread open, the column holds that thread's coordinator and the thread stays on the right. It opens at half the scene, on the hinge, and resizes up to 62% while leaving the thread 340 points; its width is stored apart from the list's (`swc.chatColumnWidth`). The column follows the project's active coordinator or else the thread's own machine, and its switcher changes only the column. "Show projects" in its header shows the list until the screen changes, and Settings > "Coordinator beside threads" turns it off (`swc.coordinatorBeside`). With no thread open the column is the list. A thread opened from a coordinator link lands on the right because the column chat uses the main stack's navigator. Upright at 669 points and folded, navigation stays the modal drawer.
+
+## List beside a thread, November 3
+
+The wide list's header holds the sidebar toggle, a way to change list level and one capsule with search and New chat; machine chips sit under it when there are two or more machines. With a project in view the list holds its threads on single lines; the header's back button returns to all projects. Its resting width is 42% of the scene, up to 420 points.
+
+Beside the list, a thread's title is plain text, its controls sit in the status rail when the scene reports one, and its composer names the machine ("Work on Office Mac"). A pill above the composer counts working agents: a coordinator's threads, or a thread's subagents. Hosted renders at 951x669 come from `DuoWideLayoutTests`.
+
+## Top edge, rail and project level, November 3
+
+An unfolded Duo reports no top inset and a status bar 2 points tall, yet the system takes touches along the top edge. On the Duo simulator the header's first control, at 4 points, did not fire when tapped above about 15 points. Headers now start 20 points down when the scene has a one-sided status rail (`EdgeInsets.hasStatusRail`). On that simulator's system status items, the clock and Wi-Fi centre sits 48 points from the edge and ends at about 98 points, so rail controls share that centre and start at 112 points.
+
+Projects no longer unfold in the wide list, which pushed every row below and took width from titles. A project row goes down a level in the same column; the header's back button returns. That level replaces the project picker menu. A hidden column can come back from a pushed thread.
+
+## One project in both columns, November 3
+
+The left column and the screen beside it are always about the same project: going into a project opens its coordinator on the right unless one of its chats is already there, and opening any chat ends the all-projects level. With a thread open, the column header's Coordinator and Threads switch chooses what the column holds, and the choice persists. The Threads label counts what needs you.
+
+Every thread row leads with its status in a fixed column, in the desktop's language from `ModStatGlyph`: speech bubble needs you, barred circle failed, spinner working, check finished, hollow dot idle or offline. A finished thread used to map to idle and idle drew nothing, so most rows had no status. Rows sort by `activityAt`, never `updatedAt`, so a status change or streamed update does not move them; All, Needs you, Working and Offline chips filter instead of grouping, hidden when empty. When a project spans machines each row names its machine, because the same check launched on two machines reads as a duplicate without it.
+
+Status words follow the desktop's: groups are Needs you, Working, Offline, Idle and Resolved. Waiting on subagents, CI, a review or a merge counts as Working, and "Waiting" survives only as a row's reason, such as "Waiting for CI". A count reads "1 needs you" or "2 need you". An ask found only in a thread's last message reads "Reply needed" and clears on reply; "Answer needed" stays for native question requests. `ThreadAttention` holds these rules, ported from `reportWaitReason` and `threadDependencyWait`.
+
 ## Simulator commands
 
 All runs use owned simulators booted with simctl; do not open Simulator.app. Browser checks, if added, must explicitly use headless Chrome with PWDEBUG=0 and PLAYWRIGHT_HTML_OPEN=never.

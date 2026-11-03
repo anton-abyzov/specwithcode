@@ -221,6 +221,10 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var activityAt: Date
   public var identity: ThreadIdentity
   public var waitsOnUser: Bool
+  /// Its last run finished, as opposed to a thread nothing has run in yet.
+  public var isDone = false
+  /// What it is waiting on other than the person ("Waiting for CI"); it counts as working.
+  public var waitReason: String?
   /// When the current run started, for "2m" style elapsed labels.
   public var workStartedAt: Date?
   public var isPinned: Bool
@@ -316,7 +320,7 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
     /// the provider's choices, empty for the default accept and decline.
     case approval(requestId: String, prompt: String, resolved: Bool, kind: String? = nil, options: [ApprovalChoice] = [])
     case question(requestId: String, prompt: String, resolved: Bool)
-    case subagent(title: String, child: ThreadRef?)
+    case subagent(title: String, child: ThreadRef?, isRunning: Bool = false)
     case error(message: String)
     case notice(text: String)
   }
@@ -327,6 +331,13 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
   public init(id: String, kind: Kind) {
     self.id = id
     self.kind = kind
+  }
+}
+
+extension TranscriptRow {
+  /// A subagent still at work. Most have no thread in the lists, so the row carries this itself.
+  public var isRunningSubagent: Bool {
+    if case .subagent(_, _, isRunning: true) = kind { true } else { false }
   }
 }
 
@@ -370,6 +381,8 @@ public final class ChatSession: Identifiable {
   public var lastError: String?
   /// The conversation could not be loaded; `AppEngine.reload` tries again.
   public var loadError: String?
+  /// Opening this chat may create the project's coordinator thread.
+  public var startsCoordinator = true
 
   public init(id: ChatTarget, title: String, subtitle: String, machineLabel: String, machineOnline: Bool) {
     self.id = id
@@ -634,7 +647,10 @@ public final class AppModel {
   /// A view showing a chat calls this on appear. The same chat can be on
   /// screen twice (the root and a pushed copy), and SwiftUI may run one's
   /// disappear after the other's appear, so viewers are counted.
-  public func openSession(_ session: ChatSession) {
+  /// `startingCoordinator` is false where the chat appears without being asked
+  /// for: the project's coordinator is then created by a send, not by looking.
+  public func openSession(_ session: ChatSession, startingCoordinator: Bool = true) {
+    if startingCoordinator || sessionViewers[session.id] == nil { session.startsCoordinator = startingCoordinator }
     sessionViewers[session.id, default: 0] += 1
     engine.open(session)
   }

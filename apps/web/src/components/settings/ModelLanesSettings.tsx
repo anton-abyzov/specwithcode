@@ -213,72 +213,16 @@ export function ModelLanesSettings() {
         serverScoped
         settingKeys={["modelLanes"]}
         mixed={mixedLanes}
-        id="model-lanes-complex"
-        title="Complex and creative lane"
-        description={
-          isProjectScope
-            ? "Frontier models for architecture, design, deep debugging and open-ended creative tasks in this project. The coordinator starts on the first available model."
-            : "Frontier models for architecture, design, deep debugging and open-ended creative tasks. The coordinator starts on the first available model. Projects can override it."
-        }
-        resetAction={
-          complexList.length > 0 ? (
-            <SettingResetButton label="complex lane" onClick={() => saveLane("complex", [])} />
-          ) : null
-        }
-        control={
-          <div className="flex items-center gap-2">
-            {canSeedFavorites && complexList.length < MAX_LANE_MODELS ? (
-              <Button
-                size="xs"
-                variant="outline"
-                className="gap-1.5"
-                onClick={() => seedFavoritesIntoLane("complex")}
-              >
-                <SparklesIcon className="size-3" />
-                Seed from favorites
-              </Button>
-            ) : null}
-            {pickerSelection ? (
-              <ProviderModelPicker
-                activeInstanceId={pickerSelection.instanceId}
-                model={pickerSelection.model}
-                lockedProvider={null}
-                instanceEntries={entries}
-                modelOptionsByInstance={modelOptions}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                triggerLabel={mixedLanes ? "Mixed" : "Add model"}
-                triggerAriaLabel="Add model to complex lane"
-                disabled={complexList.length >= MAX_LANE_MODELS}
-                onInstanceModelChange={(instanceId, model) =>
-                  saveLane("complex", addLaneModel(complexList, instanceId, model))
-                }
-              />
-            ) : null}
-          </div>
-        }
-      >
-        <LaneList
-          lane="complex"
-          models={complexList}
-          providers={providers}
-          onChange={(models) => saveLane("complex", models)}
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        serverScoped
-        settingKeys={["modelLanes"]}
-        mixed={mixedLanes}
         id="model-lanes-routine"
-        title="Routine lane"
+        title="Everyday work"
         description={
           isProjectScope
-            ? "Default models for regular and well-specified tasks in this project (e.g. Claude Opus 5.5). When a provider is exhausted or limited, advances to the next available model."
-            : "Default models for regular and well-specified tasks (e.g. Claude Opus 5.5). When a provider is exhausted or limited, advances to the next available model. Projects can override it."
+            ? "Your models for regular, well-specified tasks in this project, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work."
+            : "Your models for regular, well-specified tasks, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work. Projects can override it."
         }
         resetAction={
           routineList.length > 0 ? (
-            <SettingResetButton label="routine lane" onClick={() => saveLane("routine", [])} />
+            <SettingResetButton label="everyday work" onClick={() => saveLane("routine", [])} />
           ) : null
         }
         control={
@@ -303,7 +247,7 @@ export function ModelLanesSettings() {
                 modelOptionsByInstance={modelOptions}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 triggerLabel={mixedLanes ? "Mixed" : "Add model"}
-                triggerAriaLabel="Add model to routine lane"
+                triggerAriaLabel="Add model to everyday work"
                 disabled={routineList.length >= MAX_LANE_MODELS}
                 onInstanceModelChange={(instanceId, model) =>
                   saveLane("routine", addLaneModel(routineList, instanceId, model))
@@ -318,6 +262,62 @@ export function ModelLanesSettings() {
           models={routineList}
           providers={providers}
           onChange={(models) => saveLane("routine", models)}
+        />
+      </SettingsRow>
+
+      <SettingsRow
+        serverScoped
+        settingKeys={["modelLanes"]}
+        mixed={mixedLanes}
+        id="model-lanes-complex"
+        title="Hardest work"
+        description={
+          isProjectScope
+            ? "Your best models for architecture, design, deep debugging and open-ended work in this project, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work."
+            : "Your best models for architecture, design, deep debugging and open-ended work, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work. Projects can override it."
+        }
+        resetAction={
+          complexList.length > 0 ? (
+            <SettingResetButton label="hardest work" onClick={() => saveLane("complex", [])} />
+          ) : null
+        }
+        control={
+          <div className="flex items-center gap-2">
+            {canSeedFavorites && complexList.length < MAX_LANE_MODELS ? (
+              <Button
+                size="xs"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => seedFavoritesIntoLane("complex")}
+              >
+                <SparklesIcon className="size-3" />
+                Seed from favorites
+              </Button>
+            ) : null}
+            {pickerSelection ? (
+              <ProviderModelPicker
+                activeInstanceId={pickerSelection.instanceId}
+                model={pickerSelection.model}
+                lockedProvider={null}
+                instanceEntries={entries}
+                modelOptionsByInstance={modelOptions}
+                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                triggerLabel={mixedLanes ? "Mixed" : "Add model"}
+                triggerAriaLabel="Add model to hardest work"
+                disabled={complexList.length >= MAX_LANE_MODELS}
+                onInstanceModelChange={(instanceId, model) =>
+                  saveLane("complex", addLaneModel(complexList, instanceId, model))
+                }
+              />
+            ) : null}
+          </div>
+        }
+      >
+        <LaneList
+          lane="complex"
+          models={complexList}
+          providers={providers}
+          onChange={(models) => saveLane("complex", models)}
         />
       </SettingsRow>
 

@@ -1,3 +1,4 @@
+import SwiftUI
 import CoreGraphics
 
 /// Spacing steps, named after the Weave tokens (wv-space-1 is 4 pt).
@@ -61,4 +62,23 @@ public nonisolated enum WeaveSize {
   /// Below it (a folded phone, an unfolded Duo held upright, Split View) the
   /// chat keeps the whole width and navigation is the modal drawer.
   public static let sidebarBreakpoint: CGFloat = 760
+  /// An iPhone Duo reports its status bar as a trailing rail and no top inset,
+  /// but the system still takes touches along the top edge: on the Duo
+  /// simulator a button there did not fire above about 15 points. Headers start
+  /// this far down, which also clears the display's rounded corners.
+  public static let statusRailHeaderTop: CGFloat = 20
+  /// From the top of the screen to the first control in the rail, below the
+  /// clock and Wi-Fi ring, which end at about 98 points.
+  public static let statusRailClearance: CGFloat = 112
+  /// The clock and Wi-Fi sit this far inward of the rail's centre (measured at 48
+  /// points from the edge of the 84-point rail).
+  public static let statusRailCenterOffset: CGFloat = 6
+  /// Narrower trailing regions are a landscape phone's camera housing, not a rail.
+  public static let statusRailMinWidth: CGFloat = 70
+}
+
+public extension EdgeInsets {
+  /// A status rail: a region on one side only and no top inset. A landscape
+  /// phone reports both sides, so it does not count.
+  var hasStatusRail: Bool { top == 0 && (leading > 0) != (trailing > 0) }
 }

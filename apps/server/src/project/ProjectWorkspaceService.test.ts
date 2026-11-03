@@ -448,7 +448,7 @@ it("preserves maximum instructions and goal while bounding memory and link inven
   assert.include(text, "copied verbatim");
   assert.include(text, "truncated");
 });
-it("teaches the personal assistant to turn on one proactive briefing that drafts and never sends", () => {
+it("teaches the personal assistant its one proactive briefing, which sends only replies chosen on its card", () => {
   const text = Workspace.projectContextText({
     projectId: "p",
     threadId: "c",
@@ -463,6 +463,8 @@ it("teaches the personal assistant to turn on one proactive briefing that drafts
   assert.include(text, "titled 'Proactive briefing'");
   assert.include(text, "prompt '/proactive-briefing'");
   assert.include(text, "never a second");
+  assert.include(text, "SpecWithCode sets up");
+  assert.include(text, "studio_google_gmail_propose_send");
   const project = Workspace.projectContextText({
     projectId: "p",
     threadId: "c",
@@ -555,6 +557,13 @@ it("asks a coordinator for an increment on every launch only in a SpecWeave proj
   assert.notInclude(text(undefined), line);
   // Workers get no coordinator line.
   assert.notInclude(text(true, "w"), line);
+  // Workers get the sizing rule on every turn, so a question that later turns
+  // into a build still meets it; projects without SpecWeave never see it.
+  const sizing = "When this thread has no increment: If the work grows past a small fix";
+  assert.include(text(true, "w"), sizing);
+  assert.include(text(true, "w"), '`specweave create-increment "<title>"`');
+  assert.notInclude(text(false, "w"), sizing);
+  assert.notInclude(text(true), sizing);
   // One line on top of the plain role's budget.
   assert.isAtMost(text(true).length - text(false).length, 300);
 });

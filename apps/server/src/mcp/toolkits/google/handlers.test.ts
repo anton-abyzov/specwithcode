@@ -148,19 +148,22 @@ it.effect.each(["read-only", "full-access"] as const)(
     }),
 );
 
-it("offers agents reads and reply drafts only, and no way to send or change access", () => {
+it("offers agents reads, reply drafts and card-approved sending only, and no way to change access", () => {
   expect(Object.keys(GoogleToolkit.tools).sort()).toEqual([
     "studio_google_calendar_events",
     "studio_google_drive_read",
     "studio_google_drive_search",
     "studio_google_gmail_create_draft",
+    "studio_google_gmail_propose_send",
     "studio_google_gmail_read",
     "studio_google_gmail_search",
+    "studio_google_gmail_send_draft",
     "studio_google_status",
   ]);
+  // The only way to send is a draft the person answered Send for on the reply card.
   expect(
     Object.keys(GoogleToolkit.tools).filter((name) => /send|delete|modify/u.test(name)),
-  ).toEqual([]);
+  ).toEqual(["studio_google_gmail_propose_send", "studio_google_gmail_send_draft"]);
   // MCP refuses to register (and the server never starts) without an object root.
   for (const tool of Object.values(GoogleToolkit.tools)) {
     expect(Tool.getJsonSchema(tool)).toMatchObject({ type: "object" });

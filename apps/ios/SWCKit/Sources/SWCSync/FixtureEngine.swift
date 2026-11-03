@@ -758,7 +758,7 @@ public final class FixtureEngine: AppEngine {
       let threads = model?.threads(in: ref) ?? []
       let working = threads.filter { $0.activity == .working }.count
       let needs = threads.filter { $0.activity == .needsYou }.count
-      var summary = "Here's where **\(title)** stands: \(working) working, \(needs) waiting for you, \(threads.count - working - needs) idle."
+      var summary = "Here's where **\(title)** stands: \(working) working, \(needsYouLabel(needs)), \(threads.count - working - needs) idle."
       if let first = threads.first(where: { $0.activity == .needsYou }) {
         summary += "\n\n*\(first.title)* needs an answer before it can continue."
       }
@@ -923,7 +923,7 @@ private enum FixtureSample {
   static func threads(now: Date) -> [ThreadSummary] {
     func ago(_ minutes: Double) -> Date { now.addingTimeInterval(-minutes * 60) }
     func thread(_ id: String, _ project: ProjectRef, _ projectTitle: String, _ machine: String, _ title: String, _ activity: ThreadActivity, _ preview: String, updated: Double, started: Double? = nil, pinned: Bool = false, resolved: Bool = false, unread: Bool = false, plan: (Int, Int)? = nil) -> ThreadSummary {
-      ThreadSummary(
+      var summary = ThreadSummary(
         ref: ThreadRef(environmentId: project.environmentId, threadId: id),
         projectRef: project,
         projectTitle: projectTitle,
@@ -942,6 +942,8 @@ private enum FixtureSample {
           : id == "t-ledger" ? ThreadIdentity(provider: "GitHub Copilot", model: "Opus 5.5", providerBrand: "copilot", modelBrand: "claude")
           : ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude", modelBrand: "claude")
       )
+      summary.isDone = activity == .idle
+      return summary
     }
     return [
       thread("t-release", specweave, "SpecWeave", "Office Mac", "Release 3.1 checklist", .needsYou, "Wants to run npm publish --tag next", updated: 1, started: 9, unread: true, plan: (3, 5)),

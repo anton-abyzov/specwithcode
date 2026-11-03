@@ -7,10 +7,13 @@ public struct TitleCapsule<Icon: View>: View {
   let subtitle: String?
   let action: (() -> Void)?
   let icon: Icon
+  /// Text only, without the glass: for a wide thread, whose title sits on the transcript.
+  var isPlain = false
 
-  public init(title: String, subtitle: String? = nil, action: (() -> Void)? = nil, @ViewBuilder icon: () -> Icon) {
+  public init(title: String, subtitle: String? = nil, isPlain: Bool = false, action: (() -> Void)? = nil, @ViewBuilder icon: () -> Icon) {
     self.title = title
     self.subtitle = subtitle
+    self.isPlain = isPlain
     self.action = action
     self.icon = icon()
   }
@@ -46,17 +49,23 @@ public struct TitleCapsule<Icon: View>: View {
       .lineLimit(1)
       .truncationMode(.tail)
     }
-    .padding(.leading, Icon.self == EmptyView.self ? 14 : WeaveSpacing.s2)
-    .padding(.trailing, 14)
+    .padding(.leading, isPlain ? 0 : Icon.self == EmptyView.self ? 14 : WeaveSpacing.s2)
+    .padding(.trailing, isPlain ? 0 : 14)
     .frame(minHeight: WeaveSize.control)
-    .weaveGlass(in: Capsule(), interactive: action != nil)
-    .contentShape(Capsule())
+    .plainOrGlass(isPlain, interactive: action != nil)
+    .contentShape(Rectangle())
   }
 }
 
 extension TitleCapsule where Icon == EmptyView {
-  public init(title: String, subtitle: String? = nil, action: (() -> Void)? = nil) {
-    self.init(title: title, subtitle: subtitle, action: action) { EmptyView() }
+  public init(title: String, subtitle: String? = nil, isPlain: Bool = false, action: (() -> Void)? = nil) {
+    self.init(title: title, subtitle: subtitle, isPlain: isPlain, action: action) { EmptyView() }
+  }
+}
+
+extension View {
+  @ViewBuilder fileprivate func plainOrGlass(_ isPlain: Bool, interactive: Bool) -> some View {
+    if isPlain { self } else { weaveGlass(in: Capsule(), interactive: interactive) }
   }
 }
 

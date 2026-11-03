@@ -988,6 +988,16 @@ it.effect.each(["missing", "disabled", "signed-out", "unknown", "no-tools"] as c
           expect(result.failure.message).toContain(
             scenario === "no-tools" ? "tool support" : "Settings > Providers",
           );
+          // The refusal names the provider and model it could not run, and why.
+          if (scenario !== "no-tools")
+            expect(result.failure.message).toMatch(
+              {
+                missing: /^claude · sonnet is not set up on this machine\. /,
+                disabled: /^claude · Sonnet is turned off in Settings > Providers\. /,
+                "signed-out": /^claude · Sonnet is not signed in\. /,
+                unknown: /^claude · Sonnet is not signed in\. /,
+              }[scenario],
+            );
         }
         expect(f.updates).toEqual([]);
         expect(f.launches).toEqual([]);

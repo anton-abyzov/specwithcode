@@ -31,7 +31,9 @@ nonisolated enum Elapsed {
 nonisolated struct ThreadGroups: Equatable {
   /// Waiting for an answer, or failed.
   var needsYou: [ThreadSummary] = []
+  /// Running, or waiting on subagents, CI, a review or a merge.
   var working: [ThreadSummary] = []
+  var offline: [ThreadSummary] = []
   var idle: [ThreadSummary] = []
   var resolved: [ThreadSummary] = []
 
@@ -43,13 +45,17 @@ nonisolated struct ThreadGroups: Equatable {
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }
     for thread in threads.sorted(by: order) where needle.isEmpty || thread.matches(needle) {
-      if thread.isUnknown || !thread.machineOnline {
+      if !thread.machineOnline {
+        if thread.isResolved { resolved.append(thread) } else { offline.append(thread) }
+      }
+      else if thread.isUnknown {
         if thread.isResolved { resolved.append(thread) } else { idle.append(thread) }
       }
       else if thread.activity == .needsYou { needsYou.append(thread) }
       else if thread.activity == .working { working.append(thread) }
       else if thread.waitsOnUser { needsYou.append(thread) }
       else if thread.isResolved { resolved.append(thread) }
+      else if thread.waitReason != nil { working.append(thread) }
       else {
         switch thread.activity {
         case .needsYou, .failed: needsYou.append(thread)
@@ -60,7 +66,7 @@ nonisolated struct ThreadGroups: Equatable {
     }
   }
 
-  var isEmpty: Bool { needsYou.isEmpty && working.isEmpty && idle.isEmpty && resolved.isEmpty }
+  var isEmpty: Bool { needsYou.isEmpty && working.isEmpty && offline.isEmpty && idle.isEmpty && resolved.isEmpty }
 }
 
 /// Drawer search over projects and threads.

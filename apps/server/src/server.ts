@@ -222,6 +222,7 @@ import * as CoordinatorLease from "./project/CoordinatorLease.ts";
 import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
+import * as AideBriefingSetup from "./project/AideBriefingSetup.ts";
 import * as LaunchedWorkerWake from "./project/LaunchedWorkerWake.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffPeers from "./handoff/handoffPeers.ts";
@@ -790,7 +791,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(StatusMonitor.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   ),
   // Read-only Gmail, Calendar and Drive for the projects the person turns them on for.
-  GoogleAccountService.layer.pipe(Layer.provide(GoogleApi.layer)),
+  // Gives this machine's assistant its daily briefing once it may read mail or calendar.
+  Layer.effectDiscard(AideBriefingSetup.start).pipe(
+    Layer.provideMerge(GoogleAccountService.layer.pipe(Layer.provide(GoogleApi.layer))),
+  ),
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,

@@ -2,6 +2,18 @@ import SwiftUI
 import SWCSync
 import Weave
 
+private nonisolated struct BesideCoordinatorKey: EnvironmentKey {
+  static let defaultValue = false
+}
+
+extension EnvironmentValues {
+  /// This chat is the coordinator in the wide column, beside its thread.
+  nonisolated var isBesideCoordinator: Bool {
+    get { self[BesideCoordinatorKey.self] }
+    set { self[BesideCoordinatorKey.self] = newValue }
+  }
+}
+
 /// A conversation with Aide, a project coordinator or a thread.
 struct ChatView: View {
   let target: ChatTarget
@@ -24,6 +36,8 @@ private struct ChatScreen: View {
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
+  @Environment(\.isWideLayout) private var wide
+  @Environment(\.isBesideCoordinator) private var isBesideCoordinator
   @Environment(\.verticalSizeClass) private var verticalSizeClass
 
   @FocusState private var composerFocused: Bool
@@ -39,6 +53,7 @@ private struct ChatScreen: View {
   @State private var showingIncrement = false
   @State private var deviceViewer: DeviceViewerRoute?
   @State private var headerWidth: CGFloat = 0
+  @State private var railWidth: CGFloat = 0
   @State private var increment: IncrementProgress?
   @State private var choosingAttachment = false
   @State private var preparingPhotos = 0
@@ -53,6 +68,8 @@ private struct ChatScreen: View {
     transcript
       .edgeBar(.bottom) { composerArea }
       .screenChrome { header }
+      .overlay(alignment: .topTrailing) { rail }
+      .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing } action: { railWidth = $0 }
       .sheet(isPresented: $showingHandoff) {
         if let thread = target.threadRef {
           HandoffSheet(thread: thread) { next in nav.push(.chat(.thread(next))) }
@@ -68,7 +85,7 @@ private struct ChatScreen: View {
         deviceViewer = pending
       }
       .task(id: incrementKey) { await loadIncrement() }
-      .onAppear { model.openSession(session) }
+      .onAppear { model.openSession(session, startingCoordinator: !isBesideCoordinator) }
       .onDisappear {
         openingLink?.cancel()
         // Navigation must not restore a keyboard over a hidden safe-area bar.
@@ -106,6 +123,11 @@ private struct ChatScreen: View {
       }
   }
 
+  /// Beside a thread, another machine's coordinator replaces only this column.
+  private func showOrchestrator(_ ref: ProjectRef) {
+    if isBesideCoordinator { router.chosenCoordinator = ref } else { router.open(.project(ref)) }
+  }
+
   // MARK: Transcript
 
   private var transcript: some View {
@@ -134,7 +156,7 @@ private struct ChatScreen: View {
             busyRequests: busyRequests,
             thinkingBrand: thinkingBrand,
             onDecision: { requestId, decision in respond(requestId, decision) },
-            onOpenThread: { nav.push(.chat(.thread($0))) },
+            onOpenThread: { router.pushThread($0, on: nav, in: model) },
             onOpenLink: { openThreadLink($0, in: row) },
             environmentId: target.environmentId
           )
@@ -221,7 +243,7 @@ private struct ChatScreen: View {
           title: machine.recoveryTitle,
           message: "This machine is unavailable. \(other.machineLabel)'s coordinator for this project is available now.",
           actionTitle: "View on \(other.machineLabel)",
-          action: { router.open(.project(other.ref)) }
+          action: { showOrchestrator(other.ref) }
         )
       } else {
         transcriptPlaceholder(
@@ -316,17 +338,53 @@ private struct ChatScreen: View {
 
   // MARK: Header
 
-  private var header: some View {
-    // On narrow phones (iPhone SE, mini, the 6.1-inch models) the Threads
-    // label gives its width to the title, so the title and subtitle fit.
-    header(threadsLabel: headerWidth >= 380)
-      .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+  @ViewBuilder private var header: some View {
+    if isBesideCoordinator {
+      ColumnHeader {
+        ColumnActions()
+      } modeTrailing: {
+        if case let .project(project) = target, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1 {
+          OrchestratorSwitcher(current: project)
+            .weaveGlass(in: Capsule(), interactive: true)
+        }
+        if !session.machineOnline {
+          WeaveIconButton("laptopcomputer", label: "Connection options") {
+            nav.push(.machine(target.environmentId))
+          }
+          .accessibilityIdentifier("chat.connection-options")
+        }
+        switch target {
+        case let .aide(ref), let .project(ref):
+          WeaveIconButton("gearshape", label: "Project settings") { router.sheet = .projectSettings(ref) }
+            .accessibilityIdentifier("column.project-settings")
+        case .thread:
+          EmptyView()
+        }
+      }
+    } else {
+      // On narrow phones (iPhone SE, mini, the 6.1-inch models) the Threads
+      // label gives its width to the title, so the title and subtitle fit.
+      header(threadsLabel: headerWidth >= 380)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+    }
   }
 
   private func header(threadsLabel: Bool) -> some View {
     // Beside the sidebar the title leads the detail column, as on iPad.
     ScreenHeader(alignment: target.threadRef == nil && !sidebarVisible ? .center : .leading) {
-      if isPushed { BackButton() } else if !sidebarVisible { MenuButton() }
+      if isPushed {
+        // A hidden column must come back from any thread, not only the root chat.
+        if !sidebarVisible, !isBesideCoordinator, wide {
+          HStack(spacing: WeaveSpacing.s2) {
+            BackButton()
+            MenuButton()
+          }
+        } else {
+          BackButton()
+        }
+      } else if !sidebarVisible {
+        MenuButton()
+      }
     } center: {
       titleCapsule
     } trailing: {
@@ -340,35 +398,64 @@ private struct ChatScreen: View {
         case let .aide(project), let .project(project):
           let needsYou = model.threads(in: project).contains { $0.needsAttention }
           // One glass capsule: the machine this coordinator runs on, a
-          // hairline, then the project's threads.
-          HStack(spacing: 0) {
-            if case .project = target, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1 {
-              OrchestratorSwitcher(current: project)
-              Rectangle()
-                .fill(Color.weave.line)
-                .frame(width: WeaveSize.hairline, height: 20)
-                .accessibilityHidden(true)
+          // hairline, then the project's threads, which the list beside it
+          // already shows on a wide screen.
+          let switches: Bool = {
+            guard case .project = target else { return false }
+            return OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1
+          }()
+          if switches || !sidebarVisible {
+            HStack(spacing: 0) {
+              if switches {
+                OrchestratorSwitcher(current: project)
+                if !sidebarVisible {
+                  Rectangle()
+                    .fill(Color.weave.line)
+                    .frame(width: WeaveSize.hairline, height: 20)
+                    .accessibilityHidden(true)
+                }
+              }
+              if !sidebarVisible {
+                Button {
+                  nav.push(.overview(project))
+                } label: {
+                  Label("Threads", systemImage: "bubble.left.and.bubble.right")
+                    .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
+                    .font(.weave(.callout, weight: .semibold))
+                    .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
+                    .padding(.horizontal, WeaveSpacing.s3)
+                    .frame(minHeight: WeaveSize.minTap)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableStyle())
+                .accessibilityLabel("Threads")
+                .accessibilityIdentifier("chat.threads")
+              }
             }
-            Button {
-              nav.push(.overview(project))
-            } label: {
-              Label("Threads", systemImage: "bubble.left.and.bubble.right")
-                .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
-                .font(.weave(.callout, weight: .semibold))
-                .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
-                .padding(.horizontal, WeaveSpacing.s3)
-                .frame(minHeight: WeaveSize.minTap)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(PressableStyle())
-            .accessibilityLabel("Threads")
-            .accessibilityIdentifier("chat.threads")
+            .weaveGlass(in: Capsule(), interactive: true)
           }
-          .weaveGlass(in: Capsule(), interactive: true)
         case let .thread(thread):
-          threadControls(thread)
+          if !usesRail { threadControls(thread) }
         }
       }
+    }
+  }
+
+  /// Beside the list, a thread's controls move into the status rail, under
+  /// the clock and Wi-Fi of an unfolded iPhone Duo and on the same centre.
+  private var usesRail: Bool {
+    sidebarVisible && !isBesideCoordinator && target.threadRef != nil && railWidth >= WeaveSize.statusRailMinWidth
+  }
+
+  @ViewBuilder private var rail: some View {
+    if usesRail, let thread = target.threadRef {
+      VStack(spacing: 0) { threadControlButtons(thread) }
+        .padding(.vertical, 2)
+        .weaveGlass(in: Capsule(), interactive: true)
+        .padding(.top, WeaveSize.statusRailClearance)
+        .padding(.trailing, railWidth / 2 + WeaveSize.statusRailCenterOffset - WeaveSize.minTap / 2)
+        .ignoresSafeArea(.container, edges: .trailing)
+        .accessibilityIdentifier("chat.rail")
     }
   }
 
@@ -381,44 +468,46 @@ private struct ChatScreen: View {
       }
       .accessibilityHint("Opens project settings")
     case let .thread(ref):
-      TitleCapsule(title: model.thread(ref)?.title ?? session.title, subtitle: session.subtitle, action: { router.sheet = .threadInfo(ref) })
+      TitleCapsule(title: model.thread(ref)?.title ?? session.title, subtitle: session.subtitle, isPlain: sidebarVisible, action: { router.sheet = .threadInfo(ref) })
         .accessibilityHint("Shows thread details")
     }
   }
 
   private func threadControls(_ ref: ThreadRef) -> some View {
+    HStack(spacing: 0) { threadControlButtons(ref) }
+      .padding(.horizontal, 2)
+      .weaveGlass(in: Capsule(), interactive: true)
+  }
+
+  @ViewBuilder private func threadControlButtons(_ ref: ThreadRef) -> some View {
     let summary = model.thread(ref)
     let machine = model.machine(ref.environmentId)
     let status = machine?.status.weaveStatus ?? (session.machineOnline ? .online : .offline)
-    return HStack(spacing: 0) {
-      deviceButton(ref)
-      Button {
-        nav.push(.machine(ref.environmentId))
-      } label: {
-        MachineBadge(status: status, size: 17)
-          .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(PressableStyle())
-      .accessibilityLabel(session.machineOnline ? "\(session.machineLabel), \(status.label)" : "Connection options")
-      .accessibilityHint("Shows the machine")
-      .accessibilityIdentifier(session.machineOnline ? "chat.machine" : "chat.connection-options")
-
-      Menu {
-        threadMenu(ref, summary: summary)
-      } label: {
-        Image(systemName: "ellipsis")
-          .font(.system(size: 17, weight: .semibold))
-          .foregroundStyle(Color.weave.ink)
-          .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
-          .contentShape(Rectangle())
-      }
-      .menuIndicator(.hidden)
-      .buttonStyle(.plain)
-      .accessibilityLabel("Thread actions")
+    deviceButton(ref)
+    Button {
+      nav.push(.machine(ref.environmentId))
+    } label: {
+      MachineBadge(status: status, size: 17)
+        .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
+        .contentShape(Rectangle())
     }
-    .padding(.horizontal, 2)
-    .weaveGlass(in: Capsule(), interactive: true)
+    .buttonStyle(PressableStyle())
+    .accessibilityLabel(session.machineOnline ? "\(session.machineLabel), \(status.label)" : "Connection options")
+    .accessibilityHint("Shows the machine")
+    .accessibilityIdentifier(session.machineOnline ? "chat.machine" : "chat.connection-options")
+
+    Menu {
+      threadMenu(ref, summary: summary)
+    } label: {
+      Image(systemName: "ellipsis")
+        .font(.system(size: 17, weight: .semibold))
+        .foregroundStyle(Color.weave.ink)
+        .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
+        .contentShape(Rectangle())
+    }
+    .menuIndicator(.hidden)
+    .buttonStyle(.plain)
+    .accessibilityLabel("Thread actions")
   }
 
   /// Opens the simulator or emulator this thread has open; a menu when it has several.
@@ -496,8 +585,46 @@ private struct ChatScreen: View {
   /// the increment row steps aside so the transcript stays in view.
   private var isShort: Bool { verticalSizeClass == .compact }
 
+  /// Agents at work under this chat: a coordinator's threads, a thread's subagents.
+  private var workingAgents: Int {
+    switch target {
+    case let .aide(project), let .project(project):
+      return model.threads(in: project).count { $0.activity == .working }
+    case .thread:
+      return session.rows.count(where: \.isRunningSubagent)
+    }
+  }
+
+  private func openAgents() {
+    switch target {
+    case let .aide(project), let .project(project):
+      if isBesideCoordinator {
+        withAnimation(.snappy) { router.showsCoordinatorBeside = false }
+      } else {
+        nav.push(.overview(project))
+      }
+    case .thread:
+      if let first = session.rows.first(where: \.isRunningSubagent) { withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(id: first.id) } }
+    }
+  }
+
   private var composerArea: some View {
     VStack(spacing: WeaveSpacing.s2) {
+      if sidebarVisible || isBesideCoordinator, !(isShort && composerFocused), workingAgents > 0 {
+        Button(action: openAgents) {
+          Label(workingAgents == 1 ? "1 agent" : "\(workingAgents) agents", systemImage: "person.2")
+            .font(.weave(.caption, weight: .medium))
+            .foregroundStyle(Color.weave.muted)
+            .padding(.horizontal, WeaveSpacing.s3)
+            .frame(minHeight: 32)
+            .weaveGlass(in: Capsule(), interactive: true)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressableStyle())
+        .frame(minHeight: WeaveSize.minTap)
+        .accessibilityLabel(workingAgents == 1 ? "1 agent working" : "\(workingAgents) agents working")
+        .accessibilityIdentifier("chat.agents")
+      }
       // Only a chat with a bound SpecWeave increment shows it; a coordinator
       // or Aide chat without one shows nothing here.
       if !(isShort && composerFocused), increment != nil || session.plan != nil {
@@ -585,7 +712,7 @@ private struct ChatScreen: View {
     switch target {
     case .aide: "Ask Aide anything…"
     case .project: "Message the coordinator…"
-    case .thread: "Message…"
+    case .thread: sidebarVisible && !session.machineLabel.isEmpty ? "Work on \(session.machineLabel)" : "Message…"
     }
   }
 
@@ -611,7 +738,7 @@ private struct ChatScreen: View {
         ? "\(label) is offline."
         : (session.sendBlockedReason == nil ? "\(label) is offline. Showing saved messages." : "Showing saved messages.")
       if let other = reachableOrchestrator {
-        return ConnectionNotice(message: "\(message) \(other.machineLabel)'s orchestrator is available.", kind: .warn, actionTitle: "View on \(other.machineLabel)", action: { router.open(.project(other.ref)) })
+        return ConnectionNotice(message: "\(message) \(other.machineLabel)'s orchestrator is available.", kind: .warn, actionTitle: "View on \(other.machineLabel)", action: { showOrchestrator(other.ref) })
       }
       return ConnectionNotice(message: message, kind: .warn, action: { model.engine.reconnect(machineId: machineId) })
     }
@@ -649,7 +776,7 @@ private struct ChatScreen: View {
     openingLink = Task {
       do {
         let thread = try await model.openThreadLink(threadId: route.threadId, environmentId: route.environmentId, threadIds: route.threadIds, title: route.title, label: label, from: origin)
-        if !Task.isCancelled { nav.push(.chat(.thread(thread))) }
+        if !Task.isCancelled { router.pushThread(thread, on: nav, in: model) }
       } catch {
         if !Task.isCancelled { router.showError(error) }
       }

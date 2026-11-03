@@ -68,7 +68,7 @@ export class GoogleApi extends Context.Service<
       readonly query?: Record<string, string | ReadonlyArray<string> | undefined>;
       readonly accessToken: Redacted.Redacted<string>;
     }) => Effect.Effect<unknown, GoogleApiError>;
-    /** POST a JSON body and read the JSON answer. Used only to save Gmail drafts. */
+    /** POST a JSON body and read the JSON answer. Used only to save a Gmail draft and to send one the person approved. */
     readonly postJson: (input: {
       readonly operation: string;
       readonly url: string;

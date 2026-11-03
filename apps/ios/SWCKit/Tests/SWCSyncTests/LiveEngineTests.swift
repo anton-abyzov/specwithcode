@@ -457,6 +457,27 @@ import SWCWire
     h.engine.close(session)
   }
 
+  @Test func onlyAChatAskedForStartsAMissingCoordinator() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    let shellId = try #require(h.machine.requests("orchestration.subscribeShell").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    let unstarted = FixtureJSON.project.replacingOccurrences(of: #""coordinatorThreadId": "project-coordinator:proj_1","#, with: "")
+    socket.push(FakeMachine.chunk(shellId, #"{"kind":"project.updated","sequence":43,"project":\#(unstarted)}"#))
+    #expect(await until { h.engine.machines[env]?.project("proj_1")?.workspaceSettings?.coordinatorThreadId == nil })
+
+    let session = h.model.session(for: .project(ProjectRef(environmentId: env, projectId: "proj_1")))
+    h.model.openSession(session, startingCoordinator: false)
+    #expect(await until { h.machine.payloads("orchestration.subscribeThread").last?["threadId"] == .string("project-coordinator:proj_1") })
+    #expect(h.machine.requests("projects.coordinatorStart").isEmpty)
+    h.model.closeSession(session)
+
+    let asked = h.model.session(for: .project(ProjectRef(environmentId: env, projectId: "proj_1")))
+    h.model.openSession(asked)
+    #expect(await until { !h.machine.requests("projects.coordinatorStart").isEmpty })
+    h.model.closeSession(asked)
+  }
+
   @Test func projectChatKeepsTheThreadASendStartedBeforeTheProjectNamesIt() async throws {
     let h = try await harness()
     #expect(await loaded(h))

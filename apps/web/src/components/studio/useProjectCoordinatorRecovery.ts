@@ -95,6 +95,8 @@ export function useProjectCoordinatorModelControls(input: {
     offPick?: boolean;
     /** Why the saved pick is out, with its reset time; the picker header names it. */
     reason?: string | null;
+    /** The saved pick cannot run at all (not prepared, off, signed out), rather than limited. */
+    setup?: boolean;
     onSwitchBack?: (() => void) | null;
     switching?: boolean;
   } | null;

@@ -44,6 +44,7 @@ private struct AppScreens: View {
   @State private var router: AppRouter
   @State private var keyboardInset: CGFloat = 0
   @Environment(\.sampleData) private var sampleData
+  @Environment(\.headerTopPadding) private var headerTopPadding
 
   init(model: AppModel) {
     self.model = model
@@ -88,7 +89,7 @@ private struct AppScreens: View {
         top: proxy.safeAreaInsets.top, leading: proxy.safeAreaInsets.leading,
         bottom: max(proxy.safeAreaInsets.bottom, keyboardInset), trailing: proxy.safeAreaInsets.trailing
       )
-      DrawerContainer(isOpen: $router.isDrawerOpen, isCollapsed: $router.isSidebarCollapsed, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
+      DrawerContainer(isOpen: $router.isDrawerOpen, isCollapsed: $router.isSidebarCollapsed, isChatColumn: router.besideCoordinator(in: model) != nil, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
         NavigationColumn()
       } content: {
         NavigationStack(path: $main.path) {
@@ -98,6 +99,7 @@ private struct AppScreens: View {
         }
         .background(Color.weave.canvas)
       }
+      .environment(\.headerTopPadding, insets.hasStatusRail ? WeaveSize.statusRailHeaderTop : headerTopPadding)
       .background { KeyboardInsetReader { keyboardInset = $0 } }
       .ignoresSafeArea()
     }
@@ -109,14 +111,26 @@ private struct AppScreens: View {
   private var launchKey: String { "\(model.isLoading)-\(model.machines.count)-\(model.projects.count)" }
 }
 
-/// Navigation beside or over the main stack: a native sidebar list in the
-/// persistent column, the phone drawer when it is modal.
+/// Navigation beside or over the main stack: the open thread's coordinator or
+/// a native sidebar list in the persistent column, the phone drawer when it is
+/// modal. The coordinator keeps the main stack's navigator from the
+/// environment, so a thread it opens lands on the right.
 private struct NavigationColumn: View {
   @Environment(\.isNavigationSidebarVisible) private var persistent
+  @Environment(AppModel.self) private var model
+  @Environment(AppRouter.self) private var router
 
   var body: some View {
     if persistent {
-      NavigationStack { SidebarView().fillsDrawerWidth() }
+      if let coordinator = router.besideCoordinator(in: model) {
+        NavigationStack {
+          ChatView(target: coordinator)
+            .environment(\.isBesideCoordinator, true)
+            .fillsDrawerWidth()
+        }
+      } else {
+        NavigationStack { SidebarView().fillsDrawerWidth() }
+      }
     } else {
       DrawerView()
     }

@@ -81,6 +81,14 @@ private struct GlobalSettingsRoot: View {
           model.appearance = AppearancePreference(rawValue: value) ?? .system
         }
       ))
+      GroupedCard {
+        WeaveToggleRow(
+          "Coordinator beside threads",
+          subtitle: "On an unfolded iPhone Duo or a wide window, keep the project's coordinator on the left while a thread is open.",
+          symbol: "rectangle.split.2x1",
+          isOn: Binding(get: { router.showsCoordinatorBeside }, set: { router.showsCoordinatorBeside = $0 })
+        )
+      }
     }
   }
 

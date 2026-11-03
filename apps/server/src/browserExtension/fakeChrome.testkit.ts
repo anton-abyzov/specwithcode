@@ -96,6 +96,10 @@ export function connectFake(
               return reply(message.id, {
                 result: { result: { value: { found: true, x: 10, y: 20, width: 5, height: 5 } } },
               });
+            if (expression.includes("new DataTransfer"))
+              return reply(message.id, {
+                result: { result: { value: { given: expression.match(/"name":/g)?.length ?? 0 } } },
+              });
             if (expression === "throw")
               return reply(message.id, {
                 result: {

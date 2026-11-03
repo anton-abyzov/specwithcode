@@ -20,6 +20,7 @@ import {
   ChromeTabsInput,
   ChromeTabsResult,
   ChromeTypeInput,
+  ChromeUploadInput,
   OrchestratorMcpFailure,
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
@@ -142,6 +143,14 @@ const ChromePressTool = make(
   ChromePageResult,
   ACT,
 );
+const ChromeUploadTool = make(
+  "chrome_upload",
+  "Upload files in Chrome",
+  "Give files on this machine to a page's file input, as a person choosing them would. Several paths on one input make a carousel or album. Click the page's upload button first if it has no file input yet; the input may be hidden, so omit ref and selector when the page has one. Only upload files the user asked for. Works with this machine's Chrome only.",
+  ChromeUploadInput,
+  ChromePageResult,
+  ACT,
+);
 export const ChromeScreenshotTool = make(
   "chrome_screenshot",
   "Screenshot Chrome tab",
@@ -185,6 +194,7 @@ export const ChromeStandardToolkit = Toolkit.make(
   ChromeClickTool,
   ChromeTypeTool,
   ChromePressTool,
+  ChromeUploadTool,
   ChromeEvaluateTool,
   ChromeCloseTool,
   ChromePeerTool,
@@ -201,6 +211,7 @@ export const ChromeToolkit = Toolkit.make(
   ChromeClickTool,
   ChromeTypeTool,
   ChromePressTool,
+  ChromeUploadTool,
   ChromeScreenshotTool,
   ChromeEvaluateTool,
   ChromeCloseTool,

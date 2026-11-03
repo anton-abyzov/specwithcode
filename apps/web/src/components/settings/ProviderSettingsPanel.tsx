@@ -1389,7 +1389,7 @@ export function EnvironmentProviderSettings({
         </SettingsGroup>
       </SettingsSection>
 
-      <SettingsSection title="Model lanes" reach={{ kind: "machine", name: environmentLabel }}>
+      <SettingsSection title="Model tiers" reach={{ kind: "machine", name: environmentLabel }}>
         <ModelLanesSettings />
       </SettingsSection>
 

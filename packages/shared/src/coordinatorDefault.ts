@@ -13,6 +13,7 @@ import {
 } from "@specweave-studio/contracts";
 
 import { canTakeTurn, isClaudeApiKeyProvider, isPerTokenProvider } from "./providerFallback.ts";
+import { providerSetupProblem } from "./providerSetup.ts";
 
 /** Opus 5.5 under any of the spellings a catalog uses for it. */
 const PREFERRED_MODEL = /opus[\s._-]*5[\s._-]*5(?!\d)/i;
@@ -52,24 +53,54 @@ export function coordinatorSelectionProblem(
   providers: ReadonlyArray<ServerProvider>,
 ): "provider_unavailable" | "coordinator_tools_required" | null {
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
-  if (
-    !provider ||
-    !provider.enabled ||
-    !provider.installed ||
-    !isProviderAvailable(provider) ||
-    provider.status === "error"
-  )
-    return "provider_unavailable";
-  const model = provider.models.find(
+  if (providerSetupProblem(provider, selection.model) !== null) return "provider_unavailable";
+  const model = provider?.models.find(
     (candidate) =>
       candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
   );
-  const signedIn =
-    provider.auth.status === "authenticated" ||
-    (provider.auth.status === "unknown" && provider.status === "ready");
-  if (!signedIn && model?.billing !== "local") return "provider_unavailable";
   if (model?.toolCalls === false) return "coordinator_tools_required";
   return null;
+}
+
+/**
+ * The `provider_unavailable` message for one selection: the provider and model
+ * by name, its own reason (`ACP Registry agent 'github-copilot-cli' has not
+ * been prepared on this environment.`), the way to fix it, and whether any
+ * other provider could have taken the turn instead.
+ */
+export function coordinatorUnavailableDetail(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+  input: { readonly nothingElseHasRoom: boolean },
+): string {
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  const providerName = provider?.displayName ?? selection.instanceId;
+  const modelName =
+    provider?.models.find(
+      (candidate) =>
+        candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+    )?.name ?? selection.model;
+  const label = `${providerName} · ${modelName}`;
+  const why = providerSetupProblem(provider, selection.model);
+  const sentence = (text: string) => text.replace(/\.?$/, ".");
+  // Our own reasons are fragments (`is not signed in`); a provider's status message is a sentence.
+  const first =
+    why === null
+      ? `${label} cannot run the coordinator on this machine.`
+      : /^[a-z]/.test(why)
+        ? sentence(`${label} ${why}`)
+        : `${label} cannot run on this machine: ${sentence(why)}`;
+  const fix =
+    provider?.driver === "acpRegistry" && provider.enabled && !provider.installed
+      ? `Open Settings > Providers > ${providerName} on that machine and choose Install / update agent, or choose another coordinator model.`
+      : `Fix it under Settings > Providers > ${providerName} on that machine, or choose another coordinator model.`;
+  return [
+    first,
+    input.nothingElseHasRoom ? "No other provider has room to run the coordinator instead." : null,
+    fix,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function builtInDefault(provider: ServerProvider): string | undefined {

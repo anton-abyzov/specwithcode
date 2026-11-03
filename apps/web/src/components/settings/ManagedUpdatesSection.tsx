@@ -12,10 +12,10 @@ import type { EnvironmentPresentation } from "../../state/environments";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 
 const consentLabels = {
-  "not-enrolled": "This connection has no update permission.",
-  enrolled: "This connection can manage updates.",
-  "other-controller": "Update permission belongs to another connection.",
-  revoked: "Update permission was revoked.",
+  "not-enrolled": "Update permission: Not granted.",
+  enrolled: "Update permission: Granted to this connection.",
+  "other-controller": "Update permission: Granted to another connection.",
+  revoked: "Update permission: Revoked.",
 };
 /**
  * Why the update agent's saved state may be frozen, from what launchd reports
@@ -56,11 +56,13 @@ export function ManagedUpdatesView(props: {
   return (
     <section
       aria-label={`Updates for ${props.label}`}
-      className="mt-2 flex max-w-xl flex-col gap-2 rounded-lg border border-border/60 p-3 text-xs"
+      className="mt-3 flex max-w-xl flex-col gap-2 rounded-lg border border-border/60 p-3 text-xs [--disabled-opacity:0.45]"
     >
       <div className="flex flex-wrap justify-between gap-2">
-        <span className="font-medium">Updates · {props.label}</span>
-        {status && <span>Installed {status.currentVersion ?? "unknown"}</span>}
+        <span className="font-medium">Updates</span>
+        {status?.currentVersion && (
+          <span className="text-muted-foreground">Service {status.currentVersion}</span>
+        )}
       </div>
       {!props.reachable ? (
         <p>Machine unreachable. Saved update permission has not changed.</p>
@@ -72,15 +74,15 @@ export function ManagedUpdatesView(props: {
         <p>
           {status.support === "unmanaged"
             ? "This machine does not have a managed service installation."
-            : "Managed updates are not supported on this installation."}
+            : "Managed updates are unavailable on this installation."}
         </p>
       ) : (
         <>
-          <p>
+          <p className="font-medium">
             {managedHere ? "Managed by this Mac's updater." : consentLabels[status.remoteConsent]}
           </p>
           <p>
-            Automatic updates:{" "}
+            Automatic updates on {props.label}:{" "}
             {status.localAutomation === "unavailable"
               ? "updater not installed"
               : status.localAutomation === "enabled"
@@ -100,6 +102,9 @@ export function ManagedUpdatesView(props: {
           )}
         </>
       )}
+      <p className="text-muted-foreground">
+        Update permission is separate from connection and agent work access.
+      </p>
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
@@ -116,33 +121,44 @@ export function ManagedUpdatesView(props: {
         )}
         {valid && !managedHere && (
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!props.canManage || props.pending}
-              onClick={status.remoteConsent === "enrolled" ? props.onRevoke : props.onAllow}
-            >
-              {status.remoteConsent === "enrolled" ? "Revoke permission" : "Allow this connection"}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!props.canCheck || status.remoteConsent !== "enrolled" || props.pending}
-              onClick={props.onCheck}
-            >
-              Check only
-            </Button>
+            {props.canManage && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={props.pending}
+                onClick={status.remoteConsent === "enrolled" ? props.onRevoke : props.onAllow}
+              >
+                {status.remoteConsent === "enrolled"
+                  ? "Revoke update permission"
+                  : "Grant update permission"}
+              </Button>
+            )}
+            {props.canCheck && status.remoteConsent === "enrolled" && (
+              <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onCheck}>
+                Check for updates
+              </Button>
+            )}
           </>
         )}
       </div>
       {valid && !managedHere && !props.canManage && (
-        <p>
-          A machine administrator must approve update permission. On this Mac, use the installed app
-          to approve it.
+        <p className="border-l-2 border-border pl-2 text-muted-foreground">
+          {status.remoteConsent === "enrolled"
+            ? `A machine administrator must change update permission on ${props.label}.`
+            : `A machine administrator must approve update permission for this connection on ${props.label}.`}
+          {props.local
+            ? " Use the installed app on this Mac."
+            : " Being connected does not grant update permission."}
         </p>
       )}
       {valid && !managedHere && (
-        <p>Check only finds releases; it does not download or install them.</p>
+        <p className="text-muted-foreground">
+          {status.remoteConsent !== "enrolled"
+            ? "Checking for updates requires permission for this connection."
+            : !props.canCheck
+              ? "This connection does not have maintenance access to check for updates."
+              : "Check for updates finds releases; it does not download or install them."}
+        </p>
       )}
     </section>
   );

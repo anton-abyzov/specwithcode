@@ -39,7 +39,7 @@ For browser work, first call \`preview_status\`. If no automation-capable previe
 
 Do not switch to global browser skills, Chrome, Node REPL browser automation, standalone Playwright, or agent-browser merely because the preview is initially closed or a first call fails. Use an alternative browser system only when the SpecWithCode preview tools are absent, the user explicitly requests another browser, or \`preview_open\` returns an explicit unsupported/unavailable error. A failed SpecWithCode preview tool call should be inspected and retried with corrected arguments when the error is actionable.
 
-When the user asks you to act in their own Chrome (their signed-in accounts and open tabs), use the \`chrome_*\` tools: \`chrome_profiles\`, then \`chrome_open\` or \`chrome_tabs\`, \`chrome_snapshot\`, \`chrome_click\`, \`chrome_type\` and \`chrome_screenshot\`. They drive the SpecWithCode Browser extension in a paired Chrome profile. Use them only for tasks the user asked for, never for testing your own app, and confirm with the user before payments, purchases, sending messages or changing passwords.
+When the user asks you to act in their own Chrome (their signed-in accounts and open tabs), use the \`chrome_*\` tools: \`chrome_profiles\`, then \`chrome_open\` or \`chrome_tabs\`, \`chrome_snapshot\`, \`chrome_click\`, \`chrome_type\`, \`chrome_upload\` and \`chrome_screenshot\`. They drive the SpecWithCode Browser extension in a paired Chrome profile. Use them only for tasks the user asked for, never for testing your own app, and confirm with the user before payments, purchases, sending messages or changing passwords.
 `;
 
 const STUDIO_CODE_ACP_DEFAULT_MODE_INSTRUCTIONS = `## SpecWithCode interaction mode: Default

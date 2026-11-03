@@ -1,4 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, ProjectId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ProviderInstanceId,
+} from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { act, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -252,4 +256,20 @@ it("adds API accounts from the row and counts every ready one", () => {
     ).props["data-status"],
   ).toBe("Continues on Hackathon 1, then the next of 2 API accounts");
   expect(addButton("Add another")).toBeDefined();
+});
+it("follows the model tiers when no fallback order is set, and offers Only these models", () => {
+  const section = (title: string) =>
+    renderer!.root.findAll((node) => node.type === "section" && node.props["aria-label"] === title);
+  expect(section("Fallback order")[0]!.props["data-status"]).toBe("Any ready provider");
+  expect(section("Only these models")).toHaveLength(0);
+  state.settings = {
+    ...state.settings,
+    modelLanes: {
+      complex: [{ instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" }],
+      routine: [],
+    },
+  };
+  act(() => renderer!.update(<ProviderLimitSettings />));
+  expect(section("Fallback order")[0]!.props["data-status"]).toBe("Uses your model tiers");
+  expect(section("Only these models")).toHaveLength(1);
 });
