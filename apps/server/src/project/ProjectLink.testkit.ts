@@ -28,6 +28,7 @@ import { planProjectCommand } from "../orchestration-v2/ProjectCommands.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectRow } from "../orchestration-v2/ProjectStore.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import * as CoordinatorRole from "./CoordinatorRole.ts";
 import {
   type CoordinatorStandbyRecord,
   CoordinatorStandbyStore,
@@ -145,8 +146,12 @@ export function machine(environment: string) {
     notes.set(projectId, existing);
     return existing;
   };
-  /** ProjectLink with the services it was built on, for services layered over it. */
+  /**
+   * ProjectLink with the services it was built on, for services layered over
+   * it, and the CoordinatorRole it publishes to.
+   */
   const layer = ProjectLink.layer.pipe(
+    Layer.provideMerge(CoordinatorRole.layer),
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.succeed(ServerEnvironment.ServerEnvironment, {

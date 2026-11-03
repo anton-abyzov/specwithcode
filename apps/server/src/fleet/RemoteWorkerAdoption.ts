@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   STANDBY_DELIVERED_RUN_IDS_MAX,
@@ -40,6 +41,12 @@ export interface AdoptWorkersInput {
   /** The coordinator this machine replaced. */
   readonly predecessor: LogicalProjectMember;
   readonly shadowWorkers: ReadonlyArray<CoordinatorStandbyShadowWorker>;
+  /**
+   * Other machines (environment ids) to claim the epoch on although no worker
+   * there is taken on, so the replaced coordinator steers nothing there either.
+   * Only machines this one has a link to are asked.
+   */
+  readonly claimOn?: ReadonlyArray<string> | undefined;
 }
 
 export interface AdoptWorkersResult {
@@ -49,6 +56,11 @@ export interface AdoptWorkersResult {
   readonly readOnly: ReadonlyArray<string>;
   /** Launches still in flight on the old coordinator, which it settles when it returns. */
   readonly waitingForPredecessor: number;
+  /**
+   * Machines (environment ids) whose claim got no answer: unreachable, not
+   * yet updated, or not linked to this one. A later retry may still claim there.
+   */
+  readonly unclaimed: ReadonlyArray<string>;
 }
 
 /** The shadow rows the old coordinator thread started that still have a result to report. */
@@ -123,12 +135,15 @@ const make = Effect.gen(function* () {
         input.predecessor,
       );
       const updatedAt = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
-      const machines = yield* targets.load.pipe(
+      // Unreadable targets claim nowhere this time, and say so, so a retry follows.
+      const loaded = yield* targets.load.pipe(
         Effect.map((config) => config?.machines ?? []),
-        Effect.orElseSucceed(() => []),
+        Effect.option,
       );
+      const machines = Option.getOrElse(loaded, () => []);
       const adopted: Array<string> = [];
       const readOnly: Array<string> = [];
+      const unclaimed: Array<string> = [];
 
       const rowFor = (
         shadow: CoordinatorStandbyShadowWorker,
@@ -169,15 +184,25 @@ const make = Effect.gen(function* () {
           ...(byMachine.get(shadow.environmentId) ?? []),
           shadow,
         ]);
+      for (const environmentId of input.claimOn ?? [])
+        if (
+          !byMachine.has(environmentId) &&
+          (Option.isNone(loaded) ||
+            machines.some((candidate) => candidate.environmentId === environmentId))
+        )
+          byMachine.set(environmentId, []);
 
       for (const [environmentId, shadows] of byMachine) {
         const machine = machines.find((candidate) => candidate.environmentId === environmentId);
-        const answer: ClaimAnswer & { readonly reason: string | null } =
+        const answer: ClaimAnswer & { readonly answered: boolean; readonly reason: string | null } =
           machine === undefined
             ? {
                 accepted: false,
+                answered: false,
                 origins: new Map(),
-                reason: "This Mac has no link to that machine.",
+                reason: Option.isNone(loaded)
+                  ? "This Mac could not read its list of machines."
+                  : "This Mac has no link to that machine.",
               }
             : yield* client
                 .call({
@@ -196,6 +221,7 @@ const make = Effect.gen(function* () {
                     const read = readClaimAnswer(value);
                     return {
                       ...read,
+                      answered: true,
                       reason: read.accepted
                         ? null
                         : `${machine.label} did not let this Mac take over its workers.`,
@@ -204,6 +230,7 @@ const make = Effect.gen(function* () {
                   Effect.catch((error) =>
                     Effect.succeed({
                       accepted: false,
+                      answered: false,
                       origins: new Map<string, string | null>(),
                       reason:
                         error.reason === "unsupported" || error.reason === "refused"
@@ -212,6 +239,7 @@ const make = Effect.gen(function* () {
                     }),
                   ),
                 );
+        if (!answer.answered) unclaimed.push(environmentId);
         for (const shadow of shadows) {
           const rowId = adoptedRowId(shadow.id);
           if (!answer.accepted) {
@@ -241,7 +269,7 @@ const make = Effect.gen(function* () {
           if (written.state === "following") yield* follower.follow(rowId);
         }
       }
-      return { adopted, readOnly, waitingForPredecessor } satisfies AdoptWorkersResult;
+      return { adopted, readOnly, waitingForPredecessor, unclaimed } satisfies AdoptWorkersResult;
     });
 
   return RemoteWorkerAdoption.of({ adopt });

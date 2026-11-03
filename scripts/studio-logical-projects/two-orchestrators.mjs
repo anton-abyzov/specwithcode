@@ -582,23 +582,43 @@ async function main() {
         }),
       });
     const conflicted = merges.filter((merge) => merge.result.conflicts.length > 0);
-    assert.equal(
-      conflicted.length,
-      1,
-      `One side records the concurrent edit: ${JSON.stringify(merges.map((m) => m.result))}`,
-    );
-    const { host: copyHost, result } = conflicted[0];
-    const contents = await Promise.all(
-      ["notes.md", result.conflicts[0].copy].map(
-        async (name) =>
-          (await rpc(copyHost, "projects.memoryRead", { projectId: copyHost.projectId, name }))
-            .content,
-      ),
-    );
-    assert.deepEqual(contents.toSorted(), ["M4 fixture notes", "Minis fixture notes"]);
-    check(
-      `Concurrent memory edits keep both versions (${copyHost.short} holds ${result.conflicts[0].copy})`,
-    );
+    if (conflicted.length > 0) {
+      // A conflict copy beside the winner.
+      assert.equal(
+        conflicted.length,
+        1,
+        `One side records the concurrent edit: ${JSON.stringify(merges.map((m) => m.result))}`,
+      );
+      const { host: copyHost, result } = conflicted[0];
+      const contents = await Promise.all(
+        ["notes.md", result.conflicts[0].copy].map(
+          async (name) =>
+            (await rpc(copyHost, "projects.memoryRead", { projectId: copyHost.projectId, name }))
+              .content,
+        ),
+      );
+      assert.deepEqual(contents.toSorted(), ["M4 fixture notes", "Minis fixture notes"]);
+      check(
+        `Concurrent memory edits keep both versions (${copyHost.short} holds ${result.conflicts[0].copy})`,
+      );
+    } else {
+      // The three-way merge keeps both versions in one file, marked, on both machines.
+      const merged = await Promise.all(
+        [m4, minis].map(
+          async (host) =>
+            (
+              await rpc(host, "projects.memoryRead", {
+                projectId: host.projectId,
+                name: "notes.md",
+              })
+            ).content,
+        ),
+      );
+      assert.equal(merged[0], merged[1], "Both machines hold the same merged note");
+      for (const version of ["M4 fixture notes", "Minis fixture notes"])
+        assert.ok(merged[0].includes(version), `The merged note keeps "${version}"`);
+      check("Concurrent memory edits keep both versions in one marked note on both machines");
+    }
   }
 
   // ── Browser: M4's page, with Minis in this device's saved machines ──
@@ -905,8 +925,8 @@ async function main() {
   for (const text of [
     m4ViewLabel,
     "View Minis fixture's orchestrator",
-    "Move coordinator to Minis fixture…",
-    /Migrate .*threads…/,
+    "Hand off coordinator to Minis fixture…",
+    /(Migrate|Move) .*threads…/,
   ])
     await menu.getByText(text, { exact: false }).first().waitFor({ timeout: 15000 });
   await shot("01-switcher-three-actions.png");

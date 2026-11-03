@@ -246,6 +246,8 @@ describe("coordinator epoch claims", () => {
       );
       // The new coordinator names its epoch; a later one (handed back by hand) also steers.
       expect(Exit.isSuccess(yield* steer(naming(M1, 5)))).toBe(true);
+      // M4 reaching the same epoch by itself is not the machine that claimed it.
+      fenced(yield* steer(naming(M4, 5)));
       expect(Exit.isSuccess(yield* steer(naming(M4, 6)))).toBe(true);
       // A claim for another project changes nothing here.
       expect(

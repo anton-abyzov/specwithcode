@@ -34,6 +34,7 @@ import * as ManagedRuntime from "effect/ManagedRuntime";
 import * as Schema from "effect/Schema";
 
 import {
+  type AdoptWorkersInput,
   adoptedRowId,
   adoptionCandidates,
   RemoteWorkerAdoption,
@@ -71,8 +72,9 @@ import {
 } from "./CoordinatorLease.ts";
 import * as CoordinatorLeaseRoute from "./CoordinatorLeaseRoute.ts";
 import { makeMemory } from "./CoordinatorLeaseStore.ts";
-import type {
-  CoordinatorStandbyShadowWorker,
+import { makeStandbyTakeover } from "./CoordinatorStandbyLoop.ts";
+import {
+  type CoordinatorStandbyShadowWorker,
   CoordinatorStandbyStore,
 } from "./CoordinatorStandbyStore.ts";
 import { makeStandbyWatch, STANDBY_TICK_MS } from "./CoordinatorStandbyWatch.ts";
@@ -92,6 +94,7 @@ const linkM3 = "22222222-2222-4222-8222-222222222222";
 const standbyOn = "33333333-3333-4333-8333-333333333333";
 const standbyOff = "44444444-4444-4444-8444-444444444444";
 const handToM3 = "55555555-5555-4555-8555-555555555555";
+const m4RunsAgain = "66666666-6666-4666-8666-666666666666";
 
 type Name = "m4" | "m1" | "m3";
 const NAMES: ReadonlyArray<Name> = ["m4", "m1", "m3"];
@@ -387,9 +390,49 @@ async function fleet(options: { readonly afterMinutes?: 5 | 15 | 30 | 60 } = {})
   /** M4's lease records: its file on disk, which outlives a restart. */
   const leaseRecords = makeMemory();
   let lease: CoordinatorLeaseShape = await makeLease();
-  /** M1's standby watch: making it is the process start. */
-  const makeWatch = () => on1(makeStandbyWatch({ nowMs: () => clocks.m1.mono }));
-  let watch = await makeWatch();
+  const takeovers: Array<{ at: number; epoch: number; operationId: string }> = [];
+  const followUps: Array<AdoptWorkersInput> = [];
+
+  /**
+   * M1's standby round as production runs it (CoordinatorStandbyLoop), over
+   * its real watch and takeover. The follow-up claims the epoch on M3 by the
+   * worker machine's own rules; the real adoption is exercised on its own below.
+   * Making it is the process start.
+   */
+  const makeStandby = () =>
+    on1(
+      Effect.gen(function* () {
+        const link = yield* ProjectLink.ProjectLink;
+        const store = yield* CoordinatorStandbyStore;
+        const watch = yield* makeStandbyWatch({ nowMs: () => clocks.m1.mono });
+        return makeStandbyTakeover({
+          watch,
+          store,
+          autoTakeover: link.autoTakeover,
+          selfEnvironmentId: "m1",
+          held: Effect.succeed(false),
+          followUp: (input) =>
+            Effect.sync(() => {
+              followUps.push(input);
+              if (!input.claimOn?.includes("m3")) return { unclaimed: [] };
+              if (!reaches("m1", "m3")) return { unclaimed: ["m3"] };
+              const claim = applyEpochClaim(epochs.get(input.logicalProjectId), {
+                logicalProjectId: input.logicalProjectId,
+                epoch: input.epoch,
+                by: "m1",
+              });
+              if (claim.next !== undefined)
+                epochs.set(input.logicalProjectId, {
+                  ...claim.next,
+                  claimedAt: iso(clocks.m3.wall),
+                });
+              claims.push({ by: "m1", epoch: input.epoch, accepted: claim.accepted });
+              return { unclaimed: [] };
+            }),
+        });
+      }),
+    );
+  let standby = await makeStandby();
 
   const binding = (name: Name): ProjectCoordinatorBinding =>
     machines[name].projects.get(members[name].projectId)!.workspaceSettings!.coordinatorBinding ?? {
@@ -400,33 +443,18 @@ async function fleet(options: { readonly afterMinutes?: 5 | 15 | 30 | 60 } = {})
   const namedEpoch = (name: Name) =>
     binding(name).state === "active" ? binding(name).epoch : undefined;
   const steersM3 = (name: "m4" | "m1") =>
-    reaches(name, "m3") && epochAdmits(epochs.get(logicalProjectId), namedEpoch(name));
+    reaches(name, "m3") && epochAdmits(epochs.get(logicalProjectId), namedEpoch(name), name);
   /** M4's wake gate for its coordinator thread: null when a turn may start. */
   const gateM4 = () => on4(makeCheck(leaseRecords.service)(members.m4.coordinatorThreadId));
 
-  const takeovers: Array<{ at: number; epoch: number; operationId: string }> = [];
   const violations: Array<string> = [];
 
   /** M1 takes over when its clock says so, then claims the epoch on M3 (AC-07, AC-08). */
   const standbyRound = async () => {
-    const { due } = await on1(watch.tick);
-    for (const record of due) {
-      const outcome = await link1((service) =>
-        service.autoTakeover({ logicalProjectId: record.logicalProjectId }),
-      );
-      if (outcome.outcome !== "taken-over" || outcome.result.replayed) continue;
-      const taken = outcome.result.coordinatorBinding;
-      takeovers.push({ at: clocks.m1.wall, epoch: taken.epoch, operationId: taken.operationId! });
-      if (!reaches("m1", "m3")) continue;
-      const claim = applyEpochClaim(epochs.get(record.logicalProjectId), {
-        logicalProjectId: record.logicalProjectId,
-        epoch: taken.epoch,
-        by: "m1",
-      });
-      if (claim.next !== undefined)
-        epochs.set(record.logicalProjectId, { ...claim.next, claimedAt: iso(clocks.m3.wall) });
-      claims.push({ by: "m1", epoch: taken.epoch, accepted: claim.accepted });
-    }
+    const { takenOver } = await on1(standby.round);
+    for (const taken of takenOver)
+      if (!taken.replayed)
+        takeovers.push({ at: clocks.m1.wall, epoch: taken.epoch, operationId: taken.operationId });
   };
 
   /** Two coordinators at once: M4 active with its gate open while M1 is active too. */
@@ -471,6 +499,7 @@ async function fleet(options: { readonly afterMinutes?: 5 | 15 | 30 | 60 } = {})
     epochs,
     workerOrigins,
     claims,
+    followUps,
     running,
     workers,
     interrupts,
@@ -505,7 +534,7 @@ async function fleet(options: { readonly afterMinutes?: 5 | 15 | 30 | 60 } = {})
     },
     /** M1's process starts again: every watch begins anew. */
     restartM1: async () => {
-      watch = await makeWatch();
+      standby = await makeStandby();
     },
     pause: (input: PauseInput) => on4(lease.pause(input)),
   };
@@ -560,6 +589,17 @@ describe("automatic coordinator takeover, end to end", () => {
     f.awake.m4 = true;
     expect(f.steersM3("m4")).toBe(false);
     f.awake.m4 = false;
+    // The round asked once, as production does: claim on M3, adopt M4's workers there.
+    expect(f.followUps).toHaveLength(1);
+    expect(f.followUps[0]).toMatchObject({
+      logicalProjectId: f.logicalProjectId,
+      epoch: 1,
+      projectId: f.members.m1.projectId,
+      coordinatorThreadId: f.members.m1.coordinatorThreadId,
+      predecessor: { environmentId: "m4" },
+      claimOn: ["m3"],
+    });
+    expect(f.followUps[0]!.shadowWorkers.map((worker) => worker.id)).toEqual(["m4-row-1"]);
 
     // The worker M4's coordinator started is the one M1 takes on.
     const { candidates, waitingForPredecessor } = adoptionCandidates(
@@ -625,6 +665,7 @@ describe("automatic coordinator takeover, end to end", () => {
       adopted: [adoptedRowId("m4-row-1")],
       readOnly: [],
       waitingForPredecessor: 0,
+      unclaimed: [],
     });
     expect(adopted.settled.find((row) => row.id === adoptedRowId("m4-row-1"))).toMatchObject({
       callerThreadId: "coordinator",
@@ -880,6 +921,46 @@ describe("automatic coordinator takeover, end to end", () => {
     expect(handed.binding("m1").state).toBe("transferred");
     expectNoTwoCoordinators(off);
     expectNoTwoCoordinators(handed);
+  });
+
+  it("a standby superseded after its takeover never fires again on the spent registration", async () => {
+    const f = await fleet();
+    await f.run(2 * MINUTE);
+    // M1 cannot reach M3, so the claim after its takeover stays owed.
+    f.cut.add(f.pair("m1", "m3"));
+    f.awake.m4 = false;
+    await f.runUntil(() => f.takeovers.length > 0, 30 * MINUTE);
+    expect(f.binding("m1")).toMatchObject({ state: "active", epoch: 1, takenOverBy: "auto" });
+    expect(f.standbyRecord()).toMatchObject({ epoch: 0 });
+
+    // M4 comes back and takes the project from M1 by hand at epoch 2; M1 hears of it.
+    await f.link1((service) =>
+      service.supersede({
+        projectId: f.members.m1.projectId,
+        logicalProjectId: f.logicalProjectId,
+        successor: f.members.m4,
+        coordinatorBinding: {
+          epoch: 2,
+          state: "active",
+          operationId: m4RunsAgain,
+          predecessor: f.members.m1,
+          takenOverAt: iso(f.clocks.m4.wall),
+          takenOverBy: "person",
+        },
+      }),
+    );
+    expect(f.binding("m1")).toMatchObject({ state: "transferred", epoch: 2 });
+
+    // The owed follow-up comes due again, and the silence from M4 goes on.
+    f.cut.clear();
+    await f.run(60 * MINUTE);
+    expect(f.takeovers).toHaveLength(1);
+    expect(f.binding("m1")).toMatchObject({ state: "transferred", epoch: 2 });
+    expect(f.standbyRecord()).toBeUndefined();
+    expect(
+      await f.link1((service) => service.autoTakeover({ logicalProjectId: f.logicalProjectId })),
+    ).toEqual({ outcome: "disarmed" });
+    expectNoTwoCoordinators(f);
   });
 
   it("a standby that slept through the silence, or whose clock jumped, never fires", async () => {

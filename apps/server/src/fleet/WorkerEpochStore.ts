@@ -18,7 +18,7 @@ import * as ProjectService from "../project/ProjectService.ts";
  * The coordinator epoch each linked project last claimed on this worker
  * machine. After an automatic takeover the new coordinator claims its epoch
  * here; from then on this machine takes steering calls for that project only
- * from callers that name an epoch at least as high. The old coordinator, which
+ * from callers that name a higher epoch, or that epoch and are the claimant. The old coordinator, which
  * still believes its older epoch or sends none, may read but no longer steer,
  * so two coordinators never drive the same worker.
  *
@@ -100,14 +100,22 @@ export function applyEpochClaim(
 }
 
 /**
- * Whether a steering call may go ahead: always before any claim, and after
- * one only with an epoch at least as high as the claimed one.
+ * Whether a steering call may go ahead: always before any claim; after one,
+ * with a higher epoch than the claimed one, or with the claimed epoch only
+ * from the coordinator environment that claimed it. Two machines that both
+ * reached the same epoch (each took over by itself) never both steer here.
  */
 export function epochAdmits(
   claimed: WorkerEpochRecord | undefined,
   callerEpoch: number | undefined,
+  callerEnvironmentId: string,
 ): boolean {
-  return claimed === undefined || (callerEpoch !== undefined && callerEpoch >= claimed.epoch);
+  if (claimed === undefined) return true;
+  if (callerEpoch === undefined) return false;
+  return (
+    callerEpoch > claimed.epoch ||
+    (callerEpoch === claimed.epoch && callerEnvironmentId === claimed.claimedBy)
+  );
 }
 
 export interface WorkerEpochStoreShape {

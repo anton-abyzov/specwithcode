@@ -224,6 +224,8 @@ import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
 import * as StrandedSubagents from "./orchestration-v2/StrandedSubagents.ts";
 import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
 import * as CoordinatorLease from "./project/CoordinatorLease.ts";
+import * as CoordinatorStandbyLoop from "./project/CoordinatorStandbyLoop.ts";
+import * as CoordinatorStandbyStore from "./project/CoordinatorStandbyStore.ts";
 import * as CoordinatorSuspendRoute from "./project/CoordinatorSuspendRoute.ts";
 import * as SubagentLaunchCheckpoints from "./orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
@@ -698,6 +700,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(layerCoordinatorLease),
   ),
   layerCoordinatorLease,
+  // Automatic coordinator takeover, standby side: watches the armed projects'
+  // leases, takes over when they stop, then claims the epoch on the worker
+  // machines and takes on the replaced coordinator's workers. The store is the
+  // runtime's (one layer value, so one lock over the file).
+  CoordinatorStandbyLoop.layer.pipe(
+    Layer.provide(CoordinatorStandbyStore.layer),
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
+  ),
   // Records a routine turn that fails after its message was dispatched.
   Layer.effectDiscard(ScheduledTaskRunReactor.start),
   // Wakes the thread that launched a worker on this machine when the worker's run ends.

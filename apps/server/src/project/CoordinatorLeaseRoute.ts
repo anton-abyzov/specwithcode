@@ -16,6 +16,7 @@ import {
   type CoordinatorReplicaRequest,
   type CoordinatorReplicaResponse,
 } from "../handoff/handoffWire.ts";
+import * as CoordinatorRole from "./CoordinatorRole.ts";
 import {
   type CoordinatorStandbyRecord,
   CoordinatorStandbyStore,
@@ -70,6 +71,7 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const link = yield* ProjectLink;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  const publishRole = yield* CoordinatorRole.publisher;
 
   const checkVersion = (protocolVersion: number) =>
     protocolVersion === COORDINATOR_LEASE_PROTOCOL_VERSION
@@ -83,12 +85,23 @@ export const make = Effect.gen(function* () {
           ),
         );
 
-  const disarm = (logicalProjectId: string, reason: string) =>
+  const disarm = (record: CoordinatorStandbyRecord, reason: string) =>
     store
-      .modify(logicalProjectId, () => null)
+      .modify(record.logicalProjectId, () => null)
       .pipe(
         Effect.tap(() =>
-          Effect.logWarning("Coordinator standby disarmed", { logicalProjectId, reason }),
+          Effect.logWarning("Coordinator standby disarmed", {
+            logicalProjectId: record.logicalProjectId,
+            reason,
+          }),
+        ),
+        Effect.tap(() =>
+          publishRole({
+            kind: "standby-released",
+            projectId: record.projectId as ProjectId,
+            logicalProjectId: record.logicalProjectId,
+            reason,
+          }),
         ),
         Effect.asVoid,
         Effect.mapError(storeFailed),
@@ -132,7 +145,7 @@ export const make = Effect.gen(function* () {
             .getById(record.projectId as ProjectId)
             .pipe(Effect.mapError(storeFailed));
           if (Option.isNone(project) || project.value.deletedAt !== null) {
-            yield* disarm(logicalProjectId, "project-removed");
+            yield* disarm(record, "project-removed");
             return yield* notArmed();
           }
           const fromCoordinator = caller.sourceEnvironmentId === record.coordinator.environmentId;
@@ -140,7 +153,7 @@ export const make = Effect.gen(function* () {
             caller.grant !== null &&
             !projectInGrant(caller.grant.projects, caller.sourceEnvironmentId, project.value)
           ) {
-            if (fromCoordinator) yield* disarm(logicalProjectId, "grant-scope");
+            if (fromCoordinator) yield* disarm(record, "grant-scope");
             return yield* refuse(
               403,
               "needs_grant",
@@ -192,7 +205,7 @@ export const make = Effect.gen(function* () {
           if (!fromCoordinator) return yield* ignore(record, "not-registered-coordinator", nowMs);
           if (request.kind === "release") {
             if (request.epoch !== record.epoch) return yield* ignore(record, "wrong-epoch", nowMs);
-            yield* disarm(record.logicalProjectId, "released");
+            yield* disarm(record, "released");
             return { takenOver: null, wantsContent: false, standbySleeping: false, receivedAt };
           }
           const verdict = applyLease(
@@ -264,13 +277,24 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const records = yield* store.list;
       for (const record of records)
-        if (record.coordinator.environmentId === coordinatorEnvironmentId)
+        if (record.coordinator.environmentId === coordinatorEnvironmentId) {
+          let released = false;
           yield* admission.withLock(
             record.projectId as ProjectId,
-            store.modify(record.logicalProjectId, (current) =>
-              current?.coordinator.environmentId === coordinatorEnvironmentId ? null : undefined,
-            ),
+            store.modify(record.logicalProjectId, (current) => {
+              released = current?.coordinator.environmentId === coordinatorEnvironmentId;
+              return released ? null : undefined;
+            }),
           );
+          // Re-registered for another coordinator meanwhile: nothing was released.
+          if (released)
+            yield* publishRole({
+              kind: "standby-released",
+              projectId: record.projectId as ProjectId,
+              logicalProjectId: record.logicalProjectId,
+              reason: "grant-revoked",
+            });
+        }
       if (records.some((record) => record.coordinator.environmentId === coordinatorEnvironmentId))
         yield* Effect.logWarning("Coordinator standby disarmed", {
           coordinatorEnvironmentId,

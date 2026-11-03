@@ -591,6 +591,7 @@ describe("adopting the replaced coordinator's workers", () => {
         adopted: ["takeover:a", "takeover:b", "takeover:c"],
         readOnly: [],
         waitingForPredecessor: 1,
+        unclaimed: [],
       });
       expect(
         remote.toolCalls.find((call) => call.name === "studio_coordinator_claim_epoch"),
@@ -641,13 +642,16 @@ describe("adopting the replaced coordinator's workers", () => {
       const refused = yield* adoption.adopt(input);
       expect(refused.adopted).toEqual([]);
       expect(refused.readOnly).toEqual(["takeover:a", "takeover:b", "takeover:c", "takeover:e"]);
+      // A refusal is an answer: nothing to try again.
+      expect(refused.unclaimed).toEqual([]);
       for (const row of yield* rows) {
         expect(row).toMatchObject({ state: "stopped", readOnly: true });
         expect(row.lastError).toBe("M1 did not let this Mac take over its workers.");
       }
       // An older SpecWithCode there has no claim at all.
       delete world.tools.studio_coordinator_claim_epoch;
-      yield* adoption.adopt(input);
+      // No claim there yet, so a later round asks again.
+      expect((yield* adoption.adopt(input)).unclaimed).toEqual(["env-m1"]);
       expect((yield* rows)[0]?.lastError).toBe(
         "M1 needs an update before this Mac can take over its workers.",
       );
@@ -670,6 +674,37 @@ describe("adopting the replaced coordinator's workers", () => {
         readOnly: true,
       });
       expect(world.wakes).toHaveLength(2);
+    }).pipe(withAdoption(layer));
+  });
+
+  it.live("claims on other linked machines that run no worker of the old coordinator", () => {
+    const { remote, layer } = setup({
+      studio_coordinator_claim_epoch: () => claimAnswer(true),
+    });
+    return Effect.gen(function* () {
+      yield* allow();
+      const adoption = yield* RemoteWorkerAdoption.RemoteWorkerAdoption;
+      const result = yield* adoption.adopt({
+        ...input,
+        shadowWorkers: [],
+        // env-m9 is no machine this one links to: nothing to ask there.
+        claimOn: ["env-m1", "env-m9"],
+      });
+      expect(result).toEqual({
+        adopted: [],
+        readOnly: [],
+        waitingForPredecessor: 0,
+        unclaimed: [],
+      });
+      expect(
+        remote.toolCalls.filter((call) => call.name === "studio_coordinator_claim_epoch"),
+      ).toEqual([
+        {
+          name: "studio_coordinator_claim_epoch",
+          args: { logicalProjectId: "logical:app", epoch: 5, threadIds: [] },
+        },
+      ]);
+      expect(yield* rows).toEqual([]);
     }).pipe(withAdoption(layer));
   });
 

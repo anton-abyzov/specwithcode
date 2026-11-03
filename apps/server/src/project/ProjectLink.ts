@@ -71,6 +71,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
@@ -260,6 +261,7 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const replicas = yield* CoordinatorReplicas.CoordinatorReplicas;
   const standbyStore = yield* CoordinatorStandbyStore;
+  const publishRole = yield* CoordinatorRole.publisher;
 
   const load = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -581,6 +583,13 @@ const make = Effect.gen(function* () {
           logicalProject,
           coordinatorBinding: relinquished,
         });
+        yield* publishRole({
+          kind: "gave-way",
+          projectId: project.id,
+          logicalProjectId: logicalProject.id,
+          epoch: relinquished.epoch,
+          successor: input.kept,
+        });
         // A project shares one icon. This never fails the link: the icon only decorates it.
         const sharedIcon = input.sharedIcon && sharedIconOf(input.sharedIcon);
         if (sharedIcon && !hasSavedProjectIcon(project)) {
@@ -730,6 +739,15 @@ const make = Effect.gen(function* () {
           mode: "unlink",
           logicalProject,
           coordinatorBinding: active,
+        });
+        // Leaving makes this copy the coordinator of its own, new project.
+        yield* publishRole({
+          kind: "took-over",
+          projectId: project.id,
+          logicalProjectId: logicalProject.id,
+          epoch: 0,
+          predecessor: null,
+          takenOverBy: "person",
         });
         return {
           operationId: input.operationId,
@@ -998,6 +1016,14 @@ const make = Effect.gen(function* () {
           ? { goal: replica.value.goal, instructions: replica.value.instructions }
           : undefined,
       );
+      yield* publishRole({
+        kind: "took-over",
+        projectId: project.id,
+        logicalProjectId: identity.id,
+        epoch,
+        predecessor,
+        takenOverBy: input.takenOverBy,
+      });
       return {
         operationId: input.operationId,
         logicalProject: identity,
@@ -1060,6 +1086,13 @@ const make = Effect.gen(function* () {
           mode: "superseded",
           logicalProject: identity,
           coordinatorBinding: relinquished,
+        });
+        yield* publishRole({
+          kind: "gave-way",
+          projectId: project.id,
+          logicalProjectId: identity.id,
+          epoch: incoming.epoch,
+          successor: input.successor,
         });
         return {
           coordinatorBinding: relinquished,
@@ -1131,6 +1164,14 @@ const make = Effect.gen(function* () {
           { mode: "start-coordinator", logicalProject: identity, coordinatorBinding: active },
           fill,
         );
+        yield* publishRole({
+          kind: "took-over",
+          projectId: current.id,
+          logicalProjectId: identity.id,
+          epoch: active.epoch,
+          predecessor: null,
+          takenOverBy: "person",
+        });
         return {
           operationId: input.operationId,
           logicalProject: identity,
@@ -1153,6 +1194,7 @@ const make = Effect.gen(function* () {
     selfMember,
     readReplica,
     coordinatorContentDigest,
+    publishRole,
     writeOwnership: (project, commandPrefix, operationId, ownership) =>
       writeOwnership(project, commandPrefix, operationId, ownership),
     takeoverLocked,

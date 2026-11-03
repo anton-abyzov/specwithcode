@@ -205,10 +205,11 @@ export const assertThreadInGrant = Effect.fn("mcp.assertThreadInGrant")(function
 
 /**
  * After a coordinator took over a linked project and claimed its epoch here,
- * the other machine steers that project's threads only if it names an epoch
- * at least as high: the coordinator it replaced still believes an older one,
- * or names none, and may read but no longer steer. Threads another machine's
- * work started here act under that work's origin and are not held to it.
+ * the other machine steers that project's threads only if it names a higher
+ * epoch, or that epoch as the machine that claimed it: the coordinator it
+ * replaced still believes an older one, or names none, and may read but no
+ * longer steer. Threads another machine's work started here act under that
+ * work's origin and are not held to it.
  */
 export const assertCoordinatorEpoch = Effect.fn("mcp.assertCoordinatorEpoch")(function* (
   work: WorkGrantContext,
@@ -219,7 +220,14 @@ export const assertCoordinatorEpoch = Effect.fn("mcp.assertCoordinatorEpoch")(fu
   if (identity === undefined || identity.members.length < 2) return;
   const store = yield* WorkerEpochStore.WorkerEpochStore;
   const claimed = yield* store.get(identity.id).pipe(Effect.mapError(storageFailure));
-  if (WorkerEpochStore.epochAdmits(claimed, work.coordinatorEpochs?.get(identity.id))) return;
+  if (
+    WorkerEpochStore.epochAdmits(
+      claimed,
+      work.coordinatorEpochs?.get(identity.id),
+      work.grant.coordinatorEnvironmentId,
+    )
+  )
+    return;
   return yield* new OrchestratorMcpFailure({
     code: "thread_fenced",
     message: `Another machine now coordinates "${project.title}". This machine takes steering for it only from that coordinator. ${work.coordinatorLabel} may still read its threads.`,

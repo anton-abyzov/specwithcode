@@ -25,6 +25,7 @@ import type * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import type * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import type { CoordinatorRoleShape } from "./CoordinatorRole.ts";
 import type {
   CoordinatorStandbyRecord,
   CoordinatorStandbyStore,
@@ -165,6 +166,8 @@ export interface ProjectLinkStandbyDeps {
     project: Project,
   ) => Effect.Effect<Option.Option<ProjectCoordinatorReplica>, ProjectLinkError>;
   readonly coordinatorContentDigest: (content: PeerReplicaContent) => string;
+  /** Publishes this machine's coordinator role changes (CoordinatorRole). */
+  readonly publishRole: CoordinatorRoleShape["publish"];
   readonly writeOwnership: (
     project: Project,
     commandPrefix: string,
@@ -258,6 +261,12 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
         if (wanted === null) {
           if (held === undefined) return { standby: null, replayed: true };
           yield* store.modify(identity.id, () => null).pipe(Effect.catch(storeFailed));
+          yield* deps.publishRole({
+            kind: "standby-released",
+            projectId: project.id,
+            logicalProjectId: identity.id,
+            reason: "turned-off",
+          });
           return { standby: null, replayed: false };
         }
         yield* deps.refusePersonal(project);
@@ -321,6 +330,14 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
               updatedAt: at,
             };
         yield* store.modify(identity.id, () => record).pipe(Effect.catch(storeFailed));
+        yield* deps.publishRole({
+          kind: "standby-armed",
+          projectId: project.id,
+          logicalProjectId: identity.id,
+          coordinator,
+          epoch: record.epoch,
+          afterMinutes: record.afterMinutes,
+        });
         return { standby: registration(record), replayed: false };
       }),
     );
@@ -415,6 +432,34 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
               },
               instructionsChangedAt: yield* changedAt,
             } as const;
+          // A binding past the registration's epoch means this copy already took over
+          // or was handed past that coordinator; an active copy (or one unlinked since)
+          // coordinates itself. Either way the registration is spent: firing on it
+          // would take the project from whoever coordinates now, and it would only fail
+          // here on every later round.
+          if (
+            (binding?.epoch ?? 0) > record.epoch ||
+            binding === undefined ||
+            binding.state === "active" ||
+            project.workspaceSettings?.logicalProject?.id !== logicalProjectId
+          ) {
+            yield* store
+              .modify(logicalProjectId, (current) =>
+                current !== undefined &&
+                current.epoch === record.epoch &&
+                current.acceptedAt === record.acceptedAt
+                  ? null
+                  : undefined,
+              )
+              .pipe(Effect.catch(storeFailed));
+            yield* deps.publishRole({
+              kind: "standby-released",
+              projectId: project.id,
+              logicalProjectId,
+              reason: "outdated",
+            });
+            return { outcome: "disarmed" } as const;
+          }
           const decision = shouldTakeOver(record, yield* Clock.currentTimeMillis);
           if (!decision.fire) return { outcome: "not-due", reason: decision.reason } as const;
           if (binding?.state !== "transferred")

@@ -5,6 +5,7 @@ import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as CoordinatorLeaseRoute from "../project/CoordinatorLeaseRoute.ts";
 import * as CoordinatorWakeGate from "../project/CoordinatorWakeGate.ts";
 import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
+import * as CoordinatorRole from "../project/CoordinatorRole.ts";
 import * as CoordinatorStandbyStore from "../project/CoordinatorStandbyStore.ts";
 import * as LinkedPeerSyncState from "../project/LinkedPeerSyncState.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
@@ -477,6 +478,10 @@ const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, HandoffTurnGate.layer)),
 );
 
+// One instance: ProjectLink and the lease receiver publish role changes to it,
+// and other server code reads and subscribes to it.
+const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(layerProjectService));
+
 const layerProjectLinkProvided = ProjectLink.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -485,6 +490,7 @@ const layerProjectLinkProvided = ProjectLink.layer.pipe(
       layerProjectWorkspaceProvided,
       CoordinatorReplicas.layer,
       CoordinatorStandbyStore.layer,
+      layerCoordinatorRoleProvided,
     ),
   ),
 );
@@ -515,10 +521,16 @@ export const layerProduction = Layer.mergeAll(
   layerProjectLinkProvided,
   // Which linked pairs this server keeps in step; the driver, the peer route and the app read it.
   LinkedPeerSyncState.layer,
+  layerCoordinatorRoleProvided,
   // The standby's side of the coordinator lease, served on the handoff peer route.
   CoordinatorLeaseRoute.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(layerProjectLinkProvided, layerProjectService, CoordinatorStandbyStore.layer),
+      Layer.mergeAll(
+        layerProjectLinkProvided,
+        layerProjectService,
+        CoordinatorStandbyStore.layer,
+        layerCoordinatorRoleProvided,
+      ),
     ),
   ),
   layerLinkedMemorySyncProvided,
