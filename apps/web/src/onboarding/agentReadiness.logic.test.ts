@@ -60,6 +60,7 @@ describe("summarizeAgentReadiness", () => {
     expect(readiness).toMatchObject({
       kind: "ready",
       agents: ["Claude on Mac"],
+      unconfirmedAgents: [],
       machinesWithoutAgent: ["Windows PC"],
     });
     expect(agentReadinessMessage(readiness)).toBe(
@@ -79,10 +80,25 @@ describe("summarizeAgentReadiness", () => {
   it("says an unread sign-in could not be confirmed instead of ready", () => {
     const readiness = summarizeAgentReadiness([{ label: "Mac", providers: [unverified] }]);
     expect(readiness.kind).toBe("unconfirmed");
-    expect(agentReadinessMessage(readiness)).toContain("could not be confirmed");
+    expect(agentReadinessMessage(readiness)).toBe(
+      "Could not confirm Claude; your first chat will tell.",
+    );
   });
 
-  it("names only confirmed agents when one is confirmed", () => {
+  it("names a machine whose only agent is unconfirmed when another is ready", () => {
+    expect(
+      agentReadinessMessage(
+        summarizeAgentReadiness([
+          { label: "Mac", providers: [provider()] },
+          { label: "Windows PC", providers: [unverified] },
+        ]),
+      ),
+    ).toBe(
+      "Ready: Claude on Mac. Could not confirm Claude on Windows PC; your first chat will tell.",
+    );
+  });
+
+  it("names confirmed and unconfirmed agents apart", () => {
     const codex = provider({
       instanceId: ProviderInstanceId.make("codex"),
       driver: ProviderDriverKind.make("codex"),
@@ -92,6 +108,6 @@ describe("summarizeAgentReadiness", () => {
       agentReadinessMessage(
         summarizeAgentReadiness([{ label: "Mac", providers: [unverified, codex] }]),
       ),
-    ).toBe("Ready: Codex.");
+    ).toBe("Ready: Codex. Could not confirm Claude; your first chat will tell.");
   });
 });

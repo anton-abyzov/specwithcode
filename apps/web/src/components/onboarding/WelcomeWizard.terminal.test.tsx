@@ -410,6 +410,25 @@ describe("welcome agent terminal setup", () => {
     expect(button("Continue without an agent")).toBeUndefined();
   });
 
+  it("stops saying checking when a provider never finishes its probe", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const neverProbed: ServerProvider = { ...missingClaude, status: "warning" };
+      await act(async () => {
+        state.registry!.set(state.providers.get(remoteId)!, [neverProbed]);
+      });
+      await enterRemoteAgents();
+      expect(text(renderer!.root)).toContain("Checking which agents can run");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(text(renderer!.root)).toContain("No agent is ready yet");
+      expect(button("Continue without an agent")).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("re-reads a machine's agents on Check again", async () => {
     await enterRemoteAgents();
     state.refresh.mockClear();
@@ -430,7 +449,7 @@ describe("welcome agent terminal setup", () => {
     await enterRemoteAgents();
     await click("Open terminal");
     expect(state.write.mock.calls[0]![0].input.data).toBe("claude auth login");
-    expect(text(renderer!.root)).toContain("could not be confirmed");
+    expect(text(renderer!.root)).toContain("Could not confirm");
   });
 
   it("checks access when a queued retry starts and recovers after regrant", async () => {

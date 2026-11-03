@@ -341,6 +341,22 @@ describe("deliberate native session entry", () => {
       state.projects = projects;
     }
   });
+  it("keeps partial observations when an empty workspace has an offline host", async () => {
+    const { projects, environments } = state;
+    state.projects = [];
+    state.shells = [];
+    state.environments = [
+      environments[0]!,
+      { ...environments[1]!, connection: { phase: "disconnected" } },
+    ];
+    try {
+      await render();
+      expect(container.textContent).toContain("Partial observations");
+    } finally {
+      state.projects = projects;
+      state.environments = environments;
+    }
+  });
   it("renders actual title-shaped project, session and attention labels", async () => {
     state.shells = [shell("needs-review", { hasPendingApprovals: true })];
     await render();

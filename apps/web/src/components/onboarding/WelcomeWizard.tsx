@@ -136,6 +136,8 @@ const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const CONNECT_SIGN_IN_TIMEOUT_MS = 10_000;
+// Some providers report "not checked yet" for good, so checking cannot last forever.
+const AGENT_CHECK_TIMEOUT_MS = 15_000;
 
 export function WelcomeWizard({
   localAvailable,
@@ -572,9 +574,9 @@ function useHeldFor(active: boolean, delayMs: number) {
   const [elapsed, setElapsed] = useState(false);
   useEffect(() => {
     if (!active) return;
-    const timer = window.setTimeout(() => setElapsed(true), delayMs);
+    const timer = setTimeout(() => setElapsed(true), delayMs);
     return () => {
-      window.clearTimeout(timer);
+      clearTimeout(timer);
       setElapsed(false);
     };
   }, [active, delayMs]);
@@ -841,7 +843,9 @@ function AgentsStep({
       })),
     [environmentIds, environments, t],
   );
-  const readiness = useAgentReadiness(machines);
+  const reported = useAgentReadiness(machines);
+  const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
+  const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
   return (
     <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">

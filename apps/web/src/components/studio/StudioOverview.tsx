@@ -176,10 +176,8 @@ export function StudioOverview() {
     () => threadsVisibleWithAide(catalogShells, catalogProjects, aideEnabled),
     [catalogShells, catalogProjects, aideEnabled],
   );
-  // With no projects and no sessions there is nothing left unobserved.
   const attentionComplete = useMemo(
     () =>
-      (attentionMembers.length === 0 && allShells.length === 0) ||
       aggregateProjectAttention({
         members: attentionMembers,
         roots: projectAttentionRoots(allShells, attentionMembers),
@@ -245,6 +243,10 @@ export function StudioOverview() {
   const attention = sessions.filter((s) => s.attention !== null);
   const working = sessions.filter((s) => s.working).length;
   const connected = connectedIds.size;
+  // With no projects, no sessions and every host connected, nothing is left unobserved.
+  const observationsComplete =
+    attentionComplete ||
+    (attentionMembers.length === 0 && allShells.length === 0 && connected === environments.length);
   const hostNames = new Map(environments.map((e) => [e.environmentId, e.label]));
   const draftProjects = projectPickerMembers(
     projects,
@@ -360,7 +362,7 @@ export function StudioOverview() {
 
   const summary = !bootstrapped
     ? tx("Reading session state from connected hosts…")
-    : !attentionComplete
+    : !observationsComplete
       ? tx(
           "{count} sessions with known actions. Partial observations; some hosts are not current.",
           { count: attention.length },
@@ -433,7 +435,7 @@ export function StudioOverview() {
               value={bootstrapped ? String(attention.length) : "—"}
               label={tx("Sessions needing action")}
               hint={
-                !attentionComplete
+                !observationsComplete
                   ? tx("Partial observations")
                   : attention.length > 0
                     ? tx("Review now")

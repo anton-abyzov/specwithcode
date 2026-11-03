@@ -22,6 +22,7 @@ export type AgentReadiness =
       readonly kind: "ready" | "unconfirmed";
       /** "Claude on Studio Mac" or, with one machine, "Claude". */
       readonly agents: readonly string[];
+      readonly unconfirmedAgents: readonly string[];
       /** Machines with nothing able to run, once they have answered. */
       readonly machinesWithoutAgent: readonly string[];
     };
@@ -56,15 +57,16 @@ export function summarizeAgentReadiness(
   const confirmed = running.flatMap((machine) =>
     machine.providers.filter((provider) => !isUnconfirmed(provider)),
   );
-  const named =
-    confirmed.length > 0 ? (provider: ServerProvider) => !isUnconfirmed(provider) : () => true;
-  return {
-    kind: confirmed.length > 0 ? "ready" : "unconfirmed",
-    agents: running.flatMap((machine) =>
-      [...new Set(machine.providers.filter(named).map(providerName))].map((name) =>
+  const names = (keep: (provider: ServerProvider) => boolean) =>
+    running.flatMap((machine) =>
+      [...new Set(machine.providers.filter(keep).map(providerName))].map((name) =>
         machines.length > 1 ? `${name} on ${machine.label}` : name,
       ),
-    ),
+    );
+  return {
+    kind: confirmed.length > 0 ? "ready" : "unconfirmed",
+    agents: names((provider) => !isUnconfirmed(provider)),
+    unconfirmedAgents: names(isUnconfirmed),
     machinesWithoutAgent: canRun
       .filter((machine) => machine.answered && !machine.checking && machine.providers.length === 0)
       .map((machine) => machine.label),
@@ -80,11 +82,12 @@ export function agentReadinessMessage(readiness: AgentReadiness): string {
       return "No agent is ready yet, so chats will not start. Sign in or install one above.";
     case "ready":
     case "unconfirmed": {
-      const agents = readiness.agents.join(", ");
-      const lead =
-        readiness.kind === "ready"
-          ? `Ready: ${agents}.`
-          : `${agents} could not be confirmed. It may still work; your first chat will tell.`;
+      const ready = readiness.agents.length > 0 ? `Ready: ${readiness.agents.join(", ")}. ` : "";
+      const unconfirmed =
+        readiness.unconfirmedAgents.length > 0
+          ? `Could not confirm ${readiness.unconfirmedAgents.join(", ")}; your first chat will tell.`
+          : "";
+      const lead = `${ready}${unconfirmed}`.trim();
       return readiness.machinesWithoutAgent.length > 0
         ? `${lead} Nothing is ready on ${readiness.machinesWithoutAgent.join(", ")}, so chats there will not start.`
         : lead;
