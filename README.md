@@ -102,3 +102,5 @@ Early access. Projects, providers, usage limits, machines, routines and the Tele
 ## Source and third-party notices
 
 Source is available for inspection. No new project-wide license is granted for original SpecWithCode material; previously distributed versions retain their existing grants. Third-party code and assets retain their own licenses and required notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+For umbrella projects with nested repositories, see [project transfer choices](docs/user/add-a-machine.md#projects-in-an-umbrella-folder).

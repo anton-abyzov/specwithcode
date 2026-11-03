@@ -909,6 +909,11 @@ export function ProjectMachineHandoff({
                 setMethod("folder");
                 chooseGitMachine(gitMachine);
               }}
+              onPrepareRepositories={() => {
+                setShareView(false);
+                setIntent("copy");
+                setMethod("clone");
+              }}
               onCopyInstead={() => {
                 setShareView(false);
                 setIntent("copy");

@@ -1294,3 +1294,14 @@ it("holds the workspace page on this checkout while the move dialog is open", as
   await act(async () => root.render(<div>Another checkout</div>));
   expect(hold).toHaveBeenLastCalledWith(false);
 });
+
+it("routes umbrella review to cloning with local files without moving the coordinator", async () => {
+  state.environments = machineEnvironments;
+  state.projects = [source];
+  await mount();
+  const share = (props().shareFlow as React.ReactElement<HandoffShareProps>).props;
+  await act(async () => share.onPrepareRepositories());
+  expect(props().shareFlow).toBeUndefined();
+  expect(props().intent).toBe("copy");
+  expect(props().method).toBe("clone");
+});

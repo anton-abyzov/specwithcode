@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real scope fixtures.
+import { execFileSync } from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -100,5 +101,35 @@ describe("copy scope discovery", () => {
     await expect(verifyCopiedProjectFolder(root, "apps/api")).rejects.toMatchObject({
       code: "invalid",
     });
+  });
+});
+
+it("lists repositories inside a non-Git umbrella without exposing origin credentials", async () => {
+  const { root, child } = fixture();
+  const local = NodePath.join(root, "local");
+  NodeFS.mkdirSync(local);
+  for (const folder of [child, local]) execFileSync("git", ["init", "--quiet", folder]);
+  execFileSync("git", ["-C", child, "remote", "add", "origin", "https://example.com/acme/api.git"]);
+  const result = await discoverCopyScopes(root);
+  expect(result.scopes[0]).toMatchObject({
+    repositories: ["local", "repositories/acme/app"],
+    repositoryOrigins: [
+      { path: "local", kind: "copy" },
+      { path: "repositories/acme/app", kind: "remote" },
+    ],
+  });
+  execFileSync("git", [
+    "-C",
+    child,
+    "remote",
+    "set-url",
+    "origin",
+    "https://user:secret@example.com/acme/api.git",
+  ]);
+  expect(JSON.stringify(await discoverCopyScopes(root))).not.toContain("secret");
+  execFileSync("git", ["-C", child, "remote", "set-url", "origin", "/local/origin"]);
+  expect((await discoverCopyScopes(root)).scopes[0]?.repositoryOrigins).toContainEqual({
+    path: "repositories/acme/app",
+    kind: "copy",
   });
 });

@@ -30,6 +30,8 @@ import { MachineOptionRows, type MachineOption } from "../handoff/MachineOptionR
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { HandoffCopyActions } from "./HandoffCopyActions";
+import { useCopyScope } from "./HandoffCopyScope";
+import { HandoffShareRepositories } from "./HandoffShareRepositories";
 import { MoreOptions } from "./ProjectMoveOptions";
 
 /** How long a finished clone waits for its link before Add is offered again. */
@@ -55,6 +57,7 @@ export interface HandoffShareProps {
   /** Hands the coordinator to the chosen machine's copy, through the Git review. */
   readonly onMove: () => void;
   readonly onCopyInstead: () => void;
+  readonly onPrepareRepositories: () => void;
   /** The folder there needs a person's choice: the full Add to another machine dialog. */
   readonly onNeedsFolderChoice: () => void;
   readonly onBusyChange: (busy: boolean) => void;
@@ -81,6 +84,7 @@ export function HandoffShare({
   onMachineChange,
   onMove,
   onCopyInstead,
+  onPrepareRepositories,
   onNeedsFolderChoice,
   onBusyChange,
   onClose,
@@ -100,6 +104,8 @@ export function HandoffShare({
   const [error, setError] = useState<string | null>(null);
   useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
 
+  const scope = useCopyScope(project, !project.repositoryIdentity && !linked);
+  const nested = scope.selected.repositories.length > 0;
   const urls = project.repositoryIdentity ? cloneUrlsFor(project.repositoryIdentity) : null;
   const remoteUrl = urls ? cloneUrlFor(urls, urls.preferred) : null;
   // A clone started earlier, from this dialog or a closed one, is still this machine's add.
@@ -230,16 +236,26 @@ export function HandoffShare({
             : linked
               ? `${machineLabel} already has this project. Its goal, instructions, notes and repository list stay in sync.`
               : remoteUrl === null
-                ? `This project has no Git remote, so ${machineLabel} has nothing to clone. Push it first, or copy its files.`
+                ? `This project folder has no Git remote of its own.`
                 : `${machineLabel} clones this project from Git and shares its goal, instructions, notes and repository list. Other repositories clone when a task needs them.`}
         </p>
+      )}
+      {machineLabel && !linked && !justAdded && remoteUrl === null && (
+        <HandoffShareRepositories scope={scope} machineLabel={machineLabel} />
       )}
       {machineLabel && !linked && !justAdded && uncommittedFiles > 0 && (
         <p className="wrap-anywhere text-sm text-muted-foreground" data-slot="handoff-share-local">
           {uncommittedFiles === 1
-            ? "1 uncommitted file stays"
-            : `${uncommittedFiles} uncommitted files stay`}{" "}
-          on {sourceLabel}. Commit and push to share them.
+            ? remoteUrl === null
+              ? "1 local change"
+              : "1 uncommitted file stays"
+            : remoteUrl === null
+              ? `${uncommittedFiles} local changes`
+              : `${uncommittedFiles} uncommitted files stay`}{" "}
+          on {sourceLabel}
+          {remoteUrl === null
+            ? ". The transfer review lets you copy local changes and files outside Git. Secret files need a separate selection."
+            : ". Commit and push to share them, or choose Copy files instead."}
         </p>
       )}
       {machineLabel && !linked && remoteUrl !== null && !justAdded && (
@@ -289,8 +305,8 @@ export function HandoffShare({
             {`Hand off to ${machineLabel ?? "machine"}`}
           </Button>
         ) : remoteUrl === null ? (
-          <Button disabled={busy} onClick={onCopyInstead}>
-            Copy files instead
+          <Button disabled={busy || !machineLabel || scope.loading} onClick={onPrepareRepositories}>
+            {nested ? "Review repositories and local files" : "Review files to transfer"}
           </Button>
         ) : (
           <Button disabled={busy || !machineLabel || !canClone} onClick={() => void add()}>

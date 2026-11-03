@@ -10,6 +10,15 @@ const state = vi.hoisted(() => ({
   clone: vi.fn(),
   job: vi.fn(),
   listed: vi.fn((): unknown[] => []),
+  scope: {
+    loading: false,
+    notice: null,
+    selected: {
+      repositories: [] as string[],
+      repositoryOrigins: [] as Array<{ path: string; kind: string }>,
+      truncated: false,
+    },
+  },
   clone_: null as { phase: string } | null,
 }));
 vi.mock("~/state/use-atom-command", () => ({
@@ -22,6 +31,7 @@ vi.mock("~/state/sourceControl", () => ({
     startProjectClone: state.clone,
   },
 }));
+vi.mock("./HandoffCopyScope", () => ({ useCopyScope: () => state.scope }));
 vi.mock("~/state/entities", () => ({ waitForProject: async () => undefined }));
 vi.mock("~/state/projectClones", () => ({ useProjectClone: () => state.clone_ }));
 vi.mock("~/studio/addToMachine", async (original) => ({
@@ -76,6 +86,7 @@ const base = {
   onMachineChange: () => undefined,
   onMove: vi.fn(),
   onCopyInstead: vi.fn(),
+  onPrepareRepositories: vi.fn(),
   onNeedsFolderChoice: vi.fn(),
   onBusyChange: () => undefined,
   onClose: () => undefined,
@@ -88,6 +99,11 @@ const button = (name: string) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  state.scope = {
+    loading: false,
+    notice: null,
+    selected: { repositories: [], repositoryOrigins: [], truncated: false },
+  };
   state.listed.mockReturnValue([]);
   state.clone_ = null;
   state.job.mockImplementation((job: unknown) => state.listed.mockReturnValue([job]));
@@ -206,4 +222,32 @@ it("offers Add again once the job ended with no link", async () => {
   await act(async () => vi.advanceTimersByTime(120_000));
   vi.useRealTimers();
   expect(button("Add Ministorm")).toBeDefined();
+});
+
+it("names nested origins and routes an umbrella to the mixed transfer review", async () => {
+  state.scope.selected = {
+    repositories: ["repositories/acme/api", "local"],
+    repositoryOrigins: [
+      { path: "repositories/acme/api", kind: "remote" },
+      { path: "local", kind: "copy" },
+    ],
+    truncated: false,
+  };
+  await show({ project: { ...project, repositoryIdentity: null } as never, uncommittedFiles: 57 });
+  expect(container.textContent).toContain("repositories/acme/api");
+  expect(container.textContent).toContain("Clone from origin if accessible");
+  expect(container.textContent).toContain("Copy required");
+  expect(container.textContent).not.toContain("nothing to clone");
+  expect(container.textContent).not.toContain("Commit and push");
+  expect(container.textContent).not.toContain("files stay");
+  await act(async () => button("Review repositories and local files")!.click());
+  expect(base.onPrepareRepositories).toHaveBeenCalledOnce();
+  expect(state.clone).not.toHaveBeenCalled();
+});
+
+it("keeps old-source discovery and truncated lists explicitly uncertain", async () => {
+  state.scope.selected = { repositories: ["api"], repositoryOrigins: [], truncated: true };
+  await show({ project: { ...project, repositoryIdentity: null } as never });
+  expect(container.textContent).toContain("Check in transfer review");
+  expect(container.textContent).toContain("list is incomplete");
 });

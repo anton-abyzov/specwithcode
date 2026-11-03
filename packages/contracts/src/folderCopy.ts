@@ -21,6 +21,14 @@ export const FolderCopyScopes = Schema.Struct({
       kind: Schema.Literals(["project", "workspace"]),
       label: bounded(200),
       repositories: Schema.Array(bounded(4096)),
+      repositoryOrigins: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            path: bounded(4096),
+            kind: Schema.Literals(["remote", "copy", "unknown"]),
+          }),
+        ),
+      ),
       truncated: Schema.Boolean,
     }),
   ),

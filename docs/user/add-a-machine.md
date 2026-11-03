@@ -507,3 +507,18 @@ Browsers add the new address on their own and keep the old one as a fallback.
 
 The invitation is valid for a year by default (`fleet invite --coordinator '<main-machine-environment-id>' --ttl` changes it).
 Adding a fresh one renews it.
+
+## Projects in an umbrella folder
+
+A project folder does not need its own Git remote when it contains separate repositories.
+In **Hand off**, choose **Review repositories and local files**. The app names the nested
+repositories with origins and checks whether the destination can clone them. Selected
+local changes and files outside Git can be copied alongside those clones. A repository
+without a usable origin can be copied whole; secret files require a separate selection.
+
+Adding a copy does not move the coordinator. Choose the move option only when you want
+work to continue on that machine. Merely viewing another server does not transfer files.
+
+**Didn't update …: this machine can't reach its origin** means the automatic Git fetch
+failed. It can be a network, authentication or timeout problem; the warning alone does
+not distinguish them. The checkout is left in place and the thread can still start.

@@ -4,6 +4,8 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 import { FolderCopyError, type FolderCopyScopes } from "@specweave-studio/contracts";
 import { readFolderLayout } from "../project/FolderLayout.ts";
+import { runGit } from "./folderTransfer/git.ts";
+import { canonicalOrigin } from "./handoffGitTypes.ts";
 import { isSafeRelativePath } from "./folderTransfer/paths.ts";
 
 export interface CopyScopePaths {
@@ -64,6 +66,51 @@ async function ownsProject(root: string, projectRoot: string): Promise<boolean> 
   return relative !== null && /^repositories\/[^/]+(?:\/[^/]+)?(?:\/.*)?$/.test(relative);
 }
 
+/** Offline hints only. Destination access and clone safety are checked in the transfer preview. */
+async function scopeRepositories(root: string) {
+  const layout = await readFolderLayout(root);
+  const repositories = layout?.repositories ?? [];
+  const repositoryOrigins: Array<{ path: string; kind: "remote" | "copy" | "unknown" }> = [];
+  const queue = [...repositories];
+  await Promise.all(
+    Array.from({ length: 4 }, async () => {
+      for (let relative = queue.shift(); relative !== undefined; relative = queue.shift()) {
+        let kind: "remote" | "copy" | "unknown" = "unknown";
+        try {
+          const folder = NodePath.join(root, relative);
+          // Linked worktrees/submodules need the full transfer plan, not an independent clone.
+          const marker = await NodeFSP.lstat(NodePath.join(folder, ".git"));
+          if (marker.isFile()) kind = "copy";
+          else {
+            const result = await runGit(folder, ["remote", "get-url", "origin"], {
+              allowFailure: true,
+              timeoutMs: 2_000,
+              env: { GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+            });
+            const identity = result.code === 0 ? canonicalOrigin(result.stdout.trim()) : null;
+            kind =
+              result.code === 0
+                ? identity !== null && !identity.startsWith("file://")
+                  ? "remote"
+                  : "copy"
+                : result.code === 2
+                  ? "copy"
+                  : "unknown";
+          }
+        } catch {
+          /* Keep unreadable repositories unknown. */
+        }
+        repositoryOrigins.push({ path: relative, kind });
+      }
+    }),
+  );
+  return {
+    repositories,
+    repositoryOrigins: repositoryOrigins.sort((a, b) => a.path.localeCompare(b.path)),
+    truncated: layout === null || layout.truncated || layout.repositoryCount > repositories.length,
+  };
+}
+
 /** Only verified containing workspaces are offered; never guess from sibling repositories. */
 export async function discoverCopyScopes(workspaceRoot: string): Promise<FolderCopyScopes> {
   const projectRoot = await NodeFSP.realpath(workspaceRoot);
@@ -75,8 +122,7 @@ export async function discoverCopyScopes(workspaceRoot: string): Promise<FolderC
       projectRelativePath: ".",
       kind: "project",
       label: "This project folder",
-      repositories: [],
-      truncated: false,
+      ...(await scopeRepositories(projectRoot)),
     },
   ];
   const home = await NodeFSP.realpath(NodeOS.homedir()).catch(() => NodeOS.homedir());
@@ -84,14 +130,13 @@ export async function discoverCopyScopes(workspaceRoot: string): Promise<FolderC
   for (let depth = 0; depth < 32 && ancestor !== NodePath.dirname(ancestor); depth++) {
     if (ancestor === home) break;
     if (await ownsProject(ancestor, projectRoot)) {
-      const layout = await readFolderLayout(ancestor);
+      const layout = await scopeRepositories(ancestor);
       scopes.push({
         copyRoot: ancestor,
         projectRelativePath: relativeWithin(ancestor, projectRoot)!,
         kind: "workspace",
         label: NodePath.basename(ancestor),
-        repositories: layout?.repositories ?? [],
-        truncated: layout?.truncated ?? false,
+        ...layout,
       });
     }
     ancestor = NodePath.dirname(ancestor);

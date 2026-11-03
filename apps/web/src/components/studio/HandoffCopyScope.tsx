@@ -6,7 +6,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { Checkbox } from "../ui/checkbox";
 
-export function useCopyScope(project: EnvironmentProject) {
+export function useCopyScope(project: EnvironmentProject, enabled = true) {
   const command = useAtomCommand(machineHandoff.copyScopes, { reportFailure: false });
   const requestKey = JSON.stringify([project.environmentId, project.id, project.workspaceRoot]);
   const [response, setResponse] = useState<{
@@ -22,6 +22,7 @@ export function useCopyScope(project: EnvironmentProject) {
     }),
   );
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -41,7 +42,7 @@ export function useCopyScope(project: EnvironmentProject) {
     return () => {
       cancelled = true;
     };
-  }, [requestKey]);
+  }, [requestKey, enabled]);
   const current = response?.key === requestKey ? response : null;
   const result = current?.result;
   const scopes = result?.scopes ?? [
