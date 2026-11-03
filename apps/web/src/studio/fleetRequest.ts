@@ -58,7 +58,9 @@ export function requestFleetAdd(prepared: PreparedConnection, input: StudioFleet
       group: "studioFleet",
       method: "POST",
       url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/machines"),
-      timeoutMs: 15000,
+      // Longer than the server's own budget: giving up early hides its answer
+      // after the one-time line may already be spent.
+      timeoutMs: 30000,
       request: ({ client, headers }) => client.addFleetMachine({ headers, payload: input }),
     });
   });

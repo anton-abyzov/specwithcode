@@ -85,7 +85,10 @@ job_command() {
 
 # Internal: run one stage-1 job under the watchdog; job_run records its exit code and secs.
 run_one() {
-  job_run "$OUT_DIR" "$(slug "$1" | sed 's/^pkg:/pkg-/')" "$LIMIT" job_command "$1"
+  local limit="$LIMIT"
+  # Queueing for the machine's type check lock must not use up the check's own time.
+  [ "$1" != typecheck ] || limit=$((LIMIT + ${TYPECHECK_LOCK_WAIT:-600}))
+  job_run "$OUT_DIR" "$(slug "$1" | sed 's/^pkg:/pkg-/')" "$limit" job_command "$1"
 }
 
 LIMIT="${PR_GATE_TIMEOUT:-1200}"

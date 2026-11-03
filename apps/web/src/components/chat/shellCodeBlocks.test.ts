@@ -7,6 +7,7 @@ import {
   looksLikeShellCommand,
   resolveCodeFenceLanguage,
   runnableShellCommand,
+  shellRunMachineWarning,
   shellRunNeedsConfirmation,
   terminalOutputPlainText,
   withoutTerminalEscapes,
@@ -133,5 +134,25 @@ describe("groupHighlightedWords", () => {
     const again = groupHighlightedWords(root);
     const lineOf = (tree: HastNode) => tree.children?.[0]?.children?.[0]?.children?.[0];
     expect(lineOf(again as HastNode)).toBe(lineOf(grouped as HastNode));
+  });
+});
+
+describe("shellRunMachineWarning", () => {
+  it("warns on a real fleet invite, more sharply when it names this machine", () => {
+    expect(
+      shellRunMachineWarning("specweave-studio fleet invite --coordinator env-a", "env-a", "M4"),
+    ).toContain("names M4 as its own main machine");
+    expect(
+      shellRunMachineWarning("specwithcode fleet invite --coordinator env-b", "env-a", "M4"),
+    ).toContain("one-time invitation for M4");
+  });
+
+  it("stays quiet for commands that only mention it", () => {
+    for (const command of [
+      "specwithcode fleet invite --help",
+      'grep "fleet invite" README.md',
+      "specwithcode fleet list",
+    ])
+      expect(shellRunMachineWarning(command, "env-a", "M4")).toBeNull();
   });
 });

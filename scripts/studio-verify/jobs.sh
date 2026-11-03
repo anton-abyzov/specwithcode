@@ -65,7 +65,8 @@ job_run() {
     sleeper=$!
     wait "$sleeper"
     kill -KILL -- "-$JOB_PID" 2>/dev/null || true
-  ) &
+    # Not fd 9, typecheck-gate.sh's machine lock: a watchdog orphaned by a killed run holds no memory.
+  ) 9>&- &
   JOB_WATCHDOG=$!
   wait "$JOB_PID" 2>/dev/null || code=$?
   kill -TERM "$JOB_WATCHDOG" 2>/dev/null || true

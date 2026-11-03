@@ -12,14 +12,25 @@ if not __debug__:
 import array
 import bisect
 import copy
+import errno
 import hashlib
+import heapq
 import itertools
 import json
 import operator
+import os
 import pathlib
 import re
+import shutil
+import tempfile
 
+import kept_lines
 import live_database
+
+# A table's lines held in memory, per encoding, before they go to a sorted run on disk.
+SPILL_RUN_CHARS = 128 << 20
+# Runs open at once when they are merged; more are merged in groups first.
+SPILL_MERGE_FILES = 128
 
 
 def encoded(value):
@@ -100,6 +111,143 @@ def whole_and_prefix(rows, line, boundary, keep=None):
     return whole, {'count': len(earlier), 'sha256': joined_digest(earlier)}
 
 
+class SpillFailed(Exception):
+    """The scratch folder cannot take a run: the table is read into memory instead."""
+
+
+class SortedRuns:
+    """One encoding's lines of a table, hashed as joined_digest hashes them sorted, without
+    holding them: an external merge sort. Lines are ASCII JSON, so they hold no raw newline or
+    NUL and their bytes sort as the strings do. Each stored line ends in NUL and a flag (is it
+    one of the earlier rows, whole_and_prefix); NUL sorts below every character a line holds, so
+    the flag never changes the order of different lines, and equal lines are interchangeable."""
+
+    def __init__(self, scratch):
+        self.scratch, self.lines, self.chars, self.runs = scratch, [], 0, []
+
+    def add(self, line, earlier):
+        self.lines.append(line + ('\0' + '1' if earlier else '\0' + '0'))
+        self.chars += len(line)
+        if self.chars >= SPILL_RUN_CHARS:
+            self.flush()
+
+    def _path(self):
+        return os.path.join(self.scratch(), 'run-%d' % next(self.scratch.numbers))
+
+    @staticmethod
+    def _check_room(folder, size):
+        available = kept_lines.available_disk(folder)
+        if available is None or available < kept_lines.DISK_FLOOR_MARGIN + size:
+            raise OSError(errno.ENOSPC, 'Scratch volume is below its floor')
+
+    def flush(self):
+        if not self.lines:
+            return
+        self.lines.sort()
+        data = ('\n'.join(self.lines) + '\n').encode()
+        try:
+            path = self._path()
+            self._check_room(os.path.dirname(path), len(data))
+            with open(path, 'wb') as handle:
+                handle.write(data)
+        except OSError as error:
+            raise SpillFailed(str(error)) from error
+        self.runs.append(path)
+        self.lines, self.chars = [], 0
+
+    def _merged(self, paths):
+        handles = []
+        try:
+            for path in paths:
+                handles.append(open(path, 'rb'))
+            yield from heapq.merge(*handles)
+        finally:
+            for handle in handles:
+                handle.close()
+
+    def _reduce(self):
+        """At most SPILL_MERGE_FILES runs, merging only as many as that takes. The merged run is
+        written while its sources still exist, so it passes the same floor as any other run."""
+        while len(self.runs) > SPILL_MERGE_FILES:
+            count = min(SPILL_MERGE_FILES, len(self.runs) - SPILL_MERGE_FILES + 1)
+            group, self.runs = self.runs[:count], self.runs[count:]
+            path = self._path()
+            self._check_room(os.path.dirname(path), sum(os.stat(used).st_size for used in group))
+            with open(path, 'wb') as handle:
+                handle.writelines(self._merged(group))
+            self.runs.append(path)
+            for used in group:
+                os.unlink(used)
+
+    def hashes(self):
+        """(sha256 of every line, sha256 of the earlier rows' lines), as joined_digest hashes each."""
+        try:
+            if self.runs:
+                self.flush()
+                self._reduce()
+                stored = self._merged(self.runs)
+            else:
+                self.lines.sort()
+                stored = (line.encode() + b'\n' for line in self.lines)
+            whole, earlier, first, first_earlier = hashlib.sha256(), hashlib.sha256(), True, True
+            for line in stored:
+                text = line[:-3]
+                if not first: whole.update(b'\n')
+                whole.update(text)
+                first = False
+                if line[-2] == 49:  # '1'
+                    if not first_earlier: earlier.update(b'\n')
+                    earlier.update(text)
+                    first_earlier = False
+            return whole.hexdigest(), earlier.hexdigest()
+        except OSError as error:
+            raise SpillFailed(str(error)) from error
+
+
+class _Scratch:
+    """A folder made on the first run, named so kept_lines.remove_stale also takes it after a
+    helper that died with it (a restart of the Mac during an update)."""
+
+    def __init__(self, parent):
+        self.parent, self.folder, self.numbers = parent, None, itertools.count()
+
+    def __call__(self):
+        if self.folder is None:
+            kept_lines.remove_stale(self.parent)
+            self.folder = tempfile.mkdtemp(prefix='%s%d-' % (kept_lines.SCRATCH_PREFIX, os.getpid()), dir=str(self.parent))
+        return self.folder
+
+    def close(self):
+        if self.folder is not None:
+            shutil.rmtree(self.folder, ignore_errors=True)
+            self.folder = None
+
+
+def spilled_table(rows, boundary, parent):
+    """(typed whole, legacy whole, typed earlier, legacy earlier), each {count, sha256}, of rows
+    from a cursor, equal to typed_rows_hash, legacy_rows_hash and whole_and_prefix over the same
+    rows. With a `boundary` the rows are `SELECT rowid, *` in scan order. Memory stays about two
+    SPILL_RUN_CHARS whatever the table's size; a table within them touches no disk. orchestration_events
+    held 12.6 GB as rows alone and 23.6 GB with its lines on M4 (November 2, 2026, 21.6 GB file)."""
+    scratch = _Scratch(parent)
+    try:
+        typed, legacy = SortedRuns(scratch), SortedRuns(scratch)
+        count, earlier, leading = 0, 0, True
+        for row in rows:
+            if boundary is not None:
+                leading = leading and row[0] <= boundary
+                row = row[1:]
+            count += 1
+            earlier += leading
+            typed.add(typed_line(row), leading)
+            legacy.add(legacy_line(row), leading)
+        (typed_whole, typed_earlier), (legacy_whole, legacy_earlier) = typed.hashes(), legacy.hashes()
+        return ({'count': count, 'sha256': typed_whole}, {'count': count, 'sha256': legacy_whole},
+                {'count': earlier, 'sha256': typed_earlier}, {'count': earlier, 'sha256': legacy_earlier})
+    finally:
+        scratch.close()
+
+
 def identifier(value):
     assert re.fullmatch('[a-zA-Z0-9_]+', value), 'Unexpected schema identifier'
     return '"' + value + '"'
@@ -153,7 +301,7 @@ def at_default(column):
     return '(0)'
 
 
-def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=None, reuse=None):
+def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=None, reuse=None, spill=None, needs_rows=None):
     """Capture the complete database inside the caller's open read transaction. With
     `widen_from`, also measure tables that gained columns since then (widened_tables).
     `visit(table, rows)` is handed each table's rows from this scan, so a caller that
@@ -166,7 +314,11 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=N
     rows would hash (whole_and_prefix). The capture itself is the same with or without it.
     `keep` (kept_lines.Kept, opt-in) is handed each table's sorted lines as they are hashed, so the
     page proof after a restart can hash a grown table again without reading it (after_proof); the
-    capture is the same with or without it too."""
+    capture is the same with or without it too.
+    `spill` (a folder) hashes tables through sorted runs on disk there (spilled_table), not in
+    memory, to the same hashes. It applies without `keep`, which needs the lines themselves, and to
+    tables whose rows no one is handed: without a `visit`, or where `needs_rows(table)` is false, in
+    which case `visit` gets None for them. A folder that cannot take a run falls back to memory."""
     assert db.in_transaction, 'Complete database capture requires an existing read transaction'
     structure = schema(db)
     tables, legacy, sequences = {}, {}, None
@@ -178,6 +330,20 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=N
             continue
         rows = None  # The previous table's rows go before this table is read and hashed.
         typed_keep, legacy_keep = (keep.keeper(table, 'typed'), keep.keeper(table, 'legacy')) if keep is not None else (None, None)
+        if spill is not None and keep is None and table != 'sqlite_sequence' \
+                and (visit is None or (needs_rows is not None and not needs_rows(table))):
+            entry = prefixes.get(table) if prefixes is not None else None
+            try:
+                query = ('SELECT rowid, * FROM ' if entry is not None else 'SELECT * FROM ') + identifier(table)
+                spilled = spilled_table(db.execute(query), entry['boundary'] if entry is not None else None, spill)
+            except SpillFailed:
+                spilled = None
+            if spilled is not None:
+                tables[table], legacy[table] = spilled[0], spilled[1]
+                if entry is not None:
+                    entry['typed'], entry['legacy'] = spilled[2], spilled[3]
+                if visit is not None: visit(table, None)
+                continue
         if prefixes is not None and table in prefixes:
             entry = prefixes[table]
             positioned = list(db.execute('SELECT rowid, * FROM ' + identifier(table)))

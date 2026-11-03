@@ -289,7 +289,8 @@ try {
     "/bin/bash",
     [join(root, "scripts/studio-verify/typecheck-gate.sh"), "--out", join(out, "typecheck")],
     root,
-    1200000,
+    // 20 minutes to check, plus up to 10 queueing for the machine's type check lock.
+    1800000,
   );
   await runNode("web-production", ["--run", "build"], join(root, "apps/web"), 900000);
   await runNode(

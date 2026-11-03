@@ -246,6 +246,8 @@ export const StudioFleetInviteProblem = Schema.Literals([
   "connect_not_linked",
   /** Linked to SpecWithCode Connect, and its address does not answer as this machine. */
   "connect_unreachable",
+  /** The main machine named is this machine itself. */
+  "coordinator_is_this_machine",
 ]);
 export type StudioFleetInviteProblem = typeof StudioFleetInviteProblem.Type;
 

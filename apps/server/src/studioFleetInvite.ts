@@ -81,7 +81,17 @@ export class ConnectUnreachable extends Data.TaggedError("ConnectUnreachable")<{
   readonly tailscale?: TailscalePublishError;
 }> {}
 
-export type FleetInviteFailure = TailscalePublishError | ConnectNotLinked | ConnectUnreachable;
+/** The line would name this machine as its own main machine, so it could never be used. */
+export class CoordinatorIsThisMachine extends Data.TaggedError("CoordinatorIsThisMachine")<{}> {}
+
+export const COORDINATOR_IS_THIS_MACHINE_MESSAGE =
+  "The main machine named here is this machine. Make the line on the machine you want to add, naming this machine's environment ID as its main machine.";
+
+export type FleetInviteFailure =
+  | TailscalePublishError
+  | ConnectNotLinked
+  | ConnectUnreachable
+  | CoordinatorIsThisMachine;
 
 /** Which address an invitation carries: absent is the original Tailscale-only line. */
 export type FleetInviteVia = "auto" | "tailscale" | "connect";
@@ -121,6 +131,8 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   /** Used to check that the Connect address answers as this machine. */
   readonly fetch?: FleetFetch | undefined;
 }) {
+  if (input.coordinatorEnvironmentId === input.environmentId)
+    return yield* new CoordinatorIsThisMachine();
   const label = fleetInviteLabel(input.label, input.ownLabel) || "Machine";
   if (input.via === undefined || input.via === "tailscale") {
     const served = yield* publishOnTailscale({
@@ -244,6 +256,11 @@ export function fleetInviteProblem(error: FleetInviteFailure): {
   readonly message: string;
 } {
   switch (error._tag) {
+    case "CoordinatorIsThisMachine":
+      return {
+        reason: "coordinator_is_this_machine",
+        message: COORDINATOR_IS_THIS_MACHINE_MESSAGE,
+      };
     case "ConnectNotLinked":
     case "ConnectUnreachable": {
       const head =

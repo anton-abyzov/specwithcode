@@ -107,6 +107,10 @@ export interface BootServicePlan {
   readonly unitPath: string;
 }
 
+/** A 28 GB machine's largest measured checks together (9.4 + 4.8 + 3.1 GB) plus agents still fit. */
+const SERVICE_MEMORY_MAX = "75%";
+const SERVICE_MEMORY_SWAP_MAX = "1G";
+
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
 export function renderBootServiceUnit(plan: BootServicePlan): string {
   // The user manager has no reliable network-online target; server networking retries itself.
@@ -130,6 +134,12 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     // child stops the whole unit: the server, every live agent, and the user's
     // connection. Keep running and let Restart=always cover the main process.
     "OOMPolicy=continue",
+    // Without a cap a machine runs out of memory as a whole: minutes of thrashing,
+    // then the kernel picks among the desktop, the browser and the app window. At
+    // the cap it kills inside this cgroup only, where agent work is marked to go
+    // first (MemoryGuard). Swap is capped too, or the overrun would thrash first.
+    `MemoryMax=${SERVICE_MEMORY_MAX}`,
+    `MemorySwapMax=${SERVICE_MEMORY_SWAP_MAX}`,
     "Restart=always",
     "RestartSec=5",
     `StandardOutput=append:${escapeSystemdSpecifiers(plan.logPath)}`,

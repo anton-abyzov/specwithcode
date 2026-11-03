@@ -175,6 +175,27 @@ export function shellRunNeedsConfirmation(runtimeMode: RuntimeMode | null): bool
   return runtimeMode !== "full-access";
 }
 
+/** A line that really runs `fleet invite`, not one that mentions it or asks for its help. */
+const FLEET_INVITE_COMMAND_REGEX =
+  /^\s*(?:\S*\/)?(?:specweave-studio|specwithcode)\s+fleet\s+invite\b(?![^\n]*\s(?:--help|-h)\b)/m;
+
+/**
+ * What to know before running a command on this machine. `fleet invite` is
+ * meant for the machine being added, and an agent asking for it usually means
+ * another machine, while Run always uses the thread's host.
+ */
+export function shellRunMachineWarning(
+  command: string,
+  environmentId: string,
+  hostLabel: string | null,
+): string | null {
+  if (!FLEET_INVITE_COMMAND_REGEX.test(command)) return null;
+  const host = hostLabel ?? "this machine";
+  return command.includes(environmentId)
+    ? `This names ${host} as its own main machine, so it will not work here. Run it on the machine you want to add.`
+    : `This makes a one-time invitation for ${host} itself. Run it here only if ${host} is the machine to add.`;
+}
+
 // CSI, OSC (BEL or ST terminated) and two-byte escape sequences.
 const ANSI_SEQUENCE_REGEX =
   // oxlint-disable-next-line no-control-regex -- terminal escape sequences start with ESC

@@ -12,7 +12,7 @@ import {
   AuthStandardClientScopes,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
-import * as Cause from "effect/Cause";
+import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { type AsyncResult, type Atom } from "effect/reactivity";
@@ -20,7 +20,12 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "../state/presentation";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
-import { addStudioFleetMachine, changeMachineWorkGrant, inviteStudioFleetMachine } from "./fleet";
+import {
+  addStudioFleetMachine,
+  badRequestMessage,
+  changeMachineWorkGrant,
+  inviteStudioFleetMachine,
+} from "./fleet";
 import { requestFleet, requestFleetWorkersAllow, requestWorkGrants } from "./fleetRequest";
 import type { StandbyArmingCommands } from "./standbyArming";
 
@@ -46,13 +51,7 @@ function connected(environmentId: EnvironmentId, what: string): PreparedConnecti
 
 /** The message the server worded for the person, else the fallback. */
 function serverMessage(cause: Cause.Cause<unknown>, fallback: string): string {
-  const failure = Cause.squash(cause) as { readonly _tag?: unknown; readonly message?: unknown };
-  return typeof failure === "object" &&
-    failure !== null &&
-    failure._tag === "EnvironmentHttpBadRequestError" &&
-    typeof failure.message === "string"
-    ? failure.message
-    : fallback;
+  return badRequestMessage(cause) ?? fallback;
 }
 
 async function run<A, E>(

@@ -110,6 +110,17 @@ def scratch_parent(database):
     return updates if updates.is_dir() else pathlib.Path(tempfile.gettempdir())
 
 
+def spill_folder(database):
+    """Where a full read's sorted runs go, or None to hold them in memory: scratch_parent when it
+    is on the database's volume. A system temporary folder can be backed by memory, which is what
+    the runs are written to save."""
+    try:
+        parent = scratch_parent(database)
+        return parent if os.stat(str(parent)).st_dev == os.stat(str(database)).st_dev else None
+    except OSError:
+        return None
+
+
 def disk_floor(database_bytes):
     return DISK_FLOOR_FACTOR * database_bytes + DISK_FLOOR_MARGIN
 

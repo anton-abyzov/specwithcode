@@ -1,3 +1,4 @@
+import { shellQuote } from "./cli/shellLauncher.ts";
 import {
   teamRulesMachineLinkRefusal,
   teamRulesMachineRefusal,
@@ -85,23 +86,27 @@ export class FleetJoinError extends Error {
     | "write"
     | "invitation-used"
     | "wrong-coordinator"
-    | "coordinator-unknown";
-  constructor(kind: FleetJoinError["kind"]) {
+    | "coordinator-unknown"
+    | "own-machine";
+  constructor(kind: FleetJoinError["kind"], message?: string) {
     super(
-      {
-        "invalid-code":
-          "This is not a machine invitation. Make a new line on that machine (Join a main machine in its Settings > Connections, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
-        "address-in-use": "Another configured machine already uses this address.",
-        "id-in-use": "Another configured machine already uses this name.",
-        "unknown-machine": "No configured machine has that name.",
-        write: "The private machine list could not be saved.",
-        "invitation-used":
-          "This invitation was already used or has expired. On that machine choose Join a main machine again and add the new line here.",
-        "wrong-coordinator":
-          "This line was made for a different main machine, so it no longer works. On that machine choose Join a main machine again, paste this machine's environment ID (Settings > Connections) as the main machine environment ID, and add the new line here.",
-        "coordinator-unknown":
-          "Start SpecWithCode on this machine first: adding this machine needs its environment ID.",
-      }[kind],
+      message ??
+        {
+          "invalid-code":
+            "This is not a machine invitation. Make a new line on that machine (Join a main machine in its Settings > Connections, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+          "address-in-use": "Another configured machine already uses this address.",
+          "id-in-use": "Another configured machine already uses this name.",
+          "unknown-machine": "No configured machine has that name.",
+          write: "The private machine list could not be saved.",
+          "invitation-used":
+            "This invitation was already used or has expired. On that machine choose Join a main machine again and add the new line here.",
+          "wrong-coordinator":
+            "This line was made for a different main machine, so it no longer works. On that machine choose Join a main machine again, paste this machine's environment ID (Settings > Connections) as the main machine environment ID, and add the new line here.",
+          "coordinator-unknown":
+            "Start SpecWithCode on this machine first: adding this machine needs its environment ID.",
+          "own-machine":
+            "This line came from this machine, so there is nothing to add here. On the machine you want to add, choose Join a main machine in Settings > Connections, then paste its line here.",
+        }[kind],
     );
     this.kind = kind;
   }
@@ -294,6 +299,9 @@ export async function addFleetMachine(input: {
   readonly localEnvironmentId?: string | undefined;
 }): Promise<FleetAddResult> {
   const invite = decodeFleetJoinCode(input.code);
+  // Refused before anything is sent: a v2 line is spent by redeeming it.
+  if (input.localEnvironmentId !== undefined && invite.environmentId === input.localEnvironmentId)
+    throw new FleetJoinError("own-machine");
   const fetcher = input.link ?? input.fetcher ?? fetch;
   const rules =
     (typeof input.link === "object" ? input.link.teamRules?.() : undefined) ??
@@ -355,6 +363,14 @@ export async function addFleetMachine(input: {
         machine,
         redeem: invite.redeem,
         coordinatorEnvironmentId: input.localEnvironmentId!,
+      }).catch((error: unknown) => {
+        // The likely mix-up: the line was meant to add this machine to that one.
+        throw error instanceof FleetJoinError && error.kind === "wrong-coordinator" && index !== -1
+          ? new FleetJoinError(
+              "wrong-coordinator",
+              `${label} is already added here, and this line was made for a different main machine, so nothing changed and the line is now used up. To add this machine to ${label}, run \`specwithcode fleet invite --coordinator ${shellQuote(invite.environmentId)}\` on this machine and add its line on ${label}.`,
+            )
+          : error;
       })
     : { token: invite.managementToken };
   const managementToken = redeemed.token;

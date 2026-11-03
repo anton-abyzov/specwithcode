@@ -184,16 +184,53 @@ export function useStudioFleet(environmentId: EnvironmentId) {
   };
 }
 /** The message of a bad-request failure, which the server words for the user. */
-function badRequestMessage(cause: Cause.Cause<unknown>): string | null {
-  const failure = Cause.squash(cause);
-  return typeof failure === "object" &&
-    failure !== null &&
-    "_tag" in failure &&
-    failure._tag === "EnvironmentHttpBadRequestError" &&
-    "message" in failure &&
+/**
+ * The error the server declared for this request. The request layer passes on
+ * only its common errors and wraps any other as a fetch failure, the declared
+ * one as its cause.
+ */
+export function declaredFailure(cause: Cause.Cause<unknown>): {
+  readonly _tag?: unknown;
+  readonly reason?: unknown;
+  readonly message?: unknown;
+} | null {
+  const failure = Cause.squash(cause) as {
+    readonly _tag?: unknown;
+    readonly cause?: unknown;
+  } | null;
+  if (typeof failure !== "object" || failure === null) return null;
+  return failure._tag === "RemoteEnvironmentAuthFetchError" &&
+    typeof failure.cause === "object" &&
+    failure.cause !== null
+    ? failure.cause
+    : failure;
+}
+
+const messageOfDeclared = (
+  cause: Cause.Cause<unknown>,
+  tags: ReadonlyArray<string>,
+): string | null => {
+  const failure = declaredFailure(cause);
+  return typeof failure?._tag === "string" &&
+    tags.includes(failure._tag) &&
     typeof failure.message === "string"
     ? failure.message
     : null;
+};
+
+export function badRequestMessage(cause: Cause.Cause<unknown>): string | null {
+  return messageOfDeclared(cause, ["EnvironmentHttpBadRequestError"]);
+}
+
+/** What the server said about a machine it could not add, in words it wrote for the user. */
+export function fleetAddFailureMessage(cause: Cause.Cause<unknown>): string {
+  return (
+    messageOfDeclared(cause, [
+      "EnvironmentHttpBadRequestError",
+      "EnvironmentHttpForbiddenError",
+      "EnvironmentHttpInternalServerError",
+    ]) ?? "Could not add this machine. Refresh, then retry."
+  );
 }
 
 export async function pairStudioFleet(environmentId: EnvironmentId, id: string) {
@@ -301,9 +338,7 @@ export async function addStudioFleetMachine(
   appAtomRegistry.refresh(fleetAtom(environmentId));
   if (result._tag === "Failure") {
     // The server words what the user can fix: a bad line, an offline machine.
-    throw new Error(
-      badRequestMessage(result.cause) ?? "Could not add this machine. Refresh, then retry.",
-    );
+    throw new Error(fleetAddFailureMessage(result.cause));
   }
   return result.value;
 }
@@ -359,11 +394,7 @@ export async function inviteStudioFleetMachine(
   });
   if (result._tag === "Failure") {
     // The server words what to do about Tailscale; anything else is generic.
-    const failure = Cause.squash(result.cause) as {
-      readonly _tag?: unknown;
-      readonly reason?: unknown;
-      readonly message?: unknown;
-    } | null;
+    const failure = declaredFailure(result.cause);
     if (
       typeof failure === "object" &&
       failure !== null &&
@@ -495,11 +526,7 @@ export async function signInStudioFleetTailscale(
     reportDefect: false,
   });
   if (result._tag === "Failure") {
-    const failure = Cause.squash(result.cause) as {
-      readonly _tag?: unknown;
-      readonly reason?: unknown;
-      readonly message?: unknown;
-    } | null;
+    const failure = declaredFailure(result.cause);
     if (
       typeof failure === "object" &&
       failure !== null &&
@@ -531,16 +558,7 @@ export function useMachineWorkGrants(environmentId: EnvironmentId | null) {
 }
 
 function failureMessage(cause: unknown, fallback: string) {
-  const failure = Cause.squash(cause as Cause.Cause<unknown>) as {
-    readonly _tag?: unknown;
-    readonly message?: unknown;
-  } | null;
-  return typeof failure === "object" &&
-    failure !== null &&
-    failure._tag === "EnvironmentHttpBadRequestError" &&
-    typeof failure.message === "string"
-    ? failure.message
-    : fallback;
+  return badRequestMessage(cause as Cause.Cause<unknown>) ?? fallback;
 }
 
 /** Changes, revokes or restores what one coordinator machine may do here. */

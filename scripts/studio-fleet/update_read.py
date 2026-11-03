@@ -103,8 +103,9 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
         # Inside kept_lines.keeping (update.py's read before the restart) the single scan also
         # hands over the sorted lines of the largest tables for after_proof; nothing else changes.
         keep = kept_lines.active()
+        spill = kept_lines.spill_folder(state / 'statev2.sqlite')
         try:
-            return _read_tables(db, tables, include_auth, since, True, widen_from, once=True,
+            return _read_tables(db, tables, include_auth, since, True, widen_from, once=True, spill=spill,
                                 **({'keep': keep} if keep is not None else {}))
         except Exception:
             if keep is not None:
@@ -118,11 +119,11 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
         # rows are let go: the first fault it meets is what helpers that read in that order
         # answer, and without one its rows are the answer. Without a virtual table, a table
         # gives the same rows each time this transaction reads it.
-        return _read_tables(db, tables, include_auth, since, True, widen_from)
+        return _read_tables(db, tables, include_auth, since, True, widen_from, spill=spill)
     finally:
         db.close()
 
-def _read_tables(db, tables, include_auth, since, include_database, widen_from, *, once=False, check_idle=False, keep=None, cache=None):
+def _read_tables(db, tables, include_auth, since, include_database, widen_from, *, once=False, check_idle=False, keep=None, cache=None, spill=None):
     """The rest of _read_state, in its read transaction. With `once`, the complete capture
     comes first: its legacy hashes are the guarded hashes (the same encoding), it hashes the
     logs' earlier rows in the same scan (log_prefixes), and it hands over the rows of
@@ -130,7 +131,8 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
     projections per stream as it goes (ThreadRows). Otherwise every part reads its own rows in the
     original order, the capture last; with `check_idle`, protected rows first, then the idle
     check, then the rest. `keep` (kept_lines.Kept, with `once` only) is handed the capture's sorted
-    lines."""
+    lines. `spill` (a folder) hashes the tables whose rows are not kept through runs on disk there,
+    so a large log is not held in memory (continuity.spilled_table)."""
     database, scanned, prefixes = None, None, None
     if once:
         # Complete schema and typed cells of every table, bound to the protected rows in
@@ -139,8 +141,11 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
         def visit(table, rows):
             if table == 'auth_sessions' or table in CURSOR_COLUMNS: scanned[table] = rows
             threads.visit(table, rows)
+        def needs_rows(table):
+            return table == 'auth_sessions' or table in CURSOR_COLUMNS or threads.needs_rows(table)
         prefixes = log_prefixes(db, tables, since) if since is not None else None
         database = continuity.capture_connection(db, widen_from, visit=visit, prefixes=prefixes,
+                                                  spill=spill, needs_rows=needs_rows,
                                                   **({'keep': keep} if keep is not None else {}),
                                                   **({'reuse': cache.reuse} if cache is not None else {}))
         guarded = [table for table in tables
@@ -167,7 +172,7 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
     if include_database and not once:
         # Complete schema and typed cells of every table, bound to the protected rows in
         # this same read transaction. Hashes and schema text only; no cell values.
-        database = continuity.capture_connection(db, widen_from)
+        database = continuity.capture_connection(db, widen_from, spill=spill)
     # After a single scan, whose guarded hashes came from the capture, bind_rows checks the shape.
     if database is not None: continuity.bind_rows(database, proof)
     if keep is not None: keep.complete = True
@@ -302,6 +307,11 @@ class ThreadRows:
     def __init__(self, db, cached=None):
         self.db, self.visited, self.tables, self.hashers = db, [], [], {}
         self.cached = cached
+
+    def needs_rows(self, table):
+        """Whether visit reads `table`'s rows; it is handed None for any other table."""
+        return self.cached is None and table not in CURSOR_COLUMNS and is_projection_table(table) \
+            and bool(stream_column(table_columns(self.db, table)))
 
     def visit(self, table, rows):
         assert not self.visited or self.visited[-1] < table, 'Tables visited out of name order'

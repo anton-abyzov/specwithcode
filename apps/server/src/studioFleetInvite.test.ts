@@ -17,6 +17,8 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as Auth from "./auth/EnvironmentAuth.ts";
 import {
+  COORDINATOR_IS_THIS_MACHINE_MESSAGE,
+  CoordinatorIsThisMachine,
   FLEET_INVITE_SCOPES,
   fleetInviteProblem,
   issueFleetInvitation,
@@ -126,6 +128,7 @@ async function invite(input: {
   readonly connectOrigin: string | null;
   readonly connectAnswers?: string | null | undefined;
   readonly days?: number;
+  readonly coordinator?: string;
 }) {
   const auth = authFake();
   const tailscale = tailscaleFake(input.tailscale);
@@ -142,7 +145,7 @@ async function invite(input: {
   const result = await Effect.runPromise(
     issueFleetInvitation({
       environmentId: SELF,
-      coordinatorEnvironmentId: PRIMARY,
+      coordinatorEnvironmentId: (input.coordinator ?? PRIMARY) as EnvironmentId,
       ownLabel: "Worker",
       state: { host: "127.0.0.1", port: 8319 },
       servePort: 443,
@@ -232,6 +235,24 @@ describe("fleet invitation over SpecWithCode Connect", () => {
   it("legacy and Tailscale-only requests never look at Connect", async () => {
     const legacy = await invite({ tailscale: running, connectOrigin: CONNECT });
     expect(legacy.fetched).not.toContain(CONNECT);
+  });
+
+  it("refuses a main machine that is this machine, and mints nothing", async () => {
+    const { result, auth } = await invite({
+      via: "auto",
+      tailscale: null,
+      connectOrigin: CONNECT,
+      coordinator: SELF,
+    });
+    expect(result._tag).toBe("Failure");
+    if (result._tag !== "Failure") return;
+    expect(result.failure).toBeInstanceOf(CoordinatorIsThisMachine);
+    expect(fleetInviteProblem(new CoordinatorIsThisMachine())).toEqual({
+      reason: "coordinator_is_this_machine",
+      message: COORDINATOR_IS_THIS_MACHINE_MESSAGE,
+    });
+    expect(auth.sessions).toHaveLength(0);
+    expect(auth.pairings).toHaveLength(0);
   });
 
   it("mints nothing when no address can be used", async () => {

@@ -73,6 +73,8 @@ export function fleetInviteProblemTitle(reason: FleetInviteReason): string {
       return "SpecWithCode Connect is not linked";
     case "connect_unreachable":
       return "SpecWithCode Connect is not answering";
+    case "coordinator_is_this_machine":
+      return "That ID is this machine";
     case "permission":
       return "Manage access required";
     case "unknown":

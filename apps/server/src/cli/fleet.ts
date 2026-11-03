@@ -192,6 +192,10 @@ const inviteCommand = Command.make("invite", {
         return yield* Effect.fail(new FleetError("team-rules", refused.message));
       const logLevel = Option.getOrElse(yield* GlobalFlag.LogLevel, () => "Warn" as const);
       const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+      if (flags.coordinator === target.descriptor.environmentId)
+        return yield* new LiveServiceUnsupportedError({
+          reason: `--coordinator names this machine (${target.descriptor.label}), so the line could never be used. Run this command on the machine you want to add.`,
+        });
       const config = yield* makePairServerConfig({ target, logLevel });
       const invitation = yield* inviteThroughRunningService({
         config,

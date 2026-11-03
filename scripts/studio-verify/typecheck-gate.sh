@@ -36,6 +36,9 @@
 # apps/server peaks near 12 GB with tsc's default four checkers and 8 GB with two. It also
 # changes the result: four checkers report 9 more Effect diagnostics in apps/server/src/server.ts,
 # so a local run must use CI's count to match it. Set TYPECHECK_TSC_ARGS= (empty) to pass none.
+# TYPECHECK_LOCK (lock file) and TYPECHECK_LOCK_WAIT (seconds, default 600): one run at a time on a
+# machine, since parallel workers each starting a run is what exhausts its memory. After the wait
+# the run goes ahead anyway and says so: a stuck run must not block every other worker's gate.
 # A tsc package must resolve the workspace's own tsc; a global tsc on PATH is refused.
 # Ctrl-C or a TERM stops every running typecheck.
 set -euo pipefail
@@ -109,6 +112,24 @@ for pattern in patterns:
 PY
 }
 
+# Without flock (macOS) a run just does not wait. Children inherit fd 9, so a checker that outlives
+# a killed run keeps the lock for as long as it holds the memory.
+wait_for_machine_lock() {
+  command -v flock >/dev/null 2>&1 || return 0
+  # Not $XDG_RUNTIME_DIR: cron and some SSH sessions lack it and would take a different lock.
+  local dir="/run/user/$(id -u)"
+  [ -d "$dir" ] && [ -w "$dir" ] || dir="${TMPDIR:-/tmp}"
+  local lock="${TYPECHECK_LOCK:-$dir/studio-typecheck-$(id -u).lock}"
+  local wait="${TYPECHECK_LOCK_WAIT:-600}"
+  case "$wait" in
+    '' | *[!0-9]*) die "TYPECHECK_LOCK_WAIT must be a number of seconds" ;;
+  esac
+  exec 9>"$lock" || return 0
+  flock -n 9 && return 0
+  echo "Waiting up to ${wait}s for another type check on this machine to finish ($lock)"
+  flock -w "$wait" 9 || echo "Still running after ${wait}s; type checking alongside it"
+}
+
 if [ "${1:-}" = "--run-one" ]; then
   [ $# -eq 3 ] || die "usage: --run-one OUT PACKAGE"
   run_one "$2" "$3"
@@ -160,6 +181,7 @@ else
     echo "$package" >> "$OUT/packages.txt"
   done
   [ -s "$OUT/packages.txt" ] || die "no workspace package has a typecheck script"
+  wait_for_machine_lock
   echo "Type checking $(wc -l < "$OUT/packages.txt" | tr -d ' ') packages, $JOBS at a time; logs in $OUT"
   runner=0
   job_pool "$OUT/packages.txt" "$JOBS" bash "$SELF" --run-one "$OUT" || runner=$?

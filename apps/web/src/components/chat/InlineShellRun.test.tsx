@@ -234,6 +234,29 @@ describe("inline shell code block runs", () => {
     expect(commands.open).toHaveBeenCalledOnce();
   });
 
+  it("names the machine on the Run button", async () => {
+    const renderer = await render("```bash\n" + COMMAND + "\n```", target("full-access"));
+    const run = renderer.root.findByProps({ "data-shell-run-action": "run", type: "button" });
+    expect(run.findByType("span").props.children).toBe("Run on MacBook M4MAX");
+  });
+
+  it("warns under Full access when a fleet invite names this machine, and runs only after", async () => {
+    const renderer = await render(
+      "```bash\nspecweave-studio fleet invite --coordinator env-local\n```",
+      target("full-access"),
+    );
+
+    await act(async () => button(renderer, "Run command").onClick?.({} as never));
+
+    expect(commands.open).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ "data-shell-run-warning": "" }).props.children).toContain(
+      "names MacBook M4MAX as its own main machine",
+    );
+    const confirmRun = renderer.root.findByProps({ "data-shell-run-confirm": "" });
+    await act(async () => confirmRun.props.onClick?.({} as never));
+    expect(commands.open).toHaveBeenCalledOnce();
+  });
+
   it("shows output and the exit code under the block, and clears it", async () => {
     terminal.known = [inlineRunTerminalId(COMMAND)];
     terminal.state = exitedSession("\u001b[31merror:\u001b[0m no zip\r\n", 9);

@@ -363,7 +363,8 @@ def read_once(test, state, include_auth, since, include_database, widen_from, la
     virtual table), from origin/main's whole order alone, whatever it answers."""
     with patch.object(update_read, '_read_tables', wraps=update_read._read_tables) as tables:
         new = outcome(update._read_state, state, include_auth, since, include_database, widen_from)
-    paths = [call.kwargs for call in tables.call_args_list]
+    # Where a large table's runs go is no part of which order the read took.
+    paths = [{key: value for key, value in call.kwargs.items() if key != 'spill'} for call in tables.call_args_list]
     if in_order:
         test.assertEqual(paths, [{'check_idle': True}], label)
     elif new[0] == 'ok':
@@ -954,7 +955,7 @@ class RefusalOrder(unittest.TestCase):
                     expected = frozen(REFERENCE['_read_state'](*args))
                     committed = []
                     def single_scan_fails(db, widen_from=None, **kwargs):
-                        if not kwargs: return real(db, widen_from)
+                        if 'visit' not in kwargs: return real(db, widen_from)
                         writer = subprocess.run([sys.executable, '-I', '-c', COMMIT_DURING_THE_SCAN, str(case / 'statev2.sqlite')],
                                                 capture_output=True, text=True, timeout=60)
                         committed.append((writer.returncode, writer.stderr))
@@ -968,7 +969,7 @@ class RefusalOrder(unittest.TestCase):
                         new = update._read_state(*args)
                     self.assertEqual(committed, [(0, '')])
                     # origin/main's order ran after it, on the same connection, still in its transaction.
-                    self.assertEqual([kwargs for kwargs, _, _ in calls], [{'once': True}, {}])
+                    self.assertEqual([{key: value for key, value in kwargs.items() if key != 'spill'} for kwargs, _, _ in calls], [{'once': True}, {}])
                     self.assertIs(calls[1][1], calls[0][1])
                     self.assertTrue(calls[1][2])
                     self.assertEqual(new[0]['projectIds'], ['p1'])
@@ -987,8 +988,8 @@ class RefusalOrder(unittest.TestCase):
         real one."""
         real, calls = continuity.capture_connection, []
         def capture(db, widen_from=None, **kwargs):
-            calls.append(sorted(kwargs))
-            if not kwargs:
+            calls.append(sorted(key for key in kwargs if key not in ('spill', 'needs_rows')))
+            if 'visit' not in kwargs:
                 return real(db, widen_from)
             seen = []
             def visit(name, rows):
@@ -1043,7 +1044,7 @@ class RefusalOrder(unittest.TestCase):
             with self.subTest(since=since is not None), \
                     patch.object(update_read, '_read_tables', wraps=update_read._read_tables) as tables:
                 update._read_state(self.state, False, since, True)
-                self.assertEqual([call.kwargs for call in tables.call_args_list], [{'once': True}])
+                self.assertEqual([{key: value for key, value in call.kwargs.items() if key != 'spill'} for call in tables.call_args_list], [{'once': True}])
 
 
 # About 1 KB of text a row, so the rows a read holds outweigh everything else it allocates.
@@ -1258,7 +1259,7 @@ class ProjectionsReadOnce(unittest.TestCase):
             db.close()
         real = continuity.capture_connection
         def reversed_visits(db, widen_from=None, **kwargs):
-            if not kwargs: return real(db, widen_from)
+            if 'visit' not in kwargs: return real(db, widen_from)
             seen = []
             capture = real(db, widen_from, visit=lambda table, rows: seen.append((table, rows)), prefixes=kwargs['prefixes'])
             for table, rows in reversed(seen): kwargs['visit'](table, rows)
@@ -1267,7 +1268,7 @@ class ProjectionsReadOnce(unittest.TestCase):
         with patch.object(continuity, 'capture_connection', side_effect=reversed_visits), \
                 patch.object(update_read, '_read_tables', wraps=update_read._read_tables) as tables:
             self.assertEqual(frozen(update._read_state(state, False, None, True)), expected)
-        self.assertEqual([call.kwargs for call in tables.call_args_list], [{'once': True}, {}])
+        self.assertEqual([{key: value for key, value in call.kwargs.items() if key != 'spill'} for call in tables.call_args_list], [{'once': True}, {}])
 
     def test_a_projection_heavy_read_peaks_well_below_origin_main(self):
         """origin/main held every thread-keyed projection's lines at once, after the capture

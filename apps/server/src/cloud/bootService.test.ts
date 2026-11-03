@@ -77,6 +77,13 @@ it("survives the kernel OOM-killing a greedy agent child", () => {
   expect(unit).toContain("OOMPolicy=continue");
 });
 
+it("contains a memory overrun inside the service's cgroup", () => {
+  const unit = BootService.renderBootServiceUnit(linuxPlan);
+
+  expect(unit).toContain("MemoryMax=75%");
+  expect(unit).toContain("MemorySwapMax=1G");
+});
+
 const macRuntime = "/Users/dev/.specweave-studio/runtime/versions/1.2.3/specweave-studio";
 const macPlan = {
   program: [macRuntime, "__service-launcher"],

@@ -21,6 +21,7 @@ import {
   removeFleetMachine,
   removeFleetMachineEverywhere,
   revokeManagementToken,
+  writeFleetConfigSource,
 } from "./studioFleetJoin.ts";
 import { fleetRemoveSummary } from "./cli/fleet.ts";
 
@@ -352,6 +353,62 @@ describe("adding machines to the fleet file", () => {
         }),
       ).rejects.toMatchObject({ kind: "wrong-coordinator" });
       expect(await readFleetConfig(baseDir)).toBeNull();
+    });
+
+    it("refuses a line from this machine itself before spending it", async () => {
+      const baseDir = await home();
+      const f = machine([tailnet], () => {
+        throw new Error("the line must not be redeemed");
+      });
+      await expect(
+        addFleetMachine({
+          baseDir,
+          code: v2(),
+          link: f,
+          localEnvironmentId: "environment-m1",
+        }),
+      ).rejects.toMatchObject({
+        kind: "own-machine",
+        message: expect.stringContaining("This line came from this machine"),
+      });
+      expect(await readFleetConfig(baseDir)).toBeNull();
+    });
+
+    it("says the machine is already added when its line names another main machine", async () => {
+      const baseDir = await home();
+      await writeFleetConfigSource(baseDir, {
+        version: 1,
+        machines: [
+          {
+            id: "m1",
+            label: "Mac M1",
+            environmentId: "environment-m1",
+            url: tailnet,
+            managementToken: "synthetic-existing-token",
+          },
+        ],
+      });
+      const f = machine([tailnet], () =>
+        Response.json(
+          {
+            _tag: "EnvironmentHttpBadRequestError",
+            message:
+              "This invitation was made for a different main machine. Make a new line for this one.",
+          },
+          { status: 400 },
+        ),
+      );
+      await expect(
+        addFleetMachine({
+          baseDir,
+          code: v2(),
+          link: f,
+          localEnvironmentId: "environment-primary",
+        }),
+      ).rejects.toMatchObject({
+        kind: "wrong-coordinator",
+        message: expect.stringContaining("Mac M1 is already added here"),
+      });
     });
 
     it("refuses a returned token not bound to this machine's key", async () => {

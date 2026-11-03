@@ -31,6 +31,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { TerminalActionBar, TerminalLinkedText } from "./TerminalTextActions";
 import {
   inlineRunTerminalId,
+  shellRunMachineWarning,
   shellRunNeedsConfirmation,
   terminalOutputPlainText,
 } from "./shellCodeBlocks";
@@ -65,6 +66,10 @@ export interface InlineShellRun {
   readonly error: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
+  /** The machine this command runs on, when known. */
+  readonly hostLabel: string | null;
+  /** Why this machine may be the wrong one for this command. */
+  readonly warning: string | null;
   /** The click: asks first under a stricter mode than Full access, otherwise runs. */
   readonly requestRun: () => void;
   readonly confirmRun: () => void;
@@ -85,6 +90,11 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
   const threadId = active ? target.threadId : null;
   const terminalId = command !== null ? inlineRunTerminalId(command) : null;
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const hostLabel = useEnvironment(environmentId)?.label ?? null;
+  const warning =
+    command !== null && environmentId !== null
+      ? shellRunMachineWarning(command, environmentId, hostLabel)
+      : null;
   const knownSessions = useKnownTerminalSessions({ environmentId, threadId });
   const known =
     terminalId !== null &&
@@ -142,12 +152,12 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
 
   const requestRun = useCallback(() => {
     if (running) return;
-    if (shellRunNeedsConfirmation(target?.runtimeMode ?? null)) {
+    if (warning !== null || shellRunNeedsConfirmation(target?.runtimeMode ?? null)) {
       setConfirming(true);
       return;
     }
     void run();
-  }, [run, running, target?.runtimeMode]);
+  }, [run, running, target?.runtimeMode, warning]);
 
   const stop = useCallback(() => {
     if (!target || terminalId === null) return;
@@ -181,6 +191,8 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     error: error ?? (attached ? session.error : null),
     environmentId,
     cwd: target?.worktreePath ?? target?.cwd ?? null,
+    hostLabel,
+    warning,
     requestRun,
     confirmRun: () => void run(),
     cancelRun: () => setConfirming(false),
@@ -220,7 +232,7 @@ export function InlineShellRunScope({
 export function InlineShellRunButton() {
   const run = use(InlineShellRunContext);
   if (!run?.available) return null;
-  const label = run.running ? "Stop" : "Run";
+  const label = run.running ? "Stop" : run.hostLabel ? `Run on ${run.hostLabel}` : "Run";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -231,15 +243,18 @@ export function InlineShellRunButton() {
             size="xs"
             onClick={run.running ? run.stop : run.requestRun}
             aria-label={run.running ? "Stop command" : "Run command"}
+            aria-description={run.hostLabel ? `Runs on ${run.hostLabel}` : undefined}
             data-shell-run-action={run.running ? "stop" : "run"}
           />
         }
       >
         {run.running ? <SquareIcon className="size-3" /> : <PlayIcon className="size-3" />}
-        {label}
+        <span className="max-w-40 truncate">{label}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {run.running ? "Stop the command" : "Run here and show the output below"}
+        {run.running
+          ? "Stop the command"
+          : `Run on ${run.hostLabel ?? "this thread's machine"} and show the output below`}
       </TooltipPopup>
     </Tooltip>
   );
@@ -258,8 +273,7 @@ function exitLabel(run: InlineShellRun): { text: string; failed: boolean } | nul
 }
 
 function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
-  const hostLabel = useEnvironment(run.environmentId)?.label ?? null;
-  const where = [hostLabel, run.cwd].filter(Boolean).join(" in ");
+  const where = [run.hostLabel, run.cwd].filter(Boolean).join(" in ");
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-t border-border/60 px-3 py-2 text-xs select-none"
@@ -268,6 +282,11 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
       aria-label="Confirm command"
     >
       <span className="min-w-0 flex-1 text-muted-foreground">
+        {run.warning ? (
+          <span className="block font-medium text-warning-foreground" data-shell-run-warning="">
+            {run.warning}
+          </span>
+        ) : null}
         Run this command{where ? ` on ${where}` : ""}?
       </span>
       <Button type="button" size="micro" onClick={run.confirmRun} data-shell-run-confirm="">

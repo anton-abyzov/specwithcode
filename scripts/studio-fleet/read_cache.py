@@ -20,6 +20,7 @@ import sys
 import tempfile
 
 import database_continuity as continuity
+import kept_lines
 import live_database
 
 VERSION = 1
@@ -298,8 +299,9 @@ def read(state, include_auth, keep):
         except Exception as error:
             LAST = {'mode': 'full', 'reason': type(error).__name__ + ':' + str(error)}
             cache = None
+        spill = kept_lines.spill_folder(pathlib.Path(state) / 'statev2.sqlite')
         try:
-            reads = update_read._read_tables(db, tables, include_auth, None, True, None, once=True,
+            reads = update_read._read_tables(db, tables, include_auth, None, True, None, once=True, spill=spill,
                                             **({'keep': keep} if keep is not None else {}),
                                             **({'cache': cache} if cache is not None and cache.reuse else {}))
         except Exception:
@@ -307,7 +309,7 @@ def read(state, include_auth, keep):
                 keep.clear()
             if not db.in_transaction:
                 raise
-            return update_read._read_tables(db, tables, include_auth, None, True, None)
+            return update_read._read_tables(db, tables, include_auth, None, True, None, spill=spill)
         if cache is not None:
             try:
                 snapshot.check()
@@ -317,7 +319,7 @@ def read(state, include_auth, keep):
                     keep.clear()
                 # The SQL snapshot remains valid even if physical WAL provenance cannot be
                 # proven. Its original reader determines the answer, without using the cache.
-                return update_read._read_tables(db, tables, include_auth, None, True, None, once=True,
+                return update_read._read_tables(db, tables, include_auth, None, True, None, once=True, spill=spill,
                                                 **({'keep': keep} if keep is not None else {}))
             try:
                 cache.save(reads)

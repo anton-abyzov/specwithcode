@@ -89,6 +89,7 @@ class DatabaseChangedDuringVerification(AssertionError):
 import after_proof
 import auth_heartbeat
 import database_continuity as continuity
+import kept_lines
 import live_database
 import page_continuity
 import read_cache
@@ -294,7 +295,8 @@ class PageMode:
             assert all(re.fullmatch('[a-z0-9_]+', table) for table in tables), 'Unexpected table identifier'
             virtual = update_read.virtual_tables(db, tables)
             if not virtual: update_read.assert_idle(db)
-            rows, auth, _, capture = update_read._read_tables(db, tables, True, None, True, None, once=not virtual, check_idle=virtual)
+            rows, auth, _, capture = update_read._read_tables(db, tables, True, None, True, None, once=not virtual, check_idle=virtual,
+                                                          spill=kept_lines.spill_folder(self.state / 'statev2.sqlite'))
         finally:
             db.close()
         self.check_baseline(held)

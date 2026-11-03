@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -201,7 +201,7 @@ test("a crashing checker fails a real gate run", { skip }, () => {
       ["oom", "killed", "exit2"].map((p) => `pkg/${p}/src/a.ts TS2322 1\n`).join(""),
     );
     const out = join(repo, "out");
-    const env = { ...process.env };
+    const env = { ...process.env, TYPECHECK_LOCK: join(repo, "gate.lock") };
     delete env.TYPECHECK_TSC_ARGS;
     const result = spawnSync(
       "bash",
@@ -219,5 +219,81 @@ test("a crashing checker fails a real gate run", { skip }, () => {
     assert.match(readFileSync(join(out, "pkg__oom.log"), "utf8"), /args: --noEmit --checkers 2/);
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+function lockFixture(repo) {
+  const verify = join(repo, "scripts", "studio-verify");
+  mkdirSync(verify, { recursive: true });
+  for (const name of ["typecheck-gate.sh", "jobs.sh"]) {
+    copyFileSync(new URL(`./${name}`, import.meta.url).pathname, join(verify, name));
+  }
+  writeFileSync(join(repo, "pnpm-workspace.yaml"), "packages:\n  - pkg/*\n");
+  const dir = join(repo, "pkg", "a");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), '{"scripts":{"typecheck":"true"}}\n');
+  return join(verify, "typecheck-gate.sh");
+}
+
+const hasFlock = spawnSync("flock", ["--version"]).status === 0;
+const lockSkip = skip || (hasFlock ? false : "needs flock");
+
+test("a run waits for another on the machine, then goes ahead", { skip: lockSkip }, () => {
+  const repo = mkdtempSync(join(tmpdir(), "typecheck-gate-lock-"));
+  try {
+    const script = lockFixture(repo);
+    const lock = join(repo, "gate.lock");
+    const baseline = join(repo, "baseline.txt");
+    writeFileSync(baseline, "");
+    const gateRun = (wait) =>
+      spawnSync("bash", [script, "--out", join(repo, "out"), "--baseline", baseline], {
+        encoding: "utf8",
+        env: { ...process.env, TYPECHECK_LOCK: lock, TYPECHECK_LOCK_WAIT: wait },
+      });
+
+    const free = gateRun("0");
+    assert.equal(free.status, 0, free.stdout + free.stderr);
+    assert.doesNotMatch(free.stdout, /Waiting/);
+
+    const holder = spawn("flock", ["--no-fork", lock, "sleep", "30"], { stdio: "ignore" });
+    try {
+      const deadline = Date.now() + 5000;
+      while (spawnSync("flock", ["-n", lock, "true"]).status === 0) {
+        assert.ok(Date.now() < deadline, "the holder never took the lock");
+      }
+      const held = gateRun("1");
+      assert.equal(held.status, 0, held.stdout + held.stderr);
+      assert.match(held.stdout, /Waiting up to 1s for another type check/);
+      assert.match(held.stdout, /Still running after 1s; type checking alongside it/);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("a watchdog orphaned by a killed run does not keep the lock", { skip: lockSkip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "typecheck-gate-orphan-"));
+  try {
+    const lock = join(dir, "gate.lock");
+    const jobs = new URL("./jobs.sh", import.meta.url).pathname;
+    // The job ends by itself while the watchdog, its limit far off, would live on.
+    const run = spawn(
+      "bash",
+      ["-c", `. "${jobs}"; exec 9>"${lock}"; flock 9; job_run "${dir}" job 3 sleep 0.5`],
+      { stdio: "ignore" },
+    );
+    const started = Date.now() + 5000;
+    while (spawnSync("flock", ["-n", lock, "true"]).status === 0) {
+      assert.ok(Date.now() < started, "the run never took the lock");
+    }
+    // Long enough for job_run to start the watchdog, or there is nothing to orphan.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    run.kill("SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    assert.equal(spawnSync("flock", ["-n", lock, "true"]).status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
