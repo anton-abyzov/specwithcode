@@ -35,6 +35,7 @@ import {
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
   resolveSidebarThreadStatus,
+  resolveThreadAlertStatus,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
   resolveThreadRowClassName,
@@ -2080,8 +2081,24 @@ describe("navigation after parking a thread", () => {
 
 describe("unseen completion with background work", () => {
   it.each([
-    { kind: "command", status: "ready", topStatus: "done", receded: false, pill: "Completed" },
-    { kind: "monitor", status: "waiting", topStatus: "waiting", receded: true, pill: "Waiting" },
+    {
+      kind: "command",
+      status: "waiting",
+      alertStatus: "ready",
+      topStatus: "waiting",
+      receded: true,
+      working: true,
+      pill: "Waiting",
+    },
+    {
+      kind: "monitor",
+      status: "waiting",
+      alertStatus: "idle-parked",
+      topStatus: "waiting",
+      receded: true,
+      working: true,
+      pill: "Waiting",
+    },
   ] as const)("presents a completed thread with a $kind roster", (expected) => {
     const thread = presentThreadShell(localEnvironmentId, {
       ...makeThreadFixture().source,
@@ -2096,6 +2113,9 @@ describe("unseen completion with background work", () => {
 
     expect(isUnread).toBe(true);
     expect(status).toBe(expected.status);
+    expect(resolveThreadAlertStatus(thread)).toBe(
+      expected.alertStatus === "ready" ? "ready" : "waiting",
+    );
     expect(resolveSidebarV2TopStatus({ status, isUnread, isWoke: false })).toBe(expected.topStatus);
     expect(
       shouldRecedeSidebarThread({
@@ -2106,7 +2126,7 @@ describe("unseen completion with background work", () => {
         isSelected: false,
       }),
     ).toBe(expected.receded);
-    expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
+    expect(isSidebarThreadWorking(thread)).toBe(expected.working);
     expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
   });
 });

@@ -1,3 +1,4 @@
+import { threadBackgroundWait } from "./projectAttention.ts";
 import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
@@ -194,11 +195,14 @@ export function threadRelationshipRowStatus(
   graph: ThreadRelationshipGraph,
   row: Pick<ThreadRelationshipWalkRow, "threadId" | "edge">,
 ): string | null {
-  if (row.edge.kind === "transfer" || row.threadId === row.edge.targetThreadId) {
-    return row.edge.status;
-  }
+  if (row.edge.kind === "transfer") return row.edge.status;
   const thread = graph.nodes.get(row.threadId)?.thread;
-  return thread?.activityRunStatus ?? thread?.status ?? null;
+  const status =
+    row.threadId === row.edge.targetThreadId
+      ? row.edge.status
+      : (thread?.activityRunStatus ?? thread?.status ?? null);
+  // Its run ended, but background work it left is still going: not done yet.
+  return status === "completed" && thread && threadBackgroundWait(thread) ? "waiting" : status;
 }
 
 function threadCreatedAtMillis(node: ThreadRelationshipNode | undefined): number | null {

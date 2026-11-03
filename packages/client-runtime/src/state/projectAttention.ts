@@ -30,20 +30,68 @@ const COORDINATOR_THREAD_PREFIX = "project-coordinator:";
  * report to the person (the coordinator never repeats their results), so their
  * blockers still count.
  */
-export const reportsToParentAgent = (
-  thread: Pick<EnvironmentThreadShell, "lineage"> & {
-    readonly source?: Pick<EnvironmentThreadShell["source"], "creationSource"> | undefined;
-  },
-): boolean => {
+export const reportsToParentAgent = (thread: {
+  readonly lineage?: EnvironmentThreadShell["lineage"] | undefined;
+  readonly source?: Pick<EnvironmentThreadShell["source"], "creationSource"> | undefined;
+}): boolean => {
   if (thread.lineage?.relationshipToParent !== "subagent") return false;
   if (thread.source?.creationSource === "provider") return true;
   const parent = thread.lineage.parentThreadId;
   return typeof parent === "string" && !parent.startsWith(COORDINATOR_THREAD_PREFIX);
 };
+/** Accepts a presented thread or a wire shell, whose dates are not yet strings. */
+type BackgroundWaitInput = {
+  readonly archivedAt?: unknown;
+  readonly deletedAt?: unknown;
+} & {
+  readonly [
+    K in
+      | "settledOverride"
+      | "heldQueuedCount"
+      | "hasActionableProposedPlan"
+      | "reportedBlocker"
+      | "lineage"
+      | "source"
+      | "runtime"
+      | "pendingBackgroundTasks"
+  ]?: EnvironmentThreadShell[K] | undefined;
+};
+
+/**
+ * The one rule for live background work on a thread whose turn has ended,
+ * read by every surface that lists a thread: the words it goes by, or null
+ * when there is none or something outranks it (a resolved mark, a failed run,
+ * or anything that asks the person). It covers commands and a delegated child
+ * whose own run ended. Completion alerts deliberately do not use it.
+ */
+export function threadBackgroundWait(thread: BackgroundWaitInput): string | null {
+  const tasks = thread.pendingBackgroundTasks ?? [];
+  if (
+    tasks.length === 0 ||
+    thread.archivedAt != null ||
+    thread.deletedAt != null ||
+    thread.settledOverride === "settled" ||
+    threadRuntimeIsActive(thread.runtime) ||
+    thread.runtime?.status === "failed" ||
+    (thread.heldQueuedCount ?? 0) > 0 ||
+    thread.hasActionableProposedPlan === true ||
+    (Boolean(thread.reportedBlocker?.trim()) &&
+      !reportsToParentAgent(thread) &&
+      reportWaitReason(thread.reportedBlocker ?? "") === null)
+  )
+    return null;
+  if (tasks.every((task) => task.kind === "command")) return "Background command running";
+  return tasks.every((task) => task.kind === "subagent")
+    ? "Waiting for subagents"
+    : "Waiting for background work";
+}
+
 /** A dependency is separate from an actual pending request or held queue. */
 export function threadDependencyWait(thread: EnvironmentThreadShell): string | null {
   if (thread.archivedAt != null || thread.deletedAt != null || thread.settledOverride === "settled")
     return null;
+  const background = threadBackgroundWait(thread);
+  if (background) return background;
   if (
     thread.lineage?.relationshipToParent === "subagent" &&
     ["completed", "cancelled", "failed", "interrupted"].includes(
@@ -271,7 +319,8 @@ export function aggregateProjectAttention(input: {
   for (const member of input.members) {
     if (member.remoteWorkersComplete === false) complete = false;
     for (const follower of member.remoteWorkers ?? []) {
-      if (["disposed", "idle"].includes(follower.state)) continue;
+      // A finished run whose wake is pending has nothing more to ask; its card says Done.
+      if (["disposed", "idle", "wake_pending"].includes(follower.state)) continue;
       if (follower.state === "paused_auth") {
         complete = false;
         continue;
@@ -284,6 +333,7 @@ export function aggregateProjectAttention(input: {
     }
   }
   const result = [...roots.values()];
+  const everyMemberLive = input.members.every((m) => m.freshness === "live");
   const count = result.filter((root) => root.actions.length > 0).length;
   return {
     roots: result,
@@ -296,6 +346,8 @@ export function aggregateProjectAttention(input: {
       ? `${count} waiting on you`
       : count > 0
         ? `${count} waiting on you · partial`
-        : "Attention unavailable",
+        : everyMemberLive && input.members.length > 0
+          ? "Some threads could not be read"
+          : "Attention unavailable",
   };
 }

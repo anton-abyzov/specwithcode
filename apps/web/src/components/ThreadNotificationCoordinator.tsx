@@ -43,7 +43,7 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { useActiveNotificationThread } from "../hooks/useActiveNotificationThread";
-import { resolveSidebarThreadStatus } from "./Sidebar.logic";
+import { resolveThreadAlertStatus } from "./Sidebar.logic";
 import { notificationsConnected, useNotificationsConnected } from "../notificationConnection";
 import { deliverNotificationOnce } from "../notificationHistory";
 import { toastManager } from "./ui/toast";
@@ -256,7 +256,7 @@ function EnvironmentNotifications({
       if (isProviderNativeSubagentThread(rawThread)) continue;
       const prior = previous.current.get(rawThread.id);
       const thread = presentThreadShell(environmentId, rawThread);
-      let status = resolveSidebarThreadStatus(thread);
+      let status = resolveThreadAlertStatus(thread);
       if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const observation = observeProjectThread(thread, "live");
       const observedActions = classifyProjectActions(observation);
@@ -411,7 +411,7 @@ function EnvironmentNotifications({
               return false;
             if (!allowedByLevel(kind)) return false;
             const currentThread = presentThreadShell(environmentId, currentRaw);
-            let currentStatus = resolveSidebarThreadStatus(currentThread);
+            let currentStatus = resolveThreadAlertStatus(currentThread);
             if (currentStatus === "ready" && currentThread.latestRun?.status === "failed")
               currentStatus = "failed";
             if (

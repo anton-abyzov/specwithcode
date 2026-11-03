@@ -64,7 +64,7 @@ export function threadAttentionNote(thread: EnvironmentThreadShell): string | nu
 /**
  * A thread whose host cannot be reached keeps the state it had when the host
  * dropped, which is stale: it is neither waiting on the person (nothing can be
- * answered there) nor known to be working, so it is listed as idle.
+ * answered there) nor known to be working, so it is listed as unavailable.
  */
 export function projectThreadGroup(
   thread: EnvironmentThreadShell,

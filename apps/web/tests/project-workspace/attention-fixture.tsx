@@ -28,6 +28,7 @@ function Content() {
           "held",
           "operational",
           "review-routing",
+          "background-work",
           "disk-answer",
           "resolved",
           "resolved-child",
@@ -57,7 +58,7 @@ function Content() {
                         },
                       ]
                     : [],
-                complete: name !== "partial",
+                complete: name !== "partial" && name !== "background-work",
               });
               setAttentionScenario(
                 ["partial", "cached", "synchronizing", "offline"].includes(name)

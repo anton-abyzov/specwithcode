@@ -181,6 +181,22 @@ describe("fitCoordinatorContext", () => {
     expect(result.retention!.workers[0]?.threadId).toBe("w0005");
     expect(result.retention!.totalThreads).toBe(401);
   });
+  it("ranks live background work with running, below a thread asking the person", () => {
+    const background = [{ taskId: "t", kind: "command" }];
+    const threads = [
+      shell(3, {}),
+      shell(2, { pendingBackgroundTasks: background }),
+      shell(1, { pendingBackgroundTasks: background, heldQueuedCount: 1 }),
+      shell(0, { pendingBackgroundTasks: background, reportedBlocker: "Needs a token" }),
+    ];
+    expect(workerSummaries(threads, env).map((w) => w.threadId)).toEqual([
+      "w0001",
+      "w0000",
+      "w0002",
+      "w0003",
+    ]);
+  });
+
   it("ranks held queues as waiting on the person and ignores a resolved thread's old flags", () => {
     const threads = [
       shell(9, {

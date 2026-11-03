@@ -18,8 +18,14 @@ import type {
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@specweave-studio/client-runtime/state/thread-search";
-import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@specweave-studio/contracts";
-import { canSnooze, resolveSnoozePresets } from "@specweave-studio/client-runtime/state/thread-settled";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentMachineKind,
+} from "@specweave-studio/contracts";
+import {
+  canSnooze,
+  resolveSnoozePresets,
+} from "@specweave-studio/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
@@ -70,6 +76,7 @@ const STATUS_LABEL_BY_STATUS: Partial<
   approval: { label: "Approval", className: "text-warning-foreground" },
   input: { label: "Input", className: "text-adaptive-indigo-600-300" },
   working: { label: "Working", className: "text-adaptive-sky-600-400" },
+  waiting: { label: "Waiting", className: "text-adaptive-sky-600-400" },
   failed: { label: "Failed", className: "text-danger-foreground" },
   limited: { label: "Limited", className: "text-warning-foreground" },
 };
@@ -193,7 +200,11 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: THREAD_LIFECYCLE_LABELS.resolved } as const;
+const SHELF_LABEL = {
+  working: "Working",
+  snoozed: "Snoozed",
+  settled: THREAD_LIFECYCLE_LABELS.resolved,
+} as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },

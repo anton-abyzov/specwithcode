@@ -47,6 +47,46 @@ describe("thread relationships", () => {
     ).toBe(childStatus);
   });
 
+  it("does not call a child done while its background work runs", () => {
+    const parent = ThreadId.make("parent");
+    const child = ThreadId.make("child");
+    const graph = (tasks: readonly unknown[]) =>
+      deriveThreadRelationshipGraph({
+        threads: [
+          { id: parent, status: "running", lineage: { parentThreadId: null } },
+          {
+            id: child,
+            status: "completed",
+            pendingBackgroundTasks: tasks,
+            lineage: { parentThreadId: parent, relationshipToParent: "fork" },
+          },
+        ] as never,
+        projection: null,
+      });
+    const statusOf = (tasks: readonly unknown[]) => {
+      const built = graph(tasks);
+      return threadRelationshipRowStatus(built, immediateThreadRelationships(built, parent)[0]!);
+    };
+    expect(statusOf([{ taskId: "t", kind: "command" }])).toBe("waiting");
+    expect(statusOf([])).toBe("completed");
+    const settled = deriveThreadRelationshipGraph({
+      threads: [
+        { id: parent, status: "running", lineage: { parentThreadId: null } },
+        {
+          id: child,
+          status: "completed",
+          settledOverride: "settled",
+          pendingBackgroundTasks: [{ taskId: "t", kind: "command" }],
+          lineage: { parentThreadId: parent, relationshipToParent: "fork" },
+        },
+      ] as never,
+      projection: null,
+    });
+    expect(
+      threadRelationshipRowStatus(settled, immediateThreadRelationships(settled, parent)[0]!),
+    ).toBe("completed");
+  });
+
   it("does not label a missing parent with its child's running status", () => {
     const parent = ThreadId.make("missing-parent");
     const child = ThreadId.make("child");

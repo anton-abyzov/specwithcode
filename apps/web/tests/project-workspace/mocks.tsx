@@ -1496,6 +1496,27 @@ export function setAttentionScenario(scenario: string) {
       runtime: { status: "failed", lastErrorClass: "usage_limit" },
       reportedBlocker: "Waiting for CI",
     }));
+  // November 2 screenshot: a delegated worker's turn ended with live background
+  // commands, while a slow remote worker read leaves coverage incomplete.
+  if (scenario === "background-work") {
+    const ended = {
+      runtime: { status: "completed", activeRunId: null },
+      latestRun: { runId: "run-10", status: "completed" },
+    };
+    shells = [
+      shell("coord", "Project coordinator"),
+      shell("worker-video", "Tournament chat video for players", {
+        ...ended,
+        lineage: { relationshipToParent: "subagent", parentThreadId: "coord" },
+        pendingBackgroundTasks: [
+          { taskId: "bpx7qsqav", description: "Wait for console checks", kind: "command" },
+          { taskId: "bfqtwav7c", description: "Wait for console build", kind: "command" },
+        ],
+      }),
+      shell("worker-done", "Remove $29 prompt for Joe", ended),
+      shell("worker-idle", "DCFC payment data and access", ended),
+    ];
+  }
   // October 26 screenshot: finished Claude Code subagents ending their reports
   // with Blockers, and a Muse check that failed on a provider limitation.
   if (scenario === "review-routing") {

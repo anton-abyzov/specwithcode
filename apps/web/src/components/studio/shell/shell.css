@@ -146,6 +146,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-dot[data-tone="working"] {
   background: var(--shell-working);
 }
+.sws-dot[data-tone="background"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--shell-working);
+}
+.sws-dot[data-tone="unknown"] {
+  background: transparent;
+  outline: 1px dashed var(--muted-foreground);
+  outline-offset: -1px;
+}
 .sws-dot[data-tone="failed"] {
   background: var(--destructive);
 }

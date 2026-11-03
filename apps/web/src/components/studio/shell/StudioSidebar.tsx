@@ -145,6 +145,7 @@ import {
   parseChatListOptions,
   THREAD_TONE_LABELS,
   threadTone,
+  threadToneShowsDot,
 } from "../../../studio/shellModel";
 import { resolveThreadRouteTarget } from "../../../threadRoutes";
 import { stackedThreadToast, toastManager } from "../../ui/toast";
@@ -1358,7 +1359,7 @@ export default function StudioSidebar() {
                               {stateDescription}, {THREAD_TONE_LABELS[tone]}
                               {machineNote ? `, ${machineNote}` : ""}
                             </span>
-                            {tone === "waiting" || tone === "working" || tone === "failed" ? (
+                            {threadToneShowsDot(tone) ? (
                               <span className="sws-dot" data-tone={tone} aria-hidden />
                             ) : null}
                             {showMachineColumn ? (

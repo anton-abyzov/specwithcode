@@ -452,7 +452,7 @@ export function buildThreadPaneGroups(
   query = "",
   /** Working subagents per `environmentId:threadId`: an idle thread with one is still working. */
   runningSubagents?: ReadonlyMap<string, number>,
-  /** Hosts that cannot be reached now; their threads are listed as idle. */
+  /** Hosts that cannot be reached now; their threads are listed as unavailable. */
   unreachable?: ReadonlySet<string>,
   attention?: ProjectAttention,
 ): ThreadPaneGroup[] {
@@ -596,20 +596,46 @@ export function threadAttentionWord(
   return `${attentionActionWord(first.reason)} · ${first.title || "subagent"}`;
 }
 
+/**
+ * What an empty group says. While some threads could not be read, "none" would
+ * claim more than is known, so it is limited to the threads that were read.
+ */
+export function emptyThreadGroupCopy(
+  group: ProjectThreadGroup,
+  attention: ProjectAttention | undefined,
+): string {
+  if (attention && !attention.complete && group !== "Idle" && group !== "Resolved")
+    return "None among the threads read so far.";
+  if (group === "Waiting on you") return "No decisions or replies requested.";
+  return group === "Waiting" ? "No dependency waits." : "Nothing here.";
+}
+
 /** Groups a person has dealt with stay folded until they ask for them. */
 export const THREAD_GROUPS_FOLDED_BY_DEFAULT: readonly ProjectThreadGroup[] = ["Resolved"];
 
-export type ThreadTone = "waiting" | "working" | "failed" | "resolved" | "idle";
+export type ThreadTone =
+  | "waiting"
+  | "working"
+  | "background"
+  | "failed"
+  | "resolved"
+  | "idle"
+  | "unknown";
+
+/** Tones a list row marks with a dot; a quiet thread stays unmarked. */
+export const threadToneShowsDot = (tone: ThreadTone): boolean =>
+  tone !== "idle" && tone !== "resolved";
 
 /** What a row's status dot says; failed is called out so it is not read as a question. */
 export function threadTone(thread: EnvironmentThreadShell, hostOffline = false): ThreadTone {
   const status = resolveSidebarThreadStatus(thread);
   const group = projectThreadGroup(thread, hostOffline);
   if (group === "Resolved") return "resolved";
-  if (hostOffline) return "idle";
+  if (hostOffline) return "unknown";
   if (status === "failed") return "failed";
   if (group === "Waiting on you") return "waiting";
   if (group === "Working" || threadRuntimeIsActive(thread.runtime)) return "working";
+  if (group === "Waiting") return "background";
   return "idle";
 }
 
@@ -644,9 +670,11 @@ export function threadStatusWord(
 export const THREAD_TONE_LABELS: Record<ThreadTone, string> = {
   waiting: "Waiting on you",
   working: "Working",
+  background: "Waiting for background work",
   failed: "Run failed",
   resolved: "Resolved",
   idle: "Idle",
+  unknown: "Status unknown",
 };
 
 /**

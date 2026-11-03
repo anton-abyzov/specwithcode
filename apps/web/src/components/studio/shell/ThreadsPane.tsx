@@ -51,6 +51,8 @@ import { withRunningSubagents } from "../../../studio/threadSubagents";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import {
   buildThreadPaneGroups,
+  threadToneShowsDot,
+  emptyThreadGroupCopy,
   compactAge,
   modelLabel,
   nowFromMinute,
@@ -108,10 +110,6 @@ const PaneFiltersSchema = Schema.Record(
 );
 type StoredPaneFilters = typeof PaneFiltersSchema.Type;
 const NO_PANE_FILTERS = { agent: null, openPullRequest: false } as const;
-const EMPTY_GROUP_COPY: Partial<Record<ProjectThreadGroup, string>> = {
-  "Waiting on you": "No decisions or replies requested.",
-  Waiting: "No dependency waits.",
-};
 
 /** The one pull request a row has room for: the open one, else the latest. */
 function threadPullRequest(thread: EnvironmentThreadShell) {
@@ -883,7 +881,7 @@ export function ThreadsPane({
               </h3>
               {isFolded ? null : rows.length === 0 ? (
                 <p className="sws-empty" id={listId}>
-                  {EMPTY_GROUP_COPY[group] ?? "Nothing here."}
+                  {emptyThreadGroupCopy(group, props.attention)}
                 </p>
               ) : (
                 <div className="sws-thread-list" id={listId}>
@@ -896,7 +894,7 @@ export function ThreadsPane({
                     const attentionWord = threadAttentionWord(thread, props.attention);
                     const tone = attentionWord
                       ? group === "Waiting"
-                        ? "idle"
+                        ? "background"
                         : "waiting"
                       : subagentsWorking > 0 && ownTone === "idle"
                         ? "working"
@@ -926,7 +924,7 @@ export function ThreadsPane({
                     const location = locate(thread);
                     // A thread that runs away from home says so even in a one-machine project.
                     const machine = multiMachine || location.moved ? location : null;
-                    const showDot = tone === "waiting" || tone === "working" || tone === "failed";
+                    const showDot = threadToneShowsDot(tone);
                     const pullRequest = threadPullRequest(thread);
                     const plan = compactThreadPlan(
                       thread.environmentId === props.environmentId

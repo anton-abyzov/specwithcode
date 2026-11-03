@@ -1,4 +1,5 @@
 import { resolveThreadWorkingStartedAt } from "@specweave-studio/client-runtime/state/models";
+import { threadBackgroundWait } from "@specweave-studio/client-runtime/state/projectAttention";
 import { backgroundWorkHoldsCompletion } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@specweave-studio/shared/threadPullRequests";
 import * as React from "react";
@@ -988,7 +989,21 @@ export function shouldRecedeSidebarThread(input: {
 type SidebarThreadStatusInput = Pick<
   SidebarThreadSummary,
   "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
->;
+> &
+  Parameters<typeof threadBackgroundWait>[0];
+
+/**
+ * The status completion alerts follow: a command left running, such as a dev
+ * server, does not hold back its run's alert (#14872), though the thread still
+ * reads as waiting everywhere it is listed.
+ */
+export function resolveThreadAlertStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+  return resolveSidebarThreadStatus({
+    hasPendingApprovals: thread.hasPendingApprovals,
+    hasPendingUserInput: thread.hasPendingUserInput,
+    runtime: thread.runtime,
+  });
+}
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals) {
@@ -1009,7 +1024,7 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
-  return "ready";
+  return threadBackgroundWait(thread) ? "waiting" : "ready";
 }
 
 export type SidebarV2TopStatusKind =
@@ -1254,7 +1269,10 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
+  if (
+    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
+    threadBackgroundWait(thread)
+  ) {
     return {
       label: "Waiting",
       colorClass: "text-sidebar-muted-foreground",

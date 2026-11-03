@@ -178,7 +178,7 @@ describe("resolveThreadListV2Status", () => {
   });
 
   it.each([
-    { kind: "command", status: "ready" },
+    { kind: "command", status: "waiting" },
     { kind: "monitor", status: "waiting" },
   ] as const)(
     "presents an unseen completion with a $kind roster as $status",

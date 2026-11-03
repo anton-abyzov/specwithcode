@@ -1,3 +1,4 @@
+import { threadBackgroundWait } from "@specweave-studio/client-runtime/state/projectAttention";
 import { threadPullRequestSearchTerms } from "@specweave-studio/shared/threadPullRequests";
 import {
   canSnooze,
@@ -183,7 +184,8 @@ export function threadHasUnseenCompletion(
 }
 
 export function resolveThreadListV2Status(
-  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
+  thread: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime"> &
+    Parameters<typeof threadBackgroundWait>[0],
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals) {
     return "approval";
@@ -203,7 +205,7 @@ export function resolveThreadListV2Status(
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
-  return "ready";
+  return threadBackgroundWait(thread) ? "waiting" : "ready";
 }
 
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not

@@ -21,8 +21,17 @@ import {
   threadStatusWord,
   threadTone,
   waitingCount,
+  emptyThreadGroupCopy,
+  threadToneShowsDot,
 } from "./shellModel";
 import { unreachableEnvironmentIds } from "../state/environments";
+import { threadBackgroundWait } from "@specweave-studio/client-runtime/state/projectAttention";
+import { threadCardStatus } from "./projectThreadCards";
+import {
+  resolveSidebarThreadStatus,
+  resolveThreadAlertStatus,
+  resolveThreadStatusPill,
+} from "../components/Sidebar.logic";
 
 type ThreadOverrides = Omit<Partial<EnvironmentThreadShell>, "id"> & { id?: string };
 function thread(overrides: ThreadOverrides = {}): EnvironmentThreadShell {
@@ -712,7 +721,7 @@ describe("threads on an unreachable host", () => {
 
   it("says the host is offline instead of Blocked and does not wait on the person", () => {
     expect(threadStatusWord(blocked, true)).toBe("Host offline");
-    expect(threadTone(blocked, true)).toBe("idle");
+    expect(threadTone(blocked, true)).toBe("unknown");
     expect(waitingCount([blocked], offline)).toBe(0);
     expect(threadsSummary([blocked], 0, offline)).toBe(
       "Attention unavailable on disconnected hosts.",
@@ -759,7 +768,7 @@ describe("dependency waiting", () => {
     ).toEqual([row]);
     expect(waitingCount([row])).toBe(0);
     expect(threadStatusWord(row)).toBe(reason);
-    expect(threadTone(row)).toBe("idle");
+    expect(threadTone(row)).toBe("background");
   });
   it("a real pending permission outranks a dependency", () => {
     const row = thread({ reportedWait: "Waiting for CI", hasPendingApprovals: true });
@@ -774,6 +783,114 @@ describe("dependency waiting", () => {
     } as unknown as ThreadOverrides);
     expect(waitingCount([row])).toBe(0);
     expect(threadStatusWord(row)).toBe("Waiting for CI");
+  });
+});
+
+describe("a turn that ended with live background work", () => {
+  const worker = (overrides: ThreadOverrides = {}) =>
+    thread({
+      lineage: {
+        relationshipToParent: "subagent",
+        parentThreadId: "project-coordinator:p",
+      },
+      latestRun: { status: "completed" },
+      runtime: { ...running, status: "completed", activeRunId: null },
+      pendingBackgroundTasks: [
+        { taskId: "bfqtwav7c", description: "Wait for console build", kind: "command" },
+      ],
+      ...overrides,
+    } as unknown as ThreadOverrides);
+
+  it("never reads Idle or Done on any surface", () => {
+    const row = worker();
+    expect(
+      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Waiting")?.threads,
+    ).toEqual([row]);
+    expect(
+      buildThreadPaneGroups([row], "activity").find((g) => g.group === "Idle")?.threads,
+    ).toEqual([]);
+    expect(threadTone(row)).toBe("background");
+    expect(threadStatusWord(row)).toBe("Background command running");
+    expect(threadCardStatus(row)).toEqual({
+      tone: "background",
+      label: "Background command running",
+    });
+    expect(resolveSidebarThreadStatus(row)).toBe("waiting");
+    expect(resolveThreadStatusPill({ thread: row })).toMatchObject({ label: "Waiting" });
+    expect(waitingCount([row])).toBe(0);
+  });
+
+  it("reads Idle again once the roster clears", () => {
+    const row = worker({ pendingBackgroundTasks: [] });
+    expect(threadTone(row)).toBe("idle");
+    expect(threadCardStatus(row).label).toBe("Done");
+    expect(resolveSidebarThreadStatus(row)).toBe("ready");
+  });
+
+  it.each([
+    ["a real blocker", { reportedBlocker: "Which channel should this go to?" }, "Waiting on you"],
+    ["a held queue", { heldQueuedCount: 1 }, "Waiting on you"],
+    ["a settled mark", { settledOverride: "settled" }, "Resolved"],
+  ] as const)("lets %s outrank the wait", (_name, overrides, group) => {
+    const row = worker(overrides as unknown as ThreadOverrides);
+    expect(
+      buildThreadPaneGroups([row], "activity").find((g) => g.group === group)?.threads,
+    ).toEqual([row]);
+    expect(threadStatusWord(row)).not.toBe("Background command running");
+    expect(resolveSidebarThreadStatus(row)).toBe("ready");
+    expect(resolveThreadStatusPill({ thread: row })?.label).not.toBe("Waiting");
+  });
+
+  it("lets a ready plan outrank the wait on the row and the pill", () => {
+    const row = worker({ hasActionableProposedPlan: true });
+    expect(threadTone(row)).toBe("waiting");
+    expect(resolveSidebarThreadStatus(row)).toBe("ready");
+    expect(threadBackgroundWait(row)).toBeNull();
+  });
+
+  it("keeps a turn waiting on subagents working, not background", () => {
+    const row = thread({
+      runtime: { ...running, status: "waiting" },
+      source: { activeWork: { waitThreadId: "child" } },
+    } as unknown as ThreadOverrides);
+    expect(threadTone(row)).toBe("working");
+  });
+
+  it("keeps a failed run failed", () => {
+    const row = worker({
+      runtime: { ...running, status: "failed", activeRunId: null },
+    } as unknown as ThreadOverrides);
+    expect(threadTone(row)).toBe("failed");
+    expect(threadStatusWord(row)).toBe("Run failed");
+  });
+
+  it("does not let a left-running command hold back the completion alert", () => {
+    const row = worker();
+    expect(resolveThreadAlertStatus(row)).toBe("ready");
+  });
+});
+
+it("marks background and unknown rows with a dot, but not quiet ones", () => {
+  expect(threadToneShowsDot("background")).toBe(true);
+  expect(threadToneShowsDot("unknown")).toBe(true);
+  expect(threadToneShowsDot("idle")).toBe(false);
+  expect(threadToneShowsDot("resolved")).toBe(false);
+});
+
+describe("empty groups while some threads could not be read", () => {
+  const attention = (complete: boolean) =>
+    ({ complete, roots: [], count: 0, working: 0, staleCount: 0, label: "" }) as never;
+  it("limits the claim to the threads that were read", () => {
+    expect(emptyThreadGroupCopy("Waiting on you", attention(false))).toBe(
+      "None among the threads read so far.",
+    );
+    expect(emptyThreadGroupCopy("Working", attention(false))).toBe(
+      "None among the threads read so far.",
+    );
+    expect(emptyThreadGroupCopy("Waiting on you", attention(true))).toBe(
+      "No decisions or replies requested.",
+    );
+    expect(emptyThreadGroupCopy("Idle", attention(false))).toBe("Nothing here.");
   });
 });
 

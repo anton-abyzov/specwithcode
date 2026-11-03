@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "./models.js";
 import {
   aggregateProjectAttention,
+  threadDependencyWait,
   observeProjectThread,
   type AttentionMember,
 } from "./projectAttention.js";
@@ -434,6 +435,35 @@ describe("native child and fallback generations", () => {
   });
 });
 
+describe("live background work", () => {
+  const worker = (kind: "command" | "monitor" | "subagent") =>
+    thread("worker", {
+      lineage: { relationshipToParent: "subagent", parentThreadId: "project-coordinator:p" },
+      pendingBackgroundTasks: [{ taskId: "t", kind }],
+    } as unknown as Partial<EnvironmentThreadShell>);
+  it.each([
+    ["command", "Background command running"],
+    ["monitor", "Waiting for background work"],
+    ["subagent", "Waiting for subagents"],
+  ] as const)("names a %s wait, also on a delegated child", (kind, word) => {
+    expect(threadDependencyWait(worker(kind))).toBe(word);
+  });
+  it("rolls a child's background work up to its root", () => {
+    const root = thread("root");
+    const child = thread("child", {
+      lineage: { relationshipToParent: "subagent", parentThreadId: "root" },
+      pendingBackgroundTasks: [{ taskId: "t", kind: "command" }],
+    } as unknown as Partial<EnvironmentThreadShell>);
+    const result = aggregateProjectAttention({
+      members: [member],
+      roots: [root],
+      threads: [root, child],
+    });
+    expect(result.roots[0]?.waits).toEqual(["Background command running"]);
+    expect(result.count).toBe(0);
+  });
+});
+
 describe("remote follower aliases", () => {
   it("marks an unmatched follower unknown and never duplicates a loaded root", () => {
     const root = thread("remote", { hasPendingUserInput: true });
@@ -452,6 +482,29 @@ describe("remote follower aliases", () => {
         threads: [],
       }),
     ).toMatchObject({ count: 0, complete: false });
+  });
+  it.each([
+    ["wake_pending", true],
+    ["stopped", false],
+  ] as const)("a %s worker leaves coverage complete: %s", (state, complete) => {
+    expect(
+      aggregateProjectAttention({
+        members: [
+          { ...member, remoteWorkers: [{ environmentId: "host", remoteThreadId: "r", state }] },
+        ],
+        roots: [],
+        threads: [],
+      }),
+    ).toMatchObject({ complete });
+  });
+  it("names a coverage gap rather than calling all attention unavailable", () => {
+    expect(
+      aggregateProjectAttention({
+        members: [{ ...member, remoteWorkersComplete: false }],
+        roots: [],
+        threads: [],
+      }),
+    ).toMatchObject({ complete: false, label: "Some threads could not be read" });
   });
   it("qualifies known actions while follower coverage is unavailable", () => {
     const root = thread("a", { hasPendingUserInput: true });

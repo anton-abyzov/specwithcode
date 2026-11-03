@@ -156,7 +156,7 @@ export function workerRank(thread: OrchestrationV2ThreadShell): number {
     (!running && thread.reportedWait == null && Boolean(thread.reportedBlocker?.trim()))
   )
     return 0;
-  if (running) return 1;
+  if (running || (thread.pendingBackgroundTasks?.length ?? 0) > 0) return 1;
   if (thread.pinnedAt != null || thread.reportedWait != null) return 2;
   return 3;
 }
