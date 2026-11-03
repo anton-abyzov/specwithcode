@@ -196,6 +196,17 @@ export function machine(environment: string) {
                 })
               : Effect.fail({ code: "not_found" });
           },
+          readMemoryFiles: ({ projectId }: { projectId: ProjectId }) =>
+            Effect.sync(() =>
+              [...notesOf(projectId)]
+                .map(([name, note]) => ({
+                  name,
+                  ...note,
+                  updatedAt: "2026-10-19T00:00:00.000Z",
+                  byteLength: Buffer.byteLength(note.content),
+                }))
+                .toSorted((left, right) => (left.name < right.name ? -1 : 1)),
+            ),
           writeMemory: (input: {
             projectId: ProjectId;
             name: string;

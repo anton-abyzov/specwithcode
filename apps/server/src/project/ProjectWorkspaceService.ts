@@ -85,6 +85,10 @@ export class ProjectWorkspaceService extends Context.Service<
       projectId: ProjectId;
       name: string;
     }) => Effect.Effect<ProjectMemoryFile, ProjectWorkspaceError>;
+    /** Every memory file of one project with its content, in name order, in one query. */
+    readonly readMemoryFiles: (input: {
+      projectId: ProjectId;
+    }) => Effect.Effect<ReadonlyArray<ProjectMemoryFile>, ProjectWorkspaceError>;
     readonly writeMemory: (
       input: ProjectMemoryWriteInput,
     ) => Effect.Effect<ProjectMemoryFile, ProjectWorkspaceError>;
@@ -357,6 +361,11 @@ const make = Effect.gen(function* () {
       if (!found) return yield* fail(projectId, "not_found");
       return { ...found };
     }).pipe(mapProjectFailure(projectId, "memory.read"));
+  const readMemoryFiles = ({ projectId }: { projectId: ProjectId }) =>
+    Effect.gen(function* () {
+      yield* requireProject(projectId);
+      return yield* sql<ProjectMemoryFile>`SELECT name, content, revision, updated_at AS "updatedAt", byte_length AS "byteLength" FROM project_memory WHERE project_id = ${projectId} ORDER BY name`;
+    }).pipe(mapProjectFailure(projectId, "memory.read"));
   const writeMemory = (input: ProjectMemoryWriteInput) =>
     sql
       .withTransaction(
@@ -622,6 +631,7 @@ const make = Effect.gen(function* () {
     readLibrary,
     addLibraryArtifact,
     readMemory,
+    readMemoryFiles,
     writeMemory: (input) =>
       admission
         .withLock(input.projectId, writeMemoryRemembered(input))

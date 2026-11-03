@@ -8,6 +8,7 @@ import {
 } from "@specweave-studio/shared/threadLifecycleEvidence";
 import {
   CommandId,
+  type ProjectId,
   type ThreadId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
@@ -262,13 +263,24 @@ export const make = Effect.gen(function* () {
     // their branch lookup, which would otherwise wait for the next minute's
     // sweep on a possibly stale cached answer.
     const snapshotSequences = new Map<ThreadId, number>();
+    const eligible = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    // Threads share projects, so each project is asked once per sweep.
+    const scratchProjects = new Set<ProjectId>();
+    yield* Effect.forEach(
+      new Set(eligible.map((thread) => thread.projectId)),
+      (projectId) =>
+        managedFolders
+          .isScratch(projectId)
+          .pipe(Effect.map((scratch) => void (scratch && scratchProjects.add(projectId)))),
+      { concurrency: 8, discard: true },
+    );
     const candidates = (yield* Effect.forEach(
-      threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs)),
+      eligible,
       (thread) =>
         Effect.gen(function* () {
           // A chat ("No project") is not a project's thread: it is never resolved,
           // only archived by the person.
-          if (yield* managedFolders.isScratch(thread.projectId)) return null;
+          if (scratchProjects.has(thread.projectId)) return null;
           const sequence = yield* orchestrator.getThreadEventSequence(thread.id);
           if (sequence > beforeReadSequence) return null;
           snapshotSequences.set(thread.id, sequence);

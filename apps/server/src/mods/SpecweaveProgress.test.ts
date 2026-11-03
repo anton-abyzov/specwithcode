@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it as plainIt } from "@effect/vitest";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -12,6 +14,7 @@ import {
   parseSpecweaveSpec,
   parseVerifyReport,
   readSpecweaveProgress,
+  makeSharedRead,
 } from "./SpecweaveProgress.ts";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
@@ -514,3 +517,52 @@ plainIt(
     assert.lengthOf(bad.acceptedSkips, 0);
   },
 );
+
+describe("makeSharedRead", () => {
+  it.effect("keeps a read running for later callers when its first caller gives up", () =>
+    Effect.gen(function* () {
+      let runs = 0;
+      const shared = makeSharedRead<number, never>(20_000);
+      const read = Effect.gen(function* () {
+        runs += 1;
+        yield* Effect.sleep("30 seconds");
+        return runs;
+      });
+      const first = yield* Effect.forkChild(shared("key", read));
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(first);
+      const second = yield* Effect.forkChild(shared("key", read));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(yield* Fiber.join(second), 1);
+      assert.equal(runs, 1);
+    }),
+  );
+
+  it.effect("answers from the finished read until the time runs out, then reads again", () =>
+    Effect.gen(function* () {
+      let runs = 0;
+      const shared = makeSharedRead<number, never>(20_000);
+      const read = Effect.sync(() => (runs += 1));
+      assert.equal(yield* shared("key", read), 1);
+      yield* TestClock.adjust("19 seconds");
+      assert.equal(yield* shared("key", read), 1);
+      yield* TestClock.adjust("2 seconds");
+      assert.equal(yield* shared("key", read), 2);
+      assert.equal(yield* shared("other", read), 3);
+    }),
+  );
+
+  it.effect("does not keep a failed read", () =>
+    Effect.gen(function* () {
+      let runs = 0;
+      const shared = makeSharedRead<number, string>(20_000);
+      const read = Effect.suspend(() => {
+        runs += 1;
+        return runs === 1 ? Effect.fail("broken") : Effect.succeed(runs);
+      });
+      assert.equal(yield* Effect.flip(shared("key", read)), "broken");
+      assert.equal(yield* shared("key", read), 2);
+    }),
+  );
+});

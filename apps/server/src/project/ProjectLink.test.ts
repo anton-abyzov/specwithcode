@@ -524,6 +524,30 @@ describe("ProjectLink", () => {
     ).toBe("invalid");
   });
 
+  it("recomputes a digest only when a note, goal or instructions change", async () => {
+    const pair = legacyPair();
+    await link(pair);
+    const notes = pair.m4.notes(pair.kept.projectId);
+    notes.set("decisions.md", { content: "Ship 2.0", revision: 3 });
+    const digest = () =>
+      pair.m4
+        .run((service) => service.digest({ projectId: pair.kept.projectId }))
+        .then((result) => result.digest);
+    const first = await digest();
+    expect(await digest()).toBe(first);
+
+    notes.set("decisions.md", { content: "Ship 3.0", revision: 4 });
+    const second = await digest();
+    expect(second).not.toBe(first);
+
+    const kept = pair.m4.projects.get(pair.kept.projectId)!;
+    pair.m4.projects.set(pair.kept.projectId, {
+      ...kept,
+      workspaceSettings: { ...kept.workspaceSettings!, goal: "A new goal" },
+    });
+    expect(await digest()).not.toBe(second);
+  });
+
   describe("coordinator takeover", () => {
     const takeoverId = "33333333-3333-4333-8333-333333333333";
     /** M4 coordinates; the M3 copy runs workers and holds a replica of M4's notes. */

@@ -24,6 +24,8 @@ import type {
 import { compareIncrementFoldersNewestFirst } from "@specweave-studio/shared/specweaveIncrement";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
@@ -683,3 +685,60 @@ export const readSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>,
     }
     return { increments, truncated } satisfies ModSpecweaveResult;
   });
+
+/** How long a finished read answers again: the app asks every 30 seconds, from every window. */
+const SHARED_PROGRESS_TTL_MS = 20_000;
+
+/**
+ * One run at a time per key, kept for `ttlMs` after it succeeds. The run does not
+ * belong to any caller: a client that gives up does not cancel it, so a slow read
+ * finishes once instead of restarting from nothing on every retry.
+ */
+export const makeSharedRead = <A, E>(ttlMs: number) => {
+  let current:
+    | {
+        readonly key: string;
+        fiber: Fiber.Fiber<A, E> | null;
+        finishedAt: number | null;
+        succeeded: boolean;
+      }
+    | undefined;
+  return <R>(key: string, read: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      if (
+        current?.fiber != null &&
+        current.key === key &&
+        (current.finishedAt === null || (current.succeeded && now - current.finishedAt < ttlMs))
+      )
+        return yield* Fiber.join(current.fiber);
+      const entry: NonNullable<typeof current> = {
+        key,
+        fiber: null,
+        finishedAt: null,
+        succeeded: false,
+      };
+      current = entry;
+      entry.fiber = yield* read.pipe(
+        Effect.onExit((exit) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((finishedAt) => {
+              entry.finishedAt = finishedAt;
+              entry.succeeded = Exit.isSuccess(exit);
+            }),
+          ),
+        ),
+        Effect.forkDetach,
+      );
+      return yield* Fiber.join(entry.fiber);
+    });
+};
+
+const sharedProgress = makeSharedRead<ModSpecweaveResult, never>(SHARED_PROGRESS_TTL_MS);
+
+/** `readSpecweaveProgress` for the app's poll: shared by every caller of the same projects. */
+export const readSharedSpecweaveProgress = (projects: ReadonlyArray<SpecweaveProject>) =>
+  sharedProgress(
+    JSON.stringify(projects.slice(0, MAX_PROJECTS).map((p) => [p.title, p.workspaceRoot])),
+    readSpecweaveProgress(projects),
+  );

@@ -172,6 +172,21 @@ export function coordinatorContentDigest(content: {
   return sha256([JSON.stringify([content.goal, content.instructions, notes])]).toString("hex");
 }
 
+/** Changes whenever `coordinatorContentDigest` would, without reading any note's content. */
+const contentSignature = (
+  settings: { readonly goal: string; readonly instructions: string },
+  files: ReadonlyArray<{
+    readonly name: string;
+    readonly revision: number;
+    readonly byteLength: number;
+  }>,
+) =>
+  JSON.stringify([
+    settings.goal,
+    settings.instructions,
+    files.map((file) => [file.name, file.revision, file.byteLength]),
+  ]);
+
 /** Why a copy cannot keep its coordinator, or join another copy as a member. */
 export function linkRefusals(
   project: Pick<Project, "id" | "workspaceSettings">,
@@ -320,24 +335,19 @@ const make = Effect.gen(function* () {
       const read = yield* workspace
         .readWorkspace({ projectId })
         .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
+      const files = yield* workspace
+        .readMemoryFiles({ projectId })
+        .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
       const notes: ProjectLinkNote[] = [];
       let bytes = 0;
       let notesTruncated = false;
-      for (const file of read.memory.files) {
+      for (const file of files) {
         if (bytes + file.byteLength > PROJECT_LINK_MAX_BYTES) {
           notesTruncated = true;
           continue;
         }
-        const note = yield* workspace
-          .readMemory({ projectId, name: file.name })
-          .pipe(Effect.option);
-        if (Option.isNone(note)) continue;
         bytes += file.byteLength;
-        notes.push({
-          name: note.value.name,
-          revision: note.value.revision,
-          content: note.value.content,
-        });
+        notes.push({ name: file.name, revision: file.revision, content: file.content });
       }
       return {
         goal: read.settings.goal,
@@ -345,6 +355,21 @@ const make = Effect.gen(function* () {
         notes,
         notesTruncated,
       };
+    });
+
+  // Every note write bumps its revision, so unchanged revisions mean an unchanged digest.
+  const digests = new Map<ProjectId, { readonly signature: string; readonly digest: string }>();
+  const contentDigest = (projectId: ProjectId) =>
+    Effect.gen(function* () {
+      const read = yield* workspace
+        .readWorkspace({ projectId })
+        .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" })));
+      const signature = contentSignature(read.settings, read.memory.files);
+      const known = digests.get(projectId);
+      if (known?.signature === signature) return known.digest;
+      const digest = coordinatorContentDigest(yield* readContent(projectId));
+      digests.set(projectId, { signature, digest });
+      return digest;
     });
 
   const readReplica = (project: Project) =>
@@ -669,7 +694,7 @@ const make = Effect.gen(function* () {
       const project = yield* load(projectId);
       const replica = yield* readReplica(project);
       return {
-        digest: coordinatorContentDigest(yield* readContent(projectId)),
+        digest: yield* contentDigest(projectId),
         replica: Option.match(replica, {
           onNone: () => null,
           onSome: ({ from, digest, replicatedAt }) => ({ from, digest, replicatedAt }),

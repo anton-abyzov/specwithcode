@@ -134,7 +134,7 @@ import * as StudioMods from "./mods/StudioMods.ts";
 import * as ComposerDrafts from "./composerDrafts/ComposerDrafts.ts";
 import * as StatusMonitor from "./statusPage/StatusMonitor.ts";
 import * as VoiceSpeech from "./voice/VoiceSpeech.ts";
-import { readSpecweaveProgress } from "./mods/SpecweaveProgress.ts";
+import { readSharedSpecweaveProgress } from "./mods/SpecweaveProgress.ts";
 import * as TelegramChannel from "./channels/TelegramChannel.ts";
 import * as GoogleAccountService from "./integrations/google/GoogleAccountService.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -2499,7 +2499,7 @@ const layerWsRpc = (
         [WS_METHODS.modsList]: (_input) => studioMods.list,
         [WS_METHODS.modsSpecweave]: (_input) =>
           projectStore.list().pipe(
-            Effect.flatMap((rows) => readSpecweaveProgress(rows)),
+            Effect.flatMap((rows) => readSharedSpecweaveProgress(rows)),
             Effect.mapError(
               (cause) => new ModsError({ detail: "Could not read SpecWeave progress.", cause }),
             ),

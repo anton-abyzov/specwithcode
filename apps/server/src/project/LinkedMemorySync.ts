@@ -145,36 +145,45 @@ const make = Effect.gen(function* () {
     Effect.map((descriptor): string | undefined => descriptor.label),
   );
 
+  // Every note write bumps its revision, so a known revision never needs hashing again.
+  const hashes = new Map<string, { readonly revision: number; readonly sha: string }>();
+  const hashOf = (
+    projectId: ProjectId,
+    file: { readonly name: string; readonly revision: number; readonly content: string },
+  ) => {
+    const key = `${projectId}\0${file.name}`;
+    const known = hashes.get(key);
+    if (known?.revision === file.revision) return known.sha;
+    const sha = LinkedMemoryHistory.memoryContentHash(file.content);
+    hashes.set(key, { revision: file.revision, sha });
+    return sha;
+  };
+
   /** Every memory file with its hash and the versions it has had here. */
   const readLocal = (projectId: ProjectId) =>
     Effect.gen(function* () {
-      const read = yield* workspace
-        .readWorkspace({ projectId })
-        .pipe(Effect.mapError(storageFailed));
       const state = yield* histories.read(projectId).pipe(Effect.mapError(storageFailed));
       const files = new Map<string, LocalMemoryFile>();
       let savedVersion = false;
-      for (const summary of read.memory.files) {
-        const found = yield* workspace
-          .readMemory({ projectId, name: summary.name })
-          .pipe(Effect.option);
-        if (Option.isNone(found)) continue;
-        const sha = LinkedMemoryHistory.memoryContentHash(found.value.content);
-        const view = localFileView(state.files[summary.name], {
+      for (const found of yield* workspace
+        .readMemoryFiles({ projectId })
+        .pipe(Effect.mapError(storageFailed))) {
+        const sha = hashOf(projectId, found);
+        const view = localFileView(state.files[found.name], {
           sha,
-          updatedAt: found.value.updatedAt,
+          updatedAt: found.updatedAt,
         });
-        files.set(summary.name, {
-          content: found.value.content,
+        files.set(found.name, {
+          content: found.content,
           sha,
-          revision: found.value.revision,
+          revision: found.revision,
           updatedAt: view.updatedAt,
           history: view.history.filter(isSha256),
         });
         // Every version a peer can see stays readable here as a later merge's base.
         savedVersion =
           (yield* histories
-            .saveVersion(projectId, sha, found.value.content)
+            .saveVersion(projectId, sha, found.content)
             .pipe(Effect.orElseSucceed(() => false))) || savedVersion;
       }
       if (savedVersion)

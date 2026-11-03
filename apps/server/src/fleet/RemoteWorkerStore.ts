@@ -8,6 +8,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -133,11 +134,21 @@ const make = Effect.gen(function* () {
   const filePath = path.join(config.stateDir, FILE_NAME);
   const lock = yield* Semaphore.make(1);
 
+  // The app polls this per project; an unchanged file is not read or decoded again.
+  let decoded: {
+    readonly stamp: string;
+    readonly workers: ReadonlyArray<RemoteWorkerRecord>;
+  } | null = null;
   const read = Effect.gen(function* () {
     const exists = yield* fileSystem.exists(filePath);
     if (!exists) return [] as ReadonlyArray<RemoteWorkerRecord>;
+    const info = yield* fileSystem.stat(filePath);
+    const stamp = `${Option.getOrNull(info.mtime)?.getTime()}:${info.size}`;
+    if (decoded?.stamp === stamp) return decoded.workers;
     const text = yield* fileSystem.readFileString(filePath);
-    return (yield* decodeStoreFile(text)).workers;
+    const workers = (yield* decodeStoreFile(text)).workers;
+    decoded = { stamp, workers };
+    return workers;
   }).pipe(Effect.mapError((cause) => new RemoteWorkerStoreError({ operation: "read", cause })));
 
   const write = (workers: ReadonlyArray<RemoteWorkerRecord>) =>

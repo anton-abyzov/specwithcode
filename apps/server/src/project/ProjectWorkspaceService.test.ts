@@ -320,6 +320,10 @@ it.layer(layer)("ProjectWorkspaceService", (it) => {
         (yield* service.readMemory({ projectId, name: "project_topic_0899.md" })).content,
         "topic 899\n".repeat(300),
       );
+      const batch = yield* service.readMemoryFiles({ projectId });
+      assert.equal(batch.length, 901);
+      assert.equal(batch.at(-1)?.name, "project_topic_0899.md");
+      assert.equal(batch.at(-1)?.content, "topic 899\n".repeat(300));
       // The prompt still carries a bounded index and a counted inventory, not the stored megabytes.
       const context = yield* service.context(projectId, ThreadId.make("worker"));
       assert.isAtMost(context.length, PROJECT_CONTEXT_CHARACTER_LIMIT);
