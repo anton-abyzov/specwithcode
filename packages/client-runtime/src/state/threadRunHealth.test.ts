@@ -160,3 +160,26 @@ describe("threadAwaitingPerson", () => {
     expect(threadRunHealth(older, nowMs)).toMatchObject({ state: "working", idleMs: 60_000 });
   });
 });
+
+describe("a waiting access request", () => {
+  it("counts as your approval and keeps what it asks for on the row", () => {
+    const access = {
+      accessTitle: "Use SpecWithCode",
+      reason: "Capture screenshots for the showcase.",
+      subjects: [{ kind: "app" as const, label: "SpecWithCode", hostLabel: "M4" }],
+    };
+    const thread = quietRunningThread({
+      id: RuntimeRequestId.make("turn-item:access-request:1"),
+      kind: "permission",
+      createdAt: v2Now,
+      access,
+    });
+    expect(thread.hasPendingApprovals).toBe(true);
+    expect(threadAwaitingPerson(thread)?.kind).toBe("approval");
+    expect(threadRunHealth(thread, nowMs)).toMatchObject({
+      state: "waiting",
+      awaitingPerson: "approval",
+    });
+    expect(thread.source?.pendingRuntimeRequest?.access).toEqual(access);
+  });
+});

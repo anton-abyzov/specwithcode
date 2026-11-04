@@ -629,6 +629,14 @@ export function copilotUsageCacheKey(input: {
 }
 
 /**
+ * Whether an instance's usage is read from GitHub: every Copilot CLI
+ * instance, including one the user installed (source "local"), which signs
+ * in the same way as a SpecWithCode-managed one.
+ */
+export const readsCopilotUsage = (config: { readonly agentId?: string | undefined }): boolean =>
+  config.agentId === COPILOT_USAGE_AGENT_ID;
+
+/**
  * Adds a Copilot instance's usage to its status. The reading is keyed by the
  * account the CLI signs in as, so a new sign-in or another COPILOT_HOME
  * reads afresh. The check waits at most `budget`; a slower read keeps
@@ -798,8 +806,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           environment,
           processEnvironment,
         });
-      const isCopilotInstance =
-        effectiveConfig.source !== "local" && effectiveConfig.agentId === COPILOT_USAGE_AGENT_ID;
+      const isCopilotInstance = readsCopilotUsage(effectiveConfig);
       const copilotUsageInput = {
         instanceEnvironment: Object.fromEntries(
           (environment ?? []).map((variable) => [variable.name, variable.value]),

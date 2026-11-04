@@ -325,6 +325,30 @@ export function summarizeStudioToolCalls(
     case "secret-request":
       label = phrase("Asked for", "ask for", quantity(selected.length, "secret"));
       break;
+    case "access-request": {
+      const names = new Set<string>();
+      for (const call of selected) {
+        const apps = Array.isArray(call.input?.apps) ? call.input.apps : [];
+        const devices = Array.isArray(call.input?.devices) ? call.input.devices : [];
+        for (const app of apps) {
+          const name = id(app);
+          if (name) names.add(name.trim());
+        }
+        for (const device of devices) {
+          const name = id(asRecord(device)?.deviceId);
+          if (name) names.add(name.trim());
+        }
+      }
+      const listed = [...names];
+      const shown = listed.slice(0, 4).join(", ");
+      const more = listed.length > 4 ? ` and ${listed.length - 4} more` : "";
+      label = phrase(
+        "Asked for",
+        "ask for",
+        listed.length > 0 ? `access: ${shown}${more}` : "access",
+      );
+      break;
+    }
     case "worktree-handoff":
       label = phrase(
         "Handed off to",

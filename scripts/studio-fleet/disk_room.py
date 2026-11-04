@@ -26,7 +26,15 @@ preflight_fleet.py streams exactly these sources to a host's /usr/bin/python3 th
 fleet_rollout.py streams update_request.py: update.py itself imports most of this folder.
 
     python3 -B disk_room.py --identity m1 --version 1.0.188 --json
+    python3 -B disk_room.py --identity m1 --version 1.0.188 --full-read 69,73 --json
     python3 -B update.py room --version 1.0.188 --json
+
+--full-read takes the TARGET release's FULL_READ migration numbers (comma-separated, or `none`)
+in place of this copy's additive_migrations.FULL_READ: a worker answering over SpecWithCode
+Connect runs its installed copy, whose list may be older than the release being checked. The
+rest of the estimate (line factor, floor margin, backup and staged sizes) is still this copy's;
+the update itself checks the full read's room again with the new release's code before the
+service stops (update_apply.fallback_room), so an older estimate never runs a host out of disk.
 
 Prints one JSON object (or one line without --json). Exit 0 when the host has room, 1 when it is
 short, 2 when it cannot tell (no such identity, no database).
@@ -246,9 +254,24 @@ def default_identity(home):
     return found[0]
 
 
-def room(home, identity, version, live=None, largest=None):
+def parse_full_read(value):
+    """Migration numbers from `--full-read`: '69,73' or 'none'; RoomError otherwise."""
+    text = (value or '').strip()
+    if text == 'none':
+        return []
+    numbers = []
+    for part in text.split(','):
+        if not re.fullmatch(r'[1-9][0-9]{0,5}', part):
+            raise RoomError('Invalid --full-read %r: give migration numbers like 69,73, or none' % value)
+        numbers.append(int(part))
+    return sorted(set(numbers))
+
+
+def room(home, identity, version, live=None, largest=None, full_read=None):
     """The report `update.py room` prints. `live` and `largest` read the newest migration and
-    the largest table's bytes (update.py passes update_apply's, which read through a snapshot)."""
+    the largest table's bytes (update.py passes update_apply's, which read through a snapshot).
+    `full_read`, when given, is the target release's FULL_READ migration numbers and replaces
+    additive_migrations.FULL_READ."""
     home = pathlib.Path(home)
     if not IDENTITY.fullmatch(identity or ''):
         raise RoomError('Invalid identity %r' % identity)
@@ -259,7 +282,7 @@ def room(home, identity, version, live=None, largest=None):
     if not database.is_file():
         raise RoomError('%s has no state database at %s' % (identity, database))
     newest = (live or live_migration)(database)
-    pending = additive_migrations.full_read_pending(newest)
+    pending = additive_migrations.full_read_pending(newest, full_read)
     folder = kept_lines.spill_folder(database)
     runs = full_read_runs((largest or largest_table_bytes)(database)) if pending else 0
     fallback = runs + kept_lines.DISK_FLOOR_MARGIN if pending and folder is not None else 0
@@ -308,13 +331,15 @@ def main(argv=None, live=None, largest=None):
     parser = argparse.ArgumentParser(prog='room', description='Disk an update of this host needs.')
     parser.add_argument('--version', required=True, help='The release to be installed')
     parser.add_argument('--identity', help='Default: the one installation under the home')
+    parser.add_argument('--full-read', help="The target release's FULL_READ migrations: 69,73 or none")
     parser.add_argument('--json', action='store_true')
     parser.add_argument('--home', type=pathlib.Path, help=argparse.SUPPRESS)  # Tests: a temporary private home.
     args = parser.parse_args(argv)
     home = (args.home or pathlib.Path.home()).resolve()
     try:
+        full_read = None if args.full_read is None else parse_full_read(args.full_read)
         identity = args.identity or default_identity(home)
-        report = room(home, identity, args.version, live=live, largest=largest)
+        report = room(home, identity, args.version, live=live, largest=largest, full_read=full_read)
     except (RoomError, OSError) as error:
         report = {'identity': args.identity, 'version': args.version, 'error': str(error)[:300]}
     print(json.dumps(report, sort_keys=True) if args.json else describe(report))

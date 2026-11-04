@@ -71,7 +71,15 @@ That environment is fixed when the provider subprocess spawns, so
 starts agent-device only when device support and agent access have both been
 enabled, the session has the `device` capability, and the machine can run at
 least one platform. Starting it later from `device_open` would leave the
-already-running agent without the CLI.
+already-running agent without the CLI on its PATH.
+
+With agent access off, a session has no `device` capability, but the device
+tools still answer. `device_open` then shows an access request card
+(`access/accessGate.ts`) and, on Allow, records a grant for that device and
+calls `agentTarget` with `consented: true`, which starts agent-device for that
+host despite the setting. The tool result names the CLI by absolute path, so
+the agent needs nothing on its PATH. Grants live in
+`<stateDir>/access-grants.json`, per thread or for the whole machine.
 
 How to drive a device is returned from `device_open`, not kept in an
 always-loaded prompt or skill: it costs nothing in threads that never open a

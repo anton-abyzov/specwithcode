@@ -12,6 +12,8 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 
 import { cli } from "../binCli.ts";
+import { describeFleetDiskRoom, fleetDiskRoomAskOf } from "./fleet.ts";
+import * as Option from "effect/Option";
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 
@@ -118,4 +120,54 @@ describe("specweave-studio fleet", () => {
       assert.isFalse(NodeFS.existsSync(NodePath.join(baseDir, "studio-fleet.json")));
     }),
   );
+});
+
+describe("specweave-studio fleet room", () => {
+  const room = (args: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const line = yield* captureStdout(runCli(["fleet", "room", "--json", ...args]));
+      const failed = process.exitCode;
+      process.exitCode = undefined;
+      return { body: JSON.parse(line) as Record<string, unknown>, failed };
+    });
+
+  it.effect("prints a usage failure for a bad version or FULL_READ list, as one JSON line", () =>
+    Effect.gen(function* () {
+      for (const flags of [
+        ["--full-read", "69"],
+        ["--version", "1.0.190", "--full-read", "../x"],
+      ]) {
+        const { body, failed } = yield* room(["--base-dir", home(), "m1", ...flags]);
+        assert.strictEqual(body.reason, "usage");
+        assert.strictEqual(failed, 1);
+      }
+    }),
+  );
+
+  it.effect("names a machine this primary does not know", () =>
+    Effect.gen(function* () {
+      const { body, failed } = yield* room(["--base-dir", home(), "m9", "--version", "1.0.190"]);
+      assert.strictEqual(body.reason, "unknown-machine");
+      assert.include(String(body.error), "m9");
+      assert.strictEqual(failed, 1);
+    }),
+  );
+
+  it("maps flags to the narrow ask and prints one human line", () => {
+    assert.deepEqual(fleetDiskRoomAskOf({ version: Option.some("1.0.190"), fullRead: "none" }), {
+      version: "1.0.190",
+      fullRead: "none",
+    });
+    assert.isString(fleetDiskRoomAskOf({ version: Option.none(), fullRead: "69,73" }));
+    assert.isString(fleetDiskRoomAskOf({ version: Option.some("1.0.190"), fullRead: "69;73" }));
+    const report = { ok: false, version: "1.0.190", freeBytes: 2 * 1024 ** 3, volume: "/" };
+    assert.strictEqual(
+      describeFleetDiskRoom("Mac M1", {
+        ...report,
+        needBytes: 3 * 1024 ** 3,
+        transport: "connect",
+      }),
+      "Mac M1 is short of disk for 1.0.190: 2.0 GiB free, 3.0 GiB needed on /, reached over SpecWithCode Connect.",
+    );
+  });
 });

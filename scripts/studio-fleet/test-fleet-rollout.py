@@ -1024,7 +1024,7 @@ class Inventory(unittest.TestCase):
             previous = os.environ.get('STUDIO_FLEET_HOSTS')
             os.environ['STUDIO_FLEET_HOSTS'] = str(inventory)
             try:
-                hosts = fleet_rollout.fleet(home=temporary)
+                hosts = fleet_rollout.fleet(home=temporary, ssh_fallback=True)
             finally:
                 if previous is None:
                     os.environ.pop('STUDIO_FLEET_HOSTS')
@@ -1531,8 +1531,9 @@ def connect_fleet(clock, extra=('ministorm',), polls=None):
 
 
 class ConnectFallback(unittest.TestCase):
-    """The worker stage uses SpecWithCode Connect first, falls back to pinned SSH when unavailable, and
-    reports a machine reachable by neither instead of waiting on it."""
+    """The worker stage uses SpecWithCode Connect only by default. With --ssh-fallback (FallbackHost)
+    it falls back to pinned SSH when Connect is unavailable, and reports a machine reachable by
+    neither instead of waiting on it."""
 
     def test_connect_host_maps_each_command_to_fleet_update(self):
         clock = Clock()
@@ -1811,8 +1812,24 @@ class ConnectFallback(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             home, inventory = self.write_home(temporary, machines)
             with mock.patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(inventory)}):
-                hosts = fleet_rollout.fleet(home=home, connect=CLI)
-                without_cli = fleet_rollout.fleet(home=home)  # No installed CLI in this home.
+                hosts = fleet_rollout.fleet(home=home, connect=CLI, ssh_fallback=True)
+                without_cli = fleet_rollout.fleet(home=home, ssh_fallback=True)  # No installed CLI in this home.
+            with mock.patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(home / 'missing.json')}):
+                default = fleet_rollout.fleet(home=home, connect=CLI)  # Connect only: no inventory needed.
+                default_without_cli = fleet_rollout.fleet(home=home)
+        self.assertEqual(sorted(default), ['annas-air', 'm1', 'm3', 'm4', 'ministorm', 'old-box'])
+        self.assertIsInstance(default['m1'], fleet_rollout.ConnectHost)
+        self.assertEqual(default['m1'].machine, 'm1-id')
+        self.assertIsNone(default['m1'].app_command)
+        self.assertIsInstance(default['m3'], fleet_rollout.Unreachable)
+        self.assertIn('no SpecWithCode Connect route: it has no SpecWithCode Connect address; pass --ssh-fallback',
+                      default['m3'].reason)
+        self.assertIsInstance(default['ministorm'], fleet_rollout.ConnectHost)
+        self.assertIn("M4's installed CLI cannot run `fleet update`; pass --ssh-fallback",
+                      default_without_cli['m1'].reason)
+        for host in list(default.values()) + list(default_without_cli.values()):
+            self.assertNotIsInstance(host, fleet_rollout.FallbackHost)
+            self.assertNotIn('/usr/bin/ssh', json.dumps(fleet_rollout.plan_route(host)))
         self.assertEqual(sorted(hosts), ['annas-air', 'm1', 'm3', 'm4', 'ministorm', 'old-box'])
         self.assertIsInstance(hosts['m4'], fleet_rollout.Host)
         self.assertNotIn('m4-max', without_cli)
@@ -1839,10 +1856,22 @@ class ConnectFallback(unittest.TestCase):
             home, inventory = self.write_home(temporary, machines)
             env = dict(os.environ, STUDIO_FLEET_HOSTS=str(inventory), HOME=str(home))
             result = subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW,
-                                     '--dry-run', '--only', 'workers'], capture_output=True, text=True, timeout=60,
-                                    env=env)
+                                     '--dry-run', '--only', 'workers', '--ssh-fallback'], capture_output=True,
+                                    text=True, timeout=60, env=env)
+            env['STUDIO_FLEET_HOSTS'] = str(home / 'missing.json')
+            default = subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW,
+                                      '--dry-run', '--only', 'workers'], capture_output=True, text=True, timeout=60,
+                                     env=env)
+        self.assertEqual(default.returncode, 0, default.stderr)
+        connect_only = json.loads(default.stdout)
+        self.assertIs(connect_only['sshFallback'], False)
+        self.assertEqual(connect_only['order'], ['m1+m3+ministorm'])
+        for identity in ('m1', 'm3'):
+            self.assertEqual(connect_only['routes'][identity]['route'], 'skipped')
+            self.assertIn('pass --ssh-fallback', connect_only['routes'][identity]['reason'])
         self.assertEqual(result.returncode, 0, result.stderr)
         plan = json.loads(result.stdout)
+        self.assertIs(plan['sshFallback'], True)
         self.assertEqual(plan['order'], ['m1+m3+ministorm'])
         self.assertEqual(plan['routes']['m1']['route'], 'ssh')
         # This home has no installed CLI, so ministorm has no route and is reported, not asked.

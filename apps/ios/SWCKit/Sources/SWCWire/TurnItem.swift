@@ -62,6 +62,7 @@ public struct TurnItem: Codable, Hashable, Sendable, Identifiable {
     case error(ErrorReport)
     case systemNotice(SystemNotice)
     case notification(ThreadNotification)
+    case accessRequest(AccessRequest)
     case unknown(type: String, raw: JSONValue)
 
     public var type: String {
@@ -82,6 +83,7 @@ public struct TurnItem: Codable, Hashable, Sendable, Identifiable {
       case .error: "error"
       case .systemNotice: "system_notice"
       case .notification: "notification"
+      case .accessRequest: "access_request"
       case let .unknown(type, _): type
       }
     }
@@ -91,7 +93,7 @@ public struct TurnItem: Codable, Hashable, Sendable, Identifiable {
   public static let knownTypes: Set<String> = [
     "user_message", "assistant_message", "reasoning", "proposed_plan", "todo_list", "command_execution",
     "file_change", "file_search", "web_search", "approval_request", "user_input_request", "dynamic_tool",
-    "subagent", "error", "system_notice", "notification",
+    "subagent", "error", "system_notice", "notification", "access_request",
   ]
 
   enum BaseKeys: String, CodingKey {
@@ -156,6 +158,7 @@ public struct TurnItem: Codable, Hashable, Sendable, Identifiable {
     case "subagent": content = .subagent(try Subagent(from: decoder))
     case "error": content = .error(try ErrorReport(from: decoder))
     case "system_notice": content = .systemNotice(try SystemNotice(from: decoder))
+    case "access_request": content = .accessRequest(try AccessRequest(from: decoder))
     default: content = .notification(try ThreadNotification(from: decoder))
     }
   }
@@ -202,6 +205,7 @@ public struct TurnItem: Codable, Hashable, Sendable, Identifiable {
     case let .error(v): try v.encode(to: encoder)
     case let .systemNotice(v): try v.encode(to: encoder)
     case let .notification(v): try v.encode(to: encoder)
+    case let .accessRequest(v): try v.encode(to: encoder)
     case .unknown: break
     }
   }

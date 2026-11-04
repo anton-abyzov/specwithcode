@@ -214,5 +214,28 @@
   },
   "dispatchResult": {
     "sequence": 7
+  },
+  "accessAnswer.allowThread": {
+    "threadId": "thr_1",
+    "turnItemId": "ti_access",
+    "answer": {
+      "type": "allow",
+      "scope": "thread"
+    }
+  },
+  "accessAnswer.allowMachine": {
+    "threadId": "thr_1",
+    "turnItemId": "ti_access",
+    "answer": {
+      "type": "allow",
+      "scope": "machine"
+    }
+  },
+  "accessAnswer.deny": {
+    "threadId": "thr_1",
+    "turnItemId": "ti_access",
+    "answer": {
+      "type": "deny"
+    }
   }
 }

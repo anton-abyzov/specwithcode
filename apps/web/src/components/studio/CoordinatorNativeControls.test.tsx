@@ -2,7 +2,9 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ThreadId, RuntimeRequestId } from "@specweave-studio/contracts";
+import type { AccessRequestItem } from "@specweave-studio/client-runtime/access-request";
+import { EnvironmentId, ThreadId, RuntimeRequestId, TurnItemId } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import type { PendingUserInput } from "../../session-logic";
@@ -11,6 +13,7 @@ import {
   ProjectMessageRoutingContext,
   type ProjectMessageRouting,
 } from "../../studio/projectMessageRouting";
+import { AccessRequestPrompt } from "../chat/AccessRequestCard";
 import { CoordinatorNativeControls, firstRequestAction } from "./CoordinatorNativeControls";
 import type { CoordinatorQuestionRecoveryContext } from "./CoordinatorQuestionCard";
 import type { CoordinatorQuestion } from "./useCoordinatorQuestion";
@@ -355,3 +358,61 @@ it.each(["loading", "disabled", "error", "remaining", "question", "plan"])(
     expect(close).toHaveBeenCalledOnce();
   },
 );
+// The thread's pending access_request turn item, as ChatView finds it. Runtime
+// requests never carry it, so `approvals` stays empty for an access request.
+const at = DateTime.makeUnsafe("2026-11-04T12:00:00.000Z");
+const accessItem = {
+  id: TurnItemId.make("turn-item:access-request:coord:1"),
+  threadId: ThreadId.make("coord"),
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal: 1,
+  status: "waiting",
+  title: null,
+  startedAt: at,
+  completedAt: null,
+  updatedAt: at,
+  type: "access_request",
+  accessTitle: "Use Notes",
+  reason: "To copy the release notes.",
+  subjects: [
+    { kind: "app", key: "app:notes", label: "Notes", detail: "See and control its windows" },
+  ],
+  accessStatus: "pending",
+} as AccessRequestItem;
+it("shows an answerable access card with no runtime approval pending, landing on Deny", async () => {
+  const onAnswer = vi.fn(async (_answer: unknown) => null);
+  props.approvals = [];
+  props.accessRequest = (
+    <AccessRequestPrompt item={accessItem} agentLabel="Claude" onAnswer={onAnswer} />
+  );
+  await render();
+  expect(container.querySelector("[data-access-request-card]")).not.toBeNull();
+  expect(container.querySelector("section[aria-label='Approval request']")).toBeNull();
+  expect(firstRequestAction(container)?.textContent).toBe("Deny");
+  await act(async () => button("Allow for this session").click());
+  expect(onAnswer).toHaveBeenCalledWith({ type: "allow", scope: "thread" });
+});
+it("puts the access card ahead of a runtime approval, and both stay answerable", async () => {
+  const onAnswer = vi.fn(async (_answer: unknown) => null);
+  props.approvals = [approval];
+  props.accessRequest = (
+    <AccessRequestPrompt item={accessItem} agentLabel="Claude" onAnswer={onAnswer} />
+  );
+  await render();
+  const card = container.querySelector("[data-access-request-card]")!;
+  const approvalSection = container.querySelector("section[aria-label='Approval request']")!;
+  expect(card.compareDocumentPosition(approvalSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    Node.DOCUMENT_POSITION_FOLLOWING,
+  );
+  expect(container.querySelectorAll("[data-access-request-card]")).toHaveLength(1);
+  expect(firstRequestAction(container)?.textContent).toBe("Deny");
+  await act(async () => button("Deny").click());
+  expect(onAnswer).toHaveBeenCalledWith({ type: "deny" });
+  await act(async () => button("Approve").click());
+  expect(props.onApproval).toHaveBeenCalledWith(RuntimeRequestId.make("a"), "accept");
+});

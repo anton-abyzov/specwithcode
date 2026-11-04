@@ -8,6 +8,8 @@ struct TranscriptRowView: View {
   let busyRequests: Set<String>
   var thinkingBrand: String? = nil
   let onDecision: (String, ApprovalDecision) -> Void
+  /// Answers an access request card.
+  var onAccess: ((AccessRequestRow, AccessAnswer) -> Void)? = nil
   let onOpenThread: (ThreadRef) -> Void
   var onOpenLink: ((URL) -> Void)? = nil
   var environmentId: String = ""
@@ -71,6 +73,13 @@ struct TranscriptRowView: View {
 
     case let .question(_, prompt, resolved):
       QuestionCard(prompt: prompt, resolved: resolved)
+
+    case let .access(request):
+      // A pending request is answered in the card above the composer; the
+      // conversation keeps one line for it.
+      request.card(agent: nil, style: .transcript, isBusy: busyRequests.contains(request.itemId)) { answer in
+        onAccess?(request, answer)
+      }
 
     case let .subagent(title, child, _):
       SubagentRow(title: title, child: child, onOpen: onOpenThread)

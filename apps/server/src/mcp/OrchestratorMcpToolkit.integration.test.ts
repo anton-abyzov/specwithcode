@@ -1809,6 +1809,65 @@ describe("orchestrator MCP toolkit", () => {
               .pipe(Effect.flip);
             expect(reused.message).toContain("already used");
 
+            // An access request card is recorded in the same run, waits like
+            // an approval, and is answered once.
+            const accessCardId = TurnItemId.make("turn-item:access-request:integration");
+            const recordAccess = (
+              accessStatus: "pending" | "allowed" | "denied" | "cancelled",
+              suffix: string,
+            ) =>
+              orchestrator.dispatch({
+                type: "access_request.record",
+                commandId: CommandId.make(`command:test:access-request-${suffix}`),
+                threadId: parentThreadId,
+                runId: card.runId!,
+                nodeId: card.nodeId!,
+                turnItemId: accessCardId,
+                accessTitle: "Use Notes",
+                reason: "To read the shopping list.",
+                subjects: [
+                  {
+                    kind: "app",
+                    key: "app:notes",
+                    label: "Notes",
+                    detail: "See and control its windows",
+                  },
+                ],
+                accessStatus,
+                ...(accessStatus === "allowed" ? { accessScope: "machine" as const } : {}),
+              });
+            yield* recordAccess("pending", "pending");
+            const accessAsked = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(accessAsked.turnItems.find((item) => item.id === accessCardId)).toMatchObject({
+              type: "access_request",
+              status: "waiting",
+              accessStatus: "pending",
+              accessTitle: "Use Notes",
+              runId: card.runId,
+            });
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest,
+            ).toMatchObject({ kind: "permission" });
+            expect(threadShellFromProjection(accessAsked).pendingRuntimeRequest).toMatchObject({
+              kind: "permission",
+            });
+            yield* recordAccess("allowed", "allowed");
+            // A late close or a replayed ask leaves the answer as it was.
+            yield* recordAccess("cancelled", "cancelled");
+            yield* recordAccess("pending", "replay");
+            const accessAnswered = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).turnItems.filter((item) => item.type === "access_request");
+            expect(accessAnswered).toHaveLength(1);
+            expect(accessAnswered[0]).toMatchObject({
+              status: "completed",
+              accessStatus: "allowed",
+              accessScope: "machine",
+            });
+            expect(
+              (yield* orchestrator.getThreadShell(parentThreadId))?.pendingRuntimeRequest ?? null,
+            ).toBeNull();
+
             // ask_user shows a message-mode question card and returns at once;
             // the answer comes back to the thread as a message.
             const askCall = yield* invoke("ask_user", {

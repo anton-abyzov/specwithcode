@@ -45,6 +45,8 @@ import {
   StudioFleetUpdateResult,
   StudioFleetUpdateStatus,
   StudioFleetUpdateStatusQuery,
+  StudioFleetDiskRoomQuery,
+  StudioFleetDiskRoomReport,
   StudioFleetSkillInput,
   StudioFleetSkillRefusal,
   StudioFleetSkillResult,
@@ -1339,6 +1341,24 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
       headers: OptionalBearerHeaders,
       query: StudioFleetUpdateStatusQuery,
       success: StudioFleetUpdateStatus,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetUpdateError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * The fleet primary asks how much disk this machine's update to a version
+     * needs; it runs this release's own disk_room.py. Same token rule as the
+     * update request. Read-only.
+     */
+    HttpApiEndpoint.get("fleetDiskRoom", "/api/studio/fleet/disk-room", {
+      headers: OptionalBearerHeaders,
+      query: StudioFleetDiskRoomQuery,
+      success: StudioFleetDiskRoomReport,
       error: [
         ...EnvironmentScopedOperationErrors,
         EnvironmentHttpForbiddenError,

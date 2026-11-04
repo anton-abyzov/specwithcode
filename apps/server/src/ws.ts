@@ -152,6 +152,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTaskRpc from "./scheduledTasks/ScheduledTaskRpc.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as AccessRequests from "./access/AccessRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1330,6 +1331,7 @@ const layerWsRpc = (
       const threadWorkspaceRestore = yield* ThreadWorkspaceRestore.ThreadWorkspaceRestore;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const accessRequests = yield* AccessRequests.AccessRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -2238,6 +2240,12 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
           ),
+        [WS_METHODS.accessAnswerRequest]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(accessRequests.answer(input)),
+          ),
+        [WS_METHODS.accessListGrants]: (_input) => accessRequests.listMachineGrants,
+        [WS_METHODS.accessRevokeGrant]: (input) => accessRequests.revokeMachineGrant(input.key),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig({ usageLimitsCommand: false }),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>

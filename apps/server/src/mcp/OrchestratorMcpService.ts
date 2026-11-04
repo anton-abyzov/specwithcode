@@ -13,6 +13,7 @@ import {
   NodeId,
   RuntimeRequestId,
   TurnItemId,
+  type AccessRequestSubject,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
@@ -139,6 +140,12 @@ import {
   requireThreadScope,
 } from "./McpInvocationContext.ts";
 import * as Metrics from "../observability/Metrics.ts";
+import {
+  type AccessRequestCardInput,
+  type AccessRequestCardResult,
+  accessRequestKey,
+  waitForAccessRequestCard,
+} from "../access/accessRequestCard.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import {
   assertAccountInGrant,
@@ -165,6 +172,8 @@ const TASK_WAKE_EVENTS = [
 ] as const;
 /** A person answers the card, so a slower poll is plenty. */
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
+
+export type { AccessRequestCardInput, AccessRequestCardResult };
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
@@ -253,6 +262,15 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpRequestSecretInput,
   ) => Effect.Effect<OrchestratorMcpRequestSecretResult, OrchestratorMcpFailure>;
+  /**
+   * Shows an access request card in the calling thread and waits for the
+   * user's Allow or Deny. Subjects come resolved (name, icon, grant key);
+   * AccessRequests writes the grants when the user allows.
+   */
+  readonly requestAccess: (
+    scope: McpInvocationScope,
+    input: AccessRequestCardInput,
+  ) => Effect.Effect<AccessRequestCardResult, OrchestratorMcpFailure>;
   /**
    * Shows a question card in the calling thread and returns at once. The
    * user's answer arrives in that thread as a message.
@@ -985,6 +1003,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "secret_request":
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
+    case "access_request":
+      return `Asked the user for access (${item.accessTitle}): ${item.accessStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -2542,6 +2562,50 @@ const make = Effect.gen(function* () {
         }
         return { status, secretRef: secretRef.value };
       }).pipe(Effect.withSpan("OrchestratorMcpService.requestSecret")),
+    requestAccess: (scope, input) =>
+      Effect.gen(function* () {
+        // The card is shown in, and answered from, the caller's own thread.
+        const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_access");
+        const threadId = threadScope.thread.threadId;
+        const run = ThreadManagementService.latestActiveRun(parent);
+        if (
+          run === undefined ||
+          run.rootNodeId === null ||
+          run.providerInstanceId !== threadScope.thread.providerInstanceId
+        ) {
+          const verdict = parentLiveness(threadScope, parent);
+          return yield* failure(
+            "parent_not_active",
+            verdict.live
+              ? "Asking for access needs a live turn of this thread, and this call came between turns. Ask for it in the thread's next turn."
+              : verdict.message,
+          );
+        }
+        const runId = run.id;
+        const nodeId = run.rootNodeId;
+        const subjects = input.subjects as AccessRequestSubject[];
+        if (subjects.length === 0) {
+          return yield* failure("invalid_request", "Name at least one app or device to ask for.");
+        }
+        // The same clientRequestId with other subjects is a new card, never another card's answer.
+        const key = accessRequestKey(yield* requestKey(input.clientRequestId), subjects);
+        const turnItemId = TurnItemId.make(
+          `turn-item:access-request:${stablePart(threadId)}:${stablePart(key)}`,
+        );
+        return yield* waitForAccessRequestCard(
+          {
+            threadManagement,
+            threadId,
+            runId,
+            nodeId,
+            turnItemId,
+            commandId: (accessStatus) =>
+              stableCommandId({ scope, requestKey: key, operation: `access-${accessStatus}` }),
+            timeoutMs: Math.min(input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS, MAX_WAIT_TIMEOUT_MS),
+          },
+          { ...input, subjects: [subjects[0]!, ...subjects.slice(1)] },
+        );
+      }).pipe(Effect.withSpan("OrchestratorMcpService.requestAccess")),
     askUser: (scope, input) =>
       Effect.gen(function* () {
         const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "ask_user");

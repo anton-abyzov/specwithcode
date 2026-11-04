@@ -360,11 +360,30 @@ public struct PendingRuntimeRequestSummary: Codable, Hashable, Sendable, Identif
   public var id: String
   public var kind: RuntimeRequestKind
   public var createdAt: Date
+  /// What an access request card asks for. Older servers leave it out.
+  public var access: PendingAccessSummary?
 
-  public init(id: String, kind: RuntimeRequestKind, createdAt: Date) {
+  public init(id: String, kind: RuntimeRequestKind, createdAt: Date, access: PendingAccessSummary? = nil) {
     self.id = id
     self.kind = kind
     self.createdAt = createdAt
+    self.access = access
+  }
+
+  enum CodingKeys: String, CodingKey { case id, kind, createdAt, access }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(String.self, forKey: .id)
+    kind = try c.decode(RuntimeRequestKind.self, forKey: .kind)
+    createdAt = try c.decode(Date.self, forKey: .createdAt)
+    // A summary this build cannot read leaves the generic wording, never fails the thread.
+    access = (try? c.decodeIfPresent(PendingAccessSummary.self, forKey: .access)) ?? nil
+  }
+
+  /// The pending request is an access request card waiting for an answer.
+  public var isAccessRequest: Bool {
+    access != nil || (kind == .permission && id.hasPrefix("turn-item:access-request:"))
   }
 }
 

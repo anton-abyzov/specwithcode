@@ -63,6 +63,8 @@ const ACTION_TIMEOUT_MS: Record<ComputerUseAction["kind"], number> = {
   type: 30_000,
   key: 15_000,
   open: 30_000,
+  appInfo: 15_000,
+  appAt: 10_000,
 };
 
 interface Host {

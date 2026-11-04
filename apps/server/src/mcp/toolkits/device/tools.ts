@@ -16,12 +16,22 @@ import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
+import * as AccessRequests from "../../../access/AccessRequests.ts";
+import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   DeviceService.DeviceService,
+  AccessRequests.AccessRequests,
+];
+/** device_open may ask the user first, on an access request card. */
+const openDependencies = [
+  ...dependencies,
+  ComputerUseBroker.ComputerUseBroker,
+  OrchestratorMcpService.OrchestratorMcpService,
 ];
 
 /** What a device tool fails with, including the access gate's refusal. */
@@ -60,7 +70,7 @@ const DeviceOpenTool = Tool.make("device_open", {
   parameters: DeviceToolOpenInput,
   success: DeviceToolOpenResult,
   failure: DeviceToolFailure,
-  dependencies: [...dependencies, FileSystem.FileSystem, Path.Path, ServerConfig.ServerConfig],
+  dependencies: [...openDependencies, FileSystem.FileSystem, Path.Path, ServerConfig.ServerConfig],
 })
   .annotate(Tool.Title, "Open device")
   .annotate(Tool.Readonly, false)

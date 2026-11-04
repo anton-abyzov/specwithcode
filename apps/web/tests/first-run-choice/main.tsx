@@ -9,6 +9,8 @@ import { StudioWordmark } from "../../src/components/StudioWordmark";
 import { Dialog } from "../../src/components/ui/dialog";
 import { DialogCloseButton } from "../../src/components/ui/dialog-close-button";
 import { WizardHeader, WizardPanel, WizardPopup } from "../../src/components/ui/wizard";
+import { LanguageSelect } from "../../src/components/settings/LanguageSelect";
+import { t } from "../../src/i18n";
 import "./fixture.css";
 
 // The welcome wizard's first-run choice as it renders on a machine with a
@@ -33,13 +35,16 @@ createRoot(document.getElementById("root")!).render(
       initialFocus={() => firstStepControl() ?? true}
     >
       <WizardHeader
-        title="Set up SpecWithCode"
+        title={t("wizard.title")}
         identity={
-          <div className="flex items-center gap-2" role="img" aria-label="SpecWithCode">
-            <StudioWordmark className="size-6 shrink-0" aria-hidden />
-            <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-              SpecWithCode
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-3 pe-10">
+            <div className="flex items-center gap-2" role="img" aria-label="SpecWithCode">
+              <StudioWordmark className="size-6 shrink-0" aria-hidden />
+              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
+                SpecWithCode
+              </span>
+            </div>
+            <LanguageSelect showIcon className="w-auto sm:w-auto" />
           </div>
         }
       >
@@ -54,7 +59,7 @@ createRoot(document.getElementById("root")!).render(
       </WizardHeader>
       <WizardPanel>
         <MachineRoleStep
-          machineNoun={params.get("os") === "darwin" ? "Mac" : "machine"}
+          machineNoun={t(params.get("os") === "darwin" ? "wizard.noun.mac" : "wizard.noun.machine")}
           onJoin={noop}
           onMain={noop}
           onLater={noop}

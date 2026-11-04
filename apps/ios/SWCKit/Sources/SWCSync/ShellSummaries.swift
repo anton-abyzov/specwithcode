@@ -451,6 +451,9 @@ public enum ShellSummaries {
     switch activity(thread) {
     case .needsYou:
       if thread.pendingRuntimeRequest == nil { return "Plan ready" }
+      if let request = thread.pendingRuntimeRequest, request.isAccessRequest {
+        return AccessRequestCopy.waitingSubtitle(request.access?.subjects.map(\.copyName) ?? [])
+      }
       if thread.pendingRuntimeRequest?.kind.isUserInput == true { return "Answer needed" }
       return thread.pendingRuntimeRequest?.kind == .authRefresh ? "Sign-in needed" : "Approval requested"
     case .working:
@@ -493,6 +496,7 @@ public enum ShellSummaries {
     )
     summary.isDone = thread.status == .completed
     summary.waitReason = ThreadAttention.dependencyWait(thread)
+    summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true
     return summary
   }
 

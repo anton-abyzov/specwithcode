@@ -290,6 +290,8 @@ public struct ServerError: Error, Sendable, Hashable, CustomStringConvertible {
           return ServerError(kind: .projectMutation, message: message ?? "The project could not be saved.", raw: error)
         case "ServerSettingsError":
           return ServerError(kind: .serverSettings, message: message ?? "The setting could not be saved.", raw: error)
+        case "AccessRequestError":
+          return ServerError(kind: .other(tag: tag), message: AccessRequestErrorText.message(for: error["reason"]?.stringValue), raw: error)
         default:
           return ServerError(kind: .other(tag: tag), message: message ?? tag, raw: error)
         }

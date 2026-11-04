@@ -52,6 +52,29 @@ Settings → Connections may list a `computer-use` row with Codex showing
 computer-use helpers, not what agents in SpecWithCode use, so nothing there
 needs turning on.
 
+## Allow an app
+
+Computer use being on lets agents ask for apps; it does not let them use any
+app they like. The first time an agent in a thread opens an app or clicks,
+types, scrolls or drags in the app in front, a card appears just above the
+composer: "Claude wants to use Notes", the agent's one-sentence reason, and
+each app with its own icon. **Allow for this session** lets the agent use those
+apps in this thread; **Always allow on this machine**, under the buttons, lets
+every thread on this Mac use them. **Deny** stops the action, and the agent is
+told not to ask again in that turn. The agent's action waits for your answer
+for up to five minutes. While it waits, the thread shows as waiting for you,
+and the project's coordinator shows the thread with "Asking to use apps on
+your computer" and a **View thread** button.
+
+Screenshots and pointer moves change nothing, so they are never asked about.
+An agent can also ask ahead with the `request_access` tool, naming the apps
+and devices it will need, so you answer one card instead of several.
+
+The same card shows in the iPhone app, so you can answer it from your phone.
+Apps you allowed with **Always on this machine** are listed under **Settings →
+Integrations → Agent computer access**; **Remove** takes one back, and the next
+agent that needs it asks again.
+
 ## What agents do and do not do
 
 - Agents type text by pasting it, then put back what you had copied.

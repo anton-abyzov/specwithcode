@@ -11,6 +11,17 @@ public struct ThreadIdentity: Hashable, Sendable {
   public var label: String { "\(provider) · \(model)" }
   public static let unknown = ThreadIdentity(provider: "Unknown provider", model: "Unknown model")
 
+  /// The agent's short name for sentences such as "Claude wants to use Notes":
+  /// the provider without a trailing "Code" or "CLI". Nil when the provider is unknown.
+  public var agentName: String? {
+    var name = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, name != Self.unknown.provider else { return nil }
+    for suffix in [" Code", " CLI"] where name.hasSuffix(suffix) && name.count > suffix.count {
+      name.removeLast(suffix.count)
+    }
+    return name
+  }
+
   public init(provider: String, model: String, providerBrand: String? = nil, modelBrand: String? = nil) {
     self.provider = provider
     self.model = model

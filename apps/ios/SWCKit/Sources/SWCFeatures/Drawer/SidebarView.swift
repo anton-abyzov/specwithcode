@@ -270,7 +270,8 @@ struct SidebarView: View {
         }
         .sidebarRowStyle(selected: false)
       }
-      let details: (ThreadSummary) -> (String?, String?) = { thread in machines.count > 1 ? (nil, thread.placement.owner) : (nil, nil) }
+      // A thread waiting for access says what it asks for: "Asking to use apps on your computer".
+      let details: (ThreadSummary) -> (String?, String?) = { thread in (thread.accessWaitLine, machines.count > 1 ? thread.placement.owner : nil) }
       // All of them come grouped by what they need, as on the desktop; a
       // chip shows its group alone.
       if filter == .all, !threads.isEmpty {
@@ -485,7 +486,7 @@ struct SidebarView: View {
   @ViewBuilder private var recentsSection: some View {
     Section {
       threadRows(router.sidebarThreads(in: model)) { thread in
-        ([thread.projectTitle, thread.placement.subtitle()].compactMap(\.self).joined(separator: " · "), nil)
+        ([thread.accessWaitLine, thread.projectTitle, thread.placement.subtitle()].compactMap(\.self).joined(separator: " · "), nil)
       }
     } header: {
       SidebarRecentsHeader(updating: !model.staleMachines.isEmpty)

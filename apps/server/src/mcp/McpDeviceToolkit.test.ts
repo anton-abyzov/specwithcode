@@ -11,11 +11,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as AccessRequests from "../access/AccessRequests.ts";
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
+import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
@@ -102,11 +104,18 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
 });
 
+/** No device was allowed on an access card; tests grant through the device capability. */
+const layerNoAccessGrants = Layer.mock(AccessRequests.AccessRequests)({
+  isAllowed: () => Effect.succeed(false),
+  hasAnyGrant: () => Effect.succeed(false),
+});
+
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
   Layer.provideMerge(layerDeviceServiceMock),
+  Layer.provideMerge(layerNoAccessGrants),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-device-toolkit-test-" }),
   ),
@@ -146,6 +155,7 @@ it.effect("returns the complete bounded launch diagnostics to the agent", () => 
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
         Layer.provide(failedDevices),
+        Layer.provideMerge(layerNoAccessGrants),
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-boot-error-test-" }),
         ),
@@ -223,6 +233,183 @@ it.effect("rejects unavailable agent access before booting or opening a device",
         Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
         Layer.provide(layerUnavailable),
+        Layer.provideMerge(layerNoAccessGrants),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});
+
+/**
+ * The device toolkit where the thread holds no device grant, recording what
+ * agentTarget receives and any access card, which the user answers `answer`.
+ */
+const consentHarness = (answer: "allowed" | "denied") => {
+  const targets: Array<Parameters<DeviceService.DeviceService["Service"]["agentTarget"]>[0]> = [];
+  const asked: Array<OrchestratorMcpService.AccessRequestCardInput> = [];
+  const opened: Array<string> = [];
+  const devices = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(state),
+    list: Effect.succeed(state),
+    agentCli: Effect.succeed("/cli"),
+    agentTarget: (input) =>
+      Effect.sync(() => {
+        targets.push(input);
+        return ["--config", "/host.json", "--session", "thread-device"];
+      }),
+    open: (input) =>
+      Effect.sync(() => {
+        opened.push(input.deviceId);
+        return {
+          threadId: input.threadId,
+          hostId: "local",
+          deviceId: input.deviceId,
+          platform: input.platform,
+          openedAt: "2026-09-08T00:00:00.000Z",
+        };
+      }),
+  });
+  const layer = McpHttpServer.layerDeviceToolkit.pipe(
+    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+    Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
+    Layer.provide(devices),
+    Layer.provideMerge(layerNoAccessGrants),
+    Layer.provideMerge(
+      Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+        requestAccess: (_scope, card) =>
+          Effect.sync(() => {
+            asked.push(card);
+            return answer === "allowed"
+              ? { status: "allowed" as const, scope: "thread" as const }
+              : { status: "denied" as const };
+          }),
+      }),
+    ),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-device-consent-" })),
+    Layer.provide(NodeServices.layer),
+  );
+  return { layer, targets, asked, opened };
+};
+
+const openDevice = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    return yield* server
+      .callTool({ name: "device_open", arguments: { deviceId: "UDID-1" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+  });
+
+it.effect("opens a device without a card when Agent device access is on", () => {
+  const { layer, targets, asked } = consentHarness("denied");
+  return Effect.gen(function* () {
+    const result = yield* openDevice(["device"]);
+    expect(result.isError).toBe(false);
+    expect(asked).toHaveLength(0);
+    expect(targets).toHaveLength(1);
+    expect(targets[0]).not.toHaveProperty("consented");
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("asks on a card before opening a device without Agent device access", () => {
+  const { layer, targets, asked, opened } = consentHarness("allowed");
+  return Effect.gen(function* () {
+    const result = yield* openDevice(["preview"]);
+    expect(result.isError).toBe(false);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({
+      accessTitle: "Control iPhone 17 Pro",
+      subjects: [{ kind: "device", key: "device:local/udid-1", label: "iPhone 17 Pro" }],
+    });
+    expect(targets).toEqual([
+      expect.objectContaining({ deviceId: "UDID-1", hostId: "local", consented: true }),
+    ]);
+    expect(opened).toEqual(["UDID-1"]);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("opens nothing when the user denies the device", () => {
+  const { layer, targets, asked, opened } = consentHarness("denied");
+  return Effect.gen(function* () {
+    const result = yield* openDevice(["preview"]);
+    expect(result.isError).toBe(true);
+    expect(result.content.map((part) => ("text" in part ? part.text : "")).join("\n")).toContain(
+      "The user did not allow this (Control iPhone 17 Pro)",
+    );
+    expect(asked).toHaveLength(1);
+    expect(targets).toHaveLength(0);
+    expect(opened).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+it.effect("a card grant for one device does not reach another device", () => {
+  const shots: Array<string> = [];
+  const closed: Array<string | undefined> = [];
+  const granted = Layer.mock(AccessRequests.AccessRequests)({
+    isAllowed: (_threadId, key) => Effect.succeed(key === "device:local/udid-1"),
+    hasAnyGrant: (_threadId, kind) => Effect.succeed(kind === "device"),
+  });
+  const devices = Layer.mock(DeviceService.DeviceService)({
+    state: Effect.succeed(state),
+    list: Effect.succeed(state),
+    sessionsForThread: () =>
+      Effect.succeed([
+        {
+          threadId,
+          hostId: "local",
+          deviceId: "UDID-2",
+          platform: "ios" as const,
+          openedAt: "2026-09-08T00:00:00.000Z",
+        },
+      ] as never),
+    screenshot: (input) =>
+      Effect.sync(() => {
+        shots.push(input.deviceId);
+        return { device, png };
+      }),
+    close: (input) =>
+      Effect.sync(() => {
+        closed.push(input.deviceId);
+      }),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (name: string, args: Record<string, unknown>) =>
+      server
+        .callTool({ name, arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation([])),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    const allowed = yield* call("device_screenshot", { deviceId: "UDID-1" });
+    expect(allowed.isError).toBe(false);
+    const other = yield* call("device_screenshot", { deviceId: "UDID-2" });
+    expect(other.isError).toBe(true);
+    expect(JSON.stringify(other.content)).toContain("may not use device UDID-2");
+    // Without a deviceId the thread's open session is UDID-2, which is not allowed either.
+    const latest = yield* call("device_screenshot", {});
+    expect(latest.isError).toBe(true);
+    const close = yield* call("device_close", {});
+    expect(close.isError).toBe(true);
+    const listed = yield* call("device_list", {});
+    expect(listed.isError).toBe(false);
+    expect(shots).toEqual(["UDID-1"]);
+    expect(closed).toEqual([]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provideMerge(McpToolAccessTestkit.noProjectsLayer),
+        Layer.provideMerge(devices),
+        Layer.provideMerge(granted),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-device-grant-test-" }),
+        ),
         Layer.provide(NodeServices.layer),
       ),
     ),

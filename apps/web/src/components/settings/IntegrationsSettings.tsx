@@ -4,6 +4,7 @@ import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
+import { AccessGrantsList } from "./AccessGrantsList";
 /**
  * Integrations settings - preferences for surfaces SpecWithCode embeds rather than
  * owns. Browser is the first section: the defaults a preview tab opens at,
@@ -847,7 +848,11 @@ export function DeviceIntegrationControls({
             />
           </>
         }
-      />
+      >
+        {environmentId && !projectScope ? (
+          <AccessGrantsList kind="device" environmentId={environmentId} />
+        ) : null}
+      </SettingsRow>
       <MaxBootedDevicesSetting disabled={!canConfigure || projectScope || !environmentId} />
       {environmentId ? (
         <DeviceHostUpdates

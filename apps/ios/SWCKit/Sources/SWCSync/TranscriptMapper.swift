@@ -10,7 +10,9 @@ public enum TranscriptMapper {
     let timeline = projection.visibleTurnItems
       .sorted { $0.position < $1.position }
       .compactMap { row in
-        kind(for: row.item, requests: requests, environmentId: environmentId).map { TranscriptRow(id: row.id, kind: $0) }
+        kind(for: row.item, requests: requests, environmentId: environmentId).map { kind in
+          TranscriptRow(id: row.id, kind: placed(kind, visibility: row.visibility))
+        }
       }
     return timeline + queuedRows(projection)
   }
@@ -30,6 +32,14 @@ public enum TranscriptMapper {
         let text = message?.text ?? "Queued message"
         return TranscriptRow(id: "queued:\(run.id)", kind: .user(text: text, state: run.queueHeld == true ? .held : .queued, attachments: (message?.attachments ?? []).map(TranscriptAttachment.init)))
       }
+  }
+
+  /// Marks an access request that came from another thread (inherited from a
+  /// fork, or synthetic) so it is not answered here, as the web client does.
+  static func placed(_ kind: TranscriptRow.Kind, visibility: TurnItemVisibility) -> TranscriptRow.Kind {
+    guard case var .access(request) = kind, visibility != .local else { return kind }
+    request.isInherited = true
+    return .access(request)
   }
 
   /// Whole seconds a settled thought took; nil while streaming or unmeasured (replayed items).
@@ -89,6 +99,9 @@ public enum TranscriptMapper {
       let resolved = requests[request.requestId].map { !$0.isPending } ?? (request.isAnswered || !item.isInFlight)
       let prompt = request.questions.map(\.question).filter { !$0.isEmpty }.joined(separator: "\n")
       return .question(requestId: request.requestId, prompt: prompt.isEmpty ? "A question is waiting for your answer." : prompt, resolved: resolved)
+
+    case let .accessRequest(request):
+      return .access(accessRow(request, item: item))
 
     case let .subagent(subagent):
       let title = item.title ?? firstLine(subagent.prompt)
@@ -186,6 +199,31 @@ public enum TranscriptMapper {
     default: nil
     }
     return decision.map { ApprovalChoice(decision: $0, label: option.label, warning: option.warning) }
+  }
+
+  static func accessRow(_ request: TurnItem.AccessRequest, item: TurnItem) -> AccessRequestRow {
+    let subjects = request.subjects.map { subject in
+      AccessRequestRow.Subject(
+        kind: subject.kind.rawValue,
+        key: subject.key,
+        label: subject.label,
+        detail: subject.detail,
+        hostLabel: subject.hostLabel,
+        platform: subject.platform,
+        iconPNG: subject.icon.flatMap { $0.mimeType == "image/png" ? $0.pngData : nil }
+      )
+    }
+    return AccessRequestRow(threadId: item.threadId, itemId: item.id, title: request.accessTitle, reason: request.reason, subjects: subjects, state: accessState(request))
+  }
+
+  static func accessState(_ request: TurnItem.AccessRequest) -> AccessRequestRow.State {
+    switch request.accessStatus.known {
+    case .pending: .pending
+    case .allowed: request.accessScope == .machine ? .allowedOnMachine : .allowedInThread
+    case .denied: .denied
+    // Cancelled, or a status this build does not know: nothing left to answer.
+    case .cancelled, nil: .ended
+    }
   }
 
   static func approvalPrompt(_ kind: RuntimeRequestKind, appName: String?) -> String {

@@ -92,6 +92,7 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as AccessRequests from "../access/AccessRequests.ts";
 import * as ServiceUpdateCleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
 import * as ServiceUpdateDescendants from "../serviceUpdate/ServiceUpdateDescendants.ts";
 import * as ServiceUpdatePreparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
@@ -414,6 +415,9 @@ const layerProjectActionRequestsProvided = ProjectActionRequests.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerAccessRequestsProvided = AccessRequests.layer.pipe(
+  Layer.provide(layerThreadManagementProvided),
+);
 // One instance: ProjectLink and the lease receiver publish role changes to it,
 // and other server code reads and subscribes to it.
 const layerCoordinatorRoleProvided = CoordinatorRole.layer.pipe(Layer.provide(layerProjectService));
@@ -597,6 +601,7 @@ export const layerProduction = Layer.mergeAll(
   // The coordinator's lease loop reads the routines it sends its standby.
   layerRoutineCopiesProvided,
   layerSecretRequestsProvided,
+  layerAccessRequestsProvided,
   layerProjectFolderProvided,
   layerProjectActionRequestsProvided,
   layerMachineLimitHandoffProvided,

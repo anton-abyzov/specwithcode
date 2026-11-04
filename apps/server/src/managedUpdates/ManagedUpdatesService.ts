@@ -31,6 +31,48 @@ const HelperResult = Schema.Union([
   }),
 ]);
 
+/**
+ * True when `candidate` and each of `names` beside it is a plain file (no
+ * symlink) owned by `uid` and not group or world writable, and every parent
+ * directory is owned by `uid` or root and not group or world writable.
+ */
+export const trustedHelperFiles = (input: {
+  candidate: string;
+  names: Iterable<string>;
+  uid: number;
+}) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    for (const name of new Set([path.basename(input.candidate), ...input.names])) {
+      const sibling = path.join(path.dirname(input.candidate), name);
+      if ((yield* fs.realPath(sibling)) !== sibling) return false;
+      const info = yield* fs.stat(sibling);
+      if (
+        info.type !== "File" ||
+        Option.getOrNull(info.uid) !== input.uid ||
+        (info.mode & 0o022) !== 0
+      )
+        return false;
+    }
+    let cursor = input.candidate;
+    let file = true;
+    while (true) {
+      const info = yield* fs.stat(cursor);
+      const uid = Option.getOrNull(info.uid);
+      if (
+        (info.mode & 0o022) !== 0 ||
+        (uid !== input.uid && uid !== 0) ||
+        (file ? info.type !== "File" || uid !== input.uid : info.type !== "Directory")
+      )
+        return false;
+      if (cursor === path.parse(cursor).root) break;
+      cursor = path.dirname(cursor);
+      file = false;
+    }
+    return true;
+  }).pipe(Effect.orElseSucceed(() => false));
+
 /** Trusted executable locations only; neither receipts nor RPC payloads select code. */
 export const resolveManagedUpdateHelper = (input: {
   home: string;
@@ -41,42 +83,17 @@ export const resolveManagedUpdateHelper = (input: {
   Effect.gen(function* () {
     if (input.platform !== "darwin" || input.uid <= 0) return null;
     const path = yield* Path.Path;
-    const fs = yield* FileSystem.FileSystem;
     if (!path.isAbsolute(input.home) || !path.isAbsolute(input.entry)) return null;
     const candidates = [
       path.join(path.dirname(input.entry), "studio-updater", "managed_updates.py"),
       path.join(studioInstallDirectory(input.home), "updater", "managed_updates.py"),
     ];
     for (const candidate of candidates) {
-      const valid = yield* Effect.gen(function* () {
-        for (const name of new Set(["managed_updates.py", ...MAC_SERVICE_UPDATER_FILES])) {
-          const sibling = path.join(path.dirname(candidate), name);
-          if ((yield* fs.realPath(sibling)) !== sibling) return false;
-          const info = yield* fs.stat(sibling);
-          if (
-            info.type !== "File" ||
-            Option.getOrNull(info.uid) !== input.uid ||
-            (info.mode & 0o022) !== 0
-          )
-            return false;
-        }
-        let cursor = candidate;
-        let file = true;
-        while (true) {
-          const info = yield* fs.stat(cursor);
-          const uid = Option.getOrNull(info.uid);
-          if (
-            (info.mode & 0o022) !== 0 ||
-            (uid !== input.uid && uid !== 0) ||
-            (file ? info.type !== "File" || uid !== input.uid : info.type !== "Directory")
-          )
-            return false;
-          if (cursor === path.parse(cursor).root) break;
-          cursor = path.dirname(cursor);
-          file = false;
-        }
-        return true;
-      }).pipe(Effect.catch(() => Effect.succeed(false)));
+      const valid = yield* trustedHelperFiles({
+        candidate,
+        names: MAC_SERVICE_UPDATER_FILES,
+        uid: input.uid,
+      });
       if (valid) return candidate;
     }
     return null;

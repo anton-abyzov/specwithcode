@@ -1,4 +1,5 @@
 import type { FallbackOption, FallbackOptionGroup } from "@specweave-studio/shared/fallbackOptions";
+import { t, type Translate } from "../../i18n";
 
 /**
  * How the fallback options panel lays a family out: one block per provider,
@@ -124,12 +125,16 @@ export function summarizeFallbackFamily(group: FallbackOptionGroup): FallbackFam
   };
 }
 
-export function fallbackFamilySummaryLabel(summary: FallbackFamilySummary): string {
+export function fallbackFamilySummaryLabel(
+  summary: FallbackFamilySummary,
+  tr: Translate = t,
+): string {
   const parts = [
-    `${summary.total} ${summary.total === 1 ? "model" : "models"}`,
-    `${summary.usable} ready now`,
+    tr("fallback.summary.models", { count: summary.total }),
+    tr("fallback.summary.ready", { count: summary.usable }),
   ];
-  if (summary.excluded > 0) parts.push(`${summary.excluded} excluded`);
+  if (summary.excluded > 0)
+    parts.push(tr("fallback.summary.excluded", { count: summary.excluded }));
   return parts.join(" · ");
 }
 

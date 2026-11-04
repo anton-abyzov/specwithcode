@@ -97,6 +97,55 @@ extension ApprovalCard.Decision {
   var engineDecision: ApprovalDecision { ApprovalDecision(rawValue: rawValue) ?? .deny }
 }
 
+extension AccessRequestCard.Answer {
+  var engineAnswer: AccessAnswer {
+    switch self {
+    case .allow(.thread): .allow(.thread)
+    case .allow(.machine): .allow(.machine)
+    case .deny: .deny
+    }
+  }
+}
+
+extension AccessRequestRow.State {
+  /// Nil while the request waits for an answer.
+  var cardOutcome: AccessRequestCard.Outcome? {
+    switch self {
+    case .pending: nil
+    case .allowedInThread: .allowedInThread
+    case .allowedOnMachine: .allowedOnMachine
+    case .denied: .denied
+    case .ended: .ended
+    }
+  }
+}
+
+extension AccessRequestRow {
+  /// The card for this request. `agent` is the thread's agent ("Claude"), nil when unknown.
+  /// `maxHeight` caps the composer card; `waitingCount` counts the requests waiting in the chat.
+  func card(agent: String?, style: AccessRequestCard.Style, isBusy: Bool, maxHeight: CGFloat? = nil, waitingCount: Int = 1, onAnswer: @escaping (AccessAnswer) -> Void) -> AccessRequestCard {
+    AccessRequestCard(
+      title: title,
+      headline: headline(agent: agent),
+      reason: reason,
+      subjects: subjects.map { $0.cardSubject(tag: tag(for: $0)) },
+      note: note,
+      outcome: state.cardOutcome,
+      style: style,
+      isBusy: isBusy,
+      maxHeight: maxHeight,
+      waitingCount: waitingCount,
+      isElsewhere: isInherited
+    ) { onAnswer($0.engineAnswer) }
+  }
+}
+
+extension AccessRequestRow.Subject {
+  func cardSubject(tag: String) -> AccessRequestCard.Subject {
+    AccessRequestCard.Subject(id: key, kind: kind, label: label, detail: detail, hostLabel: hostLabel, platform: platform, tag: tag, iconPNG: iconPNG)
+  }
+}
+
 extension ChatTarget {
   var projectRef: ProjectRef? {
     switch self {
@@ -143,5 +192,12 @@ extension AppModel {
       result.append(thread)
     }
     return result.sorted { $0.updatedAt > $1.updatedAt }
+  }
+}
+
+extension ThreadSummary {
+  /// "Asking to use apps on your computer" while the thread waits for access; nil otherwise.
+  var accessWaitLine: String? {
+    asksForAccess && activity == .needsYou && !isUnknown && !isResolved ? preview : nil
   }
 }

@@ -771,6 +771,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "access_request.record":
     case "user_input_request.record":
       return command.threadId;
     case "thread.fork":
@@ -1364,7 +1365,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "checkpointScopes",
           "contextTransfers",
         ],
-        { turnItemTypes: ["user_message", "error", "secret_request"], messageRoles: ["user"] },
+        {
+          turnItemTypes: ["user_message", "error", "secret_request", "access_request"],
+          messageRoles: ["user"],
+        },
       )
       .pipe(
         Effect.map((records): OrchestrationV2ThreadProjection => ({
@@ -8604,6 +8608,99 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   );
 
   /**
+   * Records or updates an access request card. The item carries what was
+   * asked and how it was answered; the grants themselves are written by
+   * AccessRequests before an Allow is recorded.
+   */
+  const dispatchAccessRequestRecord = Effect.fn("orchestrationV2.dispatch.accessRequestRecord")(
+    function* (
+      command: Extract<OrchestrationV2InternalCommand, { readonly type: "access_request.record" }>,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(
+          command.threadId,
+          ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
+          { turnItemTypes: ["access_request"], messageRoles: [] },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.rootNodeId !== command.nodeId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Node ${command.nodeId} is not the root of run ${command.runId}.`,
+        });
+      }
+      const existing = projection.turnItems.find((item) => item.id === command.turnItemId);
+      if (existing !== undefined && existing.type !== "access_request") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Turn item ${command.turnItemId} is not an access request.`,
+        });
+      }
+      if (existing !== undefined && existing.runId !== command.runId) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Access request ${command.turnItemId} belongs to another run.`,
+        });
+      }
+      const now = yield* DateTime.now;
+      // A request is answered once, and a retry finds its card as it was asked.
+      const unchanged =
+        existing !== undefined &&
+        (existing.accessStatus !== "pending" || command.accessStatus === "pending");
+      const pending = command.accessStatus === "pending";
+      const turnItem: OrchestrationV2TurnItem = unchanged
+        ? existing
+        : {
+            id: command.turnItemId,
+            threadId: command.threadId,
+            runId: command.runId,
+            nodeId: command.nodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: providerTurnForRun(projection, run)?.id ?? null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: existing?.ordinal ?? (yield* nextTurnItemOrdinal(projection)),
+            status: pending
+              ? "waiting"
+              : command.accessStatus === "allowed"
+                ? "completed"
+                : "cancelled",
+            title: command.accessTitle,
+            startedAt: existing?.startedAt ?? now,
+            completedAt: pending ? null : now,
+            updatedAt: now,
+            type: "access_request",
+            accessTitle: command.accessTitle,
+            reason: command.reason,
+            subjects: command.subjects,
+            accessStatus: command.accessStatus,
+            ...(command.accessScope === undefined ? {} : { accessScope: command.accessScope }),
+          };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId: command.nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: turnItem,
+      });
+    },
+  );
+
+  /**
    * Records a question an agent asked through `ask_user`: its own node, a
    * message-mode runtime request and the card's turn item. A retry with the
    * same ids leaves an existing card, answered or not, as it is, except a
@@ -12963,6 +13060,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "access_request.record":
+        yield* dispatchAccessRequestRecord(command, events);
         break;
       case "user_input_request.record":
         yield* dispatchUserInputRequestRecord(command, events);

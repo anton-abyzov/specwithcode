@@ -9,7 +9,12 @@ import {
   PRESWITCH_RETURN_BLOCK_REASON,
   type PreswitchReturnBlock,
 } from "@specweave-studio/shared/preswitchReturn";
+import { translate } from "../../i18n";
 import { preswitchFallbackDetail, type LimitPairingRoomUnknown } from "./UsageLimitRecoveryBanner";
+
+/** The fallback card is not translated yet: keep its detail in the same language as the rest. */
+const english = (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) =>
+  translate("en", key, values);
 
 /** One step of the fallback order as the picker lists it. */
 export type FallbackChainEntry = {
@@ -218,7 +223,7 @@ export function fallbackStatusHeader(input: {
   return {
     title: "Running on a fallback",
     detail: preswitched
-      ? preswitchFallbackDetail({ originalModel: pickModel, hasRoom, returnBlock })
+      ? preswitchFallbackDetail({ originalModel: pickModel, hasRoom, returnBlock }, english)
       : `${pickModel} ${why.charAt(0).toLowerCase()}${why.slice(1)} ${returns.text}`,
     now: input.running ? modelFirst(input.running) : null,
     pick: { label: modelFirst(input.pick), why },

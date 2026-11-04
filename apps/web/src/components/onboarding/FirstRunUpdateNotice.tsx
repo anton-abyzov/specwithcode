@@ -14,6 +14,7 @@ import { requestRestartToUpdate } from "../sidebar/restartToUpdateRequests";
 import { appInstallFailureReason, isAppUpdateReady } from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { t as translate, useT } from "../../i18n";
 
 /**
  * Setup covers the sidebar, where the update controls live, and off macOS the
@@ -78,7 +79,7 @@ function FirstRunUpdateNoticeContent() {
         if (error) {
           toastManager.add({
             type: "error",
-            title: "Could not download update",
+            title: translate("update.downloadFailed"),
             description: error,
           });
         }
@@ -86,8 +87,8 @@ function FirstRunUpdateNoticeContent() {
       .catch((error: unknown) =>
         toastManager.add({
           type: "error",
-          title: "Could not start update download",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          title: translate("update.startFailed"),
+          description: error instanceof Error ? error.message : translate("update.unexpected"),
         }),
       )
       .finally(() => setDownloading(false));
@@ -99,8 +100,8 @@ function FirstRunUpdateNoticeContent() {
     if (!requestRestartToUpdate()) {
       toastManager.add({
         type: "info",
-        title: "Update downloaded",
-        description: "Quit and reopen SpecWithCode to install it.",
+        title: translate("update.downloaded"),
+        description: translate("update.quitReopen"),
       });
     }
   };
@@ -127,35 +128,38 @@ export function FirstRunUpdateNoticeView({
   readonly onDownload: () => void;
   readonly onInstall: () => void;
 }) {
+  const t = useT();
   const product = (version: string | null) =>
-    version ? `SpecWithCode ${version}` : "A newer SpecWithCode";
+    version ? t("update.productVersion", { version }) : t("update.productNewer");
   const message =
     view.kind === "download"
-      ? `${product(view.version)} is available. Update before you set up.`
+      ? t("update.available", { product: product(view.version) })
       : view.kind === "downloading"
-        ? `Downloading the update${view.percent === null ? "…" : ` (${Math.floor(view.percent)}%)…`}`
+        ? view.percent === null
+          ? t("update.downloading")
+          : t("update.downloadingPercent", { percent: Math.floor(view.percent) })
         : view.failure !== null
-          ? `The last install failed: ${view.failure}`
-          : `${product(view.version)} is ready to install.`;
+          ? t("update.lastFailed", { reason: view.failure })
+          : t("update.ready", { product: product(view.version) });
 
   return (
     <div
       role="status"
-      aria-label="App update"
+      aria-label={t("update.aria")}
       className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg bg-muted/60 px-3 py-2 text-sm"
     >
       <span className="min-w-0 text-muted-foreground">{message}</span>
       {view.kind === "download" ? (
         <Button size="xs" variant="outline" disabled={downloading} onClick={onDownload}>
-          Download update
+          {t("update.download")}
         </Button>
       ) : view.kind === "install" ? (
         <Button size="xs" disabled={view.checking} aria-busy={view.checking} onClick={onInstall}>
           {view.checking
-            ? "Checking…"
+            ? t("update.checking")
             : view.failure !== null
-              ? "Retry update"
-              : "Restart to update"}
+              ? t("update.retry")
+              : t("update.restart")}
         </Button>
       ) : null}
     </div>

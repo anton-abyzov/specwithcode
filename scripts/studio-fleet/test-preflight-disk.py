@@ -95,6 +95,35 @@ class RoomReport(unittest.TestCase):
         self.assertEqual(report['parts']['fallback'], 0)
         self.assertEqual(report['needBytes'], report['parts']['backup'] + report['parts']['staged'])
 
+    def test_full_read_list_replaces_this_copys_full_read(self):
+        """--full-read: the target release's FULL_READ numbers, for an installed copy that predates them."""
+        home = Home(self, migration=72, size=DATABASE)
+        with patch.object(os, 'statvfs', fake_statvfs(60 * GB)):
+            later = disk_room.room(home.home, 'm4', VERSION, largest=lambda database: LARGEST, full_read=[69, 73, 75])
+            none = disk_room.room(home.home, 'm4', VERSION, largest=lambda database: self.fail('walked'), full_read=[])
+        self.assertEqual(later['fullReadMigrations'], [73, 75])
+        self.assertEqual(later['parts']['fallback'], int(disk_room.FULL_READ_LINE_FACTOR * LARGEST) + kept_lines.DISK_FLOOR_MARGIN)
+        self.assertEqual((none['fullReadMigrations'], none['parts']['fallback']), ([], 0))
+        home = Home(self, migration=68, size=DATABASE)
+        out = io.StringIO()
+        with patch.object(os, 'statvfs', fake_statvfs(60 * GB)), contextlib.redirect_stdout(out):
+            self.assertEqual(disk_room.main(['--version', VERSION, '--identity', 'm4', '--full-read', 'none', '--json',
+                                             '--home', str(home.home)]), 0)
+        report = json.loads(out.getvalue())
+        self.assertEqual((report['fullReadMigrations'], report['parts']['fallback']), ([], 0))  # 069 not named: none.
+
+    def test_bad_full_read_cannot_tell(self):
+        self.assertEqual(disk_room.parse_full_read('73,69,69'), [69, 73])
+        self.assertEqual(disk_room.parse_full_read('none'), [])
+        home = Home(self)
+        for value in ('', 'all', '69,', '-1', '0', '69;rm', '1e3'):
+            with self.subTest(value=value):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(disk_room.main(['--version', VERSION, '--identity', 'm4', '--full-read', value,
+                                                     '--json', '--home', str(home.home)]), 2)
+                self.assertIn('Invalid --full-read', json.loads(out.getvalue())['error'])
+
     def test_same_case_with_room_is_ok(self):
         _, report = self.m4_184(60 * GB)
         self.assertTrue(report['ok'])
@@ -264,27 +293,231 @@ class FleetPreflight(unittest.TestCase):
                                     'm3': (0, json.dumps(self.report('m3', GB, 2 * GB)))}, headroom=0)
         self.assertFalse(ok)
 
-    def test_missing_inventory_fails(self):
+    def test_no_inventory_is_needed_by_default(self):
+        """Connect first: a missing hosts.json is no failure; M1 and M3 without a Connect route are,
+        each named."""
         with tempfile.TemporaryDirectory() as folder, \
-             patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(pathlib.Path(folder) / 'none.json')}):
+             patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(pathlib.Path(folder) / 'none.json'), 'HOME': folder}):
             out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                self.assertEqual(preflight_fleet.main(['--version', VERSION], run=lambda *a, **k: self.fail('ran')), 1)
-        self.assertIn('the fleet cannot be asked: Fleet inventory not found', out.getvalue())
+            asked = []
 
-    def test_plan_asks_m4_locally_and_each_worker_over_pinned_ssh(self):
+            def run(command, **kwargs):
+                asked.append(command)
+                return subprocess.CompletedProcess(command, 0, json.dumps(self.report('m4', GB, 400 * GB)), '')
+
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(preflight_fleet.main(['--version', VERSION], run=run), 1)
+        self.assertEqual(len(asked), 1)  # M4 only: nothing is sent to a worker without a route.
+        self.assertNotIn('Fleet inventory', out.getvalue())
+        for identity in ('m1', 'm3'):
+            self.assertIn("%s: FAILED, could not be asked over SpecWithCode Connect: no-route: it is not in M4's "
+                          "fleet (studio-fleet.json)" % identity, out.getvalue())
+
+    def test_plan_asks_m4_locally_and_each_worker_over_connect(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = ConnectPreflight.write_home(folder)
+            with patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(pathlib.Path(folder) / 'none.json')}):
+                plan = preflight_fleet.hosts(VERSION, home=home, connect=ConnectPreflight.CLI)
+        self.assertEqual([identity for identity, *_ in plan], ['m4', 'm1', 'm3'])
+        self.assertEqual(plan[0][1][-6:], ['room', '--identity', 'm4', '--version', VERSION, '--json'])
+        self.assertTrue(plan[0][1][2].endswith('scripts/studio-fleet/update.py'))
+        self.assertEqual(plan[1][1], ConnectPreflight.CLI + ['m1-id', '--version', VERSION, '--full-read',
+                                                             ConnectPreflight.full_read(), '--connect-only', '--json'])
+        self.assertEqual(plan[2][1][len(ConnectPreflight.CLI)], 'm3-id')
+        self.assertIsNone(plan[1][4]['fallback'])
+
+    def test_ssh_fallback_plan_streams_disk_room_over_pinned_ssh(self):
         with tempfile.TemporaryDirectory() as folder:
             inventory = pathlib.Path(folder) / 'hosts.json'
             inventory.write_text(json.dumps({'m1': {'host': 'm1.example', 'user': 'a'}, 'm3': {'host': 'm3.example', 'user': 'b'}}))
             with patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(inventory)}):
-                plan = preflight_fleet.hosts(VERSION, home=folder)
-        self.assertEqual([identity for identity, *_ in plan], ['m4', 'm1', 'm3'])
-        self.assertEqual(plan[0][1][-6:], ['room', '--identity', 'm4', '--version', VERSION, '--json'])
-        self.assertTrue(plan[0][1][2].endswith('scripts/studio-fleet/update.py'))
-        self.assertEqual(plan[1][1][0], '/usr/bin/ssh')
-        self.assertIn('a@m1.example', plan[1][1])
-        self.assertIn("'--identity', 'm1'", plan[1][2])
-        self.assertIn("sys.modules['disk_room'].main(argv)", plan[1][2])
+                plan = preflight_fleet.hosts(VERSION, home=folder, ssh_fallback=True)
+                command, stdin, timeout = plan[1][4]['fallback']()
+        self.assertEqual(command[0], '/usr/bin/ssh')
+        self.assertIn('a@m1.example', command)
+        self.assertIn("'--identity', 'm1'", stdin)
+        self.assertIn("sys.modules['disk_room'].main(argv)", stdin)
+        self.assertEqual(timeout, preflight_fleet.REMOTE_TIMEOUT)
+
+
+class ConnectPreflight(unittest.TestCase):
+    """The workers' disk asked over SpecWithCode Connect through M4's `fleet room` CLI (mocked here),
+    pinned SSH only with --ssh-fallback and only for the worker Connect could not ask."""
+    CLI = ['/fake/specweave-studio', 'fleet', 'room', '--base-dir', '/fake/home/m4']
+    MACHINES = {'m1-id': 'm1', 'm3-id': 'm3'}
+
+    @staticmethod
+    def full_read():
+        import additive_migrations
+        return ','.join(str(number) for number in sorted(additive_migrations.FULL_READ)) or 'none'
+
+    @staticmethod
+    def write_home(folder):
+        import base64
+        claims = base64.urlsafe_b64encode(json.dumps({'sub': 'coordinator', 'jkt': 'thumbprint'}).encode()).decode()
+        token = claims.rstrip('=') + '.signature'
+        own = pathlib.Path(folder) / '.specwithcode' / 'm4'
+        own.mkdir(parents=True)
+        machines = [{'id': machine, 'label': label.upper(), 'environmentId': 'e-' + label, 'url': 'https://%s.ts.net' % label,
+                     'connectUrl': 'https://prod.spec-weave.com', 'managementToken': token}
+                    for machine, label in ConnectPreflight.MACHINES.items()]
+        (own / 'studio-fleet.json').write_text(json.dumps({'version': 1, 'machines': machines}))
+        return pathlib.Path(folder)
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.home = self.write_home(folder.name)
+        self.inventory = pathlib.Path(folder.name) / 'hosts.json'
+        self.inventory.write_text(json.dumps({'m1': {'host': 'm1.example', 'user': 'a'},
+                                              'm3': {'host': 'm3.example', 'user': 'b'}}))
+        environment = patch.dict(os.environ, {'STUDIO_FLEET_HOSTS': str(self.inventory)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def report(self, identity, need, free, **extra):
+        value = dict(FleetPreflight.report(None, identity, need, free), transport='connect', serverVersion='1.0.190',
+                     workerIdentity=identity)
+        value.update(extra)
+        return value
+
+    def preflight(self, answers, ssh_fallback=False):
+        """answers: {'m4' | machine id | 'ssh-m1': (exit, stdout) or an exception}."""
+        asked, lines = [], []
+
+        def run(command, **kwargs):
+            if command[:len(self.CLI)] == self.CLI:
+                key = command[len(self.CLI)]
+            elif command[0] == '/usr/bin/ssh':
+                key = 'ssh-' + ('m1' if 'a@m1.example' in command else 'm3')
+            else:
+                key = 'm4'
+            asked.append((key, command))
+            answer = answers[key]
+            if isinstance(answer, Exception):
+                raise answer
+            return subprocess.CompletedProcess(command, answer[0], answer[1], '')
+
+        plan = preflight_fleet.hosts(VERSION, home=self.home, ssh_fallback=ssh_fallback, connect=self.CLI)
+        ok = preflight_fleet.preflight(VERSION, plan, 0, run=run, say=lines.append)
+        return ok, lines, asked
+
+    def m4(self):
+        return (0, json.dumps(self.report('m4', GB, 400 * GB)))
+
+    def test_workers_are_asked_over_connect_with_the_checkouts_full_read(self):
+        ok, lines, asked = self.preflight({'m4': self.m4(), 'm1-id': (0, 'progress\n' + json.dumps(self.report('m1-id', GB, 50 * GB))),
+                                           'm3-id': (0, json.dumps(self.report('m3-id', GB, 50 * GB)))})
+        self.assertTrue(ok, lines)
+        self.assertEqual(sorted(key for key, _ in asked), ['m1-id', 'm3-id', 'm4'])  # Asked together.
+        for key, command in (entry for entry in asked if entry[0] != 'm4'):
+            self.assertEqual(command, self.CLI + [key, '--version', VERSION, '--full-read', self.full_read(),
+                                                  '--connect-only', '--json'])
+        self.assertTrue(lines[1].startswith('m1: ok') and lines[2].startswith('m3: ok'), lines)
+        self.assertEqual(lines[-1], 'disk preflight: m4, m1, m3 have room for %s' % VERSION)
+
+    def test_full_read_none_when_the_checkout_has_none(self):
+        import additive_migrations
+        with patch.dict(additive_migrations.FULL_READ, clear=True):
+            self.assertEqual(preflight_fleet.full_read_list(), 'none')
+        expected = ','.join(str(number) for number in sorted(set(additive_migrations.FULL_READ) | {73}))
+        with patch.dict(additive_migrations.FULL_READ, {73: 'Later'}):
+            self.assertEqual(preflight_fleet.full_read_list(), expected)
+
+    def test_connect_failures_are_named_failures(self):
+        for reason, error in (('unsupported', 'm3 runs 1.0.188, which has no fleet disk-room call'),
+                              ('unreachable', 'This machine is unavailable over Connect or Tailscale.'),
+                              ('unauthorized', 'The management token was refused'),
+                              ('failed', 'm3 has no state database at /x')):
+            with self.subTest(reason=reason):
+                ok, lines, asked = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+                                                   'm3-id': (1, json.dumps({'error': error, 'reason': reason}))})
+                self.assertFalse(ok)
+                self.assertEqual(lines[2], 'm3: FAILED, could not be asked over SpecWithCode Connect (machine m3-id): '
+                                           '%s: %s' % (reason, error))
+                self.assertIn('m3 is not ready for %s' % VERSION, lines[-1])
+                self.assertFalse(any(key.startswith('ssh-') for key, _ in asked))
+
+    def test_a_report_not_over_connect_is_a_failure(self):
+        ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB, transport='tailnet'))),
+                                       'm3-id': (0, json.dumps(self.report('m3', GB, 50 * GB)))})
+        self.assertFalse(ok)
+        self.assertEqual(lines[1], 'm1: FAILED, could not be asked over SpecWithCode Connect (machine m1-id): transport: '
+                                   'answered over tailnet, not SpecWithCode Connect')
+
+    def test_a_short_worker_over_connect_fails_as_before(self):
+        short = dict(FleetPreflight.SHORT, transport='connect', identity='m1-id')
+        ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(short)),
+                                       'm3-id': (0, json.dumps(self.report('m3', GB, 50 * GB)))})
+        self.assertFalse(ok)
+        self.assertIn('m1: FAILED, short of disk, needs 35.6 GB, 15.0 GB free on /Users/w/.specwithcode/m1/updates '
+                      '(fallback 30.2 GB for migration 069', lines[1])
+        self.assertIn('m1 is not ready', lines[-1])
+
+    def test_a_cli_without_fleet_room_is_named(self):
+        ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': (0, ''), 'm3-id': (0, json.dumps(self.report('m3', GB, 50 * GB)))})
+        self.assertFalse(ok)
+        self.assertIn("m1: FAILED, could not be asked over SpecWithCode Connect (machine m1-id): no-answer: the fleet CLI "
+                      "gave no JSON (exit 0: no output); M4's installed CLI may predate `fleet room`", lines[1])
+
+    def test_no_cli_or_timeout_is_a_named_failure(self):
+        ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': FileNotFoundError(),
+                                       'm3-id': subprocess.TimeoutExpired(['x'], 5)})
+        self.assertFalse(ok)
+        self.assertIn('m1: FAILED, could not be asked over SpecWithCode Connect (machine m1-id): no-cli', lines[1])
+        self.assertIn('m3: FAILED, could not be asked over SpecWithCode Connect (machine m3-id): timeout', lines[2])
+
+    def test_ssh_fallback_only_for_the_worker_connect_could_not_ask(self):
+        ok, lines, asked = self.preflight({
+            'm4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+            'm3-id': (1, json.dumps({'error': 'm3 runs 1.0.188, which has no fleet disk-room call', 'reason': 'unsupported'})),
+            'ssh-m3': (0, json.dumps(self.report('m3', GB, 50 * GB)))}, ssh_fallback=True)
+        self.assertTrue(ok, lines)
+        self.assertEqual(sorted(key for key, _ in asked), ['m1-id', 'm3-id', 'm4', 'ssh-m3'])
+        self.assertLess([key for key, _ in asked].index('m3-id'), [key for key, _ in asked].index('ssh-m3'))
+        self.assertIn('m3: SpecWithCode Connect could not ask (unsupported); using pinned fleet SSH', lines)
+        self.assertLess(lines.index('m3: SpecWithCode Connect could not ask (unsupported); using pinned fleet SSH'),
+                        [index for index, line in enumerate(lines) if line.startswith('m3: ok')][0])
+        ssh_command = dict(asked)['ssh-m3']
+        self.assertIn('b@m3.example', ssh_command)
+
+    def test_ssh_fallback_never_follows_a_refusal_the_worker_answered(self):
+        for reason in ('unauthorized', 'identity-mismatch', 'failed'):
+            with self.subTest(reason=reason):
+                ok, lines, asked = self.preflight({
+                    'm4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+                    'm3-id': (1, json.dumps({'error': 'refused', 'reason': reason}))}, ssh_fallback=True)
+                self.assertFalse(ok)
+                self.assertFalse(any(key.startswith('ssh-') for key, _ in asked))
+                self.assertFalse(any('using pinned fleet SSH' in line for line in lines))
+                self.assertIn('m3: FAILED, could not be asked over SpecWithCode Connect (machine m3-id): %s: refused'
+                              % reason, lines)
+
+    def test_ssh_fallback_failure_and_missing_inventory_are_named(self):
+        ok, lines, _ = self.preflight({
+            'm4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+            'm3-id': (1, json.dumps({'error': 'offline', 'reason': 'unreachable'})),
+            'ssh-m3': (255, '')}, ssh_fallback=True)
+        self.assertFalse(ok)
+        self.assertIn('m3: FAILED, could not be asked: gave no answer (exit 255', lines[-2])
+        self.inventory.unlink()
+        ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+                                       'm3-id': (1, json.dumps({'error': 'offline', 'reason': 'unreachable'}))},
+                                      ssh_fallback=True)
+        self.assertFalse(ok)
+        self.assertIn('m3: FAILED, could not be asked: could not be asked over pinned fleet SSH either: '
+                      'Fleet inventory not found', lines[-2])
+
+    def test_main_parses_ssh_fallback(self):
+        seen = {}
+        def hosts(version, ssh_fallback=False):
+            seen['fallback'] = ssh_fallback
+            return []
+        with patch.object(preflight_fleet, 'hosts', hosts), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(preflight_fleet.main(['--version', VERSION, '--ssh-fallback']), 0)
+            self.assertTrue(seen['fallback'])
+            self.assertEqual(preflight_fleet.main(['--version', VERSION]), 0)
+            self.assertFalse(seen['fallback'])
 
 
 if __name__ == '__main__':

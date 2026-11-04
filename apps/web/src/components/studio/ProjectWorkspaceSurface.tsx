@@ -110,6 +110,7 @@ import { toastManager } from "../ui/toast";
 import { RemoteWorkerCards } from "./RemoteWorkerCards";
 import { useProjectRemoteWorkers } from "../../studio/fleet";
 import { visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
+import { remoteWorkerThreads } from "../../studio/accessWaiting";
 import {
   coordinatorTurnFailure,
   latestOrdinal,
@@ -322,6 +323,11 @@ export function ProjectWorkspaceSurface({
     project.id,
   );
   const remoteWorkerCount = visibleRemoteWorkers(remoteWorkers).length;
+  // Workers on other machines: their access requests show in the coordinator too.
+  const coordinatorRemoteWorkerThreads = useMemo(
+    () => remoteWorkerThreads(shells, remoteWorkers),
+    [shells, remoteWorkers],
+  );
   const remoteThreadKey = remoteWorkers
     .flatMap((worker) =>
       worker.remoteThreadId === null ? [] : [`${worker.environmentId} ${worker.remoteThreadId}`],
@@ -1719,6 +1725,7 @@ export function ProjectWorkspaceSurface({
                   workers={workers.filter(
                     (thread) => thread.environmentId === project.environmentId,
                   )}
+                  remoteWorkerThreads={coordinatorRemoteWorkerThreads}
                   environmentThreads={linkTargets}
                   onOpenThread={openThread}
                   canChange={canWriteSourceControl && connected}

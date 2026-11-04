@@ -2,6 +2,7 @@ import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
 import { continueHere, listHandoffReady } from "./continueHere.ts";
 import { migrateThreads } from "./migrate.ts";
 import { OrchestratorToolkit } from "./tools.ts";
+import { requestAccess } from "./requestAccess.ts";
 import { waitThreads } from "./threadsWait.ts";
 import * as Effect from "effect/Effect";
 import { OrchestratorMcpFailure, ThreadId } from "@specweave-studio/contracts";
@@ -181,6 +182,12 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.requestSecret(scope, input);
+    }),
+  ),
+  request_access: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      return yield* requestAccess(scope, input);
     }),
   ),
   ask_user: McpToolAccess.actsAsCaller((input) =>

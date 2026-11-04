@@ -47,7 +47,11 @@ export function deferredResolutionBlocked(projection: ResolutionProjection, runI
     thread.autoSettleDisabledAt != null ||
     thread.movedTo != null ||
     runtimeRequests.some((request) => request.status === "pending") ||
-    turnItems.some((item) => item.type === "secret_request" && item.secretStatus === "pending") ||
+    turnItems.some(
+      (item) =>
+        (item.type === "secret_request" && item.secretStatus === "pending") ||
+        (item.type === "access_request" && item.accessStatus === "pending"),
+    ) ||
     subagents.some(
       (child) =>
         ["idle", "pending", "running", "waiting"].includes(child.status) ||
@@ -78,7 +82,8 @@ export function invalidatesDeferredResolution(
     case "turn-item.updated":
       return (
         event.payload.type === "run_interrupt_request" ||
-        (event.payload.type === "secret_request" && event.payload.secretStatus === "pending")
+        (event.payload.type === "secret_request" && event.payload.secretStatus === "pending") ||
+        (event.payload.type === "access_request" && event.payload.accessStatus === "pending")
       );
     case "provider-thread.updated":
       return backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? []);

@@ -397,6 +397,12 @@ import {
 } from "./scheduledTask.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
+  AccessGrantListResult,
+  AccessGrantRevokeInput,
+  AccessRequestAnswerInput,
+  AccessRequestError,
+} from "./accessRequest.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -616,6 +622,9 @@ export const WS_METHODS = {
   scheduledTasksRunNow: "scheduledTasks.runNow",
   scheduledTasksRotateWebhookToken: "scheduledTasks.rotateWebhookToken",
   secretsAnswerRequest: "secrets.answerRequest",
+  accessAnswerRequest: "access.answerRequest",
+  accessListGrants: "access.listGrants",
+  accessRevokeGrant: "access.revokeGrant",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
@@ -1994,6 +2003,23 @@ const WsSecretsAnswerRequestRpc = Rpc.make(WS_METHODS.secretsAnswerRequest, {
   error: Schema.Union([SecretRequestError, EnvironmentAuthorizationError]),
 });
 
+const WsAccessAnswerRequestRpc = Rpc.make(WS_METHODS.accessAnswerRequest, {
+  payload: AccessRequestAnswerInput,
+  error: Schema.Union([AccessRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsAccessListGrantsRpc = Rpc.make(WS_METHODS.accessListGrants, {
+  payload: Schema.Struct({}),
+  success: AccessGrantListResult,
+  error: Schema.Union([AccessRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsAccessRevokeGrantRpc = Rpc.make(WS_METHODS.accessRevokeGrant, {
+  payload: AccessGrantRevokeInput,
+  success: AccessGrantListResult,
+  error: Schema.Union([AccessRequestError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksListWebhookDeliveriesRpc = Rpc.make(
   WS_METHODS.scheduledTasksListWebhookDeliveries,
   {
@@ -2114,6 +2140,9 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsScheduledTasksRunNowRpc,
   WsScheduledTasksRotateWebhookTokenRpc,
   WsSecretsAnswerRequestRpc,
+  WsAccessAnswerRequestRpc,
+  WsAccessListGrantsRpc,
+  WsAccessRevokeGrantRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
   WsServerReportClientActivityRpc,

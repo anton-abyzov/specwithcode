@@ -128,6 +128,12 @@ struct ProjectOverviewView: View {
             .accessibilityHidden(true)
         }
         if thread.isUnread { UnreadDot() }
+        if thread.asksForAccess, thread.activity == .needsYou, !thread.isUnknown {
+          Image(systemName: "hand.raised")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(Color.weave.warn)
+            .accessibilityHidden(true)
+        }
         if thread.activity == .failed, !thread.isResolved, !thread.isUnknown {
           Image(systemName: "exclamationmark.triangle")
             .font(.system(size: 14, weight: .regular))

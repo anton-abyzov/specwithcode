@@ -77,6 +77,7 @@ import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { getDriverOption } from "../settings/providerDriverMeta";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
+import { LanguageSelect } from "../settings/LanguageSelect";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
@@ -99,6 +100,8 @@ import { DialogCloseButton } from "../ui/dialog-close-button";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { useT } from "../../i18n";
+import { renderRich } from "../../i18n/rich";
 
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
@@ -129,8 +132,6 @@ export interface WelcomeMachineRole {
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
-const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
   localAvailable,
@@ -145,6 +146,7 @@ export function WelcomeWizard({
   /** Absent: no machine choice, the setup starts at Connect. */
   readonly machineRole?: WelcomeMachineRole | undefined;
 }) {
+  const t = useT();
   const completeOnboarding = useCompleteOnboarding();
   // Until the person moves, the step follows saved settings, which can
   // finish loading after the first render.
@@ -168,14 +170,22 @@ export function WelcomeWizard({
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   const canInvite = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
-  const machineNoun =
-    primaryEnvironment?.serverConfig?.environment.platform.os === "darwin" ? "Mac" : "machine";
+  const machineNoun = t(
+    primaryEnvironment?.serverConfig?.environment.platform.os === "darwin"
+      ? "wizard.noun.mac"
+      : "wizard.noun.machine",
+  );
+  const onboardingStages = [
+    t("wizard.stage.connect"),
+    t("wizard.stage.agents"),
+    t("wizard.stage.projects"),
+  ];
   const chooseRole = (role: OnboardingMachineRole) => {
     void machineRole?.onChange(role).catch(() =>
       toastManager.add({
         type: "error",
-        title: "Could not save your choice",
-        description: "Your settings could not be saved. Try again.",
+        title: t("wizard.toast.choiceNotSaved"),
+        description: t("wizard.toast.settingsNotSaved"),
       }),
     );
   };
@@ -226,14 +236,14 @@ export function WelcomeWizard({
           if (importWarning) {
             toastManager.add({
               type: "warning",
-              title: "Some history was not imported",
+              title: t("wizard.toast.historyNotImported"),
               description: importWarning,
               timeout: 0,
             });
           } else if (importedThreadCount > 0) {
             toastManager.add({
               type: "success",
-              title: `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}`,
+              title: t("wizard.toast.imported", { count: importedThreadCount }),
             });
           }
           return true;
@@ -241,8 +251,8 @@ export function WelcomeWizard({
         .catch(() => {
           const errorToast = {
             type: "error",
-            title: "Could not finish setup",
-            description: "Your settings could not be saved. Try again.",
+            title: t("wizard.toast.finishFailed"),
+            description: t("wizard.toast.settingsNotSaved"),
           } as const;
           if (completionErrorToastIdRef.current === null) {
             completionErrorToastIdRef.current = toastManager.add(errorToast);
@@ -259,7 +269,7 @@ export function WelcomeWizard({
       finishingPromiseRef.current = completion;
       return completion;
     },
-    [completeOnboarding, onDone],
+    [completeOnboarding, onDone, t],
   );
 
   // Without a server here there is nothing to open yet, so pairing stays
@@ -288,19 +298,22 @@ export function WelcomeWizard({
         }
       >
         <WizardHeader
-          title="Set up SpecWithCode"
+          title={t("wizard.title")}
           identity={
-            <div className="flex items-center gap-2" role="img" aria-label="SpecWithCode">
-              <StudioWordmark className="size-6 shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                SpecWithCode
-              </span>
+            <div className="flex flex-wrap items-center justify-between gap-3 pe-10">
+              <div className="flex items-center gap-2" role="img" aria-label="SpecWithCode">
+                <StudioWordmark className="size-6 shrink-0" aria-hidden />
+                <span className="text-2xl font-medium tracking-tight text-muted-foreground">
+                  SpecWithCode
+                </span>
+              </div>
+              <LanguageSelect showIcon className="w-auto sm:w-auto" />
             </div>
           }
         >
           {FULL_SETUP_STEPS.has(step) ? (
             <WizardSteps
-              steps={ONBOARDING_STAGES}
+              steps={onboardingStages}
               currentStep={stageIndex}
               isStepDisabled={(index) => isImporting || index >= stageIndex}
               onStepChange={(index) => {
@@ -379,7 +392,9 @@ export function WelcomeWizard({
           )}
         </WizardPanel>
         {/* Last, as in every dialog: setup opens focused on its content. */}
-        {canClose ? <DialogCloseButton aria-label="Close setup" title="Close setup" /> : null}
+        {canClose ? (
+          <DialogCloseButton aria-label={t("wizard.close")} title={t("wizard.close")} />
+        ) : null}
       </WizardPopup>
       <ChatGptWelcomeCoordinator />
     </Dialog>
@@ -405,6 +420,7 @@ function ConnectionStep({
   readonly onContinue: () => void;
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
+  const t = useT();
   const { environments } = useEnvironments();
   const cloudEnabled = hasCloudPublicConfig();
   const directEnvironments = environments.filter(
@@ -433,14 +449,14 @@ function ConnectionStep({
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Connect your computers
+        {t("wizard.connection.title")}
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        Choose one or more computers. We’ll set up agents and projects on each.
+        {t("wizard.connection.description")}
       </p>
       {directEnvironments.length > 0 ? (
         <fieldset className="mt-5 space-y-2">
-          <legend className="sr-only">Computers to set up</legend>
+          <legend className="sr-only">{t("wizard.connection.legend")}</legend>
           {directEnvironments.map((environment) => (
             <label
               key={environment.environmentId}
@@ -462,7 +478,9 @@ function ConnectionStep({
                     {environment.label}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {environment.connection.phase === "connected" ? "Connected" : "Connecting…"}
+                    {environment.connection.phase === "connected"
+                      ? t("wizard.connection.connected")
+                      : t("wizard.connection.connecting")}
                   </span>
                 </span>
                 {environment.displayUrl ? (
@@ -497,7 +515,7 @@ function ConnectionStep({
               }
             >
               <LinkIcon className="size-4 text-muted-foreground" />
-              <span className="flex-1 text-left">Add a computer</span>
+              <span className="flex-1 text-left">{t("wizard.connection.addComputer")}</span>
               <ChevronRightIcon
                 className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
               />
@@ -520,8 +538,7 @@ function ConnectionStep({
       </div>
       <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          Usage telemetry is off by default. SpecWithCode sends no product usage data unless you
-          turn it on in the server's environment.
+          {t("wizard.connection.telemetry")}
         </p>
         <Button
           className="shrink-0 self-end"
@@ -530,7 +547,7 @@ function ConnectionStep({
           disabled={!ready || isPairing}
           onClick={onContinue}
         >
-          Continue
+          {t("wizard.continue")}
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
@@ -549,6 +566,7 @@ function ConnectAccountOption({
   readonly selectedIds: ReadonlySet<EnvironmentId>;
   readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
 }) {
+  const t = useT();
   const { environments } = useEnvironments();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
@@ -576,11 +594,11 @@ function ConnectAccountOption({
           <span className="flex-1 text-left">SpecWithCode Connect</span>
           <span className="text-xs text-muted-foreground">
             {!isLoaded
-              ? "Loading sign-in…"
+              ? t("wizard.connect.loadingSignIn")
               : !isSignedIn
-                ? "Sign in"
+                ? t("wizard.connect.signIn")
                 : !discoveryReady
-                  ? "Loading computers…"
+                  ? t("wizard.connect.loadingComputers")
                   : null}
           </span>
           <ChevronRightIcon
@@ -599,19 +617,16 @@ function ConnectAccountOption({
                   selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
                   refreshWhileEmpty
                   empty={
-                    <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
+                    <p className="py-3 text-sm text-muted-foreground">
+                      {t("wizard.connect.noComputers")}
+                    </p>
                   }
                 />
               ) : null}
             </div>
-            <p className="text-sm text-muted-foreground">
-              Run this on each computer you want to connect. It makes the computer reachable from
-              your other devices, with no Tailscale or port forwarding.
-            </p>
+            <p className="text-sm text-muted-foreground">{t("wizard.connect.runThis")}</p>
             <CommandBlock command="specweave-studio connect" className="mt-3" />
-            <p className="mt-3 text-xs text-muted-foreground">
-              Keep SpecWithCode running. Select the computers you want to set up above.
-            </p>
+            <p className="mt-3 text-xs text-muted-foreground">{t("wizard.connect.keepRunning")}</p>
           </div>
         </CollapsiblePanel>
       </Collapsible>
@@ -633,6 +648,7 @@ function PairingForm({
   readonly setIsPairing: (value: boolean) => void;
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
+  const t = useT();
   const connectPairingEnvironment = useAtomCommand(connectPairing, { reportFailure: false });
   const [pairingUrl, setPairingUrl] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
@@ -658,7 +674,7 @@ function PairingForm({
     }
     if (isAtomCommandInterrupted(result)) return;
     const cause = squashAtomCommandFailure(result);
-    setErrorMessage(cause instanceof Error ? cause.message : "Pairing failed.");
+    setErrorMessage(cause instanceof Error ? cause.message : t("wizard.pairing.failed"));
   };
 
   return (
@@ -672,7 +688,7 @@ function PairingForm({
       >
         <div>
           <label className="block text-sm text-muted-foreground" htmlFor="onboarding-pairing-url">
-            Pairing link
+            {t("wizard.pairing.label")}
           </label>
           <Input
             id="onboarding-pairing-url"
@@ -712,21 +728,20 @@ function PairingForm({
               className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
             >
               <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
-              Need a pairing link?
+              {t("wizard.pairing.need")}
             </CollapsibleTrigger>
             <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
-              {isPairing ? "Pairing..." : "Pair"}
+              {isPairing ? t("wizard.pairing.pairing") : t("wizard.pairing.pair")}
             </Button>
           </div>
           <CollapsiblePanel>
-            <p className="pt-3 text-sm text-muted-foreground">
-              Run this on the computer with your code.
-            </p>
+            <p className="pt-3 text-sm text-muted-foreground">{t("wizard.pairing.runThis")}</p>
             <CommandBlock command="specweave-studio pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Start SpecWithCode first, or run{" "}
-              <code className="font-mono">specweave-studio serve</code>. Add{" "}
-              <code className="font-mono">--tailscale</code> to use your tailnet.
+              {renderRich(t("wizard.pairing.startFirst"), {
+                serve: <code className="font-mono">specweave-studio serve</code>,
+                tailscale: <code className="font-mono">--tailscale</code>,
+              })}
             </p>
           </CollapsiblePanel>
         </Collapsible>
@@ -758,12 +773,10 @@ function AgentsStep({
   readonly environmentIds: readonly EnvironmentId[];
   readonly onContinue: () => void;
 }) {
+  const t = useT();
   const { environments } = useEnvironments();
   return (
-    <StepShell
-      title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
-    >
+    <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
           {environmentIds.map((environmentId) => (
@@ -772,7 +785,7 @@ function AgentsStep({
               environmentId={environmentId}
               machineLabel={
                 environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? "Computer"
+                  ?.label ?? t("wizard.computer")
               }
             />
           ))}
@@ -780,7 +793,7 @@ function AgentsStep({
       </ScrollArea>
       <div className="mt-6 flex justify-end">
         <Button autoFocus onClick={onContinue}>
-          Continue
+          {t("wizard.continue")}
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
@@ -795,6 +808,7 @@ function ConnectedAgentsStep({
   readonly environmentId: EnvironmentId;
   readonly machineLabel: string;
 }) {
+  const t = useT();
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -842,9 +856,7 @@ function ConnectedAgentsStep({
     <section>
       <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
       {!canOperateTerminal ? (
-        <p className="mb-2 text-sm text-muted-foreground">
-          This connection cannot control terminals.
-        </p>
+        <p className="mb-2 text-sm text-muted-foreground">{t("wizard.agents.noTerminal")}</p>
       ) : null}
       <div className="space-y-1.5">
         {primaryAgents.map(({ driver, provider, instanceId }) =>
@@ -926,7 +938,7 @@ function ConnectedAgentsStep({
       ) ? (
         <div className="mt-3">
           <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
-            Connect another ChatGPT account
+            {t("wizard.agents.anotherChatGpt")}
           </Button>
         </div>
       ) : null}
@@ -1054,6 +1066,7 @@ function AgentCard({
   readonly terminalAvailable: boolean;
   readonly onOpenTerminal: () => void;
 }) {
+  const t = useT();
   const meta = getDriverOption(ProviderDriverKind.make(driver));
   const displayName =
     provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
@@ -1070,7 +1083,7 @@ function AgentCard({
       <div className="min-w-0 flex-1">
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
         <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? "Ready to code." : summary.headline}
+          {providerState === "ready" ? t("wizard.agents.readyToCode") : summary.headline}
           {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
         </p>
       </div>
@@ -1078,12 +1091,12 @@ function AgentCard({
         {providerState === "ready" ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
-            Ready
+            {t("wizard.agents.ready")}
           </span>
         ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">Checking...</span>
+          <span className="text-xs text-muted-foreground">{t("wizard.agents.checking")}</span>
         ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">Disabled</span>
+          <span className="text-xs text-muted-foreground">{t("wizard.agents.disabled")}</span>
         ) : providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
@@ -1094,7 +1107,7 @@ function AgentCard({
             disabled={terminalOpen || !terminalAvailable}
           >
             <TerminalIcon className="size-3.5" />
-            {providerState === "signIn" ? "Sign in" : "Install"}
+            {providerState === "signIn" ? t("wizard.agents.signIn") : t("wizard.agents.install")}
           </Button>
         )}
       </div>
@@ -1115,6 +1128,7 @@ function AgentInstallTerminal({
   readonly session: AgentTerminalSession;
   readonly onClose: () => void;
 }) {
+  const t = useT();
   const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   // Same terminal typography preference the thread drawer honors.
@@ -1216,20 +1230,17 @@ function AgentInstallTerminal({
     >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-2xs font-medium text-muted-foreground">
-          {!canOperateTerminal ? (
-            "This connection cannot control terminals."
-          ) : setupState === "writeFailed" ? (
-            <>
-              Run <code className="rounded bg-muted px-1 font-mono">{command}</code> in this
-              terminal.
-            </>
-          ) : setupState === "ready" ? (
-            "Review the command, then press Enter to run it."
-          ) : setupState === "openFailed" ? (
-            "Could not open the setup terminal."
-          ) : (
-            "Preparing command..."
-          )}
+          {!canOperateTerminal
+            ? t("wizard.agents.noTerminal")
+            : setupState === "writeFailed"
+              ? renderRich(t("wizard.terminal.runCommand"), {
+                  command: <code className="rounded bg-muted px-1 font-mono">{command}</code>,
+                })
+              : setupState === "ready"
+                ? t("wizard.terminal.review")
+                : setupState === "openFailed"
+                  ? t("wizard.terminal.openFailed")
+                  : t("wizard.terminal.preparing")}
         </span>
         <div className="flex items-center gap-1">
           {setupState === "openFailed" ? (
@@ -1243,11 +1254,11 @@ function AgentInstallTerminal({
                 }
               }}
             >
-              Retry
+              {t("wizard.retry")}
             </Button>
           ) : null}
           <Button size="xs" variant="ghost-muted" onClick={onClose}>
-            Close
+            {t("wizard.closeTerminal")}
           </Button>
         </div>
       </div>
@@ -1257,7 +1268,7 @@ function AgentInstallTerminal({
             threadRef={threadRef}
             threadId={AGENT_ONBOARDING_THREAD_ID}
             terminalId={terminalId}
-            terminalLabel={`Install ${driver}`}
+            terminalLabel={t("wizard.terminal.label", { driver })}
             cwd={cwd}
             providerInstanceId={providerInstanceId}
             advancedTypography={advancedTypography}
@@ -1277,8 +1288,6 @@ function AgentInstallTerminal({
 
 // ── Step 4: import ───────────────────────────────────────────
 
-const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
-
 function ImportStep({
   scans,
   isImporting,
@@ -1294,6 +1303,8 @@ function ImportStep({
     importedThreadCount?: number,
   ) => Promise<boolean>;
 }) {
+  const t = useT();
+  const importPermissionMessage = t("wizard.import.noPermission");
   const { environments } = useEnvironments();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
@@ -1360,12 +1371,9 @@ function ImportStep({
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
   );
-  const [importError, setImportError] = useState("");
-  const visibleImportError = !canImport
-    ? IMPORT_PERMISSION_MESSAGE
-    : importError === IMPORT_PERMISSION_MESSAGE
-      ? ""
-      : importError;
+  // Access denied is the only import error; it shows while access is missing,
+  // in whatever language is showing now.
+  const visibleImportError = canImport ? "" : importPermissionMessage;
 
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
@@ -1389,7 +1397,6 @@ function ImportStep({
       );
     const stopForDeniedAccess = () => {
       setIsImporting(false);
-      setImportError(IMPORT_PERMISSION_MESSAGE);
     };
     if (!hasAccess()) {
       stopForDeniedAccess();
@@ -1507,14 +1514,18 @@ function ImportStep({
     setIsImporting(false);
     importedThreadCountRef.current = importedThreadCount;
     if (importedProjectsCount < selection.length) {
+      const imported = t("wizard.import.importedThreads", { count: importedThreadCount });
+      const skipped = t("wizard.import.skippedThreads", { count: skippedThreadCount });
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
-        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`;
+        importWarningRef.current = [imported, skipped].join(t("common.sentenceSpace"));
       } else if (skippedThreadCount > 0) {
-        importWarningRef.current = `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`;
+        importWarningRef.current = skipped;
       } else if (importedThreadCount > 0) {
-        importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`;
+        importWarningRef.current = [imported, t("wizard.import.someHistoryFailed")].join(
+          t("common.sentenceSpace"),
+        );
       } else {
-        importWarningRef.current = "Could not import thread history.";
+        importWarningRef.current = t("wizard.import.historyFailed");
       }
     }
     finishAfterImport();
@@ -1523,16 +1534,18 @@ function ImportStep({
   if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
     return (
       <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+          {t("wizard.import.yourProjects")}
+        </h1>
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
           <Spinner size="lg" tone="muted" />
           <p className="text-center text-sm text-muted-foreground">
-            Looking for projects from Claude Code and Codex…
+            {t("wizard.import.lookingInAgents")}
           </p>
         </div>
         <div className="flex justify-end">
           <Button variant="ghost-muted" onClick={() => void onDone()}>
-            Do not import projects
+            {t("wizard.import.skip")}
           </Button>
         </div>
       </div>
@@ -1540,14 +1553,14 @@ function ImportStep({
   }
 
   return (
-    <StepShell
-      title="Choose your projects"
-      description="Import projects and conversations from your selected computers."
-    >
+    <StepShell title={t("wizard.import.title")} description={t("wizard.import.description")}>
       {candidates.length > 0 ? (
         <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span role="status">
-            {selected.length} of {candidates.length} selected
+            {t("wizard.import.selectedCount", {
+              selected: selected.length,
+              total: candidates.length,
+            })}
           </span>
           <div className="flex items-center gap-1">
             <Button
@@ -1556,7 +1569,7 @@ function ImportStep({
               disabled={isImporting || selected.length === candidates.length}
               onClick={() => setSelectedPaths(new Set(candidates.map((item) => item.key)))}
             >
-              Select all
+              {t("wizard.import.selectAll")}
             </Button>
             <Button
               variant="ghost"
@@ -1564,7 +1577,7 @@ function ImportStep({
               disabled={isImporting || selected.length === 0}
               onClick={() => setSelectedPaths(new Set())}
             >
-              Select none
+              {t("wizard.import.selectNone")}
             </Button>
           </div>
         </div>
@@ -1577,7 +1590,7 @@ function ImportStep({
             );
             const label =
               environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? "Computer";
+                ?.label ?? t("wizard.computer");
             return (
               <fieldset
                 key={scan.environmentId}
@@ -1590,26 +1603,24 @@ function ImportStep({
                 {scan.isPending && scan.data === null ? (
                   <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
                     <Spinner size="md" />
-                    Looking for projects…
+                    {t("wizard.import.looking")}
                   </div>
                 ) : scan.error !== null ? (
                   <div
                     role="alert"
                     className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
                   >
-                    <span>Could not check projects. {scan.error}</span>
+                    <span>{t("wizard.import.checkFailed", { error: scan.error })}</span>
                     <Button variant="ghost" size="sm" onClick={scan.refresh}>
-                      Retry
+                      {t("wizard.retry")}
                     </Button>
                   </div>
                 ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">
-                    No existing Claude Code or Codex projects found.
-                  </p>
+                  <p className="py-2 text-sm text-muted-foreground">{t("wizard.import.none")}</p>
                 ) : null}
                 {scan.data?.truncated ? (
                   <p className="text-xs text-muted-foreground" role="status">
-                    {SCAN_LIMIT_MESSAGE}
+                    {t("wizard.import.scanLimit")}
                   </p>
                 ) : null}
                 <ImportCandidateList
@@ -1627,7 +1638,7 @@ function ImportStep({
       ) : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-          Do not import projects
+          {t("wizard.import.skip")}
         </Button>
         <Button
           autoFocus
@@ -1635,8 +1646,8 @@ function ImportStep({
           onClick={() => void runImport(selected)}
         >
           {isImporting
-            ? "Importing…"
-            : `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"}`}
+            ? t("wizard.import.importing")
+            : t("wizard.import.importButton", { count: selected.length })}
         </Button>
       </div>
     </StepShell>
@@ -1663,6 +1674,7 @@ function ImportCandidateList({
   readonly selectedKeys: ReadonlySet<string>;
   readonly onSelectionChange: (next: ReadonlySet<string>) => void;
 }) {
+  const t = useT();
   const { repositories, other } = useMemo(() => groupOnboardingProjects(candidates), [candidates]);
   const setKeys = (keys: ReadonlyArray<string>, checked: boolean) => {
     const next = new Set(selectedKeys);
@@ -1699,9 +1711,11 @@ function ImportCandidateList({
             />
             <CollapsibleTrigger className="group flex min-w-0 flex-1 items-center gap-1.5 text-left">
               <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
-              <span className="truncate text-sm text-muted-foreground">Other folders</span>
+              <span className="truncate text-sm text-muted-foreground">
+                {t("wizard.import.otherFolders")}
+              </span>
               <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                {other.length} {other.length === 1 ? "folder" : "folders"}
+                {t("wizard.import.folderCount", { count: other.length })}
               </span>
             </CollapsibleTrigger>
           </div>
@@ -1840,9 +1854,11 @@ function ImportRowMeta({
   readonly threadCount: number;
   readonly lastActiveAt: string | null;
 }) {
+  const t = useT();
   const relative = lastActiveAt === null ? null : formatRelativeTime(lastActiveAt);
   // "just now" does not fit the fixed column, so collapse it.
-  const age = relative === null ? "" : relative.suffix === null ? "now" : relative.value;
+  const age =
+    relative === null ? "" : relative.suffix === null ? t("wizard.import.now") : relative.value;
   return (
     <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-xs text-muted-foreground tabular-nums">
       <span className="flex size-4 items-center justify-center">

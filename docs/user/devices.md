@@ -87,14 +87,21 @@ viewer stops streaming and leaves the device available to the agent. Device
 activity also appears in the thread timeline.
 
 Agents drive the device through the `agent-device` command line. SpecWithCode
-Code installs and starts it only after **Agent device access** is enabled. iOS
+installs and starts it when **Agent device access** is on, or when you allow a
+device on an access request card. iOS
 taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
 receives the device CLI environment.
 
-To keep agents away from simulators, turn off **Agent device access** in
-**Settings → Integrations → Devices**. This hides the device tools from agents
-started from then on; your own Device panel is unaffected.
+With **Agent device access** on in **Settings → Integrations → Devices**,
+agents use any device without asking. With it off, an agent that opens a
+device, or asks ahead with `request_access`, shows a card above the composer
+instead: "Claude wants to control iPhone 17 Pro", the agent's reason and the
+device with the machine it is on. Choose **Allow for this session**, **Always
+allow on this machine** or **Deny**, on the desktop, the web or the iPhone
+app. Devices allowed with **Always on this machine** are listed under
+**Settings → Integrations → Devices**, where **Remove** takes one back. Your
+own Device panel is unaffected either way.
 
 ## Remote connections
 

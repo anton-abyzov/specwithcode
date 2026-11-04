@@ -47,30 +47,36 @@ the middle of M4's snapshot and apply fail its guarded prestate, so they are ask
 M4 completes verification of the new version, and then together with a plain version-bound
 request. They are never drained or held.
 
+Workers are asked over SpecWithCode Connect only, by default. Each update_request.py command
+becomes M4's own `specweave-studio fleet update <machine> ... --connect-only --json`, which
+answers with the same keys. M1 and M3 (fleet_hosts.PORTS) are matched to M4's studio-fleet.json by
+machine id or label; one missing there, without a Connect address or a proof-bound management token,
+or with no usable CLI on M4 is reported unreachable with that reason, and the fleet inventory
+(hosts.json) is not read.
+
+`--ssh-fallback` (release.sh passes it when RELEASE_FLEET_SSH=1) restores pinned fleet SSH from
+hosts.json: Connect is still tried first, and only a transport failure during the initial status
+read selects pinned SSH. An authorization refusal stops the rollout, and each worker keeps the
+selected route once a request can be sent. Over SSH each request is written by update_request.py,
+streamed with studio_paths.py to the host's /usr/bin/python3 (the network-transition.py
+convention), so a host needs neither this repository nor a newer agent. A worker in hosts.json
+without a Connect address then goes over SSH only. Machines outside M1 and M3 go over Connect only.
+
 Once a worker's service is confirmed on the version (installed, or already on it), its desktop
-app is updated to the same version over pinned SSH (desktop_app_rollout.py, which runs
-desktop_app_update_remote.sh there), and the rollout reports its version before and after and
-how: already current, the app's own updater on quit, or swapped. A failed app update fails the
-rollout after every service is done, naming the host and the reason; --no-desktop-apps skips the
-step. M4's app is release.sh's desktop stage's.
-
-SpecWithCode Connect is tried first for a linked worker. Each update_request.py command becomes
-M4's own `specweave-studio fleet update <machine> ... --connect-only --json`, which answers with
-the same keys. Only a transport failure during the initial status read can select pinned fleet SSH
-as a fallback. An authorization refusal stops the rollout, and each worker keeps the selected
-route once a request can be sent. The separate desktop app step still needs pinned fleet SSH.
-Workers outside the SSH inventory go over Connect only. A worker with neither route is reported.
-
-Each request is written by update_request.py, streamed with studio_paths.py to the host's
-/usr/bin/python3 (over the pinned fleet SSH key for M1 and M3, the network-transition.py
-convention), so a host needs neither this repository nor a newer agent. Hosts come from
-fleet_hosts.load_hosts(); nothing here names an address.
+app follows. That step needs pinned fleet SSH, so it runs only with --ssh-fallback: there it is
+updated to the same version (desktop_app_rollout.py, which runs desktop_app_update_remote.sh
+there), and the rollout reports its version before and after and how: already current, the app's
+own updater on quit, or swapped. A failed app update fails the rollout after every service is
+done, naming the host and the reason. Without the flag each confirmed worker reports the step
+skipped (its own updater installs the version on quit), which fails nothing; --no-desktop-apps
+skips the step entirely. M4's app is release.sh's desktop stage's.
 
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37        # M4, then M1 and M3
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only m4
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only m4 --no-hold
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --dry-run
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --no-desktop-apps
+    python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --ssh-fallback
 
 Every host ends with a row: installed, already-installed, or not-updated with a reason. M4, M1
 and M3 are required (REQUIRED_HOSTS; --optional HOST relaxes one): a required host that is
@@ -528,8 +534,8 @@ def connect_machines(home):
     return found
 
 
-def connect_command(home):
-    """M4's installed `fleet update` CLI with M4's studio home, or None when it cannot run."""
+def connect_command(home, subcommand='update'):
+    """M4's installed `fleet <subcommand>` CLI with M4's studio home, or None when it cannot run."""
     try:
         own, receipt = service_hold.ServiceHold(LOCAL, home).receipt()
     except HoldUnavailable:
@@ -539,22 +545,50 @@ def connect_command(home):
     if not isinstance(wrapper, str) or not os.path.isabs(wrapper) or not os.path.isfile(wrapper) \
             or not os.access(wrapper, os.X_OK) or studio_home != str(own):
         return None
-    return [wrapper, 'fleet', 'update', '--base-dir', studio_home]
+    return [wrapper, 'fleet', subcommand, '--base-dir', studio_home]
 
 
-def fleet(home=None, connect=None):
-    """{identity: host} for M4 (local), linked workers over Connect (pinned SSH as fallback),
-    inventory workers without a Connect address over SSH, and other fleet machines over Connect.
-    `connect` is the `fleet update` command prefix (default: M4's installed CLI)."""
+SSH_FALLBACK_HINT = 'pass --ssh-fallback to use pinned fleet SSH'
+
+
+def connect_reason(match, command, subcommand='update'):
+    """Why a worker cannot be asked over SpecWithCode Connect, or None when it can."""
+    if match is None:
+        return "it is not in M4's fleet (%s)" % FLEET_CONFIG
+    if not match['connect']:
+        return match['reason']
+    if not command:
+        return "M4's installed CLI cannot run `fleet %s`" % subcommand
+    return None
+
+
+def find_machine(machines, identity):
+    """The studio-fleet.json row for `identity` (its machine id or label slug), or None."""
+    return next((machine for machine in machines if identity in (machine['machine'], machine['identity'])), None)
+
+
+def fleet(home=None, connect=None, ssh_fallback=False):
+    """{identity: host} for M4 (local), M1 and M3 over Connect, and other fleet machines over
+    Connect. A worker Connect cannot ask is Unreachable, naming why. With `ssh_fallback`, M1 and M3
+    come from the fleet inventory: linked ones over Connect with pinned SSH as fallback, ones
+    without a Connect address over SSH. `connect` is the `fleet update` command prefix (default:
+    M4's installed CLI)."""
     home = pathlib.Path(home or pathlib.Path.home())
     command = connect if connect is not None else connect_command(home)
     machines = connect_machines(home)
     hosts = {LOCAL: Host(LOCAL, [SYSTEM_PYTHON, '-B', '-'])}
-    for identity, user, host, _tunnel, _https in fleet_hosts.worker_plans():
+    if not ssh_fallback:
+        for identity in WORKERS:
+            match = find_machine(machines, identity)
+            if match is not None:
+                machines.remove(match)
+            reason = connect_reason(match, command)
+            hosts[identity] = ConnectHost(identity, command, match['machine']) if reason is None \
+                else Unreachable(identity, 'no SpecWithCode Connect route: %s; %s' % (reason, SSH_FALLBACK_HINT))
+    for identity, user, host, _tunnel, _https in fleet_hosts.worker_plans() if ssh_fallback else ():
         ssh = Host(identity, ssh_command(home, user, host),
                    app_command=ssh_command(home, user, host, desktop_app_rollout.REMOTE_COMMAND))
-        match = next((machine for machine in machines
-                      if identity in (machine['machine'], machine['identity'])), None)
+        match = find_machine(machines, identity)
         if match is not None:
             machines.remove(match)
         if match is not None and match['connect'] and command:
@@ -1035,7 +1069,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
 
 def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60, worker_deadline=60 * 60,
             worker_force=False, poll=5, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None,
-            local_copies=None, ignore_folder_copies=False, required=REQUIRED_HOSTS, m4_wait=0):
+            local_copies=None, ignore_folder_copies=False, required=REQUIRED_HOSTS, m4_wait=0, desktop_skip=None):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then every other
     host in `hosts` together (M1 and M3, and any Connect-only machine), never held; an Unreachable
     one is reported as skipped. `local_copies` (local_folder_copies) counts M4's own folder copies,
@@ -1043,7 +1077,8 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
     follows once its service is confirmed on `version`. Returns {identity: result}; raises
     RolloutPartial (every host's row in `results`) when a host in `required` did not end on `version`,
     or DesktopAppsFailed once every service is done when only an app update failed. A host outside
-    `required` that fails or cannot be reached ends with a not-updated row and fails nothing."""
+    `required` that fails or cannot be reached ends with a not-updated row and fails nothing.
+    `desktop_skip`, without `desktop`, is the reason each confirmed worker reports for its app."""
     say = say or Printer(clock=clock)
     results = {}
     required = tuple(required)
@@ -1135,6 +1170,10 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                     app = update_app(identity, via_connect)
                 with lock:
                     result['desktopApp'] = app
+            elif desktop_skip:
+                say('%s: desktop app skipped: %s' % (identity, desktop_skip))
+                with lock:
+                    result['desktopApp'] = {'result': 'skipped', 'reason': desktop_skip}
 
         threads = [threading.Thread(target=worker, args=(identity,), name='rollout-' + identity)
                    for identity in hosts if identity != LOCAL]
@@ -1188,6 +1227,9 @@ def main(argv=None):
                              "from another machine; the copy may need Retry")
     parser.add_argument('--no-desktop-apps', action='store_true',
                         help="leave M1's and M3's desktop apps as they are (by default each follows its service)")
+    parser.add_argument('--ssh-fallback', action='store_true',
+                        help='use pinned fleet SSH (hosts.json) for M1 and M3 when SpecWithCode Connect does not '
+                             'answer, and for their desktop apps (release.sh: RELEASE_FLEET_SSH=1)')
     parser.add_argument('--dry-run', action='store_true', help='print the order and commands; contact no host')
     parser.add_argument('--optional', action='append', default=[], metavar='HOST',
                         help='a required host (%s) that may end not-updated without failing the run'
@@ -1214,12 +1256,14 @@ def main(argv=None):
     if args.poll_seconds < 1 or args.m4_deadline_minutes < 1 or args.worker_deadline_minutes < 1:
         parser.error('deadlines and the poll interval must be positive')
     try:
-        hosts = fleet()
+        hosts = fleet(ssh_fallback=True) if args.ssh_fallback else fleet()
     except SystemExit as error:  # fleet_hosts reports a missing or bad inventory this way.
         print('fleet_rollout: %s' % error, file=sys.stderr)
         return 1
-    desktop = None
-    if args.only != LOCAL and not args.no_desktop_apps:
+    desktop, desktop_skip = None, None
+    if args.only != LOCAL and not args.no_desktop_apps and not args.ssh_fallback:
+        desktop_skip = 'needs pinned fleet SSH (pass --ssh-fallback); its own updater installs %s on quit' % args.version
+    elif args.only != LOCAL and not args.no_desktop_apps:
         try:
             desktop = desktop_app_rollout.DesktopApps(args.version, {
                 name: host.app_command for name, host in hosts.items() if getattr(host, 'app_command', None)})
@@ -1241,10 +1285,11 @@ def main(argv=None):
             planned = 'unavailable: %s' % error
         if not supported:
             planned = 'unsupported: %s' % reason
-        print(json.dumps({'version': args.version, 'order': order, 'hold': planned,
+        print(json.dumps({'version': args.version, 'order': order, 'hold': planned, 'sshFallback': args.ssh_fallback,
                           'commands': {name: host.command for name, host in hosts.items()},
                           'routes': {name: plan_route(host) for name, host in hosts.items()},
-                          'desktopApps': desktop.plan() if desktop else None}))
+                          'desktopApps': desktop.plan() if desktop else
+                          {'skipped': desktop_skip} if desktop_skip else None}))
         return 0
     # An old M4 is refused in roll_host, after its status shows whether Update now already
     # asked for this version (then the rollout joins that install instead).
@@ -1268,7 +1313,7 @@ def main(argv=None):
                           args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold,
                           desktop=desktop, local_copies=local_folder_copies,
                           ignore_folder_copies=args.ignore_folder_copies, required=required,
-                          m4_wait=RECONCILE_WAIT if args.reconcile else 0)
+                          m4_wait=RECONCILE_WAIT if args.reconcile else 0, desktop_skip=desktop_skip)
     except RolloutPartial as error:
         lines = report(args.version, error.results, required)
         print('fleet_rollout: %s' % error, file=sys.stderr)

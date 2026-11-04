@@ -138,11 +138,35 @@ REBUILT = {
 }
 
 
-def full_read_pending(live_max):
+# Populated fixtures for each migration the page proof refuses or accepts only as a declared rebuild:
+# {migration: {table: (row, ...)}}, the rows the table holds before that migration runs, each a
+# {column: value} mapping (a test writes only the columns its fixture table has). The updater never
+# reads them. test-update-migration-coverage.py requires one for every FULL_READ and REBUILT entry
+# and every table such a migration alters or rebuilds, and test-full-read-completes.py runs each
+# migration's own SQL over them through update.apply, in page mode and in the full read.
+_SESSION_ROW = {'subject': 'owner', 'scopes': 'operate', 'method': 'browser-session-cookie',
+                'issued_at': '2026-10-21T00:00:00Z', 'expires_at': '2026-12-30T00:00:00Z'}
+FIXTURES = {
+    69: {'auth_sessions': tuple(dict(_SESSION_ROW, session_id='fixture-session-%d' % index,
+                                     last_connected_at=None if index % 3 == 0 else '2026-10-22T13:%02d:00Z' % index,
+                                     revoked_at='2026-10-23T00:00:00Z' if index % 4 == 0 else None)
+                                for index in range(12))},
+    72: {_COMPACTIONS: tuple({'thread_id': 'fixture-thread-%03d' % index,
+                              'kind': 'archived' if index % 3 == 0 else 'deleted',
+                              'through_sequence': index * 11,
+                              'compacted_at': '2026-10-%02dT10:00:00Z' % (1 + index % 28),
+                              'completed_at': None if index % 5 == 0 else '2026-11-01T00:00:00Z'}
+                             for index in range(48))},
+}
+
+
+def full_read_pending(live_max, full_read=None):
     """The FULL_READ migrations a database whose newest effect_sql_migrations row is `live_max`
     has not run yet, sorted. None (no migrations table, or it cannot tell) counts none: a database
-    the helper cannot place would otherwise be refused for room it may never need."""
-    return [] if live_max is None else sorted(number for number in FULL_READ if number > live_max)
+    the helper cannot place would otherwise be refused for room it may never need. `full_read`
+    replaces FULL_READ with another release's numbers (disk_room.py --full-read)."""
+    numbers = FULL_READ if full_read is None else set(full_read)
+    return [] if live_max is None else sorted(number for number in numbers if number > live_max)
 
 
 def newest(db):

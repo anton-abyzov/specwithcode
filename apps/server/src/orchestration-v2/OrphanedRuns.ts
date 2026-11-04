@@ -353,15 +353,23 @@ export const makeSettler = Effect.gen(function* () {
                 completedAt: now,
                 updatedAt: now,
               }
-            : {
-                ...item,
-                status: "cancelled",
-                completedAt: now,
-                updatedAt: now,
-                ...(item.type === "reasoning" || item.type === "assistant_message"
-                  ? { streaming: false }
-                  : {}),
-              },
+            : item.type === "access_request" && item.accessStatus === "pending"
+              ? {
+                  ...item,
+                  status: "cancelled",
+                  accessStatus: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                }
+              : {
+                  ...item,
+                  status: "cancelled",
+                  completedAt: now,
+                  updatedAt: now,
+                  ...(item.type === "reasoning" || item.type === "assistant_message"
+                    ? { streaming: false }
+                    : {}),
+                },
       });
     }
     if (providerTurn !== undefined && isOpen(providerTurn.status)) {

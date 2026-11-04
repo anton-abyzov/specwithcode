@@ -225,7 +225,7 @@ struct DrawerView: View {
             .padding(.horizontal, WeaveSpacing.s4)
           ForEach(rows) { thread in
             let target = ChatTarget.thread(thread.ref)
-            WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 3, action: { router.open(target) }) {
+            WeaveRow(thread.title, subtitle: (thread.accessWaitLine ?? thread.identity.label) + "\n" + thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 3, action: { router.open(target) }) {
               ThreadIdentityMarks(identity: thread.identity)
             } trailing: {
               RecentThreadGlyph(thread: thread)
@@ -384,6 +384,11 @@ struct RecentThreadGlyph: View {
     HStack(spacing: WeaveSpacing.s2) {
       if thread.isUnread, thread.activity == .idle || thread.isUnknown { UnreadDot() }
       switch thread.isUnknown ? .idle : thread.activity {
+      case .needsYou where thread.asksForAccess:
+        Image(systemName: "hand.raised")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundStyle(Color.weave.warn)
+          .accessibilityHidden(true)
       case .needsYou: StatusDot(.needsYou).accessibilityHidden(true)
       case .working: StatusDot(.working).accessibilityHidden(true)
       case .failed:
@@ -412,6 +417,7 @@ struct RecentThreadGlyph: View {
 
   static func spoken(_ thread: ThreadSummary) -> String {
     var parts = [thread.isUnknown ? "Unknown" : thread.activity.label]
+    if let wait = thread.accessWaitLine { parts.append(wait) }
     parts.append(ProjectOverviewView.spokenPlacement(thread.placement))
     if let project = thread.projectTitle { parts.append(project) }
     if thread.isUnread { parts.append("Unread") }

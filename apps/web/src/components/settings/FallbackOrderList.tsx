@@ -11,6 +11,8 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { getLocale, t, useT, type Translate } from "../../i18n";
+import { renderRich } from "../../i18n/rich";
 
 /** At most this many fallback models; the contract refuses more. */
 export const MAX_FALLBACK_MODELS = 8;
@@ -56,40 +58,44 @@ export type ModelOrderStatus = ReviewerStepStatus;
 const clock = (ms: number) => {
   const at = new Date(ms);
   return at.toDateString() === new Date().toDateString()
-    ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-    : at.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+    ? at.toLocaleTimeString(getLocale(), { hour: "numeric", minute: "2-digit" })
+    : at.toLocaleString(getLocale(), { weekday: "short", hour: "numeric", minute: "2-digit" });
 };
 
 export function modelOrderStatusChip(
   status: ModelOrderStatus,
   resetAt: number | null = null,
+  tr: Translate = t,
 ): { readonly label: string; readonly variant: "success" | "info" | "warning" | "outline" } {
   switch (status) {
     case "ready":
-      return { label: "Ready", variant: "success" };
+      return { label: tr("fallback.chip.ready"), variant: "success" };
     case "unverified":
-      return { label: "Usage unknown", variant: "info" };
+      return { label: tr("fallback.chip.unverified"), variant: "info" };
     case "full":
       return {
-        label: resetAt === null ? "Usage full" : `Full until ${clock(resetAt)}`,
+        label:
+          resetAt === null
+            ? tr("fallback.chip.full")
+            : tr("fallback.chip.fullUntil", { time: clock(resetAt) }),
         variant: "warning",
       };
     case "limited":
-      return { label: "At its limit", variant: "warning" };
+      return { label: tr("fallback.chip.limited"), variant: "warning" };
     case "signed-out":
-      return { label: "Signed out", variant: "warning" };
+      return { label: tr("fallback.chip.signedOut"), variant: "warning" };
     case "per-token":
-      return { label: "Billed per token", variant: "warning" };
+      return { label: tr("fallback.chip.perToken"), variant: "warning" };
     case "too-small":
-      return { label: "Context too small", variant: "outline" };
+      return { label: tr("fallback.chip.tooSmall"), variant: "outline" };
     case "not-ready":
-      return { label: "Not set up", variant: "outline" };
+      return { label: tr("fallback.chip.notReady"), variant: "outline" };
     case "missing":
-      return { label: "Not on this machine", variant: "outline" };
+      return { label: tr("fallback.chip.missing"), variant: "outline" };
     case "excluded":
-      return { label: "Excluded", variant: "outline" };
+      return { label: tr("fallback.chip.excluded"), variant: "outline" };
     case "unknown-billing":
-      return { label: "Billing unknown", variant: "outline" };
+      return { label: tr("fallback.chip.unknownBilling"), variant: "outline" };
   }
 }
 
@@ -104,8 +110,9 @@ export interface ModelOrderStep {
 }
 
 function StatusChip(props: { readonly step: ModelOrderStep }) {
+  const tr = useT();
   if (props.step.status === undefined) return null;
-  const chip = modelOrderStatusChip(props.step.status, props.step.resetAt ?? null);
+  const chip = modelOrderStatusChip(props.step.status, props.step.resetAt ?? null, tr);
   return (
     <Badge variant={chip.variant} className="shrink-0" data-status={props.step.status}>
       {chip.label}
@@ -128,6 +135,7 @@ export function ModelOrderList(props: {
   readonly onChange?: ((order: ReadonlyArray<ModelSelection>) => void) | undefined;
   readonly className?: string | undefined;
 }) {
+  const tr = useT();
   const { label, steps, providers, order, onChange } = props;
   const entries = useMemo(() => deriveProviderInstanceEntries(providers), [providers]);
   if (steps.length === 0) return null;
@@ -193,7 +201,9 @@ export function ModelOrderList(props: {
                   <span className="truncate text-sm font-medium text-foreground">{modelName}</span>
                   <span className="truncate text-xs text-muted-foreground">
                     {providerName}
-                    {step.family ? ` · ${MODEL_FAMILY_LABELS[step.family]} family` : ""}
+                    {step.family
+                      ? ` · ${tr("fallback.family", { family: MODEL_FAMILY_LABELS[step.family] })}`
+                      : ""}
                   </span>
                 </span>
                 <StatusChip step={step} />
@@ -203,7 +213,7 @@ export function ModelOrderList(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`Move ${rowLabel} up`}
+                    aria-label={tr("fallback.moveUp", { label: rowLabel })}
                     disabled={at === 0}
                     onClick={() => onChange(moveFallbackEntry(order, at, -1))}
                   >
@@ -212,7 +222,7 @@ export function ModelOrderList(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`Move ${rowLabel} down`}
+                    aria-label={tr("fallback.moveDown", { label: rowLabel })}
                     disabled={at === order.length - 1}
                     onClick={() => onChange(moveFallbackEntry(order, at, 1))}
                   >
@@ -221,7 +231,7 @@ export function ModelOrderList(props: {
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`Remove ${rowLabel}`}
+                    aria-label={tr("fallback.remove", { label: rowLabel })}
                     onClick={() => onChange(order.filter((_, item) => item !== at))}
                   >
                     <XIcon className="size-3" />
@@ -231,7 +241,7 @@ export function ModelOrderList(props: {
             </div>
             {step.alternates && step.alternates.length > 0 ? (
               <ul
-                aria-label={`Same model on other providers, after ${rowLabel}`}
+                aria-label={tr("fallback.sameModelAria", { label: rowLabel })}
                 className="mt-1.5 ml-[1.375rem] flex flex-col gap-1 border-l border-border/70 pl-3"
               >
                 {step.alternates.map((alternate) => {
@@ -251,7 +261,9 @@ export function ModelOrderList(props: {
                           className="min-w-[10rem] flex-1 truncate text-xs text-muted-foreground"
                           data-label={`${alt.providerName} · ${alt.modelName}`}
                         >
-                          Same model on <span className="text-foreground">{alt.providerName}</span>
+                          {renderRich(tr("fallback.sameModelOn"), {
+                            provider: <span className="text-foreground">{alt.providerName}</span>,
+                          })}
                         </span>
                         <StatusChip step={alternate} />
                       </span>
@@ -277,6 +289,7 @@ export function FallbackOrderList(props: {
   readonly onChange: (order: ReadonlyArray<ModelSelection>) => void;
   readonly statuses?: ReadonlyMap<string, Pick<ModelOrderStep, "status" | "resetAt">> | undefined;
 }) {
+  const tr = useT();
   const { order, providers, onChange, statuses } = props;
   const steps = order.map((selection) => ({
     selection,
@@ -284,7 +297,7 @@ export function FallbackOrderList(props: {
   }));
   return (
     <ModelOrderList
-      label="Fallback order"
+      label={tr("fallback.orderLabel")}
       className="mt-3 mb-2"
       steps={steps}
       providers={providers}

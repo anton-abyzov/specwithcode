@@ -172,7 +172,7 @@ import SWCWire
 
   @Test func everyFixtureItemMaps() throws {
     let items = try TestData.turnItems()
-    #expect(items.count == 18)
+    #expect(items.count == 19)
     let mapped = items.compactMap { TranscriptMapper.kind(for: $0, environmentId: "env") }
     #expect(mapped.count == items.filter { !$0.isUnknown }.count)
   }

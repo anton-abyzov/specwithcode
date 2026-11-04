@@ -17,11 +17,13 @@ import { COORDINATOR_PROMPT_ID, CoordinatorQuestionRecovery } from "./Coordinato
 
 /**
  * The control a keyboard user lands on first, in this order: an approval's
- * Decline (never Approve, so a stray Enter grants nothing, whatever order the
- * provider lists its options in), the request's own action (Answer in chat,
+ * Deny on a pending access card, then an approval's Decline (never Approve or
+ * Allow, so a stray Enter grants nothing, whatever order the provider lists its
+ * options in), the request's own action (Answer in chat,
  * the recovery box, Implement plan), then a question's first option.
  */
 const FIRST_ACTION_SELECTORS = [
+  "[data-coordinator-access-request] button[data-access-decision='deny']:not(:disabled)",
   "section[aria-label='Approval request'] button[data-approval-decision='decline']:not(:disabled)",
   "[data-request-focus]:not(:disabled)",
   "[data-question-option]:not([aria-disabled='true'])",
@@ -43,6 +45,7 @@ export function CoordinatorNativeControls({
   disabled,
   error,
   approvals,
+  accessRequest = null,
   respondingApprovals,
   onApproval,
   questions,
@@ -67,6 +70,12 @@ export function CoordinatorNativeControls({
   disabled: boolean;
   error: string | null;
   approvals: PendingApproval[];
+  /**
+   * The answerable access card for the thread's pending access request. It
+   * comes from the thread's turn items, not from `approvals`, and shows ahead
+   * of any runtime approval.
+   */
+  accessRequest?: ReactNode;
   respondingApprovals: RuntimeRequestId[];
   onApproval: (id: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>;
   questions: PendingUserInput[];
@@ -88,8 +97,13 @@ export function CoordinatorNativeControls({
   const rootRef = useRef<HTMLDivElement>(null);
   const sawRequests = useRef(false);
   const resolved = useRef(false);
+  const hasAccessRequest = accessRequest !== null && accessRequest !== undefined;
   const hasRequests =
-    approvals.length > 0 || questions.length > 0 || Boolean(planMarkdown) || heldQueue !== null;
+    hasAccessRequest ||
+    approvals.length > 0 ||
+    questions.length > 0 ||
+    Boolean(planMarkdown) ||
+    heldQueue !== null;
   const onResolved = routing?.onCoordinatorRequestsResolved;
   useEffect(() => {
     if (hasRequests) sawRequests.current = true;
@@ -160,6 +174,11 @@ export function CoordinatorNativeControls({
         <p className="text-sm text-muted-foreground" role="status">
           Responses are temporarily unavailable. Check the host connection and permissions.
         </p>
+      ) : null}
+      {hasAccessRequest ? (
+        <div className="min-w-0" data-coordinator-access-request="">
+          {accessRequest}
+        </div>
       ) : null}
       {approval ? (
         <section

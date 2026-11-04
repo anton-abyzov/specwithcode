@@ -24,7 +24,9 @@
 # only its own run's flakes, and every retry is in retries.jsonl and the timing table. And the
 # desktop stage: it waits for the app's own update (its swap, or Squirrel.Mac's ShipIt) and moves
 # aside, without a snapshot, an app on the release that fails its signature check. And the Linux
-# workers last (fleet-linux, after merge), skipped with --ci, whose failure only warns.
+# workers last (fleet-linux, after merge), skipped with --ci, whose failure only warns. And the
+# update rehearsal: in the background after stage 1, waited on before drafts, a failure stopping
+# the release before drafts and rerun by --resume, skipped with --ci.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -91,7 +93,7 @@ lacks() { ! grep -qF -- "$1" "$LAST_OUT"; }
 
 # Stages in the order their first stubbed command appears after line $1 of the stub log.
 stages_after() {
-  awk -F '\t' -v from="$1" 'NR > from && $1 != "server" && $2 != "staging-finished" && !seen[$1]++ { printf "%s ", $1 }' "$STUB_LOG"
+  awk -F '\t' -v from="$1" 'NR > from && $1 != "server" && $1 != "rehearsal" && $2 != "staging-finished" && !seen[$1]++ { printf "%s ", $1 }' "$STUB_LOG"
 }
 
 lines() { if [ -f "$STUB_LOG" ]; then wc -l < "$STUB_LOG" | tr -d ' '; else printf '0\n'; fi; }
@@ -155,7 +157,7 @@ use_machine() {  # use_machine ROOT VERSION
     RELEASE_ENV="$root/secrets/release.env" NVM_DIR="$root/nvm" STUDIO_FLEET_HOSTS="$root/fleet/hosts.json"
     STUDIO_PUBLIC_RULES="$root/public-rules/rules.json" RELEASE_DESKTOP_APP="$root/Applications/SpecWithCode.app"
     RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE=
-    RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT= RELEASE_JOBS=2)
+    RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT= RELEASE_JOBS=2 RELEASE_FLEET_SSH=)
   mkdir -p "$root/home"
 }
 
@@ -228,7 +230,7 @@ check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -
 DRY_HOME="$WORK/dry-home"
 mkdir -p "$DRY_HOME"
 STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=)
-EXPECTED_ORDER="preflight trees prev bump candidate server stage1 build bundle sign verify helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
+EXPECTED_ORDER="preflight trees prev bump candidate server stage1 rehearsal build bundle sign verify helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
 dry_ok() {
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_ORDER" ] || return 1
@@ -241,7 +243,8 @@ dry_ok() {
     has 'fleet-feed: stop unless v9.9.9 is published on anton-abyzov/specwithcode' &&
     has 'public-identity: (in ' && has 'same-sums-public: stop unless' &&
     has 'fleet-linux: (in ' && has 'linux_rollout.py --version 9.9.9' &&
-    has 'verify-app: (in ' && has 'verify-built-app.mjs --mode all --archive ' || return 1
+    has 'verify-app: (in ' && has 'verify-built-app.mjs --mode all --archive ' &&
+    has 'rehearse: (in ' && has 'rehearse_update.py --json --server-entrypoint ' && has '/test/apps/server/src/bin.ts' || return 1
   run 0 9.9.9 --dry-run --no-project-migrations || return 1
   lacks 'allow-project-migrations' && has '--arg=--allow-existing-browser-heartbeat'
 }
@@ -252,7 +255,8 @@ dry_ci_ok() {
   run 0 9.9.9 --dry-run --ci || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$CI_ORDER" ] &&
     has 'fleet-m4, desktop, fleet-workers: skipped (--ci)' && lacks 'fleet_rollout.py' && lacks 'osascript' &&
-    has '= fleet-linux: skipped (--ci)' && lacks 'fleet-linux: (in '
+    has '= fleet-linux: skipped (--ci)' && lacks 'fleet-linux: (in ' &&
+    has '= rehearsal: skipped (--ci)' && lacks 'rehearse_update.py'
 }
 check '--ci leaves out quit-desktop, the fleet stages (Linux too) and the desktop swap' dry_ci_ok
 
@@ -457,6 +461,31 @@ server_stop_ok() {
   [ "$(stages_after "$BEFORE")" = "main " ] && grep -q 'drop-draft' "$STUB_LOG"
 }
 check 'a failed server suite stops the release before bundle and signing' server_stop_ok
+
+# The update rehearsal runs in the background after stage 1 and is waited on before drafts. A
+# failed one stops the release before drafts (none are made), and --resume reruns it.
+RH="$WORK/rehearsal"
+make_machine "$RH"
+use_machine "$RH" 1.2.5
+stub_set RELEASE_STUB_FAIL=rehearsal
+rehearsal_stop_ok() {
+  run 1 1.2.5 || return 1
+  has 'the update rehearsal failed' && [ -f "$STAGE/markers/plan" ] && [ ! -f "$STAGE/markers/drafts" ] &&
+    [ ! -f "$STAGE/markers/rehearsal" ] || return 1
+  grep -q $'^rehearsal\trehearse\tFAILED (stub)' "$STUB_LOG" && ! grep -q '^drafts' "$STUB_LOG" &&
+    [ "$(cut -d' ' -f2 < "$STAGE/rehearsal.exit")" = 1 ] &&
+    [ "$(awk -F '\t' '$1 == "rehearsal" { print NR; exit }' "$STUB_LOG")" -gt \
+      "$(awk -F '\t' '$1 == "stage1" { n = NR } END { print n }' "$STUB_LOG")" ]
+}
+check 'a failed update rehearsal stops the release before drafts' rehearsal_stop_ok
+stub_set RELEASE_STUB_FAIL=
+rehearsal_rerun_ok() {
+  BEFORE="$(lines)"
+  run 0 1.2.5 --resume --stop-after drafts || return 1
+  has '= rehearsal: passed for' && [ -f "$STAGE/markers/drafts" ] && [ "$(cat "$STAGE/markers/rehearsal")" = "$SHA_A" ] &&
+    [ "$(awk -F '\t' -v from="$BEFORE" 'NR > from && $1 == "rehearsal" && $2 == "rehearse"' "$STUB_LOG" | wc -l | tr -d ' ')" = 1 ]
+}
+check '--resume reruns a failed rehearsal and then makes the drafts' rehearsal_rerun_ok
 
 O="$WORK/o"
 make_machine "$O"
@@ -677,6 +706,15 @@ stub_set RELEASE_STUB_STATUS=
 rm -rf "$STAGE"
 dry_disk_listed() { run 0 1.6.1 --dry-run && has 'disk-room: python3 -B' && has 'preflight_fleet.py --version 1.6.1'; }
 check 'the dry-run lists the disk preflight' dry_disk_listed
+dry_disk_ssh() {
+  run 0 1.6.1 --dry-run && lacks 'preflight_fleet.py --version 1.6.1 --ssh-fallback' || return 1
+  stub_set RELEASE_FLEET_SSH=1
+  run 0 1.6.1 --dry-run; local rc=$?
+  stub_set RELEASE_FLEET_SSH=
+  [ "$rc" -eq 0 ] && has 'preflight_fleet.py --version 1.6.1 --ssh-fallback' &&
+    has 'fleet_rollout.py --version 1.6.1 --only workers --ssh-fallback'
+}
+check 'RELEASE_FLEET_SSH=1 adds --ssh-fallback to the disk preflight and the worker rollout' dry_disk_ssh
 
 # ---------------------------------------------------------------- a CI Mac: no fleet files, no desktop
 
@@ -691,7 +729,8 @@ ci_release_ok() {
   run 0 1.6.0 --ci || return 1
   has 'SpecWithCode 1.6.0 is released.' && has 'skipped (--ci)' || return 1
   [ "$(stages_after 0)" = "prev bump candidate stage1 build bundle sign verify helpers plan drafts publish-private publish-public merge " ] &&
-    [ ! -f "$STAGE/markers/fleet-m4" ] && [ ! -f "$STAGE/markers/desktop" ]
+    [ ! -f "$STAGE/markers/fleet-m4" ] && [ ! -f "$STAGE/markers/desktop" ] &&
+    has '= rehearsal: skipped (--ci)' && ! grep -q '^rehearsal' "$STUB_LOG" && [ ! -f "$STAGE/markers/rehearsal" ]
 }
 check 'a --ci release publishes both feeds and merges without fleet files' ci_release_ok
 

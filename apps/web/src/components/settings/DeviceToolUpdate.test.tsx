@@ -56,6 +56,7 @@ vi.mock("../device/DeviceToolVersions", () => ({
 }));
 vi.mock("../device/DeviceHostUpdates", () => ({ DeviceHostUpdates: () => null }));
 vi.mock("./DeviceHostsSettings", () => ({ DeviceHostsSettings: () => null }));
+vi.mock("./AccessGrantsList", () => ({ AccessGrantsList: () => null }));
 
 import { DeviceIntegrationControls } from "./IntegrationsSettings";
 

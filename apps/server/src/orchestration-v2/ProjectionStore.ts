@@ -1558,25 +1558,44 @@ function buildVisibleTurnItems(input: {
 }
 
 /**
- * An agent waiting on a secret is waiting on the user just like a question,
- * so the shell reports it as pending user input. Secret requests have no
+ * An agent waiting on a secret or on access is waiting on the user just like
+ * a question, so the shell reports it as a pending request. Secret requests have no
  * runtime request of their own; this stands one in for the shell summary
  * only, keyed by the card's turn item.
  */
 function secretRequestAsPendingInput(
   item: OrchestrationV2TurnItem | null,
 ): OrchestrationV2ThreadProjection["runtimeRequests"][number] | null {
-  if (item?.type !== "secret_request" || item.nodeId === null) return null;
+  if (
+    (item?.type !== "secret_request" && item?.type !== "access_request") ||
+    item.nodeId === null
+  ) {
+    return null;
+  }
   return {
     id: RuntimeRequestId.make(item.id),
     nodeId: item.nodeId,
     providerTurnId: item.providerTurnId,
     nativeRequestRef: null,
-    kind: "user_input",
+    // An access card is an approval; a secret card is a question.
+    kind: item.type === "access_request" ? "permission" : "user_input",
     status: "pending",
     responseCapability: { type: "message" },
     createdAt: item.startedAt ?? item.updatedAt,
     resolvedAt: null,
+    ...(item.type === "access_request"
+      ? {
+          access: {
+            accessTitle: item.accessTitle,
+            reason: item.reason,
+            subjects: item.subjects.map((subject) => ({
+              kind: subject.kind,
+              label: subject.label,
+              ...(subject.hostLabel === undefined ? {} : { hostLabel: subject.hostLabel }),
+            })),
+          },
+        }
+      : {}),
   };
 }
 
@@ -1652,7 +1671,7 @@ export function threadShellFromProjection(
       projection.turnItems
         .filter(
           (item) =>
-            item.type === "secret_request" &&
+            (item.type === "secret_request" || item.type === "access_request") &&
             item.status === "waiting" &&
             item.runId !== null &&
             liveRunIds.has(item.runId),
@@ -1788,6 +1807,9 @@ export function threadShellFromProjection(
             ...(pendingRuntimeRequest.reopenedFromAskedAt === undefined
               ? {}
               : { reopenedFromAskedAt: pendingRuntimeRequest.reopenedFromAskedAt }),
+            ...(pendingRuntimeRequest.access === undefined
+              ? {}
+              : { access: pendingRuntimeRequest.access }),
           },
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
@@ -2169,6 +2191,9 @@ function shellFromState(input: {
             ...(input.state.pendingRuntimeRequest.reopenedFromAskedAt === undefined
               ? {}
               : { reopenedFromAskedAt: input.state.pendingRuntimeRequest.reopenedFromAskedAt }),
+            ...(input.state.pendingRuntimeRequest.access === undefined
+              ? {}
+              : { access: input.state.pendingRuntimeRequest.access }),
           },
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
@@ -6008,7 +6033,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE r.thread_id = t.thread_id
                   AND r.status IN ('preparing', 'starting', 'running', 'waiting')
                   AND secret.thread_id = t.thread_id AND secret.run_id = r.run_id
-                  AND secret.type = 'secret_request' AND secret.status = 'waiting'
+                  AND secret.type IN ('secret_request', 'access_request')
+                  AND secret.status = 'waiting'
                 ORDER BY secret.updated_at DESC, secret.turn_item_id DESC
                 LIMIT 1
               ) AS pending_secret_request_payload_json,

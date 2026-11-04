@@ -33,6 +33,7 @@ import { useBrowserDefaults } from "../../browser/browserDefaults";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import { ComputerUsePermissionSetup } from "../computerUse/ComputerUsePermissions";
+import { AccessGrantsList } from "./AccessGrantsList";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -750,6 +751,7 @@ export function ProjectDefaultsSettings({
               {settings.enableAgentComputerAccess && !mixedComputer && computerUseLock === null ? (
                 <ComputerUsePermissionSetup environmentId={target?.environmentId ?? null} />
               ) : null}
+              {target ? <AccessGrantsList kind="app" environmentId={target.environmentId} /> : null}
             </SettingsRow>
           )}
           {browserProfileSupported ? (

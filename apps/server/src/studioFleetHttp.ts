@@ -47,6 +47,7 @@ import {
 } from "./auth/CredentialFailureLimiter.ts";
 import { requestRemoteAddress } from "./auth/utils.ts";
 import * as Config from "./config.ts";
+import * as FleetDiskRoom from "./fleet/fleetDiskRoom.ts";
 import * as FleetSkills from "./fleet/fleetSkills.ts";
 import * as FleetUpdate from "./fleet/fleetUpdate.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
@@ -214,12 +215,17 @@ export const layer = HttpApiBuilder.group(
         message: "Could not read the clients paired with this machine.",
       });
     const fleetUpdates = yield* Effect.serviceOption(FleetUpdate.FleetUpdateWorker);
+    const fleetDiskRoom = yield* Effect.serviceOption(FleetDiskRoom.FleetDiskRoom);
     /**
      * Only the fleet primary's own management token: a coordinator principal
      * for the primary named in the request, with `fleet:update` (or
      * `environment:maintain`, which every token issued before it holds).
      */
-    const requireFleetPrimary = (coordinatorEnvironmentId: EnvironmentId) =>
+    const requireFleetPrimaryFor = <S>(
+      service: Option.Option<S>,
+      coordinatorEnvironmentId: EnvironmentId,
+      unsupported: string,
+    ) =>
       Effect.gen(function* () {
         const session = yield* EnvironmentAuthenticatedPrincipal;
         if (!FleetUpdate.fleetUpdateAllowed(session, coordinatorEnvironmentId))
@@ -227,13 +233,16 @@ export const layer = HttpApiBuilder.group(
             message:
               "Only this machine's fleet primary, with the management token it holds here, can ask it to update.",
           });
-        if (Option.isNone(fleetUpdates))
-          return yield* new StudioFleetUpdateError({
-            reason: "unsupported",
-            message: "This machine cannot take update requests from its fleet primary.",
-          });
-        return fleetUpdates.value;
+        if (Option.isNone(service))
+          return yield* new StudioFleetUpdateError({ reason: "unsupported", message: unsupported });
+        return service.value;
       });
+    const requireFleetPrimary = (coordinatorEnvironmentId: EnvironmentId) =>
+      requireFleetPrimaryFor(
+        fleetUpdates,
+        coordinatorEnvironmentId,
+        "This machine cannot take update requests from its fleet primary.",
+      );
     const fleetSkills = yield* Effect.serviceOption(FleetSkills.FleetSkillWorker);
     /** The same gate for skill installs, with `fleet:skills` (or `environment:maintain`). */
     const requireFleetSkillsPrimary = (coordinatorEnvironmentId: EnvironmentId) =>
@@ -373,6 +382,17 @@ export const layer = HttpApiBuilder.group(
             yield* noStore;
             const worker = yield* requireFleetPrimary(query.coordinatorEnvironmentId);
             return yield* worker.status;
+          }),
+        )
+        .handle("fleetDiskRoom", ({ query }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const worker = yield* requireFleetPrimaryFor(
+              fleetDiskRoom,
+              query.coordinatorEnvironmentId,
+              "This machine cannot report its disk room to its fleet primary.",
+            );
+            return yield* worker.report({ version: query.version, fullRead: query.fullRead });
           }),
         )
         .handle("requestFleetSkill", ({ payload }) =>

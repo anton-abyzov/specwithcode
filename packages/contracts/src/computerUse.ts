@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { Rpc } from "effect/rpc";
 
 import { EnvironmentAuthorizationError } from "./auth.ts";
+import { AccessRequestIcon } from "./accessRequest.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
@@ -127,6 +128,13 @@ export const ComputerUseAction = Schema.Union([
     application: Schema.optional(ApplicationName),
     url: Schema.optional(SettingsPaneUrl),
   }),
+  /** Looks an app up without opening it: its name as macOS shows it and its icon. */
+  Schema.Struct({ kind: Schema.Literal("appInfo"), application: ApplicationName }),
+  /**
+   * The app that owns the topmost window under a point, in screenshot pixels
+   * like a click: the app a click or drag there reaches. Changes nothing.
+   */
+  Schema.Struct({ kind: Schema.Literal("appAt"), x: Coordinate, y: Coordinate }),
 ]);
 export type ComputerUseAction = typeof ComputerUseAction.Type;
 export type ComputerUseActionKind = ComputerUseAction["kind"];
@@ -154,7 +162,9 @@ export function computerUsePermissionFor(
   kind: ComputerUseActionKind,
 ): ComputerUsePermission | undefined {
   if (kind === "screenshot") return "screen-recording";
-  if (kind === "status" || kind === "open") return undefined;
+  if (kind === "status" || kind === "open" || kind === "appInfo" || kind === "appAt") {
+    return undefined;
+  }
   return "accessibility";
 }
 
@@ -193,6 +203,18 @@ export const ComputerUseActionResult = Schema.Struct({
   cursor: Schema.optional(Schema.Struct({ x: Schema.Int, y: Schema.Int })),
   frontmostApplication: Schema.optional(Schema.String),
   screenshot: Schema.optional(ComputerUseScreenshot),
+  /**
+   * For appInfo: the installed app, or absent when no app has that name.
+   * For appAt: the app owning the window under the point (name only), or
+   * absent when no window is there.
+   */
+  application: Schema.optional(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      bundleId: Schema.optional(Schema.String),
+      icon: Schema.optional(AccessRequestIcon),
+    }),
+  ),
 });
 export type ComputerUseActionResult = typeof ComputerUseActionResult.Type;
 

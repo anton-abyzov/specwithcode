@@ -39,6 +39,11 @@ import { readFile } from "node:fs/promises";
 import { fleetProbeFetch, probeFleetList, renderFleetTable } from "../fleet/fleetListTable.ts";
 import { makeFleetLink } from "../fleet/fleetTransport.ts";
 import {
+  StudioFleetDiskRoomFullRead,
+  StudioFleetUpdateVersion,
+} from "@specweave-studio/contracts/studioFleet";
+import { runFleetDiskRoom } from "../fleet/fleetDiskRoom.ts";
+import {
   type FleetUpdateAction,
   FleetUpdateFailure,
   legacySelfUpdateOverSocket,
@@ -606,6 +611,122 @@ const updateCommand = Command.make("update", {
   ),
 );
 
+const isReleaseVersion = Schema.is(StudioFleetUpdateVersion);
+const isFullReadList = Schema.is(StudioFleetDiskRoomFullRead);
+
+/** The `fleet room` version and FULL_READ list, or why the flags do not make one. */
+export function fleetDiskRoomAskOf(flags: {
+  readonly version: Option.Option<string>;
+  readonly fullRead: string;
+}): { readonly version: string; readonly fullRead: string } | string {
+  const version = Option.getOrUndefined(flags.version)?.trim() ?? "";
+  if (!isReleaseVersion(version))
+    return "--version is required: the exact release to check for (X.Y.Z).";
+  const fullRead = flags.fullRead.trim();
+  if (!isFullReadList(fullRead))
+    return "--full-read is the target release's FULL_READ migration numbers, like 69,73, or none.";
+  return { version, fullRead };
+}
+
+/** A human line for one `fleet room` report. */
+export function describeFleetDiskRoom(label: string, report: Record<string, unknown>): string {
+  const via = report.transport === "connect" ? "over SpecWithCode Connect" : "over Tailscale";
+  const gib = (value: unknown) =>
+    typeof value === "number" ? `${(value / 1024 ** 3).toFixed(1)} GiB` : "unknown";
+  return `${label} ${report.ok === true ? "has room" : "is short of disk"} for ${String(report.version)}: ${gib(report.freeBytes)} free, ${gib(report.needBytes)} needed on ${String(report.volume ?? "its volume")}, reached ${via}.`;
+}
+
+const roomCommand = Command.make("room", {
+  baseDir: baseDirFlag,
+  machine: Argument.String("machine").pipe(
+    Argument.withDescription("The machine's id or name, as `fleet list` shows it."),
+  ),
+  version: Flag.String("version").pipe(
+    Flag.withDescription("The release (X.Y.Z) whose update the machine checks its disk for."),
+    Flag.optional,
+  ),
+  fullRead: Flag.String("full-read").pipe(
+    Flag.withDescription(
+      "That release's FULL_READ migration numbers, comma-separated (69,73), or none.",
+    ),
+    Flag.withDefault("none"),
+  ),
+  connectOnly: Flag.Boolean("connect-only").pipe(
+    Flag.withDescription("Use only the SpecWithCode Connect address for this operation."),
+    Flag.withDefault(false),
+  ),
+  json: Flag.Boolean("json").pipe(
+    Flag.withDescription(
+      "Print one JSON line, shaped like disk_room.py's, and exit 1 when no report came back.",
+    ),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "On the primary machine: ask another machine how much disk its update to a release needs, with the management token saved for it. A machine short of disk is a report, not a failure.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const fail = (reason: string, error: string): Effect.Effect<void, FleetCommandError> =>
+        flags.json
+          ? Console.log(encodeJsonLine({ error, reason })).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  process.exitCode = 1;
+                }),
+              ),
+            )
+          : Effect.fail(new FleetCommandError({ detail: error }));
+      const ask = fleetDiskRoomAskOf(flags);
+      if (typeof ask === "string") return yield* fail("usage", ask);
+      const baseDir = yield* resolveFleetBaseDir(flags.baseDir);
+      const config = yield* Effect.tryPromise({
+        try: () => readFleetConfig(baseDir),
+        catch: fleetFailure,
+      });
+      const wanted = flags.machine.trim().toLowerCase();
+      const target = config?.machines.find(
+        (machine) => machine.id === wanted || machine.label.trim().toLowerCase() === wanted,
+      );
+      if (target === undefined)
+        return yield* fail(
+          "unknown-machine",
+          `${flags.machine.trim()}: ${new FleetError("unknown-machine").message}`,
+        );
+      const coordinatorEnvironmentId = yield* primaryEnvironmentId(baseDir, flags.baseDir);
+      if (coordinatorEnvironmentId === "")
+        return yield* fail(
+          "unauthorized",
+          `${target.label}: this machine's environment ID could not be read; start its SpecWithCode service, or pass --base-dir.`,
+        );
+      const outcome = yield* Effect.tryPromise({
+        try: () =>
+          runFleetDiskRoom({
+            link: {
+              ...makeFleetLink({ fetch: globalThis.fetch, baseDir }),
+              connectOnly: flags.connectOnly,
+            },
+            target,
+            coordinatorEnvironmentId,
+            version: ask.version,
+            fullRead: ask.fullRead,
+          }),
+        catch: (error) =>
+          error instanceof FleetUpdateFailure
+            ? error
+            : new FleetUpdateFailure("failed", `${target.label}: could not ask for its disk room.`),
+      }).pipe(Effect.result);
+      if (outcome._tag === "Failure")
+        return yield* fail(outcome.failure.reason, outcome.failure.message);
+      yield* Console.log(
+        flags.json
+          ? encodeJsonLine(outcome.success)
+          : describeFleetDiskRoom(target.label, outcome.success),
+      );
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
+  ),
+);
+
 /** Which skill install the `fleet skills` flags ask for, or why they do not make one. */
 export function fleetSkillAskOfFlags(flags: {
   readonly skill: string;
@@ -775,6 +896,7 @@ export const fleetCommand = Command.make("fleet").pipe(
     listCommand,
     removeCommand,
     updateCommand,
+    roomCommand,
     skillsCommand,
   ]),
 );

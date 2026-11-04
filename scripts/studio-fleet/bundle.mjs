@@ -25,6 +25,7 @@ import { sourceVersion } from "../studio-projects/version.mjs";
 import { generateThirdPartyLicenseManifest } from "../lib/third-party-licenses.ts";
 import { runtimePackage } from "./runtime-package.mjs";
 import { MAC_SERVICE_UPDATER_FILES } from "../lib/studio-service-updater.ts";
+import { DISK_ROOM_FILES } from "../lib/studio-disk-room.ts";
 
 assert.equal(process.versions.node.split(".")[0], "22", "Use the supported Node22 toolchain");
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -94,6 +95,15 @@ for (const file of MAC_SERVICE_UPDATER_FILES) {
   assert.ok(
     lstatSync(source).isFile() && !lstatSync(source).isSymbolicLink(),
     "Unsafe updater helper source",
+  );
+  cpSync(source, join(updater, file));
+}
+// The disk room check the fleet primary asks for before a release (fleetDiskRoom.ts).
+for (const file of DISK_ROOM_FILES) {
+  const source = join(root, "scripts/studio-fleet", file);
+  assert.ok(
+    lstatSync(source).isFile() && !lstatSync(source).isSymbolicLink(),
+    "Unsafe disk room helper source",
   );
   cpSync(source, join(updater, file));
 }

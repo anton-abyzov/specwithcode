@@ -691,6 +691,18 @@ extension LiveEngine {
     try await dispatch(command, on: target.environmentId)
   }
 
+  public func answerAccess(_ request: AccessRequestRow, in target: ChatTarget, answer: AccessAnswer) async throws {
+    guard machines[target.environmentId] != nil else { throw SyncError.unknownMachine }
+    let wireAnswer: AccessRequestAnswer = switch answer {
+    case let .allow(scope): .allow(scope: scope == .machine ? .machine : .thread)
+    case .deny: .deny
+    }
+    let payload = try JSONValue.from(AccessAnswerRequestInput(threadId: request.threadId, turnItemId: request.itemId, answer: wireAnswer))
+    _ = try await withRetry(target.environmentId) { socket in
+      try await socket.call(tag: RpcMethod.accessAnswerRequest.rawValue, payload: payload)
+    }
+  }
+
   public func perform(_ action: ThreadAction, on thread: ThreadRef) async throws {
     guard let entry = machines[thread.environmentId] else { throw SyncError.unknownMachine }
     guard entry.canOperate else { throw SyncError.sendBlocked(Self.readOnlyReason) }

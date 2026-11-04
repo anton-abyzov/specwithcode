@@ -557,6 +557,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "thread_created":
       return "zap";
     case "secret_request":
+    case "access_request":
       return "secret";
   }
 }
@@ -615,6 +616,8 @@ function itemSummary(
       return "Thread created";
     case "secret_request":
       return item.label;
+    case "access_request":
+      return item.accessTitle;
     case "dynamic_tool": {
       const classified = classifyToolActivity({
         itemType: "dynamic_tool_call",
@@ -674,6 +677,7 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
     case "thread_created":
       return item.targetThreadId;
     case "secret_request":
+    case "access_request":
       return item.reason || null;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;

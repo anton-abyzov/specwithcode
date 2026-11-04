@@ -44,6 +44,7 @@ export type StudioMcpToolSummaryAction =
   | "question-read"
   | "question-respond"
   | "secret-request"
+  | "access-request"
   | "worktree-handoff"
   | "worktree-list"
   | "worktree-status"
@@ -136,6 +137,7 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "schedule-delete",
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
+  request_access: tool(["Ask for", "Asking for", "Asked for", "access"], "access-request"),
   ask_user: tool(["Ask", "Asking", "Asked", "the user"], "question-respond"),
   create_threads: tool(["Create", "Creating", "Created", "SpecWithCode threads"], "thread-create"),
   studio_thread_start: tool(

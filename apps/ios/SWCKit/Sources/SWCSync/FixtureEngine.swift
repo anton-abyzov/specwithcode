@@ -126,6 +126,8 @@ public final class FixtureEngine: AppEngine {
       switch row.kind {
       case let .approval(_, prompt, _, _, _), let .question(_, prompt, _):
         row.kind = .notice(text: "Previous machine request (historical): " + prompt)
+      case let .access(request):
+        row.kind = .notice(text: "Previous machine request (historical): " + request.title)
       case let .plan(steps):
         row.kind = .plan(steps: steps.map { step in
           var step = step
@@ -402,6 +404,23 @@ public final class FixtureEngine: AppEngine {
     touch(target, preview: "Publishing 3.1.0", activity: .working)
     running.insert(target)
     startReply("Published **3.1.0** to the `next` tag. The release workflow is running; I'll open the release PR once it's green.", in: target)
+  }
+
+  public func answerAccess(_ request: AccessRequestRow, in target: ChatTarget, answer: AccessAnswer) async throws {
+    guard var rows = transcripts[target], let index = rows.firstIndex(where: {
+      if case let .access(row) = $0.kind { row.itemId == request.itemId && row.isPending } else { false }
+    }), case var .access(row) = rows[index].kind else {
+      throw FixtureFailure("This access request was already answered.")
+    }
+    await pause(latency / 3)
+    row.state = switch answer {
+    case .allow(.thread): .allowedInThread
+    case .allow(.machine): .allowedOnMachine
+    case .deny: .denied
+    }
+    rows[index].kind = .access(row)
+    transcripts[target] = rows
+    refresh(target)
   }
 
   public func perform(_ action: ThreadAction, on thread: ThreadRef) async throws {

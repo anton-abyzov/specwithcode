@@ -1402,6 +1402,21 @@ export function isCodexThreadNotLoaded(
   );
 }
 
+/**
+ * Codex could not write the thread to its own store, such as a CODEX_HOME
+ * whose sessions folder is a dangling link: `-32603 "failed to inject response
+ * items: thread-store internal error: File exists (os error 17)"`.
+ */
+export function isCodexThreadStoreFailure(
+  error: unknown,
+): error is CodexErrors.CodexAppServerRequestError {
+  return (
+    isCodexAppServerRequestError(error) &&
+    error.code === -32603 &&
+    error.errorMessage.includes("thread-store internal error")
+  );
+}
+
 export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly modelSelection?: { readonly model: string };
@@ -6745,9 +6760,19 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 // Older app servers reject unknown methods before mutating history.
                 // Transport errors and invalid payloads are ambiguous and must not
                 // fall through to a second delivery in the current user message.
+                // A Codex that cannot save its transcript (a broken sessions folder)
+                // refuses every injection while it still runs turns, so the history
+                // goes inline: at worst duplicated, never a thread that cannot start.
                 Effect.catchTags({
                   CodexAppServerRequestError: (error) =>
-                    error.code === -32601 ? Effect.succeed(false) : Effect.fail(error),
+                    error.code === -32601
+                      ? Effect.succeed(false)
+                      : isCodexThreadStoreFailure(error)
+                        ? Effect.logWarning("orchestration-v2.codex.inject-unsaved", {
+                            nativeThreadId: threadId,
+                            reason: error.errorMessage,
+                          }).pipe(Effect.as(false))
+                        : Effect.fail(error),
                 }),
               );
             }).pipe(

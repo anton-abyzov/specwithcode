@@ -26,6 +26,7 @@ import {
   copilotUsageCacheKey,
   invalidateAcpRegistryCaches,
   withCopilotUsage,
+  readsCopilotUsage,
 } from "./AcpRegistryDriver.ts";
 import { makeCachedCopilotUsageLimits } from "../copilotUsageLimits.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -935,4 +936,13 @@ describe("saveAcpRegistryCredential", () => {
       expect(JSON.stringify(error)).not.toContain("AIza-test-not-a-real-key");
     }).pipe(Effect.provide(ServerSettings.layerTest())),
   );
+});
+
+describe("readsCopilotUsage", () => {
+  it("reads usage for a user-installed Copilot CLI as well as a managed one", () => {
+    expect(readsCopilotUsage({ agentId: "github-copilot-cli" })).toBe(true);
+    const userInstalled = { agentId: "github-copilot-cli", source: "local" };
+    expect(readsCopilotUsage(userInstalled)).toBe(true);
+    expect(readsCopilotUsage({ agentId: "gemini" })).toBe(false);
+  });
 });

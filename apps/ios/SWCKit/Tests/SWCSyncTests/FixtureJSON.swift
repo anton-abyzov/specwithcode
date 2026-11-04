@@ -749,6 +749,46 @@ enum FixtureJSON {
     ]
   },
   {
+    "id": "ti_access",
+    "threadId": "thr_1",
+    "runId": "run_1",
+    "nodeId": null,
+    "providerThreadId": null,
+    "providerTurnId": null,
+    "nativeItemRef": null,
+    "parentItemId": null,
+    "ordinal": 9,
+    "status": "waiting",
+    "title": null,
+    "startedAt": "2026-10-18T06:00:03.000Z",
+    "completedAt": null,
+    "updatedAt": "2026-10-18T06:00:05.123Z",
+    "type": "access_request",
+    "accessTitle": "Use Activity Monitor and iPhone 17 Pro",
+    "reason": "To see what keeps the Mac awake and check the fix on the phone.",
+    "subjects": [
+      {
+        "kind": "app",
+        "key": "app:activity monitor",
+        "label": "Activity Monitor",
+        "detail": "See and control its windows",
+        "icon": {
+          "mimeType": "image/png",
+          "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        }
+      },
+      {
+        "kind": "device",
+        "key": "device:iphone-17-pro",
+        "label": "iPhone 17 Pro",
+        "detail": "Install and drive apps",
+        "hostLabel": "M1",
+        "platform": "ios"
+      }
+    ],
+    "accessStatus": "pending"
+  },
+  {
     "id": "ti_input",
     "threadId": "thr_1",
     "runId": "run_1",

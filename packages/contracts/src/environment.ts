@@ -201,6 +201,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server takes its fleet primary's skill installs at `/api/studio/fleet/skills`.
       Absent on older servers: the primary reports `unsupported` for them. */
   fleetSkillUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server reports its disk room for a release at `/api/studio/fleet/disk-room`.
+      Absent on older servers: the primary reports `unsupported`. */
+  fleetDiskRoom: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.visit / thread.mark-unread commands and
       projects lastVisitedAt on thread shells. Same version-skew contract as
       threadSettlement: clients keep their local visited state against

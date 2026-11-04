@@ -103,6 +103,17 @@ export function AdversarialReviewSettings() {
   const tierWord = review.tier === "frontier" ? "frontier" : "regular";
   // Listing a model is consent to use it, so an agent of unknown billing that
   // the default order passes over stays out of the customized order too.
+  // A project without its own list shows the machine's: say so rather than "this project's".
+  const machineReviewers =
+    representative?.serverConfig?.settings?.adversarialReview?.reviewers ?? [];
+  const ownProjectOrder =
+    isProjectScope &&
+    (reviewers.length !== machineReviewers.length ||
+      reviewers.some(
+        (entry, index) =>
+          entry.instanceId !== machineReviewers[index]?.instanceId ||
+          entry.model !== machineReviewers[index]?.model,
+      ));
   const customized = view.groups
     .filter((group) => !group.primary.unconsented)
     .map((group) => group.primary.selection)
@@ -274,13 +285,23 @@ export function AdversarialReviewSettings() {
             )}
             <p className="text-xs text-muted-foreground">
               {isProjectScope ? (
-                <>
-                  This project&apos;s order. Projects without one use the{" "}
-                  <button type="button" className={linkClassName} onClick={openAppWideOrder}>
-                    app-wide reviewer order
-                  </button>
-                  .{" "}
-                </>
+                ownProjectOrder ? (
+                  <>
+                    This project&apos;s own order; reset it to use the{" "}
+                    <button type="button" className={linkClassName} onClick={openAppWideOrder}>
+                      app-wide reviewer order
+                    </button>
+                    .{" "}
+                  </>
+                ) : (
+                  <>
+                    Uses the{" "}
+                    <button type="button" className={linkClassName} onClick={openAppWideOrder}>
+                      app-wide reviewer order
+                    </button>
+                    ; customize to give this project its own.{" "}
+                  </>
+                )
               ) : (
                 <>App-wide for this machine; a project can set its own in its settings. </>
               )}

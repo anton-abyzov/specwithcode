@@ -8,6 +8,7 @@ import {
   CheckpointScopeId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2PendingAccessRequest,
   type OrchestrationV2ProviderThread,
   NodeId,
   ProjectId,
@@ -3282,6 +3283,87 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           status === "completed" || status === "rolled_back" ? null : "secret:b",
         );
       }
+    }),
+  );
+
+  it.effect("reports a waiting access request as a permission with what it asks for", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const suffix = "shell-pending-access";
+      const threadId = yield* addRolledBackRecoveryCandidate(suffix);
+      const runId = RunId.make(`run:${suffix}:rolled-back`);
+      const nodeId = NodeId.make(`node:${suffix}:rolled-back`);
+      const now = yield* DateTime.now;
+      yield* projectionStore.apply({
+        id: EventId.make("event:access:a"),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("turn-item:access-request:a"),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 2,
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "access_request",
+          accessTitle: "Use SpecWithCode",
+          reason: "Capture screenshots for the showcase.",
+          subjects: [
+            {
+              kind: "app",
+              key: "app:specwithcode",
+              label: "SpecWithCode",
+              detail: "See and control its windows",
+              hostLabel: "M4",
+              icon: { mimeType: "image/png", data: "iVBORw0KGgo=" },
+            },
+            {
+              kind: "device",
+              key: "device:iphone",
+              label: "iPhone 17 Pro",
+              detail: "Drive the simulator",
+              platform: "ios",
+            },
+          ],
+          accessStatus: "pending",
+        },
+      });
+      yield* sql`
+        UPDATE orchestration_v2_projection_runs
+        SET status = 'running', payload_json = json_set(payload_json, '$.status', 'running')
+        WHERE run_id = ${runId}
+      `;
+      const expected: OrchestrationV2PendingAccessRequest = {
+        accessTitle: "Use SpecWithCode",
+        reason: "Capture screenshots for the showcase.",
+        subjects: [
+          { kind: "app", label: "SpecWithCode", hostLabel: "M4" },
+          { kind: "device", label: "iPhone 17 Pro" },
+        ],
+      };
+      const shell = yield* projectionStore.getShellSnapshot();
+      const thread = shell.threads.find((candidate) => candidate.id === threadId);
+      assert.equal(thread?.pendingRuntimeRequest?.id, "turn-item:access-request:a");
+      assert.equal(thread?.pendingRuntimeRequest?.kind, "permission");
+      assert.deepEqual(thread?.pendingRuntimeRequest?.access, expected);
+
+      const projected = ProjectionStore.threadShellFromProjection(
+        yield* projectionStore.getThreadProjection(threadId),
+      );
+      assert.deepEqual(projected.pendingRuntimeRequest?.access, expected);
     }),
   );
 

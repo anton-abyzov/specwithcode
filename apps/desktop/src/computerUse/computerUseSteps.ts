@@ -391,6 +391,8 @@ export function actionSteps(action: ComputerUseAction, display: DisplayGeometry)
     case "screenshot":
     case "type":
     case "open":
+    case "appInfo":
+    case "appAt":
       return [];
   }
 }
@@ -429,5 +431,187 @@ function run(argv) {
   }
   var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   return JSON.stringify({ frontmostApplication: front.isNil() ? null : front.localizedName.js });
+}
+`;
+
+/** One on-screen window as `JXA_WINDOWS_SCRIPT` reports it, front to back. */
+export interface ScreenWindow {
+  readonly owner: string | null;
+  readonly layer: number;
+  readonly alpha: number;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A display as `JXA_WINDOWS_SCRIPT` reports it, in global display points. */
+export interface ScreenArea {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface ScreenDisplay {
+  readonly frame: ScreenArea;
+  /** The frame without the menu bar and the Dock. */
+  readonly visible: ScreenArea;
+}
+
+/** What `JXA_WINDOWS_SCRIPT` reports: the windows front to back, the displays and the frontmost app. */
+export interface ScreenScene {
+  readonly frontmost?: string | null | undefined;
+  readonly windows: ReadonlyArray<ScreenWindow>;
+  readonly screens?: ReadonlyArray<ScreenDisplay> | undefined;
+}
+
+/** The owner of the menu bar and of system overlays such as the cursor. */
+const WINDOW_SERVER = "Window Server";
+/** kCGMainMenuWindowLevel and kCGStatusWindowLevel: the menu bar. */
+const MENU_BAR_LAYERS: ReadonlySet<number> = new Set([24, 25]);
+const DOCK = "Dock";
+
+const contains = (area: ScreenArea, point: { readonly x: number; readonly y: number }) =>
+  point.x >= area.x &&
+  point.x < area.x + area.width &&
+  point.y >= area.y &&
+  point.y < area.y + area.height;
+
+const sameArea = (a: ScreenArea, b: ScreenArea) =>
+  a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
+const named = (name: string | null | undefined) => {
+  const trimmed = name?.trim();
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
+};
+
+/**
+ * The app a click at a display point reaches: the owner of the topmost visible
+ * window there, at any layer, so the Dock, Notification Center and banners
+ * count as themselves. Two system cases are read differently:
+ * - the menu bar belongs to Window Server and shows the frontmost app's menus,
+ *   so it counts as the frontmost app; other Window Server windows (the
+ *   cursor, screen shields) take no clicks and are passed over;
+ * - the Dock spans its whole display in one see-through window, so it counts
+ *   only outside that display's visible frame, where the Dock is drawn.
+ * Undefined when it cannot tell.
+ */
+export function applicationAtPoint(
+  scene: ScreenScene,
+  point: { readonly x: number; readonly y: number },
+): string | undefined {
+  for (const window of scene.windows) {
+    if (!(window.alpha > 0) || !contains(window, point)) continue;
+    const owner = named(window.owner);
+    if (owner === WINDOW_SERVER) {
+      if (MENU_BAR_LAYERS.has(window.layer)) return named(scene.frontmost);
+      continue;
+    }
+    if (owner === DOCK && window.layer !== 0) {
+      const display = scene.screens?.find((screen) => sameArea(screen.frame, window));
+      if (display !== undefined) {
+        // Above the visible frame is the menu bar's strip; inside it, the windows below.
+        if (contains(display.visible, point) || point.y < display.visible.y) continue;
+        return DOCK;
+      }
+    }
+    return owner;
+  }
+  return undefined;
+}
+
+/**
+ * Lists on-screen windows front to back (CGWindowListCopyWindowInfo with
+ * on-screen-only and no desktop elements) and the displays, in the global
+ * display points a click is posted at, with the frontmost app. Owner names
+ * need no Screen Recording permission.
+ */
+export const JXA_WINDOWS_SCRIPT = `
+ObjC.import("CoreGraphics");
+ObjC.import("AppKit");
+function area(rect, primaryHeight) {
+  return {
+    x: Number(rect.origin.x),
+    y: primaryHeight - Number(rect.origin.y) - Number(rect.size.height),
+    width: Number(rect.size.width),
+    height: Number(rect.size.height)
+  };
+}
+function run() {
+  var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
+  var windows = [];
+  for (var i = 0; i < list.length; i++) {
+    var w = list[i];
+    var b = w.kCGWindowBounds || {};
+    windows.push({
+      owner: w.kCGWindowOwnerName || null,
+      layer: Number(w.kCGWindowLayer),
+      alpha: w.kCGWindowAlpha === undefined ? 1 : Number(w.kCGWindowAlpha),
+      x: Number(b.X), y: Number(b.Y), width: Number(b.Width), height: Number(b.Height)
+    });
+  }
+  var screens = [];
+  var all = $.NSScreen.screens;
+  if (all.count > 0) {
+    var primaryHeight = Number(all.objectAtIndex(0).frame.size.height);
+    for (var j = 0; j < all.count; j++) {
+      var screen = all.objectAtIndex(j);
+      screens.push({ frame: area(screen.frame, primaryHeight), visible: area(screen.visibleFrame, primaryHeight) });
+    }
+  }
+  var front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  return JSON.stringify({
+    frontmost: front.isNil() ? null : front.localizedName.js,
+    windows: windows,
+    screens: screens
+  });
+}
+`;
+
+/**
+ * The name an app goes by while it runs, the one the access gate sees as the
+ * frontmost app or a window's owner: its running name (NSRunningApplication
+ * localizedName), else the bundle's display name, its bundle name, its file
+ * name, and last the name it was asked for.
+ */
+export function applicationName(input: {
+  readonly requested: string;
+  readonly runningName?: string | undefined;
+  readonly displayName?: string | undefined;
+  readonly bundleName?: string | undefined;
+  readonly fileName?: string | undefined;
+}): string {
+  for (const candidate of [
+    input.runningName,
+    input.displayName,
+    input.bundleName,
+    input.fileName,
+  ]) {
+    const name = candidate?.trim();
+    if (name !== undefined && name !== "") return name;
+  }
+  return input.requested.trim() || input.requested;
+}
+
+/**
+ * The localizedName of a running app, matched by bundle id (argv[0]) or
+ * bundle path (argv[1]); an empty string when it is not running.
+ */
+export const JXA_RUNNING_APP_NAME_SCRIPT = `
+ObjC.import("AppKit");
+function run(argv) {
+  var bundleId = argv[0] || "";
+  var bundlePath = argv[1] || "";
+  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+  for (var i = 0; i < apps.count; i++) {
+    var app = apps.objectAtIndex(i);
+    var id = app.bundleIdentifier;
+    var url = app.bundleURL;
+    var byId = bundleId !== "" && !id.isNil() && id.js === bundleId;
+    var byPath = bundlePath !== "" && !url.isNil() && url.path.js === bundlePath;
+    if (byId || byPath) return app.localizedName.isNil() ? "" : app.localizedName.js;
+  }
+  return "";
 }
 `;

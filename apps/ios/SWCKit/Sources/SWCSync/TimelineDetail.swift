@@ -152,10 +152,11 @@ extension TranscriptRow {
   var isUser: Bool { if case .user = kind { true } else { false } }
   var isAssistant: Bool { if case .assistant = kind { true } else { false } }
   var isReasoning: Bool { if case .reasoning = kind { true } else { false } }
-  /// An approval or question still waiting for the person.
+  /// An approval, question or access request still waiting for the person.
   var awaitsAnswer: Bool {
     switch kind {
     case .approval(_, _, resolved: false, _, _), .question(_, _, resolved: false): true
+    case let .access(request): request.awaitsAnswerHere
     default: false
     }
   }

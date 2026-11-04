@@ -71,6 +71,69 @@ test("runtime and desktop package the complete executable managed helper graph",
   }
 });
 
+test("runtime packages the disk room check with every module it imports", () => {
+  const read = (file) => readFileSync(new URL(`../lib/${file}`, import.meta.url), "utf8");
+  const agent = [...read("studio-service-updater.ts").matchAll(/"([a-z_]+\.py)"/g)].map(
+    (match) => match[1],
+  );
+  const room = [...read("studio-disk-room.ts").matchAll(/"([a-z_]+\.py)"/g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(
+    room.filter((name) => agent.includes(name)),
+    [],
+    "the disk room list adds only files the agent list lacks",
+  );
+  const fleet = new URL("./", import.meta.url);
+  const local = new Set(readdirSync(fleet).filter((name) => name.endsWith(".py")));
+  const required = new Set();
+  const pending = ["disk_room.py"];
+  while (pending.length) {
+    const name = pending.pop();
+    if (required.has(name)) continue;
+    required.add(name);
+    const content = readFileSync(new URL(name, fleet), "utf8");
+    for (const match of content.matchAll(/^(?:import|from) ([a-z_]+)\b/gm)) {
+      if (local.has(`${match[1]}.py`)) pending.push(`${match[1]}.py`);
+    }
+  }
+  const shipped = [...new Set([...agent, ...room])];
+  for (const name of required) assert.ok(shipped.includes(name), `${name} is not shipped`);
+  assert.deepEqual(
+    room.toSorted(),
+    [...required].filter((name) => !agent.includes(name)).toSorted(),
+    "the disk room list is exactly what its closure needs beyond the agent files",
+  );
+  const bundle = readFileSync(new URL("./bundle.mjs", import.meta.url), "utf8");
+  assert.match(bundle, /import \{ DISK_ROOM_FILES \} from/);
+  assert.match(bundle, /for \(const file of DISK_ROOM_FILES\)/);
+  assert.ok(
+    bundle.indexOf("for (const file of DISK_ROOM_FILES)") < bundle.indexOf("indexTree(output);"),
+    "disk room copies must precede the archive's hashed file inventory",
+  );
+  const isolated = mkdtempSync(join(tmpdir(), "studio-disk-room-graph-"));
+  try {
+    for (const name of required) cpSync(new URL(name, fleet), join(isolated, name));
+    const help = execFileSync(
+      "/usr/bin/python3",
+      ["-B", "-E", "-s", join(isolated, "disk_room.py"), "--help"],
+      {
+        cwd: isolated,
+        encoding: "utf8",
+        env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" },
+      },
+    );
+    assert.match(help, /--full-read/);
+    assert.deepEqual(
+      readdirSync(isolated).toSorted(),
+      [...required].toSorted(),
+      "disk room import creates no cache or state",
+    );
+  } finally {
+    rmSync(isolated, { recursive: true, force: true });
+  }
+});
+
 test("bundle verification rejects a runtime package without the specwithcode bin", () => {
   // The 0.2.6 bundle shape: only the identity name was registered.
   assert.throws(

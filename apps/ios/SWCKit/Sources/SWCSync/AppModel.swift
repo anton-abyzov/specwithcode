@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SWCWire
 
 // The UI contract. SwiftUI views read `AppModel` and `ChatSession` only; they
 // never see wire types, sockets or reducers. An `AppEngine` fills the model:
@@ -225,6 +226,8 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var isDone = false
   /// What it is waiting on other than the person ("Waiting for CI"); it counts as working.
   public var waitReason: String?
+  /// It waits for the person to allow access to apps, devices, machines or folders.
+  public var asksForAccess = false
   /// When the current run started, for "2m" style elapsed labels.
   public var workStartedAt: Date?
   public var isPinned: Bool
@@ -320,6 +323,8 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
     /// the provider's choices, empty for the default accept and decline.
     case approval(requestId: String, prompt: String, resolved: Bool, kind: String? = nil, options: [ApprovalChoice] = [])
     case question(requestId: String, prompt: String, resolved: Bool)
+    /// The agent asks to use apps, devices, machines or folders. One answer covers them all.
+    case access(AccessRequestRow)
     case subagent(title: String, child: ThreadRef?, isRunning: Bool = false)
     case error(message: String)
     case notice(text: String)
@@ -344,6 +349,90 @@ extension TranscriptRow {
 }
 
 public enum ApprovalDecision: String, Sendable { case approve, approveForSession, approveAlways, deny, cancel }
+
+/// An access request card: what the agent asks to use and where the answer stands.
+public struct AccessRequestRow: Hashable, Sendable {
+  public enum State: String, Hashable, Sendable {
+    case pending, allowedInThread, allowedOnMachine, denied, ended
+  }
+
+  public struct Subject: Hashable, Sendable, Identifiable {
+    public var id: String { key }
+    /// `app`, `device`, `machine` or `folder`; kept open for newer servers.
+    public var kind: String
+    public var key: String
+    public var label: String
+    public var detail: String
+    public var hostLabel: String?
+    /// `ios` or `android`, for a device.
+    public var platform: String?
+    /// The subject's own PNG icon, when the server sent one.
+    public var iconPNG: Data?
+
+    public init(kind: String, key: String, label: String, detail: String, hostLabel: String? = nil, platform: String? = nil, iconPNG: Data? = nil) {
+      self.kind = kind
+      self.key = key
+      self.label = label
+      self.detail = detail
+      self.hostLabel = hostLabel
+      self.platform = platform
+      self.iconPNG = iconPNG
+    }
+  }
+
+  /// The thread that holds the turn item; the answer is addressed to it.
+  public var threadId: String
+  public var itemId: String
+  public var title: String
+  public var reason: String
+  public var subjects: [Subject]
+  public var state: State
+  /// Inherited from the thread this one was forked from: it is answered
+  /// there, so this chat shows a line instead of the card.
+  public var isInherited: Bool
+
+  public init(threadId: String, itemId: String, title: String, reason: String, subjects: [Subject], state: State, isInherited: Bool = false) {
+    self.threadId = threadId
+    self.itemId = itemId
+    self.title = title
+    self.reason = reason
+    self.subjects = subjects
+    self.state = state
+    self.isInherited = isInherited
+  }
+
+  public var isPending: Bool { state == .pending }
+
+  /// Waiting for an answer in this chat; an inherited request waits in the original thread.
+  public var awaitsAnswerHere: Bool { isPending && !isInherited }
+
+  var copyNames: [AccessRequestCopy.SubjectName] { subjects.map { .init(kind: $0.kind, label: $0.label) } }
+
+  /// "Claude wants to use Notes"; "The agent wants …" without a name.
+  public func headline(agent: String?) -> String { AccessRequestCopy.headline(agentLabel: agent, subjects: copyNames) }
+
+  /// What Allow lets the agent do, in one line.
+  public var note: String { AccessRequestCopy.note(copyNames) }
+
+  /// The pill on a subject's chip.
+  public func tag(for subject: Subject) -> String {
+    AccessRequestCopy.subjectTag(.init(kind: subject.kind, label: subject.label))
+  }
+}
+
+/// How long an Allow on an access request lasts.
+public enum AccessScope: String, Hashable, Sendable, CaseIterable {
+  /// This thread only.
+  case thread
+  /// Every thread on this machine, until taken back in Settings.
+  case machine
+}
+
+/// The answer to an access request card.
+public enum AccessAnswer: Hashable, Sendable {
+  case allow(AccessScope)
+  case deny
+}
 
 /// One choice a provider offers on an approval, with its own label.
 public struct ApprovalChoice: Hashable, Sendable {
@@ -503,6 +592,8 @@ public protocol AppEngine: AnyObject {
   /// Stops the active run and holds the queue.
   func stop(_ target: ChatTarget) async throws
   func respond(to requestId: String, in target: ChatTarget, decision: ApprovalDecision) async throws
+  /// Answers an access request card with `access.answerRequest`.
+  func answerAccess(_ request: AccessRequestRow, in target: ChatTarget, answer: AccessAnswer) async throws
 
   func perform(_ action: ThreadAction, on thread: ThreadRef) async throws
   func handoffOptions(for thread: ThreadRef) async throws -> HandoffOptions

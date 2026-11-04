@@ -382,6 +382,7 @@ import {
 } from "@specweave-studio/client-runtime/handoff";
 import { ThinkingMark } from "./ThinkingMark";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { AccessRequestCard, accessAgentLabel } from "./AccessRequestCard";
 import { ThreadDecisionCard } from "./ThreadDecisionCard";
 import { linkifyQuestionPaths } from "./questionCard.logic";
 
@@ -3635,6 +3636,23 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
         environmentId={ctx.activeThreadEnvironmentId}
         item={item}
         visibility={visibility}
+      />
+    );
+  }
+  if (item.type === "access_request") {
+    return (
+      <AccessRequestCard
+        item={item}
+        visibility={visibility}
+        agentLabel={accessAgentLabel(
+          ctx.providerStatuses.find(
+            (provider) =>
+              provider.instanceId ===
+              (item.runId === null
+                ? ctx.threadProviderInstanceId
+                : ctx.runs.find((run) => run.id === item.runId)?.providerInstanceId),
+          ),
+        )}
       />
     );
   }

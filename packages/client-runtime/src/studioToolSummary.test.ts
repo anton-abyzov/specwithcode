@@ -44,6 +44,22 @@ describe("summarizeStudioToolCalls", () => {
     ).toEqual({ label, failedCount: 0 });
   });
 
+  it("names the apps and devices an access request asked for", () => {
+    expect(
+      summarizeStudioToolCalls("access-request", [
+        completed(
+          { reason: "To take notes.", apps: ["Notes"], devices: [{ deviceId: "iPhone 17 Pro" }] },
+          { status: "allowed", allowed: ["Notes", "iPhone 17 Pro"] },
+        ),
+      ]).label,
+    ).toBe("Asked for access: Notes, iPhone 17 Pro");
+    expect(
+      summarizeStudioToolCalls("access-request", [
+        { input: { reason: "To look." }, output: undefined, outcome: "unfinished" },
+      ]).label,
+    ).toBe("Tried to ask for access");
+  });
+
   it("says how often a thread searched and read project knowledge", () => {
     const calls = [completed({ query: "storage" }), completed({ query: "index" })];
     expect(summarizeStudioToolCalls("knowledge-search", calls).label).toBe(

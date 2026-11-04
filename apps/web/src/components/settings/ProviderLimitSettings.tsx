@@ -25,6 +25,7 @@ import {
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useT, type Translate } from "../../i18n";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import {
   AlertDialog,
@@ -63,11 +64,13 @@ import {
 /** Settings describe the order with no thread running, so no instance is "the thread's own". */
 const NO_THREAD_INSTANCE = "__fallback-order__" as ModelSelection["instanceId"];
 
-const ACTION_LABELS: Record<ProviderLimitAction, string> = {
-  ask: "Offer the fallback",
-  wait: "Wait for the reset",
-  switch: "Switch automatically",
-};
+const PROVIDER_LIMIT_ACTIONS: ReadonlyArray<ProviderLimitAction> = ["ask", "wait", "switch"];
+const actionLabel = (t: Translate, action: ProviderLimitAction) =>
+  action === "ask"
+    ? t("limitSettings.action.ask")
+    : action === "wait"
+      ? t("limitSettings.action.wait")
+      : t("limitSettings.action.switch");
 const SWITCH_AT_OPTIONS = [
   "off",
   "50",
@@ -82,16 +85,17 @@ const SWITCH_AT_OPTIONS = [
   "99",
 ] as const;
 /** The stored threshold is a used share; the label names what is left at that point. */
-const switchAtLabel = (value: string) => `At ${100 - Number(value)}% left`;
+const switchAtLabel = (t: Translate, value: string) =>
+  t("limitSettings.switchAtOption", { percent: 100 - Number(value) });
 const WAIT_UNDER_OPTIONS = ["0", "15", "30", "60", "120"] as const;
-const waitUnderLabel = (value: string) =>
+const waitUnderLabel = (t: Translate, value: string) =>
   value === "0"
-    ? "Never wait"
+    ? t("limitSettings.waitOption.never")
     : value === "60"
-      ? "Under 1 hour"
+      ? t("limitSettings.waitOption.hour")
       : value === "120"
-        ? "Under 2 hours"
-        : `Under ${value} min`;
+        ? t("limitSettings.waitOption.twoHours")
+        : t("limitSettings.waitOption.minutes", { minutes: value });
 
 /**
  * What a thread does when its provider runs out of usage. Every row is
@@ -99,6 +103,7 @@ const waitUnderLabel = (value: string) =>
  * another waits for the reset.
  */
 export function ProviderLimitSettings() {
+  const t = useT();
   const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -196,11 +201,11 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitAction"]}
         mixed={mixedAction}
         id="provider-limit-action"
-        title="When a provider runs out"
+        title={t("limitSettings.action.title")}
         description={
           isProjectScope
-            ? "What this project's threads do when their provider hits a usage limit. Switching hands the thread over with its context, in the same worktree."
-            : "What threads do when their provider hits a usage limit. Projects can override it."
+            ? t("limitSettings.action.descriptionProject")
+            : t("limitSettings.action.description")
         }
         resetAction={
           settings.providerLimitAction !== "switch" ? (
@@ -218,19 +223,19 @@ export function ProviderLimitSettings() {
                 updateSettings({ providerLimitAction: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="When a provider runs out">
+            <SelectTrigger size="sm" aria-label={t("limitSettings.action.title")}>
               <SelectValue>
                 {(value: string | null) =>
                   value === "ask" || value === "wait" || value === "switch"
-                    ? ACTION_LABELS[value]
-                    : "Mixed"
+                    ? actionLabel(t, value)
+                    : t("limitSettings.mixed")
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {(Object.keys(ACTION_LABELS) as ProviderLimitAction[]).map((action) => (
+              {PROVIDER_LIMIT_ACTIONS.map((action) => (
                 <SelectItem key={action} value={action}>
-                  {ACTION_LABELS[action]}
+                  {actionLabel(t, action)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -242,21 +247,21 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitFallbackModels", "providerLimitFallbackModelSelection"]}
         mixed={mixedFallback}
         id="provider-limit-fallback"
-        title="Fallback order"
-        description={`The models a limited thread continues on, best first. The first one that is signed in and has room takes the thread; a thread already on one skips it, so Codex threads can fall back to Claude from the same list. ${
-          tierCount > 0
-            ? "Leave it empty to follow your model tiers instead; a list here replaces them for limits. "
-            : ""
-        }${
+        title={t("limitSettings.order.title")}
+        description={[
+          t("limitSettings.order.description"),
+          tierCount > 0 ? t("limitSettings.order.descriptionTiers") : null,
           settings.providerLimitFallbackListOnly && chainSet
-            ? "When none of these has room, the thread waits."
-            : "After these, SpecWithCode tries any other ready provider."
-        }`}
+            ? t("limitSettings.order.descriptionWaits")
+            : t("limitSettings.order.descriptionAny"),
+        ]
+          .filter((part) => part !== null)
+          .join(t("common.sentenceSpace"))}
         status={
           fallbackOrder.length === 0 && !mixedFallback
             ? usesTiers
-              ? "Uses your model tiers"
-              : "Any ready provider"
+              ? t("limitSettings.order.statusTiers")
+              : t("limitSettings.order.statusAny")
             : undefined
         }
         resetAction={
@@ -273,15 +278,19 @@ export function ProviderLimitSettings() {
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              triggerLabel={mixedFallback ? "Mixed" : "Add model"}
-              triggerAriaLabel="Add a fallback model"
+              triggerLabel={
+                mixedFallback ? t("limitSettings.mixed") : t("limitSettings.order.addModel")
+              }
+              triggerAriaLabel={t("limitSettings.order.addAria")}
               disabled={fallbackOrder.length >= MAX_FALLBACK_MODELS}
               onInstanceModelChange={(instanceId, model) =>
                 saveFallbackOrder(addFallbackEntry(fallbackOrder, instanceId, model))
               }
             />
           ) : (
-            <span className="text-sm text-muted-foreground">No providers available</span>
+            <span className="text-sm text-muted-foreground">
+              {t("limitSettings.order.noProviders")}
+            </span>
           )
         }
       >
@@ -298,10 +307,12 @@ export function ProviderLimitSettings() {
           settingKeys={["providerLimitFallbackListOnly"]}
           mixed={mixedListOnly}
           id="provider-limit-fallback-list-only"
-          title="Only these models"
-          description={`Never continue a limited thread on a model outside ${
-            usesTiers ? "your model tiers" : "the fallback order"
-          }. When none of them has room, the thread waits for its reset.`}
+          title={t("limitSettings.listOnly.title")}
+          description={
+            usesTiers
+              ? t("limitSettings.listOnly.descriptionTiers")
+              : t("limitSettings.listOnly.descriptionOrder")
+          }
           resetAction={
             settings.providerLimitFallbackListOnly ? (
               <SettingResetButton
@@ -316,7 +327,7 @@ export function ProviderLimitSettings() {
               onCheckedChange={(checked) =>
                 updateSettings({ providerLimitFallbackListOnly: Boolean(checked) })
               }
-              aria-label="Only these models"
+              aria-label={t("limitSettings.listOnly.title")}
             />
           }
         />
@@ -326,12 +337,12 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitExcludedModels"]}
         mixed={mixedExcluded}
         id="provider-limit-options"
-        title="Where a limited thread can continue"
-        description="The models on this machine a limited thread could move to, folded by family and grouped by provider, with older versions tucked away. Exclude a model to keep it out of automatic fallback; to set a family's minimum, exclude the models below it."
+        title={t("limitSettings.options.title")}
+        description={t("limitSettings.options.description")}
         status={
           excludedModels.length === 0 && !mixedExcluded
-            ? "Nothing excluded"
-            : `${excludedModels.length} excluded`
+            ? t("limitSettings.options.none")
+            : t("limitSettings.options.count", { count: excludedModels.length })
         }
         resetAction={
           excludedModels.length > 0 ? (
@@ -360,8 +371,8 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitSwitchAtPercent"]}
         mixed={mixedSwitchAt}
         id="provider-limit-switch-at"
-        title="Switch before the limit"
-        description="With Switch automatically, the next turn starts on the fallback once the provider's lowest usage window has only this much left. With Offer the fallback, the thread suggests the switch at this point instead. Never mid-turn, and only to a provider with more left."
+        title={t("limitSettings.switchAt.title")}
+        description={t("limitSettings.switchAt.description")}
         resetAction={
           switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
             <SettingResetButton
@@ -383,21 +394,21 @@ export function ProviderLimitSettings() {
                 updateSettings({ providerLimitSwitchAtPercent: Number(value) });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Switch before the limit">
+            <SelectTrigger size="sm" aria-label={t("limitSettings.switchAt.title")}>
               <SelectValue>
                 {(value: string | null) =>
                   value === "off"
-                    ? "Only when it stops"
+                    ? t("limitSettings.switchAt.off")
                     : value === null
-                      ? "Mixed"
-                      : switchAtLabel(value)
+                      ? t("limitSettings.mixed")
+                      : switchAtLabel(t, value)
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {SWITCH_AT_OPTIONS.map((option) => (
                 <SelectItem key={option} value={option}>
-                  {option === "off" ? "Only when it stops" : switchAtLabel(option)}
+                  {option === "off" ? t("limitSettings.switchAt.off") : switchAtLabel(t, option)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -409,8 +420,8 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitWaitUnderMinutes"]}
         mixed={mixedWaitUnder}
         id="provider-limit-wait-under"
-        title="Wait when the reset is close"
-        description="When the usage that reached the limit or the threshold resets within this time, nothing switches, redeems or spends: the thread waits and resumes on the same provider at the reset. A weekly window that is also full keeps the wait from applying."
+        title={t("limitSettings.waitUnder.title")}
+        description={t("limitSettings.waitUnder.description")}
         resetAction={
           settings.providerLimitWaitUnderMinutes !== DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES ? (
             <SettingResetButton
@@ -431,15 +442,17 @@ export function ProviderLimitSettings() {
                 updateSettings({ providerLimitWaitUnderMinutes: Number(value) });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Wait when the reset is close">
+            <SelectTrigger size="sm" aria-label={t("limitSettings.waitUnder.title")}>
               <SelectValue>
-                {(value: string | null) => (value === null ? "Mixed" : waitUnderLabel(value))}
+                {(value: string | null) =>
+                  value === null ? t("limitSettings.mixed") : waitUnderLabel(t, value)
+                }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {WAIT_UNDER_OPTIONS.map((option) => (
                 <SelectItem key={option} value={option}>
-                  {waitUnderLabel(option)}
+                  {waitUnderLabel(t, option)}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -451,8 +464,8 @@ export function ProviderLimitSettings() {
         settingKeys={["autoApproveSubscriptionChange"]}
         mixed={mixedSubscriptionChange}
         id="provider-limit-auto-approve-subscription-change"
-        title="Continue on a new subscription automatically"
-        description="When a thread with auto-continue on is waiting on a limit and its CLI is signed in to another subscription that has room, continue the thread there without asking. Off, or with auto-continue off: the thread shows the change and waits for you to confirm it. The provider and model stay the same."
+        title={t("limitSettings.subscription.title")}
+        description={t("limitSettings.subscription.description")}
         resetAction={
           settings.autoApproveSubscriptionChange === false ? (
             <SettingResetButton
@@ -464,7 +477,7 @@ export function ProviderLimitSettings() {
         }
         control={
           <Switch
-            aria-label="Continue on a new subscription automatically"
+            aria-label={t("limitSettings.subscription.title")}
             mixed={mixedSubscriptionChange}
             checked={
               mixedSubscriptionChange ? false : settings.autoApproveSubscriptionChange !== false
@@ -480,8 +493,8 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitRedeemResets"]}
         mixed={mixedRedeem}
         id="provider-limit-redeem-resets"
-        title="Redeem a banked reset first"
-        description="When a turn stops on the limit and a fresh usage read confirms the account is at it, use one of the account's banked resets (Claude and Codex grant them) and continue on the same provider before any fallback. At most one per limit window, never while limits are simulated."
+        title={t("limitSettings.redeem.title")}
+        description={t("limitSettings.redeem.description")}
         resetAction={
           settings.providerLimitRedeemResets ? (
             <SettingResetButton
@@ -493,7 +506,7 @@ export function ProviderLimitSettings() {
         }
         control={
           <Switch
-            aria-label="Redeem a banked reset first"
+            aria-label={t("limitSettings.redeem.title")}
             mixed={mixedRedeem}
             checked={mixedRedeem ? false : settings.providerLimitRedeemResets}
             onCheckedChange={(enabled) => {
@@ -508,8 +521,8 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitSpendCredits"]}
         mixed={mixedSpend}
         id="provider-limit-spend-credits"
-        title="Spend Codex credits first"
-        description="When a Codex turn stops on the plan limit and the account holds paid credits, continue that turn on credits before any fallback. SpecWithCode never buys credits or changes automatic reload."
+        title={t("limitSettings.spend.title")}
+        description={t("limitSettings.spend.description")}
         resetAction={
           settings.providerLimitSpendCredits ? (
             <SettingResetButton
@@ -521,7 +534,7 @@ export function ProviderLimitSettings() {
         }
         control={
           <Switch
-            aria-label="Spend Codex credits first"
+            aria-label={t("limitSettings.spend.title")}
             mixed={mixedSpend}
             checked={mixedSpend ? false : settings.providerLimitSpendCredits}
             onCheckedChange={(enabled) => {
@@ -536,18 +549,21 @@ export function ProviderLimitSettings() {
         settingKeys={["providerLimitUseApiCredits"]}
         mixed={mixedApiCredits}
         id="provider-limit-use-api-credits"
-        title="Use API credits first"
-        description="When a Claude subscription turn stops on the limit and a new usage read confirms it, continue that turn on the same model on a Claude instance billed to Anthropic API credits (its own API key or a Claude Console sign-in), before any fallback. With several API accounts, a turn that one refuses for lack of credits moves on to the next. The thread goes back to the subscription when the limit resets, or as soon as this is turned off. Never while limits are simulated. Without this, the limit banner still offers each account as a button."
+        title={t("limitSettings.api.title")}
+        description={t("limitSettings.api.description")}
         status={
           mixedApiCredits
             ? undefined
             : apiKeyInstance
               ? readyApiKeyInstances.length > 1
-                ? `Continues on ${instanceName(apiKeyInstance)}, then the next of ${readyApiKeyInstances.length} API accounts`
-                : `Continues on ${instanceName(apiKeyInstance)} when it lists the thread's model`
+                ? t("limitSettings.api.statusNext", {
+                    name: instanceName(apiKeyInstance),
+                    count: readyApiKeyInstances.length,
+                  })
+                : t("limitSettings.api.statusOne", { name: instanceName(apiKeyInstance) })
               : apiKeyInstances[0]
-                ? `${instanceName(apiKeyInstances[0])} is not ready, so nothing moves`
-                : "Needs a Claude API account: add one with its key"
+                ? t("limitSettings.api.statusNotReady", { name: instanceName(apiKeyInstances[0]) })
+                : t("limitSettings.api.statusNeeds")
         }
         resetAction={
           settings.providerLimitUseApiCredits ? (
@@ -562,11 +578,13 @@ export function ProviderLimitSettings() {
           <div className="flex items-center gap-2">
             {target ? (
               <Button size="xs" variant="ghost" onClick={() => setAddingApiAccount(true)}>
-                {apiKeyInstances.length === 0 ? "Add an API key" : "Add another"}
+                {apiKeyInstances.length === 0
+                  ? t("limitSettings.api.addKey")
+                  : t("limitSettings.api.addAnother")}
               </Button>
             ) : null}
             <Switch
-              aria-label="Use API credits first"
+              aria-label={t("limitSettings.api.title")}
               mixed={mixedApiCredits}
               checked={mixedApiCredits ? false : settings.providerLimitUseApiCredits}
               onCheckedChange={(enabled) => {
@@ -588,22 +606,24 @@ export function ProviderLimitSettings() {
       <AlertDialog open={confirmingRedeem} onOpenChange={setConfirmingRedeem}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Redeem banked resets automatically?</AlertDialogTitle>
+            <AlertDialogTitle>{t("limitSettings.redeem.confirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
               {isProjectScope
-                ? "Turns in this project that stop on a confirmed usage limit will redeem one of the account's banked resets without asking, at most one per limit window. A redeemed reset is gone."
-                : "Turns that stop on a confirmed usage limit will redeem one of the account's banked resets without asking, at most one per limit window, in every project that does not override this. A redeemed reset is gone."}
+                ? t("limitSettings.redeem.confirmProject")
+                : t("limitSettings.redeem.confirmGlobal")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("limitSettings.cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 updateSettings({ providerLimitRedeemResets: true });
                 setConfirmingRedeem(false);
               }}
             >
-              Redeem resets
+              {t("limitSettings.redeem.confirm")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -611,22 +631,24 @@ export function ProviderLimitSettings() {
       <AlertDialog open={confirmingSpend} onOpenChange={setConfirmingSpend}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Spend paid Codex credits automatically?</AlertDialogTitle>
+            <AlertDialogTitle>{t("limitSettings.spend.confirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
               {isProjectScope
-                ? "Turns in this project that stop on the Codex plan limit will continue on the account's paid credits without asking. Credits cost money and are not refunded."
-                : "Turns that stop on the Codex plan limit will continue on the account's paid credits without asking, in every project that does not override this. Credits cost money and are not refunded."}
+                ? t("limitSettings.spend.confirmProject")
+                : t("limitSettings.spend.confirmGlobal")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("limitSettings.cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 updateSettings({ providerLimitSpendCredits: true });
                 setConfirmingSpend(false);
               }}
             >
-              Spend credits
+              {t("limitSettings.spend.confirm")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -634,22 +656,24 @@ export function ProviderLimitSettings() {
       <AlertDialog open={confirmingApiCredits} onOpenChange={setConfirmingApiCredits}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Use Claude API credits automatically?</AlertDialogTitle>
+            <AlertDialogTitle>{t("limitSettings.api.confirmTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
               {isProjectScope
-                ? "Turns in this project that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, moving on to your next API account if one runs out of credits, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console."
-                : "Turns that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, moving on to your next API account if one runs out of credits, in every project that does not override this, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console."}
+                ? t("limitSettings.api.confirmProject")
+                : t("limitSettings.api.confirmGlobal")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("limitSettings.cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 updateSettings({ providerLimitUseApiCredits: true });
                 setConfirmingApiCredits(false);
               }}
             >
-              Use API credits
+              {t("limitSettings.api.confirm")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

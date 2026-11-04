@@ -323,13 +323,19 @@ const make = Effect.gen(function* () {
       )
         return yield* refuse("Unfinished work or provider session is protected");
       const controls = yield* projections.getThreadRecords(thread.id, ["turnItems"], {
-        turnItemTypes: ["run_interrupt_request", "secret_request", "user_input_request"],
+        turnItemTypes: [
+          "run_interrupt_request",
+          "secret_request",
+          "access_request",
+          "user_input_request",
+        ],
       });
       if (
         controls.turnItems.some(
           (item) =>
             (item.type === "run_interrupt_request" && item.runId === thread.latestRunId) ||
             (item.type === "secret_request" && item.secretStatus === "pending") ||
+            (item.type === "access_request" && item.accessStatus === "pending") ||
             (item.type === "user_input_request" &&
               !["completed", "cancelled"].includes(item.status)),
         )

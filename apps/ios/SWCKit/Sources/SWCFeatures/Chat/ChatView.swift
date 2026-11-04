@@ -54,6 +54,8 @@ private struct ChatScreen: View {
   @State private var deviceViewer: DeviceViewerRoute?
   @State private var headerWidth: CGFloat = 0
   @State private var railWidth: CGFloat = 0
+  /// The chat's height between its safe areas; shrinks while the keyboard is up.
+  @State private var availableHeight: CGFloat = 0
   @State private var increment: IncrementProgress?
   @State private var choosingAttachment = false
   /// Turn folds the person opened, by fold row id.
@@ -65,12 +67,37 @@ private struct ChatScreen: View {
     return model.thread(ref)?.identity.providerBrand
   }
 
+  /// The agent's name for an access request's headline; a coordinator chat has no single agent.
+  private var agentName: String? {
+    guard case let .thread(ref) = target else { return nil }
+    return model.thread(ref)?.identity.agentName
+  }
+
+  /// Access requests waiting for an answer in this chat, oldest first.
+  /// Inherited ones are answered in the thread that asked.
+  private var pendingAccesses: [AccessRequestRow] {
+    session.rows.compactMap { row in
+      if case let .access(request) = row.kind, request.awaitsAnswerHere { request } else { nil }
+    }
+  }
+
+  /// The newest access request still waiting; it is answered above the
+  /// composer, and answering it brings up the next.
+  private var pendingAccess: AccessRequestRow? { pendingAccesses.last }
+
+  /// The access card's tallest: under half the room between the header and
+  /// the keyboard, so a long reason or many subjects scroll inside it.
+  private var accessCardMaxHeight: CGFloat? {
+    availableHeight > 0 ? availableHeight * 0.45 : nil
+  }
+
   var body: some View {
     transcript
       .edgeBar(.bottom) { composerArea }
       .screenChrome { header }
       .overlay(alignment: .topTrailing) { rail }
       .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing } action: { railWidth = $0 }
+      .onGeometryChange(for: CGFloat.self) { max(0, $0.size.height - $0.safeAreaInsets.top - $0.safeAreaInsets.bottom) } action: { availableHeight = $0 }
       .sheet(isPresented: $showingHandoff) {
         if let thread = target.threadRef {
           HandoffSheet(thread: thread) { next in nav.push(.chat(.thread(next))) }
@@ -165,6 +192,7 @@ private struct ChatScreen: View {
             busyRequests: busyRequests,
             thinkingBrand: thinkingBrand,
             onDecision: { requestId, decision in respond(requestId, decision) },
+            onAccess: { request, answer in answerAccess(request, answer) },
             onOpenThread: { router.pushThread($0, on: nav, in: model) },
             onOpenLink: { openThreadLink($0, in: row) },
             environmentId: target.environmentId,
@@ -732,6 +760,13 @@ private struct ChatScreen: View {
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
       }
+      if let request = pendingAccess {
+        request.card(agent: agentName, style: .composer, isBusy: busyRequests.contains(request.itemId), maxHeight: accessCardMaxHeight, waitingCount: pendingAccesses.count) { answer in
+          answerAccess(request, answer)
+        }
+        .id(request.itemId)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+      }
       if !pendingImages.isEmpty || photosPending {
         ComposerAttachmentStrip(images: pendingImages, isLoading: photosPending) { image in
           router.attachmentDrafts[target]?.removeAll { $0.id == image.id }
@@ -770,6 +805,7 @@ private struct ChatScreen: View {
     .animation(.snappy, value: increment)
     .animation(.snappy, value: isNearBottom)
     .animation(.snappy, value: session.lastError)
+    .animation(.snappy, value: pendingAccess?.itemId)
     .animation(.snappy, value: composerFocused)
   }
 
@@ -941,6 +977,20 @@ private struct ChatScreen: View {
         router.showError(error)
       }
       busyRequests.remove(requestId)
+    }
+  }
+
+  private func answerAccess(_ request: AccessRequestRow, _ answer: AccessAnswer) {
+    guard !busyRequests.contains(request.itemId) else { return }
+    busyRequests.insert(request.itemId)
+    let target = target
+    Task {
+      do {
+        try await model.engine.answerAccess(request, in: target, answer: answer)
+      } catch {
+        router.showError(error)
+      }
+      busyRequests.remove(request.itemId)
     }
   }
 

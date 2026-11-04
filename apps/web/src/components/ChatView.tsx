@@ -170,6 +170,7 @@ import {
   type RunId,
   type RuntimeRequestId,
   type KeybindingCommand,
+  PROVIDER_DISPLAY_NAMES,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
   ProviderDriverKind,
@@ -179,6 +180,7 @@ import {
   isInlineRunTerminalId,
 } from "@specweave-studio/contracts";
 import { type EnvironmentConnectionPresentation } from "@specweave-studio/client-runtime/connection";
+import { PendingAccessRequestPanel, accessAgentLabel } from "./chat/AccessRequestCard";
 import { deriveThreadTitleSeed } from "@specweave-studio/client-runtime/operations";
 import {
   wasBootstrapThreadDeleted,
@@ -286,6 +288,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useLocale, useT } from "../i18n";
 import { createPortal, flushSync } from "react-dom";
 import { InViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -1793,7 +1796,11 @@ function useDraftFanoutState(atom: ReturnType<typeof draftFanoutStateAtom>) {
  * them for a click.
  */
 function useBannerItem<I, O>(build: (input: I) => O, input: I | null): O | null {
-  return input === null ? null : build(input);
+  // Kept out of the compiler, which would drop `locale` from the memo keys.
+  "use no memo";
+  // Banner copy is translated when it is built, so a new language builds it again.
+  const locale = useLocale();
+  return useMemo(() => (input === null ? null : build(input)), [build, input, locale]);
 }
 
 /**
@@ -3969,6 +3976,41 @@ function useChatViewState(props: ChatViewProps) {
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
+  // The newest access request this thread waits on: its card sits above the
+  // composer, and the timeline keeps a one-line note of it.
+  const pendingAccessRequest = useMemo(() => {
+    for (let index = serverVisibleTurnItems.length - 1; index >= 0; index -= 1) {
+      const row = serverVisibleTurnItems[index];
+      if (
+        row?.visibility === "local" &&
+        row.item.type === "access_request" &&
+        row.item.accessStatus === "pending"
+      ) {
+        return row.item;
+      }
+    }
+    return null;
+  }, [serverVisibleTurnItems]);
+  const pendingAccessRequestAgentLabel = useMemo(() => {
+    if (pendingAccessRequest === null) return null;
+    const runInstanceId =
+      pendingAccessRequest.runId === null
+        ? null
+        : serverProjection?.runs.find((run) => run.id === pendingAccessRequest.runId)
+            ?.providerInstanceId;
+    const provider =
+      (runInstanceId == null
+        ? undefined
+        : providerStatuses.find((status) => status.instanceId === runInstanceId)) ??
+      conversationProviderStatus;
+    return accessAgentLabel(provider) ?? PROVIDER_DISPLAY_NAMES[selectedProvider] ?? null;
+  }, [
+    conversationProviderStatus,
+    pendingAccessRequest,
+    providerStatuses,
+    selectedProvider,
+    serverProjection?.runs,
+  ]);
   const supportsConversationRollback =
     canOperateThread &&
     conversationProviderStatus !== null &&
@@ -5199,6 +5241,8 @@ function useChatViewState(props: ChatViewProps) {
     activeLatestRun,
     activeMessageCount,
     activePendingApproval,
+    pendingAccessRequest,
+    pendingAccessRequestAgentLabel,
     activePendingDraftAnswers,
     activePendingIsResponding,
     activePendingProgress,
@@ -9691,6 +9735,7 @@ function useChatViewActions(
 
 export default function ChatView(props: ChatViewProps) {
   const renderNowMs = useRenderTime();
+  const translateUi = useT();
   const chatViewState = useChatViewState(props);
   const {
     activeProjectIsScratch,
@@ -9712,6 +9757,8 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironmentUnavailableState,
     activeMessageCount,
     activePendingApproval,
+    pendingAccessRequest,
+    pendingAccessRequestAgentLabel,
     activePendingDraftAnswers,
     activePendingIsResponding,
     activePendingProgress,
@@ -10493,7 +10540,12 @@ export default function ChatView(props: ChatViewProps) {
         entry.provider?.models.find((candidate) => candidate.slug === entry.selection.model)
           ?.name ?? entry.selection.model;
       const choosable = canSelectManualFallback(entry);
-      const reason = fallbackUnavailableReason(entry.unavailable, entry.resetAt, choosable);
+      const reason = fallbackUnavailableReason(
+        entry.unavailable,
+        entry.resetAt,
+        choosable,
+        translateUi,
+      );
       return [
         {
           label,
@@ -15177,6 +15229,18 @@ export default function ChatView(props: ChatViewProps) {
     </div>
   );
 
+  // The answerable access card, above the composer or in the coordinator's
+  // requests. A viewer without operate access sees it with its answers off.
+  const pendingAccessRequestPanel =
+    pendingAccessRequest !== null && activeThread ? (
+      <PendingAccessRequestPanel
+        environmentId={activeThread.environmentId}
+        item={pendingAccessRequest}
+        agentLabel={pendingAccessRequestAgentLabel}
+        disabled={!canOperateThread}
+      />
+    ) : null;
+
   // Keep every hook above this presentation branch. Native callbacks retain
   // their host permission checks and persisted request/model identity.
   if (reviewOnly)
@@ -15191,6 +15255,7 @@ export default function ChatView(props: ChatViewProps) {
         disabled={!canOperateThread || activeEnvironmentUnavailable || isSendBusy || isConnecting}
         error={visibleThreadError ?? null}
         approvals={pendingApprovals}
+        accessRequest={pendingAccessRequestPanel}
         respondingApprovals={respondingRequestIds}
         onApproval={onRespondToApproval}
         questions={pendingUserInputs}
@@ -15896,6 +15961,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               onAppCommand={appCommandsOffered ? runAppCommand : undefined}
                               environmentUnavailable={activeEnvironmentUnavailableState}
+                              accessRequestCard={pendingAccessRequestPanel}
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}
                               pendingUserInputs={pendingUserInputs}

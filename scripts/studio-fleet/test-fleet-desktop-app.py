@@ -943,11 +943,15 @@ class MainWithApps(unittest.TestCase):
             os.environ.pop(name, None)
         self.saved = fleet_rollout.rollout, fleet_rollout.fleet
         self.addCleanup(self.restore)
-        self.seen = []
-        fleet_rollout.fleet = lambda: {'m1': fleet_rollout.Host('m1', ['ssh', 'm1', 'python'],
-                                                                app_command=['ssh', 'm1', '/bin/bash -s']),
-                                       'm3': fleet_rollout.Host('m3', ['ssh', 'm3', 'python'],
-                                                                app_command=['ssh', 'm3', '/bin/bash -s'])}
+        self.seen, self.skips, self.fallback = [], [], []
+
+        def fleet(ssh_fallback=False):
+            self.fallback.append(ssh_fallback)
+            return self.hosts
+
+        fleet_rollout.fleet = fleet
+        self.hosts = {'m1': fleet_rollout.Host('m1', ['ssh', 'm1', 'python'], app_command=['ssh', 'm1', '/bin/bash -s']),
+                      'm3': fleet_rollout.Host('m3', ['ssh', 'm3', 'python'], app_command=['ssh', 'm3', '/bin/bash -s'])}
 
     def restore(self):
         fleet_rollout.rollout, fleet_rollout.fleet = self.saved
@@ -955,6 +959,7 @@ class MainWithApps(unittest.TestCase):
     def main(self, *argv, error=None):
         def rollout(version, hosts, *args, **options):
             self.seen.append(options.get('desktop'))
+            self.skips.append(options.get('desktop_skip'))
             if error:
                 raise error
             return {}
@@ -965,21 +970,32 @@ class MainWithApps(unittest.TestCase):
             code = fleet_rollout.main(['--version', NEW, '--no-hold'] + list(argv))
         return code, out.getvalue(), err.getvalue()
 
-    def test_the_desktop_step_is_on_for_workers_unless_turned_off(self):
+    def test_the_desktop_step_needs_ssh_fallback_and_is_otherwise_skipped(self):
         self.assertEqual(self.main('--only', 'workers')[0], 0)
+        self.assertIsNone(self.seen[-1])
+        self.assertEqual(self.fallback[-1], False)
+        self.assertEqual(self.skips[-1], 'needs pinned fleet SSH (pass --ssh-fallback); its own updater installs %s '
+                                         'on quit' % NEW)
+        self.assertEqual(self.main('--only', 'workers', '--no-desktop-apps')[0], 0)
+        self.assertIsNone(self.skips[-1])
+
+    def test_the_desktop_step_is_on_for_workers_unless_turned_off(self):
+        self.assertEqual(self.main('--only', 'workers', '--ssh-fallback')[0], 0)
+        self.assertEqual(self.fallback[-1], True)
+        self.assertIsNone(self.skips[-1])
         desktop = self.seen[-1]
         self.assertIsInstance(desktop, desktop_app_rollout.DesktopApps)
         self.assertEqual(desktop.commands, {'m1': ['ssh', 'm1', '/bin/bash -s'], 'm3': ['ssh', 'm3', '/bin/bash -s']})
         self.assertEqual((desktop.version, desktop.repo), (NEW, REPO))
-        self.assertEqual(self.main('--only', 'workers', '--no-desktop-apps')[0], 0)
+        self.assertEqual(self.main('--only', 'workers', '--ssh-fallback', '--no-desktop-apps')[0], 0)
         self.assertIsNone(self.seen[-1])
-        self.assertEqual(self.main('--only', 'm4')[0], 0)
+        self.assertEqual(self.main('--only', 'm4', '--ssh-fallback')[0], 0)
         self.assertIsNone(self.seen[-1])
 
     def test_a_failed_app_exits_non_zero_naming_the_host(self):
         failed = fleet_rollout.DesktopAppsFailed('m3: desktop app not updated to %s: the app did not quit' % NEW,
                                                  {'m3': {'result': 'installed', 'desktopApp': {'result': 'failed'}}})
-        code, out, err = self.main('--only', 'workers', error=failed)
+        code, out, err = self.main('--only', 'workers', '--ssh-fallback', error=failed)
         self.assertEqual(code, 1)
         self.assertIn('every service is on %s, but m3: desktop app not updated' % NEW, err)
         self.assertEqual(json.loads(out)['hosts']['m3']['desktopApp']['result'], 'failed')
@@ -993,7 +1009,8 @@ class MainWithApps(unittest.TestCase):
             env.pop('RELEASE_PUBLIC_REPO', None)
             plans = [subprocess.run([sys.executable, '-B', str(HERE / 'fleet_rollout.py'), '--version', NEW,
                                      '--dry-run', '--only', 'workers'] + extra, capture_output=True, text=True,
-                                    timeout=60, env=env) for extra in ([], ['--no-desktop-apps'])]
+                                    timeout=60, env=env)
+                     for extra in (['--ssh-fallback'], ['--ssh-fallback', '--no-desktop-apps'], [])]
         for plan in plans:
             self.assertEqual(plan.returncode, 0, plan.stderr)
         plan = json.loads(plans[0].stdout)
@@ -1003,6 +1020,11 @@ class MainWithApps(unittest.TestCase):
             self.assertEqual(apps['commands'][identity][-2:], [login, '/bin/bash -s'])
             self.assertEqual(apps['commands'][identity][:-1], plan['commands'][identity][:-1])
         self.assertIsNone(json.loads(plans[1].stdout)['desktopApps'])
+        # Without --ssh-fallback the step is planned as skipped and no ssh command is built.
+        default = json.loads(plans[2].stdout)
+        self.assertEqual(default['desktopApps'], {'skipped': 'needs pinned fleet SSH (pass --ssh-fallback); its own '
+                                                             'updater installs %s on quit' % NEW})
+        self.assertNotIn('/usr/bin/ssh', plans[2].stdout)
 
 
 if __name__ == '__main__':

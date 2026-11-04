@@ -44,6 +44,8 @@ public enum RpcMethod: String, Sendable, CaseIterable {
   case ensureScratch = "projects.ensureScratch"
   /// `EmptyInput` -> stream of `DeviceServiceState`.
   case subscribeDeviceState = "subscribeDeviceState"
+  /// `AccessAnswerRequestInput` -> void.
+  case accessAnswerRequest = "access.answerRequest"
 
   /// True for methods that answer with a stream of chunks.
   public var isStream: Bool {

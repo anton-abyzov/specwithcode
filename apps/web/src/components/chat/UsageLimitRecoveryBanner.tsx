@@ -31,6 +31,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Checkbox } from "../ui/checkbox";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { LimitHandoffCandidates } from "./LimitHandoffCandidates";
+import { getLocale, t, useT, type Translate } from "../../i18n";
 
 type RecoveryProps = {
   canCheck?: boolean;
@@ -124,44 +125,54 @@ export function fallbackUnavailableReason(
   unavailable: FallbackOrderUnavailable | null,
   resetAt: number | null,
   manuallySelectable = false,
+  tr: Translate = t,
 ): string | undefined {
   switch (unavailable) {
     case null:
     case "current":
       return undefined;
     case "missing":
-      return "not on this machine";
+      return tr("limit.unavailable.missing");
     case "limited":
-      return "at its limit";
+      return tr("limit.unavailable.limited");
     case "signed-out":
-      return "signed out";
+      return tr("limit.unavailable.signedOut");
     case "per-token":
-      return "billed per token";
+      return tr("limit.unavailable.perToken");
     case "full":
       return resetAt === null
-        ? "full"
-        : `full until ${new Date(resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+        ? tr("limit.unavailable.full")
+        : tr("limit.unavailable.fullUntil", {
+            time: new Date(resetAt).toLocaleTimeString(getLocale(), {
+              hour: "numeric",
+              minute: "2-digit",
+            }),
+          });
     case "too-small":
-      return "context window too small";
+      return tr("limit.unavailable.tooSmall");
     case "unverified":
-      return "no recent usage reading";
+      return tr("limit.unavailable.unverified");
     case "not-ready":
-      return manuallySelectable ? "provider warning" : "not set up on this machine";
+      return manuallySelectable
+        ? tr("limit.unavailable.providerWarning")
+        : tr("limit.unavailable.notReady");
     case "excluded":
-      return "excluded from automatic fallback";
+      return tr("limit.unavailable.excluded");
   }
 }
 
 /** "12 min", "2 h 5 min", "3 days": how far off a reset is, rounded up to the minute. */
-export function formatResetIn(resetMs: number, nowMs: number): string {
+export function formatResetIn(resetMs: number, nowMs: number, tr: Translate = t): string {
   const minutes = Math.max(1, Math.ceil((resetMs - nowMs) / 60_000));
-  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 60) return tr("limit.duration.minutes", { count: minutes });
   if (minutes < 48 * 60) {
     const hours = Math.floor(minutes / 60);
     const rest = minutes % 60;
-    return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+    return rest === 0
+      ? tr("limit.duration.hours", { count: hours })
+      : tr("limit.duration.hoursMinutes", { hours, minutes: rest });
   }
-  return `${Math.round(minutes / (24 * 60))} days`;
+  return tr("limit.duration.days", { count: Math.round(minutes / (24 * 60)) });
 }
 
 /** Re-renders every half minute while `untilMs` is ahead, then once when it passes. */
@@ -189,27 +200,28 @@ export function ResetCountdown({
   autoContinuing?: boolean;
   automaticLabel?: string | null;
 }) {
+  const tr = useT();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const clock = resetAt ? formatDisplayDate(resetAt, timestampFormat) : null;
   const resetMs = clock ? Date.parse(resetAt ?? "") : Number.NaN;
   const nowMs = useNowUntil(resetMs);
   const when = !Number.isFinite(resetMs)
-    ? "Reset time unavailable"
+    ? tr("limit.reset.unavailable")
     : resetMs > nowMs
-      ? `Resets in ${formatResetIn(resetMs, nowMs)} (${clock})`
-      : `Reset at ${clock}`;
+      ? tr("limit.reset.in", { duration: formatResetIn(resetMs, nowMs, tr), clock: clock ?? "" })
+      : tr("limit.reset.at", { clock: clock ?? "" });
   const next = waiting
     ? resetMs > nowMs
-      ? "The reset is close, so this thread waits and resumes here instead of switching."
-      : "Resuming here now that the limit has reset."
+      ? tr("limit.next.waiting")
+      : tr("limit.next.resumingNow")
     : autoContinuing && Number.isFinite(resetMs)
       ? resetMs > nowMs
-        ? "This thread continues by itself at the reset."
-        : "Continuing now that the limit has reset."
+        ? tr("limit.next.continuesAtReset")
+        : tr("limit.next.continuingNow")
       : automaticLabel
-        ? `Continuing with ${automaticLabel} by project rule.`
+        ? tr("limit.next.byRule", { label: automaticLabel })
         : null;
-  return <>{[when, next].filter(Boolean).join(". ")}</>;
+  return <>{[when, next].filter(Boolean).join(tr("limit.sentenceJoin"))}</>;
 }
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
@@ -222,12 +234,12 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     priority: "urgent",
     icon: <GaugeIcon />,
     title: props.creditsExhausted
-      ? "API credits used up"
+      ? t("limit.title.credits")
       : props.credits
-        ? "Included usage limit reached"
-        : "Usage limit reached",
+        ? t("limit.title.included")
+        : t("limit.title.usage"),
     description: props.creditsExhausted ? (
-      "This API account has no credits left. Add funds to it, or continue on another account."
+      t("limit.creditsExhausted")
     ) : (
       <ResetCountdown
         resetAt={resetAt}
@@ -260,6 +272,7 @@ function RecoveryActions({
   onChange,
   project,
 }: RecoveryProps) {
+  const tr = useT();
   const canSchedule = resetAt !== null && Date.parse(resetAt) > Date.parse(stoppedAt);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -290,13 +303,17 @@ function RecoveryActions({
       if (scheduled) await onChange({ runId, resetAt, autoResume: false });
       await target.onContinue();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : `Could not continue on ${target.label}.`);
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : tr("limit.error.continueOn", { label: target.label }),
+      );
     }
     setPending(false);
   }
   async function toggle(action: "resume" | "snooze" | "check") {
     if (action === "snooze" && !snoozed && Date.parse(resetAt ?? "") <= Date.now()) {
-      setError("The reset time has passed. Retry the thread manually.");
+      setError(tr("limit.error.resetPassed"));
       setNowMs(Date.now());
       return;
     }
@@ -313,7 +330,7 @@ function RecoveryActions({
             : { snooze: !snoozed }),
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
+      setError(cause instanceof Error ? cause.message : tr("limit.error.recovery"));
     }
     setPending(false);
   }
@@ -328,7 +345,7 @@ function RecoveryActions({
       // continues this thread too, without waiting for that.
       if (on && canAutoContinue && !scheduled) await onChange({ runId, resetAt, autoResume: true });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not change the project setting.");
+      setError(cause instanceof Error ? cause.message : tr("limit.error.project"));
     }
     setPending(false);
   }
@@ -338,75 +355,71 @@ function RecoveryActions({
     <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
       <label
         className="flex basis-full items-center gap-2 text-xs text-foreground has-data-disabled:text-muted-foreground"
-        title={
-          canAutoContinue
-            ? "Saved for this thread. SpecWithCode continues the stopped turn by itself, even after a restart."
-            : undefined
-        }
+        title={canAutoContinue ? tr("limit.auto.savedHint") : undefined}
       >
         <Checkbox
-          aria-label={
-            canCheck
-              ? "Auto-continue when usage is available"
-              : "Auto-continue when the limit resets"
-          }
+          aria-label={canCheck ? tr("limit.auto.whenUsage") : tr("limit.auto.whenReset")}
           checked={scheduled}
           disabled={pending || !canAutoContinue}
           onCheckedChange={() => void toggle("resume")}
         />
-        {canCheck ? "Auto-continue when usage is available" : "Auto-continue when the limit resets"}
-        {pending ? <span className="text-muted-foreground">Saving...</span> : null}
+        {canCheck ? tr("limit.auto.whenUsage") : tr("limit.auto.whenReset")}
+        {pending ? <span className="text-muted-foreground">{tr("limit.saving")}</span> : null}
       </label>
       {project ? (
         <label
           className="flex basis-full items-center gap-2 text-xs text-foreground has-data-disabled:text-muted-foreground"
-          title={
-            project.global
-              ? "On for every project in Settings."
-              : "Also continues this project's threads already waiting on a limit."
-          }
+          title={project.global ? tr("limit.project.global") : tr("limit.project.hint")}
         >
           <Checkbox
-            aria-label="Auto-continue this project's threads when limits reset"
+            aria-label={tr("limit.project.label")}
             checked={project.on || project.global}
             disabled={pending || project.global}
             onCheckedChange={() => void toggleProject(!project.on)}
           />
-          Auto-continue this project's threads when limits reset
+          {tr("limit.project.label")}
         </label>
       ) : null}
       {!canAutoContinue ? (
         <p className="basis-full text-xs text-muted-foreground">
-          {handoffs.length > 0
-            ? "The provider did not say when this limit resets, so the thread cannot continue by itself. Continue elsewhere now, or send a message after the reset."
-            : "The provider did not say when this limit resets, so the thread cannot continue by itself. Send a message after the reset."}
+          {handoffs.length > 0 ? tr("limit.noReset.withHandoffs") : tr("limit.noReset")}
         </p>
       ) : null}
       {handoffs.length > 0 ? (
         <div className="flex min-w-0 basis-full flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {scheduled ? "Or continue elsewhere now:" : "Continue elsewhere instead of waiting:"}
+            {scheduled ? tr("limit.orElsewhere") : tr("limit.insteadOfWaiting")}
           </span>
           {fallback ? (
             <Button
               size="xs"
               variant={waiting ? "ghost" : "outline"}
               disabled={pending}
-              title={`Switch this thread to ${fallback.label} (${fallback.model}) and continue the stopped turn with its conversation`}
-              aria-label={`Continue with ${fallback.label} · ${fallback.model}`}
+              title={tr("limit.fallback.hint", { label: fallback.label, model: fallback.model })}
+              aria-label={tr("limit.fallback.continueWith", {
+                label: fallback.label,
+                model: fallback.model,
+              })}
               className="max-w-full min-w-0"
               onClick={() => void continueElsewhere(fallback)}
             >
-              <span className="truncate">{`Continue with ${fallback.label} · ${fallback.model}`}</span>
+              <span className="truncate">
+                {tr("limit.fallback.continueWith", {
+                  label: fallback.label,
+                  model: fallback.model,
+                })}
+              </span>
             </Button>
           ) : null}
           {choices.length > 0 ? (
             <Menu>
               <MenuTrigger
                 disabled={pending}
-                render={<Button size="xs" variant="ghost" aria-label="Other fallback models" />}
+                render={
+                  <Button size="xs" variant="ghost" aria-label={tr("limit.otherModelsAria")} />
+                }
               >
-                {fallback ? "Other models" : "Choose a model"}
+                {fallback ? tr("limit.otherModels") : tr("limit.chooseModel")}
                 <ChevronDownIcon className="size-3" />
               </MenuTrigger>
               <MenuPopup side="bottom" align="start">
@@ -435,12 +448,12 @@ function RecoveryActions({
               size="xs"
               variant={waiting ? "ghost" : "outline"}
               disabled={pending}
-              title={`Start a thread on ${device.label} (${device.model}) with a written summary of this conversation. Changes not pushed from this device do not go with it.`}
+              title={tr("limit.device.hint", { label: device.label, model: device.model })}
               onClick={() => void continueElsewhere(device)}
             >
               {machines
-                ? `Start fresh on ${device.label} (summary only)`
-                : `Continue on ${device.label}`}
+                ? tr("limit.device.fresh", { label: device.label })
+                : tr("limit.device.continue", { label: device.label })}
             </Button>
           ) : null}
         </div>
@@ -460,7 +473,7 @@ function RecoveryActions({
           disabled={pending || recovery?.checkNow === true}
           onClick={() => void toggle("check")}
         >
-          {recovery?.checkNow ? "Check requested" : "Check now"}
+          {recovery?.checkNow ? tr("limit.checkRequested") : tr("limit.checkNow")}
         </Button>
       ) : null}
       {!snoozed && resetAt !== null ? (
@@ -470,22 +483,22 @@ function RecoveryActions({
           disabled={pending || Date.parse(resetAt!) <= nowMs}
           onClick={() => void toggle("snooze")}
         >
-          {pending ? "Saving..." : "Snooze until reset"}
+          {pending ? tr("limit.saving") : tr("limit.snooze")}
         </Button>
       ) : null}
       {canCheck && recovery?.availability ? (
         <p role="status" className="basis-full text-xs text-muted-foreground">
           {recovery.availability.status === "allowed"
             ? scheduled
-              ? "Last check allowed ordinary usage; auto-continue is on."
-              : "Last check allowed ordinary usage. Tick Auto-continue to continue."
+              ? tr("limit.check.allowedOn")
+              : tr("limit.check.allowedOff")
             : recovery.availability.status === "denied"
-              ? "This profile still denies ordinary usage."
+              ? tr("limit.check.denied")
               : recovery.availability.status === "changed"
-                ? "The account or profile changed. Automatic recovery is blocked."
+                ? tr("limit.check.changed")
                 : scheduled && (!recovery.explicitArm || !recovery.armedAffinity)
-                  ? "Check now, then untick and tick Auto-continue again to confirm the current profile."
-                  : "Ordinary usage permission could not be verified. The thread remains stopped."}
+                  ? tr("limit.check.reconfirm")
+                  : tr("limit.check.unverified")}
         </p>
       ) : null}
       {error ? (
@@ -517,19 +530,23 @@ export function usageApproachingBannerItem(props: {
     variant: "info",
     priority: "notice",
     icon: <GaugeIcon />,
-    title: `${props.providerLabel} has ${Math.max(0, Math.round(props.leftPercent))}% of its usage left`,
+    title: t("limit.approaching.title", {
+      provider: props.providerLabel,
+      percent: Math.max(0, Math.round(props.leftPercent)),
+    }),
     description: (
       <>
         <ResetCountdown resetAt={props.resetAt} />
-        {`. Switch this thread to ${props.fallbackLabel} before the limit stops a turn?`}
+        {t("limit.sentenceJoin")}
+        {t("limit.approaching.question", { label: props.fallbackLabel })}
       </>
     ),
     actions: (
       <Button size="xs" variant="outline" onClick={props.onSwitch}>
-        {`Switch to ${props.fallbackLabel}`}
+        {t("limit.approaching.switch", { label: props.fallbackLabel })}
       </Button>
     ),
-    dismissLabel: "Not now",
+    dismissLabel: t("limit.approaching.notNow"),
     onDismiss: props.onDismiss,
   };
 }
@@ -592,14 +609,20 @@ export function preswitchPairingRoom(
  * its limit (1075): it goes back by itself once the original has room, unless
  * the original is one the server never moves a thread to, which it names.
  */
-export function preswitchFallbackDetail(input: {
-  readonly originalModel: string;
-  readonly hasRoom: boolean;
-  readonly returnBlock: PreswitchReturnBlock | null;
-}): string {
+export function preswitchFallbackDetail(
+  input: {
+    readonly originalModel: string;
+    readonly hasRoom: boolean;
+    readonly returnBlock: PreswitchReturnBlock | null;
+  },
+  tr: Translate = t,
+): string {
   if (input.returnBlock !== null)
-    return `${input.originalModel} neared its usage limit, so this thread moved before its next turn. It stays on the fallback: ${PRESWITCH_RETURN_BLOCK_REASON[input.returnBlock]}.`;
+    return tr("limit.preswitch.blocked", {
+      model: input.originalModel,
+      reason: PRESWITCH_RETURN_BLOCK_REASON[input.returnBlock],
+    });
   return input.hasRoom
-    ? `${input.originalModel} neared its usage limit and has room again. The idle thread goes back on its own.`
-    : `${input.originalModel} neared its usage limit. The idle thread goes back on its own once it has room.`;
+    ? tr("limit.preswitch.hasRoom", { model: input.originalModel })
+    : tr("limit.preswitch.noRoom", { model: input.originalModel });
 }

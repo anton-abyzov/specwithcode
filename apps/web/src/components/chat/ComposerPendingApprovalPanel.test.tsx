@@ -14,6 +14,24 @@ import { describe, expect, it } from "vite-plus/test";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 
 describe("ComposerPendingApprovalPanel", () => {
+  it("keeps other permission approvals as they were", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel
+        approval={{
+          requestId: RuntimeRequestId.make("perm-1"),
+          requestKind: "permission",
+          createdAt: "2026-11-04T00:00:00.000Z",
+          detail: "Allow network access",
+          responseCapability: "live",
+        }}
+        pendingCount={1}
+      />,
+    );
+
+    expect(markup).toContain("App permission approval");
+    expect(markup).toContain("Allow network access");
+  });
+
   it("keeps the complete command readable in the compact row", () => {
     const detail = `bun run release -- ${"x".repeat(500)}\nsecond line`;
     const markup = renderToStaticMarkup(

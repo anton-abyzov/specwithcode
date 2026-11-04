@@ -2299,7 +2299,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
-  it.effect.each(["supported", "unsupported", "invalid"] as const)(
+  it.effect.each(["supported", "unsupported", "unsaved", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
     (response) =>
       Effect.gen(function* () {
@@ -2346,13 +2346,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               frame:
                 response === "supported"
                   ? { id: 3, result: {} }
-                  : {
-                      id: 3,
-                      error: {
-                        code: response === "unsupported" ? -32601 : -32602,
-                        message: "Injection rejected",
+                  : response === "unsaved"
+                    ? {
+                        id: 3,
+                        error: {
+                          code: -32603,
+                          message:
+                            "failed to inject response items: thread-store internal error: File exists (os error 17)",
+                        },
+                      }
+                    : {
+                        id: 3,
+                        error: {
+                          code: response === "unsupported" ? -32601 : -32602,
+                          message: "Injection rejected",
+                        },
                       },
-                    },
             },
             ...(response === "invalid"
               ? []

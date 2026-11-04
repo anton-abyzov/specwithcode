@@ -1211,6 +1211,59 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
 ]);
 export type OrchestratorMcpRequestSecretResult = typeof OrchestratorMcpRequestSecretResult.Type;
 
+export const OrchestratorMcpRequestAccessDevice = Schema.Struct({
+  deviceId: TrimmedNonEmptyString.annotate({
+    description:
+      "The device id or name from device_list, e.g. a simulator UDID or 'iPhone 17 Pro'.",
+  }),
+  hostId: Schema.optional(TrimmedNonEmptyString).annotate({
+    description: "The device host from device_list. Omit for this machine.",
+  }),
+});
+export type OrchestratorMcpRequestAccessDevice = typeof OrchestratorMcpRequestAccessDevice.Type;
+
+export const OrchestratorMcpRequestAccessInput = Schema.Struct({
+  reason: TrimmedNonEmptyString.annotate({
+    description:
+      "One sentence the user reads on the card: what you will do with the access, e.g. 'To check which process is using the CPU.'",
+  }),
+  apps: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+  ).annotate({
+    description:
+      "Mac apps to control with the computer_* tools, by name as macOS shows it, e.g. ['System Settings', 'Activity Monitor'].",
+  }),
+  devices: Schema.optional(
+    Schema.Array(OrchestratorMcpRequestAccessDevice).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(4),
+    ),
+  ).annotate({ description: "Simulators or emulators to drive with the device_* tools." }),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60 * 60 * 1_000 })),
+  ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description:
+      "Reuse when retrying a call that lost its result, so the user sees one card. Use a new id to ask again after denied, timed_out or cancelled.",
+  }),
+});
+export type OrchestratorMcpRequestAccessInput = typeof OrchestratorMcpRequestAccessInput.Type;
+
+export const OrchestratorMcpRequestAccessResult = Schema.Struct({
+  status: Schema.Literals(["allowed", "denied", "cancelled", "timed_out"]).annotate({
+    description:
+      "allowed: use what you asked for. denied: the user said no; do not ask again for the same thing in this turn. cancelled: the request ended with the run. timed_out: the user did not answer in time.",
+  }),
+  scope: Schema.optional(Schema.Literals(["thread", "machine"])).annotate({
+    description: "How long an Allow lasts: this thread, or every thread on this machine.",
+  }),
+  allowed: Schema.Array(Schema.String).annotate({
+    description: "What you may now use, by name, including anything allowed before this call.",
+  }),
+  note: Schema.optional(Schema.String),
+});
+export type OrchestratorMcpRequestAccessResult = typeof OrchestratorMcpRequestAccessResult.Type;
+
 const OrchestratorMcpAskUserOption = Schema.Struct({
   label: TrimmedNonEmptyString.annotate({
     description: "A short choice, e.g. 'Clear caches'. Shown in bold after its letter (A, B, C).",

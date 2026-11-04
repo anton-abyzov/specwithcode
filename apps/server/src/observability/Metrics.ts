@@ -84,6 +84,10 @@ export const secretRequestsTotal = Metric.counter("studio_secret_requests_total"
   description: "Secrets agents asked users for, by how each request ended.",
 });
 
+export const accessRequestsTotal = Metric.counter("studio_access_requests_total", {
+  description: "Access requests agents showed users, by how each request ended.",
+});
+
 /** One-use secret refs a tool tried to use, by result: used, rejected. */
 export const secretRefsConsumedTotal = Metric.counter("studio_secret_refs_consumed_total", {
   description: "Secret refs tools tried to use, by result.",

@@ -59,6 +59,10 @@
 # RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's), RELEASE_SERVER_SHARDS
 # (default 4), RELEASE_RETRY_MAX_JOBS (2), RELEASE_RETRY_MAX_FILES (5), RELEASE_BUILD_HEADROOM_GIB
 # (10: M4's free disk kept for the build by preflight_fleet.py; it never turns that check off).
+# RELEASE_FLEET_SSH=1 passes --ssh-fallback to preflight_fleet.py (disk-room) and to fleet-workers:
+# M1 and M3 are otherwise asked over SpecWithCode Connect only, and their desktop apps are left to
+# their own updaters. Use it once for the release that first ships `fleet room` (the disk check
+# reports `unsupported` until M4 and a worker run it), or when Connect is down.
 # RELEASE_STUB=1 (with RELEASE_STAGING_ROOT and RELEASE_TREES) records commands instead of
 # running them; only the self-test uses it.
 set -euo pipefail
@@ -67,6 +71,8 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 HERE="$(dirname "$SELF")"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 TOOLS="$HERE/release_tools.py"
+FLEET_SSH=""  # --ssh-fallback with RELEASE_FLEET_SSH=1; expanded unquoted, so empty adds nothing.
+[ "${RELEASE_FLEET_SSH:-}" != 1 ] || FLEET_SSH="--ssh-fallback"
 
 PRIVATE_REPO="${RELEASE_PRIVATE_REPO:-anton-abyzov/specwithcode}"
 PUBLIC_REPO="${RELEASE_PUBLIC_REPO:-anton-abyzov/specwithcode}"
@@ -141,8 +147,10 @@ stage_preflight() {
       [ -e "$var" ] || check_fail "missing $var"
     done
     # Disk for this version's update on M4 (+ build headroom), M1 and M3 (update.py room); 1.0.184.
-    [ "$MODE" != dry ] || say "    disk-room: python3 -B $HERE/preflight_fleet.py --version $VERSION"
-    t disk-room -- python3 -B "$HERE/preflight_fleet.py" --version "$VERSION" ||
+    # M1 and M3 over SpecWithCode Connect; pinned SSH only with RELEASE_FLEET_SSH=1.
+    [ "$MODE" != dry ] || say "    disk-room: python3 -B $HERE/preflight_fleet.py --version $VERSION${FLEET_SSH:+ $FLEET_SSH}"
+    # shellcheck disable=SC2086 # FLEET_SSH is one flag or nothing.
+    t disk-room -- python3 -B "$HERE/preflight_fleet.py" --version "$VERSION" $FLEET_SSH ||
       check_fail "a host lacks the disk its update to $VERSION needs, or could not be asked (lines above)"
   fi
   load="$(q loadavg -- sysctl -n vm.loadavg | awk '{print $3}')"
@@ -367,6 +375,9 @@ electron_runtime() {
 # stage_verify (the built app, fresh and upgraded, headless) and require_verified.
 # shellcheck source=release-verify.sh
 . "$HERE/release-verify.sh"
+# start_rehearsal and rehearsal_wait.
+# shellcheck source=release_rehearsal.sh
+. "$HERE/release_rehearsal.sh"
 
 run_job() {  # run_job OUT NAME|DIR|KIND: one stage-1 job, leaving OUT/NAME.exit and .secs
   local out="$1" name dir kind started code
@@ -1105,7 +1116,8 @@ stage_fleet_m4() {
 
 stage_fleet_workers() {
   fleet_feed_ready
-  x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers
+  # shellcheck disable=SC2086 # FLEET_SSH is one flag or nothing.
+  x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers $FLEET_SSH
 }
 
 # Linux workers, after the release is merged: best effort, so it never fails or delays macOS. A
@@ -1451,10 +1463,11 @@ main() {
   if [ "$early_server" -eq 1 ]; then start_server; fi
   run_stage stage1 sha
   if [ "$early_server" -eq 0 ]; then start_server; fi
+  start_rehearsal
   run_stage build sha
   for stage in bundle sign verify helpers plan drafts; do
     stop_if_server_failed
-    if [ "$stage" = drafts ]; then require_verified; fi
+    if [ "$stage" = drafts ]; then rehearsal_wait; require_verified; fi
     run_stage "$stage" sha
   done
   run_stage server-wait sha

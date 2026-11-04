@@ -87,6 +87,8 @@ import { prepareProjectMarkdown } from "../../studio/projectWorkspaceModel";
 import { type CoordinatorAttention } from "../../studio/projectCoordinatorThreads";
 import { ProjectThreadCard, ProjectThreadChip } from "./ProjectThreadCards";
 import { RemoteWorkerCardList } from "./RemoteWorkerCards";
+import { CoordinatorAccessWaiting } from "./CoordinatorAccessWaiting";
+import { accessWaitingThreads } from "../../studio/accessWaiting";
 import { REMOTE_WORKERS_REFRESH_MS, useProjectRemoteWorkers } from "../../studio/fleet";
 import { placeRemoteWorkers } from "../../studio/remoteWorkerCards";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
@@ -111,6 +113,7 @@ type CoordinatorMessage = NonNullable<
 >["projection"]["messages"][number];
 
 const EMPTY_MESSAGES: readonly CoordinatorMessage[] = [];
+const EMPTY_REMOTE_WORKER_THREADS: readonly EnvironmentThreadShell[] = [];
 const EMPTY_IDS: readonly ThreadId[] = [];
 
 /**
@@ -199,6 +202,7 @@ export function CoordinatorConversation({
   project,
   coordinatorId,
   workers,
+  remoteWorkerThreads = EMPTY_REMOTE_WORKER_THREADS,
   environmentThreads,
   onOpenThread,
   canChange,
@@ -218,6 +222,8 @@ export function CoordinatorConversation({
   project: EnvironmentProject;
   coordinatorId: ThreadId;
   workers: readonly EnvironmentThreadShell[];
+  /** This project's worker threads on other machines, so their access requests show here too. */
+  remoteWorkerThreads?: readonly EnvironmentThreadShell[];
   /** Every thread of the project's environment, live or deleted, that a link may name. */
   environmentThreads: readonly ThreadLinkTarget[];
   onOpenThread: (id: ThreadId, environmentId?: EnvironmentId) => void;
@@ -306,6 +312,17 @@ export function CoordinatorConversation({
       ).full
     : null;
   const machineNames = useMachineNicknames();
+  // Threads waiting on an access card, said once at the end of the conversation.
+  const accessWaiting = useMemo(
+    () =>
+      accessWaitingThreads([...workers, ...remoteWorkerThreads], (worker) =>
+        machineNames(
+          worker.executionMachineId ?? worker.environmentId,
+          worker.executionMachineLabel,
+        ),
+      ),
+    [workers, remoteWorkerThreads, machineNames],
+  );
   const hasRoutineRuns = messages.some((message) => message.scheduledTaskId !== undefined);
   const routines = useKnownRoutines(project.environmentId, hasRoutineRuns);
   const prepared = useMemo(() => {
@@ -702,6 +719,10 @@ export function CoordinatorConversation({
           </Fragment>
         ))}
         <RemoteWorkerCardList workers={remotePlacement.live} onOpenThread={onOpenThread} />
+        <CoordinatorAccessWaiting
+          entries={accessWaiting}
+          onOpenThread={(waiting) => onOpenThread(waiting.id, waiting.environmentId)}
+        />
         {view.liveActivity && working ? (
           <CoordinatorRunActivity
             live

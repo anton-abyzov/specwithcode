@@ -7,14 +7,21 @@ import {
   type ComputerUsePermissions,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
-import { CircleCheckIcon, MonitorIcon } from "lucide-react";
+import { CircleCheckIcon } from "lucide-react";
 import { createContext, use, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { useEnvironment } from "../../state/environments";
 import { MacAccessibilityIcon, MacScreenRecordingIcon } from "../Icons";
-import { PermissionChecklist } from "../permissions/PermissionChecklist";
-import { Button } from "../ui/button";
+import {
+  ACCESS_CARD_CLASS,
+  ACCESS_PRIMARY_BUTTON_CLASS,
+  ACCESS_SECONDARY_BUTTON_CLASS,
+  ACCESS_SUBJECT_LIST_CLASS,
+  AccessCardHeader,
+  AccessChip,
+} from "../chat/AccessCardChrome";
+import { cn } from "~/lib/utils";
 
 /** Sends a message to the agent in the open thread; absent where the user cannot send. */
 export const ComputerUseRetryContext = createContext<((text: string) => void) | null>(null);
@@ -211,29 +218,60 @@ export function ComputerUsePermissionChecklist({
   const stale = permissions.filter(pending);
   return (
     <div className="space-y-2">
-      <PermissionChecklist
-        permissions={permissions.map((permission) => {
+      <ul aria-label="macOS permissions" className={ACCESS_SUBJECT_LIST_CLASS}>
+        {permissions.map((permission) => {
           const copy = COMPUTER_USE_PERMISSION_COPY[permission];
           const Icon =
             permission === "accessibility" ? MacAccessibilityIcon : MacScreenRecordingIcon;
-          return {
-            id: permission,
-            icon: <Icon className="size-8 shrink-0 drop-shadow-sm" />,
-            title: copy.title,
-            description: state.requested.has(permission)
-              ? "Turn on SpecWithCode in the list System Settings opened."
-              : copy.purpose,
-            granted: state.status[copy.key],
-            onAllow: () => state.request(permission),
-          };
+          const granted = state.status[copy.key];
+          return (
+            <AccessChip
+              key={permission}
+              data-computer-use-permission={permission}
+              icon={<Icon className="size-7 drop-shadow-sm" aria-hidden="true" />}
+              label={
+                <>
+                  <span>{copy.title}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {state.requested.has(permission) && !granted
+                      ? "Turn on SpecWithCode in the list System Settings opened."
+                      : copy.purpose}
+                  </span>
+                </>
+              }
+              trailing={
+                granted ? (
+                  <span
+                    role="status"
+                    className="flex items-center gap-1 rounded-full bg-access-allowed px-2.5 py-0.5 text-xs font-medium text-access-allowed-foreground"
+                  >
+                    <CircleCheckIcon className="size-3.5" aria-hidden="true" />
+                    Allowed
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className={cn(ACCESS_PRIMARY_BUTTON_CLASS, "h-8 px-4 text-xs")}
+                    onClick={() => state.request(permission)}
+                  >
+                    Allow
+                  </button>
+                )
+              }
+            />
+          );
         })}
-      />
+      </ul>
       {screenRecordingPending && state.relaunch ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
           Already turned it on? macOS applies Screen Recording after the app reopens.
-          <Button size="xs" variant="outline" onClick={state.relaunch}>
+          <button
+            type="button"
+            className={cn(ACCESS_SECONDARY_BUTTON_CLASS, "h-7 px-3 text-xs font-medium")}
+            onClick={state.relaunch}
+          >
             Quit &amp; Reopen
-          </Button>
+          </button>
         </p>
       ) : null}
       {state.reset
@@ -246,9 +284,13 @@ export function ComputerUsePermissionChecklist({
                 ? `Reset. Turn SpecWithCode on again in the ${COMPUTER_USE_PERMISSION_COPY[permission].title} list.`
                 : `SpecWithCode already on in the ${COMPUTER_USE_PERMISSION_COPY[permission].title} list? macOS is keeping that switch for another build of the app.`}
               {state.resetDone.has(permission) ? null : (
-                <Button size="xs" variant="outline" onClick={() => state.reset?.(permission)}>
+                <button
+                  type="button"
+                  className={cn(ACCESS_SECONDARY_BUTTON_CLASS, "h-7 px-3 text-xs font-medium")}
+                  onClick={() => state.reset?.(permission)}
+                >
                   Reset and ask again
-                </Button>
+                </button>
               )}
             </p>
           ))
@@ -276,7 +318,7 @@ function RemoteHint({
 }) {
   const machine = useEnvironment(environmentId)?.label ?? "that Mac";
   return (
-    <p className="text-muted-foreground">
+    <p className="text-sm/relaxed text-muted-foreground">
       On {machine}, open the SpecWithCode app and allow{" "}
       {COMPUTER_USE_PERMISSION_COPY[permission].title} for it in System Settings &gt; Privacy &amp;
       Security, then ask the agent to try again.
@@ -311,25 +353,18 @@ export function ComputerUsePermissionCard({
   if (!local) {
     body = <RemoteHint environmentId={environmentId} permission={permission} />;
   } else if (!granted) {
-    body = (
-      <>
-        <p className="text-muted-foreground">
-          The agent stopped waiting. Allow it here, then ask the agent to try again.
-        </p>
-        <ComputerUsePermissionChecklist permissions={[permission]} state={state} />
-      </>
-    );
+    body = <ComputerUsePermissionChecklist permissions={[permission]} state={state} />;
   } else {
     body = (
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="flex items-center gap-1 text-success-foreground">
+      <div className="flex min-w-0 flex-col items-center gap-3 text-sm">
+        <span className="flex items-center gap-1.5 text-success-foreground">
           <CircleCheckIcon className="size-4" aria-hidden="true" />
           {copy.title} is allowed.
         </span>
         {retry ? (
-          <Button
-            size="sm"
-            variant="outline"
+          <button
+            type="button"
+            className={cn(ACCESS_PRIMARY_BUTTON_CLASS, "w-full sm:w-auto sm:min-w-56")}
             disabled={retried}
             onClick={() => {
               setRetried(true);
@@ -337,7 +372,7 @@ export function ComputerUsePermissionCard({
             }}
           >
             {retried ? "Asked the agent" : "Ask the agent to try again"}
-          </Button>
+          </button>
         ) : (
           <span className="text-muted-foreground">Send a message to try again.</span>
         )}
@@ -345,17 +380,21 @@ export function ComputerUsePermissionCard({
     );
   }
   return (
-    <div
+    <section
       role="note"
       data-testid="computer-use-permission-card"
-      className="my-1 space-y-2 rounded-lg border border-warning/30 bg-warning/6 px-3 py-2 text-sm"
+      className={`my-1 ${ACCESS_CARD_CLASS}`}
     >
-      <p className="flex items-center gap-2 font-medium">
-        <MonitorIcon className="size-4 shrink-0 text-warning-foreground" aria-hidden="true" />
-        Computer use needs {copy.title}
-      </p>
+      <AccessCardHeader
+        title={`Computer use needs ${copy.title}`}
+        reason={
+          local && !granted
+            ? `${copy.purpose} macOS lets only you allow it for SpecWithCode. The agent stopped waiting, so allow it here, then ask the agent to try again.`
+            : undefined
+        }
+      />
       {body}
-    </div>
+    </section>
   );
 }
 

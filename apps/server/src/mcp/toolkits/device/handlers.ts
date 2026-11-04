@@ -14,6 +14,8 @@ import * as ServerConfig from "../../../config.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@specweave-studio/shared/nodeRuntime";
 
+import * as AccessGate from "../../../access/accessGate.ts";
+import * as AccessRequests from "../../../access/AccessRequests.ts";
 import * as DeviceService from "../../../device/DeviceService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -67,14 +69,76 @@ export function agentDeviceQuickStart(
   ].join("\n");
 }
 
-const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("device").pipe(
-  Effect.mapError(
-    () =>
-      new DeviceToolUnavailableError({
-        reason: "Agent device access is turned off for this environment.",
-      }),
-  ),
-);
+const DEVICE_ACCESS_OFF =
+  "Agent device access is turned off for this environment. Call device_open for the device you need, or request_access with it, and the user can allow it on a card.";
+
+/**
+ * Device tools need Agent device access, or a device the user allowed this
+ * thread (or this machine) on an access request card. Listing devices needs
+ * any such device; tools that act on one need that device itself.
+ */
+const requireDeviceAccess = Effect.gen(function* () {
+  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  if (invocation.thread === undefined) {
+    return yield* new DeviceToolUnavailableError({ reason: DEVICE_ACCESS_OFF });
+  }
+  const scope = invocation as McpInvocationContext.McpThreadInvocationScope;
+  if (invocation.capabilities.has("device")) return scope;
+  const access = yield* AccessRequests.AccessRequests;
+  if (yield* access.hasAnyGrant(scope.thread.threadId, "device")) return scope;
+  return yield* new DeviceToolUnavailableError({ reason: DEVICE_ACCESS_OFF });
+});
+
+/** Without Agent device access, each device a tool reaches must be allowed itself. */
+const requireDeviceGrants = (
+  scope: McpInvocationContext.McpThreadInvocationScope,
+  targets: ReadonlyArray<{ readonly hostId: string; readonly deviceId: string }>,
+) =>
+  Effect.gen(function* () {
+    if (scope.capabilities.has("device")) return;
+    const access = yield* AccessRequests.AccessRequests;
+    for (const target of targets) {
+      const key = AccessGate.deviceGrantKey(target.hostId, target.deviceId);
+      if (yield* access.isAllowed(scope.thread.threadId, key)) continue;
+      return yield* new DeviceToolUnavailableError({
+        reason: `This thread may not use device ${target.deviceId}${target.hostId === LOCAL_DEVICE_HOST_ID ? "" : ` on host ${target.hostId}`}. Call device_open for it, or request_access with it, and the user can allow it on a card.`,
+      });
+    }
+  });
+
+/**
+ * Opening a device without Agent device access asks the user first, on an
+ * access request card; an Allow lets agent tools start for that device.
+ */
+const requireDeviceConsent = (target: DeviceSummary) =>
+  Effect.gen(function* () {
+    const invocation = yield* McpInvocationContext.McpInvocationContext;
+    if (invocation.thread === undefined) {
+      return yield* new DeviceToolUnavailableError({ reason: DEVICE_ACCESS_OFF });
+    }
+    const scope = invocation as McpInvocationContext.McpThreadInvocationScope;
+    if (invocation.capabilities.has("device")) return { scope, consented: false };
+    const subject = AccessGate.deviceSubject(target);
+    const result = yield* AccessGate.ensureAccess({
+      scope,
+      subjects: [subject],
+      reason: `The agent wants to control ${target.name} to test the app on it.`,
+      timeoutMs: AccessGate.IMPLICIT_ACCESS_TIMEOUT_MS,
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new DeviceToolUnavailableError({
+            reason: `Could not ask the user for access to ${target.name}: ${error.message}`,
+          }),
+      ),
+    );
+    if (result.status !== "allowed") {
+      return yield* new DeviceToolUnavailableError({
+        reason: AccessGate.accessRefusal(result.status, `Control ${target.name}`),
+      });
+    }
+    return { scope, consented: true };
+  });
 
 const pickDevice = (
   devices: ReadonlyArray<DeviceSummary>,
@@ -149,7 +213,6 @@ const handlers = {
   ),
   device_open: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
       const state = yield* devices.list;
       if (state.hostStatus === "disabled") {
@@ -159,11 +222,13 @@ const handlers = {
         });
       }
       const target = yield* pickDevice(state.devices, input);
+      const { scope, consented } = yield* requireDeviceConsent(target);
       // Resolve consent and agent connectivity before booting or registering a session.
       const agentArgs = yield* devices.agentTarget({
         threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
+        ...(consented ? { consented: true } : {}),
       });
       const session = yield* devices.open({
         threadId: scope.thread.threadId,
@@ -222,6 +287,7 @@ const handlers = {
           reason: "No device is open in this thread. Call device_open first.",
         });
       }
+      yield* requireDeviceGrants(scope, [target]);
       const shot = yield* devices.screenshot(target);
       return {
         device: shot.device,
@@ -237,6 +303,12 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* requireDeviceAccess;
       const devices = yield* DeviceService.DeviceService;
+      const closing = (yield* devices.sessionsForThread(scope.thread.threadId)).filter(
+        (session) =>
+          (input.hostId === undefined || session.hostId === input.hostId) &&
+          (input.deviceId === undefined || session.deviceId === input.deviceId),
+      );
+      yield* requireDeviceGrants(scope, closing);
       yield* devices.close({
         threadId: scope.thread.threadId,
         ...(input.hostId === undefined ? {} : { hostId: input.hostId }),

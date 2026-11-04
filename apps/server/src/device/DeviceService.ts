@@ -115,10 +115,15 @@ export class DeviceService extends Context.Service<
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
+    /**
+     * `consented`: the user allowed this device on an access request card, so
+     * agent tools may start even with Agent device access off.
+     */
     readonly agentTarget: (input: {
       threadId: ThreadId;
       hostId: DeviceHostId;
       deviceId: DeviceId;
+      consented?: boolean;
     }) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
@@ -152,6 +157,7 @@ export class DeviceService extends Context.Service<
     ) => Effect.Effect<DeviceReadiness | null, DeviceError>;
     readonly agentReadinessIfSupported: (
       hostId?: DeviceHostId,
+      options?: { readonly consented?: boolean },
     ) => Effect.Effect<DeviceAgentReadiness | null, DeviceError>;
     readonly currentReadiness: (hostId?: DeviceHostId) => Effect.Effect<DeviceReadiness | null>;
     readonly sessionsForThread: (threadId: ThreadId) => Effect.Effect<ReadonlyArray<DeviceSession>>;
@@ -324,9 +330,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   });
 
   const agentReadinessIfSupported: DeviceService["Service"]["agentReadinessIfSupported"] =
-    Effect.fn("DeviceService.agentReadinessIfSupported")(function* (hostId) {
+    Effect.fn("DeviceService.agentReadinessIfSupported")(function* (hostId, options) {
       const deviceSettings = yield* readDeviceSettings;
-      if (!deviceSettings.enabled || !deviceSettings.agentAccessEnabled) return null;
+      if (!deviceSettings.enabled) return null;
+      if (!deviceSettings.agentAccessEnabled && options?.consented !== true) return null;
       const host = yield* resolveHost(hostId);
       const summary = yield* host.summary;
       if (summary.kind === "local" && !summary.platforms.some((platform) => platform.available))
@@ -829,7 +836,9 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
       agentTarget: (input) =>
         Effect.gen(function* () {
           const host = yield* resolveHost(input.hostId);
-          const ready = yield* agentReadinessIfSupported(input.hostId);
+          const ready = yield* agentReadinessIfSupported(input.hostId, {
+            consented: input.consented === true,
+          });
           if (!ready)
             return yield* new DeviceHostUnavailableError({
               hostId: input.hostId,

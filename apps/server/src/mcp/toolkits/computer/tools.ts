@@ -18,11 +18,19 @@ import { Tool, Toolkit } from "effect/ai";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as AccessRequests from "../../../access/AccessRequests.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
   ThreadManagementService.ThreadManagementService,
   ComputerUseBroker.ComputerUseBroker,
+];
+/** Actions ask for app access first (see handlers.ts), so they also need these. */
+const actionDependencies = [
+  ...dependencies,
+  AccessRequests.AccessRequests,
+  OrchestratorMcpService.OrchestratorMcpService,
 ];
 
 /** What a computer tool fails with, including the access gate's refusal. */
@@ -42,7 +50,7 @@ const action = <const Name extends string, P extends Schema.Struct.Fields>(
     parameters,
     success: ComputerToolActionResult,
     failure: ComputerToolFailure,
-    dependencies,
+    dependencies: actionDependencies,
   })
     .annotate(Tool.Title, title)
     .annotate(Tool.Readonly, false)
@@ -52,7 +60,7 @@ const action = <const Name extends string, P extends Schema.Struct.Fields>(
 
 export const ComputerScreenshotTool = Tool.make("computer_screenshot", {
   description:
-    "Computer use: see the user's own computer desktop (the Mac running the SpecWithCode app), as an image. Use the computer_* tools when the user asks you to change something on their computer or work in a native app: System Settings (mouse or trackpad speed, display, sound, keyboard, notifications), Finder, Notes, Calendar, or any other installed app. Prefer them over shell edits such as `defaults write`, which often need a logout to apply. Start with this screenshot, act with computer_open, computer_click, computer_type and computer_key, and take another screenshot to confirm the result. These are this session's computer-use tools: where a computer-use skill names mcp__computer-use__* tools or a request_access step, use these instead; the machine's Agent computer access setting already grants access. Ask the user before deleting data, sending messages, purchases or changing security settings. For websites use the chrome_* or preview_* tools instead.",
+    "Computer use: see the user's own computer desktop (the Mac running the SpecWithCode app), as an image. Use the computer_* tools when the user asks you to change something on their computer or work in a native app: System Settings (mouse or trackpad speed, display, sound, keyboard, notifications), Finder, Notes, Calendar, or any other installed app. Prefer them over shell edits such as `defaults write`, which often need a logout to apply. Start with this screenshot, act with computer_open, computer_click, computer_type and computer_key, and take another screenshot to confirm the result. These are this session's computer-use tools: where a computer-use skill names mcp__computer-use__* tools, use these instead. The first time you open or work in an app, the user is asked to allow it on a card in this thread; to ask for several apps at once with your reason, call request_access first. Ask the user before deleting data, sending messages, purchases or changing security settings. For websites use the chrome_* or preview_* tools instead.",
   parameters: ComputerToolScreenshotInput,
   success: ComputerToolScreenshotResult,
   failure: ComputerToolFailure,

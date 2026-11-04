@@ -938,10 +938,10 @@ const STATUS_KEYS = [
   "installRequest",
 ] as const;
 
-const transportOf = (origin: { readonly transport: string }) =>
+export const transportOf = (origin: { readonly transport: string }) =>
   origin.transport === "connect" ? "connect" : "tailnet";
 
-const fleetFailureOf = (error: unknown, link: FleetLink): FleetUpdateFailure => {
+export const fleetFailureOf = (error: unknown, link: FleetLink): FleetUpdateFailure => {
   if (error instanceof FleetUpdateFailure) return error;
   if (error instanceof FleetError) {
     const reason =
@@ -1002,7 +1002,7 @@ async function answerOf(response: Response): Promise<unknown> {
 }
 
 /** A refusal answer from the worker, as a failure. */
-async function refusalOf(response: Response): Promise<FleetUpdateFailure> {
+export async function refusalOf(response: Response): Promise<FleetUpdateFailure> {
   const body = await answerOf(response);
   const message =
     record(body) && typeof body.message === "string"

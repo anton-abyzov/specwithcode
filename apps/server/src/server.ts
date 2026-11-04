@@ -119,7 +119,7 @@ import * as StudioNativeRoute from "./studio/NativeRoute.ts";
 import * as StudioHttp from "./studio/http.ts";
 import * as StudioFleetHttp from "./studioFleetHttp.ts";
 import * as FleetSkills from "./fleet/fleetSkills.ts";
-import * as FleetUpdate from "./fleet/fleetUpdate.ts";
+import * as FleetWorkers from "./fleet/fleetDiskRoom.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
@@ -989,7 +989,7 @@ const layerMakeRoutes = Layer.mergeAll(
         Layer.mergeAll(
           StudioHttp.layer,
           StudioFleetHttp.layer.pipe(
-            Layer.provide(FleetUpdate.layer.pipe(Layer.provide(ProcessRunner.layer))),
+            Layer.provide(FleetWorkers.workerLayer.pipe(Layer.provide(ProcessRunner.layer))),
             Layer.provide(FleetSkills.layer.pipe(Layer.provide(ProcessRunner.layer))),
           ),
         ),

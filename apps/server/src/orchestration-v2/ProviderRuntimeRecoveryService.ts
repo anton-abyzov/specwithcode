@@ -113,7 +113,15 @@ const cancelledItem = (
 ): OrchestrationV2ThreadProjection["turnItems"][number] =>
   item.type === "secret_request" && item.secretStatus === "pending"
     ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
-    : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
+    : item.type === "access_request" && item.accessStatus === "pending"
+      ? {
+          ...item,
+          status: "cancelled",
+          accessStatus: "cancelled",
+          completedAt: now,
+          updatedAt: now,
+        }
+      : { ...item, status: "cancelled", completedAt: now, updatedAt: now };
 
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;

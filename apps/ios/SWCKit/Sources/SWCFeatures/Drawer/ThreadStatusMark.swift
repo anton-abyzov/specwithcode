@@ -13,7 +13,7 @@ struct ThreadStatusMark: View {
       switch Self.state(of: thread) {
       case .unknown: symbol("questionmark.circle", Color.weave.muted)
       case .offline: StatusDot(.offline)
-      case .needsYou: symbol("bubble.left.fill", Color.weave.warn)
+      case .needsYou: symbol(Self.needsYouSymbol(thread), Color.weave.warn)
       case .failed: symbol("minus.circle", Color.weave.fail)
       case .working:
         ProgressView()
@@ -47,6 +47,11 @@ struct ThreadStatusMark: View {
       case .idle: "Idle"
       }
     }
+  }
+
+  /// A raised hand waits for access to be allowed; a bubble waits for a reply or an approval.
+  static func needsYouSymbol(_ thread: ThreadSummary) -> String {
+    thread.asksForAccess ? "hand.raised" : "bubble.left.fill"
   }
 
   static func state(of thread: ThreadSummary) -> State {

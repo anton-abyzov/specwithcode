@@ -674,6 +674,34 @@ export const StudioFleetUpdateStatus = Schema.Struct({
 export type StudioFleetUpdateStatus = typeof StudioFleetUpdateStatus.Type;
 
 /**
+ * Migration numbers whose fallback reads the whole database, as the target
+ * release's FULL_READ lists them: `none`, or up to 64 comma-separated numbers
+ * (1 to 999999, as disk_room.py --full-read takes them).
+ */
+export const StudioFleetDiskRoomFullRead = Schema.String.check(
+  Schema.isPattern(/^(none|[1-9]\d{0,5}(,[1-9]\d{0,5}){0,63})$/),
+);
+
+/**
+ * The fleet primary asks this machine how much disk its update to `version`
+ * needs. Only a version and migration numbers: no paths, commands or URLs.
+ */
+export const StudioFleetDiskRoomQuery = Schema.Struct({
+  coordinatorEnvironmentId: EnvironmentId,
+  version: StudioFleetUpdateVersion,
+  fullRead: StudioFleetDiskRoomFullRead,
+});
+export type StudioFleetDiskRoomQuery = typeof StudioFleetDiskRoomQuery.Type;
+
+/**
+ * This machine's disk room report as its `disk_room.py --json` prints it
+ * (freeBytes, needBytes, parts, ok, volume, ...), plus `workerIdentity`, the
+ * identity it ran the check as.
+ */
+export const StudioFleetDiskRoomReport = Schema.Record(Schema.String, Schema.Unknown);
+export type StudioFleetDiskRoomReport = typeof StudioFleetDiskRoomReport.Type;
+
+/**
  * A published skill as `owner/repo/name`: three plain segments, each starting
  * with a letter or digit. No scheme (`local:`, `github:`), path, URL, `..` or
  * leading `-` can match, so the value is safe as one argv element.

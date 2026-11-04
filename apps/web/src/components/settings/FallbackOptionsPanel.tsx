@@ -6,6 +6,7 @@ import { useState } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { getLocale, t, useT, type Translate } from "../../i18n";
 import {
   type FallbackProviderBlock,
   fallbackFamilySummaryLabel,
@@ -16,54 +17,58 @@ import {
 } from "./fallbackOptionsLayout";
 
 const clock = (ms: number) =>
-  new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  new Date(ms).toLocaleTimeString(getLocale(), { hour: "numeric", minute: "2-digit" });
 
 /** Whether, and why not, a limited thread can continue on this model now. */
-export function fallbackOptionStatusLabel(option: FallbackOption): string {
+export function fallbackOptionStatusLabel(option: FallbackOption, tr: Translate = t): string {
   switch (option.status) {
     case "ready":
-      return "Can take a limited thread";
+      return tr("fallback.status.ready");
     case "unverified":
-      return "Signed in, no recent usage reading";
+      return tr("fallback.status.unverified");
     case "current":
-      return "This thread's model";
+      return tr("fallback.status.current");
     case "excluded":
-      return "Excluded from automatic fallback";
+      return tr("fallback.status.excluded");
     case "disabled":
-      return "Turned off";
+      return tr("fallback.status.disabled");
     case "signed-out":
-      return "Signed out";
+      return tr("fallback.status.signedOut");
     case "not-ready":
-      return "Not set up on this machine";
+      return tr("fallback.status.notReady");
     case "limited":
-      return "At its limit";
+      return tr("fallback.status.limited");
     case "full":
-      return option.resetAt === null ? "Full" : `Full until ${clock(option.resetAt)}`;
+      return option.resetAt === null
+        ? tr("fallback.status.full")
+        : tr("fallback.status.fullUntil", { time: clock(option.resetAt) });
     case "per-token":
-      return "Billed per token: only when you name it or allow API credits";
+      return tr("fallback.status.perToken");
     case "never-automatic":
-      return "Bills a Google Cloud project: never automatic";
+      return tr("fallback.status.neverAutomatic");
     case "named-only":
-      return "Billing unknown: only when you name it";
+      return tr("fallback.status.namedOnly");
   }
 }
 
 /** What backs the access, as far as SpecWithCode can see. */
-export function fallbackOptionAccessLabel(option: FallbackOption): string {
+export function fallbackOptionAccessLabel(option: FallbackOption, tr: Translate = t): string {
   switch (option.access) {
     case "usage-read":
       if (option.usedPercent === null)
-        return option.status === "unverified" ? "Plan usage not read" : "Plan usage reported";
+        return option.status === "unverified"
+          ? tr("fallback.access.notRead")
+          : tr("fallback.access.reported");
       // An old reading is not current room: say it is the last one.
       return option.status === "unverified"
-        ? `Last read ${Math.round(option.usedPercent)}% used`
-        : `Plan usage ${Math.round(option.usedPercent)}% used`;
+        ? tr("fallback.access.lastRead", { percent: Math.round(option.usedPercent) })
+        : tr("fallback.access.planUsage", { percent: Math.round(option.usedPercent) });
     case "no-usage-reported":
-      return "Signed in; provider reports no usage";
+      return tr("fallback.access.noUsage");
     case "per-token":
-      return "Billed per token";
+      return tr("fallback.access.perToken");
     case "unknown":
-      return "Access unknown";
+      return tr("fallback.access.unknown");
   }
 }
 
@@ -81,11 +86,12 @@ function OptionRow(props: {
   readonly onToggleExcluded: (model: string, instanceId?: ProviderInstanceId) => void;
   readonly disabled?: boolean | undefined;
 }) {
+  const tr = useT();
   const { option, common, onToggleExcluded, disabled } = props;
   // The block header already says what most rows share; a row adds only what differs.
   const notes = [
-    option.status === common.status ? null : fallbackOptionStatusLabel(option),
-    sameAccess(option, common) ? null : fallbackOptionAccessLabel(option),
+    option.status === common.status ? null : fallbackOptionStatusLabel(option, tr),
+    sameAccess(option, common) ? null : fallbackOptionAccessLabel(option, tr),
   ].filter((note): note is string => note !== null);
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-md px-2 py-1 text-sm hover:bg-accent/40">
@@ -94,7 +100,7 @@ function OptionRow(props: {
         <span className={cn(option.excluded && "line-through opacity-60")}>{option.modelName}</span>
         {option.orderIndex !== null ? (
           <span className="ml-1.5 text-xs text-muted-foreground tabular-nums">
-            #{option.orderIndex + 1} in order
+            {tr("fallback.inOrder", { index: option.orderIndex + 1 })}
           </span>
         ) : null}
       </span>
@@ -105,10 +111,12 @@ function OptionRow(props: {
         size="xs"
         variant="outline"
         disabled={disabled}
-        aria-label={`${option.excluded ? "Include" : "Exclude"} ${option.modelName}`}
+        aria-label={tr(option.excluded ? "fallback.includeAria" : "fallback.excludeAria", {
+          model: option.modelName,
+        })}
         onClick={() => onToggleExcluded(option.selection.model)}
       >
-        {option.excluded ? "Include" : "Exclude"}
+        {option.excluded ? tr("fallback.include") : tr("fallback.exclude")}
       </Button>
     </li>
   );
@@ -119,17 +127,22 @@ function ProviderBlock(props: {
   readonly onToggleExcluded: (model: string, instanceId?: ProviderInstanceId) => void;
   readonly disabled?: boolean | undefined;
 }) {
+  const tr = useT();
   const { block, onToggleExcluded, disabled } = props;
   const [showOlder, setShowOlder] = useState(false);
   const sample = block.shown[0] ?? block.older[0]!;
   const headerOption = { ...sample, ...block.common };
   const rows = showOlder ? [...block.shown, ...block.older] : block.shown;
   return (
-    <section aria-label={`${block.providerName} models`} className="flex flex-col gap-0.5">
+    <section
+      aria-label={tr("fallback.providerModels", { provider: block.providerName })}
+      className="flex flex-col gap-0.5"
+    >
       <div className="flex flex-wrap items-baseline gap-x-2 px-2 pb-0.5">
         <h5 className="text-xs font-medium text-foreground/80">{block.providerName}</h5>
         <span className="text-xs text-muted-foreground" data-testid="provider-block-status">
-          {fallbackOptionStatusLabel(headerOption)} · {fallbackOptionAccessLabel(headerOption)}
+          {fallbackOptionStatusLabel(headerOption, tr)} ·{" "}
+          {fallbackOptionAccessLabel(headerOption, tr)}
         </span>
       </div>
       <ul className="flex flex-col">
@@ -151,8 +164,8 @@ function ProviderBlock(props: {
           onClick={() => setShowOlder((open) => !open)}
         >
           {showOlder
-            ? "Hide older versions"
-            : `Show ${block.older.length} older ${block.older.length === 1 ? "version" : "versions"}`}
+            ? tr("fallback.hideOlder")
+            : tr("fallback.showOlder", { count: block.older.length })}
         </button>
       ) : null}
     </section>
@@ -165,6 +178,7 @@ function FamilySection(props: {
   readonly disabled?: boolean | undefined;
   readonly defaultOpen: boolean;
 }) {
+  const tr = useT();
   const { group, onToggleExcluded, disabled, defaultOpen } = props;
   const [open, setOpen] = useState(defaultOpen);
   const blocks = layoutFallbackFamily(group);
@@ -172,7 +186,7 @@ function FamilySection(props: {
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      render={<section aria-label={`${group.label} models`} />}
+      render={<section aria-label={tr("fallback.providerModels", { provider: group.label })} />}
       className="rounded-lg border border-border/70"
     >
       <h4>
@@ -188,7 +202,7 @@ function FamilySection(props: {
             {group.label}
           </span>
           <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">
-            {fallbackFamilySummaryLabel(summarizeFallbackFamily(group))}
+            {fallbackFamilySummaryLabel(summarizeFallbackFamily(group), tr)}
           </span>
         </CollapsibleTrigger>
       </h4>
@@ -220,9 +234,10 @@ export function FallbackOptionsPanel(props: {
   readonly onToggleExcluded: (model: string, instanceId?: ProviderInstanceId) => void;
   readonly disabled?: boolean;
 }) {
+  const tr = useT();
   const { groups, onToggleExcluded, disabled } = props;
   if (groups.length === 0)
-    return <p className="text-sm text-muted-foreground">No providers on this machine yet.</p>;
+    return <p className="text-sm text-muted-foreground">{tr("fallback.noProviders")}</p>;
   return (
     <div className="flex flex-col gap-2" data-testid="fallback-options">
       {groups.map((group) => (
@@ -234,12 +249,7 @@ export function FallbackOptionsPanel(props: {
           defaultOpen={groups.length === 1}
         />
       ))}
-      <p className="text-xs text-muted-foreground">
-        Excluding a model keeps it out of every automatic switch on every provider; you can still
-        pick it yourself. New models are allowed until you exclude them. Access shown here is only
-        what SpecWithCode can see: GitHub Actions minutes, an X subscription or startup credits are
-        not model access unless one of these providers is signed in with them.
-      </p>
+      <p className="text-xs text-muted-foreground">{tr("fallback.footnote")}</p>
     </div>
   );
 }

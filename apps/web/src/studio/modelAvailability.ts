@@ -114,8 +114,12 @@ export type ModelAvailability =
     }
   /** Billed per token (an API key or Bedrock): no subscription quota. */
   | { readonly kind: "perToken" }
-  /** GitHub Copilot and the ACP agents: they do not report usage at all. */
-  | { readonly kind: "unreported" }
+  /**
+   * The provider reports no usage. `message` is the machine's reason when it
+   * tried and could not read it (for Copilot: which GitHub CLI sign-in is
+   * missing), so the picker says what to do instead of a generic line.
+   */
+  | { readonly kind: "unreported"; readonly message?: string }
   /** The machine that runs the provider is not connected. */
   | { readonly kind: "offline"; readonly machineLabel: string | null }
   /**
@@ -241,7 +245,11 @@ export function modelAvailability(input: ModelAvailabilityInput): ModelAvailabil
   const unreadable =
     limits.unavailable?.reason === "probeFailed" || limits.unavailable?.reason === "unsupported";
   if (limits.unavailable?.reason === "unsupported" && limits.windows.length === 0) {
-    return { kind: "unreported" };
+    if (provider.auth.status === "unauthenticated") {
+      return { kind: "unknown", reason: "notSignedIn" };
+    }
+    const message = limits.unavailable.message?.trim();
+    return message ? { kind: "unreported", message } : { kind: "unreported" };
   }
 
   if (unreadable && live.length === 0) {
@@ -517,12 +525,19 @@ export function availabilityText(
         tone: "muted",
       };
     case "unreported":
-      return {
-        short: "Usage not reported",
-        label: "usage not reported",
-        long: `${provider} does not report usage limits, so its room is unknown until a turn runs.`,
-        tone: "muted",
-      };
+      return availability.message
+        ? {
+            short: "Usage not read",
+            label: "usage not read",
+            long: `${availability.message} The model stays selectable.`,
+            tone: "muted",
+          }
+        : {
+            short: "Usage not reported",
+            label: "usage not reported",
+            long: `${provider} does not report usage limits, so its room is unknown until a turn runs.`,
+            tone: "muted",
+          };
     case "offline":
       return {
         short: availability.machineLabel

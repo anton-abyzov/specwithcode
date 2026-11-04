@@ -20,6 +20,11 @@ export {
   OrchestrationV2LimitRecoveryUpdate,
 } from "./orchestrationV2LimitRecovery.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import {
+  AccessRequestScope,
+  AccessRequestSubject,
+  AccessRequestSubjectKind,
+} from "./accessRequest.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -1227,7 +1232,27 @@ export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Typ
 
 export { latestProviderTurnForAttempt } from "./latestProviderTurnForAttempt.ts";
 
+/**
+ * What a waiting access request asks for, small enough for thread lists:
+ * the title, the agent's reason and each subject's name and machine. Icons
+ * stay on the turn item.
+ */
+export const OrchestrationV2PendingAccessRequest = Schema.Struct({
+  accessTitle: Schema.String,
+  reason: Schema.String,
+  subjects: Schema.Array(
+    Schema.Struct({
+      kind: AccessRequestSubjectKind,
+      label: Schema.String,
+      hostLabel: Schema.optional(Schema.String),
+    }),
+  ),
+});
+export type OrchestrationV2PendingAccessRequest = typeof OrchestrationV2PendingAccessRequest.Type;
+
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
+  /** Set only on the stand-in for a waiting access request card. */
+  access: Schema.optional(OrchestrationV2PendingAccessRequest),
   /** Original ask time of an update-reopened card; null means unknown, never the reopen time. */
   reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
   id: RuntimeRequestId,
@@ -1741,6 +1766,28 @@ const OrchestrationV2SecretRequestFields = {
   secretStatus: OrchestrationV2SecretRequestStatus,
 } as const;
 
+export const OrchestrationV2AccessRequestStatus = Schema.Literals([
+  "pending",
+  "allowed",
+  "denied",
+  "cancelled",
+]);
+export type OrchestrationV2AccessRequestStatus = typeof OrchestrationV2AccessRequestStatus.Type;
+
+/**
+ * Access an agent asked the user for: apps it wants to control, devices it
+ * wants to drive. One answer covers every subject; an Allow carries its scope.
+ */
+const OrchestrationV2AccessRequestFields = {
+  type: Schema.Literal("access_request"),
+  /** What is asked, e.g. "Use System Settings and Activity Monitor". */
+  accessTitle: TrimmedNonEmptyString,
+  reason: Schema.String,
+  subjects: Schema.Array(AccessRequestSubject).check(Schema.isMinLength(1)),
+  accessStatus: OrchestrationV2AccessRequestStatus,
+  accessScope: Schema.optional(AccessRequestScope),
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1931,6 +1978,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2SecretRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2AccessRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2212,6 +2263,8 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
    * would look freshly asked (or never actionable) after every update.
    */
   reopenedFromAskedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  /** What a waiting access request asks for; absent for every other request. */
+  access: Schema.optional(OrchestrationV2PendingAccessRequest),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
@@ -2796,6 +2849,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2SecretRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2AccessRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3736,6 +3793,23 @@ const OrchestrationV2InternalCommand = Schema.Union([
     reason: Schema.String,
     placeholder: Schema.optional(Schema.String),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /**
+   * Records or updates an access request card. Internal so no client can mark
+   * a request allowed without its grants being written.
+   */
+  Schema.Struct({
+    type: Schema.Literal("access_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    accessTitle: TrimmedNonEmptyString,
+    reason: Schema.String,
+    subjects: Schema.Array(AccessRequestSubject).check(Schema.isMinLength(1)),
+    accessStatus: OrchestrationV2AccessRequestStatus,
+    accessScope: Schema.optional(AccessRequestScope),
   }),
   /**
    * Records a question an agent asked the user through `ask_user`. The answer

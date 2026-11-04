@@ -1638,6 +1638,8 @@ export interface ChatComposerProps {
   } | null;
 
   // Pending approvals / inputs
+  /** The pending access request card, shown above the composer in place of its approval row. */
+  accessRequestCard?: ReactNode;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   pendingUserInputs: PendingUserInput[];
@@ -7118,6 +7120,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             restingControlsHost,
           )
         : null}
+      {props.accessRequestCard ? (
+        <div data-chat-composer-access-request="true" className="mb-3 min-w-0">
+          {props.accessRequestCard}
+        </div>
+      ) : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack

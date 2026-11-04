@@ -83,6 +83,9 @@ struct CommandEncodeTests {
       ("subscribeShell.resume", try encodeToJSON(SubscribeShellInput(afterSequence: 42))),
       ("subscribeThread", try encodeToJSON(SubscribeThreadInput(threadId: "thr_1", acceptBoundedSnapshot: true))),
       ("dispatchResult", try encodeToJSON(DispatchResult(sequence: 7))),
+      ("accessAnswer.allowThread", try encodeToJSON(AccessAnswerRequestInput(threadId: "thr_1", turnItemId: "ti_access", answer: .allow(scope: .thread)))),
+      ("accessAnswer.allowMachine", try encodeToJSON(AccessAnswerRequestInput(threadId: "thr_1", turnItemId: "ti_access", answer: .allow(scope: .machine)))),
+      ("accessAnswer.deny", try encodeToJSON(AccessAnswerRequestInput(threadId: "thr_1", turnItemId: "ti_access", answer: .deny))),
     ]
   }
 
@@ -113,6 +116,8 @@ struct CommandEncodeTests {
     try round(ProjectUpdateCommand.self, "projectUpdate.clearIcon")
     try round(UpdateServerSettingsInput.self, "updateSettings.clearModel")
     try round(SubscribeThreadInput.self, "subscribeThread")
+    try round(AccessAnswerRequestInput.self, "accessAnswer.allowMachine")
+    try round(AccessAnswerRequestInput.self, "accessAnswer.deny")
   }
 
   @Test func requestFrames() throws {
@@ -132,7 +137,7 @@ struct CommandEncodeTests {
   }
 
   @Test func methodNames() {
-    #expect(RpcMethod.allCases.count == 21)
+    #expect(RpcMethod.allCases.count == 22)
     #expect(RpcMethod.subscribeDeviceState.rawValue == "subscribeDeviceState" && RpcMethod.subscribeDeviceState.isStream)
     #expect(RpcMethod.subscribeShell.rawValue == "orchestration.subscribeShell")
     #expect(RpcMethod.projectsMutate.rawValue == "projects.mutate")

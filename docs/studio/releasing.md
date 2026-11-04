@@ -79,8 +79,8 @@ The **Release macOS** workflow (`.github/workflows/release-macos.yml`, run by ha
 version) runs `release.sh --ci` on the self-hosted **M1** release Mac, so a release needs neither
 the M4 nor anyone at it. `--ci` needs no fleet files and skips `quit-desktop`, `fleet-m4`, `fleet-workers`, `desktop`
 and `fleet-linux`: each Mac's update agent installs the release from the public feed on its next hourly
-check, and `fleet_rollout.py --version <v>` on the M4 asks them at once and then updates the M1
-and M3 apps ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
+check, and `fleet_rollout.py --version <v>` on the M4 asks them at once over SpecWithCode Connect
+(add `--ssh-fallback` to also update the M1 and M3 apps, [desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)); `linux_rollout.py
 --version <v>` does the same for Linux workers, which have no update agent. The workflow writes
 release.env, the certificate, the notarization key, the Google pair and the mirror rules from
 repository secrets into the runner's temp folder and deletes them at the end; its header lists the
@@ -101,7 +101,7 @@ make, and refuses to start a second run of a version without `--resume`.
 
 | Stage           | What it does                                                                                                           | Runs again              |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| preflight       | version policy, release.env and the files it names, toolchain, `gh auth`; free disk for the update on M4 (plus 10 GiB build headroom, `RELEASE_BUILD_HEADROOM_GIB`), M1 and M3 (`preflight_fleet.py`, each host's `update.py room`; an unreachable host fails); drops anaconda from PATH; warns on high load | every run               |
+| preflight       | version policy, release.env and the files it names, toolchain, `gh auth`; free disk for the update on M4 (plus 10 GiB build headroom, `RELEASE_BUILD_HEADROOM_GIB`), M1 and M3 (`preflight_fleet.py`: M4's `update.py room`, the workers' `fleet room` over SpecWithCode Connect; a host that cannot be asked fails); drops anaconda from PATH; warns on high load | every run               |
 | trees           | makes or checks the build, test and public trees                                                                       | every run               |
 | prev            | downloads the previous release's plan, helpers manifest and `SHA256SUMS`; checks them (sums or GitHub's digest)        | once                    |
 | bump            | `release/<version>` from `main`, the version bump commit                                                               | once                    |
@@ -120,7 +120,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
 | fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                  | once                    |
 | desktop         | record grants, rollback copy, swap the app in `/Applications`, check its signature, grants and version, open it        | once                    |
-| fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way, then each one's desktop app                | once                    |
+| fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together over SpecWithCode Connect, polled the same way; their desktop apps only with `RELEASE_FLEET_SSH=1` | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
 | fleet-linux     | `linux_rollout.py`: Linux workers, best effort; a skipped or failed worker only warns                                  | once                    |
 
@@ -232,6 +232,32 @@ from that release's helpers (log: `updates/reconcile/<v>/reconcile.log`), so M1 
 even when nobody ran the workers stage. A reconcile gives up at once while another rollout covers
 the workers, and `STUDIO_FLEET_RECONCILE=0` turns it off.
 
+### Connect first, SSH on request
+
+The disk preflight and the worker stage ask M1 and M3 over SpecWithCode Connect, through M4's own
+installed CLI (the `cliWrapper` and `studioHome` of its `installation.json`), so a stale address in
+`~/.local/share/specweave/fleet/hosts.json` no longer stops a release. Each worker is matched to M4's
+`studio-fleet.json` by machine id or label. `preflight_fleet.py` runs `fleet room <machine> --version
+<v> --full-read <this checkout's FULL_READ migrations, or none> --connect-only --json` for each, and
+`fleet_rollout.py` sends each status read and request as `fleet update ... --connect-only --json`.
+A worker missing there, without a Connect address or a proof-bound management token, or one Connect
+cannot ask (unreachable, unauthorized, unsupported) fails with the machine and the reason, for example
+`m3: FAILED, could not be asked over SpecWithCode Connect (machine <id>): unsupported: <error>`.
+
+`RELEASE_FLEET_SSH=1` makes release.sh pass `--ssh-fallback` to both: a worker Connect could not
+ask is then asked over the pinned fleet SSH from `hosts.json` (the preflight says
+`m3: SpecWithCode Connect could not ask (<reason>); using pinned fleet SSH`), the rollout falls back
+the same way after a failed initial status read, and the desktop app step runs. Without it the step
+is skipped on each confirmed worker, `desktop app skipped: needs pinned fleet SSH (pass
+--ssh-fallback); its own updater installs <v> on quit`, which fails nothing.
+
+Bootstrap: until M4 and a worker run a release that has `fleet room`, the disk check reports
+`unsupported` for that worker. Run that one release with `RELEASE_FLEET_SSH=1`:
+
+```sh
+RELEASE_FLEET_SSH=1 bash scripts/release/release.sh <v>
+```
+
 ### What keeps a release from failing late
 
 Three different failures stopped 1.0.44, each after the expensive stages had run. These guards
@@ -271,9 +297,12 @@ command that refreshes the recorded shard weights from its reports.
 ### By hand
 
 `fleet_rollout.py --version <v> --dry-run` prints the rollout order and commands, with the
-`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it), and under
-`desktopApps` the ssh command for each worker's app and where the zip's sha256 will come from
-(`null` with `--no-desktop-apps`); it fetches nothing and contacts no host. A rollout
+`service prepare-update` command that drains and holds M4 first (`--no-hold` skips it), each
+host's route under `routes` (SpecWithCode Connect, or `skipped` with the reason), and under
+`desktopApps` the reason the app step is skipped; with `--ssh-fallback`, the ssh command for each
+worker's app and where the zip's sha256 will come from instead (`null` with `--no-desktop-apps`). It
+fetches nothing and contacts no host. `preflight_fleet.py --version <v>` runs the disk check alone
+(add `--ssh-fallback` for pinned SSH where Connect cannot ask). A rollout
 never asks M4 for a forced install it could not hold: an unheld request stops no running work and
 leaves `update.py --reap` nothing it may stop, so a busy M4 waits for quiet and fails its guarded
 checks as new work starts. When M4's installed release predates the command (it first shipped in
@@ -498,9 +527,11 @@ rename.
 
 ## Desktop apps on M1 and M3
 
-`fleet_rollout.py` updates `/Applications/SpecWithCode.app` on each worker once it has confirmed
-that worker's service on the version, whether this run installed it or it already ran it. M4's app
-is the desktop stage's. The step uses the same pinned fleet ssh as the service request: it streams
+With `--ssh-fallback` (`RELEASE_FLEET_SSH=1` in a release), `fleet_rollout.py` updates
+`/Applications/SpecWithCode.app` on each worker once it has confirmed that worker's service on the
+version, whether this run installed it or it already ran it. Without the flag the step needs SSH the
+run does not use, so each worker reports it skipped and its app's own updater installs the version
+on quit. M4's app is the desktop stage's. The step uses the pinned fleet ssh from `hosts.json`: it streams
 `scripts/studio-fleet/desktop_app_update_remote.sh` to the worker's `/bin/bash -s`, with the
 version, the zip's sha256 and the public repository in a preamble. Each value is checked before it
 reaches a shell (digits and dots, 64 hex digits, owner/name) and again on the worker.
@@ -567,7 +598,7 @@ not quit, 30 minutes passed) fails the rollout once every service is done: it pr
 `fleet_rollout: every service is on <v>, but m3: desktop app not updated to <v>: <reason>` and
 exits 1. Continue the release with `bash scripts/release/release.sh <v> --resume`: the services
 are already on the release, so only the apps are retried, and the merge stage still runs. Outside
-a release, `--only workers` retries them the same way. `--no-desktop-apps` leaves the apps alone.
+a release, `--only workers --ssh-fallback` retries them the same way. `--no-desktop-apps` leaves the apps alone.
 
 To update one worker's app by hand, take the zip's line from the release's `SHA256SUMS`:
 

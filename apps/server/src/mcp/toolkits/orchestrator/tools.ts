@@ -9,6 +9,8 @@ import {
   OrchestratorMcpAskUserInput,
   OrchestratorMcpAskUserResult,
   OrchestratorMcpRequestSecretInput,
+  OrchestratorMcpRequestAccessInput,
+  OrchestratorMcpRequestAccessResult,
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
   OrchestratorMcpListScheduledTasksInput,
@@ -50,6 +52,9 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import { DELEGATED_RESULT_VERIFY_SENTENCE } from "../../../orchestration-v2/DelegatedCompletionText.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import * as AccessRequests from "../../../access/AccessRequests.ts";
+import * as ComputerUseBroker from "../../../computerUse/ComputerUseBroker.ts";
+import * as DeviceService from "../../../device/DeviceService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 import { ThreadsWaitInput, ThreadsWaitResult } from "./threadsWait.ts";
 
@@ -179,6 +184,25 @@ const RequestSecretTool = Tool.make("request_secret", {
   dependencies,
 })
   .annotate(Tool.Title, "Request a secret from the user")
+  .annotate(Tool.Destructive, false);
+
+const accessDependencies = [
+  ...dependencies,
+  AccessRequests.AccessRequests,
+  ComputerUseBroker.ComputerUseBroker,
+  DeviceService.DeviceService,
+];
+
+const RequestAccessTool = Tool.make("request_access", {
+  description:
+    "Ask the user to let you use Mac apps (with the computer_* tools) or simulators and emulators (with the device_* tools), through one access card in this thread, and wait for Allow or Deny. Name every app and device you need in one call and give one sentence on why; the card shows each with its icon. The user picks whether the Allow lasts for this thread or always on this machine. Anything already allowed is not asked again. You do not need this before every app: opening or working in an app you were not allowed yet shows the same card by itself, but asking up front with your reason is clearer.",
+  parameters: OrchestratorMcpRequestAccessInput,
+  success: OrchestratorMcpRequestAccessResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: accessDependencies,
+})
+  .annotate(Tool.Title, "Request access to apps or devices")
   .annotate(Tool.Destructive, false);
 
 const AskUserTool = Tool.make("ask_user", {
@@ -383,6 +407,7 @@ export const OrchestratorToolkit = Toolkit.make(
   UpdateScheduledTaskTool,
   DeleteScheduledTaskTool,
   RequestSecretTool,
+  RequestAccessTool,
   AskUserTool,
   CreateThreadsTool,
   ThreadListTool,

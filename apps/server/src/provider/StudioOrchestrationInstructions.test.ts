@@ -53,7 +53,16 @@ describe("SpecWithCode orchestration provider instructions", () => {
     // line (about 70 tokens) stops workers improvising when a file is elsewhere.
     // The Chrome line (about 35 tokens) outranks a skill that names another browser.
     // The model line (about 30 tokens) stops agents delegating to change model.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_550);
+    // The access sentence (about 40 tokens) asks before driving apps or devices.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 2_750);
+  });
+
+  it("asks for app and device access before computer or device use", () => {
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "call `request_access` with the apps and devices",
+    );
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "Deny means stop asking this turn");
   });
 
   it("asks for an increment on launches in a SpecWeave project and a link to its spec", () => {

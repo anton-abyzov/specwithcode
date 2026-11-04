@@ -1406,6 +1406,27 @@ export function createServerEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.threadId, input.turnItemId]),
       },
     }),
+    // Off the config lane, like secret cards: one answer per card at a time.
+    answerAccessRequest: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:access:answer-request",
+      tag: WS_METHODS.accessAnswerRequest,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.turnItemId]),
+      },
+    }),
+    listAccessGrants: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:access:list-grants",
+      tag: WS_METHODS.accessListGrants,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
+    revokeAccessGrant: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:access:revoke-grant",
+      tag: WS_METHODS.accessRevokeGrant,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     refreshUsageRates: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-usage-rates",
       tag: WS_METHODS.serverRefreshUsageRates,

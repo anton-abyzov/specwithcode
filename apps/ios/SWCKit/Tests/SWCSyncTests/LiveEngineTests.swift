@@ -207,6 +207,35 @@ import SWCWire
     } throws: { $0.localizedDescription == "Acme's rules allow up to Auto, so Full access is not available." }
   }
 
+  @Test func answerAccessRequestCallsTheAccessRpc() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    let target = ChatTarget.thread(ThreadRef(environmentId: env, threadId: "thr_1"))
+    let request = AccessRequestRow(threadId: "thr_1", itemId: "ti_access", title: "Use Notes", reason: "", subjects: [], state: .pending)
+    try await h.engine.answerAccess(request, in: target, answer: .allow(.machine))
+    try await h.engine.answerAccess(request, in: target, answer: .deny)
+    let calls = h.machine.payloads("access.answerRequest")
+    #expect(calls.count == 2)
+    #expect(calls.first == .object([
+      "threadId": .string("thr_1"),
+      "turnItemId": .string("ti_access"),
+      "answer": .object(["type": .string("allow"), "scope": .string("machine")]),
+    ]))
+    #expect(calls.last?["answer"] == .object(["type": .string("deny")]))
+    // Answering never goes through the command dispatcher.
+    #expect(h.machine.payloads("orchestration.dispatchCommand").isEmpty)
+  }
+
+  @Test func answerAccessRequestShowsTheServersReason() async throws {
+    let h = try await harness(failing: ["access.answerRequest": #"{"_tag":"AccessRequestError","reason":"already_answered"}"#])
+    #expect(await loaded(h))
+    let target = ChatTarget.thread(ThreadRef(environmentId: env, threadId: "thr_1"))
+    let request = AccessRequestRow(threadId: "thr_1", itemId: "ti_access", title: "Use Notes", reason: "", subjects: [], state: .pending)
+    await #expect {
+      try await h.engine.answerAccess(request, in: target, answer: .allow(.thread))
+    } throws: { $0.localizedDescription == "This access request was already answered." }
+  }
+
   @Test func missingCoordinatorIsSubscribedAgainOnceTheShellListsIt() async throws {
     let h = try await harness()
     #expect(await loaded(h))

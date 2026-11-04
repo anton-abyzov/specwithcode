@@ -370,6 +370,46 @@ describe("modelAvailability", () => {
     );
   });
 
+  it("says why Copilot usage could not be read instead of a generic line", () => {
+    const empty = claude([], {});
+    const reason = "Sign in to the GitHub CLI as abycrash to read Copilot usage (gh auth login).";
+    const provider = claude(null, {
+      usageLimits: {
+        ...empty.usageLimits!,
+        unavailable: { reason: "unsupported", message: reason },
+      },
+    });
+    const state = modelAvailability({ provider, model: null, nowMs: now });
+    expect(state).toEqual({ kind: "unreported", message: reason });
+    expect(isAvailabilityBlocking(state)).toBe(false);
+    const words = availabilityText(state, { provider: "Copilot", nowMs: now });
+    expect(words.short).toBe("Usage not read");
+    expect(words.long).toContain("as abycrash");
+    expect(words.long).not.toContain("does not report usage limits");
+    // A signed-out provider says so instead of "stays selectable".
+    const signedOut = claude(null, {
+      auth: { ...empty.auth, status: "unauthenticated" },
+      usageLimits: {
+        ...empty.usageLimits!,
+        unavailable: { reason: "unsupported", message: "Not signed in." },
+      },
+    });
+    expect(modelAvailability({ provider: signedOut, model: null, nowMs: now })).toEqual({
+      kind: "unknown",
+      reason: "notSignedIn",
+    });
+    // Without a reason the generic line stays.
+    const plain = claude(null, {
+      usageLimits: { ...empty.usageLimits!, unavailable: { reason: "unsupported" } },
+    });
+    expect(
+      availabilityText(modelAvailability({ provider: plain, model: null, nowMs: now }), {
+        provider: "Copilot",
+        nowMs: now,
+      }).long,
+    ).toContain("does not report usage limits");
+  });
+
   it("judges a sparse denial by when it was seen, not by the last full read", () => {
     const old = claude([weekly(60)], {}, now - 40 * 60_000);
     const provider = claude(null, {

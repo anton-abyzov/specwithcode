@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   actionSteps,
+  applicationAtPoint,
+  applicationName,
   ComputerUseInputError,
   parseChord,
   PASTE_STEPS,
@@ -110,5 +112,104 @@ describe("actionSteps", () => {
         step.type === "key" ? step.keyCode : -1,
       ),
     ).toEqual([55, 9, 9, 55]);
+  });
+});
+
+describe("applicationAtPoint", () => {
+  const window = (
+    owner: string | null,
+    x: number,
+    y: number,
+    layer = 0,
+    alpha = 1,
+    width = 400,
+    height = 300,
+  ) => ({ owner, layer, alpha, x, y, width, height });
+  const at = (windows: ReadonlyArray<ReturnType<typeof window>>, x: number, y: number) =>
+    applicationAtPoint({ frontmost: "Notes", windows, screens: [laptopScreen] }, { x, y });
+  // A 1512x982 display: menu bar 0..33, Dock drawn below 930.
+  const laptopScreen = {
+    frame: { x: 0, y: 0, width: 1512, height: 982 },
+    visible: { x: 0, y: 34, width: 1512, height: 896 },
+  };
+  const menuBar = window("Window Server", 0, 0, 24, 1, 1512, 33);
+  const dock = window("Dock", 0, 0, 20, 1, 1512, 982);
+
+  it("picks the topmost visible window that contains the point", () => {
+    const windows = [
+      window("Invisible", 0, 0, 0, 0),
+      window("Notes", 500, 500),
+      window("Terminal", 0, 40),
+      window("Finder", 0, 40),
+    ];
+    expect(at(windows, 10, 50)).toBe("Terminal");
+    expect(at(windows, 600, 600)).toBe("Notes");
+    expect(at(windows, 450, 450)).toBeUndefined();
+  });
+
+  it("counts windows above the normal layer as their own app", () => {
+    const banner = window("Notification Center", 1100, 40, 23, 1, 360, 80);
+    const overlay = window("SpecWithCode", 0, 40, 1000, 1, 200, 200);
+    const windows = [overlay, banner, window("Terminal", 0, 0, 0, 1, 1512, 982)];
+    expect(at(windows, 1200, 60)).toBe("Notification Center");
+    expect(at(windows, 50, 60)).toBe("SpecWithCode");
+    expect(at(windows, 600, 600)).toBe("Terminal");
+  });
+
+  it("reads the menu bar as the frontmost app's menus", () => {
+    const windows = [menuBar, dock, window("Terminal", 0, 0, 0, 1, 1512, 982)];
+    expect(at(windows, 100, 10)).toBe("Notes");
+    expect(
+      applicationAtPoint({ windows, screens: [laptopScreen] }, { x: 100, y: 10 }),
+    ).toBeUndefined();
+  });
+
+  it("passes over other Window Server windows such as the cursor", () => {
+    const cursor = window("Window Server", 90, 90, 2147483630, 1, 32, 32);
+    expect(at([cursor, window("Terminal", 0, 40)], 100, 100)).toBe("Terminal");
+  });
+
+  it("counts the Dock only where it is drawn", () => {
+    const windows = [menuBar, dock, window("Terminal", 0, 0, 0, 1, 1512, 982)];
+    expect(at(windows, 700, 950)).toBe("Dock");
+    expect(at(windows, 700, 500)).toBe("Terminal");
+    // The row between the menu bar and the visible frame is not the Dock.
+    expect(at(windows, 700, 33)).toBe("Terminal");
+  });
+
+  it("treats the far edges as outside the window", () => {
+    expect(at([window("Notes", 0, 40)], 400, 50)).toBeUndefined();
+    expect(at([window("Notes", 0, 40)], 399, 339)).toBe("Notes");
+  });
+
+  it("does not report a window without an owner name", () => {
+    expect(at([window(null, 0, 40)], 1, 41)).toBeUndefined();
+  });
+});
+
+describe("applicationName", () => {
+  it("prefers the name the running app goes by", () => {
+    expect(
+      applicationName({
+        requested: "code",
+        runningName: "Code",
+        displayName: "Visual Studio Code",
+        bundleName: "Code",
+        fileName: "Visual Studio Code",
+      }),
+    ).toBe("Code");
+  });
+
+  it("falls back to the display name, the bundle name, then the file name", () => {
+    const bundle = { requested: "x", fileName: "Visual Studio Code" };
+    expect(applicationName({ ...bundle, displayName: "VS Code", bundleName: "Code" })).toBe(
+      "VS Code",
+    );
+    expect(applicationName({ ...bundle, displayName: " ", bundleName: "Code" })).toBe("Code");
+    expect(applicationName(bundle)).toBe("Visual Studio Code");
+  });
+
+  it("keeps the requested name when nothing else is known", () => {
+    expect(applicationName({ requested: " Notes " })).toBe("Notes");
   });
 });

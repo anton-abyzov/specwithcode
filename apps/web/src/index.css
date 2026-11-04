@@ -67,6 +67,18 @@
   --update: var(--primary);
   --update-foreground: var(--primary);
   --update-surface: color-mix(in srgb, var(--update) 12%, transparent);
+  /* Access request card (chat and macOS permissions): a blue shield tile, a
+     near-black answer button, an amber scope tag and a green granted tag. */
+  --access-card: var(--card);
+  --access-tile: #3b78e7;
+  --access-tile-foreground: var(--color-white);
+  --access-primary: var(--color-neutral-950);
+  --access-primary-hover: var(--color-neutral-800);
+  --access-primary-foreground: var(--color-white);
+  --access-tag: var(--color-amber-100);
+  --access-tag-foreground: var(--color-amber-800);
+  --access-allowed: var(--color-emerald-100);
+  --access-allowed-foreground: var(--color-emerald-800);
   /* Keep every sidebar primitive on the same light surface hierarchy, including
      portaled mobile sheets and settings navigation outside the app sidebar. */
   --sidebar: var(--color-zinc-50);
@@ -119,6 +131,15 @@
     --warning-surface: color-mix(in srgb, var(--warning) 16%, transparent);
     --update-foreground: color-mix(in oklab, var(--primary) 70%, var(--color-white));
     --update-surface: color-mix(in srgb, var(--update) 18%, transparent);
+    --access-card: color-mix(in srgb, var(--background) 93%, white);
+    --access-tile: #4a86f0;
+    --access-primary: var(--color-white);
+    --access-primary-hover: var(--color-neutral-200);
+    --access-primary-foreground: var(--color-neutral-950);
+    --access-tag: color-mix(in oklab, var(--color-amber-300) 15%, transparent);
+    --access-tag-foreground: var(--color-amber-200);
+    --access-allowed: color-mix(in oklab, var(--color-emerald-300) 15%, transparent);
+    --access-allowed-foreground: var(--color-emerald-200);
     --sidebar: var(--card);
     --sidebar-control-surface: var(--muted);
     --sidebar-row-hover: var(--accent);
@@ -128,6 +149,24 @@
     --terminal-cursor: #cbbcff;
     --terminal-selection-background: rgb(168 140 246 / 25%);
   }
+}
+
+/* Access request card tokens; values above switch for light and dark. */
+@theme inline {
+  --color-access-card: var(--access-card);
+  --color-access-tile: var(--access-tile);
+  --color-access-tile-foreground: var(--access-tile-foreground);
+  --color-access-primary: var(--access-primary);
+  --color-access-primary-hover: var(--access-primary-hover);
+  --color-access-primary-foreground: var(--access-primary-foreground);
+  --color-access-tag: var(--access-tag);
+  --color-access-tag-foreground: var(--access-tag-foreground);
+  --color-access-allowed: var(--access-allowed);
+  --color-access-allowed-foreground: var(--access-allowed-foreground);
+  --shadow-access-card: 0 10px 32px -14px rgb(0 0 0 / 0.22), 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow-access-card-dark: 0 14px 40px -16px rgb(0 0 0 / 0.75);
+  --shadow-access-tile:
+    0 6px 16px -6px rgb(59 120 231 / 0.7), inset 0 1px 0 rgb(255 255 255 / 0.18);
 }
 
 /* Keep both sidebar implementations (default and legacy) on the same quiet

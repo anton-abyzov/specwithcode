@@ -290,6 +290,28 @@ describe("AdversarialReviewSettings stored duplicates", () => {
   });
 });
 
+describe("AdversarialReviewSettings project wording", () => {
+  const footer = () => JSON.stringify(renderer!.toJSON());
+  it("says a project without its own list uses the app-wide order", () => {
+    render(<AdversarialReviewSettings />);
+    expect(footer()).toContain("Uses the");
+    expect(footer()).not.toContain("own order");
+  });
+
+  it("says a project with a different list has its own order", () => {
+    state.settings = {
+      ...state.settings,
+      adversarialReview: {
+        autoOnFeatureComplete: false,
+        reviewers: [{ instanceId: codex, model: "gpt-6.1-sol" }],
+        tier: "regular",
+      },
+    };
+    render(<AdversarialReviewSettings />);
+    expect(footer()).toContain("own order");
+  });
+});
+
 describe("ProviderModelTiersSettings", () => {
   it("shows the built-in tier models of each provider", () => {
     render(<ProviderModelTiersSettings />);

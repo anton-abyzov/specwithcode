@@ -20,12 +20,18 @@ import * as Electron from "electron";
 import { MAC_PERMISSION_SETTINGS_URLS, type MacPermission } from "../permissions/MacPermission.ts";
 import {
   actionSteps,
+  applicationAtPoint,
+  applicationName,
   ComputerUseInputError,
   type DisplayGeometry,
   type InputStep,
   JXA_INPUT_SCRIPT,
+  JXA_RUNNING_APP_NAME_SCRIPT,
+  JXA_WINDOWS_SCRIPT,
   PASTE_STEPS,
+  type ScreenScene,
   screenshotSize,
+  toDisplayPoint,
   toScreenshotPoint,
 } from "./computerUseSteps.ts";
 import { isResettableBundleId, TCC_SERVICE, waitForPermission } from "./permissionWait.ts";
@@ -226,6 +232,28 @@ async function frontmostApplication(): Promise<string | undefined> {
   return replay([]).catch(() => undefined);
 }
 
+/**
+ * The app owning the topmost window under a screenshot point, scaled to
+ * display points exactly as a click there is. Undefined when it cannot tell.
+ */
+async function applicationAt(
+  display: DisplayGeometry,
+  x: number,
+  y: number,
+): Promise<string | undefined> {
+  try {
+    const output = await execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", JXA_WINDOWS_SCRIPT],
+      5_000,
+    );
+    const scene = JSON.parse(output.trim()) as ScreenScene;
+    return applicationAtPoint(scene, toDisplayPoint(display, x, y));
+  } catch {
+    return undefined;
+  }
+}
+
 /** Puts text on the clipboard, pastes it, then gives the user's clipboard back. */
 async function typeText(text: string): Promise<string | undefined> {
   const saved = await Electron.clipboard.read().catch(() => []);
@@ -257,6 +285,125 @@ async function open(action: Extract<ComputerUseAction, { kind: "open" }>) {
   await sleep(900);
 }
 
+const APP_INFO_TIMEOUT_MS = 3_000;
+const APP_ICON_MAX_CHARS = 96_000;
+
+/** Folders that hold most apps, searched before Spotlight. */
+const appFolders = () => [
+  "/Applications",
+  "/System/Applications",
+  "/System/Applications/Utilities",
+  "/Applications/Utilities",
+  NodePath.join(NodeOS.homedir(), "Applications"),
+];
+
+/** Escapes a value for a quoted Spotlight query string. */
+const spotlightQuoted = (value: string) => value.replace(/[\\'"*]/g, (char) => `\\${char}`);
+
+async function isDirectory(path: string) {
+  return NodeFSP.stat(path).then(
+    (stats) => stats.isDirectory(),
+    () => false,
+  );
+}
+
+async function findAppBundle(name: string): Promise<string | undefined> {
+  // A name with a path separator is not an app name; never let it walk out of the folders.
+  if (!name.includes("/") && name !== "." && name !== "..") {
+    for (const folder of appFolders()) {
+      const candidate = NodePath.join(folder, `${name}.app`);
+      if (await isDirectory(candidate)) return candidate;
+    }
+  }
+  const query = `kMDItemContentType == 'com.apple.application-bundle' && kMDItemDisplayName == '${spotlightQuoted(name)}'`;
+  const output = await execFile("/usr/bin/mdfind", [query], APP_INFO_TIMEOUT_MS).catch(() => "");
+  const first = output.split("\n").find((line) => line.trim().endsWith(".app"));
+  return first?.trim();
+}
+
+async function readBundleInfo(bundle: string) {
+  const output = await execFile(
+    "/usr/bin/plutil",
+    ["-convert", "json", "-o", "-", NodePath.join(bundle, "Contents", "Info.plist")],
+    APP_INFO_TIMEOUT_MS,
+  ).catch(() => "");
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    const text = (key: string) => {
+      const value = parsed[key];
+      return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+    };
+    return {
+      bundleId: text("CFBundleIdentifier"),
+      displayName: text("CFBundleDisplayName"),
+      bundleName: text("CFBundleName"),
+    };
+  } catch {
+    return { bundleId: undefined, displayName: undefined, bundleName: undefined };
+  }
+}
+
+/** The running app's own name, by bundle id or path; undefined when it is not running. */
+async function runningApplicationName(bundleId: string | undefined, bundle: string) {
+  const output = await execFile(
+    "/usr/bin/osascript",
+    ["-l", "JavaScript", "-e", JXA_RUNNING_APP_NAME_SCRIPT, bundleId ?? "", bundle],
+    APP_INFO_TIMEOUT_MS,
+  ).catch(() => "");
+  const name = output.trim();
+  return name === "" ? undefined : name;
+}
+
+async function appIcon(bundle: string) {
+  try {
+    const image = await Electron.nativeImage.createThumbnailFromPath(bundle, {
+      width: 64,
+      height: 64,
+    });
+    if (image.isEmpty()) return undefined;
+    const data = image.toPNG().toString("base64");
+    if (data.length === 0 || data.length > APP_ICON_MAX_CHARS) return undefined;
+    return { mimeType: "image/png" as const, data };
+  } catch {
+    return undefined;
+  }
+}
+
+type ApplicationInfo = NonNullable<ComputerUseActionResult["application"]>;
+
+async function lookUpApplication(name: string): Promise<ApplicationInfo> {
+  const bundle = await findAppBundle(name);
+  if (bundle === undefined) return { name };
+  const [info, icon] = await Promise.all([readBundleInfo(bundle), appIcon(bundle)]);
+  // Grants are keyed by this name, so it is the one the gate later sees as the
+  // frontmost app or a window's owner: the running app's own name first.
+  const runningName = await runningApplicationName(info.bundleId, bundle);
+  return {
+    name: applicationName({
+      requested: name,
+      runningName,
+      displayName: info.displayName,
+      bundleName: info.bundleName,
+      fileName: NodePath.basename(bundle, ".app"),
+    }),
+    ...(info.bundleId === undefined ? {} : { bundleId: info.bundleId }),
+    ...(icon === undefined ? {} : { icon }),
+  };
+}
+
+/** The installed app's real name and icon; an unknown app comes back as named, without an icon. */
+async function applicationInfo(name: string): Promise<ApplicationInfo> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<ApplicationInfo>((resolve) => {
+    timer = setTimeout(() => resolve({ name }), APP_INFO_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([lookUpApplication(name).catch(() => ({ name })), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Performs one action on this Mac and reports the state afterwards. Throws an
  * error whose message is written for the agent.
@@ -272,6 +419,7 @@ export async function runComputerUseAction(
 
   let frontmost: string | undefined;
   let screenshot: ComputerUseActionResult["screenshot"];
+  let application: ComputerUseActionResult["application"];
   switch (action.kind) {
     case "status":
       frontmost = await frontmostApplication();
@@ -286,6 +434,14 @@ export async function runComputerUseAction(
       await open(action);
       frontmost = await frontmostApplication();
       break;
+    case "appInfo":
+      application = await applicationInfo(action.application);
+      break;
+    case "appAt": {
+      const owner = await applicationAt(display, action.x, action.y);
+      if (owner !== undefined) application = { name: owner };
+      break;
+    }
     default:
       frontmost = await replay(actionSteps(action, display));
   }
@@ -298,5 +454,6 @@ export async function runComputerUseAction(
     cursor: toScreenshotPoint(display, cursor.x, cursor.y),
     ...(frontmost === undefined ? {} : { frontmostApplication: frontmost }),
     ...(screenshot === undefined ? {} : { screenshot }),
+    ...(application === undefined ? {} : { application }),
   };
 }

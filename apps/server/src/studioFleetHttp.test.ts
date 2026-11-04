@@ -45,6 +45,7 @@ import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as FleetHttp from "./studioFleetHttp.ts";
+import * as FleetDiskRoom from "./fleet/fleetDiskRoom.ts";
 import * as FleetSkills from "./fleet/fleetSkills.ts";
 import * as FleetUpdate from "./fleet/fleetUpdate.ts";
 import { persistServerRuntimeState } from "./serverRuntimeState.ts";
@@ -136,6 +137,7 @@ async function api(
   coordinatorEnvironmentId?: EnvironmentId,
   fleetUpdateWorker?: FleetUpdate.FleetUpdateWorker["Service"],
   fleetSkillWorker?: FleetSkills.FleetSkillWorker["Service"],
+  fleetDiskRoom?: FleetDiskRoom.FleetDiskRoom["Service"],
 ) {
   const config = Layer.effect(
     Config.ServerConfig,
@@ -201,6 +203,11 @@ async function api(
           fleetSkillWorker === undefined
             ? Layer.empty
             : Layer.succeed(FleetSkills.FleetSkillWorker, fleetSkillWorker),
+        ),
+        Layer.provide(
+          fleetDiskRoom === undefined
+            ? Layer.empty
+            : Layer.succeed(FleetDiskRoom.FleetDiskRoom, fleetDiskRoom),
         ),
         Layer.provide(
           FetchHttpClient.layer.pipe(
@@ -422,8 +429,15 @@ async function api(
         },
       ),
     );
+  const diskRoom = (query: string) =>
+    handler(
+      new Request(`http://localhost:8319/api/studio/fleet/disk-room?${query}`, {
+        headers: { host: "localhost:8319", authorization: "Bearer synthetic-session" },
+      }),
+    );
   return {
     request,
+    diskRoom,
     workers,
     add,
     invite,
@@ -1254,6 +1268,55 @@ describe("a fleet primary asking this machine to update", () => {
     } finally {
       await service.dispose();
     }
+  });
+});
+
+describe("a fleet primary asking this machine for its disk room", () => {
+  const PRIMARY = EnvironmentId.make("env-primary");
+  const asked: FleetDiskRoom.FleetDiskRoomAsk[] = [];
+  const room: FleetDiskRoom.FleetDiskRoom["Service"] = {
+    report: (ask) => Effect.sync(() => (asked.push(ask), { workerIdentity: "m1", ok: false })),
+  };
+  const query = "coordinatorEnvironmentId=env-primary&version=1.0.190&fullRead=69%2C73";
+  type Ask = [ReadonlyArray<AuthEnvironmentScope>, EnvironmentId | undefined, string, number];
+  const ask = async ([scopes, coordinator, search]: Ask, worker: typeof room | undefined) => {
+    const service = await api(scopes, false, undefined, coordinator, undefined, undefined, worker);
+    try {
+      const response = await service.diskRoom(search);
+      const store = response.headers.get("cache-control");
+      return { status: response.status, store, body: await response.json().catch(() => null) };
+    } finally {
+      await service.dispose();
+    }
+  };
+
+  it("answers the primary's token with fleet:update or the legacy environment:maintain", async () => {
+    const legacy = [...AuthStandardClientScopes, AuthAccessWriteScope];
+    for (const scopes of [[AuthFleetUpdateScope], legacy])
+      expect(await ask([scopes, PRIMARY, query, 200], room)).toEqual({
+        status: 200,
+        store: "no-store",
+        body: { workerIdentity: "m1", ok: false },
+      });
+    expect(asked.splice(0)).toEqual([0, 1].map(() => ({ version: "1.0.190", fullRead: "69,73" })));
+  });
+
+  it("refuses other tokens, anything but a version and migration numbers, and no worker", async () => {
+    const update = [AuthFleetUpdateScope];
+    const owner = [...AuthStandardClientScopes, AuthAccessWriteScope, AuthFleetUpdateScope];
+    const cases: Ask[] = [
+      [[AuthOrchestrationReadScope, AuthOrchestrationOperateScope], PRIMARY, query, 403],
+      [update, EnvironmentId.make("env-other"), query, 403],
+      [owner, undefined, query, 403],
+      [update, PRIMARY, query.replace("1.0.190", "latest"), 400],
+      [update, PRIMARY, query.replace("69%2C73", "69%3Brm"), 400],
+      [update, PRIMARY, query.replace("69%2C73", "%2Ftmp%2Fx"), 400],
+      [update, PRIMARY, query.replace("&fullRead=69%2C73", ""), 400],
+    ];
+    for (const item of cases) expect((await ask(item, room)).status).toBe(item[3]);
+    expect(asked).toEqual([]);
+    const without = await ask([update, PRIMARY, query, 409], undefined);
+    expect(without).toMatchObject({ status: 409, body: { reason: "unsupported" } });
   });
 });
 

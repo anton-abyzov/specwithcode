@@ -1,0 +1,36 @@
+{
+  "comment": "Synthetic linked-project state for test-protected-tables-after-restart.py: two machines share one logical project; each holds memory the other lacks, and the first holds a native plan. Never real state.",
+  "logicalProject": { "id": "fixture-logical-project", "title": "Fixture linked project" },
+  "machines": {
+    "first": {
+      "memory": {
+        "MEMORY.md": "# Fixture memory\n\n- [Build](build.md) - how the fixture builds\n",
+        "build.md": "Build with the synthetic fixture command.\n"
+      },
+      "plan": {
+        "spec": "Synthetic plan kept by the first machine.",
+        "criteria": [{ "id": "AC-01", "text": "The fixture plan exists." }],
+        "tasks": [
+          {
+            "id": "T-01",
+            "title": "First fixture task",
+            "criterionIds": ["AC-01"],
+            "verification": null
+          },
+          {
+            "id": "T-02",
+            "title": "Second fixture task",
+            "criterionIds": ["AC-01"],
+            "verification": null
+          }
+        ]
+      }
+    },
+    "second": {
+      "memory": {
+        "MEMORY.md": "# Fixture memory\n\n- [Deploy](deploy.md) - how the fixture deploys\n",
+        "deploy.md": "Deploy with the synthetic fixture command.\n"
+      }
+    }
+  }
+}

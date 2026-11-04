@@ -25,6 +25,7 @@ import { OrchestratorMcpFailure, PreviewAutomationError } from "@specweave-studi
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
+import * as AccessRequests from "../access/AccessRequests.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as DesignService from "../design/DesignService.ts";
@@ -853,6 +854,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
 const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreenshot")(function* () {
   const devices = yield* DeviceService.DeviceService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const accessRequests = yield* AccessRequests.AccessRequests;
   const built = yield* decodeAsAdvertised(DeviceScreenshotToolkit);
   yield* registerImageTool(
     DeviceScreenshotTool,
@@ -864,9 +866,14 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
       effect.pipe(
         Effect.provideService(DeviceService.DeviceService, devices),
         Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        Effect.provideService(AccessRequests.AccessRequests, accessRequests),
       ),
     "screenshot",
-    "Device screenshot failed.",
+    // Access and "no device open" refusals are written for the agent; other device errors are not.
+    (error) =>
+      (error as { _tag?: unknown })?._tag === "DeviceToolUnavailableError"
+        ? (error as { reason: string }).reason
+        : "Device screenshot failed.",
   );
 });
 

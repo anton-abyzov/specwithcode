@@ -9,6 +9,7 @@ import {
   useTailscaleReadiness,
 } from "../settings/FleetInvite";
 import { Button } from "../ui/button";
+import { useT } from "../../i18n";
 
 /**
  * First-run steps for a machine that only serves a main machine elsewhere:
@@ -29,13 +30,15 @@ export function MachineRoleStep({
   /** Opens the app with nothing chosen or set up, e.g. to update first. */
   readonly onLater: () => void;
 }) {
+  const t = useT();
+  const machine = machineNoun;
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        How will you use this {machineNoun}?
+        {t("wizard.role.title", { machine })}
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        You can change this later.
+        {t("wizard.role.changeLater")}
       </p>
       <div className="mt-5 space-y-2">
         <Button
@@ -46,10 +49,9 @@ export function MachineRoleStep({
         >
           <LaptopIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">Start as a main machine</span>
+            <span className="block text-sm font-medium">{t("wizard.role.main.title")}</span>
             <span className="block text-xs font-normal text-muted-foreground">
-              Set up agents and projects on this {machineNoun}. You can add other machines to it
-              later.
+              {t("wizard.role.main.description", { machine })}
             </span>
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -62,10 +64,9 @@ export function MachineRoleStep({
         >
           <NetworkIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium">Connect to an existing one</span>
+            <span className="block text-sm font-medium">{t("wizard.role.join.title")}</span>
             <span className="block text-xs font-normal text-muted-foreground">
-              This {machineNoun} does work for your main machine elsewhere. You link SpecWithCode
-              Connect here, then paste one line on the main machine.
+              {t("wizard.role.join.description", { machine })}
             </span>
           </span>
           <ArrowRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -73,12 +74,9 @@ export function MachineRoleStep({
       </div>
       <div className="mt-4 flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-3">
         <Button variant="ghost" size="sm" onClick={onLater}>
-          Decide later
+          {t("wizard.role.later")}
         </Button>
-        <p className="text-xs text-muted-foreground">
-          Look around or update first. To join later, choose Join a main machine under Settings &gt;
-          Connections.
-        </p>
+        <p className="text-xs text-muted-foreground">{t("wizard.role.laterHint")}</p>
       </div>
     </>
   );
@@ -102,6 +100,8 @@ export function JoinMachineStep({
   readonly onJoined: () => void;
   readonly onDone: () => void;
 }) {
+  const t = useT();
+  const machine = machineNoun;
   const allowed = canManage && environmentId !== null;
   const readiness = useTailscaleReadiness(environmentId, { enabled: allowed });
   const controller = useFleetInvite(environmentId, readiness.status?.connect !== undefined);
@@ -109,18 +109,12 @@ export function JoinMachineStep({
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Connect this {machineNoun} to your main machine
+        {t("wizard.join.title", { machine })}
       </h1>
       <ol className="mt-2.5 list-decimal space-y-1 ps-5 text-sm leading-relaxed text-muted-foreground">
-        <li>Sign in to SpecWithCode Connect and link this {machineNoun}.</li>
-        <li>
-          Paste your main machine&apos;s environment ID (Settings &gt; Connections there) and make
-          the line.
-        </li>
-        <li>
-          Paste the line on the main machine under Settings &gt; Connections &gt; Add a machine
-          within an hour.
-        </li>
+        <li>{t("wizard.join.step1", { machine })}</li>
+        <li>{t("wizard.join.step2")}</li>
+        <li>{t("wizard.join.step3")}</li>
       </ol>
       <div className="mt-5 space-y-3">
         {controller.invitation ? null : (
@@ -144,7 +138,7 @@ export function JoinMachineStep({
           blocked={readiness.blocksInvite}
           copied={isCopied}
           onCopy={(code) => copyToClipboard(code, undefined)}
-          createLabel="Make the line"
+          createLabel={t("wizard.join.makeLine")}
         />
       </div>
       <div className="mt-6 flex justify-between gap-3">
@@ -156,7 +150,7 @@ export function JoinMachineStep({
             onBack();
           }}
         >
-          Back
+          {t("wizard.back")}
         </Button>
         {controller.invitation ? (
           <Button
@@ -167,7 +161,7 @@ export function JoinMachineStep({
               onDone();
             }}
           >
-            I pasted it
+            {t("wizard.join.pasted")}
             <ArrowRightIcon className="size-3.5" />
           </Button>
         ) : null}
@@ -185,22 +179,22 @@ export function JoinedMachineStep({
   readonly onNewLine: () => void;
   readonly onFullSetup: () => void;
 }) {
+  const t = useT();
+  const machine = machineNoun;
   return (
     <>
       <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        This {machineNoun} is ready for your main machine
+        {t("wizard.joined.title", { machine })}
       </h1>
       <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        It is ready once you paste the line on your main machine under Settings &gt; Connections
-        &gt; Add a machine. Choose Allow workers on its card there to let coordinators start work
-        here, and keep the app running on this {machineNoun}.
+        {t("wizard.joined.description", { machine })}
       </p>
       <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-between">
         <Button variant="outline" onClick={onNewLine}>
-          Make a new line
+          {t("wizard.joined.newLine")}
         </Button>
         <Button variant="ghost" onClick={onFullSetup}>
-          Set this {machineNoun} up as a main machine instead
+          {t("wizard.joined.fullSetup", { machine })}
         </Button>
       </div>
     </>
