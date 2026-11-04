@@ -689,7 +689,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     if held_snapshot:
         assert_held(_service(identity), expected.get('installRequestedAt'))
     page_report = {}
-    page_mode = update_apply.PageMode.prepare(database_restart.Names(globals()), identity, expected, allow_existing_browser_heartbeat, report=page_report)
+    page_mode = update_apply.PageMode.prepare(database_restart.Names(globals()), identity, expected, allow_existing_browser_heartbeat, report=page_report,
+                                              migrations=allow_project_migrations)
     progress_file.expect(page_mode is not None, _database_bytes(own))
     position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
     # Its lines, for the proof after the restart, kept on disk only while the backup's space is left.
@@ -1072,10 +1073,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         ready_by = min(restarted_at + READINESS_DEADLINE_SECONDS, started + READY_BY_SECONDS_FROM_START)
         wait_until_answering(identity, before['servicePid'], archive_sha, manifest['sourceCommit'], ready_by)
         lap('readinessCheap')
-        # Also for a release that may migrate: the page proof refuses on any schema change (the full
-        # read with widen_from then decides), and with the schema unchanged it returns what that read
-        # would, since a capture gains `widened` only when a table widened. Data a migration rewrites
-        # is re-read as any touched table is.
+        # Also for a release that may migrate: the page proof refuses any schema change other than
+        # declared additive migrations' new tables and indexes (additive_migrations; the full read with
+        # widen_from then decides), and otherwise returns what that read would, since a capture gains
+        # `widened` only when a table widened. Data a migration rewrites is re-read as any touched table is.
         page_after = page_mode.after(held, restart_started_at, policy) if page_mode else None
         if page_mode and page_after is None:
             progress_file.expect(False, _database_bytes(own))  # Before the clone's full read, not after it.

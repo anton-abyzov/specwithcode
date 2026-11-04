@@ -84,6 +84,11 @@ function api() {
               callers.push(caller);
               return {} as never;
             }),
+          members: (caller) =>
+            Effect.sync(() => {
+              callers.push(caller);
+              return { replayed: false, changed: true };
+            }),
         }),
         Layer.mock(HandoffReceiver)({
           negotiate: (caller) =>
@@ -168,6 +173,31 @@ describe("handoff route", () => {
         projectId: "project-minis",
       });
       expect((await app.post("linked-digest", "limited", body)).status).toBe(200);
+      expect(app.callers[0]?.sourceEnvironmentId).toBe(m4);
+    } finally {
+      await app.dispose();
+    }
+  });
+
+  it("hands a coordinator's member list to its receiver", async () => {
+    const app = api();
+    try {
+      const member = {
+        environmentId: m4,
+        projectId: "project-m4",
+        coordinatorThreadId: "project-coordinator:project-m4",
+      };
+      const body = JSON.stringify({
+        protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
+        logicalProjectId: "logical:1",
+        projectId: "project-minis",
+        from: member,
+        fromEpoch: 0,
+        members: [member],
+      });
+      const answer = await app.post("linked-members", "limited", body);
+      expect(answer.status).toBe(200);
+      expect(await answer.json()).toEqual({ replayed: false, changed: true });
       expect(app.callers[0]?.sourceEnvironmentId).toBe(m4);
     } finally {
       await app.dispose();

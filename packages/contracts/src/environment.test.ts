@@ -43,6 +43,16 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("decodes a descriptor with and without linkedMembersSync", () => {
+    expect(decodeDescriptor(descriptor).capabilities.linkedMembersSync).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, linkedMembersSync: true },
+      }).capabilities.linkedMembersSync,
+    ).toBe(true);
+  });
+
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
   });

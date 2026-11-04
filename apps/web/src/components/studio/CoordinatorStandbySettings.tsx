@@ -7,6 +7,7 @@ import {
   DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES,
   type EnvironmentId,
   type ProjectAcceptStandbyInput,
+  type ProjectLinkSyncMembersInput,
   type ProjectSetStandbyInput,
   type ProjectStandbyRearmStatus,
 } from "@specweave-studio/contracts";
@@ -336,6 +337,7 @@ export function CoordinatorStandbySettings({
     reportFailure: false,
   });
   const syncStatusCommand = useAtomCommand(projectLink.syncStatus, { reportFailure: false });
+  const syncMembersCommand = useAtomCommand(projectLink.syncMembers, { reportFailure: false });
   const binding = coordinator.workspaceSettings?.coordinatorBinding;
   const identity = coordinator.workspaceSettings?.logicalProject;
   const current = binding?.state === "active" ? binding.standby : undefined;
@@ -359,6 +361,9 @@ export function CoordinatorStandbySettings({
   const rearmCapable = (environmentId: EnvironmentId) =>
     environments.find((item) => item.environmentId === environmentId)?.serverConfig?.environment
       .capabilities.coordinatorRearm === true;
+  const membersSyncCapable = (environmentId: EnvironmentId) =>
+    environments.find((item) => item.environmentId === environmentId)?.serverConfig?.environment
+      .capabilities.linkedMembersSync === true;
   const [rearmSeen, setRearmSeen] = useState<RearmSeen>(NO_REARM_SEEN);
   const [rearmEdit, setRearmEdit] = useState<ReadonlyArray<EnvironmentId> | null>(null);
   const [rearmResults, setRearmResults] = useState<ReadonlyMap<EnvironmentId, RearmMachineResult>>(
@@ -513,6 +518,18 @@ export function CoordinatorStandbySettings({
       fromEpoch: highestEpoch(shared),
       capable: rearmCapable,
       access: rearmAccess,
+      ...(identity
+        ? {
+            coordinator: {
+              environmentId: coordinator.environmentId,
+              logicalProjectId: identity.id,
+              member: linkMemberOf(coordinator),
+              epoch: binding?.epoch ?? 0,
+              members: identity.members,
+            },
+          }
+        : {}),
+      membersSyncCapable,
     };
   };
 
@@ -523,6 +540,10 @@ export function CoordinatorStandbySettings({
     },
     acceptStandby: async (environmentId: EnvironmentId, input: ProjectAcceptStandbyInput) => {
       const result = await acceptStandbyCommand({ environmentId, input });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    },
+    syncMembers: async (environmentId: EnvironmentId, input: ProjectLinkSyncMembersInput) => {
+      const result = await syncMembersCommand({ environmentId, input });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     },
   };

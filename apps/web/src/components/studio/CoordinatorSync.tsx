@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 
+import { useEnvironments } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { logicalCoordinator } from "../../studio/projectDomain";
@@ -10,6 +11,7 @@ import {
   projectLink,
   replicaMembers,
 } from "../../studio/projectLink";
+import { membersSyncRequests } from "../../studio/linkedMembersSync";
 import { drivenPairs } from "../../studio/serverLinkedSync";
 import { useLinkMachines } from "./useLinkMachines";
 import { useServerSyncCoverage } from "./useServerSyncCoverage";
@@ -36,7 +38,8 @@ export function sharedGroups(projects: ReadonlyArray<EnvironmentProject>): Envir
  * instructions, so a takeover starts with them, and a coordinator that a
  * member took over from gives way when it is back. It never moves the
  * coordinator on its own. Pairs the machines' servers keep in step
- * themselves, with no window open, are left to them.
+ * themselves, with no window open, are left to them. Member copies also take
+ * the coordinator's member list, so machines linked later are members there.
  */
 export function CoordinatorSync() {
   const projects = useProjects();
@@ -45,6 +48,11 @@ export function CoordinatorSync() {
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const replicate = useAtomCommand(projectLink.replicate, { reportFailure: false });
   const supersede = useAtomCommand(projectLink.supersede, { reportFailure: false });
+  const syncMembers = useAtomCommand(projectLink.syncMembers, { reportFailure: false });
+  const { environments } = useEnvironments();
+  const membersCapable = (environmentId: string) =>
+    environments.find((item) => item.environmentId === environmentId)?.serverConfig?.environment
+      .capabilities.linkedMembersSync === true;
   const coverage = useServerSyncCoverage();
   const groups = useMemo(() => sharedGroups(projects), [projects]);
   // Changes to bindings, settings or reachability start a pass at once; notes are polled.
@@ -120,6 +128,11 @@ export function CoordinatorSync() {
           }
           const coordinator = logicalCoordinator(members)?.member;
           if (!coordinator || !ready(coordinator)) continue;
+          // A member refuses a list it cannot trust; the next pass retries.
+          for (const request of membersSyncRequests(coordinator, members, membersCapable)) {
+            if (!machines.takeoverReady(request.environmentId)) continue;
+            await syncMembers(request);
+          }
           const targets = replicaMembers(coordinator, members).filter(
             (member) => ready(member) && !covered("replica", copy(coordinator), copy(member)),
           );

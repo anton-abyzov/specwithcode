@@ -176,7 +176,7 @@ private struct LinkedCoordinatorBannerContent: View {
   var body: some View {
     let copies = state.copies(in: model)
     if let line = state.unreachableLine(copies) {
-      Banner(line, kind: .warn, actionTitle: "Machines") { router.sheet = .projectSettings(project) }
+      Banner(line, kind: .warn, actionTitle: "Machines") { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(project, in: model)) }
         .accessibilityIdentifier("linked.banner")
         .task { await state.follow(model: model) }
     }

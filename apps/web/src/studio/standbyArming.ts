@@ -4,6 +4,7 @@ import type {
   LogicalProjectMember,
   ProjectAcceptStandbyInput,
   ProjectId,
+  ProjectLinkSyncMembersInput,
   ProjectSetStandbyInput,
   StandbyRearmConsent,
 } from "@specweave-studio/contracts";
@@ -304,6 +305,11 @@ export interface StandbyProjectCommands {
     environmentId: EnvironmentId,
     input: ProjectAcceptStandbyInput,
   ) => Promise<void>;
+  /** A member copy adopts the coordinator's member list; absent where the app cannot. */
+  readonly syncMembers?: (
+    environmentId: EnvironmentId,
+    input: ProjectLinkSyncMembersInput,
+  ) => Promise<void>;
 }
 
 /**
@@ -335,6 +341,22 @@ export interface StandbyRearmPlan {
   readonly capable: (environmentId: EnvironmentId) => boolean;
   /** The worker access a list machine gets on another list machine. */
   readonly access: (environmentId: EnvironmentId) => StudioFleetWorkerAccess;
+  /**
+   * The coordinator's member list. Each listed machine adopts it before its
+   * consent is written, so a machine that joined before another one was
+   * linked accepts a list naming it.
+   */
+  readonly coordinator?:
+    | {
+        readonly environmentId: EnvironmentId;
+        readonly logicalProjectId: string;
+        readonly member: LogicalProjectMember;
+        readonly epoch: number;
+        readonly members: ReadonlyArray<LogicalProjectMember>;
+      }
+    | undefined;
+  /** Whether the machine's server adopts a member list (`linkedMembersSync`). */
+  readonly membersSyncCapable?: ((environmentId: EnvironmentId) => boolean) | undefined;
 }
 
 const sameSide = (
@@ -387,9 +409,45 @@ export async function prepareRearmMachines(
 }
 
 /**
- * Writes the consent, or removes it with null, on each machine. A machine
- * whose server cannot hold one is not asked.
+ * Brings each listed machine's member list in line with the coordinator's,
+ * best effort: a machine that refuses keeps its list, and its consent then
+ * says why.
  */
+export async function syncRearmMembers(
+  commands: StandbyProjectCommands,
+  plan: Pick<StandbyRearmPlan, "coordinator" | "membersSyncCapable">,
+  members: ReadonlyArray<StandbySide>,
+): Promise<void> {
+  const coordinator = plan.coordinator;
+  const sync = commands.syncMembers;
+  if (!coordinator || !sync) return;
+  await Promise.allSettled(
+    members
+      .filter(
+        (member) =>
+          member.environmentId !== coordinator.environmentId &&
+          plan.membersSyncCapable?.(member.environmentId) === true,
+      )
+      .map((member) =>
+        sync(member.environmentId, {
+          projectId: member.projectId,
+          logicalProjectId: coordinator.logicalProjectId,
+          from: coordinator.member,
+          fromEpoch: coordinator.epoch,
+          members: coordinator.members,
+        }),
+      ),
+  );
+}
+
+/**
+ * Writes the consent, or removes it with null, on each machine. A machine
+ * whose server cannot hold one is not asked. A refusal keeps the machine's
+ * own words.
+ */
+/** A consent write: done, a server too old to hold one, or the machine's refusal. */
+export type ConsentWriteResult = "ok" | "needs_update" | { readonly failed: string };
+
 export async function writeRearmConsent(
   commands: StandbyProjectCommands,
   input: {
@@ -398,8 +456,8 @@ export async function writeRearmConsent(
     readonly members: ReadonlyArray<StandbySide>;
     readonly capable: (environmentId: EnvironmentId) => boolean;
   },
-): Promise<ReadonlyMap<EnvironmentId, "ok" | "needs_update" | "failed">> {
-  const results = new Map<EnvironmentId, "ok" | "needs_update" | "failed">();
+): Promise<ReadonlyMap<EnvironmentId, ConsentWriteResult>> {
+  const results = new Map<EnvironmentId, ConsentWriteResult>();
   for (const member of input.members) {
     if (!input.capable(member.environmentId)) {
       results.set(member.environmentId, "needs_update");
@@ -412,8 +470,8 @@ export async function writeRearmConsent(
         rearm: input.consent,
       })
       .then(
-        () => "ok" as const,
-        () => "failed" as const,
+        (): ConsentWriteResult => "ok",
+        (cause: unknown): ConsentWriteResult => ({ failed: messageOf(cause, "") }),
       );
     results.set(member.environmentId, written);
   }
@@ -442,6 +500,8 @@ export async function saveRearmList(
   const results = new Map<EnvironmentId, RearmMachineResult>();
   if (members.length > 0) {
     const listed = members.filter((member) => plan.capable(member.environmentId));
+    // A machine that joined before another one was linked learns it first.
+    await syncRearmMembers(commands, plan, listed);
     // The standby's grants on the worker machines are arming's own, made before this.
     const pairs = rearmGrantPairs({
       members: listed,
@@ -473,8 +533,13 @@ export async function saveRearmList(
         member.environmentId,
         write === "needs_update"
           ? { status: "needs_update" }
-          : write === "failed"
-            ? { status: "failed", message: `Could not save the list on ${member.label}.` }
+          : typeof write === "object"
+            ? {
+                status: "failed",
+                message: write.failed
+                  ? `Could not save the list on ${member.label}: ${write.failed}`
+                  : `Could not save the list on ${member.label}.`,
+              }
             : grant?.status === "failed"
               ? grant
               : { status: "ready" },

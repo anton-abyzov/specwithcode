@@ -789,6 +789,44 @@ describe("explicit link ownership modes", () => {
     );
   });
 
+  it("lets a removal remember only the members it removes", () => {
+    const binding = { epoch: 2, state: "active" as const, predecessor: other };
+    const third = { ...other, environmentId: "third" as never, projectId: ProjectId.make("third") };
+    const current = {
+      logicalProject: { ...standalone, members: [self, other, third] },
+      coordinatorBinding: binding,
+    };
+    const removedThird = [{ environmentId: third.environmentId, projectId: third.projectId }];
+    payloadOf(
+      apply(current, {
+        mode: "remove-member",
+        logicalProject: { ...standalone, members: [self, other] },
+        coordinatorBinding: { ...binding, removedMembers: removedThird },
+      }),
+    );
+    // Never a member still listed, and nothing else in the binding changes.
+    failureOf(
+      apply(current, {
+        mode: "remove-member",
+        logicalProject: { ...standalone, members: [self, other] },
+        coordinatorBinding: {
+          ...binding,
+          removedMembers: [
+            ...removedThird,
+            { environmentId: other.environmentId, projectId: other.projectId },
+          ],
+        },
+      }),
+    );
+    failureOf(
+      apply(current, {
+        mode: "remove-member",
+        logicalProject: { ...standalone, members: [self, other] },
+        coordinatorBinding: { ...binding, epoch: 3, removedMembers: removedThird },
+      }),
+    );
+  });
+
   it("joins a standalone copy as a member whose coordinator is relinquished", () => {
     const joined = { ...shared, members: [other, self] };
     const relinquished = {
@@ -1272,5 +1310,108 @@ describe("explicit link ownership modes", () => {
         },
       ),
     );
+  });
+
+  describe("sync-members", () => {
+    const later = {
+      environmentId: "m1" as never,
+      projectId: ProjectId.make("later"),
+      coordinatorThreadId: "project-coordinator:later" as never,
+    };
+    const memberSide = { ...shared, members: [other, self] };
+    const binding = {
+      epoch: 4,
+      state: "transferred" as const,
+      operationId: "link-op",
+      successor: other,
+    };
+    const joined = { logicalProject: memberSide, coordinatorBinding: binding };
+    const sync = (members: ReadonlyArray<unknown>, extra: Record<string, unknown> = {}) =>
+      apply(joined, {
+        mode: "sync-members",
+        logicalProject: { ...memberSide, members },
+        coordinatorBinding: binding,
+        ...extra,
+      });
+
+    it("adds a later member on a transferred copy", () => {
+      const event = payloadOf(sync([other, self, later]));
+      assert.deepStrictEqual(
+        (event.workspaceSettings as { logicalProject: { members: unknown } }).logicalProject
+          .members,
+        [other, self, later],
+      );
+    });
+
+    it("removes another member and replays an identical list", () => {
+      const three = {
+        logicalProject: { ...memberSide, members: [other, self, later] },
+        coordinatorBinding: binding,
+      };
+      payloadOf(
+        apply(three, {
+          mode: "sync-members",
+          logicalProject: memberSide,
+          coordinatorBinding: binding,
+        }),
+      );
+      payloadOf(sync([other, self]));
+    });
+
+    it("rejects an active copy", () => {
+      const active = { epoch: 4, state: "active" as const };
+      assert.include(
+        failureText(
+          apply(
+            { logicalProject: memberSide, coordinatorBinding: active },
+            {
+              mode: "sync-members",
+              logicalProject: { ...memberSide, members: [other, self, later] },
+              coordinatorBinding: active,
+            },
+          ),
+        ),
+        "relinquished",
+      );
+    });
+
+    it("rejects a changed binding, id, title or coordinatorId", () => {
+      for (const extra of [
+        { coordinatorBinding: { ...binding, epoch: 5 } },
+        { coordinatorBinding: { ...binding, state: "active" } },
+        { coordinatorBinding: { ...binding, successor: later } },
+        {
+          logicalProject: { ...memberSide, id: "logical:other", members: [other, self, later] },
+        },
+        { logicalProject: { ...memberSide, title: "Renamed", members: [other, self, later] } },
+        {
+          logicalProject: {
+            ...memberSide,
+            coordinatorId: "coordinator:x",
+            members: [other, self, later],
+          },
+        },
+      ])
+        failureOf(sync([other, self, later], extra));
+    });
+
+    it("rejects a list without this copy, without the successor, or with its own entry altered", () => {
+      for (const members of [
+        [other, later],
+        [self, later],
+        [other, { ...self, workspaceRoot: "/elsewhere" }, later],
+        [other, { ...self, coordinatorThreadId: "project-coordinator:moved" }, later],
+      ])
+        assert.include(failureText(sync(members)), "Syncing members keeps");
+    });
+
+    it("rejects a second entry on this machine", () => {
+      assert.include(
+        failureText(
+          sync([other, self, { ...later, environmentId: environmentId, projectId: "twin" }]),
+        ),
+        "Syncing members keeps",
+      );
+    });
   });
 });

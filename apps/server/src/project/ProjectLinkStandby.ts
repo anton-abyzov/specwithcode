@@ -280,6 +280,11 @@ export interface ProjectLinkStandbyDeps {
     readonly epoch: number;
     readonly takenOverBy: "auto";
   }) => Effect.Effect<ProjectTakeoverResult, ProjectLinkError>;
+  /**
+   * Asks the copy this one gave way to for its member list and adopts it,
+   * outside the project lock; never fails. Absent when nothing can ask.
+   */
+  readonly refreshMembers?: ((projectId: ProjectId) => Effect.Effect<void>) | undefined;
 }
 
 export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLinkStandbyMethods => {
@@ -504,7 +509,28 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
       return { chainId: consent.chainId };
     });
 
+  /**
+   * A consent may name a machine linked after this copy joined: this copy
+   * asks its coordinator for the current list first, outside the lock.
+   */
+  const refreshForConsent = (input: Parameters<ProjectLinkStandbyMethods["acceptStandby"]>[0]) =>
+    Effect.gen(function* () {
+      const refresh = deps.refreshMembers;
+      if (refresh === undefined || input.rearm === undefined || input.rearm === null) return;
+      const project = yield* load(input.projectId).pipe(Effect.option);
+      if (Option.isNone(project)) return;
+      const settings = project.value.workspaceSettings;
+      if (settings?.coordinatorBinding?.state !== "transferred") return;
+      const listed = new Set((settings.logicalProject?.members ?? []).map(logicalProjectMemberKey));
+      if (input.rearm.members.every((member) => listed.has(logicalProjectMemberKey(member))))
+        return;
+      yield* refresh(input.projectId);
+    });
+
   const acceptStandby: ProjectLinkStandbyMethods["acceptStandby"] = (input) =>
+    refreshForConsent(input).pipe(Effect.andThen(acceptStandbyLocked(input)));
+
+  const acceptStandbyLocked = (input: Parameters<ProjectLinkStandbyMethods["acceptStandby"]>[0]) =>
     admission.withLock(
       input.projectId,
       Effect.gen(function* () {

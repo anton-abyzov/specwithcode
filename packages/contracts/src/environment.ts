@@ -331,6 +331,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       listed coordinator that took over automatically (`projectLink.acceptStandby`
       `rearm`, `studio_coordinator_claim_epoch` `standby`). Absent on older servers. */
   coordinatorRearm: Schema.optionalKey(Schema.Boolean),
+  /** A linked copy adopts its coordinator's member list (`projectLink.syncMembers`),
+      so machines linked after it joined are members there too. Absent on older servers. */
+  linkedMembersSync: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

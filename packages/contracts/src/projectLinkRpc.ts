@@ -17,6 +17,8 @@ import {
   ProjectLinkPreviewInput,
   ProjectLinkReplicateInput,
   ProjectLinkReplicateResult,
+  ProjectLinkSyncMembersInput,
+  ProjectLinkSyncMembersResult,
   ProjectStartCoordinatorInput,
   ProjectStartCoordinatorResult,
   ProjectSupersedeInput,
@@ -43,6 +45,7 @@ export const PROJECT_LINK_RPC_METHODS = {
   projectUnlink: "projectLink.unlink",
   projectLinkDigest: "projectLink.digest",
   projectLinkReplicate: "projectLink.replicate",
+  projectLinkSyncMembers: "projectLink.syncMembers",
   projectTakeover: "projectLink.takeover",
   projectSupersede: "projectLink.supersede",
   projectStartCoordinator: "projectLink.startCoordinator",
@@ -90,6 +93,11 @@ export const projectLinkRpcs = [
   Rpc.make(PROJECT_LINK_RPC_METHODS.projectLinkReplicate, {
     payload: ProjectLinkReplicateInput,
     success: ProjectLinkReplicateResult,
+    error,
+  }),
+  Rpc.make(PROJECT_LINK_RPC_METHODS.projectLinkSyncMembers, {
+    payload: ProjectLinkSyncMembersInput,
+    success: ProjectLinkSyncMembersResult,
     error,
   }),
   Rpc.make(PROJECT_LINK_RPC_METHODS.projectTakeover, {

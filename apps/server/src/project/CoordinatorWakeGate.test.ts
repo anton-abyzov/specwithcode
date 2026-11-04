@@ -5,13 +5,18 @@ import {
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
 
+import * as ServerConfig from "../config.ts";
 import { HandoffPeerError } from "../handoff/handoffPeers.ts";
 import type { CoordinatorLeaseResponse } from "../handoff/handoffWire.ts";
+import * as LinkedPeerSyncState from "./LinkedPeerSyncState.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { makeCoordinatorLease } from "./CoordinatorLease.ts";
 import {
@@ -24,8 +29,11 @@ import {
   COORDINATOR_FENCE_MARGIN_MS,
   COORDINATOR_FENCE_REFUSAL,
   COORDINATOR_FENCE_UNREADABLE_REFUSAL,
+  COORDINATOR_SUPERSEDED_REFUSAL,
   coordinatorFenced,
   fenceAt,
+  CoordinatorWakeGate,
+  layer as CoordinatorWakeGateLayer,
   makeCheck,
   makeFenceSweep,
 } from "./CoordinatorWakeGate.ts";
@@ -118,6 +126,69 @@ describe("CoordinatorWakeGate check", () => {
     expect(await run("thread-worker")).toBeNull();
     expect(await run("project-coordinator:another")).toBeNull();
   });
+
+  it.effect("refuses a coordinator another copy took over from, with no standby set", () =>
+    Effect.gen(function* () {
+      const { service } = makeMemory();
+      const state = yield* LinkedPeerSyncState.make;
+      const check = makeCheck(service, state.supersededFor);
+      const run = (threadId: string) => check(ThreadId.make(threadId));
+      expect(yield* run("project-coordinator:easychamp-m4")).toBeNull();
+
+      // M1's digest showed it took over from this copy at epoch 1; this copy has not given way.
+      yield* state.markSuperseded({
+        projectId: ProjectId.make("easychamp-m4"),
+        coordinatorThreadId: "thread-named",
+        epoch: 1,
+        successorEnvironmentId: m1.environmentId,
+      });
+      expect(yield* run("project-coordinator:easychamp-m4")).toBe(COORDINATOR_SUPERSEDED_REFUSAL);
+      expect(yield* run("thread-named")).toBe(COORDINATOR_SUPERSEDED_REFUSAL);
+      // Only the coordinator: workers and other projects keep running.
+      expect(yield* run("thread-worker")).toBeNull();
+      expect(yield* run("project-coordinator:another")).toBeNull();
+
+      // Another machine never lifts what M1 raised; once given way, turns start again.
+      yield* state.clearSuperseded(ProjectId.make("easychamp-m4"), EnvironmentId.make("m3"));
+      expect(yield* run("thread-named")).toBe(COORDINATOR_SUPERSEDED_REFUSAL);
+      yield* state.clearSuperseded(ProjectId.make("easychamp-m4"));
+      expect(yield* run("thread-named")).toBeNull();
+    }),
+  );
+
+  // The gate and the sync loop must share one state: the production graph provides
+  // LinkedPeerSyncState.layer beside a layer that provides it to the gate itself.
+  it.effect("reads the sync state the runtime provides, built from the real layers", () =>
+    Effect.gen(function* () {
+      const state = yield* LinkedPeerSyncState.LinkedPeerSyncState;
+      const gate = yield* CoordinatorWakeGate;
+      const thread = ThreadId.make("project-coordinator:easychamp-m4");
+      expect(yield* gate.check(thread)).toBeNull();
+      yield* state.markSuperseded({
+        projectId: ProjectId.make("easychamp-m4"),
+        coordinatorThreadId: undefined,
+        epoch: 1,
+        successorEnvironmentId: m1.environmentId,
+      });
+      expect(yield* gate.check(thread)).toBe(COORDINATOR_SUPERSEDED_REFUSAL);
+      yield* state.clearSuperseded(ProjectId.make("easychamp-m4"));
+      expect(yield* gate.check(thread)).toBeNull();
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          // As runtimeLayer: the gate nested inside another provided layer, the state beside it.
+          Layer.effectDiscard(Effect.void).pipe(Layer.provideMerge(CoordinatorWakeGateLayer)),
+          LinkedPeerSyncState.layer,
+        ).pipe(
+          Layer.provide(
+            ServerConfig.layerTest(NodeOS.tmpdir(), { prefix: "studio-wake-gate-" }).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
   it("fails closed from the last records read when they cannot be read again", async () => {
     const unreadable = Effect.fail(

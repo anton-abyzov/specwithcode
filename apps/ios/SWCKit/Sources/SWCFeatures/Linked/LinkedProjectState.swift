@@ -119,6 +119,13 @@ final class LinkedProjectState {
 }
 
 extension LinkedProjectState {
+  /// The copy whose settings a linked project's title, gear or Machines link
+  /// opens: a connected copy when `opened`'s machine is unreachable.
+  static func settingsTarget(_ opened: ProjectRef, in model: AppModel) -> ProjectRef {
+    guard let engine = model.engine as? LinkedProjectEngine else { return opened }
+    return LinkedProjectResolver.settingsCopy(opened: opened, copies: engine.linkedCopies(of: opened, in: model))
+  }
+
   /// The coordinator named in the confirmation is still the one, and the
   /// tapped copy still offers a ready takeover.
   nonisolated static func mayTakeOver(at target: ProjectRef, from coordinator: ProjectRef, copies: [LinkedProjectResolver.Copy], rows: [LinkedProjectResolver.Row]) -> Bool {

@@ -5,9 +5,17 @@
  * logical project is driven by exactly one of its two servers, the one with
  * the lower environment ID; the other only answers (`LinkedPeerRoute`).
  * Giving way is driven by the copy that took over, since only it holds the
- * new binding. Calls go over the handoff peer route with this machine's work
- * grant there, so a pair is driven only toward machines this one holds a
- * grant on; the app keeps driving the rest (`projectLink.syncStatus`).
+ * new binding, and watched for by the copy taken over from: a coordinating
+ * copy reads every other copy's digest each pass, and when one shows it took
+ * over from this copy at a higher epoch, this copy gives way itself. So a
+ * copy gives way within a pass of reaching the other, whichever of the two
+ * holds a grant on the other, and starts no coordinator turn once it has seen
+ * the takeover (`CoordinatorWakeGate`). Member lists follow the coordinator:
+ * whichever side drives a pair pulls the coordinator's list from its digest
+ * or pushes it (`linked-members`), best effort and outside the status the app
+ * reads. Calls go over the handoff peer route with this machine's work grant
+ * there, so a pair is driven only toward machines this one holds a grant on;
+ * the app keeps driving the rest (`projectLink.syncStatus`).
  *
  * A pass first exchanges digests; content moves only for a kind that
  * changed since the last pass that left the pair in step, and at least every
@@ -20,12 +28,14 @@
  */
 import {
   type EnvironmentId,
+  logicalProjectMemberKey,
   type LinkedServerSyncError,
   type LinkedServerSyncKind,
   type LogicalProjectMember,
   type Project,
   type ProjectId,
   ProjectLinkError,
+  type ProjectSupersedeInput,
   ProjectPlanError,
 } from "@specweave-studio/contracts";
 import {
@@ -69,6 +79,13 @@ import {
   ProjectLink,
   type ReplicateFromMemberInput,
 } from "./ProjectLink.ts";
+import { CoordinatorReleaseGuard } from "./ProjectLinkStandby.ts";
+import {
+  type AddPredecessorMembersInput,
+  type AdoptMembersInput,
+  memberRef,
+  sameMemberSet,
+} from "./ProjectLinkMembers.ts";
 import { ProjectPlanService } from "./ProjectPlanService.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -95,6 +112,19 @@ export interface LinkedPeerSyncDeps {
   /** This copy's own notes, goal and instructions, when it coordinates. */
   readonly content: (project: Project) => Effect.Effect<LinkedContentResponse, LocalError>;
   readonly replicate: (input: ReplicateFromMemberInput) => Effect.Effect<unknown, LocalError>;
+  /**
+   * Gives way to the copy that took over from this one, as that copy's own
+   * digest showed it: the standby this copy leases to is released first.
+   */
+  readonly giveWay: (input: ProjectSupersedeInput) => Effect.Effect<unknown, LocalError>;
+  /** This transferred copy adopts its coordinator's member list. */
+  readonly adoptMembers: (
+    input: AdoptMembersInput,
+  ) => Effect.Effect<{ readonly changed: boolean }, LocalError>;
+  /** This copy, after a takeover, adds the members its predecessor lists. */
+  readonly addPredecessorMembers: (
+    input: AddPredecessorMembersInput,
+  ) => Effect.Effect<{ readonly changed: boolean }, LocalError>;
   readonly memory: Pick<LinkedMemorySync["Service"], "memoryExport" | "memoryMerge">;
   readonly plans: Pick<ProjectPlanService["Service"], "exportLinked" | "mergeLinked">;
   readonly peers: Pick<
@@ -103,6 +133,7 @@ export interface LinkedPeerSyncDeps {
     | "linkedContent"
     | "linkedReplica"
     | "linkedSupersede"
+    | "linkedMembers"
     | "planExport"
     | "planMerge"
     | "memoryExport"
@@ -136,6 +167,20 @@ export function syncErrorOf(error: unknown): LinkedServerSyncError {
   return "failed";
 }
 
+/**
+ * Refusals by which this copy's own supersede says the takeover can never
+ * apply here as claimed; any other failure (a standby that must answer
+ * first, storage) is tried again on the next pass while turns stay held.
+ */
+const PERMANENT_GIVE_WAY_REFUSALS: ReadonlySet<ProjectLinkError["code"]> = new Set([
+  "not_found",
+  "not_linked",
+  "invalid",
+  "superseded_conflict",
+  "not_code_project",
+  "not_member",
+]);
+
 /** How long a memo lets passes skip a kind; past it the kind is synced again. */
 const MEMO_MAX_AGE_MS = 5 * LINKED_PAIR_SYNC_MS;
 
@@ -160,6 +205,14 @@ const sameMemo = (memo: Memo | undefined, own: string | null, peer: string | nul
   memo.own === own &&
   memo.peer === peer &&
   now - memo.at < MEMO_MAX_AGE_MS;
+
+/** How long a refused or failed member list sync waits before the same lists are tried again. */
+const MEMBER_HOLD_MS = 10 * 60_000;
+/** Held member list syncs kept; more pairs than any real fleet has. */
+const MEMBER_HOLDS_MAX = 4096;
+
+const memberRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
+  [...new Set(members.map(memberRef))].toSorted();
 
 export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
   Effect.gen(function* () {
@@ -189,15 +242,16 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           binding?.state === "active" &&
           binding.predecessor?.environmentId === member.environmentId &&
           binding.predecessor.projectId === member.projectId;
-        const legacyOnly =
-          !drive && !successor && coordinates && !current.has(member.environmentId);
-        if (!drive && !successor && !legacyOnly) return [];
+        // A coordinating copy reads the copies it does not drive each pass, to see a takeover of it.
+        const watch = !drive && !successor && coordinates;
+        const legacyOnly = watch && !current.has(member.environmentId);
+        if (!drive && !successor && !watch) return [];
         const kinds: LinkedServerSyncKind[] = [
-          ...(successor ? (["supersede"] as const) : []),
+          ...(successor || watch ? (["supersede"] as const) : []),
           ...(drive ? (["replica", "memory", "plan"] as const) : []),
           ...(legacyOnly ? (["memory"] as const) : []),
         ];
-        return [{ identity, self, member, kinds, legacyOnly }];
+        return [{ identity, self, member, kinds, legacyOnly, successor }];
       });
     };
 
@@ -342,6 +396,185 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         return calls.error() ?? (read < 2 ? "failed" : null);
       });
 
+    /**
+     * When `peer`'s own digest shows it took over from this copy at a higher
+     * epoch, this copy gives way: no new coordinator turn starts here from
+     * then on, and the takeover is written here, the standby released first.
+     * The digest came from that machine over the peer route, so it confirms
+     * the takeover as the peer route's own supersede does, but only as the
+     * copy that was called (`member`): a digest naming another copy is no
+     * takeover. Null when nothing was pending or this copy gave way;
+     * otherwise why it could not. When this copy's own rules refuse to give
+     * way (a permanent refusal), the hold on its turns is lifted again, so a
+     * claim this copy can never act on does not stop its coordinator for good.
+     */
+    const yieldToTakeover = (
+      project: Project,
+      identityId: string,
+      self: LogicalProjectMember,
+      member: LogicalProjectMember,
+      peer: LinkedDigestResponse,
+    ): Effect.Effect<LinkedServerSyncError | null> =>
+      Effect.gen(function* () {
+        const binding = peer.binding;
+        const pending =
+          binding !== null &&
+          peer.member.environmentId === member.environmentId &&
+          peer.member.projectId === member.projectId &&
+          member.environmentId !== selfEnvironmentId &&
+          pendingSupersede(
+            {
+              environmentId: member.environmentId,
+              projectId: member.projectId,
+              logicalProjectId: identityId,
+              binding,
+            },
+            {
+              environmentId: selfEnvironmentId,
+              projectId: project.id,
+              logicalProjectId: project.workspaceSettings?.logicalProject?.id,
+              binding: project.workspaceSettings?.coordinatorBinding,
+            },
+          );
+        if (!pending || binding === null) {
+          // Only the copy that claimed the takeover may lift what it raised.
+          yield* state.clearSuperseded(project.id, member.environmentId);
+          return null;
+        }
+        yield* state.markSuperseded({
+          projectId: project.id,
+          coordinatorThreadId: self.coordinatorThreadId,
+          epoch: binding.epoch,
+          successorEnvironmentId: member.environmentId,
+        });
+        const outcome = yield* deps
+          .giveWay({
+            projectId: project.id,
+            logicalProjectId: identityId,
+            successor: member,
+            coordinatorBinding: binding,
+          })
+          .pipe(Effect.result);
+        if (Result.isSuccess(outcome)) {
+          yield* Effect.logInfo("This copy gave way to a linked copy that took over", {
+            projectId: project.id,
+            successor: member.environmentId,
+            epoch: binding.epoch,
+          });
+          yield* state.clearSuperseded(project.id);
+          return null;
+        }
+        const failure = outcome.failure;
+        const permanent =
+          failure._tag === "ProjectLinkError" && PERMANENT_GIVE_WAY_REFUSALS.has(failure.code);
+        // This copy's own rules refuse the takeover: holding its turns would never end.
+        if (permanent) yield* state.clearSuperseded(project.id, member.environmentId);
+        yield* Effect.logWarning(
+          permanent
+            ? "A linked copy claims it took over from this one, which refuses to give way to it"
+            : "A linked copy took over from this one, which could not give way yet",
+          { projectId: project.id, successor: member.environmentId, error: failure },
+        );
+        return syncErrorOf(failure);
+      });
+
+    /**
+     * Member list syncs a peer refused or that failed, per pair, with both
+     * lists as they were: not tried again until either list changes or the
+     * hold runs out, so a list the peer keeps refusing costs one call per hold.
+     */
+    const memberHolds = new Map<string, { readonly lists: string; readonly until: number }>();
+
+    /**
+     * Member lists follow the coordinator, along each copy's own successor: a
+     * transferred copy takes the list of the copy it gave way to, whether that
+     * copy coordinates or gave way in turn (it relays its own successor's
+     * list), and that copy sends its list to a transferred copy that names it
+     * as successor and reports a different one. A peer too old to report
+     * members gets nothing. Best effort: never part of the pair's outcomes.
+     */
+    const syncMembers = (input: {
+      readonly project: Project;
+      readonly identityId: string;
+      readonly self: LogicalProjectMember;
+      readonly member: LogicalProjectMember;
+      readonly own: LinkedDigestResponse;
+      readonly peer: LinkedDigestResponse;
+      readonly pair: LinkedPair;
+      readonly ref: {
+        readonly protocolVersion: number;
+        readonly logicalProjectId: string;
+        readonly projectId: ProjectId;
+      };
+    }) =>
+      Effect.gen(function* () {
+        const { project, own, peer } = input;
+        const held = project.workspaceSettings?.logicalProject?.members;
+        if (held === undefined || peer.members === undefined || sameMemberSet(held, peer.members))
+          return;
+        const isPeer =
+          logicalProjectMemberKey(peer.member) === logicalProjectMemberKey(input.member);
+        const relays = (binding: LinkedDigestResponse["binding"]) =>
+          binding?.state === "active" || binding?.state === "transferred";
+        const pull =
+          isPeer &&
+          own.binding?.state === "transferred" &&
+          own.binding.successor !== undefined &&
+          logicalProjectMemberKey(own.binding.successor) ===
+            logicalProjectMemberKey(input.member) &&
+          relays(peer.binding);
+        const push =
+          !pull &&
+          isPeer &&
+          relays(own.binding) &&
+          !project.workspaceSettings?.archived &&
+          peer.binding?.state === "transferred" &&
+          peer.binding.successor !== undefined &&
+          logicalProjectMemberKey(peer.binding.successor) === logicalProjectMemberKey(input.self);
+        if (!pull && !push) return;
+        const key = pairKey(input.pair);
+        const lists = stringifyJson([
+          memberRefs(held),
+          memberRefs(peer.members),
+          own.binding?.epoch ?? null,
+          peer.binding?.epoch ?? null,
+        ]);
+        const now = yield* Clock.currentTimeMillis;
+        const hold = memberHolds.get(key);
+        if (hold !== undefined && hold.lists === lists && hold.until > now) return;
+        const call: Effect.Effect<{ readonly changed: boolean }, LocalError | HandoffPeerError> =
+          pull
+            ? deps.adoptMembers({
+                projectId: project.id,
+                logicalProjectId: input.identityId,
+                from: input.member,
+                fromEpoch: peer.binding!.epoch,
+                members: peer.members,
+              })
+            : peers.linkedMembers(input.member.environmentId, {
+                ...input.ref,
+                from: input.self,
+                fromEpoch: own.binding!.epoch,
+                members: held,
+              });
+        const outcome = yield* Effect.result(call);
+        if (Result.isFailure(outcome)) {
+          memberHolds.delete(key);
+          if (memberHolds.size >= MEMBER_HOLDS_MAX) {
+            const oldest = memberHolds.keys().next();
+            if (!oldest.done) memberHolds.delete(oldest.value);
+          }
+          memberHolds.set(key, { lists, until: now + MEMBER_HOLD_MS });
+          yield* Effect.logDebug("linked member list sync failed", { error: outcome.failure });
+          return;
+        }
+        memberHolds.delete(key);
+        // New pairs start at once rather than after the next link watch.
+        if (pull && outcome.success.changed) yield* state.wake;
+      }).pipe(
+        Effect.catch((error) => Effect.logDebug("linked member list sync failed", { error })),
+      );
+
     const syncPair = (input: {
       readonly project: Project;
       readonly identityId: string;
@@ -349,6 +582,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
       readonly member: LogicalProjectMember;
       readonly kinds: ReadonlyArray<LinkedServerSyncKind>;
       readonly legacyOnly: boolean;
+      /** This copy took over from the peer's: it drives giving way. */
+      readonly successor: boolean;
       readonly pair: LinkedPair;
       readonly labels: ReadonlyMap<string, string>;
       readonly selfLabel: string;
@@ -385,8 +620,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           return kinds.map((kind) => ({ kind, error: kind === "memory" ? memory : error }));
         }
         current.add(member.environmentId);
-        // That machine drives its own pairs: nothing is left to this one.
-        if (input.legacyOnly) return [];
+        // The peer took over from this copy: give way now, whoever drives the pair.
+        const takenOver = yield* yieldToTakeover(project, identityId, self, member, theirs.success);
+        // That machine drives its own pairs: only the watch for a takeover is left to this one.
+        if (!kinds.includes("replica") && !input.successor)
+          return [{ kind: "supersede" as const, error: takenOver }];
         const ours = yield* deps.describe(project, self).pipe(Effect.result);
         if (Result.isFailure(ours))
           return kinds.map((kind) => ({ kind, error: "failed" as const }));
@@ -436,7 +674,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   };
           });
 
-        if (kinds.includes("supersede")) {
+        yield* syncMembers({ project, identityId, self, member, own, peer, pair, ref });
+
+        if (kinds.includes("supersede") && !input.successor)
+          outcomes.push({ kind: "supersede", error: takenOver });
+        else if (kinds.includes("supersede")) {
           const binding = own.binding;
           outcomes.push({
             kind: "supersede",
@@ -455,6 +697,27 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                             projectId: project.id,
                             previous: member.environmentId,
                           }),
+                        ),
+                        // Machines linked on the old coordinator after this copy last synced.
+                        Effect.tap((answer) =>
+                          answer.members === undefined || binding.state !== "active"
+                            ? Effect.void
+                            : deps
+                                .addPredecessorMembers({
+                                  projectId: project.id,
+                                  predecessor: member,
+                                  members: answer.members,
+                                })
+                                .pipe(
+                                  Effect.flatMap(({ changed }) =>
+                                    changed ? state.wake : Effect.void,
+                                  ),
+                                  Effect.catch((error) =>
+                                    Effect.logDebug("linked members after a takeover failed", {
+                                      error,
+                                    }),
+                                  ),
+                                ),
                         ),
                       ),
                   )
@@ -560,7 +823,10 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
       const selfLabel = yield* deps.selfLabel;
       const kept: LinkedPair[] = [];
       for (const project of yield* deps.listProjects)
-        for (const { identity, self, member, kinds, legacyOnly } of pairsOf(project, configured)) {
+        for (const { identity, self, member, kinds, legacyOnly, successor } of pairsOf(
+          project,
+          configured,
+        )) {
           const pair: LinkedPair = {
             projectId: project.id as ProjectId,
             peerEnvironmentId: member.environmentId,
@@ -577,6 +843,7 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             member,
             kinds,
             legacyOnly,
+            successor,
             pair,
             labels,
             selfLabel,
@@ -612,6 +879,20 @@ export const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const state = yield* LinkedPeerSyncState;
   const hold = yield* ServiceUpdateHold.optional;
+  const guard = yield* Effect.serviceOption(CoordinatorReleaseGuard);
+  // Member sync needs the peer route, which ProjectLink itself does not hold.
+  yield* link.registerMembersSync({
+    refresh: refreshMembersFrom({
+      load: (projectId) =>
+        projects.getById(projectId).pipe(
+          Effect.map(Option.filter((project) => project.deletedAt === null)),
+          Effect.orElseSucceed(() => Option.none<Project>()),
+        ),
+      adoptMembers: link.adoptMembers,
+      peers,
+    }),
+    expedite: state.expedite,
+  });
   return yield* makeLinkedPeerSync({
     selfEnvironmentId: yield* environment.getEnvironmentId,
     selfLabel: environment.getDescriptor.pipe(
@@ -643,6 +924,20 @@ export const make = Effect.gen(function* () {
         };
       }),
     replicate: link.replicateFromMember,
+    // As the peer route's supersede: the standby this copy leases to is released, and answers, first.
+    giveWay: (input) =>
+      Option.match(guard, {
+        onNone: () => Effect.void,
+        onSome: (value) =>
+          value.releaseBefore({
+            projectId: input.projectId,
+            unless: input.successor,
+            changeAnyway: false,
+            reason: "supersede",
+          }),
+      }).pipe(Effect.andThen(link.supersede(input))),
+    adoptMembers: link.adoptMembers,
+    addPredecessorMembers: link.addPredecessorMembers,
     memory,
     plans,
     peers,
@@ -650,8 +945,57 @@ export const make = Effect.gen(function* () {
 });
 
 /**
+ * A transferred copy asks the copy it gave way to for its member list and
+ * adopts it; used before a re-arm consent naming a machine this copy does not
+ * list. Never fails, and gives up after 15 seconds.
+ */
+export const refreshMembersFrom =
+  (deps: {
+    readonly load: (projectId: ProjectId) => Effect.Effect<Option.Option<Project>>;
+    readonly adoptMembers: LinkedPeerSyncDeps["adoptMembers"];
+    readonly peers: Pick<HandoffPeers["Service"], "linkedDigest">;
+  }) =>
+  (projectId: ProjectId): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const found = yield* deps.load(projectId);
+      if (Option.isNone(found)) return;
+      const identity = found.value.workspaceSettings?.logicalProject;
+      const binding = found.value.workspaceSettings?.coordinatorBinding;
+      if (identity === undefined || binding?.state !== "transferred") return;
+      const successor = binding.successor;
+      if (successor === undefined) return;
+      const answer = yield* deps.peers
+        .linkedDigest(successor.environmentId, {
+          protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
+          logicalProjectId: identity.id,
+          projectId: successor.projectId,
+        })
+        .pipe(Effect.timeout(Duration.seconds(15)));
+      // A successor that gave way in turn relays its own successor's list.
+      if (
+        (answer.binding?.state !== "active" && answer.binding?.state !== "transferred") ||
+        answer.members === undefined ||
+        logicalProjectMemberKey(answer.member) !== logicalProjectMemberKey(successor)
+      )
+        return;
+      yield* deps.adoptMembers({
+        projectId,
+        logicalProjectId: identity.id,
+        from: answer.member,
+        fromEpoch: answer.binding.epoch,
+        members: answer.members,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logDebug("Could not refresh a linked copy's members", { cause }),
+      ),
+    );
+
+/**
  * Needs `ProjectService`, `ProjectLink`, `LinkedMemorySync`, `ProjectPlanService`,
- * `HandoffPeers`, `ServerEnvironment` and `LinkedPeerSyncState`.
+ * `HandoffPeers`, `ServerEnvironment` and `LinkedPeerSyncState`; uses
+ * `CoordinatorReleaseGuard` when the server provides it, to release a standby
+ * before this copy gives way.
  */
 export const layer = Layer.effect(LinkedPeerSync, make);
 

@@ -111,6 +111,16 @@ export const ProjectCoordinatorBinding = Schema.Struct({
   takenOverBy: Schema.optional(Schema.Literals(["person", "auto"])),
   /** Set only on an active binding while automatic takeover is on. */
   standby: Schema.optional(ProjectCoordinatorStandby),
+  /**
+   * Members this coordinator unlinked after it replaced a predecessor, so the
+   * predecessor's older list, read once it gives way, never lists them again.
+   * Absent from machines older than member sync, which ignore it.
+   */
+  removedMembers: Schema.optional(
+    Schema.Array(Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId })).check(
+      Schema.isMaxLength(256),
+    ),
+  ),
 });
 export type ProjectCoordinatorBinding = typeof ProjectCoordinatorBinding.Type;
 

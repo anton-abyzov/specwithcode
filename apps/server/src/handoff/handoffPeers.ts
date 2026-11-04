@@ -71,6 +71,8 @@ import {
   LinkedContentResponse,
   LinkedDigestRequest,
   LinkedDigestResponse,
+  LinkedMembersRequest,
+  LinkedMembersResponse,
   LinkedPlanExportRequest,
   LinkedPlanExportResponse,
   LinkedPlanMergeRequest,
@@ -95,6 +97,7 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
   "linked-content": 60_000,
   "linked-replica": 60_000,
   "linked-supersede": 30_000,
+  "linked-members": 15_000,
   "plan-export": 60_000,
   "plan-merge": 60_000,
 };
@@ -102,7 +105,10 @@ const TIMEOUT_MS: Record<PeerPath, number> = {
 const answerLimit = (path: PeerPath) =>
   path === "memory-export"
     ? LINKED_MEMORY_PEER_MAX_BYTES
-    : path === "linked-content" || path === "plan-export"
+    : path === "linked-content" ||
+        path === "plan-export" ||
+        path === "linked-digest" ||
+        path === "linked-supersede"
       ? LINKED_SYNC_PEER_MAX_BYTES
       : HANDOFF_JSON_MAX_BYTES;
 
@@ -120,6 +126,12 @@ export class HandoffPeerError extends Data.TaggedError("HandoffPeerError")<{
    * settles an earlier takeover that is still in doubt.
    */
   readonly local?: boolean | undefined;
+  /**
+   * For a local `needs_grant` from this machine's own grant there: "none" when
+   * it holds none (never allowed, or the owner stopped it here), otherwise
+   * whether the grant it held was revoked there or expired.
+   */
+  readonly grant?: "none" | "revoked" | "expired" | undefined;
 }> {}
 
 const unreachable = (label: string, uncertain: boolean, local = false) =>
@@ -206,6 +218,11 @@ export class HandoffPeers extends Context.Service<
       environmentId: EnvironmentId,
       request: LinkedSupersedeRequest,
     ) => Effect.Effect<LinkedSupersedeResponse, HandoffPeerError>;
+    /** The coordinator's member list, for the linked copy there to adopt. */
+    readonly linkedMembers: (
+      environmentId: EnvironmentId,
+      request: LinkedMembersRequest,
+    ) => Effect.Effect<LinkedMembersResponse, HandoffPeerError>;
     readonly planExport: (
       environmentId: EnvironmentId,
       request: LinkedPlanExportRequest,
@@ -233,12 +250,14 @@ const encodeLinkedDigest = Schema.encodeSync(LinkedDigestRequest);
 const encodeLinkedContent = Schema.encodeSync(LinkedContentRequest);
 const encodeLinkedReplica = Schema.encodeSync(LinkedReplicaRequest);
 const encodeLinkedSupersede = Schema.encodeSync(LinkedSupersedeRequest);
+const encodeLinkedMembers = Schema.encodeSync(LinkedMembersRequest);
 const encodePlanExport = Schema.encodeSync(LinkedPlanExportRequest);
 const encodePlanMerge = Schema.encodeSync(LinkedPlanMergeRequest);
 const decodeLinkedDigest = Schema.decodeUnknownOption(LinkedDigestResponse);
 const decodeLinkedContent = Schema.decodeUnknownOption(LinkedContentResponse);
 const decodeLinkedReplica = Schema.decodeUnknownOption(LinkedReplicaResponse);
 const decodeLinkedSupersede = Schema.decodeUnknownOption(LinkedSupersedeResponse);
+const decodeLinkedMembers = Schema.decodeUnknownOption(LinkedMembersResponse);
 const decodePlanExport = Schema.decodeUnknownOption(LinkedPlanExportResponse);
 const decodePlanMerge = Schema.decodeUnknownOption(ProjectPlanLinkMergeResult);
 const decodeNegotiate = Schema.decodeUnknownOption(NegotiateResponse);
@@ -298,6 +317,7 @@ export const make = Effect.gen(function* () {
               check: "grant",
               uncertain: false,
               local: true,
+              grant: error.reason === "not_allowed" ? "none" : error.reason,
             })
           : error.reason === "unknown_machine"
             ? new HandoffPeerError({
@@ -551,6 +571,8 @@ export const make = Effect.gen(function* () {
         encodeLinkedSupersede(request),
         decodeLinkedSupersede,
       ),
+    linkedMembers: (environmentId, request) =>
+      postJson(environmentId, "linked-members", encodeLinkedMembers(request), decodeLinkedMembers),
     planExport: (environmentId, request) =>
       postJson(environmentId, "plan-export", encodePlanExport(request), decodePlanExport),
     planMerge: (environmentId, request) =>

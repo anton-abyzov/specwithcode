@@ -374,7 +374,7 @@ private struct ChatScreen: View {
         }
         switch target {
         case let .aide(ref), let .project(ref):
-          WeaveIconButton("gearshape", label: "Project settings") { router.sheet = .projectSettings(ref) }
+          WeaveIconButton("gearshape", label: "Project settings") { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }
             .accessibilityIdentifier("column.project-settings")
         case .thread:
           EmptyView()
@@ -532,7 +532,7 @@ private struct ChatScreen: View {
     switch target {
     case let .aide(ref), let .project(ref):
       let project = model.project(ref)
-      TitleCapsule(title: project?.title ?? session.title, subtitle: session.subtitle, action: { router.sheet = .projectSettings(ref) }) {
+      TitleCapsule(title: project?.title ?? session.title, subtitle: session.subtitle, action: { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }) {
         ProjectAvatar(icon: project?.icon.avatarIcon ?? .none, title: project?.title ?? session.title, size: WeaveSize.titleTile)
       }
       .accessibilityHint("Opens project settings")

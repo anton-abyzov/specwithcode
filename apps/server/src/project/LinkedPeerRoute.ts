@@ -7,7 +7,8 @@
  * to. It is answered only for a linked copy of that project whose members list
  * the caller's machine, never for a call from this machine itself, and only
  * when the caller's grant covers the copy; a caller may push only its own
- * content, plan or takeover, and a takeover only one its copy confirms.
+ * content, plan, member list or takeover, and a takeover only one its copy
+ * confirms.
  *
  * @module LinkedPeerRoute
  */
@@ -38,6 +39,8 @@ import {
   type LinkedContentResponse,
   type LinkedDigestRequest,
   type LinkedDigestResponse,
+  type LinkedMembersRequest,
+  type LinkedMembersResponse,
   type LinkedPlanExportRequest,
   type LinkedPlanMergeRequest,
   type LinkedReplicaRequest,
@@ -73,6 +76,11 @@ export class LinkedPeerReceiver extends Context.Service<
       caller: ReceiverCaller,
       request: LinkedSupersedeRequest,
     ) => Effect.Effect<LinkedSupersedeResponse, HandoffRefusal>;
+    /** The caller's coordinator member list, for this copy to adopt. */
+    readonly members: (
+      caller: ReceiverCaller,
+      request: LinkedMembersRequest,
+    ) => Effect.Effect<LinkedMembersResponse, HandoffRefusal>;
     readonly planExport: (
       caller: ReceiverCaller,
       request: LinkedPlanExportRequest,
@@ -171,6 +179,7 @@ export const describeCopy = (
 ) =>
   Effect.gen(function* () {
     const digest = yield* services.link.digest({ projectId: project.id });
+    const members = project.workspaceSettings?.logicalProject?.members;
     const memoryDigest = yield* services.memory
       .memoryExport({ projectId: project.id, digestOnly: true })
       .pipe(
@@ -198,6 +207,8 @@ export const describeCopy = (
             },
       memoryDigest,
       planDigest: plan,
+      // Answered only to listed machines, which exchanged these entries when they linked.
+      ...(members === undefined ? {} : { members }),
     } satisfies LinkedDigestResponse;
   });
 
@@ -257,27 +268,56 @@ export const make = Effect.gen(function* () {
    * A takeover is the caller's own word: before this copy gives way, the copy
    * that took over must confirm it over the peer route, with this machine's
    * grant there, holding that very binding with this copy as its predecessor.
+   * When this machine holds no grant there at all, the caller (the copy that
+   * took over, signed in with its own grant here, which covers this copy)
+   * stands for itself, as its digest would: otherwise a copy taken over from
+   * could never give way while only the other machine holds a grant. A grant
+   * that was revoked there or expired never counts as none: the takeover then
+   * waits for a confirmation, as it always did. Unconfirmed, the claim must
+   * still be a whole takeover of this very binding, made after it began.
    */
   const confirmTakeover = (project: Project, request: LinkedSupersedeRequest) =>
     Effect.gen(function* () {
       const self = yield* ownMember(project);
       if (Option.isNone(peers))
         return yield* refuse(409, "invalid", "This machine cannot confirm the takeover.");
-      const answer = yield* peers.value
+      const confirmed = yield* peers.value
         .linkedDigest(request.successor.environmentId, {
           protocolVersion: LINKED_SYNC_PROTOCOL_VERSION,
           logicalProjectId: request.logicalProjectId,
           projectId: request.successor.projectId,
         })
         .pipe(
-          Effect.mapError(() =>
-            refuse(
-              409,
-              "busy",
-              "This copy could not confirm the takeover with the copy that took over; try again later.",
-            ),
+          Effect.asSome,
+          Effect.catch((error) =>
+            error.code === "needs_grant" && error.local === true && error.grant === "none"
+              ? Effect.succeed(Option.none<LinkedDigestResponse>())
+              : Effect.fail(
+                  refuse(
+                    409,
+                    "busy",
+                    "This copy could not confirm the takeover with the copy that took over; try again later.",
+                  ),
+                ),
           ),
         );
+      if (Option.isNone(confirmed)) {
+        const claimed = request.coordinatorBinding;
+        const own = project.workspaceSettings?.coordinatorBinding;
+        const claimedAt = Date.parse(claimed.takenOverAt ?? "");
+        const ownSince = own?.takenOverAt === undefined ? null : Date.parse(own.takenOverAt);
+        if (
+          claimed.state !== "active" ||
+          claimed.predecessor === undefined ||
+          logicalProjectMemberKey(claimed.predecessor) !== logicalProjectMemberKey(self) ||
+          claimed.operationId === undefined ||
+          !Number.isFinite(claimedAt) ||
+          (ownSince !== null && Number.isFinite(ownSince) && claimedAt <= ownSince)
+        )
+          return yield* refuse(409, "invalid", "The copy that took over does not confirm it.");
+        return;
+      }
+      const answer = confirmed.value;
       const claimed = request.coordinatorBinding;
       const held = answer.binding;
       if (
@@ -364,7 +404,27 @@ export const make = Effect.gen(function* () {
             coordinatorBinding: request.coordinatorBinding,
           })
           .pipe(Effect.mapError(fromLinkError));
-        return { coordinatorBinding: result.coordinatorBinding, replayed: result.replayed };
+        // Giving way keeps the member list, so the copy read before it is the one to send.
+        const members = project.workspaceSettings?.logicalProject?.members;
+        return {
+          coordinatorBinding: result.coordinatorBinding,
+          replayed: result.replayed,
+          ...(members === undefined ? {} : { members }),
+        };
+      }),
+    members: (caller, request) =>
+      Effect.gen(function* () {
+        const project = yield* copyFor(caller, request, request.projectId);
+        yield* fromCaller(caller, request.from.environmentId);
+        return yield* link
+          .adoptMembers({
+            projectId: project.id,
+            logicalProjectId: request.logicalProjectId,
+            from: request.from,
+            fromEpoch: request.fromEpoch,
+            members: request.members,
+          })
+          .pipe(Effect.mapError(fromLinkError));
       }),
     planExport: (caller, request) =>
       copyFor(caller, request, request.projectId).pipe(

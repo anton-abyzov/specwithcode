@@ -734,6 +734,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(LinkedPeerSync.start).pipe(
     Layer.provide(
       LinkedPeerSync.layer.pipe(
+        // Releases a standby before a copy that was taken over from gives way.
+        Layer.provide(layerCoordinatorLease),
         Layer.provide(HandoffPeers.layer),
         Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
       ),

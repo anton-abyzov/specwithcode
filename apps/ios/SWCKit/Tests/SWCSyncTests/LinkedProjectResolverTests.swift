@@ -16,6 +16,27 @@ import SWCWire
     return Copy(ref: ProjectRef(environmentId: env, projectId: "p-\(env)"), machineLabel: env.uppercased(), machineOnline: online, machineSwitchedOff: switchedOff, machineSettled: settled, lastSeenAt: lastSeen, logicalProjectId: "lp", listedMembers: ["m1", "m3", "m4"].map(member), binding: binding, canTakeOver: canTakeOver, canRearm: true)
   }
 
+  // MARK: Which copy's settings open
+
+  @Test func settingsOpenTheOpenedCopyWhileItsMachineAnswers() {
+    let copies = [copy("m4", epoch: 3), copy("m1", epoch: 3, state: .transferred)]
+    #expect(LinkedProjectResolver.settingsCopy(opened: copies[0].ref, copies: copies) == copies[0].ref)
+    let alone = ProjectRef(environmentId: "m9", projectId: "solo")
+    #expect(LinkedProjectResolver.settingsCopy(opened: alone, copies: []) == alone)
+  }
+
+  @Test func settingsOfAnUnreachableCopyOpenAReachableCopyThatCanTakeOver() {
+    let away = copy("m4", epoch: 3, online: false)
+    let old = copy("m1", epoch: 3, state: .transferred, canTakeOver: false)
+    let able = copy("m3", epoch: 3, state: .transferred)
+    #expect(LinkedProjectResolver.settingsCopy(opened: away.ref, copies: [away, old, able]) == able.ref)
+    // No copy can take over: any reachable copy still lists the machines.
+    #expect(LinkedProjectResolver.settingsCopy(opened: away.ref, copies: [away, old]) == old.ref)
+    // Every copy away: the opened one, which says why.
+    let gone = copy("m1", epoch: 3, state: .transferred, online: false)
+    #expect(LinkedProjectResolver.settingsCopy(opened: away.ref, copies: [away, gone]) == away.ref)
+  }
+
   // MARK: Which copy opens
 
   @Test func theActiveCopyWithTheHighestEpochOpensWhateverIsListedFirst() {

@@ -4,6 +4,7 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("./useLinkMachines", () => ({ useLinkMachines: () => ({}) }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../studio/projectLink", () => ({ projectLink: {} }));
 
 const { sharedGroups } = await import("./CoordinatorSync");

@@ -190,7 +190,9 @@ A release without a plan shows "needs a manual upgrade" in Settings and is never
 
 ### Migration-capable plans and the post-restart page proof
 
-A plan allowing project migrations still attempts the page proof. A schema change makes the proof refuse, so the full read with the migration baseline runs. With no schema change, the proof supplies the same rows and typed capture to the existing migration-preservation checks. Allowing a migration does not imply that one occurred.
+A plan allowing project migrations still attempts the page proof. With no schema change, the proof supplies the same rows and typed capture to the existing migration-preservation checks. Allowing a migration does not imply that one occurred.
+
+A held update whose plan allows migrations (`PageMode(migrations=True)`) keeps the page proof for a migration that only adds tables or indexes, when it is declared in `additive_migrations.DECLARED`: its `effect_sql_migrations` row (number and name) and the exact `sqlite_schema` entries it creates (type, name, table, and SQL as SQLite stores it, compared with whitespace outside quoted text collapsed). The proof then requires that every schema entry of the stopped clone is in the live database unchanged (same SQL and root page: nothing altered, dropped, renamed or moved), that every earlier migration row is unchanged and the new rows are exactly declared migrations numbered after them, that the added entries are exactly the objects those migrations declare (only tables and indexes, none on an authority, log or SQLite table), that the schema cookie moved forward and the rest of the header did not, and that every page of each new b-tree (interior, leaf and overflow) was written after the stop, so a new tree sharing a page with any other refuses (`page-owned-twice`, `added-tree-page-unchanged`). Every page of every earlier b-tree is proven exactly as without a migration; the new trees are new data and are not compared. The verdict records `schemaDelta: {migrations, objects}`. Any other schema change, an undeclared migration, a declared number with other SQL, or a data rewrite in an existing table still refuses (`Refused:schema...`, `authority-table-changed`, `projection-without-event`, `old-log-row-changed`), and the full read with the migration baseline decides. `test-page-continuity.py` checks `DECLARED` against `apps/server/src/persistence/Migrations` and against SQLite. Before this, M4's 1.0.177 and 1.0.178 updates (migrations 070 and 071) fell back with `pageFallback: Refused:schema` and a 506–589 s readiness; a new additive migration must be added to `DECLARED` to keep the fast path.
 
 ### Owned children after the restart
 
@@ -241,7 +243,7 @@ completion checks still bind the receipt to the attempted and installed artifact
 Historical replay through the legacy hash verifier explicitly refuses this proof
 kind; it requires the original immutable stopped baseline for a separate replay.
 
-A changed schema, missing WAL mark, unsupported layout, or uncertain snapshot uses
+A changed schema (other than declared additive migrations, above), missing WAL mark, unsupported layout, or uncertain snapshot uses
 the existing complete typed comparison against the immutable stopped backup.
 These fallback reads can still be expensive. An unheld/manual update keeps its
 original full verification path. The fast path bounds changed-row decoding, not

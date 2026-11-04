@@ -4,7 +4,9 @@
  * app reads (`projectLink.syncStatus`) to leave those pairs to the server;
  * per pair, how long to back off after failures; and a wake-up that starts a
  * pass at once when a linked machine shows it is back, by calling this one or
- * by answering a reachability probe.
+ * by answering a reachability probe; and the takeovers another copy showed
+ * of a copy here that has not given way yet, so its coordinator starts no new
+ * turn meanwhile (`CoordinatorWakeGate`).
  *
  * In memory only: after a restart the app drives every pair until the first
  * passes succeed again.
@@ -82,16 +84,51 @@ export class LinkedPeerSyncState extends Context.Service<
     readonly peerSeen: (environmentId: EnvironmentId) => Effect.Effect<void>;
     /** Starts a pass soon, for example after a link was made. */
     readonly wake: Effect.Effect<void>;
+    /**
+     * `projectId`'s member list changed here: its pairs skip their backoff
+     * and a pass starts now, so the other copies learn the list soon.
+     */
+    readonly expedite: (projectId: ProjectId) => Effect.Effect<void>;
     /** Resolves on the next `wake` or `peerSeen` after it was taken. */
     readonly nextWake: Effect.Effect<Effect.Effect<void>>;
+    /** Another copy showed it took over from `seen.projectId` here; the highest epoch is kept. */
+    readonly markSuperseded: (seen: SupersededCopy) => Effect.Effect<void>;
+    /**
+     * The copy gave way, or no copy claims a takeover of it any more; with
+     * `onlyFrom`, only a takeover that machine's copy claimed is cleared.
+     */
+    readonly clearSuperseded: (
+      projectId: ProjectId,
+      onlyFrom?: EnvironmentId,
+    ) => Effect.Effect<void>;
+    /** The takeover not yet given way to whose coordinator thread is `threadId`, if any. */
+    readonly supersededFor: (threadId: string) => Effect.Effect<SupersededCopy | undefined>;
   }
 >()("specweave-studio/project/LinkedPeerSyncState") {}
+
+/**
+ * A copy on this machine that another copy took over from, at a higher epoch,
+ * as that copy's own digest showed it: this copy must give way.
+ */
+export interface SupersededCopy {
+  readonly projectId: ProjectId;
+  /** This copy's coordinator thread, as its shared project lists it. */
+  readonly coordinatorThreadId: string | undefined;
+  readonly epoch: number;
+  readonly successorEnvironmentId: EnvironmentId;
+}
+
+/** Whether `threadId` is the coordinator thread of the copy `seen` names. */
+export const isSupersededCoordinatorThread = (seen: SupersededCopy, threadId: string) =>
+  threadId === `project-coordinator:${seen.projectId}` ||
+  (seen.coordinatorThreadId !== undefined && threadId === seen.coordinatorThreadId);
 
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
 export const make = Effect.gen(function* () {
   const pairs = yield* Ref.make(new Map<string, PairState>());
   const signal = yield* Ref.make(yield* Deferred.make<void>());
+  const superseded = yield* Ref.make(new Map<string, SupersededCopy>());
 
   const wake = Ref.get(signal).pipe(
     Effect.flatMap((deferred) => Deferred.succeed(deferred, undefined)),
@@ -178,6 +215,18 @@ export const make = Effect.gen(function* () {
         return [backedOff, backedOff ? next : all] as const;
       }).pipe(Effect.flatMap((backedOff) => (backedOff ? wake : Effect.void))),
     wake,
+    expedite: (projectId) =>
+      Ref.update(
+        pairs,
+        (all) =>
+          new Map(
+            [...all].map(([key, state]) =>
+              state.pair.projectId === projectId
+                ? ([key, { ...state, nextAttemptAt: 0 }] as const)
+                : ([key, state] as const),
+            ),
+          ),
+      ).pipe(Effect.andThen(wake)),
     nextWake: Effect.gen(function* () {
       const current = yield* Ref.get(signal);
       // A wake that already fired is spent: wait for the next one.
@@ -190,6 +239,31 @@ export const make = Effect.gen(function* () {
       // @effect-diagnostics-next-line returnEffectInGen:off - the caller awaits it later.
       return Deferred.await(current);
     }),
+    markSuperseded: (seen) =>
+      Ref.update(superseded, (all) => {
+        const held = all.get(seen.projectId);
+        if (held !== undefined && held.epoch >= seen.epoch) return all;
+        const next = new Map(all);
+        if (!next.has(seen.projectId) && next.size >= MAX_ENTRIES)
+          next.delete(next.keys().next().value!);
+        next.set(seen.projectId, seen);
+        return next;
+      }),
+    clearSuperseded: (projectId, onlyFrom) =>
+      Ref.update(superseded, (all) => {
+        const held = all.get(projectId);
+        if (held === undefined) return all;
+        if (onlyFrom !== undefined && held.successorEnvironmentId !== onlyFrom) return all;
+        const next = new Map(all);
+        next.delete(projectId);
+        return next;
+      }),
+    supersededFor: (threadId) =>
+      Ref.get(superseded).pipe(
+        Effect.map((all) =>
+          [...all.values()].find((seen) => isSupersededCoordinatorThread(seen, threadId)),
+        ),
+      ),
   });
 });
 

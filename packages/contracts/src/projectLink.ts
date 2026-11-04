@@ -363,6 +363,27 @@ export const ProjectLinkReplicateResult = Schema.Struct({
 export type ProjectLinkReplicateResult = typeof ProjectLinkReplicateResult.Type;
 
 /**
+ * Member machine: adopt the coordinator's member list, so machines linked
+ * after this copy joined are members here too. `from` and `fromEpoch` are the
+ * coordinator copy as the app read it; the machine checks them like a
+ * replica's, and never drops itself or the copy it gave way to.
+ */
+export const ProjectLinkSyncMembersInput = Schema.Struct({
+  projectId: ProjectId,
+  logicalProjectId: bounded(512),
+  from: LogicalProjectMember,
+  fromEpoch: NonNegativeInt,
+  members: LogicalProject.fields.members,
+});
+export type ProjectLinkSyncMembersInput = typeof ProjectLinkSyncMembersInput.Type;
+export const ProjectLinkSyncMembersResult = Schema.Struct({
+  /** The list was already held. */
+  replayed: Schema.Boolean,
+  changed: Schema.Boolean,
+});
+export type ProjectLinkSyncMembersResult = typeof ProjectLinkSyncMembersResult.Type;
+
+/**
  * Member machine, while the coordinator's machine is unreachable: make this copy
  * the coordinator at the next epoch, with the old one as predecessor, starting
  * from the replica of its notes, goal and instructions.

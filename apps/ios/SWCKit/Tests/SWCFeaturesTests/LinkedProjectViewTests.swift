@@ -58,4 +58,22 @@ import SWCWire
     #expect(coordinator.ref == project.ref)
     #expect(coordinator.binding?.standby != nil)
   }
+
+  @Test func machinesLinkOfTheAwayCoordinatorOpensTheReachableCopy() async throws {
+    let engine = FixtureEngine(scenario: .fleet)
+    engine.latency = .zero
+    let model = AppModel(engine: engine)
+    engine.start(model: model)
+    let project = try #require(model.projects.first { $0.members.count > 1 })
+    // Both machines connected: the opened copy's own settings.
+    #expect(LinkedProjectState.settingsTarget(project.ref, in: model) == project.ref)
+    // M4 away for 25 minutes: Minis' copy, which can take over.
+    let away = FixtureEngine.fleetCopies(of: project, machine: { _ in (online: true, switchedOff: false) }, state: .coordinatorAway, now: Date())
+    let coordinator = try #require(LinkedProjectResolver.coordinator(away))
+    #expect(!coordinator.machineOnline)
+    let target = LinkedProjectResolver.settingsCopy(opened: coordinator.ref, copies: away)
+    #expect(target != coordinator.ref)
+    let row = try #require(LinkedProjectResolver.rows(away, now: Date(), unreachableSince: coordinator.lastSeenAt).first { $0.copy.ref == target })
+    #expect(row.takeover == .ready)
+  }
 }

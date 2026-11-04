@@ -30,6 +30,7 @@ import {
   type ProjectLinkNoteWrite,
   type ProjectLinkSharedIcon,
   type ProjectLinkPrepareInput,
+  type ProjectLinkSyncMembersInput,
   type ProjectLinkPrepareResult,
   type ProjectLinkPreview,
   type ProjectLinkPreviewInput,
@@ -77,6 +78,13 @@ import * as CoordinatorRole from "./CoordinatorRole.ts";
 import { CoordinatorStandbyStore } from "./CoordinatorStandbyStore.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
+import {
+  type AddPredecessorMembersInput,
+  type AdoptMembersInput,
+  type AdoptMembersResult,
+  coordinatorClaimWindow,
+  makeProjectLinkMembers,
+} from "./ProjectLinkMembers.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import { LinkedPeerSyncState } from "./LinkedPeerSyncState.ts";
 import { RoutineCopies } from "../scheduledTasks/ScheduledTaskCopies.ts";
@@ -145,8 +153,30 @@ export class ProjectLink extends Context.Service<
     readonly startCoordinator: (
       input: ProjectStartCoordinatorInput,
     ) => Effect.Effect<ProjectStartCoordinatorResult, ProjectLinkError>;
+    /** A transferred copy adopts its coordinator's member list (`ProjectLinkMembers`). */
+    readonly adoptMembers: (
+      input: AdoptMembersInput,
+    ) => Effect.Effect<AdoptMembersResult, ProjectLinkError>;
+    /** A copy that took over adds the members its predecessor lists. */
+    readonly addPredecessorMembers: (
+      input: AddPredecessorMembersInput,
+    ) => Effect.Effect<{ readonly changed: boolean }, ProjectLinkError>;
+    /**
+     * Installs the server-driven half of member sync (`LinkedPeerSync`, which
+     * holds the peer route): asking the coordinator for its list, and
+     * starting a pass when this copy's list changes.
+     */
+    readonly registerMembersSync: (sync: LinkedMembersSync) => Effect.Effect<void>;
   } & ProjectLinkStandbyMethods
 >()("specweave-studio/project/ProjectLink") {}
+
+/** What `LinkedPeerSync` does for member sync; absent on a server without it. */
+export interface LinkedMembersSync {
+  /** Asks the copy this one gave way to for its member list and adopts it; never fails. */
+  readonly refresh: (projectId: ProjectId) => Effect.Effect<void>;
+  /** This copy's member list changed: its pairs sync now. */
+  readonly expedite: (projectId: ProjectId) => Effect.Effect<void>;
+}
 
 /** The content of a coordinator copy on another machine, for this member's replica. */
 export interface ReplicateFromMemberInput {
@@ -268,6 +298,11 @@ const make = Effect.gen(function* () {
   const rearmStore = yield* CoordinatorRearmStore;
   const publishRole = yield* CoordinatorRole.publisher;
   const routineCopies = Option.getOrUndefined(yield* Effect.serviceOption(RoutineCopies));
+  let membersSync: LinkedMembersSync | undefined;
+  const expedite = (projectId: ProjectId) =>
+    Effect.suspend(() =>
+      membersSync === undefined ? Effect.void : membersSync.expedite(projectId),
+    );
 
   const load = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -618,6 +653,12 @@ const make = Effect.gen(function* () {
     );
 
   const commit: ProjectLink["Service"]["commit"] = (input) =>
+    commitLocked(input).pipe(
+      // The other copies learn the new member on their next pass, which starts now.
+      Effect.tap((result) => (result.replayed ? Effect.void : expedite(input.projectId))),
+    );
+
+  const commitLocked = (input: ProjectLinkCommitInput) =>
     admission.withLock(
       input.projectId,
       Effect.gen(function* () {
@@ -665,6 +706,35 @@ const make = Effect.gen(function* () {
     );
 
   const unlink: ProjectLink["Service"]["unlink"] = (input) =>
+    unlinkLocked(input).pipe(
+      Effect.tap((result) =>
+        input.side === "coordinator" && !result.replayed ? expedite(input.projectId) : Effect.void,
+      ),
+    );
+
+  /**
+   * A coordinator that replaced a predecessor remembers whom it unlinked, so
+   * the predecessor's older list (`addPredecessorMembers`) never brings them back.
+   */
+  const rememberRemoved = (
+    binding: ProjectCoordinatorBinding,
+    member: Pick<LogicalProjectMember, "environmentId" | "projectId">,
+  ): ProjectCoordinatorBinding => {
+    if (binding.predecessor === undefined) return binding;
+    const key = logicalProjectMemberKey(member);
+    const kept = (binding.removedMembers ?? []).filter(
+      (removed) => logicalProjectMemberKey(removed) !== key,
+    );
+    return {
+      ...binding,
+      removedMembers: [
+        ...kept,
+        { environmentId: member.environmentId, projectId: member.projectId },
+      ].slice(-256),
+    };
+  };
+
+  const unlinkLocked = (input: ProjectUnlinkInput) =>
     admission.withLock(
       input.projectId,
       Effect.gen(function* () {
@@ -690,15 +760,16 @@ const make = Effect.gen(function* () {
               replayed: true,
             };
           const logicalProject = { ...identity, members: remaining };
+          const coordinatorBinding = rememberRemoved(current, input.member);
           yield* writeOwnership(project, "project-unlink-member", input.operationId, {
             mode: "remove-member",
             logicalProject,
-            coordinatorBinding: current,
+            coordinatorBinding,
           });
           return {
             operationId: input.operationId,
             logicalProject,
-            coordinatorBinding: current,
+            coordinatorBinding,
             notesWritten: 0,
             replayed: false,
           };
@@ -847,17 +918,9 @@ const make = Effect.gen(function* () {
             member.environmentId !== self.environmentId,
         );
         if (from === undefined) return yield* fail("not_member");
-        // The epoch is the sender's own word. The copy this one gave way to may send at its
-        // epoch or later; any other member only one past it (or at it, when this copy never
-        // learned who it gave way to), as a takeover or a coordinator started beside it would
-        // be, so a claim never outranks what that member could really do. A longer chain of
-        // takeovers is left to the app, which reads both sides.
-        const successor =
-          binding.successor !== undefined &&
-          logicalProjectMemberKey(binding.successor) === logicalProjectMemberKey(from);
-        const lowest =
-          successor || binding.successor === undefined ? binding.epoch : binding.epoch + 1;
-        const highest = successor ? Number.MAX_SAFE_INTEGER : binding.epoch + 1;
+        // The epoch is the sender's own word, so a claim never outranks what that member
+        // could really do (`coordinatorClaimWindow`).
+        const { lowest, highest } = coordinatorClaimWindow(binding, logicalProjectMemberKey(from));
         if (input.fromEpoch < lowest || input.fromEpoch > highest)
           return yield* fail(
             "not_coordinator",
@@ -1196,6 +1259,22 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const writeOwnershipOnly = (
+    project: Project,
+    commandPrefix: string,
+    operationId: string,
+    ownership: Omit<ProjectOwnershipUpdate, "expectedRevision">,
+  ) => writeOwnership(project, commandPrefix, operationId, ownership);
+
+  const members = makeProjectLinkMembers({
+    admission,
+    fail,
+    load,
+    refusePersonal,
+    selfMember,
+    writeOwnership: writeOwnershipOnly,
+  });
+
   const standby = makeProjectLinkStandby({
     admission,
     environment,
@@ -1226,9 +1305,12 @@ const make = Effect.gen(function* () {
               .replace(input)
               .pipe(Effect.mapError(() => new ProjectLinkError({ code: "storage_failed" }))),
     publishRole,
-    writeOwnership: (project, commandPrefix, operationId, ownership) =>
-      writeOwnership(project, commandPrefix, operationId, ownership),
+    writeOwnership: writeOwnershipOnly,
     takeoverLocked,
+    refreshMembers: (projectId) =>
+      Effect.suspend(() =>
+        membersSync === undefined ? Effect.void : membersSync.refresh(projectId),
+      ),
   });
 
   return ProjectLink.of({
@@ -1245,6 +1327,12 @@ const make = Effect.gen(function* () {
     takeover,
     supersede,
     startCoordinator,
+    adoptMembers: members.adoptMembers,
+    addPredecessorMembers: members.addPredecessorMembers,
+    registerMembersSync: (sync) =>
+      Effect.sync(() => {
+        membersSync = sync;
+      }),
   });
 });
 
@@ -1318,6 +1406,9 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
           ),
         ),
       [WS_METHODS.projectLinkReplicate]: whereRulesAllow(link.replicate),
+      [WS_METHODS.projectLinkSyncMembers]: whereRulesAllow((input: ProjectLinkSyncMembersInput) =>
+        link.adoptMembers({ ...input, viaApp: true }),
+      ),
       [WS_METHODS.projectLinkMemoryExport]: whereRulesAllow(memory.memoryExport),
       [WS_METHODS.projectLinkMemoryMerge]: whereRulesAllow(memory.memoryMerge),
       [WS_METHODS.projectTakeover]: link.takeover,

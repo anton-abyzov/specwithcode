@@ -86,6 +86,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectLinkSyncStatus]: "projects",
   [WS_METHODS.limitHandoffCandidates]: "provider",
   [WS_METHODS.projectLinkReplicate]: "projects",
+  [WS_METHODS.projectLinkSyncMembers]: "projects",
   [WS_METHODS.projectLinkMemoryExport]: "projects",
   [WS_METHODS.projectLinkMemoryMerge]: "projects",
   [WS_METHODS.projectTakeover]: "projects",

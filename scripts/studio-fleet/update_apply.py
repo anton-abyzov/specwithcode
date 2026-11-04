@@ -121,8 +121,10 @@ class PageMode:
     A refusal after activation takes the old complete clone/live proof. A failed proof leaves
     the new database held for review, never restores over unproven postactivation writes.
     """
-    def __init__(self, names, identity, expected, heartbeat):
+    def __init__(self, names, identity, expected, heartbeat, migrations=False):
         self.n, self.identity, self.expected, self.heartbeat = names, identity, expected, heartbeat
+        # An update allowed to migrate: the page proof also accepts declared additive migrations.
+        self.migrations = migrations
         self.service = names._service(identity)
         self.state = self.service['own'] / 'userdata'
         self.verdict = self.fallback_reason = None
@@ -131,12 +133,12 @@ class PageMode:
         self.process_reader, self.database_holders = quiescence.read_processes, service_handles.database_holders
 
     @classmethod
-    def prepare(cls, names, identity, expected, heartbeat, report=None):
+    def prepare(cls, names, identity, expected, heartbeat, report=None, migrations=False):
         """The mode, or None and the reason in `report['pageModeRefused']` when a held install takes
         the full path instead."""
         if expected.get('snapshotMode') != 'held-service':
             return None
-        mode = cls(names, identity, expected, heartbeat)
+        mode = cls(names, identity, expected, heartbeat, migrations)
         try:
             _, auth = mode.read()  # Unsupported/moving snapshots take the old path before any write.
             assert auth is not None, 'Page mode requires an existing auth table'
@@ -292,7 +294,7 @@ class PageMode:
             token = mark.take()
             observed = datetime.datetime.now(datetime.timezone.utc).isoformat()
             verdict = page_continuity.prove(self.state, held, started, observed,
-                                            identity=self.identity, web_session_policy=policy)
+                                            identity=self.identity, web_session_policy=policy, migrations=self.migrations)
             assert self.heartbeat or verdict['authHeartbeat'] is None, 'Auth heartbeat was not authorized'
             after, auth, _ = self._snapshot_once_children_pass()
             assert after['servicePid'] != self.expected['servicePid'], 'Page verification still sees the old service'

@@ -16,6 +16,7 @@ import {
 } from "@specweave-studio/contracts";
 import { expect } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import type * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
@@ -416,3 +417,67 @@ export const link = async (pair: ReturnType<typeof legacyPair>) => {
   );
   return { prepared, accepted, committed };
 };
+
+export const thirdLinkId = "33333333-3333-4333-8333-333333333333";
+
+/**
+ * Three copies as in the field: the M4 keeps EasyChamp, the M3 joins, then
+ * the M1 joins. The M3 still lists only the M4 and itself.
+ */
+export const legacyTrio = async () => {
+  const pair = legacyPair();
+  const { prepared } = await link(pair);
+  const m1 = machine("m1");
+  const thirdRoot = m1.add(
+    "easychamp-m1",
+    checkout("git@github.com:anton/sw-easychamp.git"),
+  ).workspaceRoot;
+  const joining = { ...m1.member("easychamp-m1"), workspaceRoot: thirdRoot };
+  const again = await pair.m4.run((service) =>
+    service.prepare({ operationId: thirdLinkId, projectId: pair.kept.projectId, joining }),
+  );
+  const accepted = await m1.run((service) =>
+    service.accept({
+      operationId: thirdLinkId,
+      projectId: joining.projectId,
+      kept: again.kept,
+      logicalProject: again.logicalProject,
+      coordinatorBinding: again.coordinatorBinding,
+      keptFingerprint: again.fingerprint,
+    }),
+  );
+  await pair.m4.run((service) =>
+    service.commit({
+      operationId: thirdLinkId,
+      projectId: pair.kept.projectId,
+      joining: accepted.member,
+      notes: [],
+    }),
+  );
+  /** The members a copy lists now. */
+  const membersOn = (target: ReturnType<typeof machine>, projectId: string) =>
+    target.projects.get(projectId)!.workspaceSettings!.logicalProject!.members;
+  return {
+    ...pair,
+    m1,
+    third: accepted.member,
+    logicalProjectId: prepared.logicalProject.id,
+    membersOn,
+  };
+};
+
+/** Runs one call on a machine's `ProjectLink`, with one extra service provided. */
+export const runOn = <A, I, S>(
+  layer: Layer.Layer<ProjectLink.ProjectLink>,
+  use: (link: ProjectLink.ProjectLink["Service"]) => Effect.Effect<A, ProjectLinkError>,
+  tag: Context.Key<I, S>,
+  service: S,
+) =>
+  Effect.runPromiseExit(
+    Effect.gen(function* () {
+      return yield* use(yield* ProjectLink.ProjectLink);
+    }).pipe(Effect.provide(layer), Effect.provideService(tag, service)),
+  ).then((exit) => {
+    if (Exit.isSuccess(exit)) return exit.value;
+    throw Cause.squash(exit.cause);
+  });

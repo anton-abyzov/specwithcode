@@ -5,11 +5,20 @@ clone. That stopped image is the baseline (never the earlier running-service ref
 Unchanged pages preserve their exact cells. Changed leaves/overflow owners are compared
 through SQLite's typed rows; uncertain layout, snapshots or policy refuse this fast path.
 The caller then uses the existing complete capture/migration proof, never assumes success.
+
+With `migrations` (an update allowed to migrate), a schema delta that is exactly what declared
+additive migrations create (additive_migrations.delta: new tables and indexes only, every earlier
+schema entry and migration row unchanged) keeps this proof: the new b-trees are new data, each of
+their pages freshly written, and every page of every earlier b-tree is proven as without a delta.
+Anything else still refuses 'schema' and takes the full read.
 """
 import os
 import pathlib
+import re
+import struct
 from types import SimpleNamespace
 
+import additive_migrations
 import after_proof
 import auth_heartbeat
 import database_continuity as continuity
@@ -21,13 +30,13 @@ MAX_CHANGED_ROWS = 50000
 MAX_CHANGED_BYTES = 64 << 20
 
 
-def prove(state, held, restart_started_at, observed_after_at, *, identity='m4', web_session_policy=None):
+def prove(state, held, restart_started_at, observed_after_at, *, identity='m4', web_session_policy=None, migrations=False):
     if not isinstance(held, dict) or not held.get('clone'):
         raise Refused('no-stopped-clone')
     baseline = dict(held, gap=[])
     baseline.pop('reference', None)
     proof = PageProof(str(pathlib.Path(state) / 'statev2.sqlite'), baseline,
-                      restart_started_at, observed_after_at, identity, web_session_policy)
+                      restart_started_at, observed_after_at, identity, web_session_policy, migrations)
     try:
         verdict, record = proof.run()
         proof.snapshot.check()
@@ -40,9 +49,10 @@ def prove(state, held, restart_started_at, observed_after_at, *, identity='m4', 
 
 
 class PageProof(after_proof._Proof):
-    def __init__(self, database, held, started, observed, identity, policy):
+    def __init__(self, database, held, started, observed, identity, policy, migrations=False):
         super().__init__(os.path.abspath(database), held, SimpleNamespace(tables={}), {}, {}, None, True)
         self.snapshot = None
+        self.migrations, self.delta, self.added = migrations, None, {}
         self.started, self.observed, self.identity, self.policy = started, observed, identity, policy
         self.decoded_rows = self.decoded_bytes = 0
 
@@ -78,6 +88,108 @@ class PageProof(after_proof._Proof):
             os.close(fd)
         if self.snapshot is not None:
             self.snapshot.close()
+
+    # A schema delta of declared additive migrations.
+
+    def check_schema(self):
+        query = 'SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master ORDER BY type, name'
+        live = [tuple(row) for row in self.db.execute(query)]
+        old = [tuple(row) for row in self.clone_db.execute(query)]
+        if not self.migrations or live == old:
+            return super().check_schema()
+        for table in self.tables:
+            if not re.fullmatch('[a-z0-9_]+', table):
+                raise Refused('table-name')
+        if after_proof.virtual_tables(self.db, self.tables):
+            raise Refused('virtual-table')
+        try:
+            self.delta = additive_migrations.delta(old, live, self.clone_db, self.db)
+        except additive_migrations.Undeclared as error:
+            raise Refused('schema:' + str(error)) from None
+        self.added, self.master = self.delta['objects'], live
+        self.structure = continuity.schema(self.db)
+        if continuity.encoded(additive_migrations.without(self.structure, self.added)) != continuity.encoded(self.capture['schema']):
+            raise Refused('schema:structure')
+        if 1 in self.gap and not self.reference:
+            raise Refused('gap-touches-schema')
+        live_page, clone_page = (self.page(version, 1) for version in ('live', 'clone'))
+        # Header bytes 24-40 (change counter, size, freelist) differ after any write, as without a
+        # delta; the schema cookie (40) must have moved forward, every other field stays. Page 1's
+        # cells are sqlite_schema's root, whose rows delta() compared above.
+        if live_page[:24] != clone_page[:24] or live_page[44:92] != clone_page[44:92]:
+            raise Refused('schema')
+        if struct.unpack_from('>I', live_page, 40)[0] <= struct.unpack_from('>I', clone_page, 40)[0]:
+            raise Refused('schema:cookie')
+        if struct.unpack_from('>I', clone_page, 52)[0]:
+            raise Refused('auto-vacuum')
+
+    def walk(self):
+        """after_proof's walk, where an added b-tree exists only in the live version; then
+        check_added."""
+        if not self.added:
+            return super().walk()
+        self.trees = [(after_proof.SCHEMA, 1, 'table', after_proof.SCHEMA)] + [
+            (name, root, kind, table) for kind, name, table, root, _ in self.master if kind in ('table', 'index') and root]
+        self.tree_table = {name: table if kind == 'index' else name for name, _, kind, table in self.trees}
+        self.tree_kind = {name: kind for name, _, kind, _ in self.trees}
+        for version in ('clone', 'live'):
+            for name, root, _, _ in self.trees:
+                if version == 'clone' and name in self.added:
+                    self.leaves[version, name] = []
+                    continue
+                interior, leaves, family = self.tree(version, root)
+                for number in self.paged.intersection(interior):
+                    self.claim(version, number, name)
+                for number in self.paged.intersection(leaves):
+                    self.claim(version, number, name)
+                self.leaves[version, name], self.kinds[name] = leaves, family
+            self.freelist(version)
+        for version, pages in (('clone', sorted(self.paged)), ('live', sorted(self.changed))):
+            for number in pages:
+                owner = self.owners[version].get(number)
+                if owner is not None and owner != after_proof.FREE and number not in self.overflow[version]:
+                    self.cells(version, number, owner)
+        self.check_added()
+
+    def check_added(self):
+        """Every page of an added b-tree (interior, leaf, overflow) was written after the stop, so
+        it was free or past the clone's end and its claim in walk() makes sharing a page with any
+        other tree refuse ('page-owned-twice'); its kind is its schema entry's."""
+        for name, (kind, _, root) in sorted(self.added.items()):
+            interior, leaves, family = self.tree('live', root)
+            if family != (after_proof.TABLE_PAGES if kind == 'table' else after_proof.INDEX_PAGES):
+                raise Refused('added-tree-kind')
+            pages = set(interior) | set(leaves)
+            for number in interior + leaves:
+                page = self.page('live', number)
+                page_kind = page[100 if number == 1 else 0]
+                if page_kind == 5:
+                    continue
+                for _, count, link in self.cell_links(page, 100 if number == 1 else 0, page_kind):
+                    pages.update(self.chain('live', count, link))
+            if not pages <= self.live_changed:
+                raise Refused('added-tree-page-unchanged')
+
+    def touched(self):
+        """after_proof's touched(), where sqlite_schema pages (their rows proven by delta()) and an
+        added b-tree's pages (check_added) belong to no compared table."""
+        if not self.added:
+            return super().touched()
+        for number in self.paged:
+            if number != 1 and not (self.owners['clone'].get(number) or (number in self.changed and self.owners['live'].get(number))):
+                raise Refused('unowned-page')
+        tables, indexed, self.gap_tables = set(), set(), set()
+        for version, pages in (('clone', self.paged), ('live', self.changed)):
+            for number in pages:
+                owner = self.owners[version].get(number)
+                if owner in (None, after_proof.FREE, after_proof.SCHEMA) or owner in self.added:
+                    continue
+                (indexed if self.tree_kind[owner] == 'index' else tables).add(self.tree_table[owner])
+                if version == 'clone' and number in self.gap and not self.reference:
+                    self.gap_tables.add(self.tree_table[owner])
+        if indexed - tables:
+            raise Refused('index-only')
+        return tables
 
     def changed_rows(self, table):
         if not self.rowid_table(table):
@@ -157,6 +269,10 @@ class PageProof(after_proof._Proof):
                       or type(old[name]) is not int or value < old[name] or not appended.get(name)
                       for name, value in new.items() if type(value) is not type(old.get(name)) or value != old.get(name)):
                     raise Refused('sequence-changed')
+            elif table == additive_migrations.MIGRATIONS_TABLE and self.delta is not None:
+                # delta() compared every row; only the declared migrations' rows were added.
+                if removed or sorted(rowid for rowid, _ in added) != self.delta['migrations']:
+                    raise Refused('migration-rows')
             elif update_read.is_projection_table(table) and key:
                 index = columns.index(key)
                 changed = {update_read.stream_key(values[index]) for _, values in removed + added}
@@ -191,7 +307,9 @@ class PageProof(after_proof._Proof):
         return {'schemaVersion': 1, 'proofKind': 'stopped-clone-pages-v1', 'preserved': True,
                 'schemaSha256': continuity.digest(continuity.encoded(self.structure)),
                 'appendedRows': appended, 'touchedStreams': sorted(streams), 'authHeartbeat': witness,
-                'decodedRows': self.decoded_rows, 'decodedBytes': self.decoded_bytes}
+                'decodedRows': self.decoded_rows, 'decodedBytes': self.decoded_bytes,
+                **({'schemaDelta': {'migrations': self.delta['migrations'], 'objects': sorted(self.added)}}
+                   if self.delta is not None else {})}
 
     def projections(self):
         return [(table, update_read.stream_column(update_read.table_columns(self.db, table)))

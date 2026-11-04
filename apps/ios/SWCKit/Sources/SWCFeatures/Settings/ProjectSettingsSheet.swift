@@ -82,11 +82,17 @@ struct ProjectSettingsSheet: View {
         .accessibilityLabel("Loading settings")
     case let .failed(message):
       ScrollView {
-        EmptyState(systemName: "exclamationmark.triangle", title: "Couldn't load settings", message: message, actionTitle: "Try again") {
-          Task { await load() }
+        VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
+          EmptyState(systemName: "exclamationmark.triangle", title: "Couldn't load settings", message: message, actionTitle: "Try again") {
+            Task { await load() }
+          }
+          .frame(maxWidth: .infinity)
+          .padding(.top, WeaveSpacing.s8)
+          // A linked copy whose machine is away still lists the other
+          // machines, so "Take over coordinator here" stays in reach.
+          LinkedProjectMachinesCard(project: project)
+            .padding(.horizontal, WeaveSpacing.gutter)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, WeaveSpacing.s8)
       }
     case .loaded:
       form

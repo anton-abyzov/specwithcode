@@ -1243,6 +1243,8 @@ describe("the wire stays as it was", () => {
         "takenOverAt",
         "takenOverBy",
         "standby",
+        // Optional, added by member list sync, not by re-arm; older peers ignore it.
+        "removedMembers",
       ].toSorted(),
     );
     expect(fieldsOf(ProjectCoordinatorStandby)).toEqual(
@@ -1277,6 +1279,8 @@ describe("the wire stays as it was", () => {
         "replica",
         "memoryDigest",
         "planDigest",
+        // Added by member sync, not by re-arm; optional, so older peers ignore it.
+        "members",
       ].toSorted(),
     );
     expect(fieldsOf(LinkedSupersedeRequest)).toEqual(

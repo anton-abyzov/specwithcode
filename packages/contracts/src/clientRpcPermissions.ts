@@ -93,6 +93,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.limitHandoffCandidates]: AuthOrchestrationReadScope,
   // A member's read-only copy of its coordinator's notes, and taking over or giving way.
   [WS_METHODS.projectLinkReplicate]: AuthSettingsWriteScope,
+  [WS_METHODS.projectLinkSyncMembers]: AuthSettingsWriteScope,
   [WS_METHODS.projectTakeover]: AuthSettingsWriteScope,
   [WS_METHODS.projectSupersede]: AuthSettingsWriteScope,
   [WS_METHODS.projectStartCoordinator]: AuthSettingsWriteScope,
@@ -337,6 +338,7 @@ export function clientRpcRequiredScopes(
     method === WS_METHODS.projectLinkCommit ||
     method === WS_METHODS.projectUnlink ||
     method === WS_METHODS.projectLinkReplicate ||
+    method === WS_METHODS.projectLinkSyncMembers ||
     method === WS_METHODS.projectLinkMemoryMerge ||
     method === WS_METHODS.projectTakeover ||
     method === WS_METHODS.projectSupersede ||

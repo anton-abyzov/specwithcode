@@ -312,6 +312,7 @@ export type PeerPath =
   | "linked-content"
   | "linked-replica"
   | "linked-supersede"
+  | "linked-members"
   | "plan-export"
   | "plan-merge";
 export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
@@ -328,6 +329,7 @@ export const PEER_PATHS: ReadonlySet<string> = new Set<PeerPath>([
   "linked-content",
   "linked-replica",
   "linked-supersede",
+  "linked-members",
   "plan-export",
   "plan-merge",
 ]);

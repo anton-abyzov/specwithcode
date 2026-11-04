@@ -42,6 +42,7 @@ import {
 import {
   LinkedContentRequest,
   LinkedDigestRequest,
+  LinkedMembersRequest,
   LinkedPlanExportRequest,
   LinkedPlanMergeRequest,
   LinkedReplicaRequest,
@@ -137,7 +138,7 @@ export const layer = HttpRouter.add(
           ? COORDINATOR_REPLICA_MAX_BYTES
           : path === "memory-merge"
             ? LINKED_MEMORY_PEER_MAX_BYTES
-            : path === "linked-replica" || path === "plan-merge"
+            : path === "linked-replica" || path === "plan-merge" || path === "linked-members"
               ? LINKED_SYNC_PEER_MAX_BYTES
               : HANDOFF_JSON_MAX_BYTES;
     const contentLength = Number(request.headers["content-length"] ?? "0");
@@ -232,6 +233,12 @@ export const layer = HttpRouter.add(
         return Option.isNone(input)
           ? invalid
           : yield* answer((yield* LinkedPeerReceiver).supersede(caller, input.value));
+      }
+      case "linked-members": {
+        const input = decodeJson(LinkedMembersRequest, body.value);
+        return Option.isNone(input)
+          ? invalid
+          : yield* answer((yield* LinkedPeerReceiver).members(caller, input.value));
       }
       case "plan-export": {
         const input = decodeJson(LinkedPlanExportRequest, body.value);

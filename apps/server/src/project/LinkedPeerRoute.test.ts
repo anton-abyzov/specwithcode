@@ -372,6 +372,199 @@ describe("LinkedPeerReceiver", () => {
       );
       if (!result.ok) return yield* Effect.die(result.refusal);
       expect(result.value.coordinatorBinding).toMatchObject({ state: "transferred", epoch: 1 });
+      // The copy that took over learns the members this one lists.
+      expect(result.value.members?.map((member) => member.environmentId).toSorted()).toEqual([
+        "m3",
+        "m4",
+      ]);
+
+      // Only M4 holds a grant (on M3): M3 cannot ask M4 back, so M4's own word, sent with
+      // its grant here, stands, and M3 gives way instead of coordinating beside it.
+      const withoutGrant = (grant: "none" | "revoked" | "expired") => () =>
+        Effect.fail(
+          new HandoffPeerError({
+            code: "needs_grant",
+            message: "M4: this machine has no work grant there",
+            check: "grant",
+            uncertain: false,
+            local: true,
+            grant,
+          }),
+        );
+      const noGrant = withoutGrant("none");
+      const oneWay = yield* linked(noGrant);
+      coordinating(oneWay.pair);
+      const gaveWay = yield* oneWay.onM3((receiver) =>
+        receiver.supersede(oneWay.m4, {
+          ...oneWay.ref,
+          successor: oneWay.pair.kept,
+          coordinatorBinding: takeover(oneWay.pair),
+        }),
+      );
+      if (!gaveWay.ok) return yield* Effect.die(gaveWay.refusal);
+      expect(gaveWay.value.coordinatorBinding).toMatchObject({ state: "transferred", epoch: 1 });
+
+      // A missing grant never lets another machine claim a takeover for a third copy.
+      const thirdParty = yield* linked(noGrant);
+      coordinating(thirdParty.pair);
+      expect(
+        yield* thirdParty.refused((receiver) =>
+          receiver.supersede(thirdParty.m4, {
+            ...thirdParty.ref,
+            successor: thirdParty.pair.kept,
+            coordinatorBinding: { ...takeover(thirdParty.pair), predecessor: thirdParty.pair.kept },
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "invalid" });
+
+      // A grant M4 revoked, or one that expired, is no grant never given: M3 still waits
+      // for M4 to confirm the takeover instead of taking its word.
+      for (const grant of ["revoked", "expired"] as const) {
+        const cut = yield* linked(withoutGrant(grant));
+        coordinating(cut.pair);
+        expect(
+          yield* cut.refused((receiver) =>
+            receiver.supersede(cut.m4, {
+              ...cut.ref,
+              successor: cut.pair.kept,
+              coordinatorBinding: takeover(cut.pair),
+            }),
+          ),
+        ).toMatchObject({ status: 409, code: "busy" });
+      }
+
+      // Unconfirmed, a claim must be a whole takeover made after this copy's own one began.
+      const stale = yield* linked(noGrant);
+      coordinating(stale.pair);
+      const staleHeld = stale.pair.m3.projects.get(stale.pair.joining.projectId)!;
+      stale.pair.m3.projects.set(stale.pair.joining.projectId, {
+        ...staleHeld,
+        workspaceSettings: {
+          ...staleHeld.workspaceSettings!,
+          coordinatorBinding: {
+            epoch: 0,
+            state: "active",
+            takenOverAt: "2026-11-03T01:00:00.000Z",
+          },
+        },
+      } as Project);
+      expect(
+        yield* stale.refused((receiver) =>
+          receiver.supersede(stale.m4, {
+            ...stale.ref,
+            successor: stale.pair.kept,
+            coordinatorBinding: takeover(stale.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "invalid" });
+      const partial = yield* linked(noGrant);
+      coordinating(partial.pair);
+      const { operationId: _dropped, ...withoutOperation } = takeover(partial.pair);
+      expect(
+        yield* partial.refused((receiver) =>
+          receiver.supersede(partial.m4, {
+            ...partial.ref,
+            successor: partial.pair.kept,
+            coordinatorBinding: withoutOperation,
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "invalid" });
+
+      // M4 could not be reached to confirm it: M3 waits and tries again later.
+      current = undefined;
+      const unreachable = yield* linked(fromM4);
+      coordinating(unreachable.pair);
+      expect(
+        yield* unreachable.refused((receiver) =>
+          receiver.supersede(unreachable.m4, {
+            ...unreachable.ref,
+            successor: unreachable.pair.kept,
+            coordinatorBinding: takeover(unreachable.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "busy" });
     }),
   );
+
+  describe("member lists", () => {
+    const later = {
+      environmentId: EnvironmentId.make("m1"),
+      projectId: ProjectId.make("easychamp-m1"),
+      coordinatorThreadId: ThreadId.make("project-coordinator:easychamp-m1"),
+    };
+
+    it.effect("reports the members this copy lists in its digest", () =>
+      Effect.gen(function* () {
+        const { pair, m4, ref, onM3 } = yield* linked();
+        const answer = yield* onM3((receiver) => receiver.digest(m4, ref));
+        if (!answer.ok) return yield* Effect.die(answer.refusal);
+        expect(answer.value.members?.map((member) => member.environmentId).toSorted()).toEqual([
+          pair.joining.environmentId,
+          pair.kept.environmentId,
+        ]);
+      }),
+    );
+
+    it.effect("adopts the list the copy it gave way to sends", () =>
+      Effect.gen(function* () {
+        const { pair, m4, ref, onM3 } = yield* linked();
+        const answer = yield* onM3((receiver) =>
+          receiver.members(m4, {
+            ...ref,
+            from: pair.kept,
+            fromEpoch: 0,
+            members: [pair.kept, pair.joining, later],
+          }),
+        );
+        if (!answer.ok) return yield* Effect.die(answer.refusal);
+        expect(answer.value).toEqual({ replayed: false, changed: true });
+        expect(
+          pair.m3.projects
+            .get(pair.joining.projectId)!
+            .workspaceSettings!.logicalProject!.members.map((member) => member.environmentId)
+            .toSorted(),
+        ).toEqual(["m1", "m3", "m4"]);
+      }),
+    );
+
+    it.effect(
+      "refuses an unlisted caller, a list in another machine's name and another version",
+      () =>
+        Effect.gen(function* () {
+          const { pair, m4, ref, refused } = yield* linked();
+          const request = {
+            ...ref,
+            from: pair.kept,
+            fromEpoch: 0,
+            members: [pair.kept, pair.joining, later],
+          };
+          expect(
+            yield* refused((receiver) =>
+              receiver.members(callerFrom("m1", { kind: "all" }), { ...request, from: later }),
+            ),
+          ).toMatchObject({ status: 403, code: "needs_grant" });
+          expect(
+            yield* refused((receiver) => receiver.members(m4, { ...request, from: later })),
+          ).toMatchObject({ status: 403, code: "needs_grant" });
+          expect(
+            yield* refused((receiver) =>
+              receiver.members(m4, {
+                ...request,
+                protocolVersion: LINKED_SYNC_PROTOCOL_VERSION + 1,
+              }),
+            ),
+          ).toMatchObject({ status: 409, check: "version" });
+          // A list that leaves this copy out is refused, and nothing changes.
+          expect(
+            yield* refused((receiver) =>
+              receiver.members(m4, { ...request, members: [pair.kept, later] }),
+            ),
+          ).toMatchObject({ status: 409, code: "invalid" });
+          expect(
+            pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!.logicalProject!
+              .members,
+          ).toHaveLength(2);
+        }),
+    );
+  });
 });

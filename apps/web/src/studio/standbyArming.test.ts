@@ -576,7 +576,7 @@ describe("armStandby with a re-arm list", () => {
     expect(result.armed).toBe(true);
     expect(result.rearm.get(M3)).toEqual({
       status: "failed",
-      message: "Could not save the list on M3.",
+      message: "Could not save the list on M3: Unreachable.",
     });
     expect(result.rearm.get(M1)).toEqual({ status: "ready" });
   });
@@ -590,6 +590,79 @@ describe("armStandby with a re-arm list", () => {
     expect(result.armed).toBe(true);
     expect(result.rearm.get(M1)).toEqual({ status: "needs_update" });
     expect(calls.some((call) => call.startsWith("consent m1"))).toBe(false);
+  });
+});
+
+describe("saveRearmList syncs member lists first", () => {
+  const coordinator = {
+    environmentId: M4,
+    logicalProjectId: "logical:1",
+    member: member("m4", "p-m4"),
+    epoch: 4,
+    members: [member("m4", "p-m4"), member("m1", "p-m1"), member("m2", "p-m2")],
+  };
+  const save = (
+    commands: StandbyArmingCommands & StandbyProjectCommands,
+    membersSyncCapable: (environmentId: string) => boolean,
+  ) =>
+    saveRearmList(commands, {
+      logicalProjectId: "logical:1",
+      standby: side("m1", "p-m1"),
+      afterMinutes: 15,
+      chainId: "7307ab55-fc59-4e07-abeb-de54be69215f",
+      workers: [],
+      plan: {
+        order: [side("m2", "p-m2")],
+        previous: [],
+        fromEpoch: 4,
+        capable: () => true,
+        access: () => "auto",
+        coordinator,
+        membersSyncCapable,
+      },
+    });
+
+  it("syncs members on capable listed machines before granting and writing consent", async () => {
+    const { commands, calls } = fakeFleet();
+    const synced: string[] = [];
+    const results = await save(
+      {
+        ...commands,
+        syncMembers: async (environmentId, input) => {
+          calls.push(
+            `sync ${environmentId} ${input.members.length} from ${input.from.environmentId} at ${input.fromEpoch}`,
+          );
+          synced.push(environmentId);
+        },
+      },
+      () => true,
+    );
+    expect(synced).toEqual(["m1", "m2"]);
+    // Both syncs come before any grant or consent call.
+    expect(calls.slice(0, 2).toSorted()).toEqual([
+      "sync m1 3 from m4 at 4",
+      "sync m2 3 from m4 at 4",
+    ]);
+    expect(calls.length).toBeGreaterThan(2);
+    expect([...results.values()].every((result) => result.status === "ready")).toBe(true);
+  });
+
+  it("skips machines without linkedMembersSync, and a refusal never blocks the consent", async () => {
+    const { commands, calls } = fakeFleet();
+    const synced: string[] = [];
+    const results = await save(
+      {
+        ...commands,
+        syncMembers: async (environmentId) => {
+          synced.push(environmentId);
+          throw new Error("Refused.");
+        },
+      },
+      (environmentId) => environmentId !== "m2",
+    );
+    expect(synced).toEqual(["m1"]);
+    expect(calls.filter((call) => call.startsWith("consent"))).toHaveLength(2);
+    expect(results.get(M1)).toEqual({ status: "ready" });
   });
 });
 

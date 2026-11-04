@@ -10,6 +10,10 @@
  * clock drift between the machines. The state lives in the lease records, so
  * it survives restarts, and a copy that never heard from its standby counts
  * from when the owner turned the standby on.
+ *
+ * Without a standby too: once another copy's digest showed it took over from
+ * this one at a higher epoch (`LinkedPeerSync`), this copy's coordinator
+ * starts no new turn, until it has given way or no copy claims the takeover.
  */
 import type { Project, ThreadId } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -18,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { LinkedPeerSyncState, layer as LinkedPeerSyncStateLayer } from "./LinkedPeerSyncState.ts";
 import {
   type CoordinatorLeaseRecord,
   CoordinatorLeaseStore,
@@ -41,6 +46,9 @@ export const COORDINATOR_FENCE_REFUSAL =
 
 export const COORDINATOR_FENCE_UNREADABLE_REFUSAL =
   "This Mac could not read its standby records, so it paused its coordinator rather than risk running beside the standby. Restart SpecWithCode; if this stays, turn the standby off in the project's settings.";
+
+export const COORDINATOR_SUPERSEDED_REFUSAL =
+  "Another Mac took over this project's coordinator while this one was away, so this Mac gives way and starts no coordinator turns here. Continue on the Mac that took over.";
 
 const parse = (value: string | null | undefined) =>
   value === null || value === undefined ? Number.NaN : Date.parse(value);
@@ -155,6 +163,7 @@ export class CoordinatorWakeGate extends Context.Reference<CoordinatorWakeGateSh
  */
 export const makeCheck = (
   store: CoordinatorLeaseStore["Service"],
+  superseded?: LinkedPeerSyncState["Service"]["supersededFor"],
 ): CoordinatorWakeGateShape["check"] => {
   let lastRead: ReadonlyArray<CoordinatorLeaseRecord> | null = null;
   const decide = (
@@ -168,7 +177,7 @@ export const makeCheck = (
     if (record === undefined) return null;
     return coordinatorFenced(record, nowMs) ? COORDINATOR_FENCE_REFUSAL : null;
   };
-  return (threadId) =>
+  const leaseCheck = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const records = yield* store.list;
       lastRead = records;
@@ -185,6 +194,16 @@ export const makeCheck = (
         }),
       ),
     );
+  return (threadId) =>
+    superseded === undefined
+      ? leaseCheck(threadId)
+      : superseded(threadId).pipe(
+          Effect.flatMap((seen) =>
+            seen === undefined
+              ? leaseCheck(threadId)
+              : Effect.succeed(COORDINATOR_SUPERSEDED_REFUSAL),
+          ),
+        );
 };
 
 export interface FenceSweepDeps {
@@ -241,11 +260,16 @@ export const makeFenceSweep = (deps: FenceSweepDeps) => {
     );
 };
 
-/** The gate over this server's lease records. */
+/**
+ * The gate over this server's lease records and the takeovers linked copies
+ * showed. The sync state is the runtime's one value (layer memoization), the
+ * same the linked sync loop writes.
+ */
 export const layer = Layer.effect(
   CoordinatorWakeGate,
   Effect.gen(function* () {
     const store = yield* CoordinatorLeaseStore;
-    return { check: makeCheck(store) };
+    const state = yield* LinkedPeerSyncState;
+    return { check: makeCheck(store, state.supersededFor) };
   }),
-).pipe(Layer.provide(CoordinatorLeaseStoreLayer));
+).pipe(Layer.provide(CoordinatorLeaseStoreLayer), Layer.provide(LinkedPeerSyncStateLayer));

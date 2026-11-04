@@ -13,6 +13,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import additive_migrations
 import database_continuity as continuity
 import kept_lines
 import update_apply
@@ -353,6 +354,39 @@ class Pipeline(unittest.TestCase):
         self.assertIn('newly_migrated', current[3]['schema']['columns'])
         with self.assertRaises(AssertionError):
             continuity.assert_database_continuity(baseline['databaseCapture']['summary'], current[3]['summary'])
+
+    def migrated(self, migrations):
+        """1.0.177/1.0.178 on M4: the new service runs migrations 070 and 071 as it starts."""
+        self.flow = f.Update(self, written=[
+            ('CREATE TABLE "effect_sql_migrations" (migration_id integer PRIMARY KEY NOT NULL, '
+             'created_at datetime NOT NULL DEFAULT current_timestamp, name VARCHAR(255) NOT NULL)', []),
+            ("INSERT INTO effect_sql_migrations(migration_id, name) VALUES (69, 'AuthSessionProofKeyThumbprint')", [])])
+        self.addCleanup(self.flow.kept.clear)
+        mode = update_apply.PageMode.prepare(self.n, 'm4', self.expected, True, migrations=migrations)
+        before, auth, _ = mode.snapshot()
+        self.flow.mark();self.flow.stop();self.flow.clone()
+        mode.stopped(self.flow.held, before, auth, START, 'browser-cookie')
+        new = self.flow.restart(writes=False);self.pid = 101
+        statements = []
+        for number in (70, 71):
+            name, objects = additive_migrations.DECLARED[number]
+            statements += [(sql, []) for _, _, _, sql in objects if sql is not None]
+            statements.append(('INSERT INTO effect_sql_migrations(migration_id, name) VALUES (?, ?)', [number, name]))
+        new.commit(*statements)
+        for batch in f.startup_writes(random.Random(7)):
+            new.commit(*batch)
+        return mode, mode.after(self.flow.held, START, 'browser-cookie')
+
+    def test_additive_migrations_keep_the_page_proof_when_migrations_are_allowed(self):
+        mode, after = self.migrated(True)
+        self.assertIsNotNone(after, mode.fallback_reason)
+        self.assertEqual(mode.verdict['schemaDelta']['migrations'], [70, 71])
+        self.assertEqual(mode.verdict['appendedRows']['orchestration_events'], 30)
+
+    def test_additive_migrations_without_permission_take_the_full_read(self):
+        mode, after = self.migrated(False)
+        self.assertIsNone(after)
+        self.assertEqual(mode.fallback_reason, 'Refused:schema')
 
     def test_old_log_rewrite_refuses_both_page_and_full_fallback(self):
         mode, before, auth = self.prepare()

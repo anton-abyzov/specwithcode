@@ -71,6 +71,11 @@ export const projectLink = {
     label: "project-link:replicate",
     tag: WS_METHODS.projectLinkReplicate,
   }),
+  /** Member machine: adopt the coordinator's member list (`linkedMembersSync` servers). */
+  syncMembers: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "project-link:sync-members",
+    tag: WS_METHODS.projectLinkSyncMembers,
+  }),
   takeover: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "project-link:takeover",
     tag: WS_METHODS.projectTakeover,

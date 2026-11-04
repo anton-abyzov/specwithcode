@@ -42,6 +42,9 @@ import type { ProjectRow } from "./ProjectStore.ts";
  *   at a higher epoch, replacing none of them.
  * - `set-standby`: the active coordinator of a linked project sets, changes or clears the
  *   one listed member that takes over automatically; nothing else in the binding changes.
+ * - `sync-members`: a relinquished member adopts the member list its coordinator holds;
+ *   its own entry, its binding and the identity stay as they are, and the copy it gave
+ *   way to stays listed (in-process only; ProjectLink checks who sent the list).
  */
 export type ProjectOwnershipMode =
   | "handoff"
@@ -53,7 +56,8 @@ export type ProjectOwnershipMode =
   | "takeover"
   | "superseded"
   | "start-coordinator"
-  | "set-standby";
+  | "set-standby"
+  | "sync-members";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -402,9 +406,26 @@ export function ownershipRejection(
       )
         return "Linking adds members and keeps every existing one.";
       return undefined;
-    case "remove-member":
+    case "remove-member": {
       if (!keepsIdentity()) return "Unlinking keeps the coordinator's shared identity as it is.";
-      if (!keepsActiveBinding())
+      // The binding may only also remember the members removed now (`removedMembers`).
+      const current = old ?? ACTIVE_LEGACY_BINDING;
+      const { removedMembers: nextRemoved, ...nextRest } = next;
+      const { removedMembers: currentRemoved, ...currentRest } = current;
+      const removedKeys = new Set((nextRemoved ?? []).map(logicalProjectMemberKey));
+      if (
+        current.state !== "active" ||
+        !sameRecord(nextRest, currentRest) ||
+        [...removedKeys].some(
+          (key) =>
+            !(currentRemoved ?? []).some((member) => logicalProjectMemberKey(member) === key) &&
+            !identity!.members.some(
+              (member) =>
+                logicalProjectMemberKey(member) === key &&
+                !incoming.members.some((kept) => memberRef(kept) === memberRef(member)),
+            ),
+        )
+      )
         return "Only the active coordinator can remove members, and its binding stays as it is.";
       if (
         !includesAll(identity!.members, incoming.members) ||
@@ -416,6 +437,7 @@ export function ownershipRejection(
       )
         return "Unlinking removes other members and keeps this project.";
       return undefined;
+    }
     case "join-as-member": {
       if (
         identity &&
@@ -545,6 +567,30 @@ export function ownershipRejection(
           !incoming.members.some((member) => memberRef(member) === memberRef(standby.member)))
       )
         return "The standby is another member listed in this project.";
+      return undefined;
+    }
+    case "sync-members": {
+      const refused =
+        "Syncing members keeps this copy, its coordinator and its binding as they are.";
+      if (old?.state !== "transferred")
+        return "Only a member whose coordinator was relinquished takes its coordinator's member list.";
+      if (!keepsIdentity() || !sameRecord(next, old)) return refused;
+      const self = selfEntries[0];
+      const held = identity!.members.find((member) => member.projectId === projectId);
+      if (selfEntries.length !== 1 || !self || !held || !sameRecord(self, held)) return refused;
+      if (
+        old.successor !== undefined &&
+        !incoming.members.some(
+          (member) => logicalProjectMemberKey(member) === logicalProjectMemberKey(old.successor!),
+        )
+      )
+        return refused;
+      if (
+        incoming.members.some(
+          (member) => member.projectId !== projectId && member.environmentId === self.environmentId,
+        )
+      )
+        return refused;
       return undefined;
     }
   }

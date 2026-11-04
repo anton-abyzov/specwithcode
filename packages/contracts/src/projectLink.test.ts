@@ -26,6 +26,7 @@ describe("project link contracts", () => {
     WS_METHODS.projectLinkCommit,
     WS_METHODS.projectUnlink,
     WS_METHODS.projectLinkReplicate,
+    WS_METHODS.projectLinkSyncMembers,
     WS_METHODS.projectLinkMemoryMerge,
     WS_METHODS.projectTakeover,
     WS_METHODS.projectSupersede,

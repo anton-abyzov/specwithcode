@@ -157,6 +157,16 @@ public enum LinkedProjectResolver {
     return copy.machineSettled ? .unreachable : .checking
   }
 
+  /// Which copy's settings open for a linked project opened as `opened`: that
+  /// copy while its machine is connected, else a connected copy, one that can
+  /// take over first, so Machines and "Take over coordinator here" stay in
+  /// reach. `opened` when no other copy is connected or it is not linked.
+  public static func settingsCopy(opened: ProjectRef, copies: [Copy]) -> ProjectRef {
+    guard let current = copies.first(where: { $0.ref == opened }), !current.machineOnline else { return opened }
+    let reachable = copies.filter { $0.machineOnline && $0.ref != opened }
+    return (reachable.first(where: \.canTakeOver) ?? reachable.first)?.ref ?? opened
+  }
+
   /// "M4 is switched off on this phone", shown where "unreachable" would be.
   public static func switchedOffCoordinatorLabel(machine: String) -> String {
     "\(machine) is switched off on this phone. Turn it on to check its coordinator."

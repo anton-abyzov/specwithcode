@@ -457,6 +457,10 @@ public final class FixtureEngine: AppEngine {
     await pause(latency / 2)
     let draft = try currentSettings(project)
     try requireOnline(project.environmentId, doing: "load these settings")
+    // A linked sample copy whose machine `-SWCLinkedState` keeps away answers as an offline machine would.
+    if FixtureLinkedState.current != .live, let model, let away = linkedCopies(of: project, in: model).first(where: { $0.ref == project && !$0.machineOnline }) {
+      throw FixtureFailure("\(away.machineLabel) is offline. Try again when it reconnects.")
+    }
     return draft
   }
 
