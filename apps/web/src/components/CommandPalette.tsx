@@ -253,6 +253,7 @@ import { openLinkIncrementDialog } from "./chat/LinkIncrementDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
 import { searchSettingsBySection, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
+import { useTx } from "../i18n";
 import {
   PROJECT_SETTINGS_TAB_LABELS,
   PROJECT_SETTINGS_TABS,
@@ -812,6 +813,7 @@ function OpenCommandPaletteDialog(props: {
   readonly onFolderCopies: (request: FolderLinkSuggestionRequest) => void;
 }) {
   const navigate = useNavigate();
+  const tx = useTx();
   const pathname = useLocation({ select: (location) => location.pathname });
   // Set on a project's workspace page.
   const routeProjectKey = useParams({
@@ -2818,6 +2820,8 @@ function OpenCommandPaletteDialog(props: {
   const settingsSearchItems: CommandPaletteActionItem[] = searchSettingsBySection(
     deferredQuery,
     availableSettingsSearchItems,
+    undefined,
+    tx,
   ).flatMap((result): CommandPaletteActionItem[] => {
     if (result.kind === "section") {
       if (!result.matched) return [];
@@ -2825,9 +2829,9 @@ function OpenCommandPaletteDialog(props: {
         {
           kind: "action",
           value: `setting-section:${result.section}`,
-          searchTerms: [result.label, "settings"],
-          title: result.label,
-          description: "Settings section",
+          searchTerms: [result.label, tx(result.label), "settings"],
+          title: tx(result.label),
+          description: tx("Settings section"),
           icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
           run: async () => {
             await navigate({ to: result.section, hash: "", hashScrollIntoView: false });
@@ -2841,8 +2845,8 @@ function OpenCommandPaletteDialog(props: {
         kind: "action",
         value: `setting:${item.id}`,
         searchTerms: [item.title, SETTINGS_SECTION_LABELS[item.to], ...(item.searchTerms ?? [])],
-        title: item.title,
-        description: `Settings · ${SETTINGS_SECTION_LABELS[item.to]}`,
+        title: tx(item.title),
+        description: `${tx("Settings")} · ${tx(SETTINGS_SECTION_LABELS[item.to])}`,
         ...(item.secondary ? { secondary: true } : {}),
         icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
         run: async () => {

@@ -19,6 +19,7 @@ import {
   type RunAppRecord,
   type RunFiles,
   RUN_ARCHIVE_KEEP,
+  RELEASE_RUN_PREFIX,
   RUN_MAX_DEADLINE_MS,
   RUN_MIN_DEADLINE_MS,
   RUN_PREPARING_LEASE_MS,
@@ -81,6 +82,18 @@ describe("createRun", () => {
       ["run-1", "run-2", "run-3", "run-4", "run-5"].map((id) => `${id}.json`),
     );
     expect(readRun(files)?.runId).toBe(`run-${RUN_ARCHIVE_KEEP + 1}`);
+  });
+
+  it("never prunes a release run record kept in the same folder", () => {
+    const files = memoryRunFiles();
+    const release = `${RELEASE_RUN_PREFIX}1.0.190-abc123.json`;
+    files.writeAtomic(`runs/${release}`, '{"kind":"release"}\n');
+    for (let index = 0; index < RUN_ARCHIVE_KEEP + 2; index += 1) {
+      const made = create(files, `run-${index}`, T0 + index * 60_000);
+      expect(end(files, made.run.runId, "verified")).not.toBeNull();
+    }
+    expect(files.list("runs")).toContain(release);
+    expect(files.list("runs").filter((entry) => entry !== release)).toHaveLength(RUN_ARCHIVE_KEEP);
   });
 
   it("sets the one deadline from the last install's time, between 10 and 30 minutes", () => {

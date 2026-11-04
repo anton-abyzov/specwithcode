@@ -194,6 +194,7 @@ export function UsageProviderSettings({
               <SettingsRow
                 key={id}
                 title={label}
+                literal
                 description={
                   <span className="break-all">
                     CLIProxyAPI · Usage reporting{source.enabled ? "" : " · Disabled"}

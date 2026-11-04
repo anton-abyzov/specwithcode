@@ -35,6 +35,7 @@ export * from "./browserBridge.ts";
 export * from "./browserExtension.ts";
 export * from "./telegramChannel.ts";
 export * from "./statusPage.ts";
+export * from "./releaseRuns.ts";
 export * from "./googleAccount.ts";
 export * from "./server.ts";
 export * from "./settings.ts";

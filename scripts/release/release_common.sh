@@ -57,6 +57,10 @@ x() {
         printf '%s\t%s\tFAILED (stub)\n' "$CURRENT_STAGE" "$label" >> "$STUB_LOG"
         return 1
       fi
+      # RELEASE_STUB_STDOUT="LABEL=FILE...": the call prints FILE, as a rollout prints its summary.
+      for item in ${RELEASE_STUB_STDOUT:-}; do
+        if [ "${item%%=*}" = "$label" ]; then cat "${item#*=}"; fi
+      done
       return 0
       ;;
   esac
@@ -214,6 +218,7 @@ record_timing() {  # record_timing STAGE START END STATUS ATTEMPT
   if [ "$MODE" = dry ]; then return 0; fi
   python3 -B "$TOOLS" timing record --file "$TIMINGS/stages.jsonl" --stage "$1" --start "$2" --end "$3" \
     --status "$4" --sha "${SHA12:-}" --attempt "$5"
+  record_timed "$1" "$4"
 }
 
 attempt_of() {
@@ -243,6 +248,7 @@ run_stage() {
     sha) key="$SHA" ;;
     once) key=once ;;
   esac
+  if stage_skip "$name"; then return 0; fi
   if [ -n "$key" ] && is_done "$name" "$key"; then
     say "= $name: done"
     stop_check "$name"
@@ -261,6 +267,7 @@ run_stage() {
   STAGE_ATTEMPT="$attempt"
   printf '\n===== %s %s attempt %s %s =====\n' "$(date -u +%FT%TZ)" "$name" "$attempt" "$SHA12" >> "$log"
   started=$(date +%s)
+  record_step "$name" running
   set +e
   (
     set -e
@@ -270,6 +277,7 @@ run_stage() {
   set -e
   status=ok
   if [ "$rc" -ne 0 ]; then status=failed; fi
+  record_rollout "$name" "$log"
   record_timing "$name" "$started" "$(date +%s)" "$status" "$attempt"
   CURRENT_STAGE=main
   if [ "$rc" -ne 0 ]; then
@@ -290,6 +298,7 @@ print_timings() {
 
 on_exit() {
   local rc=$?
+  record_finish "$rc"
   if [ "$LOCKED" -eq 1 ]; then rm -rf "$STAGE/lock"; fi
   # All publish/merge markers are durable and our lock is gone. The helper takes its own
   # lock; a racing --resume wins safely. Keep evidence, discard rebuilt runtime payloads.
@@ -363,7 +372,7 @@ init_state() {
   if [ -f "$STAGE/release.json" ] && [ "$RESUME" -eq 0 ]; then
     die "a release of $VERSION is under way in $STAGE; continue it with --resume"
   fi
-  if [ ! -f "$STAGE/release.json" ] && [ "$RESUME" -eq 1 ]; then
+  if [ ! -f "$STAGE/release.json" ] && [ "$RESUME" -eq 1 ] && ! stage_init_ok; then
     die "nothing to resume: $STAGE/release.json is missing"
   fi
   # Found before the folder exists: a failed lookup must not leave a folder without release.json,
@@ -371,17 +380,24 @@ init_state() {
   if [ ! -f "$STAGE/release.json" ]; then resolve_previous; fi
   mkdir -p "$STAGE" "$MARKERS" "$LOG_DIR" "$TIMINGS"
   chmod 700 "$STAGE"
-  if ! mkdir "$STAGE/lock" 2> /dev/null; then
+  while ! mkdir "$STAGE/lock" 2> /dev/null; do
     local holder
     holder="$(cat "$STAGE/lock/pid" 2> /dev/null || true)"
     # mkdir and writing pid are separate syscalls. A missing/partial record can belong to
     # a runner or cleanup that just acquired the lock; never steal that starting operation.
-    if ! [[ $holder =~ ^[1-9][0-9]*$ ]]; then die "release.sh $VERSION lock is starting or unreadable; refusing takeover"; fi
-    if kill -0 "$holder" 2> /dev/null; then die "release.sh $VERSION already runs (pid $holder)"; fi
+    # A --stage job waits for the one holding it (stage_lock_wait).
+    if ! [[ $holder =~ ^[1-9][0-9]*$ ]]; then
+      stage_lock_wait && continue
+      die "release.sh $VERSION lock is starting or unreadable; refusing takeover"
+    fi
+    if kill -0 "$holder" 2> /dev/null; then
+      stage_lock_wait && continue
+      die "release.sh $VERSION already runs (pid $holder)"
+    fi
     # A dead holder still requires review: deleting and recreating a shared lock can race a
     # second recovery. No release or cleanup reaps another owner's lock automatically.
     die "release.sh $VERSION has a stale lock (pid $holder); review and remove that lock before resuming"
-  fi
+  done
   LOCKED=1
   printf '%s\n' "$$" > "$STAGE/lock/pid"
   if [ ! -f "$STAGE/release.json" ]; then
@@ -391,6 +407,7 @@ init_state() {
   PREV="$(python3 -B "$TOOLS" json-get "$STAGE/release.json" previous)" ||
     die "$STAGE/release.json names no previous release"
   STATE_READY=1
+  record_init
 }
 
 resolve_previous() {
@@ -412,6 +429,7 @@ resolve_candidate() {
   SHA12="$(printf '%s' "$SHA" | cut -c1-12)"
   ASSETS="$STAGE/assets-$SHA12"
   if [ "$MODE" = dry ]; then return 0; fi
+  stage_candidate_check
   [ -z "$(q dirty -C "$BUILD" -- git status --porcelain --untracked-files=no)" ] ||
     die "$BUILD has uncommitted changes; commit the fix (it becomes the candidate) or discard it"
   local published="" previous="" untracked
@@ -472,3 +490,10 @@ prune_after_publish() {
   prune_superseded_candidates
   prune_old_staging
 }
+
+# The run record and --stage (release.sh is at its 1500-line cap).
+# shellcheck source=release-record.sh
+. "$(dirname "${BASH_SOURCE[0]}")/release-record.sh"
+# server_result, stop_if_server_failed and stage_server_wait (moved from release.sh).
+# shellcheck source=release-server-wait.sh
+. "$(dirname "${BASH_SOURCE[0]}")/release-server-wait.sh"

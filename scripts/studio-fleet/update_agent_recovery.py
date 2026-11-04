@@ -4,7 +4,7 @@ Stdlib only; imported by update_agent and copied beside every installed agent. A
 unsupported predecessor is the only reason to consider an older release. Receipt
 text alone never authorizes another automatic apply. Also holds an automatic pass's quiet
 decision and the agent's failed-install receipt readers and writer, moved here from
-update_agent.py (file-size cap).
+update_agent.py (file-size cap), and the release channel feeds (feed_releases).
 """
 import datetime
 import json
@@ -12,6 +12,7 @@ import os
 import pathlib
 import stat
 import sys
+import urllib.parse
 
 FEED_LIMIT = 30
 MAX_ATTEMPTS = 3  # Initial apply and at most two later automatic retries.
@@ -47,10 +48,14 @@ def _metadata(agent, release):
         size = asset.get('size')
         ua._refuse_if(size is not None and (type(size) is not int or size < 0), 'Release asset size is invalid')
         assets[asset['name']] = {'id': asset['id'], 'size': size}
+        if release.get(CHANNEL_KEY):  # A channel feed's asset: its own URL and digest (feed_releases).
+            assets[asset['name']].update(feedUrl=asset['channelUrl'], sha256=asset['sha256'])
         ids.add(asset['id'])
     meta = {'schemaVersion': 1, 'tag': release['tag_name'], 'version': version, 'assets': assets,
             'plan': None, 'planSha256': None, 'args': None, 'manual': None, 'rejected': None,
             'checkedAt': agent.state['checkedAt']}
+    if release.get(CHANNEL_KEY):
+        meta['channel'] = release[CHANNEL_KEY]
     directory = ua.ensure_dir(agent.release_dir(version), agent.home)
     if ua.PLAN_ASSET not in assets:
         meta['manual'] = 'SpecWithCode %s needs a manual upgrade: the release has no update plan.' % version
@@ -68,8 +73,12 @@ def _metadata(agent, release):
         # incompatibility to skip it. Actual archive bytes are verified before any apply.
         agent.download_asset(ua.SUMS_ASSET, assets[ua.SUMS_ASSET], directory / ua.SUMS_ASSET,
                              ua.LIMITS[ua.SUMS_ASSET])
-        sums = ua.parse_sums(ua.read_owned(directory / ua.SUMS_ASSET, agent.home, ua.LIMITS[ua.SUMS_ASSET]))
+        sums_bytes = ua.read_owned(directory / ua.SUMS_ASSET, agent.home, ua.LIMITS[ua.SUMS_ASSET])
+        sums = ua.parse_sums(sums_bytes)
         digest = ua.sha256_bytes(data)
+        for name, actual in ((ua.SUMS_ASSET, ua.sha256_bytes(sums_bytes)), (ua.PLAN_ASSET, digest)):
+            ua._refuse_if(assets[name].get('sha256') not in (None, actual),
+                          'The %s channel feed lists another digest for %s' % (release.get(CHANNEL_KEY), name))
         ua._refuse_if(ua.PLAN_ASSET in sums and sums[ua.PLAN_ASSET] != digest,
                       'Update plan checksum does not match the release')
         for entry in (plan['service']['runtime'], plan['service']['helpers']):
@@ -86,7 +95,8 @@ def _metadata(agent, release):
     return meta
 
 
-def check(agent):
+def github_releases(agent):
+    """The newest FEED_LIMIT releases GitHub lists for the configured repository."""
     ua, repository = _ua(agent), agent.config['repository']
     try:
         body = agent.fetch_bytes('%s/repos/%s/releases?per_page=30' % (agent.api_base(), repository),
@@ -102,6 +112,12 @@ def check(agent):
         raise ua.AgentError('GitHub returned an unreadable releases response') from None
     ua._refuse_if(not isinstance(releases, list) or len(releases) > FEED_LIMIT,
                   'GitHub returned an unexpected bounded releases response')
+    return releases
+
+
+def check(agent):
+    ua = _ua(agent)
+    releases = feed_releases(agent)
     ranked = []
     seen = set()
     installed = ua.version_tuple(agent.inst['version'])
@@ -159,6 +175,8 @@ def load_release(agent, version):
         if (not isinstance(meta, dict) or meta.get('version') != version or not isinstance(meta.get('assets'), dict)
                 or meta.get('binding') != binding(agent, meta)):
             return None
+        if meta.get('channel') == 'candidate' and requested_version(agent) != version:
+            return None  # A candidate is only ever installed for the request that named it.
         if meta.get('plan') is not None:
             ua.validate_plan(meta['plan'], version)
             data = ua.read_owned(agent.release_dir(version) / ua.PLAN_ASSET, agent.home, ua.LIMITS[ua.PLAN_ASSET])
@@ -173,6 +191,115 @@ def load_release(agent, version):
         return meta
     except (ua.AgentError, OSError, ValueError, KeyError, TypeError):
         return None
+
+
+# ---------------------------------------------------------------- channel feeds (increment 1239)
+#
+# r2_publish.py writes <feed>/stable.json and <feed>/candidate.json, each naming one version, its
+# <channel>/<version>/ prefix and every asset's size and sha256. The stable pointer is the newest
+# release a host may take on its own: GitHub releases above it (one rolled back) are never offered.
+# GitHub stays the fallback when the feed cannot be read, and below the stable pointer it still
+# supplies the intermediates a far-behind host may need. candidate.json is read only while an
+# install request bound to its exact version is pending: a rollout asks the canary and fleet that
+# way, so a host outside the rollout never installs a candidate. The request itself is unchanged
+# (update_request.write_request), so an older agent just keeps reading GitHub.
+
+FEED_ENV = 'STUDIO_UPDATE_FEED_URL'
+# The channel feed's public base URL. None (or FEED_ENV set to '' or 'off') reads GitHub only; set
+# it, and ship it as a stable release through GitHub, before any candidate-only rollout.
+DEFAULT_FEED_URL = None
+CHANNEL_KEY = 'studioChannel'  # Marks a release built from a channel pointer; GitHub sends no such key.
+POINTER_LIMIT = 256 << 10
+POINTER_ASSETS = 200
+
+
+def feed_base(agent):
+    """The channel feed's base URL, ending in '/', or None when only GitHub is read."""
+    ua = _ua(agent)
+    value = os.environ.get(FEED_ENV, DEFAULT_FEED_URL)
+    if not value or value == 'off':
+        return None
+    parts = urllib.parse.urlsplit(value)
+    ua._refuse_if(not (parts.scheme == 'https' or (parts.scheme == 'http' and ua._loopback(parts)))
+                  or parts.username or parts.password or parts.query or parts.fragment,
+                  '%s must be a plain https URL' % FEED_ENV)
+    return value if value.endswith('/') else value + '/'
+
+
+def requested_version(agent):
+    """The version the install request this pass serves is bound to, or None."""
+    if not getattr(agent, 'serving', None):
+        return None
+    record = _ua(agent).update_request.bound(agent.config)
+    return record['version'] if record else None
+
+
+def valid_pointer(ua, value, channel):
+    if not (isinstance(value, dict) and value.get('schemaVersion') == 1 and value.get('channel') == channel):
+        return False
+    version, assets = value.get('version'), value.get('assets')
+    if ua.version_tuple(version) is None or value.get('tag') != 'v' + version \
+            or value.get('prefix') != '%s/%s/' % (channel, version) \
+            or not isinstance(assets, list) or not 0 < len(assets) <= POINTER_ASSETS:
+        return False
+    names = set()
+    for asset in assets:
+        if not (isinstance(asset, dict) and ua._safe_name(asset.get('name')) and asset['name'] not in names
+                and type(asset.get('size')) is int and asset['size'] >= 0
+                and isinstance(asset.get('sha256'), str) and ua.HEX64.fullmatch(asset['sha256'])):
+            return False
+        names.add(asset['name'])
+    return ua.PLAN_ASSET in names and ua.SUMS_ASSET in names
+
+
+def read_pointer(agent, base, channel):
+    """The validated <channel>.json pointer, or None when it is missing, unreadable or malformed."""
+    ua = _ua(agent)
+    try:
+        value = json.loads(agent.fetch_bytes(base + channel + '.json', 'application/json',
+                                             POINTER_LIMIT).decode('utf-8'))
+    except (ua.AgentError, UnicodeDecodeError, ValueError):
+        return None
+    return value if valid_pointer(ua, value, channel) else None
+
+
+def pointer_release(base, pointer):
+    """A pointer in the shape of a GitHub release, its assets served from the feed."""
+    notes, published = pointer.get('notes'), pointer.get('publishedAt')
+    return {'tag_name': pointer['tag'], 'draft': False, 'prerelease': False, CHANNEL_KEY: pointer['channel'],
+            'body': notes if isinstance(notes, str) else None,
+            'published_at': published if isinstance(published, str) else None,
+            'assets': [{'id': index + 1, 'name': asset['name'], 'size': asset['size'], 'sha256': asset['sha256'],
+                        'channelUrl': base + pointer['prefix'] + urllib.parse.quote(asset['name'])}
+                       for index, asset in enumerate(pointer['assets'])]}
+
+
+def feed_releases(agent):
+    """What check() ranks: the channel pointers, then GitHub's releases below the stable one."""
+    ua = _ua(agent)
+    base = feed_base(agent)
+    if base is None:
+        return github_releases(agent)
+    stable = read_pointer(agent, base, 'stable')
+    wanted = requested_version(agent)
+    candidate = read_pointer(agent, base, 'candidate') if wanted else None
+    if candidate is not None and (candidate['version'] != wanted or (
+            stable is not None and ua.version_tuple(wanted) <= ua.version_tuple(stable['version']))):
+        candidate = None
+    if stable is None:
+        agent.out('update-agent %s: the stable channel feed could not be read; reading GitHub' % agent.identity)
+        listed, ceiling = github_releases(agent), None
+    else:
+        try:
+            listed = github_releases(agent)
+        except ua.AgentError:  # The feed answered; GitHub only adds older intermediates.
+            listed = []
+        ceiling = ua.version_tuple(stable['version'])
+    channel = [pointer_release(base, pointer) for pointer in (candidate, stable) if pointer is not None]
+    shown = set(release['tag_name'] for release in channel)
+    kept = [release for release in listed if isinstance(release, dict) and release.get('tag_name') not in shown
+            and (ceiling is None or (ua.version_tuple(ua.tag_version(release.get('tag_name'))) or ceiling) < ceiling)]
+    return channel + kept[:FEED_LIMIT - len(channel)]
 
 
 def verified_matches(agent, meta, verified):

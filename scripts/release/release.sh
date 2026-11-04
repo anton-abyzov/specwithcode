@@ -11,6 +11,9 @@
 #   preflight trees prev bump candidate [server starts here, in the background] stage1
 #   build bundle sign verify helpers plan drafts server-wait
 #   quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux
+# With RELEASE_CHANNEL=candidate (release-canary.sh), after server-wait: quit-desktop publish-candidate
+#   fleet-m4 desktop canary-soak fleet-workers, then finalize: publish-private publish-public
+#   promote-stable merge, then fleet-linux.
 #
 # macOS ships first: this script publishes the macOS app and every asset the fleet reads, rolls the
 # Macs out and merges. Linux workers in the fleet inventory ("os": "linux") follow in fleet-linux,
@@ -52,6 +55,8 @@
 #               needed and quit-desktop, fleet-m4, fleet-workers, desktop and fleet-linux are skipped. Each host's
 #               update agent installs the release from the public feed on its next hourly check;
 #               `fleet_rollout.py --version X.Y.Z` on the M4 asks them at once.
+# --stage ID [--shard N|merge]  one stage of the release graph (.github/workflows/release.yml); see
+#               release-record.sh, which also writes the run record (updates/runs/release-*.json).
 #
 # Environment: RELEASE_ENV (default ~/.config/skill-studio-release/release.env, see
 # release.env.example), RELEASE_STAGING_ROOT, RELEASE_TREES (persistent trees, default
@@ -81,7 +86,7 @@ RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
 TREES="${RELEASE_TREES:-$HOME/.specwithcode/release.noindex}"
 APP="${RELEASE_DESKTOP_APP:-/Applications/SpecWithCode.app}"
-STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign verify helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
+STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign verify helpers plan drafts server-wait quit-desktop publish-candidate publish-private publish-public fleet-m4 desktop canary-soak fleet-workers promote-stable merge fleet-linux"
 VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 POLICY_RE='^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
@@ -159,6 +164,7 @@ stage_preflight() {
     say "WARNING: 5-minute load is $load on $ncpu cores. Suites run slower and short timeouts flake;"
     say "         close idle worktrees and dev servers, or wait for the load to drop."
   fi
+  channel_preflight
   say "preflight: $VERSION after ${PREV}, node v$NODE_VERSION, pnpm $pnpm, SDKROOT ${SDKROOT:-unset}"
 }
 
@@ -376,8 +382,9 @@ electron_runtime() {
 # shellcheck source=release-verify.sh
 . "$HERE/release-verify.sh"
 # start_rehearsal and rehearsal_wait.
-# shellcheck source=release_rehearsal.sh
 . "$HERE/release_rehearsal.sh"
+# Candidate channel, canary and finalize: publish-candidate canary-soak promote-stable, release_tail.
+. "$HERE/release-canary.sh"
 
 run_job() {  # run_job OUT NAME|DIR|KIND: one stage-1 job, leaving OUT/NAME.exit and .secs
   local out="$1" name dir kind started code
@@ -608,6 +615,7 @@ stop_stale_server() {
 start_server() {
   local pid="" sha="" retry="" waited=0
   if is_done server "$SHA"; then return 0; fi
+  begin_background server || return 0
   if [ "$MODE" = dry ]; then
     say "> server (background, alongside stage1..drafts)"
     stage_server
@@ -707,73 +715,6 @@ internal_server() {
   fi
   state_write "$STAGE/server.exit" "$SHA $rc"
   exit "$rc"
-}
-
-# The current candidate's server result: its exit code, or nothing while it has none.
-server_result() {
-  local sha="" rc=""
-  if is_done server "$SHA"; then
-    printf '0\n'
-    return 0
-  fi
-  if [ -f "$STAGE/server.exit" ]; then read -r sha rc < "$STAGE/server.exit"; fi
-  if [ "$sha" = "$SHA" ] && [ -n "$rc" ]; then printf '%s\n' "$rc"; fi
-  return 0
-}
-
-# The server suite runs in the background from stage 1 on. Once it has failed, stop before the
-# next bundle, signing, plan or drafts stage rather than finish a candidate that cannot ship.
-stop_if_server_failed() {
-  local rc
-  rc="$(server_result)"
-  if [ -z "$rc" ] || [ "$rc" = 0 ]; then return 0; fi
-  if [ -f "$LOG_DIR/server.log" ]; then tail -n 40 "$LOG_DIR/server.log"; fi
-  drop_drafts  # An earlier candidate's drafts.
-  die "the server suite failed for $SHA12 (exit $rc); fix, commit in $BUILD and --resume (reruns only changed files)"
-}
-
-stage_server_wait() {
-  local pid="" sha="" rc="" started noted flakes attempt
-  if [ "$MODE" = dry ]; then
-    say "    wait for the background server suite; fail here if it failed"
-    return 0
-  fi
-  if [ "$MODE" = stub ]; then POLL=0.2; fi
-  started=$(date +%s)
-  noted=$started
-  while :; do
-    rc="$(server_result)"
-    if [ -n "$rc" ]; then break; fi
-    pid="" sha=""
-    if [ -f "$STAGE/server.pid" ]; then read -r pid sha _ < "$STAGE/server.pid"; fi
-    if [ "$sha" != "$SHA" ] || ! server_alive "$pid"; then
-      sleep 1  # It may have written its result just after the first look.
-      rc="$(server_result)"
-      if [ -n "$rc" ]; then break; fi
-      die "the server suite for $SHA12 stopped without a result; see $LOG_DIR/server.log, then --resume"
-    fi
-    sleep "$POLL"
-    if [ $(($(date +%s) - noted)) -ge 120 ]; then
-      noted=$(date +%s)
-      say "server-wait: still running after about $((noted - started))s"
-    fi
-  done
-  if [ "$rc" != 0 ]; then
-    tail -n 40 "$LOG_DIR/server.log"
-    drop_drafts
-    die "the server suite failed for $SHA12 (exit $rc); fix, commit in $BUILD and --resume (reruns only changed files)"
-  fi
-  # Only the retries of the run that gave this result: an earlier attempt on the same candidate may
-  # have retried files of its own. That run is the newest server line in stages.jsonl, which
-  # internal_server writes before its result.
-  attempt=$(($(attempt_of server) - 1))
-  flakes="$(python3 -B "$TOOLS" timing retries --file "$TIMINGS/retries.jsonl" --stage server --sha "$SHA12" \
-    --attempt "$attempt" --result passed)"
-  if [ -n "$flakes" ]; then
-    say "server: green for $SHA12, after a retry of: ${flakes//$'\n'/ } (FLAKY)"
-  else
-    say "server: green for $SHA12"
-  fi
 }
 
 # ---------------------------------------------------------------- build, bundle, sign
@@ -1098,26 +1039,18 @@ stage_publish_private() {
   state_write "$STAGE/published.sha" "$SHA"
 }
 
-# The fleet's update agents find releases on the public feed: asking a host for a version that
-# feed does not show leaves it waiting until the rollout's deadline.
-fleet_feed_ready() {
-  if [ "$MODE" = dry ]; then
-    say "    fleet-feed: stop unless v$VERSION is published on $PUBLIC_REPO"
-    return 0
-  fi
-  [ "$(q published-fleet-feed -- gh release view "v$VERSION" -R "$PUBLIC_REPO" --json isDraft -q .isDraft)" = false ] ||
-    die "v$VERSION is not published on $PUBLIC_REPO, the feed the fleet's update agents read; publish-public comes first"
-}
-
+# The fleet's update agents find releases on the public feed, or the candidate feed (fleet_feed_ready,
+# release-canary.sh): asking a host for a version that feed does not show leaves it waiting.
 stage_fleet_m4() {
   fleet_feed_ready
-  x fleet-m4 -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only m4 --hold-minutes 15
+  x fleet-m4 -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only m4 --hold-minutes 15 ${CHANNEL_ARGS[@]+"${CHANNEL_ARGS[@]}"}
 }
 
 stage_fleet_workers() {
   fleet_feed_ready
   # shellcheck disable=SC2086 # FLEET_SSH is one flag or nothing.
-  x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers $FLEET_SSH
+  x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers $FLEET_SSH \
+    ${CHANNEL_ARGS[@]+"${CHANNEL_ARGS[@]}"}
 }
 
 # Linux workers, after the release is merged: best effort, so it never fails or delays macOS. A
@@ -1370,12 +1303,13 @@ parse_args() {
       --no-retry) RETRY=0 ;;
       --no-project-migrations) MIGRATIONS=0 ;;
       --ci) CI_MODE=1 ;;
-      --previous | --stop-after | --jobs)
+      --previous | --stop-after | --jobs | --stage | --shard)
         [ $# -ge 2 ] || usage_error "$1 needs a value"
         case "$1" in
           --previous) PREV_OVERRIDE="$2" ;;
           --stop-after) STOP_AFTER="$2" ;;
           --jobs) JOBS="$2" ;;
+          *) stage_option "$1" "$2" ;;
         esac
         shift
         ;;
@@ -1417,6 +1351,7 @@ parse_args() {
       usage_error "RELEASE_STUB needs RELEASE_STAGING_ROOT and RELEASE_TREES"
     MODE=stub
   fi
+  check_stage_args
 }
 
 main() {
@@ -1430,7 +1365,9 @@ main() {
     exit 0
   fi
   load_env
+  channel_init
   if [ "$INTERNAL_SERVER" -eq 1 ]; then internal_server; fi
+  stage_entry
   trap on_exit EXIT
   if [ "$MODE" = dry ]; then
     say "Dry-run of SpecWithCode $VERSION: every command is printed, nothing runs or is written."
@@ -1459,7 +1396,7 @@ main() {
   elif [ "$MODE" != dry ] && [ "$MODE" != stub ] && [ "$(sysctl -n hw.ncpu 2> /dev/null || echo 0)" -ge 8 ]; then
     early_server=1
   fi
-  if [ "$MODE" != stub ] && { ! is_done stage1 "$SHA" || ! is_done server "$SHA"; }; then playwright_shell; fi
+  if [ "$MODE" != stub ] && { { stage_selected stage1 && ! is_done stage1 "$SHA"; } || { stage_selected server && ! is_done server "$SHA"; }; }; then playwright_shell; fi
   if [ "$early_server" -eq 1 ]; then start_server; fi
   run_stage stage1 sha
   if [ "$early_server" -eq 0 ]; then start_server; fi
@@ -1467,32 +1404,17 @@ main() {
   run_stage build sha
   for stage in bundle sign verify helpers plan drafts; do
     stop_if_server_failed
-    if [ "$stage" = drafts ]; then rehearsal_wait; require_verified; fi
+    if [ "$stage" = drafts ] && stage_selected drafts; then rehearsal_wait; require_verified; fi
     run_stage "$stage" sha
   done
   run_stage server-wait sha
   if [ "$CI_MODE" -eq 0 ] && ! is_done desktop once; then run_stage quit-desktop always; fi
-  run_stage publish-private once
-  run_stage publish-public once
-  if [ "$CI_MODE" -eq 0 ]; then
-    run_stage fleet-m4 once
-    # Right after M4: the app attaches to the M4 service, which now runs this version, so it writes
-    # no install request of its own; M1 or M3 failing next no longer leaves the Mac without its app.
-    run_stage desktop once
-    run_stage fleet-workers once
-  else
-    say "= fleet-m4, desktop, fleet-workers: skipped (--ci); the hosts install v$VERSION on their next update check"
-  fi
-  run_stage merge once
-  if [ "$CI_MODE" -eq 0 ]; then
-    run_stage fleet-linux once
-  else
-    say "= fleet-linux: skipped (--ci); update Linux workers with linux_rollout.py --version $VERSION on the M4"
-  fi
+  release_tail
   if [ "$MODE" = dry ]; then
     say "Dry-run done: nothing was run or written."
     return 0
   fi
+  if [ -n "$STAGE_ONLY" ]; then say "Stage $STAGE_ONLY of $VERSION: done." && return 0; fi
   say "SpecWithCode $VERSION is released."
   print_timings
 }

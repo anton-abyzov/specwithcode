@@ -47,6 +47,7 @@ export function TeamRulesSectionView({ summary }: { readonly summary: TeamRulesS
     <SettingsSection id="team-rules" title="Team rules">
       <SettingsRow
         title={setBy}
+        literal
         description={
           <>
             {summary.contact === undefined ? null : (
@@ -59,7 +60,7 @@ export function TeamRulesSectionView({ summary }: { readonly summary: TeamRulesS
         }
       />
       {teamRulesRows(summary).map((row) => (
-        <SettingsRow key={row.title} title={row.title} description={row.value} />
+        <SettingsRow key={row.title} title={row.title} description={row.value} literal />
       ))}
     </SettingsSection>
   );

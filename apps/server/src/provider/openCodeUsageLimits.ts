@@ -38,6 +38,12 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
+  // No Go plan on this host: Zen's free models and keys have no meter to read.
+  const unmetered = makeUnavailableUsageLimits({
+    checkedAt,
+    reason: "unsupported",
+    unmetered: true,
+  });
 
   return yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -59,7 +65,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const apiAuth = decodeApiAuth(auth["opencode-go"]);
     // OpenCode overlays stored API credentials after environment credentials.
     const apiKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
-    if (!apiKey) return unsupported;
+    if (!apiKey) return unmetered;
 
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -68,7 +74,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
       ),
     );
     // A valid Zen key can exist without a Go subscription.
-    if (response.status === 403) return unsupported;
+    if (response.status === 403) return unmetered;
     const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(UsageResponse)),
     );

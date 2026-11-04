@@ -2086,6 +2086,111 @@ describe("sweep switch path with a stale fallback read", () => {
   );
 });
 
+describe("sweep switch path to a named provider not checked since restart", () => {
+  // Codex stopped on its limit. The only fallback is OpenCode's free Zen model,
+  // which this server has not checked since it started.
+  const stoppedAt = Date.parse("2026-11-04T22:18:16.000Z");
+  const openCodeId = ProviderInstanceId.make("opencode");
+  const zenFree = "opencode/deepseek-v4.1-flash-free";
+  const limited = {
+    ...idle,
+    providerInstanceId: codexId,
+    modelSelection: { instanceId: codexId, model: "gpt-6" },
+    status: "failed" as const,
+    lastErrorClass: "usage_limit" as const,
+    projectId: null,
+    usageLimitResetAt: "2026-11-04T23:18:16.000Z",
+    latestRunCompletedAt: DateTime.makeUnsafe(stoppedAt),
+  };
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerLimitAction: "switch" as const,
+    providerLimitFallbackModelSelection: { instanceId: openCodeId, model: zenFree },
+    providerLimitFallbackModels: [{ instanceId: openCodeId, model: zenFree }],
+    providerLimitWaitUnderMinutes: 0,
+  };
+  const checkedOpenCode = (at: number): ServerProvider => ({
+    ...provider(openCodeId, "opencode", at),
+    models: [
+      {
+        slug: zenFree,
+        name: "DeepSeek V4.1 Flash Free",
+        isCustom: false,
+        isDefault: true,
+        capabilities: null,
+        billing: "unknown",
+      },
+    ],
+    usageLimits: {
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
+      windows: [],
+      unavailable: { reason: "unsupported", unmetered: true },
+    },
+  });
+  const pendingOpenCode = (at: number): ServerProvider => ({
+    ...checkedOpenCode(at),
+    installed: false,
+    status: "warning",
+    auth: { status: "unknown" },
+    models: [],
+  });
+
+  itEffect.effect("checks it once and moves the stopped thread to its free model", () =>
+    Effect.gen(function* () {
+      const state = {
+        providers: [
+          withUsage(provider(codexId, "codex", stoppedAt), 100),
+          pendingOpenCode(stoppedAt - 60_000),
+        ],
+        refreshed: [] as string[],
+        dispatched: [] as OrchestrationV2ServerCommand[],
+      };
+      const deps = Layer.mergeAll(
+        Layer.mock(Projects.ProjectService)({
+          getById: () => Effect.succeed(Option.some(legacyProject)),
+        }),
+        fallbackPolicyTestLayer(settings),
+        Layer.mock(Providers.ProviderRegistry)({
+          getProviders: Effect.sync(() => state.providers),
+          refreshInstance: (id) =>
+            Effect.gen(function* () {
+              state.refreshed.push(id);
+              const at = DateTime.toEpochMillis(yield* DateTime.now);
+              state.providers = state.providers.map((entry) =>
+                entry.instanceId === id ? checkedOpenCode(at) : entry,
+              );
+              return state.providers;
+            }),
+        }),
+        Layer.mock(Instances.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () => Effect.succeed({ threads: [limited] } as never),
+          getThreadShell: () => Effect.succeed(limited as never),
+          getThreadRecords: (threadId) =>
+            Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.sync(() => (state.dispatched.push(command), { sequence: 1, storedEvents: [] })),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(stoppedAt + 30_000);
+        const sweep = yield* makeSweep;
+        yield* sweep();
+      }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+      expect(state.refreshed).toEqual([openCodeId]);
+      expect(state.dispatched).toHaveLength(1);
+      expect(state.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        modelSelection: { instanceId: openCodeId, model: zenFree },
+      });
+    }),
+  );
+});
+
 describe("sweep switch path down the fallback order", () => {
   const stoppedAt = Date.parse("2026-10-17T04:42:26.000Z");
   const codex2Id = ProviderInstanceId.make("codex2");

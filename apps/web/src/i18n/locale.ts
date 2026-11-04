@@ -4,7 +4,17 @@
  * browser's preferred languages and falls back to English.
  */
 
-export const SUPPORTED_LOCALES = ["en", "ru", "es", "zh-CN"] as const;
+export const SUPPORTED_LOCALES = [
+  "en",
+  "ru",
+  "es",
+  "zh-CN",
+  "ja",
+  "pt-BR",
+  "ko",
+  "de",
+  "fr",
+] as const;
 export type Locale = (typeof SUPPORTED_LOCALES)[number];
 export type LocalePreference = Locale | "system";
 
@@ -17,6 +27,11 @@ export const LOCALE_NATIVE_NAMES: Readonly<Record<Locale, string>> = {
   ru: "Русский",
   es: "Español",
   "zh-CN": "简体中文",
+  ja: "日本語",
+  "pt-BR": "Português (Brasil)",
+  ko: "한국어",
+  de: "Deutsch",
+  fr: "Français",
 };
 
 export function isLocale(value: unknown): value is Locale {
@@ -43,6 +58,17 @@ export function matchLocale(tag: string): Locale | null {
       // Traditional script regions are not translated yet; they still read
       // Simplified Chinese better than English.
       return "zh-CN";
+    case "ja":
+      return "ja";
+    case "pt":
+      // European Portuguese readers understand the Brazilian translation.
+      return "pt-BR";
+    case "ko":
+      return "ko";
+    case "de":
+      return "de";
+    case "fr":
+      return "fr";
     default:
       return null;
   }

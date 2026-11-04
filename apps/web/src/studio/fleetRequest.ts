@@ -30,6 +30,23 @@ export function requestFleet(prepared: PreparedConnection) {
     });
   });
 }
+/** This machine's release run records, newest first (the Releases view). */
+export function requestReleaseRuns(prepared: PreparedConnection) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "GET",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/releases"),
+      timeoutMs: 10000,
+      request: ({ client, headers }) => client.releaseRuns({ headers }),
+    });
+  });
+}
 export function requestFleetPairing(prepared: PreparedConnection, id: string) {
   return Effect.gen(function* () {
     const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);

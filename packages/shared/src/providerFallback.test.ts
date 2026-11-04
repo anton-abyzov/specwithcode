@@ -2267,3 +2267,90 @@ describe("agents whose billing is unknown", () => {
     },
   );
 });
+
+describe("OpenCode without a usage meter (Zen free models)", () => {
+  // OpenCode reads usage only for an OpenCode Go plan; Zen keys and free models report it unsupported.
+  const unmetered = { checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)), windows: [] };
+  const zenFree = "opencode/deepseek-v4.1-flash-free";
+  const openCode = provider("opencode", "opencode", null, {
+    models: [
+      {
+        slug: zenFree,
+        name: "DeepSeek V4.1 Flash Free",
+        isCustom: false,
+        isDefault: true,
+        capabilities: null,
+        billing: "unknown",
+      },
+    ],
+    usageLimits: { ...unmetered, unavailable: { reason: "unsupported", unmetered: true } },
+  });
+  const spentCodex = provider("codex", "codex", 100);
+  const freeLane = {
+    ...rule,
+    providerLimitFallbackModels: [{ instanceId: openCode.instanceId, model: zenFree }],
+  };
+
+  it("moves a thread to a free model the fallback order names", () => {
+    const input = {
+      providers: [spentCodex, openCode],
+      currentInstanceId: spentCodex.instanceId,
+      currentModel: "codex-default",
+      rule: freeLane,
+      nowMs: now,
+      limitedInstanceIds: new Set(["codex"]),
+    };
+    expect(describeFallbackOrder(input).map((entry) => entry.unavailable)).toEqual([null]);
+    expect(resolveProviderFallback(input)).toEqual({
+      instanceId: openCode.instanceId,
+      model: zenFree,
+    });
+  });
+
+  it("still never picks one the person did not name", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [spentCodex, openCode],
+        currentInstanceId: spentCodex.instanceId,
+        currentModel: "codex-default",
+        rule,
+        nowMs: now,
+        anyReady: true,
+        limitedInstanceIds: new Set(["codex"]),
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps an unread meter unverified, including OpenCode's on an external server", () => {
+    const unreadClaude = provider("claudeAgent", "claudeAgent", null, {
+      usageLimits: { ...unmetered, unavailable: { reason: "unsupported" } },
+    });
+    const probeFailed = {
+      ...openCode,
+      usageLimits: { ...unmetered, unavailable: { reason: "probeFailed" as const } },
+    };
+    const externalServer = {
+      ...openCode,
+      instanceId: ProviderInstanceId.make("opencode-remote"),
+      usageLimits: { ...unmetered, unavailable: { reason: "unsupported" as const } },
+    };
+    const entries = describeFallbackOrder({
+      providers: [spentCodex, unreadClaude, probeFailed, externalServer],
+      currentInstanceId: spentCodex.instanceId,
+      rule: {
+        ...rule,
+        providerLimitFallbackModels: [
+          { instanceId: unreadClaude.instanceId, model: "claudeAgent-default" },
+          { instanceId: probeFailed.instanceId, model: zenFree },
+          { instanceId: externalServer.instanceId, model: zenFree },
+        ],
+      },
+      nowMs: now,
+    });
+    expect(entries.map((entry) => entry.unavailable)).toEqual([
+      "unverified",
+      "unverified",
+      "unverified",
+    ]);
+  });
+});

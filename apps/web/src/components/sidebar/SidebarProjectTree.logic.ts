@@ -2,6 +2,7 @@ import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtim
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
+import { approvalWaitLabel } from "../../studio/accessWait";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
 export type ProjectTreeSessionStatus = "attention" | "working" | "failed" | "ready" | "resolved";
@@ -49,7 +50,7 @@ export function classifyProjectTreeSession(thread: EnvironmentThreadShell): {
   const status = resolveSidebarThreadStatus(thread);
   switch (status) {
     case "approval":
-      return { status: "attention", label: "Approval requested" };
+      return { status: "attention", label: approvalWaitLabel(thread) };
     case "input":
       return { status: "attention", label: "Answer needed" };
     case "limited":

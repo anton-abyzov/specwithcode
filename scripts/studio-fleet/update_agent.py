@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Background Studio update agent: one resumable, lock-guarded pass per launchd run.
 
-A pass discovers a newer GitHub release, verifies its update plan, assets and helper
+A pass discovers a newer release (channel feed or GitHub), verifies its update plan, assets and helper
 files, waits for a quiet moment and then runs the target release's own guarded
 update.py. The agent never stops or signals the Studio service; only that verified
 helper restarts it. GitHub tokens stay in memory: they are never written, logged or
@@ -806,8 +806,8 @@ class Agent(object):
         self.fetch(url, accept, limit, chunks.append)
         return b''.join(chunks)
 
-    def asset_url(self, asset):
-        return '%s/repos/%s/releases/assets/%d' % (self.api_base(), self.config['repository'], asset['id'])
+    def asset_url(self, asset):  # A channel feed's asset carries its own URL (recovery.feed_releases).
+        return asset.get('feedUrl') or '%s/repos/%s/releases/assets/%d' % (self.api_base(), self.config['repository'], asset['id'])
 
     def download_asset(self, name, asset, destination, limit):
         return cache.download(self, name, asset, destination, limit)

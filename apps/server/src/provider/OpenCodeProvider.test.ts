@@ -119,7 +119,27 @@ it.effect("does not read local credentials for external or disabled OpenCode ins
         Effect.provide(NodeServices.layer),
       );
       NodeAssert.equal(limits.unavailable?.reason, "unsupported");
+      // An external server may hold a Go plan this host cannot read.
+      NodeAssert.equal(limits.unavailable?.unmetered, undefined);
     }
+  }),
+);
+
+it.effect("marks a host without an OpenCode Go key as having no usage meter", () =>
+  Effect.gen(function* () {
+    const limits = yield* readOpenCodeGoUsageLimits({
+      enabled: true,
+      serverUrl: "",
+      environment: { OPENCODE_AUTH_CONTENT: "{}" },
+    }).pipe(
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("unexpected usage request")),
+      ),
+      Effect.provide(NodeServices.layer),
+    );
+    NodeAssert.deepEqual(limits.unavailable, { reason: "unsupported", unmetered: true });
+    NodeAssert.deepEqual(limits.windows, []);
   }),
 );
 
@@ -152,6 +172,8 @@ it.effect("keeps Go entitlement absence distinct from failed or malformed usage 
         Effect.provide(NodeServices.layer),
       );
       NodeAssert.equal(limits.unavailable?.reason, reason);
+      // Only a refused Go read proves the key has no Go plan, so no meter.
+      NodeAssert.equal(limits.unavailable?.unmetered, status === 403 ? true : undefined);
       NodeAssert.equal(limits.credentialFingerprint, undefined);
       NodeAssert.deepEqual(limits.windows, []);
     }

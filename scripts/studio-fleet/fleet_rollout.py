@@ -94,6 +94,16 @@ up at once with `locked` and exit 0, since the run holding it covers the workers
 
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --reconcile
 
+Candidate channel (increment 1239): release.sh's canary and fleet stages pass `--channel candidate
+--channel-since X.Y.Z`. The request is the same version-bound one; the host's agent finds the version
+in the R2 candidate feed because the request names it (update_agent_recovery.feed_releases). A host
+whose installed release is older than --channel-since has an agent that reads GitHub only, so it is
+not asked and ends not-updated with that reason. While an M4 candidate run is under way, M4's own
+reconcile for that version leaves the workers to the release (CANDIDATE_HOLD), and the fleet stage
+clears that hold once every required host verified.
+
+    python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.190 --only m4 --channel candidate --channel-since 1.0.190
+
 Exit 0 when every required host has finalized the version and every worker's app is on it, 1 when
 one has not, 2 for bad arguments.
 """
@@ -114,6 +124,7 @@ import urllib.parse
 import desktop_app_rollout
 import fleet_hosts
 import folder_work
+import rollout_record
 import service_hold
 import studio_paths
 import update_request
@@ -137,6 +148,8 @@ ACK_WINDOW = 60  # Seconds before a request the host did not acknowledge is sent
 ACK_RETRIES = 3  # Unacknowledged requests sent again before the host counts as not reached.
 REQUIRED_HOSTS = ('m4', 'm1', 'm3')  # A release is done only when these are verified (increment 1239, D-03).
 LOCK_NAME = 'fleet-rollout.lock'
+CANDIDATE_HOLD = 'fleet-candidate-hold.json'  # Beside the lock: {version, at} of an M4 candidate run.
+CANDIDATE_HOLD_SECONDS = 6 * 3600  # Canary, soak and fleet windows, and then some.
 RECONCILE_WAIT = 20 * 60  # A reconcile waits this long for an M4-only rollout to end.
 VERSION = re.compile(r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})')
 BOOT = """
@@ -242,6 +255,26 @@ def lock_path(home=None):
     if override:
         return pathlib.Path(override)
     return studio_paths.identity_home(pathlib.Path(home or pathlib.Path.home()), LOCAL) / 'updates' / LOCK_NAME
+
+
+def candidate_hold(version=None, clear=False, clock=time.time):
+    """Writes (`version`), clears (`clear`) or reads the M4 candidate hold; reading returns the
+    version a fresh hold names, or None."""
+    path = lock_path().parent / CANDIDATE_HOLD
+    if version is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({'version': version, 'at': clock()}))
+        return version
+    if clear:
+        if path.is_file():
+            path.unlink()
+        return None
+    try:
+        value = json.loads(path.read_text())
+        fresh = 0 <= clock() - float(value['at']) <= CANDIDATE_HOLD_SECONDS
+        return value['version'] if fresh else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
 
 
 def not_updated(identity, reason, **extra):
@@ -737,7 +770,7 @@ def requested_by_update_now(status, version, now=None):
 
 
 def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say, hold=None,
-              local_copies=None, ignore_copies=False):
+              local_copies=None, ignore_copies=False, channel_since=None):
     """Asks one host for `version` and waits until it reports it installed. With `hold` (M4's
     ServiceHold), each forced request follows Update now's drain and hold, which waits until the
     agent offers `version`; before that the agent is only asked to check. A rollout that gives up
@@ -752,6 +785,9 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         return {'identity': identity, 'result': 'already-installed', 'requests': 0, 'seconds': 0}
     if _tuple(current) is not None and _tuple(current) > _tuple(version):
         raise RolloutError('%s already runs %s, newer than %s' % (identity, current, version))
+    if channel_since is not None and (_tuple(current) or (0, 0, 0)) < channel_since:
+        raise RolloutError('%s runs %s, whose update agent reads GitHub only (the candidate channel needs %s); '
+                           'ship a stable release through GitHub first' % (identity, current, '.'.join(map(str, channel_since))))
     window = hold_minutes * 60 if force else REQUEST_WINDOW
     holder = [hold if force else None]
     took = [False]  # This rollout holds (or held) the service.
@@ -847,6 +883,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         # already on the version. A reply with no request answer at all reached no agent.
         acked[0] = ((reply.get('request') or {}).get('installRequestedAt')
                     or ('acknowledged' if 'request' in reply or reply.get('method') == 'boot-service' else None))
+        rollout_record.asked(identity, current, acked[0])  # The release run record, under release.sh.
         if acked[0]:
             unacked[0] = 0
         else:
@@ -1069,7 +1106,8 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
 
 def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60, worker_deadline=60 * 60,
             worker_force=False, poll=5, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None,
-            local_copies=None, ignore_folder_copies=False, required=REQUIRED_HOSTS, m4_wait=0, desktop_skip=None):
+            local_copies=None, ignore_folder_copies=False, required=REQUIRED_HOSTS, m4_wait=0, desktop_skip=None,
+            channel_since=None):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then every other
     host in `hosts` together (M1 and M3, and any Connect-only machine), never held; an Unreachable
     one is reported as skipped. `local_copies` (local_folder_copies) counts M4's own folder copies,
@@ -1085,7 +1123,7 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
     if only in ('all', LOCAL):
         try:
             results[LOCAL] = roll_host(LOCAL, hosts[LOCAL], version, True, hold_minutes, local_deadline, poll,
-                                       clock, sleep, say, hold=hold,
+                                       clock, sleep, say, hold=hold, channel_since=channel_since,
                                        ignore_copies=ignore_folder_copies or getattr(hold, 'ignore_folder_copies', False))
         except RolloutError as error:
             results[LOCAL] = not_updated(LOCAL, str(error))
@@ -1140,7 +1178,7 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
             try:
                 result = roll_host(identity, host, version, worker_force, hold_minutes,
                                    worker_deadline, poll, clock, sleep, say, local_copies=local_copies,
-                                   ignore_copies=ignore_folder_copies)
+                                   ignore_copies=ignore_folder_copies, channel_since=channel_since)
                 route = getattr(host, 'route', None)
                 if route:
                     result['route'] = route
@@ -1239,7 +1277,18 @@ def main(argv=None):
                              'implies --only workers, and gives up at once when another rollout runs')
     parser.add_argument('--lock-wait-minutes', type=int, default=75,  # A reconcile's worker deadline (60) and then some.
                         help='how long to wait for another rollout to end (not with --reconcile)')
+    parser.add_argument('--channel', choices=('github', 'candidate'), default='github',
+                        help='candidate: the hosts install from the R2 candidate feed (release.sh canary and fleet)')
+    parser.add_argument('--channel-since', metavar='X.Y.Z',
+                        help='with --channel candidate: the first release whose update agent reads channel feeds')
     args = parser.parse_args(argv)
+    since = _tuple(args.channel_since) if args.channel_since else None
+    if (args.channel == 'candidate') != (since is not None):
+        parser.error('--channel candidate needs --channel-since X.Y.Z, and --channel-since needs it')
+    if args.reconcile and candidate_hold() == args.version:
+        # M4 runs a release's candidate: the release's own fleet stage asks the workers after the soak.
+        print(json.dumps({'version': args.version, 'result': 'candidate-held'}))
+        return 0
     if args.reconcile:
         if args.only == LOCAL:
             parser.error('--reconcile updates the workers; it cannot be combined with --only m4')
@@ -1309,11 +1358,16 @@ def main(argv=None):
         print(json.dumps({'version': args.version, 'result': 'locked', 'holder': error.holder}))
         return 0 if args.reconcile else 1
     try:
+        if since is not None and args.only in ('all', LOCAL):
+            candidate_hold(args.version)
         results = rollout(args.version, hosts, args.only, args.hold_minutes, args.m4_deadline_minutes * 60,
                           args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold,
                           desktop=desktop, local_copies=local_folder_copies,
                           ignore_folder_copies=args.ignore_folder_copies, required=required,
-                          m4_wait=RECONCILE_WAIT if args.reconcile else 0, desktop_skip=desktop_skip)
+                          m4_wait=RECONCILE_WAIT if args.reconcile else 0, desktop_skip=desktop_skip,
+                          channel_since=since)
+        if since is not None and args.only in ('all', 'workers') and candidate_hold() == args.version:
+            candidate_hold(clear=True)
     except RolloutPartial as error:
         lines = report(args.version, error.results, required)
         print('fleet_rollout: %s' % error, file=sys.stderr)

@@ -31,6 +31,7 @@ import {
   provenFallbackSelection,
   type ProviderFallbackRule,
   reportsNoUsage,
+  ruleNamesInstance,
   resolveApiCreditSelection,
   resolveProviderFallback,
   shouldSwitchBeforeTurn,
@@ -1279,6 +1280,7 @@ export const makeSweep = Effect.gen(function* () {
   // with another provider sitting free. Each provider at most once per read
   // lifetime, so a stop nothing can take costs one read, not one per sweep.
   const targetReads = yield* Ref.make(new Map<ProviderInstanceId, number>());
+  const firstTargetReads = yield* Ref.make<ReadonlySet<ProviderInstanceId>>(new Set());
   const unreportedStops = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   /** When each of those holds' latest limit stop happened (see `releaseRecoveredHolds`). */
   const unreportedStopsSince = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
@@ -1297,7 +1299,30 @@ export const makeSweep = Effect.gen(function* () {
           limitStopIsCurrent(thread, nowMs);
     if (rule.providerLimitAction !== "switch" || !stopped) return false;
     const readAt = yield* Ref.get(targetReads);
+    const recentlyRead = (provider: ServerProvider) =>
+      nowMs - (readAt.get(provider.instanceId) ?? -Infinity) < FALLBACK_USAGE_MAX_AGE_MS;
+    // A provider the person named that cannot take a turn yet, such as one this
+    // server has not checked since it started: nothing else reads an idle
+    // provider, so waiting never makes it ready. It is read here once per
+    // server lifetime; one that stays unusable after that is left alone.
+    const firstRead = yield* Ref.get(firstTargetReads);
+    const unchecked = new Set(
+      candidates
+        .filter(
+          (provider) =>
+            provider.instanceId !== thread.providerInstanceId &&
+            provider.enabled &&
+            !canTakeTurn(provider) &&
+            provider.auth.status !== "unauthenticated" &&
+            !firstRead.has(provider.instanceId) &&
+            ruleNamesInstance(rule, provider.instanceId),
+        )
+        .map((provider) => provider.instanceId),
+    );
+    if (unchecked.size > 0)
+      yield* Ref.update(firstTargetReads, (current) => new Set([...current, ...unchecked]));
     const stale = candidates.filter((provider) => {
+      if (unchecked.has(provider.instanceId)) return true;
       if (
         provider.instanceId === thread.providerInstanceId ||
         !canTakeTurn(provider) ||
@@ -1305,7 +1330,7 @@ export const makeSweep = Effect.gen(function* () {
         isPerTokenProvider(provider) ||
         provider.usageLimits?.unavailable !== undefined ||
         reportsNoUsage(provider) ||
-        nowMs - (readAt.get(provider.instanceId) ?? -Infinity) < FALLBACK_USAGE_MAX_AGE_MS
+        recentlyRead(provider)
       )
         return false;
       const limits = provider.usageLimits;

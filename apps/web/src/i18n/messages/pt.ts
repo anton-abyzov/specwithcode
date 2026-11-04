@@ -1,0 +1,378 @@
+import type { Messages } from "./en";
+
+/**
+ * Brazilian Portuguese, "você". "thread" (feminine) for thread, "provedor" for
+ * provider, "fallback" for fallback. Both machine nouns (Mac, computador) are masculine.
+ */
+export const pt: Messages = {
+  "common.sentenceSpace": " ",
+  "settings.language.title": "Idioma",
+  "settings.language.description":
+    "O idioma do SpecWithCode neste dispositivo. Algumas telas ainda estão em inglês.",
+  "settings.language.system": "Sistema ({language})",
+
+  "wizard.title": "Configurar o SpecWithCode",
+  "wizard.stage.connect": "Conectar",
+  "wizard.stage.agents": "Agentes",
+  "wizard.stage.projects": "Projetos",
+  "wizard.close": "Fechar configuração",
+  "wizard.noun.mac": "Mac",
+  "wizard.noun.machine": "computador",
+  "wizard.computer": "Computador",
+  "wizard.continue": "Continuar",
+  "wizard.back": "Voltar",
+  "wizard.retry": "Tentar de novo",
+  "wizard.closeTerminal": "Fechar",
+  "wizard.toast.choiceNotSaved": "Não foi possível salvar sua escolha",
+  "wizard.toast.settingsNotSaved": "Não foi possível salvar suas configurações. Tente de novo.",
+  "wizard.toast.historyNotImported": "Parte do histórico não foi importada",
+  "wizard.toast.imported": {
+    one: "{count} thread importada",
+    other: "{count} threads importadas",
+  },
+  "wizard.toast.finishFailed": "Não foi possível concluir a configuração",
+
+  "wizard.connection.title": "Conecte seus computadores",
+  "wizard.connection.description":
+    "Escolha um ou mais computadores. Vamos configurar agentes e projetos em cada um.",
+  "wizard.connection.legend": "Computadores a configurar",
+  "wizard.connection.connected": "Conectado",
+  "wizard.connection.connecting": "Conectando…",
+  "wizard.connection.addComputer": "Adicionar um computador",
+  "wizard.connection.telemetry":
+    "A telemetria de uso vem desligada. O SpecWithCode não envia dados de uso do produto, a menos que você a ative no ambiente do servidor.",
+  "wizard.connect.loadingSignIn": "Carregando login…",
+  "wizard.connect.signIn": "Entrar",
+  "wizard.connect.loadingComputers": "Carregando computadores…",
+  "wizard.connect.noComputers": "Nenhum computador vinculado ainda.",
+  "wizard.connect.runThis":
+    "Execute isto em cada computador que você quer conectar. Ele fica acessível pelos seus outros dispositivos, sem Tailscale nem redirecionamento de portas.",
+  "wizard.connect.keepRunning":
+    "Mantenha o SpecWithCode aberto. Selecione acima os computadores que você quer configurar.",
+
+  "wizard.pairing.failed": "Falha no pareamento.",
+  "wizard.pairing.label": "Link de pareamento",
+  "wizard.pairing.need": "Precisa de um link de pareamento?",
+  "wizard.pairing.pairing": "Pareando...",
+  "wizard.pairing.pair": "Parear",
+  "wizard.pairing.runThis": "Execute isto no computador que tem seu código.",
+  "wizard.pairing.startFirst":
+    "Abra o SpecWithCode primeiro ou execute {serve}. Adicione {tailscale} para usar sua tailnet.",
+
+  "wizard.agents.title": "Conecte seus agentes",
+  "wizard.agents.description":
+    "Escolha um agente para começar a programar. Você pode adicionar outros depois.",
+  "wizard.agents.noTerminal": "Esta conexão não pode controlar terminais.",
+  "wizard.agents.anotherChatGpt": "Conectar outra conta do ChatGPT",
+  "wizard.agents.readyToCode": "Pronto para programar.",
+  "wizard.agents.ready": "Pronto",
+  "wizard.agents.checking": "Verificando...",
+  "wizard.agents.disabled": "Desativado",
+  "wizard.agents.signIn": "Entrar",
+  "wizard.agents.install": "Instalar",
+  "wizard.terminal.runCommand": "Execute {command} neste terminal.",
+  "wizard.terminal.review": "Revise o comando e pressione Enter para executá-lo.",
+  "wizard.terminal.openFailed": "Não foi possível abrir o terminal de configuração.",
+  "wizard.terminal.preparing": "Preparando o comando...",
+  "wizard.terminal.label": "Instalar {driver}",
+
+  "wizard.import.noPermission": "Esta conexão não pode importar projetos nem histórico de threads.",
+  "wizard.import.scanLimit":
+    "Limite de busca atingido. Alguns projetos ou conversas podem estar faltando.",
+  "wizard.import.importedThreads": {
+    one: "{count} thread importada.",
+    other: "{count} threads importadas.",
+  },
+  "wizard.import.skippedThreads": {
+    one: "{count} thread não pôde ser importada.",
+    other: "{count} threads não puderam ser importadas.",
+  },
+  "wizard.import.someHistoryFailed": "Parte do histórico de threads não pôde ser importada.",
+  "wizard.import.historyFailed": "Não foi possível importar o histórico de threads.",
+  "wizard.import.yourProjects": "Seus projetos",
+  "wizard.import.lookingInAgents": "Procurando projetos do Claude Code e do Codex…",
+  "wizard.import.skip": "Não importar projetos",
+  "wizard.import.title": "Escolha seus projetos",
+  "wizard.import.description": "Importe projetos e conversas dos computadores selecionados.",
+  "wizard.import.selectedCount": "{selected} de {total} selecionados",
+  "wizard.import.selectAll": "Selecionar tudo",
+  "wizard.import.selectNone": "Desmarcar tudo",
+  "wizard.import.looking": "Procurando projetos…",
+  "wizard.import.checkFailed": "Não foi possível verificar os projetos. {error}",
+  "wizard.import.none": "Nenhum projeto existente do Claude Code ou do Codex encontrado.",
+  "wizard.import.importing": "Importando…",
+  "wizard.import.importButton": {
+    one: "Importar {count} projeto",
+    other: "Importar {count} projetos",
+  },
+  "wizard.import.otherFolders": "Outras pastas",
+  "wizard.import.folderCount": { one: "{count} pasta", other: "{count} pastas" },
+  "wizard.import.now": "agora",
+
+  "wizard.role.title": "Como você vai usar este {machine}?",
+  "wizard.role.changeLater": "Você pode mudar isso depois.",
+  "wizard.role.main.title": "Começar como máquina principal",
+  "wizard.role.main.description":
+    "Configure agentes e projetos neste {machine}. Você pode adicionar outras máquinas a ele depois.",
+  "wizard.role.join.title": "Conectar a uma existente",
+  "wizard.role.join.description":
+    "Este {machine} trabalha para sua máquina principal em outro lugar. Você vincula o SpecWithCode Connect aqui e depois cola uma linha na máquina principal.",
+  "wizard.role.later": "Decidir depois",
+  "wizard.role.laterHint":
+    "Explore ou atualize primeiro. Para entrar depois, escolha Entrar em uma máquina principal em Configurações > Conexões.",
+  "wizard.join.title": "Conectar este {machine} à sua máquina principal",
+  "wizard.join.step1": "Entre no SpecWithCode Connect e vincule este {machine}.",
+  "wizard.join.step2":
+    "Cole o ID de ambiente da sua máquina principal (em Configurações > Conexões nela) e gere a linha.",
+  "wizard.join.step3":
+    "Cole a linha na máquina principal em Configurações > Conexões > Adicionar máquina em até uma hora.",
+  "wizard.join.makeLine": "Gerar a linha",
+  "wizard.join.pasted": "Já colei",
+  "wizard.joined.title": "Este {machine} está pronto para sua máquina principal",
+  "wizard.joined.description":
+    "Ele fica pronto assim que você colar a linha na máquina principal em Configurações > Conexões > Adicionar máquina. Escolha Permitir workers no cartão dele lá para que coordenadores possam iniciar trabalho aqui, e mantenha o app aberto neste {machine}.",
+  "wizard.joined.newLine": "Gerar uma nova linha",
+  "wizard.joined.fullSetup": "Configurar este {machine} como máquina principal",
+
+  "update.downloadFailed": "Não foi possível baixar a atualização",
+  "update.startFailed": "Não foi possível iniciar o download da atualização",
+  "update.unexpected": "Ocorreu um erro inesperado.",
+  "update.downloaded": "Atualização baixada",
+  "update.quitReopen": "Feche e abra o SpecWithCode de novo para instalá-la.",
+  "update.productVersion": "SpecWithCode {version}",
+  "update.productNewer": "Uma versão mais nova do SpecWithCode",
+  "update.available": "{product} está disponível. Atualize antes de configurar.",
+  "update.downloading": "Baixando a atualização…",
+  "update.downloadingPercent": "Baixando a atualização ({percent}%)…",
+  "update.lastFailed": "A última instalação falhou: {reason}",
+  "update.ready": "{product} está pronto para instalar.",
+  "update.aria": "Atualização do app",
+  "update.download": "Baixar atualização",
+  "update.checking": "Verificando…",
+  "update.retry": "Tentar atualizar de novo",
+  "update.restart": "Reiniciar para atualizar",
+
+  "limit.unavailable.missing": "não está nesta máquina",
+  "limit.unavailable.limited": "no limite",
+  "limit.unavailable.signedOut": "desconectado",
+  "limit.unavailable.perToken": "cobrado por token",
+  "limit.unavailable.full": "esgotado",
+  "limit.unavailable.fullUntil": "esgotado até {time}",
+  "limit.unavailable.tooSmall": "janela de contexto pequena demais",
+  "limit.unavailable.unverified": "sem leitura de uso recente",
+  "limit.unavailable.providerWarning": "aviso do provedor",
+  "limit.unavailable.notReady": "não configurado nesta máquina",
+  "limit.unavailable.excluded": "excluído do fallback automático",
+  "limit.duration.minutes": "{count} min",
+  "limit.duration.hours": "{count} h",
+  "limit.duration.hoursMinutes": "{hours} h {minutes} min",
+  "limit.duration.days": { one: "{count} dia", other: "{count} dias" },
+  "limit.sentenceJoin": ". ",
+  "limit.reset.unavailable": "Horário de reinício indisponível",
+  "limit.reset.in": "Reinicia em {duration} ({clock})",
+  "limit.reset.at": "Reinicia às {clock}",
+  "limit.next.waiting":
+    "O reinício está perto, então esta thread espera e continua aqui em vez de trocar.",
+  "limit.next.resumingNow": "Continuando aqui agora que o limite reiniciou.",
+  "limit.next.continuesAtReset": "Esta thread continua sozinha no reinício.",
+  "limit.next.continuingNow": "Continuando agora que o limite reiniciou.",
+  "limit.next.byRule": "Continuando com {label} pela regra do projeto.",
+  "limit.title.credits": "Créditos de API esgotados",
+  "limit.title.included": "Limite de uso incluído atingido",
+  "limit.title.usage": "Limite de uso atingido",
+  "limit.creditsExhausted":
+    "Esta conta de API não tem mais créditos. Adicione saldo ou continue em outra conta.",
+  "limit.error.continueOn": "Não foi possível continuar em {label}.",
+  "limit.error.resetPassed": "O horário de reinício já passou. Tente a thread de novo manualmente.",
+  "limit.error.recovery": "Não foi possível alterar a recuperação de limite.",
+  "limit.error.project": "Não foi possível alterar a configuração do projeto.",
+  "limit.auto.savedHint":
+    "Salvo para esta thread. O SpecWithCode continua o turno interrompido sozinho, mesmo depois de reiniciar.",
+  "limit.auto.whenUsage": "Continuar automaticamente quando houver uso disponível",
+  "limit.auto.whenReset": "Continuar automaticamente quando o limite reiniciar",
+  "limit.saving": "Salvando...",
+  "limit.project.global": "Ativado para todos os projetos em Configurações.",
+  "limit.project.hint": "Também continua as threads deste projeto que já esperam um limite.",
+  "limit.project.label":
+    "Continuar automaticamente as threads deste projeto quando os limites reiniciarem",
+  "limit.noReset.withHandoffs":
+    "O provedor não informou quando este limite reinicia, então a thread não pode continuar sozinha. Continue em outro lugar agora ou envie uma mensagem depois do reinício.",
+  "limit.noReset":
+    "O provedor não informou quando este limite reinicia, então a thread não pode continuar sozinha. Envie uma mensagem depois do reinício.",
+  "limit.orElsewhere": "Ou continue em outro lugar agora:",
+  "limit.insteadOfWaiting": "Continue em outro lugar em vez de esperar:",
+  "limit.fallback.hint":
+    "Trocar esta thread para {label} ({model}) e continuar o turno interrompido com a conversa dela",
+  "limit.fallback.continueWith": "Continuar com {label} · {model}",
+  "limit.otherModelsAria": "Outros modelos de fallback",
+  "limit.otherModels": "Outros modelos",
+  "limit.chooseModel": "Escolher um modelo",
+  "limit.device.hint":
+    "Iniciar uma thread em {label} ({model}) com um resumo escrito desta conversa. Alterações não enviadas deste dispositivo não vão junto.",
+  "limit.device.fresh": "Começar do zero em {label} (só o resumo)",
+  "limit.device.continue": "Continuar em {label}",
+  "limit.checkRequested": "Verificação solicitada",
+  "limit.checkNow": "Verificar agora",
+  "limit.snooze": "Adiar até o reinício",
+  "limit.check.allowedOn":
+    "A última verificação permitiu uso normal; continuar automaticamente está ativado.",
+  "limit.check.allowedOff":
+    "A última verificação permitiu uso normal. Marque Continuar automaticamente para seguir.",
+  "limit.check.denied": "Este perfil ainda não permite uso normal.",
+  "limit.check.changed": "A conta ou o perfil mudou. A recuperação automática está bloqueada.",
+  "limit.check.reconfirm":
+    "Verifique agora, depois desmarque e marque de novo Continuar automaticamente para confirmar o perfil atual.",
+  "limit.check.unverified":
+    "Não foi possível confirmar a permissão de uso normal. A thread continua parada.",
+  "limit.approaching.title": "{provider} tem {percent}% do uso restante",
+  "limit.approaching.question": "Trocar esta thread para {label} antes que o limite pare um turno?",
+  "limit.approaching.switch": "Trocar para {label}",
+  "limit.approaching.notNow": "Agora não",
+  "limit.preswitch.blocked":
+    "{model} chegou perto do limite de uso, então esta thread mudou antes do próximo turno. Ela continua no fallback: {reason}.",
+  "limit.preswitch.hasRoom":
+    "{model} chegou perto do limite de uso e tem espaço de novo. A thread ociosa volta sozinha.",
+  "limit.preswitch.noRoom":
+    "{model} chegou perto do limite de uso. A thread ociosa volta sozinha quando houver espaço.",
+
+  "fallback.chip.ready": "Pronto",
+  "fallback.chip.unverified": "Uso desconhecido",
+  "fallback.chip.full": "Uso esgotado",
+  "fallback.chip.fullUntil": "Esgotado até {time}",
+  "fallback.chip.limited": "No limite",
+  "fallback.chip.signedOut": "Desconectado",
+  "fallback.chip.perToken": "Cobrado por token",
+  "fallback.chip.tooSmall": "Contexto pequeno",
+  "fallback.chip.notReady": "Não configurado",
+  "fallback.chip.missing": "Não está nesta máquina",
+  "fallback.chip.excluded": "Excluído",
+  "fallback.chip.unknownBilling": "Cobrança desconhecida",
+  "fallback.family": "Família {family}",
+  "fallback.moveUp": "Mover {label} para cima",
+  "fallback.moveDown": "Mover {label} para baixo",
+  "fallback.remove": "Remover {label}",
+  "fallback.sameModelAria": "Mesmo modelo em outros provedores, depois de {label}",
+  "fallback.sameModelOn": "Mesmo modelo em {provider}",
+  "fallback.orderLabel": "Ordem de fallback",
+  "fallback.status.ready": "Pode assumir uma thread limitada",
+  "fallback.status.unverified": "Conectado, sem leitura de uso recente",
+  "fallback.status.current": "Modelo desta thread",
+  "fallback.status.excluded": "Excluído do fallback automático",
+  "fallback.status.disabled": "Desligado",
+  "fallback.status.signedOut": "Desconectado",
+  "fallback.status.notReady": "Não configurado nesta máquina",
+  "fallback.status.limited": "No limite",
+  "fallback.status.full": "Esgotado",
+  "fallback.status.fullUntil": "Esgotado até {time}",
+  "fallback.status.perToken":
+    "Cobrado por token: só quando você o escolhe ou permite créditos de API",
+  "fallback.status.neverAutomatic": "Cobra um projeto do Google Cloud: nunca automático",
+  "fallback.status.namedOnly": "Cobrança desconhecida: só quando você o escolhe",
+  "fallback.access.notRead": "Uso do plano não lido",
+  "fallback.access.reported": "Uso do plano informado",
+  "fallback.access.lastRead": "Última leitura: {percent}% usado",
+  "fallback.access.planUsage": "Uso do plano: {percent}%",
+  "fallback.access.noUsage": "Conectado; o provedor não informa uso",
+  "fallback.access.perToken": "Cobrado por token",
+  "fallback.access.unknown": "Acesso desconhecido",
+  "fallback.inOrder": "Nº {index} na ordem",
+  "fallback.include": "Incluir",
+  "fallback.exclude": "Excluir",
+  "fallback.includeAria": "Incluir {model}",
+  "fallback.excludeAria": "Excluir {model}",
+  "fallback.providerModels": "Modelos de {provider}",
+  "fallback.hideOlder": "Ocultar versões antigas",
+  "fallback.showOlder": {
+    one: "Mostrar {count} versão antiga",
+    other: "Mostrar {count} versões antigas",
+  },
+  "fallback.noProviders": "Ainda não há provedores nesta máquina.",
+  "fallback.footnote":
+    "Excluir um modelo o tira de toda troca automática em todos os provedores; você ainda pode escolhê-lo. Modelos novos são permitidos até você excluí-los. O acesso mostrado aqui é só o que o SpecWithCode consegue ver: minutos do GitHub Actions, uma assinatura do X ou créditos para startups não são acesso a modelos, a menos que um desses provedores esteja conectado com eles.",
+  "fallback.summary.models": { one: "{count} modelo", other: "{count} modelos" },
+  "fallback.summary.ready": "{count} prontos agora",
+  "fallback.summary.excluded": "{count} excluídos",
+
+  "limitSettings.mixed": "Misto",
+  "limitSettings.cancel": "Cancelar",
+  "limitSettings.action.ask": "Oferecer o fallback",
+  "limitSettings.action.wait": "Esperar o reinício",
+  "limitSettings.action.switch": "Trocar automaticamente",
+  "limitSettings.switchAtOption": "Com {percent}% restante",
+  "limitSettings.waitOption.never": "Nunca esperar",
+  "limitSettings.waitOption.hour": "Menos de 1 hora",
+  "limitSettings.waitOption.twoHours": "Menos de 2 horas",
+  "limitSettings.waitOption.minutes": "Menos de {minutes} min",
+  "limitSettings.action.title": "Quando um provedor esgota",
+  "limitSettings.action.descriptionProject":
+    "O que as threads deste projeto fazem quando o provedor atinge um limite de uso. Trocar passa a thread adiante com o contexto, na mesma worktree.",
+  "limitSettings.action.description":
+    "O que as threads fazem quando o provedor atinge um limite de uso. Projetos podem substituir isso.",
+  "limitSettings.order.title": "Ordem de fallback",
+  "limitSettings.order.description":
+    "Os modelos em que uma thread limitada continua, do melhor para o pior. O primeiro que estiver conectado e tiver espaço assume a thread; uma thread que já está nele o pula, então threads do Codex podem cair para o Claude pela mesma lista.",
+  "limitSettings.order.descriptionTiers":
+    "Deixe vazia para seguir seus níveis de modelo; uma lista aqui os substitui nos limites.",
+  "limitSettings.order.descriptionWaits": "Quando nenhum deles tem espaço, a thread espera.",
+  "limitSettings.order.descriptionAny":
+    "Depois desses, o SpecWithCode tenta qualquer outro provedor pronto.",
+  "limitSettings.order.statusTiers": "Usa seus níveis de modelo",
+  "limitSettings.order.statusAny": "Qualquer provedor pronto",
+  "limitSettings.order.addModel": "Adicionar modelo",
+  "limitSettings.order.addAria": "Adicionar um modelo de fallback",
+  "limitSettings.order.noProviders": "Nenhum provedor disponível",
+  "limitSettings.listOnly.title": "Só estes modelos",
+  "limitSettings.listOnly.descriptionTiers":
+    "Nunca continuar uma thread limitada em um modelo fora dos seus níveis de modelo. Quando nenhum deles tem espaço, a thread espera o reinício.",
+  "limitSettings.listOnly.descriptionOrder":
+    "Nunca continuar uma thread limitada em um modelo fora da ordem de fallback. Quando nenhum deles tem espaço, a thread espera o reinício.",
+  "limitSettings.options.title": "Onde uma thread limitada pode continuar",
+  "limitSettings.options.description":
+    "Os modelos desta máquina para onde uma thread limitada pode ir, agrupados por família e por provedor, com versões antigas recolhidas. Exclua um modelo para mantê-lo fora do fallback automático; para definir o mínimo de uma família, exclua os modelos abaixo dele.",
+  "limitSettings.options.none": "Nada excluído",
+  "limitSettings.options.count": "{count} excluídos",
+  "limitSettings.switchAt.title": "Trocar antes do limite",
+  "limitSettings.switchAt.description":
+    "Com Trocar automaticamente, o próximo turno começa no fallback quando a janela de uso mais baixa do provedor tiver só isso restante. Com Oferecer o fallback, a thread sugere a troca nesse ponto. Nunca no meio do turno, e só para um provedor com mais restante.",
+  "limitSettings.switchAt.off": "Só quando parar",
+  "limitSettings.waitUnder.title": "Esperar quando o reinício estiver perto",
+  "limitSettings.waitUnder.description":
+    "Quando o uso que atingiu o limite ou o patamar reinicia dentro desse tempo, nada troca, resgata ou gasta: a thread espera e continua no mesmo provedor no reinício. Uma janela semanal também esgotada impede essa espera.",
+  "limitSettings.subscription.title": "Continuar automaticamente em uma nova assinatura",
+  "limitSettings.subscription.description":
+    "Quando uma thread com continuar automaticamente está esperando um limite e a CLI dela está conectada a outra assinatura com espaço, a thread continua lá sem perguntar. Desligado, ou com continuar automaticamente desligado: a thread mostra a mudança e espera sua confirmação. O provedor e o modelo continuam os mesmos.",
+  "limitSettings.redeem.title": "Resgatar primeiro um reinício guardado",
+  "limitSettings.redeem.description":
+    "Quando um turno para no limite e uma nova leitura de uso confirma que a conta está nele, usar um dos reinícios guardados da conta (o Claude e o Codex os concedem) e continuar no mesmo provedor antes de qualquer fallback. No máximo um por janela de limite, nunca enquanto os limites estiverem simulados.",
+  "limitSettings.spend.title": "Gastar créditos do Codex primeiro",
+  "limitSettings.spend.description":
+    "Quando um turno do Codex para no limite do plano e a conta tem créditos pagos, continuar esse turno nos créditos antes de qualquer fallback. O SpecWithCode nunca compra créditos nem muda a recarga automática.",
+  "limitSettings.api.title": "Usar créditos de API primeiro",
+  "limitSettings.api.description":
+    "Quando um turno da assinatura do Claude para no limite e uma nova leitura de uso confirma isso, continuar esse turno no mesmo modelo em uma instância do Claude cobrada em créditos da API da Anthropic (com a própria chave de API ou login no Claude Console), antes de qualquer fallback. Com várias contas de API, um turno que uma recusa por falta de créditos passa para a próxima. A thread volta para a assinatura quando o limite reinicia, ou assim que isto for desligado. Nunca enquanto os limites estiverem simulados. Sem isto, o banner de limite ainda oferece cada conta como um botão.",
+  "limitSettings.api.statusNext": "Continua em {name}, depois na próxima de {count} contas de API",
+  "limitSettings.api.statusOne": "Continua em {name} quando ele tiver o modelo da thread",
+  "limitSettings.api.statusNotReady": "{name} não está pronto, então nada muda",
+  "limitSettings.api.statusNeeds":
+    "Precisa de uma conta de API do Claude: adicione uma com a chave",
+  "limitSettings.api.addKey": "Adicionar uma chave de API",
+  "limitSettings.api.addAnother": "Adicionar outra",
+  "limitSettings.redeem.confirmTitle": "Resgatar reinícios guardados automaticamente?",
+  "limitSettings.redeem.confirmProject":
+    "Turnos deste projeto que pararem em um limite de uso confirmado vão resgatar um dos reinícios guardados da conta sem perguntar, no máximo um por janela de limite. Um reinício resgatado não volta.",
+  "limitSettings.redeem.confirmGlobal":
+    "Turnos que pararem em um limite de uso confirmado vão resgatar um dos reinícios guardados da conta sem perguntar, no máximo um por janela de limite, em todo projeto que não substituir isso. Um reinício resgatado não volta.",
+  "limitSettings.redeem.confirm": "Resgatar reinícios",
+  "limitSettings.spend.confirmTitle": "Gastar créditos pagos do Codex automaticamente?",
+  "limitSettings.spend.confirmProject":
+    "Turnos deste projeto que pararem no limite do plano do Codex vão continuar nos créditos pagos da conta sem perguntar. Créditos custam dinheiro e não são reembolsados.",
+  "limitSettings.spend.confirmGlobal":
+    "Turnos que pararem no limite do plano do Codex vão continuar nos créditos pagos da conta sem perguntar, em todo projeto que não substituir isso. Créditos custam dinheiro e não são reembolsados.",
+  "limitSettings.spend.confirm": "Gastar créditos",
+  "limitSettings.api.confirmTitle": "Usar créditos da API do Claude automaticamente?",
+  "limitSettings.api.confirmProject":
+    "Turnos deste projeto que pararem em um limite confirmado da assinatura do Claude vão continuar na sua instância do Claude com chave de API sem perguntar, passando para a próxima conta de API se uma ficar sem créditos, e a thread fica lá até o limite reiniciar. Todo turno executado lá, e toda thread iniciada de lá, é cobrado da organização de API da chave pelo preço da API. O SpecWithCode não consegue ler nem limitar esse saldo; defina um limite de gastos no Claude Console.",
+  "limitSettings.api.confirmGlobal":
+    "Turnos que pararem em um limite confirmado da assinatura do Claude vão continuar na sua instância do Claude com chave de API sem perguntar, passando para a próxima conta de API se uma ficar sem créditos, em todo projeto que não substituir isso, e a thread fica lá até o limite reiniciar. Todo turno executado lá, e toda thread iniciada de lá, é cobrado da organização de API da chave pelo preço da API. O SpecWithCode não consegue ler nem limitar esse saldo; defina um limite de gastos no Claude Console.",
+  "limitSettings.api.confirm": "Usar créditos de API",
+};

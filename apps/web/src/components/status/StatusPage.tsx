@@ -9,6 +9,7 @@ import {
   runAtomCommand,
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
+import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
@@ -18,6 +19,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
+import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { SidebarInset } from "../ui/sidebar";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
@@ -126,6 +128,9 @@ export function StatusPage() {
               <h1>Status</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
+          <Button render={<Link to="/releases" />} size="xs" variant="outline" className="ml-auto">
+            Releases
+          </Button>
         </WorkspacePageHeader>
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">

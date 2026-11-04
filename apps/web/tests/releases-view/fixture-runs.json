@@ -1,0 +1,932 @@
+[
+  {
+    "schemaVersion": 1,
+    "kind": "release",
+    "runId": "c0ffee000190",
+    "rev": 62,
+    "version": "1.0.190",
+    "previous": "1.0.189",
+    "channel": "candidate",
+    "sha": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "createdAt": "2026-11-04T13:00:07Z",
+    "createdBy": "release.sh",
+    "startedAt": "2026-11-04T13:00:07Z",
+    "updatedAt": "2026-11-04T14:17:07Z",
+    "endedAt": "2026-11-04T14:17:07Z",
+    "state": "held",
+    "resumes": 0,
+    "stages": [
+      {
+        "id": "resolve",
+        "needs": [],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:02:07Z",
+        "endedAt": "2026-11-04T13:06:07Z",
+        "log": "release-staging/1.0.190/logs/candidate.log",
+        "steps": [
+          {
+            "name": "trees",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:02:07Z",
+            "endedAt": "2026-11-04T13:03:07Z",
+            "log": "release-staging/1.0.190/logs/trees.log",
+            "attempt": 1
+          },
+          {
+            "name": "prev",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:03:07Z",
+            "endedAt": "2026-11-04T13:04:07Z",
+            "log": "release-staging/1.0.190/logs/prev.log",
+            "attempt": 1
+          },
+          {
+            "name": "bump",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:04:07Z",
+            "endedAt": "2026-11-04T13:05:07Z",
+            "log": "release-staging/1.0.190/logs/bump.log",
+            "attempt": 1
+          },
+          {
+            "name": "candidate",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:05:07Z",
+            "endedAt": "2026-11-04T13:06:07Z",
+            "log": "release-staging/1.0.190/logs/candidate.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "preflight",
+        "needs": ["resolve"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:00:07Z",
+        "endedAt": "2026-11-04T13:02:07Z",
+        "log": "release-staging/1.0.190/logs/preflight.log",
+        "steps": [
+          {
+            "name": "preflight",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:00:07Z",
+            "endedAt": "2026-11-04T13:02:07Z",
+            "log": "release-staging/1.0.190/logs/preflight.log",
+            "attempt": 1
+          }
+        ],
+        "facts": {
+          "disk": {
+            "m4": {
+              "freeGiB": 123,
+              "needGiB": 41
+            }
+          }
+        }
+      },
+      {
+        "id": "test.unit",
+        "needs": ["resolve"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:06:07Z",
+        "endedAt": "2026-11-04T13:15:07Z",
+        "log": "release-staging/1.0.190/logs/stage1.log",
+        "steps": [
+          {
+            "name": "stage1",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:06:07Z",
+            "endedAt": "2026-11-04T13:15:07Z",
+            "log": "release-staging/1.0.190/logs/stage1.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "test.server",
+        "needs": ["resolve"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:14:07Z",
+        "endedAt": "2026-11-04T13:36:07Z",
+        "log": "release-staging/1.0.190/logs/server.log",
+        "steps": [
+          {
+            "name": "server-wait",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:34:07Z",
+            "endedAt": "2026-11-04T13:36:07Z",
+            "log": "release-staging/1.0.190/logs/server-wait.log",
+            "attempt": 1
+          },
+          {
+            "name": "server",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:14:07Z",
+            "endedAt": "2026-11-04T13:14:07Z",
+            "log": "release-staging/1.0.190/logs/server.log",
+            "attempt": 0
+          }
+        ],
+        "shards": [
+          {
+            "n": 1,
+            "state": "passed"
+          },
+          {
+            "n": 2,
+            "state": "passed"
+          },
+          {
+            "n": 3,
+            "state": "passed"
+          },
+          {
+            "n": 4,
+            "state": "passed"
+          },
+          {
+            "n": 5,
+            "state": "passed"
+          },
+          {
+            "n": 6,
+            "state": "passed"
+          },
+          {
+            "n": 7,
+            "state": "passed"
+          },
+          {
+            "n": 8,
+            "state": "passed"
+          }
+        ]
+      },
+      {
+        "id": "test.web",
+        "needs": ["resolve"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "test.fleet",
+        "needs": ["resolve"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "test.desktop-e2e",
+        "needs": ["resolve"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "test.migration",
+        "needs": ["preflight"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "build.mac",
+        "needs": ["preflight"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:15:07Z",
+        "endedAt": "2026-11-04T13:27:07Z",
+        "log": "release-staging/1.0.190/logs/sign.log",
+        "steps": [
+          {
+            "name": "build",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:15:07Z",
+            "endedAt": "2026-11-04T13:21:07Z",
+            "log": "release-staging/1.0.190/logs/build.log",
+            "attempt": 1
+          },
+          {
+            "name": "bundle",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:21:07Z",
+            "endedAt": "2026-11-04T13:23:07Z",
+            "log": "release-staging/1.0.190/logs/bundle.log",
+            "attempt": 1
+          },
+          {
+            "name": "sign",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:23:07Z",
+            "endedAt": "2026-11-04T13:27:07Z",
+            "log": "release-staging/1.0.190/logs/sign.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "build.windows",
+        "needs": ["preflight"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "build.linux",
+        "needs": ["preflight"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "verify.mac",
+        "needs": ["build.mac"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:27:07Z",
+        "endedAt": "2026-11-04T13:30:07Z",
+        "log": "release-staging/1.0.190/logs/verify.log",
+        "steps": [
+          {
+            "name": "verify",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:27:07Z",
+            "endedAt": "2026-11-04T13:30:07Z",
+            "log": "release-staging/1.0.190/logs/verify.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "verify.windows",
+        "needs": ["build.windows"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "verify.linux",
+        "needs": ["build.linux"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "publish.candidate",
+        "needs": [
+          "test.unit",
+          "test.server",
+          "test.web",
+          "test.fleet",
+          "test.desktop-e2e",
+          "test.migration",
+          "verify.mac",
+          "verify.windows",
+          "verify.linux"
+        ],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:30:07Z",
+        "endedAt": "2026-11-04T13:34:07Z",
+        "log": "release-staging/1.0.190/logs/drafts.log",
+        "steps": [
+          {
+            "name": "helpers",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:30:07Z",
+            "endedAt": "2026-11-04T13:32:07Z",
+            "log": "release-staging/1.0.190/logs/helpers.log",
+            "attempt": 1
+          },
+          {
+            "name": "plan",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:32:07Z",
+            "endedAt": "2026-11-04T13:33:07Z",
+            "log": "release-staging/1.0.190/logs/plan.log",
+            "attempt": 1
+          },
+          {
+            "name": "drafts",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:33:07Z",
+            "endedAt": "2026-11-04T13:34:07Z",
+            "log": "release-staging/1.0.190/logs/drafts.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "canary",
+        "needs": ["publish.candidate"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:36:07Z",
+        "endedAt": "2026-11-04T13:51:07Z",
+        "log": "release-staging/1.0.190/logs/desktop.log",
+        "steps": [
+          {
+            "name": "quit-desktop",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:36:07Z",
+            "endedAt": "2026-11-04T13:37:07Z",
+            "log": "release-staging/1.0.190/logs/quit-desktop.log",
+            "attempt": 1
+          },
+          {
+            "name": "fleet-m4",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:41:07Z",
+            "endedAt": "2026-11-04T13:49:07Z",
+            "log": "release-staging/1.0.190/logs/fleet-m4.log",
+            "attempt": 1
+          },
+          {
+            "name": "desktop",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:49:07Z",
+            "endedAt": "2026-11-04T13:51:07Z",
+            "log": "release-staging/1.0.190/logs/desktop.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "fleet",
+        "needs": ["canary"],
+        "state": "failed",
+        "startedAt": "2026-11-04T13:51:07Z",
+        "endedAt": "2026-11-04T14:17:07Z",
+        "log": "release-staging/1.0.190/logs/fleet-workers.log",
+        "steps": [
+          {
+            "name": "fleet-workers",
+            "state": "failed",
+            "startedAt": "2026-11-04T13:51:07Z",
+            "endedAt": "2026-11-04T14:17:07Z",
+            "log": "release-staging/1.0.190/logs/fleet-workers.log",
+            "attempt": 1
+          },
+          {
+            "name": "fleet-linux",
+            "state": "pending",
+            "startedAt": null,
+            "endedAt": null,
+            "log": null,
+            "attempt": 0
+          }
+        ]
+      },
+      {
+        "id": "finalize",
+        "needs": ["fleet"],
+        "state": "pending",
+        "startedAt": "2026-11-04T13:37:07Z",
+        "endedAt": null,
+        "log": "release-staging/1.0.190/logs/publish-public.log",
+        "steps": [
+          {
+            "name": "publish-private",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:37:07Z",
+            "endedAt": "2026-11-04T13:39:07Z",
+            "log": "release-staging/1.0.190/logs/publish-private.log",
+            "attempt": 1
+          },
+          {
+            "name": "publish-public",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:39:07Z",
+            "endedAt": "2026-11-04T13:41:07Z",
+            "log": "release-staging/1.0.190/logs/publish-public.log",
+            "attempt": 1
+          },
+          {
+            "name": "merge",
+            "state": "pending",
+            "startedAt": null,
+            "endedAt": null,
+            "log": null,
+            "attempt": 0
+          }
+        ]
+      },
+      {
+        "id": "verify.release",
+        "needs": ["finalize"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      }
+    ],
+    "hosts": [
+      {
+        "identity": "m4",
+        "role": "canary",
+        "required": true,
+        "from": "1.0.189",
+        "to": "1.0.190",
+        "state": "verified",
+        "askedAt": "2026-11-04T13:46:07Z",
+        "ackedAt": "2026-11-04T13:46:07Z",
+        "installedAt": "2026-11-04T13:51:07Z",
+        "verifiedAt": "2026-11-04T13:53:07Z",
+        "reason": null,
+        "receipt": "updates/receipts/update-1.0.190.json",
+        "desktop": "swapped"
+      },
+      {
+        "identity": "m1",
+        "role": "fleet",
+        "required": true,
+        "from": "1.0.189",
+        "to": "1.0.190",
+        "state": "verified",
+        "askedAt": "2026-11-04T13:56:07Z",
+        "ackedAt": "2026-11-04T13:56:07Z",
+        "installedAt": "2026-11-04T14:00:07Z",
+        "verifiedAt": "2026-11-04T14:02:07Z",
+        "reason": null,
+        "desktop": "swapped"
+      },
+      {
+        "identity": "m3",
+        "role": "fleet",
+        "required": true,
+        "from": "1.0.189",
+        "to": "1.0.190",
+        "state": "not-updated",
+        "askedAt": "2026-11-04T13:56:07Z",
+        "ackedAt": "2026-11-04T13:57:07Z",
+        "installedAt": null,
+        "verifiedAt": null,
+        "reason": "busy: 3 windows elapsed (claude, node)",
+        "notUpdatedAt": "2026-11-04T14:16:07Z"
+      },
+      {
+        "identity": "annas-macbook-air",
+        "role": "fleet",
+        "required": false,
+        "from": "1.0.187",
+        "to": "1.0.190",
+        "state": "not-updated",
+        "askedAt": null,
+        "ackedAt": null,
+        "installedAt": null,
+        "verifiedAt": null,
+        "reason": "no SSH and no Connect address",
+        "notUpdatedAt": "2026-11-04T13:56:07Z"
+      }
+    ]
+  },
+  {
+    "schemaVersion": 1,
+    "kind": "release",
+    "runId": "f00dfeed0189",
+    "rev": 50,
+    "version": "1.0.189",
+    "previous": "1.0.188",
+    "channel": "candidate",
+    "sha": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+    "createdAt": "2026-11-04T13:00:07Z",
+    "createdBy": "release.sh",
+    "startedAt": "2026-11-04T13:00:07Z",
+    "updatedAt": "2026-11-04T14:12:07Z",
+    "endedAt": "2026-11-04T14:12:07Z",
+    "state": "done",
+    "resumes": 0,
+    "stages": [
+      {
+        "id": "resolve",
+        "needs": [],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:03:07Z",
+        "endedAt": "2026-11-04T13:15:07Z",
+        "log": "release-staging/1.0.189/logs/candidate.log",
+        "steps": [
+          {
+            "name": "trees",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:03:07Z",
+            "endedAt": "2026-11-04T13:06:07Z",
+            "log": "release-staging/1.0.189/logs/trees.log",
+            "attempt": 1
+          },
+          {
+            "name": "prev",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:06:07Z",
+            "endedAt": "2026-11-04T13:09:07Z",
+            "log": "release-staging/1.0.189/logs/prev.log",
+            "attempt": 1
+          },
+          {
+            "name": "bump",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:09:07Z",
+            "endedAt": "2026-11-04T13:12:07Z",
+            "log": "release-staging/1.0.189/logs/bump.log",
+            "attempt": 1
+          },
+          {
+            "name": "candidate",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:12:07Z",
+            "endedAt": "2026-11-04T13:15:07Z",
+            "log": "release-staging/1.0.189/logs/candidate.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "preflight",
+        "needs": ["resolve"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:00:07Z",
+        "endedAt": "2026-11-04T13:03:07Z",
+        "log": "release-staging/1.0.189/logs/preflight.log",
+        "steps": [
+          {
+            "name": "preflight",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:00:07Z",
+            "endedAt": "2026-11-04T13:03:07Z",
+            "log": "release-staging/1.0.189/logs/preflight.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "test.unit",
+        "needs": ["resolve"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:15:07Z",
+        "endedAt": "2026-11-04T13:18:07Z",
+        "log": "release-staging/1.0.189/logs/stage1.log",
+        "steps": [
+          {
+            "name": "stage1",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:15:07Z",
+            "endedAt": "2026-11-04T13:18:07Z",
+            "log": "release-staging/1.0.189/logs/stage1.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "test.server",
+        "needs": ["resolve"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:39:07Z",
+        "endedAt": "2026-11-04T14:09:07Z",
+        "log": "release-staging/1.0.189/logs/server.log",
+        "steps": [
+          {
+            "name": "server-wait",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:39:07Z",
+            "endedAt": "2026-11-04T13:42:07Z",
+            "log": "release-staging/1.0.189/logs/server-wait.log",
+            "attempt": 1
+          },
+          {
+            "name": "server",
+            "state": "passed",
+            "startedAt": "2026-11-04T14:06:07Z",
+            "endedAt": "2026-11-04T14:09:07Z",
+            "log": "release-staging/1.0.189/logs/server.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "test.web",
+        "needs": ["resolve"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "test.fleet",
+        "needs": ["resolve"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "test.desktop-e2e",
+        "needs": ["resolve"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "test.migration",
+        "needs": ["preflight"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "build.mac",
+        "needs": ["preflight"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:18:07Z",
+        "endedAt": "2026-11-04T13:27:07Z",
+        "log": "release-staging/1.0.189/logs/sign.log",
+        "steps": [
+          {
+            "name": "build",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:18:07Z",
+            "endedAt": "2026-11-04T13:21:07Z",
+            "log": "release-staging/1.0.189/logs/build.log",
+            "attempt": 1
+          },
+          {
+            "name": "bundle",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:21:07Z",
+            "endedAt": "2026-11-04T13:24:07Z",
+            "log": "release-staging/1.0.189/logs/bundle.log",
+            "attempt": 1
+          },
+          {
+            "name": "sign",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:24:07Z",
+            "endedAt": "2026-11-04T13:27:07Z",
+            "log": "release-staging/1.0.189/logs/sign.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "build.windows",
+        "needs": ["preflight"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "build.linux",
+        "needs": ["preflight"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "verify.mac",
+        "needs": ["build.mac"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:27:07Z",
+        "endedAt": "2026-11-04T13:30:07Z",
+        "log": "release-staging/1.0.189/logs/verify.log",
+        "steps": [
+          {
+            "name": "verify",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:27:07Z",
+            "endedAt": "2026-11-04T13:30:07Z",
+            "log": "release-staging/1.0.189/logs/verify.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "verify.windows",
+        "needs": ["build.windows"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "verify.linux",
+        "needs": ["build.linux"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      },
+      {
+        "id": "publish.candidate",
+        "needs": [
+          "test.unit",
+          "test.server",
+          "test.web",
+          "test.fleet",
+          "test.desktop-e2e",
+          "test.migration",
+          "verify.mac",
+          "verify.windows",
+          "verify.linux"
+        ],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:30:07Z",
+        "endedAt": "2026-11-04T13:39:07Z",
+        "log": "release-staging/1.0.189/logs/drafts.log",
+        "steps": [
+          {
+            "name": "helpers",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:30:07Z",
+            "endedAt": "2026-11-04T13:33:07Z",
+            "log": "release-staging/1.0.189/logs/helpers.log",
+            "attempt": 1
+          },
+          {
+            "name": "plan",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:33:07Z",
+            "endedAt": "2026-11-04T13:36:07Z",
+            "log": "release-staging/1.0.189/logs/plan.log",
+            "attempt": 1
+          },
+          {
+            "name": "drafts",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:36:07Z",
+            "endedAt": "2026-11-04T13:39:07Z",
+            "log": "release-staging/1.0.189/logs/drafts.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "canary",
+        "needs": ["publish.candidate"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:42:07Z",
+        "endedAt": "2026-11-04T13:57:07Z",
+        "log": "release-staging/1.0.189/logs/desktop.log",
+        "steps": [
+          {
+            "name": "quit-desktop",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:42:07Z",
+            "endedAt": "2026-11-04T13:45:07Z",
+            "log": "release-staging/1.0.189/logs/quit-desktop.log",
+            "attempt": 1
+          },
+          {
+            "name": "fleet-m4",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:51:07Z",
+            "endedAt": "2026-11-04T13:54:07Z",
+            "log": "release-staging/1.0.189/logs/fleet-m4.log",
+            "attempt": 1
+          },
+          {
+            "name": "desktop",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:54:07Z",
+            "endedAt": "2026-11-04T13:57:07Z",
+            "log": "release-staging/1.0.189/logs/desktop.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "fleet",
+        "needs": ["canary"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:57:07Z",
+        "endedAt": "2026-11-04T14:06:07Z",
+        "log": "release-staging/1.0.189/logs/fleet-linux.log",
+        "steps": [
+          {
+            "name": "fleet-workers",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:57:07Z",
+            "endedAt": "2026-11-04T14:00:07Z",
+            "log": "release-staging/1.0.189/logs/fleet-workers.log",
+            "attempt": 1
+          },
+          {
+            "name": "fleet-linux",
+            "state": "passed",
+            "startedAt": "2026-11-04T14:03:07Z",
+            "endedAt": "2026-11-04T14:06:07Z",
+            "log": "release-staging/1.0.189/logs/fleet-linux.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "finalize",
+        "needs": ["fleet"],
+        "state": "passed",
+        "startedAt": "2026-11-04T13:45:07Z",
+        "endedAt": "2026-11-04T14:03:07Z",
+        "log": "release-staging/1.0.189/logs/merge.log",
+        "steps": [
+          {
+            "name": "publish-private",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:45:07Z",
+            "endedAt": "2026-11-04T13:48:07Z",
+            "log": "release-staging/1.0.189/logs/publish-private.log",
+            "attempt": 1
+          },
+          {
+            "name": "publish-public",
+            "state": "passed",
+            "startedAt": "2026-11-04T13:48:07Z",
+            "endedAt": "2026-11-04T13:51:07Z",
+            "log": "release-staging/1.0.189/logs/publish-public.log",
+            "attempt": 1
+          },
+          {
+            "name": "merge",
+            "state": "passed",
+            "startedAt": "2026-11-04T14:00:07Z",
+            "endedAt": "2026-11-04T14:03:07Z",
+            "log": "release-staging/1.0.189/logs/merge.log",
+            "attempt": 1
+          }
+        ]
+      },
+      {
+        "id": "verify.release",
+        "needs": ["finalize"],
+        "state": "pending",
+        "startedAt": null,
+        "endedAt": null,
+        "log": null,
+        "steps": []
+      }
+    ],
+    "hosts": [
+      {
+        "identity": "m4",
+        "role": "canary",
+        "required": true,
+        "from": "1.0.188",
+        "to": "1.0.189",
+        "state": "verified",
+        "askedAt": "2026-11-04T14:00:07Z",
+        "ackedAt": "2026-11-04T14:00:07Z",
+        "installedAt": "2026-11-04T14:00:07Z",
+        "verifiedAt": "2026-11-04T14:00:07Z",
+        "reason": null
+      },
+      {
+        "identity": "m1",
+        "role": "fleet",
+        "required": true,
+        "from": "1.0.188",
+        "to": "1.0.189",
+        "state": "verified",
+        "askedAt": "2026-11-04T14:06:07Z",
+        "ackedAt": "2026-11-04T14:06:07Z",
+        "installedAt": "2026-11-04T14:06:07Z",
+        "verifiedAt": "2026-11-04T14:06:07Z",
+        "reason": null
+      },
+      {
+        "identity": "m3",
+        "role": "fleet",
+        "required": true,
+        "from": "1.0.188",
+        "to": "1.0.189",
+        "state": "verified",
+        "askedAt": "2026-11-04T14:06:07Z",
+        "ackedAt": "2026-11-04T14:06:07Z",
+        "installedAt": "2026-11-04T14:06:07Z",
+        "verifiedAt": "2026-11-04T14:06:07Z",
+        "reason": null
+      }
+    ]
+  }
+]

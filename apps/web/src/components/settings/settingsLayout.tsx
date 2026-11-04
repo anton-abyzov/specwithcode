@@ -41,6 +41,7 @@ import {
   type SettingInheritanceState,
   type SettingOverridingProject,
 } from "./SettingInheritance";
+import { useTx } from "../../i18n";
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 
@@ -230,6 +231,7 @@ export function SettingsDisclosure({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDetailsElement>(props.id);
+  const tx = useTx();
   return (
     <details
       {...props}
@@ -238,7 +240,7 @@ export function SettingsDisclosure({
       className={cn("group rounded-xl border border-border/60", props.className)}
     >
       <summary className="cursor-pointer rounded-xl px-4 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
-        <span className="ml-2">{title}</span>
+        <span className="ml-2">{tx(title)}</span>
         {reach ? (
           <span className="ml-3 inline-block align-middle">
             <SettingsReachLabel reach={reach} />
@@ -260,9 +262,12 @@ export function SettingsSection({
   variant = "grouped",
   children,
   className,
+  literal = false,
   ...sectionProps
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
+  /** The title is a name (a machine, provider or project), never translated. */
+  literal?: boolean;
   hideTitle?: boolean;
   reach?: SettingsReach;
   icon?: ReactNode;
@@ -271,6 +276,8 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  const tx = useTx();
+  const shownTitle = literal ? title : tx(title);
 
   return (
     <section
@@ -280,7 +287,7 @@ export function SettingsSection({
       className={cn(!hideTitle && "space-y-2.5", className)}
     >
       {hideTitle ? (
-        <h2 className="sr-only">{title}</h2>
+        <h2 className="sr-only">{shownTitle}</h2>
       ) : (
         <div
           data-settings-scroll-target
@@ -289,7 +296,7 @@ export function SettingsSection({
           <div className="min-w-0">
             <h2 className="flex min-h-7 items-center gap-2 text-sm font-semibold text-foreground">
               {icon}
-              {title}
+              {shownTitle}
             </h2>
             {reach ? <SettingsReachLabel reach={reach} /> : null}
           </div>
@@ -353,9 +360,12 @@ export function SettingsRow({
   mixed: mixedOverride,
   children,
   className,
+  literal = false,
   ...rowProps
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
+  /** Title and description are names or values, never translated. */
+  literal?: boolean;
   description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
@@ -368,6 +378,10 @@ export function SettingsRow({
   mixed?: boolean;
   children?: ReactNode;
 }) {
+  const tx = useTx();
+  const shownTitle = typeof title === "string" && !literal ? tx(title) : title;
+  const shownDescription =
+    typeof description === "string" && !literal ? tx(description) : description;
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const navigate = useNavigate();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
@@ -449,7 +463,7 @@ export function SettingsRow({
   const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
     source === "project" || source === "mixed" ? (
       <SettingResetButton
-        label={typeof title === "string" ? title : "override"}
+        label={typeof shownTitle === "string" ? shownTitle : "override"}
         tooltip="Reset to inherited value"
         onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
       />
@@ -485,13 +499,13 @@ export function SettingsRow({
     unavailable && control
       ? inertControl(
           !canWriteSettings
-            ? "This connection does not have permission to change environment settings."
+            ? tx("This connection does not have permission to change environment settings.")
             : context
-              ? "Reconnect the selected environment to change this setting."
+              ? tx("Reconnect the selected environment to change this setting.")
               : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
         )
       : environmentWide && control
-        ? inertControl("Environment-wide setting. Select an environment to change it.")
+        ? inertControl(tx("Environment-wide setting. Select an environment to change it."))
         : control;
   // Server rows get an indicator beside the title that opens the resolution
   // chain per target at every scope; client rows keep a plain status only.
@@ -551,7 +565,7 @@ export function SettingsRow({
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,40%)] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
-            <h3 className="min-w-0 text-sm font-medium text-foreground">{title}</h3>
+            <h3 className="min-w-0 text-sm font-medium text-foreground">{shownTitle}</h3>
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}
@@ -566,7 +580,7 @@ export function SettingsRow({
           </div>
           {description ? (
             <div className="max-w-xl text-xs leading-normal text-muted-foreground">
-              {description}
+              {shownDescription}
             </div>
           ) : null}
           {renderedStatus ? (

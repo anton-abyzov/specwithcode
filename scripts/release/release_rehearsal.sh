@@ -8,12 +8,19 @@
 # (--ci) has no such state, so the rehearsal is skipped there. rehearsal.exit holds "SHA EXIT" once
 # it has finished; its report is in logs/rehearsal.log.
 
+# --stage test.migration runs it in the foreground: a CI job's background processes end with it.
 start_rehearsal() {
+  start_rehearsal_background
+  if [ "$STAGE_ONLY" = test.migration ]; then rehearsal_wait; fi
+}
+
+start_rehearsal_background() {
   if [ "$CI_MODE" -eq 1 ]; then
     say "= rehearsal: skipped (--ci)"
     return 0
   fi
   if is_done rehearsal "$SHA"; then return 0; fi
+  begin_background rehearsal || return 0
   if [ "$MODE" = dry ]; then
     say "> rehearsal (background, alongside build..plan; waited on before drafts)"
     CURRENT_STAGE=rehearsal rehearsal_command
@@ -48,6 +55,9 @@ rehearsal_command() {
 rehearsal_wait() {
   local sha="" rc="" pid="" waited=0
   if [ "$CI_MODE" -eq 1 ] || [ "$MODE" = dry ] || is_done rehearsal "$SHA"; then return 0; fi
+  if [ ! -f "$STAGE/rehearsal.pid" ] && [ ! -f "$STAGE/rehearsal.exit" ]; then
+    die "the update rehearsal for $SHA12 never started; run --stage test.migration (or --resume) first"
+  fi
   while :; do
     if [ -f "$STAGE/rehearsal.exit" ]; then read -r sha rc < "$STAGE/rehearsal.exit"; fi
     if [ "$sha" = "$SHA" ] && [ -n "$rc" ]; then break; fi
@@ -64,9 +74,11 @@ rehearsal_wait() {
   done
   if [ "$rc" != 0 ]; then
     if [ -f "$LOG_DIR/rehearsal.log" ]; then tail -n 40 "$LOG_DIR/rehearsal.log"; fi
+    record_step rehearsal failed "$LOG_DIR/rehearsal.log"
     drop_drafts  # An earlier candidate's drafts.
     die "the update rehearsal failed for $SHA12 (exit $rc); log: $LOG_DIR/rehearsal.log"
   fi
   mark_done rehearsal "$SHA"
+  record_step rehearsal passed "$LOG_DIR/rehearsal.log"
   say "= rehearsal: passed for $SHA12"
 }

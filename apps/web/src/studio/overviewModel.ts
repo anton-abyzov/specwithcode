@@ -14,6 +14,7 @@ import type {
   StudioCapacitySnapshot,
 } from "@specweave-studio/contracts/studio";
 import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
+import { isAccessWait } from "./accessWait";
 
 export type AttentionKind =
   | "approval"
@@ -30,6 +31,8 @@ export type SessionView = {
   readonly project: EnvironmentProject | null;
   readonly state: string;
   readonly attention: AttentionKind | null;
+  /** The needs-you chip for attention, named once here so the chip and state agree. */
+  readonly attentionLabel: string | null;
   readonly working: boolean;
   readonly settled: boolean;
 };
@@ -47,6 +50,14 @@ const ATTENTION_LABELS: Record<AttentionKind, string> = {
 };
 
 export const attentionLabel = (kind: AttentionKind) => ATTENTION_LABELS[kind];
+
+/** The chip for a session that needs you: an access request is named as one. */
+export function sessionAttentionLabel(
+  kind: AttentionKind,
+  thread: Pick<EnvironmentThreadShell, "source">,
+): string {
+  return kind === "approval" && isAccessWait(thread) ? "Access requested" : attentionLabel(kind);
+}
 
 /**
  * A running turn this quiet is listed in Needs you only when nothing explains
@@ -91,7 +102,7 @@ export function deriveSessions(
           : observedAttention === "held"
             ? `${heldQueueCountLabel(thread.heldQueuedCount ?? 0)} · Resume or discard`
             : observedAttention
-              ? attentionLabel(observedAttention)
+              ? sessionAttentionLabel(observedAttention, thread)
               : status === "waiting"
                 ? "Waiting for background work"
                 : health?.state === "waiting" &&
@@ -110,6 +121,10 @@ export function deriveSessions(
         project: projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null,
         state: connected ? observedState : `Disconnected · Last observed: ${observedState}`,
         attention: connected ? observedAttention : null,
+        attentionLabel:
+          connected && observedAttention !== null
+            ? sessionAttentionLabel(observedAttention, thread)
+            : null,
         working: connected && observedWorking,
         settled,
       };

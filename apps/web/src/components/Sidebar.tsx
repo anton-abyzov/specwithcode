@@ -313,6 +313,7 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../composerDraftStore";
+import { isAccessWait } from "../studio/accessWait";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -1353,7 +1354,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           }
         : status === "approval"
           ? {
-              label: "Approval",
+              label: isAccessWait(thread) ? "Access" : "Approval",
               icon: "approval" as const,
               className: "text-warning-foreground",
             }

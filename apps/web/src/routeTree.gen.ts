@@ -13,6 +13,7 @@ import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as ReleasesRouteImport } from './routes/releases'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as DesignRouteImport } from './routes/design'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
@@ -67,6 +68,11 @@ const StatusRoute = StatusRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ReleasesRoute = ReleasesRouteImport.update({
+  id: '/releases',
+  path: '/releases',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PairRoute = PairRouteImport.update({
@@ -252,6 +258,7 @@ export interface FileRoutesByFullPath {
   '/connect-agent': typeof ConnectAgentRoute
   '/design': typeof DesignRouteWithChildren
   '/pair': typeof PairRoute
+  '/releases': typeof ReleasesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
@@ -291,6 +298,7 @@ export interface FileRoutesByTo {
   '/connect-agent': typeof ConnectAgentRoute
   '/design': typeof DesignRouteWithChildren
   '/pair': typeof PairRoute
+  '/releases': typeof ReleasesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
@@ -333,6 +341,7 @@ export interface FileRoutesById {
   '/connect-agent': typeof ConnectAgentRoute
   '/design': typeof DesignRouteWithChildren
   '/pair': typeof PairRoute
+  '/releases': typeof ReleasesRoute
   '/settings': typeof SettingsRouteWithChildren
   '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
@@ -376,6 +385,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/design'
     | '/pair'
+    | '/releases'
     | '/settings'
     | '/status'
     | '/usage'
@@ -415,6 +425,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/design'
     | '/pair'
+    | '/releases'
     | '/settings'
     | '/status'
     | '/usage'
@@ -456,6 +467,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/design'
     | '/pair'
+    | '/releases'
     | '/settings'
     | '/status'
     | '/usage'
@@ -498,6 +510,7 @@ export interface RootRouteChildren {
   ConnectAgentRoute: typeof ConnectAgentRoute
   DesignRoute: typeof DesignRouteWithChildren
   PairRoute: typeof PairRoute
+  ReleasesRoute: typeof ReleasesRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   StatusRoute: typeof StatusRoute
   UsageRoute: typeof UsageRoute
@@ -533,6 +546,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/releases': {
+      id: '/releases'
+      path: '/releases'
+      fullPath: '/releases'
+      preLoaderRoute: typeof ReleasesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pair': {
@@ -874,6 +894,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectAgentRoute: ConnectAgentRoute,
   DesignRoute: DesignRouteWithChildren,
   PairRoute: PairRoute,
+  ReleasesRoute: ReleasesRoute,
   SettingsRoute: SettingsRouteWithChildren,
   StatusRoute: StatusRoute,
   UsageRoute: UsageRoute,

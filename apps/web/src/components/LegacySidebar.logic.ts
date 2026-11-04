@@ -72,7 +72,12 @@ export type LegacySidebarWaitingThread = WaitingThreadStatus & {
 };
 
 // The status pills that ask the person for something: the rows a fold hides would show them.
-const WAITING_PILLS = new Set(["Pending Approval", "Awaiting Input", "Plan Ready"]);
+const WAITING_PILLS = new Set([
+  "Pending Approval",
+  "Pending Access",
+  "Awaiting Input",
+  "Plan Ready",
+]);
 
 /**
  * Threads in these projects waiting on the person (an approval, an answer or a plan to

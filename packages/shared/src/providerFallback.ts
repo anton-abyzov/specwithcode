@@ -295,11 +295,16 @@ function fitsContext(fit: ContextFitRequirement | undefined, selection: ModelSel
 
 /**
  * A provider that reports no usage at all: GitHub Copilot and the other
- * agents behind ACP. Its room can only be learned by trying it, so it counts
- * as having room while it can take a turn and nothing marks it limited.
+ * agents behind ACP, and any account whose read says it has no meter at all
+ * (`unavailable.unmetered`: OpenCode Zen without an OpenCode Go plan). Its room can only be learned
+ * by trying it, so it counts as having room while it can take a turn and
+ * nothing marks it limited.
  */
 export function reportsNoUsage(provider: ServerProvider): boolean {
-  return provider.usageLimits === undefined;
+  const limits = provider.usageLimits;
+  return (
+    limits === undefined || (limits.unavailable?.unmetered === true && limits.windows.length === 0)
+  );
 }
 
 /** A Cursor instance signed in with a Cursor API key (`api-key`). */
@@ -339,7 +344,7 @@ export function isUnknownBillingAgent(
  * order, the legacy fallback model, the project default or its provider
  * order. That is the consent an unknown-billing agent needs.
  */
-function ruleNamesInstance(
+export function ruleNamesInstance(
   rule: {
     readonly [
       K in

@@ -496,6 +496,21 @@ describe("native shells and explicit instance selection", () => {
             pendingRuntimeRequest: { id: "request", kind: "auth_refresh", createdAt: asked },
           } as never,
         }),
+        shell({
+          id: "access" as never,
+          runtime: running,
+          updatedAt: asked,
+          hasPendingApprovals: true,
+          activeWork: null,
+          source: {
+            pendingRuntimeRequest: {
+              id: "turn-item:access-request:1",
+              kind: "permission",
+              createdAt: asked,
+              access: { accessTitle: "Use Notes", reason: "", subjects: [] },
+            },
+          } as never,
+        }),
       ],
       [],
       new Set(["host"]),
@@ -505,6 +520,7 @@ describe("native shells and explicit instance selection", () => {
     expect(byId("worker")).toMatchObject({ attention: "approval", state: "Approval requested" });
     expect(byId("question")).toMatchObject({ attention: "input", state: "Answer needed" });
     expect(byId("sign-in")).toMatchObject({ attention: "signin", state: "Sign-in needed" });
+    expect(byId("access")).toMatchObject({ attention: "approval", state: "Access requested" });
     expect(views.slice(0, 3).map((s) => s.attention)).not.toContain("stalled");
   });
   it("keeps the time a limited run stopped when the service restart bumps the thread", () => {

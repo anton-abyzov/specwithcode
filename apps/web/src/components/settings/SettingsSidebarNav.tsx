@@ -56,6 +56,7 @@ import {
 } from "./settingsSearch";
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { validateSettingsScopeSearch } from "./settingsScope";
+import { useTx } from "../../i18n";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -138,6 +139,7 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+  const tx = useTx();
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
@@ -157,8 +159,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     [navItems],
   );
   const results = useMemo(
-    () => searchSettingsBySection(query, searchableItems, navSections),
-    [navSections, query, searchableItems],
+    () => searchSettingsBySection(query, searchableItems, navSections, tx),
+    [navSections, query, searchableItems, tx],
   );
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
@@ -291,8 +293,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   setActiveResultIndex(0);
                 }}
                 onKeyDown={handleSearchKeyDown}
-                placeholder="Search"
-                aria-label="Search settings"
+                placeholder={tx("Search")}
+                aria-label={tx("Search settings")}
                 role="combobox"
                 aria-autocomplete="list"
                 aria-expanded={isSearching && hasResults}
@@ -310,7 +312,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   size="icon-micro"
                   variant="ghost-muted"
                   className="shrink-0"
-                  aria-label="Clear settings search"
+                  aria-label={tx("Clear settings search")}
                   onClick={() => {
                     clearSearch();
                     searchInputRef.current?.focus();
@@ -327,14 +329,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 role="status"
                 className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
               >
-                No settings found
+                {tx("No settings found")}
               </p>
             ) : null}
             {isSearching ? (
               <SidebarMenu
                 id={hasResults ? "settings-search-results" : undefined}
                 role={hasResults ? "listbox" : undefined}
-                aria-label={hasResults ? "Settings search results" : undefined}
+                aria-label={hasResults ? tx("Settings search results") : undefined}
               >
                 {results.map((result, index) => (
                   <SidebarMenuItem key={result.id} role="presentation">
@@ -358,12 +360,12 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                         <>
                           <SettingsSectionIcon to={result.section} />
                           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-sidebar-foreground">
-                            {result.label}
+                            {tx(result.label)}
                           </span>
                         </>
                       ) : (
                         <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground">
-                          {result.row.title}
+                          {tx(result.row.title)}
                         </span>
                       )}
                     </SidebarMenuButton>
@@ -371,11 +373,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <nav aria-label="Settings sections" className="flex flex-col gap-4">
+              <nav aria-label={tx("Settings sections")} className="flex flex-col gap-4">
                 {groupSettingsNavItems(navItems).map((group) => (
                   <div key={group.label} className="flex flex-col gap-1">
                     <div className="px-2 text-xs font-medium text-sidebar-muted-foreground">
-                      {group.label}
+                      {tx(group.label)}
                     </div>
                     <SidebarMenu>
                       {group.items.map((item) => {
@@ -389,7 +391,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                               onClick={() => handleSectionClick(item.to)}
                             >
                               <Icon />
-                              <span className="truncate">{item.label}</span>
+                              <span className="truncate">{tx(item.label)}</span>
                             </SidebarMenuButton>
                           </SidebarMenuItem>
                         );

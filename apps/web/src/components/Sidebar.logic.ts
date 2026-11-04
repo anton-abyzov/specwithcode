@@ -37,6 +37,7 @@ import {
   type ProjectListGroup,
   type ScratchRootLookup,
 } from "../studio/projectListVisibility";
+import { isAccessWait } from "../studio/accessWait";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -640,6 +641,7 @@ export interface ThreadStatusPill {
     | "Connecting"
     | "Completed"
     | "Pending Approval"
+    | "Pending Access"
     | "Awaiting Input"
     | "Waiting"
     | "Plan Ready";
@@ -650,6 +652,7 @@ export interface ThreadStatusPill {
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
+  "Pending Access": 5,
   "Awaiting Input": 4,
   Working: 3,
   Connecting: 3,
@@ -669,6 +672,7 @@ type ThreadStatusInput = Pick<
 > & {
   lastVisitedAt?: string | null | undefined;
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
+  source?: SidebarThreadSummary["source"] | undefined;
 };
 
 export interface ThreadJumpHintVisibilityController {
@@ -1230,7 +1234,7 @@ export function resolveThreadStatusPill(input: {
 
   if (thread.hasPendingApprovals) {
     return {
-      label: "Pending Approval",
+      label: isAccessWait(thread) ? "Pending Access" : "Pending Approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
       dotClass: "bg-amber-500 dark:bg-amber-300/90",
       pulse: false,

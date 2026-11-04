@@ -1,7 +1,7 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect } from "react";
 
-// Settings, Usage, Status and Pull Requests replace the sidebar utility row with a
+// Settings, Usage, Status, Releases and Pull Requests replace the sidebar utility row with a
 // Back button. Everything else is the main app, a project's workspace included,
 // so Back from settings returns to the project it was opened from.
 export function isSidebarUtilityPage(pathname: string) {
@@ -10,6 +10,7 @@ export function isSidebarUtilityPage(pathname: string) {
     pathname.startsWith("/settings/") ||
     pathname === "/usage" ||
     pathname === "/status" ||
+    pathname === "/releases" ||
     pathname === "/pull-requests"
   );
 }

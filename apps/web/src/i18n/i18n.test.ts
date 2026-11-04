@@ -2,12 +2,36 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { matchLocale, resolveLocale, resolveSystemLocale, SUPPORTED_LOCALES, translate } from ".";
+import { de } from "./messages/de";
 import { en, type MessageKey } from "./messages/en";
 import { es } from "./messages/es";
+import { fr } from "./messages/fr";
+import { ja } from "./messages/ja";
+import { ko } from "./messages/ko";
+import { pt } from "./messages/pt";
 import { ru } from "./messages/ru";
 import { zh } from "./messages/zh";
+import { translatePhrase } from "./phrases";
+import { de as dePhrases } from "./phrases/de";
+import { es as esPhrases } from "./phrases/es";
+import { fr as frPhrases } from "./phrases/fr";
+import { ja as jaPhrases } from "./phrases/ja";
+import { ko as koPhrases } from "./phrases/ko";
+import { pt as ptPhrases } from "./phrases/pt";
+import { ru as ruPhrases } from "./phrases/ru";
+import { zh as zhPhrases } from "./phrases/zh";
 
-const CATALOGS = { ru, es, "zh-CN": zh } as const;
+const CATALOGS = { ru, es, "zh-CN": zh, ja, "pt-BR": pt, ko, de, fr } as const;
+const PHRASE_CATALOGS = {
+  ru: ruPhrases,
+  es: esPhrases,
+  "zh-CN": zhPhrases,
+  ja: jaPhrases,
+  "pt-BR": ptPhrases,
+  ko: koPhrases,
+  de: dePhrases,
+  fr: frPhrases,
+} as const;
 
 const placeholders = (message: string | Readonly<Record<string, string>>) => {
   const texts = typeof message === "string" ? [message] : Object.values(message);
@@ -21,19 +45,34 @@ describe("locale matching", () => {
     expect(matchLocale("zh-Hans-CN")).toBe("zh-CN");
     expect(matchLocale("zh-TW")).toBe("zh-CN");
     expect(matchLocale("en-GB")).toBe("en");
-    expect(matchLocale("de-DE")).toBeNull();
+    expect(matchLocale("ja-JP")).toBe("ja");
+    expect(matchLocale("pt-PT")).toBe("pt-BR");
+    expect(matchLocale("ko-KR")).toBe("ko");
+    expect(matchLocale("de-AT")).toBe("de");
+    expect(matchLocale("fr-CA")).toBe("fr");
+    expect(matchLocale("it-IT")).toBeNull();
   });
 
   it("takes the first supported browser language and falls back to English", () => {
-    expect(resolveSystemLocale(["de-DE", "ru", "en"])).toBe("ru");
-    expect(resolveSystemLocale(["fr-FR"])).toBe("en");
+    expect(resolveSystemLocale(["it-IT", "ru", "en"])).toBe("ru");
+    expect(resolveSystemLocale(["it-IT"])).toBe("en");
     expect(resolveSystemLocale(undefined)).toBe("en");
     expect(resolveLocale("es", ["ru"])).toBe("es");
     expect(resolveLocale("system", ["ru"])).toBe("ru");
   });
 
   it("lists every catalog", () => {
-    expect([...SUPPORTED_LOCALES]).toEqual(["en", "ru", "es", "zh-CN"]);
+    expect([...SUPPORTED_LOCALES]).toEqual([
+      "en",
+      "ru",
+      "es",
+      "zh-CN",
+      "ja",
+      "pt-BR",
+      "ko",
+      "de",
+      "fr",
+    ]);
   });
 });
 
@@ -66,6 +105,17 @@ describe("translate", () => {
       "Importar 2 proyectos",
     );
     expect(translate("zh-CN", "wizard.import.importButton", { count: 2 })).toBe("导入 2 个项目");
+    expect(translate("ja", "wizard.import.importButton", { count: 2 })).toBe(
+      "2 件のプロジェクトをインポート",
+    );
+    expect(translate("de", "wizard.import.importButton", { count: 1 })).toBe(
+      "1 Projekt importieren",
+    );
+    // French and Brazilian Portuguese use the singular for zero.
+    expect(translate("fr", "wizard.import.importButton", { count: 0 })).toBe("Importer 0 projet");
+    expect(translate("pt-BR", "wizard.import.importButton", { count: 0 })).toBe(
+      "Importar 0 projeto",
+    );
   });
 
   it("keeps an English duration that other screens already show", () => {
@@ -74,38 +124,71 @@ describe("translate", () => {
   });
 });
 
-describe("catalogs", () => {
+describe.each(Object.entries(CATALOGS))("%s catalog", (locale, catalog) => {
   const keys = Object.keys(en) as MessageKey[];
 
-  for (const [locale, catalog] of Object.entries(CATALOGS)) {
-    it(`${locale} translates every key using only English's values`, () => {
-      for (const key of keys) {
-        const source = en[key];
-        const target = catalog[key];
-        expect(target, key).toBeDefined();
-        expect(typeof target, key).toBe(typeof source);
-        // A translation may leave a value out where its grammar reads better without it.
-        const allowed = placeholders(source);
-        for (const name of placeholders(target))
-          expect(allowed.has(name), `${key} {${name}}`).toBe(true);
-      }
-      expect(Object.keys(catalog).sort()).toEqual([...keys].sort());
-    });
+  it("translates every key using only English's values", () => {
+    for (const key of keys) {
+      const source = en[key];
+      const target = catalog[key];
+      expect(target, key).toBeDefined();
+      expect(typeof target, key).toBe(typeof source);
+      // A translation may leave a value out where its grammar reads better without it.
+      const allowed = placeholders(source);
+      for (const name of placeholders(target))
+        expect(allowed.has(name), `${key} {${name}}`).toBe(true);
+    }
+    expect(Object.keys(catalog).sort()).toEqual([...keys].sort());
+  });
 
-    it(`${locale} plural messages cover the language's categories`, () => {
-      const categories = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
-      for (const key of keys) {
-        const target = catalog[key];
-        if (typeof target === "string") continue;
-        for (const category of categories) {
-          if (category === "other") continue;
-          // Spanish "many" is for exact millions, which these counts never reach.
-          if (locale === "es" && category === "many") continue;
-          expect(target[category], `${key} ${category}`).toBeDefined();
-        }
+  it("covers the language's plural categories", () => {
+    const categories = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
+    for (const key of keys) {
+      const target = catalog[key];
+      if (typeof target === "string") continue;
+      for (const category of categories) {
+        if (category === "other") continue;
+        // Romance "many" is for exact millions, which these counts never reach.
+        if (category === "many" && ["es", "fr", "pt-BR"].includes(locale)) continue;
+        expect(target[category], `${key} ${category}`).toBeDefined();
       }
+    }
+  });
+});
+
+describe("phrases", () => {
+  const reference = Object.keys(PHRASE_CATALOGS.ru).sort();
+
+  it("translates a known phrase and leaves an unknown one in English", () => {
+    expect(translatePhrase("de", "Settings")).toBe("Einstellungen");
+    expect(translatePhrase("ja", "Language")).toBe("言語");
+    expect(translatePhrase("en", "Settings")).toBe("Settings");
+    expect(translatePhrase("fr", "No such phrase")).toBe("No such phrase");
+    expect(translatePhrase("fr", "constructor")).toBe("constructor");
+  });
+
+  it("only holds phrases the interface still shows", () => {
+    // A copy edit that renames a phrase must move its translations too.
+    const files = import.meta.glob<string>(["../**/*.{ts,tsx}", "!../i18n/**", "!../**/*.test.*"], {
+      query: "?raw",
+      import: "default",
+      eager: true,
     });
-  }
+    const sources = Object.values(files).join("\n");
+    const stale = reference.filter(
+      (phrase) => !sources.includes(JSON.stringify(phrase)) && !sources.includes(`'${phrase}'`),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it.each(Object.entries(PHRASE_CATALOGS))(
+    "%s covers the same phrases with non-empty text",
+    (_locale, catalog) => {
+      expect(Object.keys(catalog).sort()).toEqual(reference);
+      for (const [english, text] of Object.entries(catalog))
+        expect(text.trim().length, english).toBeGreaterThan(0);
+    },
+  );
 });
 
 describe("language preference", () => {

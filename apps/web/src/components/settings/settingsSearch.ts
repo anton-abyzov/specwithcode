@@ -1479,19 +1479,36 @@ export type SettingsSearchResult = GroupedSettingsSearchResult<SettingsPath, Set
 
 /**
  * Sections first as roots, each followed by its matching rows. `sections` are
- * the sections this surface can open, in sidebar order.
+ * the sections this surface can open, in sidebar order. `translate` gives the
+ * titles in the interface language, so a query matches what the person reads
+ * as well as the English.
  */
 export function searchSettingsBySection(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
   sections: ReadonlyArray<SettingsPath> = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths),
+  translate?: (english: string) => string,
 ): SettingsSearchResult[] {
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const open = new Set(sections);
+  const translated = (english: string) => {
+    const text = translate?.(english);
+    return text !== undefined && text !== english ? [text] : [];
+  };
   return searchSettingsGrouped(
     query,
-    sections.map((section) => ({ section, label: SETTINGS_SECTION_LABELS[section] })),
-    items.filter((item) => open.has(item.to) && isSettingsSearchItemOnPlatform(item, platform)),
+    sections.map((section) => {
+      const label = SETTINGS_SECTION_LABELS[section];
+      return { section, label, searchTerms: translated(label) };
+    }),
+    items
+      .filter((item) => open.has(item.to) && isSettingsSearchItemOnPlatform(item, platform))
+      .map((item) => {
+        const extra = [...translated(item.title), ...translated(SETTINGS_SECTION_LABELS[item.to])];
+        return extra.length === 0
+          ? item
+          : { ...item, searchTerms: [...(item.searchTerms ?? []), ...extra] };
+      }),
     (item) => item.to,
   );
 }

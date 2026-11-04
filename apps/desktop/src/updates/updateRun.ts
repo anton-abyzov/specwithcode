@@ -32,6 +32,8 @@ export const INSTALL_PROGRESS_FILE = "install-progress.json";
 export const INSTALL_MARKER_FILE = "install-in-progress.json";
 /** Ended runs kept in `runs/`, newest first. */
 export const RUN_ARCHIVE_KEEP = 5;
+/** Release run records (scripts/release/run_record.py) share `runs/`; pruning leaves them alone. */
+export const RELEASE_RUN_PREFIX = "release-";
 
 export const RUN_MIN_DEADLINE_MS = 10 * 60_000;
 export const RUN_MAX_DEADLINE_MS = 30 * 60_000;
@@ -313,7 +315,7 @@ function archive(files: RunFiles, existing: UpdateRunRecord | null, nowMs: numbe
   files.rename(RUN_FILE, `${RUN_ARCHIVE_DIR}/${name}.json`);
   const kept = files
     .list(RUN_ARCHIVE_DIR)
-    .filter((entry) => entry.endsWith(".json"))
+    .filter((entry) => entry.endsWith(".json") && !entry.startsWith(RELEASE_RUN_PREFIX))
     .map((entry) => ({
       entry,
       at: isoMillis(parseRun(files.read(`${RUN_ARCHIVE_DIR}/${entry}`))?.createdAt) ?? 0,

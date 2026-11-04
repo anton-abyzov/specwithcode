@@ -3763,6 +3763,7 @@ export function ConnectionsSettings({
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={primaryNickname || (desktopBridge ? "This machine" : "Primary environment")}
+            literal
             icon={
               <EnvironmentMachineIcon
                 aria-hidden

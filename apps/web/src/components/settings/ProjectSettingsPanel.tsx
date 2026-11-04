@@ -518,6 +518,7 @@ function ProjectDetail({
         <SettingsRow
           key={member.physicalProjectKey}
           title={member.environmentLabel ?? "Environment"}
+          literal
           description={<ProjectLocation path={member.workspaceRoot} />}
           control={
             <Button

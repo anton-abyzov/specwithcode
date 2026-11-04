@@ -26,7 +26,9 @@
 # aside, without a snapshot, an app on the release that fails its signature check. And the Linux
 # workers last (fleet-linux, after merge), skipped with --ci, whose failure only warns. And the
 # update rehearsal: in the background after stage 1, waited on before drafts, a failure stopping
-# the release before drafts and rerun by --resume, skipped with --ci.
+# the release before drafts and rerun by --resume, skipped with --ci. And the candidate channel
+# (release-self-test-canary.sh): R2 publish, the M4 canary and its soak, the fleet, and GitHub and
+# stable.json only in finalize.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -1376,7 +1378,14 @@ unverified_drafts_refused() {
 check 'drafts refuse a candidate without a verify marker' unverified_drafts_refused
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
+# The candidate channel, canary and finalize (release-canary.sh).
+. "$HERE/release-self-test-canary.sh"
+
 check 'release_tools.py unit tests' tools_ok
+
+# The run record, --stage and release.yml (increment 1239).
+# shellcheck source=release-self-test-record.sh
+. "$HERE/release-self-test-record.sh"
 
 # Stub runs record commands without running them, so a misspelled command name (pyhton3) passes
 # every check above and first fails a real release with exit 127. Every recorded command must

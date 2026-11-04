@@ -119,6 +119,12 @@ export const ServerProviderUsageLimits = Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed"]),
       /** Malformed/incomplete evidence must survive cache and sparse updates. */
       invalidResponse: Schema.optional(Schema.Literal(true)),
+      /**
+       * This account has no usage meter at all, not a meter that went unread:
+       * OpenCode Zen without an OpenCode Go plan. Its room can only be learned
+       * by trying it, like an ACP agent that reports no usage.
+       */
+      unmetered: Schema.optional(Schema.Literal(true)),
       message: Schema.optional(TrimmedNonEmptyString),
     }),
   ),

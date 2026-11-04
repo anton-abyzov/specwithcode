@@ -28,6 +28,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -52,6 +53,7 @@ import * as FleetSkills from "./fleet/fleetSkills.ts";
 import * as FleetUpdate from "./fleet/fleetUpdate.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
+import * as ReleaseRuns from "./releases/ReleaseRunService.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -149,6 +151,7 @@ export const layer = HttpApiBuilder.group(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const httpClient = yield* HttpClient.HttpClient;
     const fileSystem = yield* FileSystem.FileSystem;
+    const releaseRuns = yield* ReleaseRuns.ReleaseRunService;
     /**
      * Where this server listens now: the runtime state it recorded at
      * startup (the bound port), else its configuration.
@@ -356,6 +359,14 @@ export const layer = HttpApiBuilder.group(
               { concurrency: 4 },
             );
             return { ...snapshot, machines };
+          }),
+        )
+        // The release runs this machine recorded, for the Releases view; read-only.
+        .handle("releaseRuns", () =>
+          Effect.gen(function* () {
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            yield* noStore;
+            return yield* releaseRuns.list();
           }),
         )
         .handle("requestFleetUpdate", ({ payload }) =>
@@ -866,4 +877,4 @@ export const layer = HttpApiBuilder.group(
         )
     );
   }),
-);
+).pipe(Layer.provide(ReleaseRuns.layer));

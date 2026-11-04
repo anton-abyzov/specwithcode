@@ -38,6 +38,8 @@ export function makeUnavailableUsageLimits(input: {
   readonly checkedAt: string;
   readonly reason: "unsupported" | "probeFailed";
   readonly message?: string;
+  /** No meter exists for this account (see `ServerProviderUsageLimits.unavailable.unmetered`). */
+  readonly unmetered?: boolean;
 }): ServerProviderUsageLimits {
   return {
     checkedAt: input.checkedAt,
@@ -45,6 +47,7 @@ export function makeUnavailableUsageLimits(input: {
     unavailable: {
       reason: input.reason,
       ...(input.message ? { message: input.message } : {}),
+      ...(input.unmetered === true ? { unmetered: true as const } : {}),
     },
   };
 }

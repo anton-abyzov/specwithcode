@@ -47,6 +47,7 @@ import { resolveThreadAlertStatus } from "./Sidebar.logic";
 import { notificationsConnected, useNotificationsConnected } from "../notificationConnection";
 import { deliverNotificationOnce } from "../notificationHistory";
 import { toastManager } from "./ui/toast";
+import { isAccessWait } from "../studio/accessWait";
 
 /** A system notification still on screen, until the user comes back. */
 // The desktop bridge accepts notification titles up to 256 characters.
@@ -444,7 +445,9 @@ function EnvironmentNotifications({
                 : kind === "completion"
                   ? "Thread completed"
                   : action?.reason === "approval"
-                    ? "Approval needed"
+                    ? isAccessWait(currentThread)
+                      ? "Access needed"
+                      : "Approval needed"
                     : action?.reason === "signin"
                       ? "Sign-in needed"
                       : action?.reason === "plan"

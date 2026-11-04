@@ -3710,6 +3710,7 @@ export function ArchivedThreadsPanel() {
             key={`${project.environmentId}:${project.id}`}
             id={index === 0 ? searchableSetting("archive").id : undefined}
             title={chats ? "Chats" : project.title}
+            literal
             icon={<ProjectFavicon project={project} />}
           >
             {projectThreads.map((thread) => (

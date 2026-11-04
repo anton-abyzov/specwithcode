@@ -44,7 +44,7 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { WhatYouCanDo } from "./WhatYouCanDo";
 import {
-  attentionLabel,
+  sessionAttentionLabel,
   deriveSessions,
   relativeTime,
   sessionStateSince,
@@ -993,7 +993,9 @@ function AttentionItem({
   return (
     <ChatLink target={target} className={`studio-attention-item ${attentionTone(s)}`}>
       <div className="studio-attention-top">
-        <span className="studio-chip">{attentionLabel(s.attention!)}</span>
+        <span className="studio-chip">
+          {s.attentionLabel ?? sessionAttentionLabel(s.attention!, s.thread)}
+        </span>
         <time dateTime={sessionStateSince(s.thread)}>
           {relativeTime(sessionStateSince(s.thread), now)}
         </time>

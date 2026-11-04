@@ -30,11 +30,12 @@ function waiting(
     readonly kind?: "permission" | "command";
     readonly at?: string;
     readonly title?: string;
+    readonly requestId?: string;
   } = {},
 ): EnvironmentThreadShell {
   const base = makeThreadFixture({ id: id as never, title: options.title ?? `Thread ${id}` });
   const pendingRuntimeRequest = {
-    id: RuntimeRequestId.make(`turn-item:access-request:${id}`),
+    id: RuntimeRequestId.make(options.requestId ?? `turn-item:access-request:${id}`),
     kind: options.kind ?? "permission",
     createdAt: DateTime.makeUnsafe(options.at ?? "2026-11-04T12:00:00.000Z"),
     ...(options.access === undefined ? {} : { access: options.access }),
@@ -52,8 +53,12 @@ describe("threads waiting on an access request", () => {
     const thread = waiting("a", { access });
     expect(threadTone(thread)).toBe("waiting");
     expect(threadStatusWord(thread)).toBe("Access requested");
+    // A card whose summary lost its access block still reads as one, by its id.
+    expect(threadStatusWord(waiting("c", { kind: "permission" }))).toBe("Access requested");
     // A plain permission keeps its wording.
-    expect(threadStatusWord(waiting("b", { kind: "permission" }))).toBe("Approval requested");
+    expect(threadStatusWord(waiting("b", { kind: "permission", requestId: "approval:b" }))).toBe(
+      "Approval requested",
+    );
   });
 
   it("list only access requests, oldest ask first, worded by the shared helpers", () => {

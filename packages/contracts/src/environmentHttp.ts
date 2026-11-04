@@ -53,6 +53,7 @@ import {
   StudioFleetSkillStatus,
   StudioFleetSkillStatusQuery,
 } from "./studioFleet.ts";
+import { ReleaseRunsSnapshot } from "./releaseRuns.ts";
 import {
   DeviceSignInApproveInput,
   DeviceSignInApproveResult,
@@ -1100,6 +1101,14 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
     HttpApiEndpoint.get("fleet", "/api/studio/fleet", {
       headers: OptionalBearerHeaders,
       success: StudioFleetSnapshot,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /** This machine's release run records (updates/runs/release-*.json), newest first. Read-only. */
+    HttpApiEndpoint.get("releaseRuns", "/api/studio/fleet/releases", {
+      headers: OptionalBearerHeaders,
+      success: ReleaseRunsSnapshot,
       error: [...EnvironmentScopedOperationErrors, EnvironmentHttpInternalServerError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )

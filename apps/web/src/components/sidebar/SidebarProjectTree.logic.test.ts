@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   buildProjectTree,
+  classifyProjectTreeSession,
   compactAge,
   PROJECT_TREE_OTHER_KEY,
   resolveProjectTreeExpanded,
@@ -125,5 +126,28 @@ describe("compactAge", () => {
     expect(compactAge(now - 2 * 86_400_000, now)).toBe("2d");
     expect(compactAge(now - 21 * 86_400_000, now)).toBe("3w");
     expect(compactAge(0, now)).toBe("");
+  });
+});
+
+describe("classifyProjectTreeSession", () => {
+  it("names an access request apart from a command approval", () => {
+    const access = {
+      id: "turn-item:access-request:1",
+      kind: "permission",
+      createdAt: "2026-10-10T05:00:00Z",
+      access: { accessTitle: "Use Notes", reason: "", subjects: [] },
+    };
+    expect(
+      classifyProjectTreeSession(
+        shell("asks", {
+          hasPendingApprovals: true,
+          source: { pendingRuntimeRequest: access } as never,
+        }),
+      ),
+    ).toEqual({ status: "attention", label: "Access requested" });
+    expect(classifyProjectTreeSession(shell("cmd", { hasPendingApprovals: true }))).toEqual({
+      status: "attention",
+      label: "Approval requested",
+    });
   });
 });

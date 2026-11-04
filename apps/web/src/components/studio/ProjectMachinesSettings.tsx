@@ -377,6 +377,7 @@ export function ProjectMachinesSettings({
             key={`${copy.project.environmentId}:${copy.project.id}`}
             data-project-copy=""
             title={label}
+            literal
             description={
               <>
                 <ProjectLocation path={copy.project.workspaceRoot} />
@@ -497,6 +498,7 @@ export function ProjectMachinesSettings({
         <SettingsRow
           key={`departed:${member.environmentId}:${member.id}`}
           title={machines.label(member.environmentId)}
+          literal
           description={`This copy was unlinked on ${machines.label(member.environmentId)}. Remove it from ${coordinatorLabel}'s list.`}
           control={
             <Button

@@ -227,6 +227,7 @@ export function CoordinatorStandbyView(props: CoordinatorStandbyViewProps) {
           key={row.environmentId}
           data-standby-machine=""
           title={row.text}
+          literal
           description={row.error ?? undefined}
           control={
             row.state === "ready" ? null : (

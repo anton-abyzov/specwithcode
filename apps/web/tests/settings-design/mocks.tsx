@@ -5,6 +5,7 @@ export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE = "Fixture unavailable";
 export const usePrimaryEnvironmentId = () => "fixture-m4";
 export const useEnvironmentScope = () => true;
 export const useEnvironmentsWithScope = () => new Set(["fixture-m4"]);
+export const useEnvironment = () => null;
 export const useOptionalSettingsScope = () => null;
 export const useClearProjectOverrides = () => () => undefined;
 export const useClearScopedSettings = () => () => undefined;

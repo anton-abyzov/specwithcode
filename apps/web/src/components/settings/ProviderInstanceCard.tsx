@@ -1065,6 +1065,7 @@ export function ProviderInstanceCard({
     <>
       <SettingsSection
         title={displayName}
+        literal
         reach={machineReach}
         icon={titleIconNode}
         headerAction={editorHeaderAction}

@@ -93,6 +93,7 @@ export function ProviderModelTiersSettings() {
             mixed={mixed}
             id={`provider-model-tiers-${provider.instanceId}`}
             title={name}
+            literal
             description="The regular model does everyday work; the frontier model runs when the strongest one is asked for, such as a review at frontier depth."
             resetAction={
               hasOwn ? (

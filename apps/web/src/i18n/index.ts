@@ -13,6 +13,12 @@ import { en, type MessageKey, type Messages, type PluralMessage } from "./messag
 import { es } from "./messages/es";
 import { ru } from "./messages/ru";
 import { zh } from "./messages/zh";
+import { ja } from "./messages/ja";
+import { pt } from "./messages/pt";
+import { ko } from "./messages/ko";
+import { de } from "./messages/de";
+import { fr } from "./messages/fr";
+import { translatePhrase } from "./phrases";
 
 export * from "./locale";
 export type { MessageKey } from "./messages/en";
@@ -22,6 +28,11 @@ const CATALOGS: Readonly<Record<Locale, Messages>> = {
   ru,
   es,
   "zh-CN": zh,
+  ja,
+  "pt-BR": pt,
+  ko,
+  de,
+  fr,
 };
 
 export type MessageValues = Readonly<Record<string, string | number>>;
@@ -87,4 +98,16 @@ export function useLocalePreference(): readonly [
 export function useT(): Translate {
   const locale = useLocale();
   return useCallback((key, values) => translate(locale, key, values), [locale]);
+}
+
+/**
+ * Translate an English UI phrase by its own text, for the many settings rows
+ * and labels that are not worth a named key. Unknown phrases stay English.
+ */
+
+export type TranslatePhrase = (english: string) => string;
+
+export function useTx(): TranslatePhrase {
+  const locale = useLocale();
+  return useCallback((english: string) => translatePhrase(locale, english), [locale]);
 }

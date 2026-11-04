@@ -17,6 +17,7 @@ import {
   threadBlocker,
   threadHeldQueue,
 } from "./projectWorkspaceModel";
+import { approvalWaitLabel } from "./accessWait";
 
 /** The slice of a provider instance that names it; `ProviderInstanceEntry` satisfies it. */
 export type ProviderNameSource = {
@@ -631,7 +632,7 @@ export function threadStatusWord(
   if (hostOffline) return "Host offline";
   const status = resolveSidebarThreadStatus(thread);
   if (status === "approval" && thread.source?.pendingRuntimeRequest !== null)
-    return thread.source?.pendingRuntimeRequest?.access ? "Access requested" : "Approval requested";
+    return approvalWaitLabel(thread);
   if (status === "input" && thread.source?.pendingRuntimeRequest !== null) return "Answer needed";
   const dependency = threadDependencyWait(thread);
   if (dependency) return dependency;
