@@ -72,12 +72,29 @@ fleet_hosts.load_hosts(); nothing here names an address.
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --dry-run
     python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --only workers --no-desktop-apps
 
-Exit 0 when every host chosen has finalized the version and every worker's app is on it, 1 when
+Every host ends with a row: installed, already-installed, or not-updated with a reason. M4, M1
+and M3 are required (REQUIRED_HOSTS; --optional HOST relaxes one): a required host that is
+unreachable, skipped or fails ends the run as `partial` with exit 1 and a per-host report. Any other
+machine (ministorm, a Connect-only Mac) may end not-updated without failing the run. A host that
+stops answering status reads after its request (a restart) counts as lost only once it has stayed
+silent for STATUS_OUTAGE_SECONDS, not after a number of reads. A request the host does not
+acknowledge (no installRequestedAt written back) is sent again after ACK_WINDOW, at most
+ACK_RETRIES more times.
+
+One rollout runs at a time: each run takes an exclusive lock (updates/fleet-rollout.lock in M4's
+home, an flock that a dead process leaves free). A release's run waits for it (--lock-wait-minutes);
+`--reconcile` (M4's update agent, after M4 finalized a version any way, Update now included) gives
+up at once with `locked` and exit 0, since the run holding it covers the workers.
+
+    python3 -B scripts/studio-fleet/fleet_rollout.py --version 1.0.37 --reconcile
+
+Exit 0 when every required host has finalized the version and every worker's app is on it, 1 when
 one has not, 2 for bad arguments.
 """
 import argparse
 import base64
 import datetime
+import fcntl
 import json
 import os
 import pathlib
@@ -108,7 +125,13 @@ CALL_TIMEOUT = 90
 # (update_request.AGENT_PASS_WAIT).
 REQUEST_TIMEOUT = CALL_TIMEOUT + update_request.AGENT_PASS_WAIT
 FLEET_CONFIG = 'studio-fleet.json'  # M4's fleet (studioFleet.FLEET_CONFIG_FILE).
-STATUS_FAILURES = 5  # Consecutive unanswered status reads before a host counts as lost.
+STATUS_FAILURES = 5  # Consecutive unanswered status reads, at least, before a host counts as lost...
+STATUS_OUTAGE_SECONDS = 300  # ...and only once it has been silent this long: a restart is not a lost host.
+ACK_WINDOW = 60  # Seconds before a request the host did not acknowledge is sent again.
+ACK_RETRIES = 3  # Unacknowledged requests sent again before the host counts as not reached.
+REQUIRED_HOSTS = ('m4', 'm1', 'm3')  # A release is done only when these are verified (increment 1239, D-03).
+LOCK_NAME = 'fleet-rollout.lock'
+RECONCILE_WAIT = 20 * 60  # A reconcile waits this long for an M4-only rollout to end.
 VERSION = re.compile(r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})')
 BOOT = """
 import sys, types
@@ -128,6 +151,99 @@ PENDING_STATUSES = ('available', 'downloading', 'downloaded', 'waiting-for-quiet
 
 class RolloutError(Exception):
     reply = None  # The host's error answer; it names a request written before a kickstart failed.
+
+
+class RolloutPartial(RolloutError):
+    """A required host did not end on the version; `results` holds every host's row."""
+
+    def __init__(self, message, results):
+        RolloutError.__init__(self, message)
+        self.results = results
+
+
+class RolloutLocked(Exception):
+    """Another rollout holds the lock; `holder` is what it wrote there."""
+
+    def __init__(self, holder):
+        Exception.__init__(self, 'another fleet rollout runs: %s' % (json.dumps(holder) if holder else 'unknown'))
+        self.holder = holder
+
+
+class RolloutLock(object):
+    """An exclusive flock on `path`. The kernel frees it when the holder dies, so a lock file left by
+    a dead process is taken again; what the holder wrote there (pid, mode, version) only names it."""
+
+    def __init__(self, path, clock=time.time, sleep=time.sleep):
+        self.path = pathlib.Path(path)
+        self.clock = clock
+        self.sleep = sleep
+        self.fd = None
+
+    def holder(self):
+        try:
+            return json.loads(self.path.read_text() or 'null')
+        except (OSError, ValueError):
+            return None
+
+    def acquire(self, wait=0, poll=10, info=None, say=None):
+        """Takes the lock, waiting up to `wait` seconds; raises RolloutLocked when it stays taken."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o600)
+        begin, told = self.clock(), False
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if self.clock() - begin >= wait:
+                    os.close(fd)
+                    raise RolloutLocked(self.holder()) from None
+                if say is not None and not told:
+                    say('waiting for the fleet rollout that holds %s: %s' % (self.path, json.dumps(self.holder())))
+                    told = True
+                self.sleep(poll)
+        os.ftruncate(fd, 0)
+        os.write(fd, json.dumps(dict(info or {}, pid=os.getpid(), at=self.clock())).encode('utf-8'))
+        self.fd = fd
+        return self
+
+    def release(self):
+        if self.fd is not None:
+            try:
+                os.ftruncate(self.fd, 0)
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self.fd)
+                self.fd = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.release()
+
+
+def covers(holder, version):
+    """True when the rollout holding the lock asks the workers for `version` itself."""
+    return isinstance(holder, dict) and holder.get('version') == version and holder.get('only') in ('all', 'workers')
+
+
+def lock_path(home=None):
+    return studio_paths.identity_home(pathlib.Path(home or pathlib.Path.home()), LOCAL) / 'updates' / LOCK_NAME
+
+
+def not_updated(identity, reason, **extra):
+    """The row of a host that did not end on the version."""
+    return dict({'identity': identity, 'result': 'not-updated', 'reason': reason}, **extra)
+
+
+def report(version, results, required):
+    """One line per host that is not on `version`, required ones first."""
+    rows = sorted(((identity, row) for identity, row in results.items()
+                   if row.get('result') not in ('installed', 'already-installed')),
+                  key=lambda item: (item[0] not in required, item[0]))
+    return ['%s%s: %s on %s: %s' % (identity, ' (required)' if identity in required else '', row.get('result'),
+                                    version, row.get('reason') or row.get('error') or '') for identity, row in rows]
 
 
 class DesktopAppsFailed(RolloutError):
@@ -605,6 +721,8 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     copying = [0]  # Folder copies the forced drain, or a worker's request, waits for, as last seen.
     counted = [0]  # Copies a drain found: no drain again until the service's own count shows none.
     deferred = [False]  # A worker's request held back while M4 copies.
+    acked = [None]  # installRequestedAt the host wrote back for the last request, or None.
+    unacked = [0]  # Requests in a row the host did not acknowledge.
 
     def unheld(reason):
         """A wanted hold that cannot be taken stops the rollout before any further forced request."""
@@ -684,6 +802,18 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         sent[0] += 1
         mode = 'forced, held %d min' % hold_minutes if force else 'version-bound'
         say('%s: asked to install %s (%s) on %s' % (identity, version, mode, current or 'an unknown version'))
+        # The host acknowledges by answering with its request: update_request writes installRequestedAt
+        # back; a Linux self-update over Connect (boot-service) answers `request: null`, as does a host
+        # already on the version. A reply with no request answer at all reached no agent.
+        acked[0] = ((reply.get('request') or {}).get('installRequestedAt')
+                    or ('acknowledged' if 'request' in reply or reply.get('method') == 'boot-service' else None))
+        if acked[0]:
+            unacked[0] = 0
+        else:
+            unacked[0] += 1
+            if unacked[0] > ACK_RETRIES:
+                raise RolloutError('%s never acknowledged a request for %s (%d sent)' % (identity, version, sent[0]))
+            say('%s: the request was not acknowledged; asking again in %ds' % (identity, ACK_WINDOW))
         agent_note(identity, reply, say)
         if reply.get('kicked') is False:
             say('%s: launchctl kickstart failed; the agent still runs within 10 minutes' % identity)
@@ -803,7 +933,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 asked, requests = clock(), 0
             else:  # Never a forced request before the hold: a check until the agent offers it.
                 asked, requests = check(), 0
-        seen, failures = None, 0
+        seen, failures, silent = None, 0, None
         while True:
             if clock() - begin >= deadline:
                 raise RolloutError('%s did not install %s within %d min; last: %s %s%s' % (
@@ -813,12 +943,16 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             sleep(poll)
             try:
                 status = call(['status', '--identity', identity])
-                failures = 0
+                failures, silent = 0, None
             except RolloutError as error:
                 failures += 1
-                say('%s: status unavailable (%d/%d): %s' % (identity, failures, STATUS_FAILURES, error))
-                if failures >= STATUS_FAILURES:
-                    raise
+                silent = clock() if silent is None else silent
+                quiet_for = int(clock() - silent)
+                say('%s: status unavailable (%d, silent %ds of %ds): %s' % (
+                    identity, failures, quiet_for, STATUS_OUTAGE_SECONDS, error))
+                if failures >= STATUS_FAILURES and quiet_for >= STATUS_OUTAGE_SECONDS:
+                    raise RolloutError('%s gave no status for %ds (%d reads): %s' % (
+                        identity, quiet_for, failures, error)) from None
                 continue
             if status.get('version') == version and failed_since(status, version, first[0]):
                 # The new release kept running after a check following the restart failed
@@ -830,7 +964,10 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             if status.get('version') == version and status.get('installFinalized') is True:
                 seconds = int(clock() - begin)
                 say('%s: installed %s after %ds' % (identity, version, seconds))
-                return {'identity': identity, 'result': 'installed', 'requests': requests, 'seconds': seconds}
+                done = {'identity': identity, 'result': 'installed', 'requests': requests, 'seconds': seconds}
+                if acked[0] and acked[0] != 'acknowledged':
+                    done['acknowledgedAt'] = acked[0]
+                return done
             if status.get('status') == 'manual-required':
                 raise RolloutError('%s needs a manual upgrade: %s' % (identity, status.get('message') or ''))
             if status.get('method') == 'boot-service' and status.get('phase') == 'failed':
@@ -865,7 +1002,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
                 # snapshot its apply is checked against already counts the hold's session row.
                 held_request, asked, requests = True, ask(), requests + 1
                 continue
-            if clock() - asked < window:
+            if clock() - asked < (window if acked[0] or not sent[0] or holder[0] is not None else ACK_WINDOW):
                 continue
             if pressed(status):  # Its own window from here, once that request no longer stands.
                 asked = clock()
@@ -892,22 +1029,40 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
 
 def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60, worker_deadline=60 * 60,
             worker_force=False, poll=5, clock=time.time, sleep=time.sleep, say=None, hold=None, desktop=None,
-            local_copies=None, ignore_folder_copies=False):
+            local_copies=None, ignore_folder_copies=False, required=REQUIRED_HOSTS, m4_wait=0):
     """M4 first (drained and held through `hold`, its ServiceHold, when given), then every other
     host in `hosts` together (M1 and M3, and any Connect-only machine), never held; an Unreachable
     one is reported as skipped. `local_copies` (local_folder_copies) counts M4's own folder copies,
     which keep every worker's request back, as runFleetUpdate does on the Connect route. With `desktop` (desktop_app_rollout.DesktopApps), each worker's desktop app
     follows once its service is confirmed on `version`. Returns {identity: result}; raises
-    RolloutError, or DesktopAppsFailed once every service is done when only an app update failed."""
+    RolloutPartial (every host's row in `results`) when a host in `required` did not end on `version`,
+    or DesktopAppsFailed once every service is done when only an app update failed. A host outside
+    `required` that fails or cannot be reached ends with a not-updated row and fails nothing."""
     say = say or Printer(clock=clock)
     results = {}
+    required = tuple(required)
     if only in ('all', LOCAL):
-        results[LOCAL] = roll_host(LOCAL, hosts[LOCAL], version, True, hold_minutes, local_deadline, poll,
-                                   clock, sleep, say, hold=hold,
-                                   ignore_copies=ignore_folder_copies or getattr(hold, 'ignore_folder_copies', False))
+        try:
+            results[LOCAL] = roll_host(LOCAL, hosts[LOCAL], version, True, hold_minutes, local_deadline, poll,
+                                       clock, sleep, say, hold=hold,
+                                       ignore_copies=ignore_folder_copies or getattr(hold, 'ignore_folder_copies', False))
+        except RolloutError as error:
+            results[LOCAL] = not_updated(LOCAL, str(error))
+            if only == 'all':
+                for identity in hosts:
+                    if identity != LOCAL:
+                        results[identity] = not_updated(identity, 'not asked: M4 did not finalize %s' % version)
+            raise RolloutPartial(str(error), results) from None
     if only in ('all', 'workers'):
         if only == 'workers':
-            status = hosts[LOCAL](['status', '--identity', LOCAL])
+            # `m4_wait` (a reconcile): M4's agent starts it before it has saved the install it finalizes.
+            begin = clock()
+            while True:
+                status = hosts[LOCAL](['status', '--identity', LOCAL])
+                if (status.get('version') == version and status.get('installFinalized') is True) \
+                        or clock() - begin >= m4_wait:
+                    break
+                sleep(poll)
             if status.get('version') != version or status.get('installFinalized') is not True:
                 raise RolloutError('M4 has not finalized %s (descriptor %s): install it first (--only m4); '
                                    'M1 and M3 never go while M4 is updating' % (version, status.get('version')))
@@ -935,6 +1090,9 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                 say('%s: skipped: %s' % (identity, host.reason))
                 with lock:
                     results[identity] = {'identity': identity, 'result': 'skipped', 'reason': host.reason}
+                    if identity in required:  # A required host is never silently skipped.
+                        results[identity] = not_updated(identity, 'unreachable: %s' % host.reason)
+                        errors.append('%s: unreachable: %s' % (identity, host.reason))
                 return
             if hasattr(host, 'say') and host.say is None:
                 host.say = say  # FallbackHost names the route it falls back to.
@@ -949,11 +1107,18 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                     results[identity] = result
             except RolloutError as error:
                 with lock:
-                    errors.append(str(error))
+                    results[identity] = not_updated(identity, str(error), route=getattr(host, 'route', None))
+                    if identity in required:
+                        errors.append(str(error))
+                    else:
+                        say('%s: not updated (optional): %s' % (identity, error))
                 return
             except Exception as error:  # noqa: BLE001 - a host never drops out of the results unreported.
+                reason = '%s stopped on an unexpected %s: %s' % (identity, type(error).__name__, error)
                 with lock:
-                    errors.append('%s stopped on an unexpected %s: %s' % (identity, type(error).__name__, error))
+                    results[identity] = not_updated(identity, reason)
+                    if identity in required:
+                        errors.append(reason)
                 return
             if desktop is not None:
                 via_connect = getattr(host, 'route', None) == 'connect'
@@ -971,8 +1136,12 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
             thread.start()
         for thread in threads:
             thread.join()
+        missing = [identity for identity in required if identity != LOCAL and identity not in hosts]
+        for identity in missing:  # A required machine absent from the inventory is not a pass.
+            results[identity] = not_updated(identity, 'not in the fleet inventory')
+            errors.append('%s: not in the fleet inventory' % identity)
         if errors:
-            raise RolloutError('; '.join(sorted(errors) + sorted(app_errors)))
+            raise RolloutPartial('; '.join(sorted(errors) + sorted(app_errors)), results)
         if app_errors:
             raise DesktopAppsFailed('; '.join(sorted(app_errors)), results)
     return results
@@ -1014,13 +1183,28 @@ def main(argv=None):
     parser.add_argument('--no-desktop-apps', action='store_true',
                         help="leave M1's and M3's desktop apps as they are (by default each follows its service)")
     parser.add_argument('--dry-run', action='store_true', help='print the order and commands; contact no host')
+    parser.add_argument('--optional', action='append', default=[], metavar='HOST',
+                        help='a required host (%s) that may end not-updated without failing the run'
+                             % ', '.join(REQUIRED_HOSTS))
+    parser.add_argument('--reconcile', action='store_true',
+                        help='M4 finalized VERSION some other way (Update now, its agent): bring the workers to it; '
+                             'implies --only workers, and gives up at once when another rollout runs')
+    parser.add_argument('--lock-wait-minutes', type=int, default=75,  # A reconcile's worker deadline (60) and then some.
+                        help='how long to wait for another rollout to end (not with --reconcile)')
     args = parser.parse_args(argv)
+    if args.reconcile:
+        if args.only == LOCAL:
+            parser.error('--reconcile updates the workers; it cannot be combined with --only m4')
+        args.only = 'workers'
+    required = tuple(name for name in REQUIRED_HOSTS if name not in args.optional)
     if args.wait_for_idle and args.no_hold:
         parser.error('--wait-for-idle cannot be combined with --no-hold')
     if _tuple(args.version) is None:
         parser.error('--version must be X.Y.Z')
     if not 1 <= args.hold_minutes <= update_request.HOLD_MAX_MINUTES:
         parser.error('--hold-minutes must be 1 to %d' % update_request.HOLD_MAX_MINUTES)
+    if args.lock_wait_minutes < 0:
+        parser.error('--lock-wait-minutes cannot be negative')
     if args.poll_seconds < 1 or args.m4_deadline_minutes < 1 or args.worker_deadline_minutes < 1:
         parser.error('deadlines and the poll interval must be positive')
     try:
@@ -1058,11 +1242,35 @@ def main(argv=None):
         return 0
     # An old M4 is refused in roll_host, after its status shows whether Update now already
     # asked for this version (then the rollout joins that install instead).
+    lock, info = RolloutLock(lock_path()), {'version': args.version, 'only': args.only, 'reconcile': args.reconcile}
+    try:
+        try:
+            lock.acquire(0 if args.reconcile else args.lock_wait_minutes * 60, info=info, say=Printer())
+        except RolloutLocked as error:
+            # Only a run that asks the workers for this same version covers them. An M4-only run (its
+            # agent finalizing is what started this reconcile), a run for another version, or a holder
+            # not yet named: wait for it rather than leave the workers behind.
+            if not args.reconcile or covers(error.holder, args.version):
+                raise
+            lock.acquire(RECONCILE_WAIT, info=info, say=Printer())
+    except RolloutLocked as error:
+        print('fleet_rollout: %s' % error, file=sys.stderr)
+        print(json.dumps({'version': args.version, 'result': 'locked', 'holder': error.holder}))
+        return 0 if args.reconcile else 1
     try:
         results = rollout(args.version, hosts, args.only, args.hold_minutes, args.m4_deadline_minutes * 60,
                           args.worker_deadline_minutes * 60, args.worker_force, args.poll_seconds, hold=hold,
                           desktop=desktop, local_copies=local_folder_copies,
-                          ignore_folder_copies=args.ignore_folder_copies)
+                          ignore_folder_copies=args.ignore_folder_copies, required=required,
+                          m4_wait=RECONCILE_WAIT if args.reconcile else 0)
+    except RolloutPartial as error:
+        lines = report(args.version, error.results, required)
+        print('fleet_rollout: %s' % error, file=sys.stderr)
+        for line in lines:
+            print('fleet_rollout: not updated: %s' % line, file=sys.stderr)
+        print(json.dumps({'version': args.version, 'result': 'partial', 'error': str(error), 'hosts': error.results,
+                          'notUpdated': lines}))
+        return 1
     except DesktopAppsFailed as error:
         print('fleet_rollout: every service is on %s, but %s' % (args.version, error), file=sys.stderr)
         print(json.dumps({'version': args.version, 'result': 'failed', 'error': str(error), 'hosts': error.results}))
@@ -1071,7 +1279,12 @@ def main(argv=None):
         print('fleet_rollout: %s' % error, file=sys.stderr)
         print(json.dumps({'version': args.version, 'result': 'failed', 'error': str(error)}))
         return 1
-    print(json.dumps({'version': args.version, 'result': 'installed', 'hosts': results}))
+    finally:
+        lock.release()
+    lines = report(args.version, results, required)
+    for line in lines:  # Optional hosts only: a required one raised.
+        print('fleet_rollout: not updated: %s' % line, file=sys.stderr)
+    print(json.dumps({'version': args.version, 'result': 'installed', 'hosts': results, 'notUpdated': lines}))
     return 0
 
 

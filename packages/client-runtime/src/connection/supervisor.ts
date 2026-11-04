@@ -761,7 +761,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // A new network or a return to the app may have brought a better route back.
       if (
         (next._tag === "NetworkChanged" && next.network !== "offline") ||
-        (next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason))
+        (next._tag === "Wakeup" && ConnectionWakeups.checksBetterRoute(next.reason))
       ) {
         yield* requestBetterRouteCheck(lease);
       }
@@ -1002,7 +1002,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     return outcome;
   }, Effect.ensuring(clearLease));
 
-  const waitForRetrySignal = Effect.fnUntraced(function* (delayMs: number) {
+  // A machine that said how long to wait (`retryAfterMs`) is not asked again
+  // sooner because a window took focus.
+  const waitForRetrySignal = Effect.fnUntraced(function* (
+    delayMs: number,
+    ignoreRetryHints: boolean,
+  ) {
     // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - the sleep is the retry delay (false), not a timeout around the signal loop
     return yield* Effect.raceFirst(
       Effect.sleep(delayMs).pipe(Effect.as(false)),
@@ -1011,6 +1016,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           const next = yield* Queue.take(signals);
           switch (next._tag) {
             case "Wakeup":
+              if (ignoreRetryHints && next.reason === "retry-hint") break;
               return ConnectionWakeups.resetsRetryBackoff(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
@@ -1025,9 +1031,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
-  // A better route only matters to a live session, so idle states ignore it.
+  // A better route only matters to a live session, and a retry hint only cuts
+  // short a backoff, so idle, offline and blocked states ignore both.
   const waitForSignal = Queue.take(signals).pipe(
-    Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
+    Effect.repeat({
+      while: (next) =>
+        next._tag === "BetterRouteAvailable" ||
+        (next._tag === "Wakeup" && next.reason === "retry-hint"),
+    }),
     Effect.map(
       (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
     ),
@@ -1157,7 +1168,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         lastFailure: error,
         retryAt: (yield* Clock.currentTimeMillis) + delayMs,
       });
-      const applicationActivated = yield* waitForRetrySignal(delayMs);
+      const applicationActivated = yield* waitForRetrySignal(
+        delayMs,
+        retryAfterFloorMs(error) > 0,
+      );
       if (applicationActivated) {
         resetRetryLadder();
       }

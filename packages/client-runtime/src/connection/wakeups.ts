@@ -9,7 +9,12 @@ export type ConnectionWakeup =
   | "credentials-changed"
   // The device moved to a different network (another Wi-Fi, Wi-Fi to
   // cellular) while staying online. Saved routes may have changed reach.
-  | "network-changed";
+  | "network-changed"
+  // The person is looking at the app again (a window took focus, or a
+  // desktop window came back after a brief hide). It only cuts short a
+  // pending retry; a live session is neither probed nor resubscribed, so it
+  // costs nothing while connected.
+  | "retry-hint";
 
 function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
@@ -21,6 +26,13 @@ function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
 
 /** Conditions changed enough that a pending retry should run now, from the first rung. */
 export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
+  return (
+    isApplicationActiveWakeup(reason) || reason === "network-changed" || reason === "retry-hint"
+  );
+}
+
+/** Whether a live session should look for a better route after this wakeup. */
+export function checksBetterRoute(reason: ConnectionWakeup): boolean {
   return isApplicationActiveWakeup(reason) || reason === "network-changed";
 }
 

@@ -7,7 +7,12 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { defaultReviewerChain, resolveReviewer, reviewerChain } from "./adversarialReview.ts";
+import {
+  defaultReviewerChain,
+  describeReviewerOrder,
+  resolveReviewer,
+  reviewerChain,
+} from "./adversarialReview.ts";
 import { tierModelFor } from "./modelTiers.ts";
 
 const now = Date.parse("2026-11-04T08:00:00.000Z");
@@ -232,6 +237,113 @@ describe("resolveReviewer", () => {
     expect(result.skipped).toEqual([
       { selection: sel("mirror", "qwen3.6-35b"), reason: "same-family" },
       { selection: sel("local", "qwen3.6-35b"), reason: "same-family" },
+    ]);
+  });
+});
+
+describe("describeReviewerOrder", () => {
+  it("groups the same model on other providers under its step, with statuses", () => {
+    const view = describeReviewerOrder({
+      providers: [
+        claude,
+        {
+          ...codex,
+          ...provider(
+            "codex",
+            "codex",
+            codex.models.map((m) => m.slug),
+            100,
+          ),
+        },
+        copilot,
+        muse,
+      ],
+      reviewers: [],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(view.isDefault).toBe(true);
+    expect(
+      view.groups.map((group) => ({
+        primary: [group.primary.selection.instanceId, group.primary.status, group.primary.family],
+        alternates: group.alternates.map((step) => [step.selection.instanceId, step.status]),
+      })),
+    ).toEqual([
+      { primary: ["codex", "full", "openai"], alternates: [["copilot", "ready"]] },
+      { primary: ["muse", "ready", "meta"], alternates: [] },
+      { primary: ["claudeAgent", "ready", "claude"], alternates: [["copilot", "ready"]] },
+    ]);
+    expect(view.groups[0]!.primary.resetAt).toBe(Date.parse("2026-11-06T00:00:00.000Z"));
+  });
+
+  it("marks unknown billing unless listed, and keeps a set order as written", () => {
+    const unknown = {
+      ...codex,
+      models: codex.models.map((model) => ({ ...model, billing: "unknown" as const })),
+    };
+    const byDefault = describeReviewerOrder({
+      providers: [claude, unknown],
+      reviewers: [],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(byDefault.groups[0]!.primary.status).toBe("unknown-billing");
+    // A harder reason shows instead, but the agent is still one nobody consented to.
+    const signedOut = describeReviewerOrder({
+      providers: [claude, { ...unknown, auth: { status: "unauthenticated" } }],
+      reviewers: [],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(signedOut.groups[0]!.primary.status).toBe("signed-out");
+    expect(signedOut.groups[0]!.primary.unconsented).toBe(true);
+    const named = describeReviewerOrder({
+      providers: [claude, unknown],
+      reviewers: [sel("claudeAgent", "claude-opus-5-5"), sel("codex", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(named.isDefault).toBe(false);
+    expect(
+      named.groups.map((group) => [group.primary.selection.instanceId, group.primary.status]),
+    ).toEqual([
+      ["claudeAgent", "ready"],
+      ["codex", "ready"],
+    ]);
+  });
+
+  it("says when a listed provider is gone from this machine", () => {
+    const view = describeReviewerOrder({
+      providers: [claude],
+      reviewers: [sel("gone", "gpt-6.1-sol")],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(view.groups[0]!.primary.status).toBe("missing");
+  });
+});
+
+describe("reviewerOrderGroups", () => {
+  it("keeps a listed model in its own place instead of as an earlier alternate", () => {
+    const view = describeReviewerOrder({
+      providers,
+      reviewers: [
+        sel("codex", "gpt-6.1-sol"),
+        sel("copilot", "gpt-6.1-sol"),
+        sel("claudeAgent", "claude-opus-5-5"),
+      ],
+      tier: "regular",
+      nowMs: now,
+    });
+    expect(
+      view.groups.map((group) => [
+        `${group.primary.selection.instanceId}/${group.primary.selection.model}`,
+        group.alternates.map((step) => `${step.selection.instanceId}/${step.selection.model}`),
+      ]),
+    ).toEqual([
+      ["codex/gpt-6.1-sol", []],
+      ["copilot/gpt-6.1-sol", []],
+      ["claudeAgent/claude-opus-5-5", ["copilot/claude-opus-5.5"]],
     ]);
   });
 });

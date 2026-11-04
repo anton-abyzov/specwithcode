@@ -68,6 +68,7 @@ vi.mock("../ui/alert-dialog", () => ({
 }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
+  useRelativeTimeTick: () => Date.now(),
   SettingsRow: ({
     title,
     control,

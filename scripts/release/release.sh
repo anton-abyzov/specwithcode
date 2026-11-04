@@ -57,7 +57,8 @@
 # release.env.example), RELEASE_STAGING_ROOT, RELEASE_TREES (persistent trees, default
 # ~/.specwithcode/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS,
 # RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's), RELEASE_SERVER_SHARDS
-# (default 4), RELEASE_RETRY_MAX_JOBS (2), RELEASE_RETRY_MAX_FILES (5).
+# (default 4), RELEASE_RETRY_MAX_JOBS (2), RELEASE_RETRY_MAX_FILES (5), RELEASE_BUILD_HEADROOM_GIB
+# (10: M4's free disk kept for the build by preflight_fleet.py; it never turns that check off).
 # RELEASE_STUB=1 (with RELEASE_STAGING_ROOT and RELEASE_TREES) records commands instead of
 # running them; only the self-test uses it.
 set -euo pipefail
@@ -139,6 +140,10 @@ stage_preflight() {
     for var in "$FLEET_HOSTS" "$(dirname "$FLEET_HOSTS")/id_ed25519" "$(dirname "$FLEET_HOSTS")/known_hosts"; do
       [ -e "$var" ] || check_fail "missing $var"
     done
+    # Disk for this version's update on M4 (+ build headroom), M1 and M3 (update.py room); 1.0.184.
+    [ "$MODE" != dry ] || say "    disk-room: python3 -B $HERE/preflight_fleet.py --version $VERSION"
+    t disk-room -- python3 -B "$HERE/preflight_fleet.py" --version "$VERSION" ||
+      check_fail "a host lacks the disk its update to $VERSION needs, or could not be asked (lines above)"
   fi
   load="$(q loadavg -- sysctl -n vm.loadavg | awk '{print $3}')"
   ncpu="$(q ncpu -- sysctl -n hw.ncpu)"
@@ -1276,39 +1281,6 @@ stage_desktop() {
   version="$(q app-version -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
   [ "$version" = "$VERSION" ] || die "$APP reports $version after the swap, not $VERSION"
   x desktop-open -- open "$APP"
-}
-
-# Publication prunes superseded stages and compacts the previous completed release. Its
-# small receipts, timings and stage-1 history stay; rebuildable payloads no longer occupy GB.
-# The helper acquires each old stage's release lock before removing anything.
-prune_old_staging() {
-  [ "$MODE" = dry ] && return 0
-  x staging-prune -- python3 -B "$HERE/staging_retention.py" --root "$STAGING_ROOT" \
-    --current "$VERSION" --previous "$PREV" --apply || say "(staging cleanup deferred)"
-}
-
-# A candidate replaced on --resume leaves its assets, runtimes and verify folders behind (about
-# 2 GB each); once the version is published only the published candidate's are needed.
-prune_superseded_candidates() {
-  local dir name published
-  [ "$MODE" = dry ] && return 0
-  [ -f "$STAGE/published.sha" ] || return 0
-  published="$(cut -c1-12 "$STAGE/published.sha")"
-  [[ $published =~ ^[0-9a-f]{12}$ ]] || return 0
-  for dir in "$STAGE"/*; do
-    name="${dir##*/}"
-    if [ ! -d "$dir" ] || [ -L "$dir" ]; then continue; fi
-    [[ $name =~ ^(assets|runtime|runtime-linux-(arm64|x64)|google-verify|verify-runtime|verify-runtime-linux-(arm64|x64))-([0-9a-f]{12})$ ]] || continue
-    [ "${BASH_REMATCH[4]}" = "$published" ] && continue
-    x staging-prune -- rm -rf "$dir" || say "(could not remove $dir)"
-  done
-}
-
-# Old versions go as soon as this one is public: a fleet host that fails later stops the run
-# before merge, and three releases in a row kept 11 GB that way.
-prune_after_publish() {
-  prune_superseded_candidates
-  prune_old_staging
 }
 
 # A plain call: on the left of || bash would turn off set -e inside merge_release_pr.

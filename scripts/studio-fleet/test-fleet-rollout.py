@@ -316,7 +316,10 @@ class RolloutOrder(unittest.TestCase):
         self.assertEqual(fleet.asked, {})
 
     def test_status_outages_are_tolerated_then_fatal(self):
-        for outages, installs in ((2, True), (fleet_rollout.STATUS_FAILURES, False)):
+        # A restart may leave a host silent for minutes (M1 on 1.0.187): five unanswered reads 15 s
+        # apart no longer lose it; only silence for STATUS_OUTAGE_SECONDS does.
+        lost = fleet_rollout.STATUS_OUTAGE_SECONDS // 15 + 2
+        for outages, installs in ((2, True), (fleet_rollout.STATUS_FAILURES, True), (lost, False)):
             with self.subTest(outages=outages):
                 clock = Clock()
                 fleet = Fleet(clock, polls={'m4': 2})

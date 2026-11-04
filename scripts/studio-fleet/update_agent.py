@@ -1164,6 +1164,7 @@ class Agent(object):
             self.clear_available()
             self.state['checkedAt'] = None  # Discover the next verified hop on a later pass.
             self.state['automaticRetry'] = None
+            cache.reconcile_workers(self, version)  # M4 only: its workers follow (fleet_rollout --reconcile).
             self.cleanup_versions(version_tuple(inst['version']))
             return 'installed', 'SpecWithCode %s is installed' % version
         self.state['lastInstall'] = {'version': version, 'at': now, 'result': 'failed', 'receipt': str(receipt),

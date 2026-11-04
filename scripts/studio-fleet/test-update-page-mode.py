@@ -584,7 +584,13 @@ class ApplyBranches(unittest.TestCase):
         self.assertIn('needs %.1f GB' % ((int(update_apply.FULL_READ_LINE_FACTOR * 11_500_000_000) + kept_lines.DISK_FLOOR_MARGIN + reserve) / 1e9), str(caught.exception))
         self.assertEqual(self.h.stops, [])
         self.assertEqual(self.h.restart_calls, [])
-        self.assertNotEqual(json.loads(self.h.output.read_text()).get('pointers'), 'new-release')
+        # Refused before phase 'prepared' (before staging, pointers and the gate): main() leaves the
+        # preflight receipt, which never overwrites a receipt _apply wrote.
+        self.update.write_preflight_failure(self.h.output, 'm4', caught.exception)
+        receipt = json.loads(self.h.output.read_text())
+        self.assertEqual((receipt['phase'], receipt['pointers']), ('preflight', 'unchanged'))
+        self.assertIn('pageFallback', receipt['error'])
+        self.assertEqual({path: path.read_bytes() for path in self.h.original}, self.h.original)
 
     def test_full_read_migration_with_room_is_named_in_the_receipt(self):
         self.old.commit(*MIGRATED_THROUGH_68)

@@ -68,15 +68,15 @@ def compare(n, before, after, original_auth, current_auth, after_carried, restar
 
 import datetime
 import os
+import contextlib
 import pathlib
-import random
 import re
 import sqlite3
-import struct
 import subprocess
 import time
 import urllib.parse
 
+import disk_room
 import quiescence
 import service_handles
 
@@ -103,12 +103,11 @@ FULL_READ_NO_ROOM = ('Not enough free disk space for the full database read that
                      'needs %.1f GB, %.1f GB free (refused before the service stops)')
 FULL_READ_NO_MEMORY = ('Not enough memory for the full database read that migration %s needs after the restart: its sorted '
                        'runs cannot go to disk on this volume and need about %.1f GB (refused before the service stops)')
-TREE_DEPTH_LIMIT = 40
-OVERFLOW_SAMPLE = 1024  # Leaves of one table read for its overflow pages.
-# Bytes of sorted runs (typed and legacy lines, each about the row's text, JSON-escaped) per byte
-# of the table's b-tree: M4's orchestration_events, 20 GB of lines for 11.5 GB (1.74); JSON event
-# payloads in test-update-page-mode.py, 2.0. An estimate, not a bound (BLOBs are hex).
-FULL_READ_LINE_FACTOR = 2.25
+# Appended to FULL_READ_NO_ROOM: what the need is made of, so the receipt's error (the five-key
+# preflight receipt installed update agents read, update_receipt.write_preflight_failure) names it.
+ROOM_PARTS = '; pageFallback %.1f GB, backupSpace %.1f GB'
+# Bytes of sorted runs per byte of the largest table's b-tree (disk_room.FULL_READ_LINE_FACTOR).
+FULL_READ_LINE_FACTOR = disk_room.FULL_READ_LINE_FACTOR
 
 
 class DatabaseChangedDuringVerification(AssertionError):
@@ -141,82 +140,21 @@ def live_migration(database):
         snapshot.close()
 
 
-def _varint(data, offset):
-    value = 0
-    for index in range(9):
-        byte = data[offset + index]
-        if index == 8:
-            return (value << 8) | byte, offset + 9
-        value = (value << 7) | (byte & 0x7f)
-        if byte < 0x80:
-            return value, offset + index + 1
-    raise ValueError('varint')
+_Pages = disk_room.Pages  # The b-tree walk largest_table_bytes takes; tests patch it here.
 
 
-class _Pages:
-    """Pages of the main file of a SQLite database, read with pread; ValueError on anything that
-    is not a well-formed b-tree page."""
-    def __init__(self, fd, size):
-        header = os.pread(fd, 100, 0)
-        if len(header) != 100 or header[:16] != b'SQLite format 3\0':
-            raise ValueError('header')
-        page_size = struct.unpack_from('>H', header, 16)[0]
-        self.fd, self.page_size = fd, 65536 if page_size == 1 else page_size
-        self.usable = self.page_size - header[20]
-        self.count, self.free = size // self.page_size, struct.unpack_from('>I', header, 36)[0]
-
-    def read(self, number):
-        if not 1 <= number <= self.count:
-            raise ValueError('page-outside-database')
-        data = os.pread(self.fd, self.page_size, (number - 1) * self.page_size)
-        if len(data) != self.page_size:
-            raise ValueError('short-read')
-        offset = 100 if number == 1 else 0
-        if data[offset] not in (2, 5, 10, 13):
-            raise ValueError('not-a-tree-page')
-        return data, offset, data[offset]
-
-    def children(self, number):
-        """The child pages of interior page `number`, or None for a leaf."""
-        data, offset, kind = self.read(number)
-        if kind in (10, 13):
-            return None
-        count = struct.unpack_from('>H', data, offset + 3)[0]
-        return [struct.unpack_from('>I', data, struct.unpack_from('>H', data, offset + 12 + 2 * index)[0])[0]
-                for index in range(count)] + [struct.unpack_from('>I', data, offset + 8)[0]]
-
-    def tree(self, root):
-        """(pages, leaves) of the b-tree at `root` (interior and leaf pages, not overflow), from its
-        interior pages and one child of each: every child of an interior page sits at one depth."""
-        level, seen, total = [root], {root}, 1
-        if self.children(root) is None:
-            return total, [root]
-        for _ in range(TREE_DEPTH_LIMIT):
-            children = [child for number in level for child in self.children(number)]
-            if len(set(children)) != len(children) or seen.intersection(children):
-                raise ValueError('page-owned-twice')
-            seen.update(children)
-            total += len(children)
-            if self.children(children[0]) is None:  # Leaves: counted, not read.
-                return total, children
-            level = children
-        raise ValueError('tree-depth')
-
-    def overflow(self, number):
-        """Overflow pages the cells of leaf `number` own, from their payload sizes alone (a rowid
-        table's leaf, or a WITHOUT ROWID table's, which is an index b-tree)."""
-        data, offset, kind = self.read(number)
-        if kind not in (10, 13):
-            raise ValueError('not-a-leaf')
-        usable, total = self.usable, 0
-        most, least = (usable - 35) if kind == 13 else (usable - 12) * 64 // 255 - 23, (usable - 12) * 32 // 255 - 23
-        for index in range(struct.unpack_from('>H', data, offset + 3)[0]):
-            payload = _varint(data, struct.unpack_from('>H', data, offset + 8 + 2 * index)[0])[0]
-            if payload > most:
-                local = least + (payload - least) % (usable - 4)
-                local = local if local <= most else least
-                total += -(-(payload - local) // (usable - 4))
-        return total
+@contextlib.contextmanager
+def _snapshot_schema(database):
+    """read_cache.Snapshot's connection, held open during the walk; ValueError when unavailable."""
+    snapshot = read_cache.Snapshot(database)
+    try:
+        try:
+            snapshot.open()
+        except read_cache.Unavailable as error:
+            raise ValueError('snapshot-unavailable') from error
+        yield snapshot.db
+    finally:
+        snapshot.close()
 
 
 def largest_table_bytes(database):
@@ -228,36 +166,15 @@ def largest_table_bytes(database):
     copy of November 4: orchestration_events 6.5 GB of b-tree pages and about 4.5 GB of overflow
     (the file's 9.4 GB of overflow is shared with turn items), 11.4 GB in all; about 20 s cold.
     Called only when a FULL_READ migration is pending."""
-    size = os.stat(str(database)).st_size
-    try:
-        size_wal = os.stat(str(database) + '-wal').st_size
-    except OSError:
-        size_wal = 0
-    snapshot = read_cache.Snapshot(database)
-    try:
-        snapshot.open()
-        roots = list(snapshot.db.execute("SELECT type, rootpage FROM sqlite_master WHERE type IN ('table', 'index') AND rootpage > 0"))
-        with open(str(database), 'rb') as handle:
-            pages = _Pages(handle.fileno(), size)
-            sample = random.Random(size)
-            walked, tables = 0, []
-            for kind, root in [('schema', 1)] + roots:  # sqlite_schema's own tree, read by nobody.
-                count, leaves = pages.tree(root)
-                walked += count
-                if kind == 'table':
-                    chosen = leaves if len(leaves) <= OVERFLOW_SAMPLE else sample.sample(leaves, OVERFLOW_SAMPLE)
-                    owned = sum(pages.overflow(number) for number in chosen) * len(leaves) / max(1, len(chosen))
-                    tables.append((count, owned))
-    except (read_cache.Unavailable, OSError, sqlite3.Error, ValueError, IndexError, struct.error):
-        return size + size_wal
-    finally:
-        snapshot.close()
-    unexplained = max(0, pages.count - pages.free - walked - sum(owned for _, owned in tables))
-    largest = max((count + owned for count, owned in tables), default=0)
-    return min(size, int((largest + unexplained) * pages.page_size)) + size_wal
+    return disk_room.largest_table_bytes(database, _snapshot_schema)
 
 
-def fallback_room(database, live, reserve=0, freed=0):
+def measured_table(database, live):
+    """largest_table_bytes when this release has a FULL_READ migration above `live`, else None."""
+    return largest_table_bytes(database) if additive_migrations.full_read_pending(live) else None
+
+
+def fallback_room(database, live, reserve=0, freed=0, table=None):
     """The FULL_READ migrations this release will run on a database whose newest migration is
     `live`, after refusing, before the service stops, when the full read they force lacks room.
     The page proof refuses such a migration, so after the restart the full read of the stopped
@@ -269,20 +186,21 @@ def fallback_room(database, live, reserve=0, freed=0):
     spill folder on the database's volume) need that memory instead. An estimate: the per-run
     check during the read (SortedRuns._check_room) stays the hard guard. M4 on 1.0.184 (072, 22 GB
     database, 12-18 GB free) found out only after the restart, with the new release held.
-    `live` None (no migrations table, or no snapshot) counts nothing: nothing to check against."""
+    `live` None (no migrations table, or no snapshot) counts nothing: nothing to check against.
+    `table`, the largest table's bytes an earlier call measured, saves a second walk."""
     pending = additive_migrations.full_read_pending(live)
     if not pending:
         return []
     numbers = ', '.join('%03d' % number for number in pending)
-    table = largest_table_bytes(database)
+    runs = disk_room.full_read_runs(largest_table_bytes(database) if table is None else table)
     folder = kept_lines.spill_folder(database)
     if folder is None:
-        need = int(FULL_READ_LINE_FACTOR * table)
-        assert kept_lines.memory_room(need), FULL_READ_NO_MEMORY % (numbers, need / 1e9)
+        assert kept_lines.memory_room(runs), FULL_READ_NO_MEMORY % (numbers, runs / 1e9)
         return pending
-    needed, free = int(FULL_READ_LINE_FACTOR * table) + kept_lines.DISK_FLOOR_MARGIN + reserve, kept_lines.available_disk(folder)
+    needed, free = runs + kept_lines.DISK_FLOOR_MARGIN + reserve, kept_lines.available_disk(folder)
     free = None if free is None else free + freed
-    assert free is not None and free >= needed, FULL_READ_NO_ROOM % (numbers, needed / 1e9, (free or 0) / 1e9)
+    assert free is not None and free >= needed, (FULL_READ_NO_ROOM % (numbers, needed / 1e9, (free or 0) / 1e9)
+                                                 + ROOM_PARTS % ((runs + kept_lines.DISK_FLOOR_MARGIN) / 1e9, reserve / 1e9))
     return pending
 
 

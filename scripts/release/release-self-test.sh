@@ -661,6 +661,22 @@ identity_env_refused() { run 1 1.4.2 --resume --stop-after trees && has "the pub
 check 'a personal committer from the environment still stops the release' identity_env_refused
 stub_set RELEASE_STUB_OUTPUT=
 
+# The disk preflight (preflight_fleet.py) runs on a fleet release and stops it before any build.
+DISK="$WORK/disk"
+make_machine "$DISK"
+use_machine "$DISK" 1.6.1
+stub_set RELEASE_STUB_STATUS=disk-room=1
+disk_refused() {
+  run 1 1.6.1 || return 1
+  has 'a host lacks the disk its update to 1.6.1 needs, or could not be asked' && [ ! -f "$STAGE/markers/preflight" ] &&
+    [ ! -f "$STAGE/markers/build" ] && lacks '> trees'
+}
+check 'preflight stops the release before any build when a host lacks disk for its update' disk_refused
+stub_set RELEASE_STUB_STATUS=
+rm -rf "$STAGE"
+dry_disk_listed() { run 0 1.6.1 --dry-run && has 'disk-room: python3 -B' && has 'preflight_fleet.py --version 1.6.1'; }
+check 'the dry-run lists the disk preflight' dry_disk_listed
+
 # ---------------------------------------------------------------- a CI Mac: no fleet files, no desktop
 
 C="$WORK/c"

@@ -94,7 +94,6 @@ import {
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
 import {
-  SettingsPageContainer,
   SettingsDisclosure,
   SettingsRow,
   TeamRulesLabel,
@@ -4217,8 +4216,9 @@ export function ConnectionsSettings({
     </>
   );
 
+  // Settings > Machines owns the page's scroll container; this renders its sections only.
   return (
-    <SettingsPageContainer width="wide">
+    <>
       {primaryEnvironmentId ? (
         <StudioFleetConnections
           {...(renderMachine ? { renderMachine } : {})}
@@ -4354,6 +4354,6 @@ export function ConnectionsSettings({
       ) : null}
       <LoadBalancingSettings environments={loadBalancingEnvironments} />
       <GitHubRoutingSettings environments={loadBalancingEnvironments} />
-    </SettingsPageContainer>
+    </>
   );
 }

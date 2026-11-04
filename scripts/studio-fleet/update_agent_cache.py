@@ -10,11 +10,14 @@ A cached asset is reused only when a record beside it names the same API URL (ho
 repository and immutable asset ID) and size: GitHub lets a same-name asset be replaced,
 even with one of the same size. Nothing here follows a symlink planted in the cache.
 """
+import json
 import os
 import pathlib
 import shutil
 import stat
+import subprocess
 import sys
+import time
 
 RECORD_LIMIT = 4096
 # `update.py --stage-release` (release_stage.stage_ahead): its liveness bound and checks.
@@ -140,4 +143,69 @@ def prestage(agent, verified):
             '--identity', agent.identity, '--stage-release', '--archive', runtime, '--sha256', verified['runtime']['sha256']]),
             str(helper_dir), agent.helper_env(), PRESTAGE_TIMEOUT, home=agent.home)
     except Exception:
+        return None
+
+
+# -- workers follow M4 (increment 1239, AC-07)
+
+RECONCILE_IDENTITY = 'm4'  # The fleet main: only its install brings the workers along.
+FLEET_CONFIG = 'studio-fleet.json'
+SPAWN = subprocess.Popen  # Tests replace it.
+
+
+def _fleet_machines(agent):
+    """Workers M4 knows about: its studio-fleet.json machines or the pinned SSH inventory."""
+    try:
+        machines = json.loads((agent.own / FLEET_CONFIG).read_text()).get('machines')
+    except (OSError, ValueError, AttributeError):
+        machines = None
+    inventory = agent.home / '.local/share/specweave/fleet' / 'hosts.json'
+    return bool(machines) or inventory.is_file()
+
+
+RECONCILE_KEEP_SECONDS = 7 * 24 * 3600
+
+
+def prune_reconciles(agent, parent):
+    """Drops reconcile folders (a few hundred KB of scripts and a log each) older than a week."""
+    ua = _module(agent)
+    if not parent.is_dir() or parent.is_symlink():
+        return
+    for child in parent.iterdir():
+        try:
+            if not child.is_symlink() and time.time() - child.stat().st_mtime > RECONCILE_KEEP_SECONDS:
+                ua.remove_path(child, agent.home)
+        except OSError:
+            pass
+
+
+def reconcile_workers(agent, version):
+    """Once M4 finalized `version` by any path (a release, Update now, the hourly agent), starts
+    `fleet_rollout.py --version <version> --reconcile` from that release's verified helpers, detached,
+    so M1 and M3 never stay behind unasked (1.0.186). It copies the helpers out first, since the
+    cleanup that follows removes them. The rollout's lock makes it a no-op while a release's own
+    fleet stage runs. Best effort, never raises; returns the log path, or None when nothing started."""
+    if agent.identity != RECONCILE_IDENTITY or os.environ.get('STUDIO_FLEET_RECONCILE') == '0' \
+            or (getattr(agent, 'test_mode', False) and SPAWN is subprocess.Popen) or not _fleet_machines(agent):
+        return None
+    ua = _module(agent)
+    try:
+        sources = [path for path in (agent.updates / 'helpers' / version).glob('*/scripts/studio-fleet')
+                   if (path / 'fleet_rollout.py').is_file() and not path.is_symlink()]
+        if len(sources) != 1:
+            return None
+        parent = agent.updates / 'reconcile'
+        prune_reconciles(agent, parent)
+        # A folder of its own: an earlier reconcile for this version may still run from its copy.
+        target = parent / ('%s-%d-%d' % (version, int(time.time()), os.getpid()))
+        shutil.copytree(str(sources[0]), str(target / 'studio-fleet'), symlinks=False,
+                        ignore=shutil.ignore_patterns('__pycache__', 'test-*', 'fixtures'))
+        log = target / 'reconcile.log'
+        with open(str(log), 'ab') as out:
+            SPAWN([agent.helper_python(), '-B', str(target / 'studio-fleet' / 'fleet_rollout.py'), '--version', version,
+                   '--reconcile'], cwd=str(target / 'studio-fleet'), stdin=subprocess.DEVNULL, stdout=out,
+                  stderr=subprocess.STDOUT, start_new_session=True, close_fds=True,
+                  env={'HOME': str(agent.home), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'en_US.UTF-8'})
+        return log
+    except Exception:  # noqa: BLE001 - a failed reconcile never fails the install it follows.
         return None

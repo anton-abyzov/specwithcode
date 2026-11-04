@@ -132,7 +132,7 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active">((queue) =>
+      Stream.callback<"application-active" | "retry-hint">((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
             const gate = createApplicationActiveGate({
@@ -141,13 +141,24 @@ const layerWakeups = Wakeups.layer({
             const listener = () => {
               if (document.visibilityState !== "visible") gate.hidden();
               else if (gate.shown()) Queue.offerUnsafe(queue, "application-active");
+              else if (gate.hinted()) Queue.offerUnsafe(queue, "retry-hint");
+            };
+            // Moving between windows, or back to a window that stayed visible,
+            // fires no visibility change. Focus only cuts short a pending retry
+            // to a machine that may be back.
+            const focus = () => {
+              if (document.visibilityState === "visible" && gate.hinted()) {
+                Queue.offerUnsafe(queue, "retry-hint");
+              }
             };
             document.addEventListener("visibilitychange", listener);
-            return listener;
+            window.addEventListener("focus", focus);
+            return { listener, focus };
           }),
-          (listener) =>
+          ({ listener, focus }) =>
             Effect.sync(() => {
               document.removeEventListener("visibilitychange", listener);
+              window.removeEventListener("focus", focus);
             }),
         ).pipe(Effect.asVoid),
       ),

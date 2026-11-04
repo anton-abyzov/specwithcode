@@ -437,3 +437,37 @@ EOF
   CURRENT_STAGE=main
 }
 
+# Staging cleanup after publication (moved from release.sh, which is at its 1500-line cap). They use
+# release.sh's MODE, STAGE, STAGING_ROOT, VERSION, PREV, HERE and its x and say helpers.
+# Publication prunes superseded stages and compacts the previous completed release. Its
+# small receipts, timings and stage-1 history stay; rebuildable payloads no longer occupy GB.
+# The helper acquires each old stage's release lock before removing anything.
+prune_old_staging() {
+  [ "$MODE" = dry ] && return 0
+  x staging-prune -- python3 -B "$HERE/staging_retention.py" --root "$STAGING_ROOT" \
+    --current "$VERSION" --previous "$PREV" --apply || say "(staging cleanup deferred)"
+}
+
+# A candidate replaced on --resume leaves its assets, runtimes and verify folders behind (about
+# 2 GB each); once the version is published only the published candidate's are needed.
+prune_superseded_candidates() {
+  local dir name published
+  [ "$MODE" = dry ] && return 0
+  [ -f "$STAGE/published.sha" ] || return 0
+  published="$(cut -c1-12 "$STAGE/published.sha")"
+  [[ $published =~ ^[0-9a-f]{12}$ ]] || return 0
+  for dir in "$STAGE"/*; do
+    name="${dir##*/}"
+    if [ ! -d "$dir" ] || [ -L "$dir" ]; then continue; fi
+    [[ $name =~ ^(assets|runtime|runtime-linux-(arm64|x64)|google-verify|verify-runtime|verify-runtime-linux-(arm64|x64))-([0-9a-f]{12})$ ]] || continue
+    [ "${BASH_REMATCH[4]}" = "$published" ] && continue
+    x staging-prune -- rm -rf "$dir" || say "(could not remove $dir)"
+  done
+}
+
+# Old versions go as soon as this one is public: a fleet host that fails later stops the run
+# before merge, and three releases in a row kept 11 GB that way.
+prune_after_publish() {
+  prune_superseded_candidates
+  prune_old_staging
+}

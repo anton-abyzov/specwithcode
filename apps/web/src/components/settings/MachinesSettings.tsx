@@ -59,7 +59,7 @@ import { MachineWorkGrants } from "./MachineWorkGrants";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingHelp } from "./SettingHelp";
-import { SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import { SettingsPageContainer, SettingsSection, TeamRulesLabel } from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
@@ -172,9 +172,10 @@ export function MachinesSettingsPanel() {
       details={details}
     />
   );
+  // The page container is the scroll area: without it Settings > Machines cannot scroll.
   return (
-    <div className="space-y-6">
-      <p className="px-4 text-sm text-muted-foreground">
+    <SettingsPageContainer width="wide">
+      <p className="text-sm text-muted-foreground">
         Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed
         action.
       </p>
@@ -213,7 +214,7 @@ export function MachinesSettingsPanel() {
       {fleet.primaryEnvironmentId ? (
         <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}
-    </div>
+    </SettingsPageContainer>
   );
 }
 

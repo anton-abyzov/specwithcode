@@ -57,4 +57,23 @@ describe("application active wakeups", () => {
     time.advance(20);
     expect(gate.shown()).toBe(true);
   });
+
+  it("hints a retry when a show does not wake, at most once per interval", () => {
+    const time = clock();
+    const gate = createApplicationActiveGate({ desktop: true, now: time.now });
+    gate.hidden();
+    time.advance(10);
+    expect(gate.shown()).toBe(false);
+    expect(gate.hinted()).toBe(true);
+    expect(gate.hinted()).toBe(false);
+    time.advance(APPLICATION_ACTIVE_MIN_INTERVAL_MS);
+    expect(gate.hinted()).toBe(true);
+  });
+
+  it("does not hint right after a wake", () => {
+    const time = clock();
+    const gate = createApplicationActiveGate({ desktop: false, now: time.now });
+    expect(gate.shown()).toBe(true);
+    expect(gate.hinted()).toBe(false);
+  });
 });

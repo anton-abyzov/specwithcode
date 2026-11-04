@@ -83,39 +83,147 @@ export function defaultReviewerChain(input: {
     .map((entry) => entry.selection);
 }
 
+/** One step of the reviewer order: a model, then the same model on other providers. */
+export interface ReviewerOrderGroup {
+  readonly primary: ModelSelection;
+  /** The same model through other enabled providers, tried right after the primary. */
+  readonly alternates: ReadonlyArray<ModelSelection>;
+}
+
 /**
- * The reviewer order with each entry followed by the same model on every
+ * The reviewer order as groups: each entry followed by the same model on every
  * other provider that serves it (Codex GPT-6.1 Sol, then Sol through GitHub
- * Copilot). Duplicates keep their first place.
+ * Copilot). A model the person listed keeps its own place: it is never taken
+ * as an earlier entry's alternate. Duplicates keep their first place.
  */
+export function reviewerOrderGroups(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly reviewers: ReadonlyArray<ModelSelection>;
+  readonly tier: ProviderModelTier;
+  readonly tiers?: ProviderModelTiers | undefined;
+}): ReadonlyArray<ReviewerOrderGroup> {
+  const base = input.reviewers.length > 0 ? input.reviewers : defaultReviewerChain(input);
+  // Only a person's own list pins places; the default order groups freely.
+  const listed = new Set(input.reviewers.map(fallbackSelectionKey));
+  const seen = new Set<string>();
+  const claim = (selection: ModelSelection) => {
+    const key = fallbackSelectionKey(selection);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
+  const groups: ReviewerOrderGroup[] = [];
+  for (const entry of base) {
+    if (!claim(entry)) continue;
+    const names = describeModel(
+      input.providers.find((provider) => provider.instanceId === entry.instanceId),
+      entry.model,
+    );
+    const alternates: ModelSelection[] = [];
+    for (const provider of input.providers) {
+      if (provider.instanceId === entry.instanceId || !provider.enabled) continue;
+      const slug = sameModelOn(provider, names);
+      if (slug === undefined) continue;
+      const alternate = { instanceId: provider.instanceId, model: slug };
+      if (listed.has(fallbackSelectionKey(alternate))) continue;
+      if (claim(alternate)) alternates.push(alternate);
+    }
+    groups.push({ primary: entry, alternates });
+  }
+  return groups;
+}
+
+/** The reviewer order flattened: each group's primary, then its alternates. */
 export function reviewerChain(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly reviewers: ReadonlyArray<ModelSelection>;
   readonly tier: ProviderModelTier;
   readonly tiers?: ProviderModelTiers | undefined;
 }): ReadonlyArray<ModelSelection> {
-  const base = input.reviewers.length > 0 ? input.reviewers : defaultReviewerChain(input);
-  const seen = new Set<string>();
-  const chain: ModelSelection[] = [];
-  const push = (selection: ModelSelection) => {
+  return reviewerOrderGroups(input).flatMap((group) => [group.primary, ...group.alternates]);
+}
+
+/** Whether a reviewer step could review now, before the author's family is known. */
+export type ReviewerStepStatus = Exclude<ReviewerSkipReason, "same-family" | "current"> | "ready";
+
+export interface ReviewerOrderStep {
+  readonly selection: ModelSelection;
+  readonly family: ModelFamily;
+  readonly status: ReviewerStepStatus;
+  /** When a full entry's usage resets, if known. */
+  readonly resetAt: number | null;
+  /** An agent of unknown billing nobody listed: never picked until a person lists it. */
+  readonly unconsented: boolean;
+}
+
+export interface ReviewerOrderView {
+  /** True when no reviewer order is set and the default order applies. */
+  readonly isDefault: boolean;
+  readonly groups: ReadonlyArray<{
+    readonly primary: ReviewerOrderStep;
+    readonly alternates: ReadonlyArray<ReviewerOrderStep>;
+  }>;
+}
+
+/** No thread runs here: settings describe the order before any author is known. */
+const NO_AUTHOR_INSTANCE = "__reviewer-order__" as ModelSelection["instanceId"];
+
+/**
+ * The effective reviewer order with each step's status on this machine now,
+ * by the same rules `resolveReviewer` walks (sign-in, usage, exclusions,
+ * unknown billing). The author's family is skipped at review time, so it is
+ * not a status here; each step names its family instead.
+ */
+export function describeReviewerOrder(input: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly reviewers: ReadonlyArray<ModelSelection>;
+  readonly tier: ProviderModelTier;
+  readonly tiers?: ProviderModelTiers | undefined;
+  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
+  readonly nowMs: number;
+}): ReviewerOrderView {
+  const groups = reviewerOrderGroups(input);
+  const chain = groups.flatMap((group) => [group.primary, ...group.alternates]);
+  const entries = describeFallbackOrder({
+    providers: input.providers,
+    currentInstanceId: NO_AUTHOR_INSTANCE,
+    rule: {
+      providerLimitFallbackModels: chain,
+      providerLimitFallbackModelSelection: null,
+      providerLimitExcludedModels: input.excludedModels ?? [],
+    },
+    nowMs: input.nowMs,
+  });
+  const byKey = new Map(entries.map((entry) => [fallbackSelectionKey(entry.selection), entry]));
+  const named = new Set(input.reviewers.map(fallbackSelectionKey));
+  const step = (selection: ModelSelection): ReviewerOrderStep => {
     const key = fallbackSelectionKey(selection);
-    if (seen.has(key)) return;
-    seen.add(key);
-    chain.push(selection);
+    const entry = byKey.get(key);
+    const provider = input.providers.find((item) => item.instanceId === selection.instanceId);
+    const unavailable: FallbackOrderUnavailable | null =
+      entry === undefined ? (provider === undefined ? "missing" : "not-ready") : entry.unavailable;
+    const unconsented = !named.has(key) && isUnknownBillingAgent(provider, selection.model);
+    const status: ReviewerStepStatus =
+      unconsented && (unavailable === null || unavailable === "unverified")
+        ? "unknown-billing"
+        : unavailable === null || unavailable === "current"
+          ? "ready"
+          : unavailable;
+    return {
+      selection,
+      family: selectionFamily(input.providers, selection),
+      status,
+      resetAt: entry?.resetAt ?? null,
+      unconsented,
+    };
   };
-  for (const entry of base) {
-    push(entry);
-    const names = describeModel(
-      input.providers.find((provider) => provider.instanceId === entry.instanceId),
-      entry.model,
-    );
-    for (const provider of input.providers) {
-      if (provider.instanceId === entry.instanceId || !provider.enabled) continue;
-      const slug = sameModelOn(provider, names);
-      if (slug !== undefined) push({ instanceId: provider.instanceId, model: slug });
-    }
-  }
-  return chain;
+  return {
+    isDefault: input.reviewers.length === 0,
+    groups: groups.map((group) => ({
+      primary: step(group.primary),
+      alternates: group.alternates.map(step),
+    })),
+  };
 }
 
 /**

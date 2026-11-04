@@ -224,6 +224,15 @@ afterEach(async () => {
 });
 
 describe("Settings > Machines", () => {
+  it("renders the whole page inside the settings scroll container", () => {
+    setUp();
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    // SettingsPageContainer is the only scroll area; a plain wrapper leaves the page stuck.
+    expect(html.startsWith("<main>")).toBe(true);
+    expect(html.endsWith("</main>")).toBe(true);
+    expect(html.match(/<main>/g)).toHaveLength(1);
+  });
+
   it("adds no team rules line when no machine has rules", () => {
     setUp();
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);

@@ -6,6 +6,7 @@ import {
 } from "@specweave-studio/contracts";
 import {
   canTakeTurn,
+  describeFallbackOrder,
   fallbackModelOrder,
   isDirectClaudeApiKeyProvider,
 } from "@specweave-studio/shared/providerFallback";
@@ -39,19 +40,28 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { AddApiCreditAccountDialog } from "./AddApiCreditAccountDialog";
 import { FallbackOptionsPanel } from "./FallbackOptionsPanel";
-import { addFallbackEntry, FallbackOrderList, MAX_FALLBACK_MODELS } from "./FallbackOrderList";
+import {
+  addFallbackEntry,
+  FallbackOrderList,
+  MAX_FALLBACK_MODELS,
+  type ModelOrderStep,
+} from "./FallbackOrderList";
 import { MachineFallbackSettings } from "./MachineFallbackSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsRow,
+  useRelativeTimeTick,
 } from "./settingsLayout";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+
+/** Settings describe the order with no thread running, so no instance is "the thread's own". */
+const NO_THREAD_INSTANCE = "__fallback-order__" as ModelSelection["instanceId"];
 
 const ACTION_LABELS: Record<ProviderLimitAction, string> = {
   ask: "Offer the fallback",
@@ -128,12 +138,36 @@ export function ProviderLimitSettings() {
   const mixedSwitchAt = useScopedSettingsMixed(["providerLimitSwitchAtPercent"]);
   const mixedExcluded = useScopedSettingsMixed(["providerLimitExcludedModels"]);
   const excludedModels = settings.providerLimitExcludedModels;
+  const nowMs = useRelativeTimeTick(60_000);
   const fallbackOptions = describeFallbackOptions({
     providers,
     rule: settings,
-    nowMs: Date.now(),
+    nowMs,
     belowPercent: settings.providerLimitSwitchAtPercent ?? 100,
   });
+  // Each listed model's state on this machine now, by the rules a limited thread is walked by.
+  const fallbackStatuses = new Map<string, Pick<ModelOrderStep, "status" | "resetAt">>(
+    describeFallbackOrder({
+      providers,
+      currentInstanceId: NO_THREAD_INSTANCE,
+      rule: {
+        providerLimitFallbackModels: fallbackOrder,
+        providerLimitFallbackModelSelection: null,
+        providerLimitExcludedModels: excludedModels,
+      },
+      nowMs,
+      belowPercent: settings.providerLimitSwitchAtPercent ?? 100,
+    }).map((entry) => [
+      `${entry.selection.instanceId}:${entry.selection.model}`,
+      {
+        status:
+          entry.unavailable === null || entry.unavailable === "current"
+            ? "ready"
+            : entry.unavailable,
+        resetAt: entry.resetAt,
+      },
+    ]),
+  );
   const mixedWaitUnder = useScopedSettingsMixed(["providerLimitWaitUnderMinutes"]);
   const mixedRedeem = useScopedSettingsMixed(["providerLimitRedeemResets"]);
   const mixedSubscriptionChange = useScopedSettingsMixed(["autoApproveSubscriptionChange"]);
@@ -255,6 +289,7 @@ export function ProviderLimitSettings() {
           order={fallbackOrder}
           providers={providers}
           onChange={saveFallbackOrder}
+          statuses={fallbackStatuses}
         />
       </SettingsRow>
       {chainSet ? (

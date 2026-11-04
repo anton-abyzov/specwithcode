@@ -37,6 +37,7 @@ from release_retention import held_state_backups, prune_releases, prune_state_ba
 import after_proof
 import update_admission
 import update_apply
+import disk_room
 import database_continuity as continuity
 import database_restart
 import folder_work
@@ -779,6 +780,13 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 raise
             raise AssertionError('%s (after removing %d older update cop%s)' % (
                 error, len(dropped), 'y' if len(dropped) == 1 else 'ies')) from None
+    # The full read a pending FULL_READ migration forces after the restart, beside the backup's
+    # reserve: refused here, before staging, the pointers, the install gate or the server browser
+    # stop, so a host short of it keeps its old service untouched (M4, 1.0.184). Asked again below.
+    database_file = own / 'userdata' / 'statev2.sqlite'
+    room_live = page_mode.live_migration if page_mode else update_apply.live_migration(database_file)
+    room_table = update_apply.measured_table(database_file, room_live)
+    update_apply.fallback_room(database_file, room_live, needed, 0 if page_mode else kept.disk_bytes(), table=room_table)
     lap('backupSpace')
     old_bytes = {name: (own / name).read_bytes() for name in ['installation.json', 'launch.sh']}
     receipt = json.loads(old_bytes['installation.json'])
@@ -1029,10 +1037,9 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         assert_clone_headroom(own, home)
         # A migration the page proof refuses means the full read after the restart: its room too,
         # in page mode or not, beside the backup's reserve and less the kept lines it lets go first.
-        database_file = own / 'userdata' / 'statev2.sqlite'
-        pending = update_apply.fallback_room(
-            database_file, page_mode.live_migration if page_mode else update_apply.live_migration(database_file),
-            backup_space_needed(own, home, _clonefile())[0], 0 if page_mode else kept.disk_bytes())
+        live = page_mode.live_migration if page_mode else update_apply.live_migration(database_file)
+        pending = update_apply.fallback_room(database_file, live, backup_space_needed(own, home, _clonefile())[0],
+                                             0 if page_mode else kept.disk_bytes(), table=room_table if live == room_live else None)
         if pending: progress['fullReadMigrations'] = pending
         budget_left()  # At least MIN_READINESS_SECONDS left before ready_by.
         lap('finalCheck')
@@ -1400,6 +1407,10 @@ def refusal_line(identity, error):
 
 def main():
     os.umask(0o077)
+    if sys.argv[1:2] == ['room']:  # Disk this host's update needs (disk_room.py); reads only.
+        held = lambda database: os.path.exists(str(database) + '-shm')  # A running service: read as apply does.
+        sys.exit(disk_room.main(sys.argv[2:], live=lambda database: update_apply.live_migration(database) or disk_room.live_migration(database),
+                                largest=lambda database: (update_apply.largest_table_bytes if held(database) else disk_room.largest_table_bytes)(database)))
     parser = argparse.ArgumentParser()
     parser.add_argument('--identity', required=True)
     parser.add_argument('--snapshot', type=pathlib.Path)

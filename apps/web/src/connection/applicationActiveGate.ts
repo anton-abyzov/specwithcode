@@ -9,6 +9,10 @@
  * window shown again after a brief hide therefore does not wake. A browser tab
  * can be suspended with its socket dropped silently, so it always wakes. Shows
  * in quick succession wake once either way.
+ *
+ * A show that does not wake, and a window taking focus, can still hint that a
+ * pending retry should run now. Hints are cheap (a live session ignores them)
+ * but still come at most once per interval.
  */
 export const DESKTOP_BRIEF_HIDE_MS = 30_000;
 export const APPLICATION_ACTIVE_MIN_INTERVAL_MS = 2_000;
@@ -20,6 +24,7 @@ export function createApplicationActiveGate(options: {
   const now = options.now ?? Date.now;
   let hiddenAt: number | null = null;
   let lastWakeAt: number | null = null;
+  let lastHintAt: number | null = null;
   return {
     hidden(): void {
       hiddenAt ??= now();
@@ -32,6 +37,14 @@ export function createApplicationActiveGate(options: {
       if (options.desktop && hiddenFor !== null && hiddenFor < DESKTOP_BRIEF_HIDE_MS) return false;
       if (lastWakeAt !== null && at - lastWakeAt < APPLICATION_ACTIVE_MIN_INTERVAL_MS) return false;
       lastWakeAt = at;
+      lastHintAt = at;
+      return true;
+    },
+    /** Whether a retry hint should go out now. */
+    hinted(): boolean {
+      const at = now();
+      if (lastHintAt !== null && at - lastHintAt < APPLICATION_ACTIVE_MIN_INTERVAL_MS) return false;
+      lastHintAt = at;
       return true;
     },
   };

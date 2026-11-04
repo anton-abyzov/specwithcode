@@ -1,0 +1,4 @@
+@import "../../src/index.css";
+@source "../../src";
+@source "./main.tsx";
+@source "./stubs";

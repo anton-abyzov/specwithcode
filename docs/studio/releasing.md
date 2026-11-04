@@ -101,7 +101,7 @@ make, and refuses to start a second run of a version without `--resume`.
 
 | Stage           | What it does                                                                                                           | Runs again              |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| preflight       | version policy, release.env and the files it names, toolchain, `gh auth`; drops anaconda from PATH; warns on high load | every run               |
+| preflight       | version policy, release.env and the files it names, toolchain, `gh auth`; free disk for the update on M4 (plus 10 GiB build headroom, `RELEASE_BUILD_HEADROOM_GIB`), M1 and M3 (`preflight_fleet.py`, each host's `update.py room`; an unreachable host fails); drops anaconda from PATH; warns on high load | every run               |
 | trees           | makes or checks the build, test and public trees                                                                       | every run               |
 | prev            | downloads the previous release's plan, helpers manifest and `SHA256SUMS`; checks them (sums or GitHub's digest)        | once                    |
 | bump            | `release/<version>` from `main`, the version bump commit                                                               | once                    |
@@ -217,6 +217,20 @@ A worker whose app could not be updated fails fleet-workers once every service i
 `--resume` runs the stage again: the services are already on the release, so only the apps are
 retried ([desktop apps on M1 and M3](#desktop-apps-on-m1-and-m3)). When publish-public's push failed after `publish.mjs`
 tagged, `--resume` drops the tag left in the public clone, since the remote has none.
+
+Every host ends `fleet_rollout.py` with a row: `installed`, `already-installed`, or `not-updated` with
+a reason. M4, M1 and M3 are required: when one of them is unreachable, skipped or failed, the run
+prints `"result": "partial"`, one `fleet_rollout: not updated: <host> (required): ...` line per host,
+and exits 1, so fleet-workers fails instead of reporting success with M3 left behind. `--optional m3`
+relaxes one for a run. Other machines (ministorm, a Connect-only Mac) may end `not-updated` without
+failing it. A worker restarting after its install may stay silent for up to five minutes before it
+counts as lost, and a request the host does not acknowledge is sent again after a minute, three
+times at most. One rollout runs at a time (`updates/fleet-rollout.lock` in M4's home; a release's
+run waits up to 75 minutes for it). Whenever M4's update agent finalizes a version, whether a release,
+Update now or the hourly check installed it, it starts `fleet_rollout.py --version <v> --reconcile`
+from that release's helpers (log: `updates/reconcile/<v>/reconcile.log`), so M1 and M3 are asked
+even when nobody ran the workers stage. A reconcile gives up at once while another rollout covers
+the workers, and `STUDIO_FLEET_RECONCILE=0` turns it off.
 
 ### What keeps a release from failing late
 
