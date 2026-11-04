@@ -4,7 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import {
   assertRoomFor,
@@ -407,6 +407,46 @@ describe("offers", () => {
     const first = await write();
     expect(first.path).toBe(offer.path);
     expect(await write()).toEqual(first);
+  });
+
+  it("shares the saved path between concurrent retries of the final chunk", async () => {
+    const offers = new FileOffers(baseOf(), state);
+    const offer = await offers.offerSend(caller(), { name: "a.bin", sizeBytes: 3, secret: false });
+    const write = () => offers.write(caller(), { offerId: offer.offerId, index: 0, data: "YWJj" });
+    expect(await Promise.all([write(), write()])).toEqual([
+      { path: offer.path },
+      { path: offer.path },
+    ]);
+    expect(NodeFS.readFileSync(offer.path, "utf8")).toBe("abc");
+  });
+
+  it("does not publish if aborted during the final write", async () => {
+    const offers = new FileOffers(baseOf(), state);
+    const offer = await offers.offerSend(caller(), { name: "a.bin", sizeBytes: 3, secret: false });
+    const write = IncomingFile.prototype.write;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const delayed = vi.spyOn(IncomingFile.prototype, "write").mockImplementation(async function (
+      this: IncomingFile,
+      index,
+      bytes,
+    ) {
+      await gate;
+      return write.call(this, index, bytes);
+    });
+    try {
+      const outcome = offers.write(caller(), { offerId: offer.offerId, index: 0, data: "YWJj" });
+      const rejected = expect(outcome).rejects.toThrow("cancelled before publication");
+      await offers.abort(caller(), offer.offerId);
+      release();
+      await rejected;
+      expect(NodeFS.existsSync(offer.path)).toBe(false);
+    } finally {
+      release();
+      delayed.mockRestore();
+    }
   });
 
   it("keeps no staged file after an abort, and sweeps abandoned ones", async () => {

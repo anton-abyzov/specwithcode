@@ -122,6 +122,7 @@ struct ProjectSettingsSheet: View {
           WeaveRow("Coordinator model", symbol: "cpu", trailingText: draft.coordinatorModel ?? "Default")
           WeaveToggleRow("Paused", subtitle: "The coordinator starts no new work", symbol: "pause.circle", isOn: $draft.paused)
         }
+        LinkedProjectMachinesCard(project: project)
         if summary?.kind != .personal {
           GroupedCard {
             WeaveRow("Archive", symbol: "archivebox", isDestructive: true) { confirmArchive = true }

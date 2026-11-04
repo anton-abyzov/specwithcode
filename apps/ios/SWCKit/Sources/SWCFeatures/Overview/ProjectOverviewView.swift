@@ -12,12 +12,26 @@ struct ProjectOverviewView: View {
   @State private var searching = false
   @State private var query = ""
   @State private var showResolved = false
+  /// The machine the threads are narrowed to, by name, or nil for all of them.
+  @State private var machine: String?
   @FocusState private var searchFocused: Bool
 
   var body: some View {
-    let groups = ThreadGroups(model.threads(in: project), query: searching ? query : "")
+    let all = model.threads(in: project)
+    let machines = model.project(project).map { model.threadMachines(of: $0, threads: all) } ?? []
+    let picked = ThreadMachineFilter.active(machine, in: machines)
+    let groups = ThreadGroups(picked.map { name in all.filter { $0.runs(on: name) } } ?? all, query: searching ? query : "")
     List {
       if searching { searchField.plainListRow() }
+      LinkedCoordinatorBanner(project: project)
+        .padding(.horizontal, WeaveSpacing.gutter)
+        .plainListRow()
+      if machines.count > 1 {
+        ThreadMachineFilter(machines: machines, selection: Binding(get: { picked }, set: { machine = $0 }))
+          .padding(.horizontal, WeaveSpacing.gutter)
+          .padding(.vertical, WeaveSpacing.s1)
+          .plainListRow()
+      }
       if let machine = model.machine(project.environmentId), machine.isStale {
         Banner("Catching up with \(machine.label). Threads may be a little behind for a moment.", kind: .info)
           .padding(.horizontal, WeaveSpacing.gutter)
@@ -132,7 +146,8 @@ struct ProjectOverviewView: View {
       Button {
         perform(thread.isPinned ? .unpin : .pin, on: thread.ref)
       } label: {
-        Label(thread.isPinned ? "Unpin" : "Pin", systemImage: thread.isPinned ? "pin.slash" : "pin")
+        Label(thread.isPinned ? "Unpin" : "Pin", systemImage: thread.isPinned ? "pin.slash.fill" : "pin.fill")
+          .labelStyle(.iconOnly)
       }
       .tint(Color.weave.iris)
     }
@@ -140,7 +155,8 @@ struct ProjectOverviewView: View {
       Button {
         perform(thread.isResolved ? .unresolve : .resolve, on: thread.ref)
       } label: {
-        Label(thread.isResolved ? "Reopen" : "Resolve", systemImage: thread.isResolved ? "arrow.uturn.backward.circle" : "checkmark.circle")
+        Label(thread.isResolved ? "Reopen" : "Resolve", systemImage: thread.isResolved ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill")
+          .labelStyle(.iconOnly)
       }
       .tint(Color.weave.pass)
     }

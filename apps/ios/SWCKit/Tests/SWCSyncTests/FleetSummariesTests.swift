@@ -160,6 +160,26 @@ import SWCWire
     #expect(rows == ["a": true, "b": false])
   }
 
+  @Test func rowOpensTheNewestActiveCoordinatorNotTheFirstListedCopy() throws {
+    // M4 is listed first and still says it coordinates; Minis took over at a newer epoch.
+    var minis = try linked("pm", epoch: 4)
+    minis.workspaceSettings?.coordinatorBinding?.predecessor = LogicalProjectMember(environmentId: "a-m4", projectId: "p4", coordinatorThreadId: "project-coordinator:p4")
+    let output = ShellSummaries.build([
+      machine("a-m4", label: "M4", online: false, threads: [try TestData.thread(id: "a", projectId: "p4")], projects: [try linked("p4", epoch: 3)], lastSeenAt: Self.seen),
+      machine("minis", label: "Minis", threads: [], projects: [minis]),
+    ])
+    let project = try #require(output.projects.first)
+    #expect(project.ref == ProjectRef(environmentId: "minis", projectId: "pm"))
+    #expect(project.members.map(\.isCoordinator) == [true, false])
+
+    // Two active copies with no takeover link: the higher epoch still wins.
+    let both = ShellSummaries.build([
+      machine("a-m4", label: "M4", threads: [try TestData.thread(id: "a", projectId: "p4")], projects: [try linked("p4", epoch: 2)]),
+      machine("minis", label: "Minis", threads: [], projects: [try linked("pm", epoch: 5)]),
+    ])
+    #expect(both.projects.first?.ref.environmentId == "minis")
+  }
+
   @Test func withoutAnActiveCoordinatorTheRowOpensAReachableMachine() throws {
     let output = ShellSummaries.build([
       machine("a-m4", label: "M4", online: false, threads: [], projects: [try linked("p4")]),

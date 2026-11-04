@@ -410,13 +410,9 @@ public enum ShellSummaries {
     return primary.project.title
   }
 
+  /// The active coordinator with the highest epoch, as the desktop decides it.
   static func activeCoordinator(_ copies: [LinkedCopy]) -> LinkedCopy? {
-    let epoch = { (copy: LinkedCopy) in copy.project.workspaceSettings?.coordinatorBinding?.epoch ?? 0 }
-    guard let highest = copies.map(epoch).max() else { return nil }
-    let current = copies.filter { epoch($0) == highest }
-    if let pending = current.first(where: { $0.project.workspaceSettings?.coordinatorBinding?.state == .transferring }) { return pending }
-    let active = current.filter { $0.project.workspaceSettings?.coordinatorBinding?.state == .active }
-    return active.count == 1 ? active[0] : nil
+    LinkedProjectResolver.coordinator(copies)
   }
 
   /// The machine's scratch project, which holds chats started without a project.

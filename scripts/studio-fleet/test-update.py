@@ -892,18 +892,23 @@ class ApplyRecovery(unittest.TestCase):
  def captured_schedule_state(self):
   return self.use_captured_waiting_state('DROP TABLE scheduled_tasks','CREATE TABLE scheduled_tasks(\n  id TEXT PRIMARY KEY,\n  title TEXT NOT NULL,\n  enabled INTEGER NOT NULL DEFAULT 1,\n  secret\n)',
                                          "INSERT INTO scheduled_tasks VALUES ('task-1','Nightly',1,X'7365637265740001'),('task-2','Weekly',0,NULL)")
- def migrate_with_desktop_reconnect(self,*extra):
+ def migrate_with_desktop_reconnect(self,*extra,first_connect=False):
   """M4: the browser cookie session plus an existing desktop-app session; a migration rebuilds a
-  projection while the desktop app reconnects, and `extra` SQL runs on auth at the same time."""
+  projection while the desktop app reconnects, and `extra` SQL runs on auth at the same time.
+  With `first_connect` the desktop session was minted before the restart and never connected
+  (NULL surface and heartbeat): its first connect reports its surface and stamps its heartbeat."""
   self.prepare_heartbeat();state=self.own/'userdata'
   db=sqlite3.connect(state/'statev2.sqlite')
-  db.execute("INSERT INTO auth_sessions SELECT 'private-desktop','bearer-access-token','desktop',issued_at,expires_at,last_connected_at,revoked_at,X'0102' FROM auth_sessions");db.commit()
+  db.execute("INSERT INTO auth_sessions SELECT 'private-desktop','bearer-access-token',"+
+             ("NULL,issued_at,expires_at,NULL" if first_connect else "'desktop',issued_at,expires_at,last_connected_at")+
+             ",revoked_at,X'0102' FROM auth_sessions");db.commit()
   rows=[list(row) for row in db.execute('SELECT * FROM auth_sessions')];db.close()
   self.rows['counts'].update(auth_sessions=2,projection_projects=1)
   self.rows['hashes'].update(auth_sessions=auth_heartbeat.rows_hash(rows),projection_projects='before-projection')
   self.before['rows']=copy.deepcopy(self.rows)
   def restart():
    db=sqlite3.connect(state/'statev2.sqlite')
+   if first_connect:db.execute("UPDATE auth_sessions SET client_surface='desktop' WHERE session_id='private-desktop'")
    db.execute("UPDATE auth_sessions SET last_connected_at=? WHERE session_id='private-desktop'",(datetime.datetime.now(datetime.timezone.utc).isoformat(),))
    for sql in extra:db.execute(sql)
    db.commit();rows=[list(row) for row in db.execute('SELECT * FROM auth_sessions')];db.close()

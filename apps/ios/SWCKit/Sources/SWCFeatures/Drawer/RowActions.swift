@@ -17,16 +17,19 @@ struct ThreadRowActions: ViewModifier {
       .swipeActions(edge: .leading, allowsFullSwipe: true) {
         Button { perform(thread.isPinned ? .unpin : .pin) } label: {
           Label(thread.isPinned ? "Unpin" : "Pin", systemImage: thread.isPinned ? "pin.slash.fill" : "pin.fill")
+            .labelStyle(.iconOnly)
         }
         .tint(Color.weave.iris)
       }
       .swipeActions(edge: .trailing, allowsFullSwipe: true) {
         Button { perform(thread.isResolved ? .unresolve : .resolve) } label: {
           Label(thread.isResolved ? "Reopen" : "Resolve", systemImage: thread.isResolved ? "arrow.uturn.backward.circle.fill" : "checkmark.circle.fill")
+            .labelStyle(.iconOnly)
         }
         .tint(Color.weave.pass)
         Button { perform(.markUnread) } label: {
           Label("Unread", systemImage: "envelope.badge.fill")
+            .labelStyle(.iconOnly)
         }
         .tint(WeaveTint.color("sky"))
       }
@@ -75,10 +78,12 @@ struct ProjectRowActions: ViewModifier {
       .swipeActions(edge: .trailing, allowsFullSwipe: false) {
         Button { router.sheet = .projectSettings(project.ref) } label: {
           Label("Edit", systemImage: "pencil")
+            .labelStyle(.iconOnly)
         }
         .tint(Color.weave.iris)
         Button { router.push(.overview(project.ref)) } label: {
           Label("Threads", systemImage: "bubble.left.and.bubble.right.fill")
+            .labelStyle(.iconOnly)
         }
         .tint(WeaveTint.color("sky"))
       }

@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeVM from "node:vm";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,6 +12,7 @@ import {
   tokensEqual,
 } from "./BrowserExtension.ts";
 import { ChromeTools, checkUrl, noProfileHint } from "./chromeTools.ts";
+import { appendChunkScript, clearUploadScript, setFilesScript } from "./pageScripts.ts";
 import { connectFake, setup } from "./fakeChrome.testkit.ts";
 import {
   BrowserRelayError,
@@ -171,6 +173,31 @@ describe("ChromeTools", () => {
       fake.calls
         .filter((call) => call.method === "chrome.debugger.sendCommand")
         .map((call) => String((call.params?.[2] as { expression?: string })?.expression ?? ""));
+
+    it("keeps interleaved same-page uploads and their cleanup separate", async () => {
+      const input = { files: [] as File[], dispatchEvent: () => true };
+      const page = NodeVM.createContext({
+        window: {},
+        document: { querySelectorAll: () => [input] },
+        location: { href: "https://example.test/upload" },
+        atob,
+        Event,
+        File,
+        DataTransfer: class {
+          readonly files: File[] = [];
+          readonly items = { add: (file: File) => this.files.push(file) };
+        },
+      });
+      const run = (script: string) => NodeVM.runInContext(script, page);
+      const href = "https://example.test/upload";
+      run(appendChunkScript("first", 0, "YQ==", href));
+      run(appendChunkScript("second", 0, "Yg==", href));
+      run(setFilesScript("first", {}, [{ name: "a.txt", type: "text/plain", size: 1 }], href));
+      expect(await input.files[0]?.text()).toBe("a");
+      run(clearUploadScript("first"));
+      run(setFilesScript("second", {}, [{ name: "b.txt", type: "text/plain", size: 1 }], href));
+      expect(await input.files[0]?.text()).toBe("b");
+    });
 
     it("streams every file in chunks, then sets them on the input in order", async () => {
       const { extension, token } = setup();

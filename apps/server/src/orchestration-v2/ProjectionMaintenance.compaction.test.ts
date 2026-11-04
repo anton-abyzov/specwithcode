@@ -269,28 +269,34 @@ it.layer(layerTest)("event store compaction", (it) => {
     }),
   );
 
-  it.effect("an incremental pass reads only threads with newer events", () =>
-    Effect.gen(function* () {
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const busy = ThreadId.make("thread:compaction:busy");
-      const quiet = ThreadId.make("thread:compaction:quiet");
-      yield* writeHistory([busy, quiet], 3);
-      const first = yield* maintenance.compactEventStore;
-      assert.isAbove(first.deletedEventCount, 0);
-      assert.isNull(first.scannedStreamCount);
+  it.effect.each([
+    { plan: "rowid range", touchedRangeScanLimit: undefined },
+    { plan: "index walk for a long gap", touchedRangeScanLimit: 0 },
+  ])(
+    "an incremental pass reads only threads with newer events ($plan)",
+    ({ touchedRangeScanLimit }) =>
+      Effect.gen(function* () {
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const busy = ThreadId.make("thread:compaction:busy");
+        const quiet = ThreadId.make("thread:compaction:quiet");
+        yield* writeHistory([busy, quiet], 3);
+        const first = yield* maintenance.compactEventStore;
+        assert.isAbove(first.deletedEventCount, 0);
+        assert.isNull(first.scannedStreamCount);
 
-      yield* writeHistory([busy], 3);
-      const rebuiltBefore = yield* maintenance.rebuild.pipe(Effect.andThen(snapshotProjections));
-      const incremental = yield* maintenance.compactEventStoreWith({
-        sinceSequence: first.throughSequence,
-      });
-      assert.equal(incremental.scannedStreamCount, 1);
-      assert.isAbove(incremental.deletedEventCount, 0);
-      // Nothing an incremental pass skipped was left behind.
-      assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 0);
-      assert.isTrue((yield* maintenance.rebuild).valid);
-      assert.strictEqual(yield* snapshotProjections, rebuiltBefore);
-    }),
+        yield* writeHistory([busy], 3);
+        const rebuiltBefore = yield* maintenance.rebuild.pipe(Effect.andThen(snapshotProjections));
+        const incremental = yield* maintenance.compactEventStoreWith({
+          sinceSequence: first.throughSequence,
+          ...(touchedRangeScanLimit === undefined ? {} : { touchedRangeScanLimit }),
+        });
+        assert.equal(incremental.scannedStreamCount, 1);
+        assert.isAbove(incremental.deletedEventCount, 0);
+        // Nothing an incremental pass skipped was left behind.
+        assert.equal((yield* maintenance.compactEventStore).deletedEventCount, 0);
+        assert.isTrue((yield* maintenance.rebuild).valid);
+        assert.strictEqual(yield* snapshotProjections, rebuiltBefore);
+      }),
   );
 
   it.effect("stops before its next delete once told to", () =>

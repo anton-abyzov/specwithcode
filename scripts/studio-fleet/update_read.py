@@ -107,6 +107,12 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
         try:
             return _read_tables(db, tables, include_auth, since, True, widen_from, once=True, spill=spill,
                                 **({'keep': keep} if keep is not None else {}))
+        except continuity.SpillFailed:
+            # Retrying the legacy reader can materialize the complete table. Preserve
+            # the bounded-read refusal and its diagnostic instead of changing strategy.
+            if keep is not None:
+                keep.clear()
+            raise
         except Exception:
             if keep is not None:
                 keep.clear()

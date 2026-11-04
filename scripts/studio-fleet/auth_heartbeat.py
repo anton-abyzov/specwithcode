@@ -7,6 +7,15 @@ connect may also report the app version its client now runs (`client_app_version
 witness version 5), with or without advancing the heartbeat: the server writes the version
 first and stamps the heartbeat only on a session's first open connection. No new session,
 no other column, no revoked or expired session, and a bounded count.
+
+A session minted shortly before the restart may make its first connection during it (witness
+version 6): the same connect then sets its `client_surface` from NULL (setClientConnectionRow's
+COALESCE) and stamps its first `last_connected_at` from NULL, with or without a version. Only a
+never-connected session (NULL surface, NULL heartbeat) qualifies, and the surface it reports must
+make it a supported web, desktop or phone session for its unchanged method. A first heartbeat, when
+present, falls inside the restart window; a surface seen without one (observed between the two writes,
+or after a failed best-effort markConnected) carries no timing evidence. That is accepted because the
+surface is client-reported metadata that grants nothing: any holder of the session sets it on connect.
 """
 import copy
 import datetime
@@ -38,13 +47,22 @@ SESSION_KIND_NAMES = {'web': 'existing-web-session', 'desktop': 'existing-deskto
 # version of the app or page that connected, for the sessions list only. A desktop app or a page
 # reloaded into the new release reports it on every connect, committed before the heartbeat (ws.ts
 # recordClientConnection, then markConnected, which stamps only a session's first open connection).
-# The server stores it trimmed, never empty, at most 64 characters (ws.ts MAX_CLIENT_APP_VERSION_LENGTH),
-# never NULL over a value.
+# The server stores it trimmed (String.prototype.trim), never empty, at most 64 characters
+# (ws.ts MAX_CLIENT_APP_VERSION_LENGTH), never NULL over a value. A reconnect may replace a stored
+# value (the app updated); a never-connected session's first connect only fills a NULL one.
 APP_VERSION_COLUMN = 'client_app_version'
 MAX_APP_VERSION_LENGTH = 64
+# The characters String.prototype.trim removes (ECMAScript WhiteSpace and LineTerminator).
+JS_TRIMMED_EDGE = '[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]'
+SURFACE_COLUMN = 'client_surface'
 HEARTBEAT_CELL = {'rowSha256', 'beforeLastConnectedAt', 'afterLastConnectedAt'}
 VERSION_CELL = {'rowSha256', 'beforeClientAppVersion', 'afterClientAppVersion'}
 VERSIONED_CELL = HEARTBEAT_CELL | VERSION_CELL
+# A never-connected session's first connect: the surface it reported, and its first heartbeat
+# unless the proof observed the surface before the stamp. Either may carry a version report.
+FIRST_CONNECT_CELL = {'rowSha256', 'firstClientSurface'}
+FIRST_CONNECT_CELLS = tuple(FIRST_CONNECT_CELL | extra for extra in (
+    set(), {'firstConnectedAt'}, VERSION_CELL - {'rowSha256'}, {'firstConnectedAt'} | VERSION_CELL))
 
 
 def session_policy(identity, policy=None):
@@ -175,6 +193,7 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
     columns = original['columns']
     identifier, timestamp = columns.index('session_id'), columns.index('last_connected_at')
     version = columns.index(APP_VERSION_COLUMN) if APP_VERSION_COLUMN in columns else None
+    surface = columns.index(SURFACE_COLUMN) if SURFACE_COLUMN in columns else None
     old_rows = {row[identifier]: row for row in original['rows']}
     new_rows = {row[identifier]: row for row in current['rows']}
     assert len(old_rows) == len(original['rows']) and len(new_rows) == len(current['rows']), 'Duplicate auth session identity'
@@ -191,20 +210,45 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
         differing = [index for index, pair in enumerate(zip(old, new))
                      if type(pair[0]) is not type(pair[1]) or pair[0] != pair[1]]
         moved, reported = timestamp in differing, version is not None and version in differing
-        assert set(differing) <= {timestamp, version}, 'Heartbeat changed another auth cell'
+        first = surface is not None and surface in differing
+        other = sorted(columns[index] for index in set(differing) - {timestamp, version, surface})
+        # Column names only: never a value, so the receipt stays credential-free.
+        assert not other, 'Heartbeat changed another auth cell: ' + ','.join(other)
+        if first:
+            # Only a never-connected session's first connect may set its surface.
+            assert old[surface] is None and old[timestamp] is None, \
+                'Heartbeat changed another auth cell: ' + SURFACE_COLUMN
+            assert type(new[surface]) is str and (new[timestamp] is None or moved), \
+                'Heartbeat first connect reported an invalid client_surface'
         if reported:
             assert (old[version] is None or type(old[version]) is str) and type(new[version]) is str \
-                and 0 < len(new[version]) <= MAX_APP_VERSION_LENGTH, 'Heartbeat reported an invalid app version'
+                and 0 < len(new[version]) <= MAX_APP_VERSION_LENGTH \
+                and not re.match(JS_TRIMMED_EDGE, new[version]) and not re.search(JS_TRIMMED_EDGE + r'\Z', new[version]), \
+                'Heartbeat reported an invalid app version'
+            # A never-connected session had reported no version: its first connect fills a NULL one.
+            assert not first or old[version] is None, 'Heartbeat first connect replaced a stored app version'
         connected = start  # A version reported over a connection the session already had, or before its stamp.
-        if moved:
+        if moved and first:
+            connected = utc_timestamp(new[timestamp])
+            assert start <= connected <= end, 'Heartbeat first connect is outside the owned restart window'
+        elif moved:
             previous, connected = utc_timestamp(old[timestamp]), utc_timestamp(new[timestamp])
             assert previous <= start <= connected <= end and previous < connected, 'Heartbeat did not advance inside the owned restart window'
-        kind = active_session(original, old, start, identity, web_session_policy)
+        # A first connect is classified by the surface it reported, with every other original cell.
+        probe = list(old)
+        if first:
+            probe[surface] = new[surface]
+        kind = active_session(original, probe, start, identity, web_session_policy)
         assert active_session(current, new, connected, identity, web_session_policy) == kind, 'Heartbeat session kind changed'
         kinds.append(kind)
         row = restored['rows'][current['rows'].index(new)]
         changes.append({'rowSha256': invariant_row_hash(current, new)})
-        if moved:
+        if first:
+            row[surface], row[timestamp] = old[surface], old[timestamp]
+            changes[-1].update(firstClientSurface=new[surface])
+            if moved:
+                changes[-1].update(firstConnectedAt=new[timestamp])
+        elif moved:
             row[timestamp] = old[timestamp]
             changes[-1].update(beforeLastConnectedAt=old[timestamp], afterLastConnectedAt=new[timestamp])
         if reported:
@@ -222,15 +266,18 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
             'afterAuthSessionsSha256': after['hashes']['auth_sessions'],
             'originalCompleteRowsReconstructed': True}
     # Version 5: version 3 or 4 where a reconnect also reported its app version.
+    # Version 6: version 5 where a never-connected session made its first connection.
     versioned = any('afterClientAppVersion' in cell for cell in changes)
+    first_connects = any('firstClientSurface' in cell for cell in changes)
+    extended = 6 if first_connects else 5 if versioned else None
     if identity not in WEB_SESSION_METHOD:
-        witness.update(schemaVersion=5 if versioned else 4, serviceIdentity=identity, webSessionPolicy=web_session_policy,
+        witness.update(schemaVersion=extended or 4, serviceIdentity=identity, webSessionPolicy=web_session_policy,
                        timestampChanges=sorted(changes, key=lambda cell: cell['rowSha256']),
                        sessions=sorted(sessions, key=lambda cell: cell['rowSha256']))
         return witness
-    if 'desktop' in kinds or 'mobile' in kinds or versioned:
+    if 'desktop' in kinds or 'mobile' in kinds or extended:
         # Version 3: any mix of the web session and existing desktop or phone app sessions, each named.
-        witness.update(schemaVersion=5 if versioned else 3, serviceIdentity=identity,
+        witness.update(schemaVersion=extended or 3, serviceIdentity=identity,
                        timestampChanges=sorted(changes, key=lambda cell: cell['rowSha256']),
                        sessions=sorted(sessions, key=lambda cell: cell['rowSha256']))
         return witness
@@ -265,20 +312,25 @@ def restore_m4_timestamps(auth, changes, expected):
     return restore_timestamps(auth, changes, expected)
 
 
-def restore_timestamps(auth, changes, expected, *, versions=False):
+def restore_timestamps(auth, changes, expected, *, versions=False, first_connects=False):
     """Reverse uniquely bound cells privately, then bind the full table. With `versions`
-    (witness version 5) a cell may also, or only, reverse the app version a connect reported."""
+    (witness version 5) a cell may also, or only, reverse the app version a connect reported.
+    With `first_connects` (version 6) a cell may reverse a never-connected session's first
+    connect: its reported surface and first heartbeat return to NULL."""
     assert isinstance(changes, list) and 1 <= len(changes) <= max(MAX_WEB_HEARTBEATS.values()) + MAX_DESKTOP_HEARTBEATS + MAX_MOBILE_HEARTBEATS, \
         'Heartbeat change count is not supported'
     restored = copy.deepcopy(auth)
     timestamp = restored['columns'].index('last_connected_at')
     version = restored['columns'].index(APP_VERSION_COLUMN) if APP_VERSION_COLUMN in restored['columns'] else None
+    surface = restored['columns'].index(SURFACE_COLUMN) if SURFACE_COLUMN in restored['columns'] else None
     # Fingerprints bind the live rows; reversing a version changes the restored row's own.
     fingerprints = [invariant_row_hash(restored, row) for row in restored['rows']]
     seen = set()
     for cell in changes:
         keys = set(cell) if isinstance(cell, dict) else None
-        assert keys == HEARTBEAT_CELL or (versions and version is not None and keys in (VERSIONED_CELL, VERSION_CELL)), \
+        first = first_connects and surface is not None and keys in FIRST_CONNECT_CELLS
+        assert keys == HEARTBEAT_CELL or (versions and version is not None and keys in (VERSIONED_CELL, VERSION_CELL)) \
+            or (first and (version is not None or not keys & VERSION_CELL - {'rowSha256'})), \
             'Heartbeat cell witness shape changed'
         fingerprint = cell['rowSha256']
         assert isinstance(fingerprint, str) and re.fullmatch('[a-f0-9]{64}', fingerprint), 'Invalid heartbeat row fingerprint'
@@ -286,12 +338,19 @@ def restore_timestamps(auth, changes, expected, *, versions=False):
         seen.add(fingerprint)
         candidates = [row for row, value in zip(restored['rows'], fingerprints) if value == fingerprint]
         assert len(candidates) == 1, 'Heartbeat fingerprint must identify exactly one existing row'
-        if keys != VERSION_CELL:
+        if first:
+            reported, stamped = cell['firstClientSurface'], cell.get('firstConnectedAt')
+            assert type(reported) is str and candidates[0][surface] == reported, 'Heartbeat first-connect surface does not match live row'
+            if 'firstConnectedAt' in keys:
+                utc_timestamp(stamped)
+            assert candidates[0][timestamp] == stamped, 'Heartbeat first-connect timestamp does not match live row'
+            candidates[0][surface] = candidates[0][timestamp] = None
+        elif keys & HEARTBEAT_CELL == HEARTBEAT_CELL:
             before, after = cell['beforeLastConnectedAt'], cell['afterLastConnectedAt']
             assert utc_timestamp(before) < utc_timestamp(after), 'Heartbeat timestamp did not advance'
             assert candidates[0][timestamp] == after, 'Heartbeat timestamp does not match live row'
             candidates[0][timestamp] = before
-        if keys != HEARTBEAT_CELL:
+        if 'afterClientAppVersion' in keys:
             earlier, reported = cell['beforeClientAppVersion'], cell['afterClientAppVersion']
             assert (earlier is None or type(earlier) is str) and type(reported) is str and earlier != reported, \
                 'Heartbeat app version witness is invalid'
@@ -304,8 +363,9 @@ def restore_timestamps(auth, changes, expected, *, versions=False):
 
 def restore_witness(current, witness, expected):
     """The complete original auth rows a verified witness of any version reverses to."""
-    if witness['schemaVersion'] in (2, 3, 4, 5):
-        return restore_timestamps(current, witness['timestampChanges'], expected, versions=witness['schemaVersion'] == 5)
+    if witness['schemaVersion'] in (2, 3, 4, 5, 6):
+        return restore_timestamps(current, witness['timestampChanges'], expected, versions=witness['schemaVersion'] in (5, 6),
+                                  first_connects=witness['schemaVersion'] == 6)
     return restore_timestamp(current, witness['beforeLastConnectedAt'], witness['afterLastConnectedAt'], expected)
 
 
@@ -319,14 +379,15 @@ def verify_restart_witness(before, after, witness, current, *, identity='m4', we
     if witness['schemaVersion'] == 2:
         assert identity == 'm4' and witness['changedRows'] == 2, 'Only M4 supports exactly two cookie heartbeats'
         original = restore_m4_timestamps(current, witness['timestampChanges'], before)
-    elif witness['schemaVersion'] in (3, 4, 5):
+    elif witness['schemaVersion'] in (3, 4, 5, 6):
         generic = identity not in WEB_SESSION_METHOD
-        if witness['schemaVersion'] == 4 or (witness['schemaVersion'] == 5 and generic):
+        if witness['schemaVersion'] == 4 or (witness['schemaVersion'] in (5, 6) and generic):
             assert generic and witness.get('webSessionPolicy') == web_session_policy, 'Heartbeat witness policy differs'
         assert witness.get('serviceIdentity') == identity, 'Heartbeat witness names another service'
         assert isinstance(witness['timestampChanges'], list) and witness['changedRows'] == len(witness['timestampChanges']), \
             'Heartbeat witness counts differ'
-        original = restore_timestamps(current, witness['timestampChanges'], before, versions=witness['schemaVersion'] == 5)
+        original = restore_timestamps(current, witness['timestampChanges'], before, versions=witness['schemaVersion'] in (5, 6),
+                                      first_connects=witness['schemaVersion'] == 6)
     else:
         assert witness['schemaVersion'] == 1 and witness['changedRows'] == 1, 'Unsupported heartbeat witness version or count'
         original = restore_timestamp(current, witness['beforeLastConnectedAt'], witness['afterLastConnectedAt'], before)

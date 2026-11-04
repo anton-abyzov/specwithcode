@@ -221,15 +221,22 @@ export function wavPeak(wav: Uint8Array): number {
 }
 
 /** Drops a transcript that only a silent recording or an echoed prompt could produce. */
-export function acceptTranscript(text: string, prompt: string, peak: number): string {
+export function acceptTranscript(
+  text: string,
+  prompt: string,
+  peak: number,
+  terms: readonly VocabularyTerm[] = [],
+): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
   if (peak < SPEECH_PEAK && SILENCE_INVENTIONS.test(trimmed)) return "";
   // Whisper can repeat its hint list on noise; ordinary speech is not a run of it.
-  const bare = trimmed.replace(/[.!]+$/, "");
+  const unpunctuated = (value: string) => value.trim().replace(/[.!]+$/, "");
+  const bare = unpunctuated(trimmed);
   if (
     prompt &&
-    (bare === prompt.trim().replace(/[.!]+$/, "") || (bare.length >= 20 && prompt.includes(bare)))
+    !(peak >= SPEECH_PEAK && writtenForms(terms).some((word) => unpunctuated(word) === bare)) &&
+    (bare === unpunctuated(prompt) || (bare.length >= 20 && prompt.includes(bare)))
   ) {
     return "";
   }

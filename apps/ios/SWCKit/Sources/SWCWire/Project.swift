@@ -275,13 +275,52 @@ public struct CoordinatorBinding: Codable, Hashable, Sendable {
   public var operationId: String?
   public var predecessor: LogicalProjectMember?
   public var successor: LogicalProjectMember?
+  /// When a member made itself the coordinator while the previous one was unreachable.
+  public var takenOverAt: String?
+  /// "person" or "auto" (an armed standby).
+  public var takenOverBy: String?
+  /// Set only on an active binding while automatic takeover is on.
+  public var standby: CoordinatorStandby?
 
-  public init(epoch: Int, state: CoordinatorBindingState, operationId: String? = nil, predecessor: LogicalProjectMember? = nil, successor: LogicalProjectMember? = nil) {
+  public init(epoch: Int, state: CoordinatorBindingState, operationId: String? = nil, predecessor: LogicalProjectMember? = nil, successor: LogicalProjectMember? = nil, takenOverAt: String? = nil, takenOverBy: String? = nil, standby: CoordinatorStandby? = nil) {
     self.epoch = epoch
     self.state = state
     self.operationId = operationId
     self.predecessor = predecessor
     self.successor = successor
+    self.takenOverAt = takenOverAt
+    self.takenOverBy = takenOverBy
+    self.standby = standby
+  }
+
+  enum CodingKeys: String, CodingKey { case epoch, state, operationId, predecessor, successor, takenOverAt, takenOverBy, standby }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    epoch = try c.decode(Int.self, forKey: .epoch)
+    state = try c.decode(CoordinatorBindingState.self, forKey: .state)
+    operationId = try c.decodeIfPresent(String.self, forKey: .operationId)
+    predecessor = try c.decodeIfPresent(LogicalProjectMember.self, forKey: .predecessor)
+    successor = try c.decodeIfPresent(LogicalProjectMember.self, forKey: .successor)
+    takenOverAt = try? c.decodeIfPresent(String.self, forKey: .takenOverAt)
+    takenOverBy = try? c.decodeIfPresent(String.self, forKey: .takenOverBy)
+    // A standby a newer server shapes differently reads as off, not as a broken binding.
+    standby = try? c.decodeIfPresent(CoordinatorStandby.self, forKey: .standby)
+  }
+}
+
+/// The member the owner chose to take over the coordinator automatically
+/// when it goes quiet.
+public struct CoordinatorStandby: Codable, Hashable, Sendable {
+  public var member: LogicalProjectMember
+  /// 5, 15, 30 or 60.
+  public var afterMinutes: Int
+  public var enabledAt: String?
+
+  public init(member: LogicalProjectMember, afterMinutes: Int, enabledAt: String? = nil) {
+    self.member = member
+    self.afterMinutes = afterMinutes
+    self.enabledAt = enabledAt
   }
 }
 

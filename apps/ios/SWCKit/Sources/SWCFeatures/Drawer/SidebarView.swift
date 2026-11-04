@@ -33,6 +33,8 @@ struct SidebarView: View {
   @State private var showArchived = false
   @State private var settingUpAide = false
   @State private var statusFilter = StatusFilter.all
+  /// The machine a project's threads are narrowed to, by name; ends with the project.
+  @State private var threadMachine: String?
 
   private static let collapsedProjectCount = 8
   private static let recentCount = 12
@@ -189,14 +191,17 @@ struct SidebarView: View {
     .scrollContentBackground(.hidden)
     .environment(\.defaultMinListRowHeight, WeaveSize.minTap)
     // A filter ends with what it filtered, so the list never narrows by itself.
-    .onChange(of: router.sidebarScope(in: model)) { statusFilter = .all }
+    .onChange(of: router.sidebarScope(in: model)) {
+      statusFilter = .all
+      threadMachine = nil
+    }
     .onChange(of: statusFilterIsEmpty) { _, empty in
       if empty { statusFilter = .all }
     }
   }
 
   private var statusFilterIsEmpty: Bool {
-    let groups = ThreadGroups(router.sidebarThreads(in: model))
+    let groups = ThreadGroups(scopedThreads)
     return switch statusFilter {
     case .all: false
     case .needsYou: groups.needsYou.isEmpty
@@ -206,6 +211,20 @@ struct SidebarView: View {
   }
 
   // MARK: One project
+
+  /// The project's threads on the machine picked above, or on all of them.
+  private var scopedThreads: [ThreadSummary] {
+    let threads = router.sidebarThreads(in: model)
+    guard let machine = activeThreadMachine(threads) else { return threads }
+    return threads.filter { $0.runs(on: machine) }
+  }
+
+  /// The picked machine while its chip is still offered, so a chip that
+  /// goes away never leaves the list empty with no way back.
+  private func activeThreadMachine(_ threads: [ThreadSummary]) -> String? {
+    guard let project = router.sidebarScope(in: model).flatMap({ model.project($0) }) else { return nil }
+    return ThreadMachineFilter.active(threadMachine, in: model.threadMachines(of: project, threads: threads))
+  }
 
   /// The project's coordinator, then its threads in a steady order, with what
   /// needs attention one tap away.
@@ -223,7 +242,9 @@ struct SidebarView: View {
         .sidebarItem(.chat(.project(project.ref)))
       }
     }
-    let threads = router.sidebarThreads(in: model)
+    let allThreads = router.sidebarThreads(in: model)
+    let threadMachines = model.threadMachines(of: project, threads: allThreads)
+    let threads = scopedThreads
     let groups = ThreadGroups(threads)
     let filter = statusFilterIsEmpty ? StatusFilter.all : statusFilter
     let shown: [ThreadSummary] = switch filter {
@@ -232,8 +253,12 @@ struct SidebarView: View {
     case .working: threads.filter { groups.working.map(\.ref).contains($0.ref) }
     case .offline: threads.filter { groups.offline.map(\.ref).contains($0.ref) }
     }
-    let machines = Set(threads.map(\.ref.environmentId))
+    let machines = Set(allThreads.map(\.ref.environmentId))
     Section {
+      if threadMachines.count > 1 {
+        ThreadMachineFilter(machines: threadMachines, selection: Binding(get: { activeThreadMachine(allThreads) }, set: { threadMachine = $0 }))
+          .sidebarRowStyle(selected: false)
+      }
       if !groups.needsYou.isEmpty || !groups.working.isEmpty || !groups.offline.isEmpty {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: WeaveSpacing.s1) {

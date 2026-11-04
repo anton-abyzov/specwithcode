@@ -1,11 +1,18 @@
 // @effect-diagnostics nodeBuiltinImport:off -- These tests use a real temporary voice folder.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { Writable } from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { LinuxSpeech, linuxSpeechAssets, type RunCommand } from "./linuxSpeech.ts";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFS>();
+  return { ...actual, createWriteStream: vi.fn(actual.createWriteStream) };
+});
 
 let dir: string;
 let whisperPath: string;
@@ -99,25 +106,28 @@ describe("assets", () => {
   it.skipIf(process.getuid?.() === 0)(
     "fails instead of hanging when writing fails",
     async () => {
-      const chunk = new Uint8Array(1024 * 1024);
-      const body = new ReadableStream<Uint8Array>({
-        pull(controller) {
-          controller.enqueue(chunk);
-        },
-      });
-      const speech = engine({
-        fetch: (async () => new Response(body)) as never,
-        // The folder exists by now; making it read-only fails the partial file's open.
-        freeBytes: async () => {
-          await NodeFSP.chmod(voiceDir(), 0o500);
-          return Number.MAX_SAFE_INTEGER;
-        },
-      });
-      await expect(speech.prepare()).rejects.toThrow(/Could not download/);
-      await NodeFSP.chmod(voiceDir(), 0o700);
-      // A later attempt starts over rather than joining a dead one.
-      await expect(speech.prepare()).rejects.toBeDefined();
-      await NodeFSP.chmod(voiceDir(), 0o700);
+      const writeStream = vi.mocked(NodeFS.createWriteStream);
+      writeStream.mockClear();
+      writeStream.mockImplementationOnce(
+        () =>
+          new Writable({
+            write(_chunk, _encoding, callback) {
+              callback(Object.assign(new Error("No space left on device"), { code: "ENOSPC" }));
+            },
+          }) as NodeFS.WriteStream,
+      );
+      const fetch = vi.fn(async () => new Response("speech file"));
+      const speech = engine({ fetch: fetch as never });
+      try {
+        await expect(speech.prepare()).rejects.toThrow(/Could not download/);
+        expect(writeStream).toHaveBeenCalledTimes(1);
+        expect(await NodeFSP.readdir(voiceDir())).toEqual([]);
+        // The retry runs a fresh download and reaches checksum validation.
+        await expect(speech.prepare()).rejects.toThrow(/checksum/);
+        expect(fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        writeStream.mockReset();
+      }
     },
     20_000,
   );

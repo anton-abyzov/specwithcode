@@ -867,7 +867,9 @@ class HeartbeatProofs(unittest.TestCase):
 
     def test_a_reported_version_must_be_short_nonempty_text(self):
         original_rows = copy.deepcopy(self.original['rows'])
-        for old, new in [('0.1', ''), ('0.1', None), ('0.1', 'x' * 65), ('0.1', b'1.0.61'), (b'0.1', '1.0.61')]:
+        # The server stores what String.prototype.trim left: no edge whitespace or line break.
+        for old, new in [('0.1', ''), ('0.1', None), ('0.1', 'x' * 65), ('0.1', b'1.0.61'), (b'0.1', '1.0.61'),
+                         ('0.1', ' 1.0.61'), ('0.1', '1.0.61\n'), ('0.1', '1.0.61\ufeff'), ('0.1', '\u3000' * 3)]:
             with self.subTest(old=old, new=new):
                 self.report('private-session-one', old); self.baseline()
                 self.report('private-session-one', new); self.change()
@@ -913,6 +915,184 @@ class HeartbeatProofs(unittest.TestCase):
             heartbeat.restore_timestamps(self.current, witness['timestampChanges'], self.before)
         with self.assertRaises(AssertionError):
             heartbeat.verify_restart_witness(self.before, self.after, witness, self.current, identity='m1')
+
+    # M4 1.0.177: a desktop session minted minutes before the restart had never connected (NULL
+    # surface, version and heartbeat). Its first connect to the new service set all three in one
+    # connect (setClientConnectionRow, then markConnected): witness version 6.
+    def add_unconnected(self, session_id='private-fresh', method='dpop-access-token'):
+        self.add_desktop(session_id, method=method, surface=None, client_app_version=None, last_connected_at=None,
+                         issued_at='2026-10-08T09:55:00.000Z')
+
+    def first_connect(self, session_id='private-fresh', surface='desktop', version='1.0.176', value=NEW):
+        self.db.execute('UPDATE auth_sessions SET client_surface=?,client_app_version=? WHERE session_id=?',
+                        (surface, version, session_id))
+        if value is not None:
+            self.db.execute('UPDATE auth_sessions SET last_connected_at=? WHERE session_id=?', (value, session_id))
+        self.db.commit(); self.observe()
+
+    def clear(self, *session_ids):
+        for session_id in session_ids:
+            self.db.execute('DELETE FROM auth_sessions WHERE session_id=?', (session_id,))
+        self.db.commit()
+
+    def test_a_session_first_connecting_during_the_restart_is_proven_and_reversed(self):
+        for identity, policy in [('m4', None), ('m1', None), ('m3', None), ('lab', 'worker-relay')]:
+            with self.subTest(identity=identity):
+                self.add_unconnected(); self.baseline(); self.first_connect(); raw = self.path.read_bytes()
+                witness = heartbeat.prove_restart_heartbeat(self.before, self.after, self.original, self.current, START, END,
+                                                            identity=identity, web_session_policy=policy)
+                self.assertEqual((witness['schemaVersion'], witness['changedRows'], witness['serviceIdentity']), (6, 1, identity))
+                fresh = next(row for row in self.current['rows'] if row[0] == 'private-fresh')
+                self.assertEqual(witness['timestampChanges'], [{
+                    'rowSha256': heartbeat.invariant_row_hash(self.current, fresh), 'firstClientSurface': 'desktop',
+                    'firstConnectedAt': NEW, 'beforeClientAppVersion': None, 'afterClientAppVersion': '1.0.176'}])
+                self.assertEqual([(cell['kind'], cell['method'], cell['surface']) for cell in witness['sessions']],
+                                 [('existing-desktop-app-session', 'dpop-access-token', 'desktop')])
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                                  identity=identity, web_session_policy=policy), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+                for secret in ['private-fresh', 'private-session', 'private-subject', 'private-desktop-label', 'private-desktop-token']:
+                    self.assertNotIn(secret, json.dumps(witness))
+                self.assertEqual(self.path.read_bytes(), raw)
+                self.clear('private-fresh')
+
+    def test_a_first_connect_with_or_without_version_or_stamp_beside_reconnects(self):
+        # The surface without a version, the surface observed before its stamp, and a mix with the
+        # web session's and an existing desktop app's ordinary reconnects.
+        for version, value, keys in [(None, NEW, {'rowSha256', 'firstClientSurface', 'firstConnectedAt'}),
+                                     ('1.0.176', None, {'rowSha256', 'firstClientSurface', 'beforeClientAppVersion', 'afterClientAppVersion'}),
+                                     (None, None, {'rowSha256', 'firstClientSurface'})]:
+            with self.subTest(version=version, value=value):
+                self.relay_baseline(method='browser-session-cookie'); self.add_desktop(); self.add_unconnected(); self.baseline()
+                self.first_connect(version=version, value=value); self.reconnect('private-session-one', 'private-desktop')
+                witness = self.prove()
+                self.assertEqual((witness['schemaVersion'], witness['changedRows']), (6, 3))
+                self.assertIn(keys, [set(cell) for cell in witness['timestampChanges']])
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+                self.clear('private-fresh', 'private-desktop')
+
+    def test_web_and_phone_sessions_may_first_connect_under_their_own_methods(self):
+        for identity, method, surface, kind in [('m4', 'browser-session-cookie', 'web', 'existing-web-session'),
+                                                ('m3', 'bearer-access-token', 'web', 'existing-web-session'),
+                                                ('m4', 'dpop-access-token', 'mobile', 'existing-mobile-app-session'),
+                                                ('m1', 'bearer-access-token', 'mobile', 'existing-mobile-app-session')]:
+            with self.subTest(identity=identity, surface=surface):
+                self.add_unconnected(method=method); self.baseline(); self.first_connect(surface=surface)
+                witness = self.relay_prove(identity)
+                self.assertEqual([cell['kind'] for cell in witness['sessions']], [kind])
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                                  identity=identity), witness)
+                self.clear('private-fresh')
+
+    def test_a_first_connect_must_report_a_surface_its_method_supports(self):
+        for method, surface in [('dpop-access-token', 'web'), ('bearer-access-token', 'cli'), ('browser-session-cookie', 'desktop'),
+                                ('dpop-access-token', 'native'), ('dpop-access-token', '')]:
+            with self.subTest(method=method, surface=surface):
+                self.add_unconnected(method=method); self.baseline(); self.first_connect(surface=surface)
+                with self.assertRaises(AssertionError): self.prove()
+                self.clear('private-fresh')
+        # A first heartbeat that reports no surface: a never-connected session's NULL heartbeat
+        # proves nothing about its kind.
+        self.add_unconnected(); self.baseline(); self.first_connect(surface=None)
+        with self.assertRaisesRegex(AssertionError, 'UTC timestamp'): self.prove()
+        self.clear('private-fresh')
+
+    def test_only_a_never_connected_session_may_gain_a_surface(self):
+        # A NULL-surface session that had connected before (M1 legacy rows), or one already on a
+        # surface, may not have its surface set or moved by a reconnect.
+        for cells, surface in [({'last_connected_at': OLD}, 'desktop'), ({'client_surface': 'mobile'}, 'desktop'),
+                               ({'client_surface': 'desktop', 'last_connected_at': OLD}, 'mobile')]:
+            with self.subTest(cells=cells, surface=surface):
+                self.add_unconnected(); self.db.execute(
+                    'UPDATE auth_sessions SET ' + ','.join(name + '=?' for name in cells) + " WHERE session_id='private-fresh'",
+                    list(cells.values())); self.db.commit(); self.baseline()
+                self.first_connect(surface=surface)
+                with self.assertRaisesRegex(AssertionError, 'another auth cell: client_surface$'): self.prove()
+                self.clear('private-fresh')
+
+    def test_a_first_connect_must_stamp_inside_the_restart_window_of_an_active_session(self):
+        for value in ['2026-10-08T09:59:59.999Z', '2026-10-08T10:00:02.001Z', '2026-10-08T10:00:01', 'yesterday']:
+            with self.subTest(value=value):
+                self.add_unconnected(); self.baseline(); self.first_connect(value=value)
+                with self.assertRaises(AssertionError): self.prove()
+                self.clear('private-fresh')
+        for cells in [{'revoked_at': OLD}, {'expires_at': '2026-10-08T09:59:00.000Z'}, {'issued_at': NEW}]:
+            with self.subTest(cells=cells):
+                self.add_unconnected(); name, value = next(iter(cells.items()))
+                self.db.execute('UPDATE auth_sessions SET ' + name + "=? WHERE session_id='private-fresh'", (value,))
+                self.db.commit(); self.baseline(); self.first_connect()
+                with self.assertRaises(AssertionError): self.prove()
+                self.clear('private-fresh')
+
+    def test_a_first_connect_never_covers_identity_scopes_method_revocation_or_credential(self):
+        for field, value in [('subject', 'other'), ('scopes', '["admin"]'), ('method', 'bearer-access-token'),
+                             ('revoked_at', NEW), ('token_digest', b'rotated'), ('expires_at', '2026-12-01T00:00:00.000Z'),
+                             ('client_label', 'renamed'), ('issued_at', '2026-10-08T09:56:00.000Z')]:
+            with self.subTest(field=field):
+                self.add_unconnected(); self.baseline()
+                self.db.execute('UPDATE auth_sessions SET ' + field + "=? WHERE session_id='private-fresh'", (value,))
+                self.first_connect()
+                with self.assertRaises(AssertionError) as caught: self.prove()
+                # The message names the column and never its value.
+                self.assertEqual(str(caught.exception), 'Heartbeat changed another auth cell: ' + field)
+                self.clear('private-fresh')
+
+    def test_the_refusal_names_every_changed_column_and_no_value(self):
+        self.add_desktop(); self.baseline()
+        self.db.execute("UPDATE auth_sessions SET scopes='[\"secret-scope\"]',expires_at='2026-12-01T00:00:00.000Z',"
+                        "token_digest=X'beef' WHERE session_id='private-desktop'")
+        self.reconnect('private-desktop')
+        with self.assertRaises(AssertionError) as caught: self.relay_prove('m4')
+        self.assertEqual(str(caught.exception), 'Heartbeat changed another auth cell: expires_at,scopes,token_digest')
+        for value in ['secret-scope', '2026-12-01', 'beef', 'private']:
+            self.assertNotIn(value, str(caught.exception))
+
+    def test_a_first_connect_only_fills_a_null_app_version_in_its_stored_form(self):
+        # A never-connected session had reported no version; its first connect cannot replace one.
+        self.add_unconnected()
+        self.db.execute("UPDATE auth_sessions SET client_app_version='1.0.100' WHERE session_id='private-fresh'")
+        self.db.commit(); self.baseline(); self.first_connect()
+        with self.assertRaisesRegex(AssertionError, 'replaced a stored app version'): self.prove()
+        self.clear('private-fresh')
+        for version in [' 1.0.176', '1.0.176\t', '\u2028']:
+            with self.subTest(version=version):
+                self.add_unconnected(); self.baseline(); self.first_connect(version=version)
+                with self.assertRaisesRegex(AssertionError, 'invalid app version'): self.prove()
+                self.clear('private-fresh')
+        # Interior text the server keeps stays accepted.
+        self.add_unconnected(); self.baseline(); self.first_connect(version='1.0.176 (arm64)')
+        self.assertEqual(self.prove()['schemaVersion'], 6)
+        self.clear('private-fresh')
+
+    def test_first_connects_count_toward_the_session_budget(self):
+        names = ['private-fresh-%d' % index for index in range(heartbeat.MAX_DESKTOP_HEARTBEATS + 1)]
+        for name in names: self.add_unconnected(name)
+        self.baseline()
+        for name in names: self.first_connect(name)
+        with self.assertRaisesRegex(AssertionError, 'count'): self.relay_prove('m4')
+        self.clear(*names)
+
+    def test_v6_witness_cannot_be_forged_downgraded_or_moved(self):
+        self.add_unconnected(); self.baseline(); self.first_connect()
+        witness = self.relay_prove('m3')
+        for field, value in [('schemaVersion', 5), ('schemaVersion', 3), ('schemaVersion', 6.0), ('serviceIdentity', 'm1'),
+                             ('changedRows', 2), ('unexpected', 'extra')]:
+            with self.subTest(field=field, value=value), self.assertRaises(AssertionError):
+                heartbeat.verify_restart_witness(self.before, self.after, {**witness, field: value}, self.current, identity='m3')
+        for field, value in [('firstClientSurface', 'mobile'), ('firstClientSurface', None), ('firstConnectedAt', OLD),
+                             ('firstConnectedAt', None), ('afterClientAppVersion', '1.0.175')]:
+            with self.subTest(cell=field, value=value), self.assertRaises(AssertionError):
+                forged = copy.deepcopy(witness); forged['timestampChanges'][0][field] = value
+                heartbeat.verify_restart_witness(self.before, self.after, forged, self.current, identity='m3')
+        # A first-connect cell is not a v5 cell, and a v5 restore never reverses a surface.
+        with self.assertRaisesRegex(AssertionError, 'shape'):
+            heartbeat.restore_timestamps(self.current, witness['timestampChanges'], self.before, versions=True)
+        disguised = copy.deepcopy(witness)
+        cell = disguised['timestampChanges'][0]
+        cell.update(beforeLastConnectedAt=OLD, afterLastConnectedAt=cell.pop('firstConnectedAt')); del cell['firstClientSurface']
+        with self.assertRaises(AssertionError):
+            heartbeat.verify_restart_witness(self.before, self.after, disguised, self.current, identity='m3')
 
     def test_desktop_heartbeat_never_covers_a_hex_alias_of_a_token(self):
         # The legacy row hash writes a BLOB as its hex text; the proof compares SQLite types.

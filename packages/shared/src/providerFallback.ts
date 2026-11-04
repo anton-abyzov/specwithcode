@@ -21,12 +21,7 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { describeModel, sameModelOn } from "./modelIdentity.ts";
-import {
-  effectiveFallbackOrder,
-  fallbackModelOrder,
-  fallbackSelectionKey,
-  tierNamesInstance,
-} from "./modelTiers.ts";
+import { effectiveFallbackOrder, fallbackModelOrder, fallbackSelectionKey } from "./modelTiers.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
@@ -630,10 +625,15 @@ export function describeFallbackOrder(input: {
   readonly contextFit?: ContextFitRequirement | undefined;
 }): ReadonlyArray<FallbackOrderEntry> {
   const chain = effectiveFallbackOrder(input.rule, input.currentModel, input.providers);
-  // Tier expansions onto unnamed providers get no more trust than "same model elsewhere".
-  const named = (id: ProviderInstanceId) =>
-    !chain.fromTiers || ruleNamesInstance(input.rule, id) || tierNamesInstance(input.rule, id);
+  // An expansion is eligible for an unknown-billing agent only if the person
+  // named this exact model on that provider in the effective tier chain.
+  const namedTiers = chain.fromTiers
+    ? new Set(
+        effectiveFallbackOrder(input.rule, input.currentModel).order.map(fallbackSelectionKey),
+      )
+    : null;
   return chain.order.map((selection) => {
+    const named = namedTiers === null || namedTiers.has(fallbackSelectionKey(selection));
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
     const entry = (
       unavailable: FallbackOrderUnavailable | null,
@@ -654,8 +654,7 @@ export function describeFallbackOrder(input: {
       (chain.fromTiers || !isGeminiSpendProvider(provider))
     )
       return entry("per-token");
-    if (!named(provider.instanceId) && isUnknownBillingAgent(provider, selection.model))
-      return entry("per-token");
+    if (!named && isUnknownBillingAgent(provider, selection.model)) return entry("per-token");
     if (!canTakeTurn(provider)) {
       if (provider.auth.status === "unauthenticated") return entry("signed-out");
       if (usageDeniesTurn(provider)) return entry("full");
@@ -673,7 +672,7 @@ export function describeFallbackOrder(input: {
       )
     )
       return entry("excluded");
-    if (reportsNoUsage(provider)) return entry(null, null, !named(provider.instanceId));
+    if (reportsNoUsage(provider)) return entry(null, null, !named);
     const used = providerUsedPercent(provider, input.nowMs, selection.model);
     const threshold = input.belowPercent ?? 100;
     if (used !== null && used >= threshold)
@@ -1066,21 +1065,26 @@ export function resolveWorkerLaunchSelection(input: {
     })
   )
     return { selection: preferred, reason: "preferred-resets-soon" };
-  const same = resolveSameModelElsewhere({
-    providers: input.providers,
-    current: preferred,
-    order: input.rule.defaultModelProviders,
-    nowMs: input.nowMs,
-    belowPercent: threshold,
-    limitedInstanceIds: limited,
-    // A provider that reports no usage only gets the worker once nothing
-    // with verified room does (see resolveProviderFallback).
-    verifiedOnly: true,
-    excludedModels: input.rule.providerLimitExcludedModels,
-  });
+  const listOnly =
+    input.rule.providerLimitFallbackListOnly === true &&
+    effectiveFallbackOrder(input.rule, preferred.model).order.length > 0;
+  const same = listOnly
+    ? null
+    : resolveSameModelElsewhere({
+        providers: input.providers,
+        current: preferred,
+        order: input.rule.defaultModelProviders,
+        nowMs: input.nowMs,
+        belowPercent: threshold,
+        limitedInstanceIds: limited,
+        // A provider that reports no usage only gets the worker once nothing
+        // with verified room does (see resolveProviderFallback).
+        verifiedOnly: true,
+        excludedModels: input.rule.providerLimitExcludedModels,
+      });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
-  if (coordinator !== null && coordinator.instanceId !== preferred.instanceId) {
+  if (!listOnly && coordinator !== null && coordinator.instanceId !== preferred.instanceId) {
     const provider = input.providers.find((entry) => entry.instanceId === coordinator.instanceId);
     if (
       provider !== undefined &&
@@ -1120,6 +1124,7 @@ export function resolveWorkerLaunchSelection(input: {
       providerLimitExcludedModels: input.rule.providerLimitExcludedModels,
       defaultModelSelection: null,
       defaultModelProviders: input.rule.defaultModelProviders,
+      modelLanes: input.rule.modelLanes,
     },
     nowMs: input.nowMs,
     belowPercent: threshold,
@@ -1393,12 +1398,20 @@ export function resolveCoordinatorTurnSelection(input: {
     // selected before this guard, nor does a model a paid router or API bills.
     // API-credit consent applies to other providers. An unknown-billing agent
     // (Devin) stays only when the person named it, as it may only be picked.
+    const chain = effectiveFallbackOrder(input.rule, input.saved.model);
+    const tierNamesModel =
+      chain.fromTiers &&
+      chain.order.some(
+        (selection) =>
+          selection.instanceId === thread.instanceId && selection.model === thread.model,
+      );
     const paid =
       isGeminiSpendProvider(current) ||
       isPaidModelBilling(providerModelBilling(current, thread.model)) ||
       (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true) ||
       (isUnknownBillingAgent(current, thread.model) &&
-        !ruleNamesInstance(input.rule, thread.instanceId));
+        !ruleNamesInstance(input.rule, thread.instanceId) &&
+        !tierNamesModel);
     if (
       current !== undefined &&
       !paid &&

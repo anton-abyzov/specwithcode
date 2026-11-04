@@ -5,7 +5,8 @@
  * fake extension. Threads share a profile and each drives only its own tabs;
  * every action lands in the audit list Settings › Chrome shows.
  */
-import * as NodeFS from "node:fs/promises";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import {
@@ -16,7 +17,7 @@ import {
 } from "./relayHub.ts";
 import {
   appendChunkScript,
-  CLEAR_UPLOAD_SCRIPT,
+  clearUploadScript,
   type ElementTarget,
   domClickScript,
   findFileInputScript,
@@ -101,7 +102,7 @@ async function uploadFiles(paths: ReadonlyArray<string>) {
   for (const path of paths) {
     if (!NodePath.isAbsolute(path))
       throw new BrowserRelayError("invalid_request", `Not an absolute path: ${path}`);
-    const info = await NodeFS.stat(path).catch(() => null);
+    const info = await NodeFSP.stat(path).catch(() => null);
     if (!info?.isFile()) throw new BrowserRelayError("invalid_request", `Not a file: ${path}`);
     total += info.size;
     files.push({
@@ -515,19 +516,18 @@ export class ChromeTools {
     const notUsable = refused(usable);
     if (notUsable) throw notUsable;
     const href = usable?.href ?? "";
-    // Bytes a failed or earlier attempt left behind must never join this one.
-    await this.evaluate(profile, tabId, CLEAR_UPLOAD_SCRIPT);
+    const uploadId = NodeCrypto.randomUUID();
     let set: { missing?: boolean; error?: string; given?: number } | undefined;
     try {
       for (const [index, file] of files.entries()) {
-        const handle = await NodeFS.open(file.path, "r");
+        const handle = await NodeFSP.open(file.path, "r");
         try {
           const buffer = Buffer.alloc(UPLOAD_CHUNK_BYTES);
           for (;;) {
             const { bytesRead } = await handle.read(buffer, 0, UPLOAD_CHUNK_BYTES);
             if (bytesRead === 0) break;
             const base64 = buffer.subarray(0, bytesRead).toString("base64");
-            await this.evaluate(profile, tabId, appendChunkScript(index, base64, href));
+            await this.evaluate(profile, tabId, appendChunkScript(uploadId, index, base64, href));
           }
         } finally {
           await handle.close();
@@ -537,13 +537,14 @@ export class ChromeTools {
         profile,
         tabId,
         setFilesScript(
+          uploadId,
           input,
           files.map(({ name, type, size }) => ({ name, type, size })),
           href,
         ),
       );
     } catch (error) {
-      await this.evaluate(profile, tabId, CLEAR_UPLOAD_SCRIPT).catch(() => {});
+      await this.evaluate(profile, tabId, clearUploadScript(uploadId)).catch(() => {});
       throw error;
     }
     const notSet = refused(set);

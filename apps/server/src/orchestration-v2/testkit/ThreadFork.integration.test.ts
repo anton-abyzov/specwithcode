@@ -205,7 +205,6 @@ describe("orchestration V2 thread fork", () => {
               sourceThreadId,
               targetThreadId,
               sourcePoint: { type: "latest_stable" },
-              title: "Forked thread",
             },
             {
               type: "thread.fork",
@@ -215,7 +214,6 @@ describe("orchestration V2 thread fork", () => {
               sourceThreadId,
               targetThreadId,
               sourcePoint: { type: "latest_stable" },
-              title: "Forked thread",
             },
             {
               type: "message.dispatch",
@@ -228,6 +226,7 @@ describe("orchestration V2 thread fork", () => {
               threadId: targetThreadId,
               messageId: MessageId.make("message-thread-fork-native-target"),
               text: THREAD_FORK_NATIVE_TARGET_PROMPT,
+              titleSeed: "Typed fork title",
               attachments: [],
               modelSelection: CODEX_MODEL_SELECTION,
               dispatchMode: { type: "start_immediately" },
@@ -270,6 +269,8 @@ describe("orchestration V2 thread fork", () => {
         assert.isDefined(targetProjection);
         assert.equal(targetProjection.thread.lineage.parentThreadId, materialized.sourceThreadId);
         assert.equal(targetProjection.thread.lineage.relationshipToParent, "fork");
+        assert.equal(targetProjection.thread.title, "Typed fork title");
+        assert.isNull(targetProjection.thread.automaticTitleSeed);
         assert.lengthOf(targetProjection.providerSessions, 1);
         assert.lengthOf(targetProjection.providerThreads, 1);
         assert.equal(

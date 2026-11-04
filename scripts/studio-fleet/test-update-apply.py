@@ -1462,6 +1462,26 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   self.assertEqual([cell['kind'] for cell in result['authHeartbeatSessions']],['existing-desktop-app-session'])
   self.assertEqual(result['authHeartbeatWitness']['migrationTypedAuth']['schemaVersion'],1)
   self.assertNotIn('private-desktop',self.output.read_text());self.assertNotIn('private-credential',self.output.read_text())
+ def test_migration_accepts_a_desktop_session_first_connecting_during_the_restart(self):
+  # M4 1.0.177: a desktop session minted minutes before the restart made its first connect to the
+  # new service, which set its surface from NULL and stamped its first heartbeat.
+  self.migrate_with_desktop_reconnect(first_connect=True)
+  self.execute(allow_project_migrations=True,allow_existing_browser_heartbeat=True);result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(result['rowPreservation'],'verified-migration')
+  self.assertEqual([cell['kind'] for cell in result['authHeartbeatSessions']],['existing-desktop-app-session'])
+  self.assertEqual(result['authHeartbeatWitness']['schemaVersion'],6)
+  self.assertEqual(set(result['authHeartbeatWitness']['timestampChanges'][0]),{'rowSha256','firstClientSurface','firstConnectedAt'})
+  self.assertNotIn('private-desktop',self.output.read_text());self.assertNotIn('private-credential',self.output.read_text())
+ def test_migration_first_connect_never_covers_another_column_and_names_it(self):
+  for statement,column in [("UPDATE auth_sessions SET credential=X'09' WHERE session_id='private-desktop'",'credential'),
+                           ("UPDATE auth_sessions SET method='dpop-access-token' WHERE session_id='private-desktop'",'method'),
+                           ("UPDATE auth_sessions SET expires_at='2099-01-01T00:00:00+00:00' WHERE session_id='private-desktop'",'expires_at')]:
+   with self.subTest(column=column):
+    self.setUp();self.migrate_with_desktop_reconnect(statement,first_connect=True)
+    with self.assertRaisesRegex(AssertionError,'Heartbeat changed another auth cell: '+column+'$'):
+     self.execute(allow_project_migrations=True,allow_existing_browser_heartbeat=True)
+    result=json.loads(self.output.read_text());self.assertEqual(result['rollback'],'restored-runtime-pointers-and-state')
+    self.assertNotIn('authHeartbeatWitness',result);self.assertNotIn('2099',self.output.read_text());self.tearDown()
  def test_migration_desktop_reconnect_never_covers_a_hex_alias_of_a_token(self):
   for target in ['private-desktop','private-session']:
    with self.subTest(target=target):

@@ -187,6 +187,20 @@ describe("silence", () => {
     expect(acceptTranscript("Thank you.", "", 0.4)).toBe("Thank you.");
   });
 
+  it("keeps a spoken vocabulary term but drops its quiet echo", () => {
+    expect(
+      acceptTranscript("SpecWeave", "SpecWeave.", 0.5, parseVocabulary("SpecWeave").terms),
+    ).toBe("SpecWeave");
+    expect(acceptTranscript("SpecWeave", "SpecWeave.", 0.001)).toBe("");
+    const phrase = "SpecWithCode coordinator";
+    expect(acceptTranscript(phrase, `${phrase}, Postiz.`, 0.5, parseVocabulary(phrase).terms)).toBe(
+      phrase,
+    );
+    for (const term of ["Hello, world", "Hello!", "Hello."]) {
+      expect(acceptTranscript(term, `${term}.`, 0.5, parseVocabulary(term).terms)).toBe(term);
+    }
+  });
+
   it("drops a prompt echoed back, whatever the level", () => {
     expect(acceptTranscript(" SpecWeave, Postiz. ", "SpecWeave, Postiz.", 0.5)).toBe("");
   });

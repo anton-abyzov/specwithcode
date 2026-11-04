@@ -339,9 +339,9 @@ export class IncomingFile {
   }
 
   async finish(expectedSha256: string | null) {
-    await this.handle.sync();
-    await this.handle.close();
     try {
+      await this.handle.sync();
+      await this.handle.close();
       if (this.written !== this.size)
         throw new FileTransferRefusal("The file arrived incomplete; nothing was kept.");
       if (expectedSha256 !== null && (await sha256File(this.partial)) !== expectedSha256)
@@ -370,6 +370,7 @@ export class IncomingFile {
         }
       });
     } finally {
+      await this.handle.close().catch(() => undefined);
       await NodeFSP.rm(this.partial, { force: true });
     }
     return this.final;

@@ -11,8 +11,10 @@ import { forgetExitedUserApps, isUserOpenedApp } from "../process/userOpenedApps
  * Chromium gives renderers +300 while everything else in a user session has
  * +200: the app window (600 MB) outscored a 4.8 GB `tsc` and died first. The
  * kernel also acts only after minutes of thrashing, with the desktop frozen.
- * So everything the service starts is marked as the first to go, and the
- * largest such process is ended as soon as memory is critical.
+ * Everything the service starts is marked as the first to go. Early termination
+ * requires an explicitly owned signal transport. The default guard sends no
+ * bare-PID signals: a PID can be reused after /proc inspection and Node does not
+ * expose a pinned process handle for arbitrary descendants.
  */
 export const AGENT_WORK_OOM_SCORE_ADJ = 800;
 
@@ -203,6 +205,8 @@ export interface MemoryGuardOptions {
   readonly procRoot?: string;
   readonly rootPid?: number;
   readonly minVictimRssBytes?: number;
+  /** Only an explicitly owned signal transport may end a build. The default guard
+   * marks OOM priority but sends no bare-PID signals: Node has no pinned pidfd API. */
   readonly signal?: (pid: number, signal: NodeJS.Signals) => void;
   /** Stands in for /proc/meminfo, so a test can use the real process table. */
   readonly memory?: MemorySample;
@@ -222,7 +226,7 @@ export const makeMemoryGuard = Effect.fn("makeMemoryGuard")(function* (
   const fs = yield* FileSystem.FileSystem;
   const procRoot = options.procRoot ?? "/proc";
   const rootPid = options.rootPid ?? process.pid;
-  const signal = options.signal ?? ((pid, name) => process.kill(pid, name));
+  const signal = options.signal;
   const state: MemoryGuardState = {
     marked: new Set(),
     ended: new Set(),
@@ -277,6 +281,7 @@ export const makeMemoryGuard = Effect.fn("makeMemoryGuard")(function* (
   /** False when the process is out of reach (EPERM), so the next can be tried. */
   const sendSignal = (pid: number, name: NodeJS.Signals) =>
     Effect.sync(() => {
+      if (signal === undefined) return false;
       try {
         signal(pid, name);
         return true;
@@ -331,7 +336,9 @@ export const makeMemoryGuard = Effect.fn("makeMemoryGuard")(function* (
       if (!scan && !critical) return;
       const descendants = yield* readDescendants;
       yield* mark(descendants);
-      if (!critical) return;
+      // Do not replace an atomic process handle with a /proc read plus process.kill:
+      // the PID may be reused between those operations. Keep kernel OOM priority.
+      if (!critical || signal === undefined) return;
       const now = yield* Clock.currentTimeMillis;
       if (now - state.lastKillAt < KILL_COOLDOWN_MS) return;
       const candidates = victimCandidates(descendants, options.minVictimRssBytes);

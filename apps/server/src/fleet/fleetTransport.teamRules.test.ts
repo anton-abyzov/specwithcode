@@ -167,6 +167,28 @@ describe("fleet reach under Team rules", () => {
     ).toBe(false);
   });
 
+  it("rejects a remembered Connect route after policy changes and discovers the tailnet", async () => {
+    let rules = active({});
+    const fixture = await linkUnder(machine({}), rules);
+    const link = { ...fixture.link, teamRules: () => rules };
+    const { bound } = fixture;
+    const address = await reachFleetMachine(link, target, { token: bound });
+    expect(address.transport).toBe("connect");
+    expect(fleetReachMayBeRemembered(link)).toBe(true);
+
+    rules = active({ reach: { connect: false } });
+    expect(fleetReachMayBeRemembered(link)).toBe(false);
+    expect(
+      (await refusalOf(fleetAuthorization(link, address, "POST", `${address.origin}/x`, bound)))
+        .kind,
+    ).toBe("team-rules");
+    const fallback = await reachFleetMachine(link, target, { token: bound });
+    expect(fallback.transport).toBe("tailnet");
+    await expect(
+      fleetAuthorization(link, fallback, "POST", `${fallback.origin}/x`, bound),
+    ).resolves.toHaveProperty("dpop");
+  });
+
   it("names this machine's rules on a credentialed call", async () => {
     const { link, bound } = await linkUnder(machine({}), active({}));
     const address = await reachFleetMachine(link, target, { token: bound });

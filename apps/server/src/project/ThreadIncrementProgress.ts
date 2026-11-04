@@ -947,7 +947,9 @@ export type RequireIncrementMode = "off" | "remind" | "enforce";
 export async function readRequireIncrementMode(
   workspaceRoot: string,
 ): Promise<RequireIncrementMode> {
-  const planning = await planningRootAbove(workspaceRoot);
+  const planning = (await hasSpecweaveConfig(workspaceRoot))
+    ? workspaceRoot
+    : await planningRootAbove(workspaceRoot);
   if (planning === null) return "off";
   const config = await readJson(NodePath.join(planning, ".specweave", "config.json"));
   const mode = (config?.planning as { requireIncrement?: unknown } | undefined)?.requireIncrement;

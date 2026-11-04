@@ -136,6 +136,17 @@ final class AppRouter {
   var drafts: [ChatTarget: String] = [:]
   /// Pictures waiting in each chat's composer. They survive leaving the chat, as text does.
   var attachmentDrafts: [ChatTarget: [OutgoingImage]] = [:]
+  private(set) var pendingPhotoBatches: [ChatTarget: Int] = [:]
+
+  func beginPhotoBatch(for target: ChatTarget) {
+    pendingPhotoBatches[target, default: 0] += 1
+  }
+
+  func finishPhotoBatch(for target: ChatTarget) {
+    let count = pendingPhotoBatches[target, default: 0]
+    pendingPhotoBatches[target] = count > 1 ? count - 1 : nil
+  }
+
   /// A pairing link from a deep link, picked up by the pairing screen.
   var pairPrefill: String?
   /// Set by a launch argument; cleared when the person picks an appearance.

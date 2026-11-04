@@ -948,6 +948,8 @@ private enum FixtureSample {
           : ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude", modelBrand: "claude")
       )
       summary.isDone = activity == .idle
+      // Handed to the build box, so the project's threads span two machines.
+      if id == "t-flaky" { summary.placement.runsOn = "Build box" }
       return summary
     }
     return [

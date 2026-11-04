@@ -66,6 +66,7 @@ private struct AppScreens: View {
     }
     // A sheet covers this overlay, so while one is up the sheet shows the toast.
     .weaveToast(Binding(get: { router.sheet == nil ? router.toast : nil }, set: { router.toast = $0 }))
+    .linkedMachinesPrompt()
     .environment(model)
     .environment(router)
     .environment(router.main)

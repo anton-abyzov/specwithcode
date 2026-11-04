@@ -112,7 +112,7 @@ def whole_and_prefix(rows, line, boundary, keep=None):
 
 
 class SpillFailed(Exception):
-    """The scratch folder cannot take a run: the table is read into memory instead."""
+    """The bounded read cannot complete in scratch storage; capture must fail closed."""
 
 
 class SortedRuns:
@@ -318,7 +318,8 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=N
     `spill` (a folder) hashes tables through sorted runs on disk there (spilled_table), not in
     memory, to the same hashes. It applies without `keep`, which needs the lines themselves, and to
     tables whose rows no one is handed: without a `visit`, or where `needs_rows(table)` is false, in
-    which case `visit` gets None for them. A folder that cannot take a run falls back to memory."""
+    which case `visit` gets None for them. Scratch failure aborts the capture; it never
+    removes the memory bound by rereading the complete table into memory."""
     assert db.in_transaction, 'Complete database capture requires an existing read transaction'
     structure = schema(db)
     tables, legacy, sequences = {}, {}, None
@@ -336,14 +337,13 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=N
             try:
                 query = ('SELECT rowid, * FROM ' if entry is not None else 'SELECT * FROM ') + identifier(table)
                 spilled = spilled_table(db.execute(query), entry['boundary'] if entry is not None else None, spill)
-            except SpillFailed:
-                spilled = None
-            if spilled is not None:
-                tables[table], legacy[table] = spilled[0], spilled[1]
-                if entry is not None:
-                    entry['typed'], entry['legacy'] = spilled[2], spilled[3]
-                if visit is not None: visit(table, None)
-                continue
+            except SpillFailed as error:
+                raise SpillFailed('Cannot capture table %s within the memory budget: %s' % (table, error)) from error
+            tables[table], legacy[table] = spilled[0], spilled[1]
+            if entry is not None:
+                entry['typed'], entry['legacy'] = spilled[2], spilled[3]
+            if visit is not None: visit(table, None)
+            continue
         if prefixes is not None and table in prefixes:
             entry = prefixes[table]
             positioned = list(db.execute('SELECT rowid, * FROM ' + identifier(table)))

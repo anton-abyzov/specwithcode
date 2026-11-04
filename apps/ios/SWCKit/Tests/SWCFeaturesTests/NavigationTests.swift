@@ -217,6 +217,25 @@ struct RouterTests {
     #expect(router.landing(in: model) == .aide(try #require(model.aide).ref))
   }
 
+  @Test func pendingPhotoBatchesFollowTheirDraftAcrossNavigation() {
+    let router = AppRouter()
+    let thread = ThreadRef(environmentId: "e", threadId: "t")
+    let target = ChatTarget.thread(thread)
+    let other = ChatTarget.thread(ThreadRef(environmentId: "e", threadId: "other"))
+    router.open(.thread(thread))
+    router.beginPhotoBatch(for: target)
+    router.open(.thread(ThreadRef(environmentId: "e", threadId: "other")))
+    #expect(router.pendingPhotoBatches[other] == nil)
+    router.open(.thread(thread))
+    #expect(router.pendingPhotoBatches[target] == 1)
+    // Encoding starts before the picker batch settles.
+    router.beginPhotoBatch(for: target)
+    router.finishPhotoBatch(for: target)
+    #expect(router.pendingPhotoBatches[target] == 1)
+    router.finishPhotoBatch(for: target)
+    #expect(router.pendingPhotoBatches[target] == nil)
+  }
+
   @Test func openClearsPathAndClosesDrawer() {
     let router = AppRouter()
     router.isDrawerOpen = true
@@ -332,6 +351,30 @@ struct RouterTests {
     #expect(model.machines(of: linked).map(\.name) == ["Office Mac", "Build box"])
     #expect(model.machines(of: linked).map(\.status) == [.online, .offline])
     #expect(model.machines(of: linked).spoken == "On Office Mac, online; Build box, offline")
+  }
+
+  @Test func threadFilterListsTheProjectsMachinesThenAnyOtherAThreadIsOn() {
+    let model = model(.empty)
+    model.machines = [
+      MachineSummary(id: "a", label: "Office Mac", status: .connected),
+      MachineSummary(id: "b", label: "Build box", status: .offline),
+    ]
+    let solo = ProjectSummary(ref: ProjectRef(environmentId: "a", projectId: "1"), title: "Solo", machineLabel: "Office Mac", machineOnline: true)
+    let here = ThreadSummary(ref: .init(environmentId: "a", threadId: "t1"), title: "Here", activity: .idle, updatedAt: .now, machineLabel: "Office Mac", machineOnline: true)
+    // Lives on the Office Mac, runs on the build box.
+    let there = ThreadSummary(ref: .init(environmentId: "a", threadId: "t2"), title: "There", activity: .idle, updatedAt: .now, machineLabel: "Office Mac", machineOnline: true, placement: ThreadPlacement(owner: "Office Mac", runsOn: "Build box"))
+    let unknown = ThreadSummary(ref: .init(environmentId: "a", threadId: "t3"), title: "Away", activity: .idle, updatedAt: .now, machineLabel: "Office Mac", machineOnline: true, placement: ThreadPlacement(owner: "Office Mac", runsOn: "Minis"))
+    // One machine: nothing to filter.
+    #expect(model.threadMachines(of: solo, threads: [here]).map(\.name) == ["Office Mac"])
+    #expect(model.threadMachines(of: solo, threads: [here, there, there]).map(\.name) == ["Office Mac", "Build box"])
+    // A machine the phone doesn't know reads as offline.
+    #expect(model.threadMachines(of: solo, threads: [here, unknown]).map(\.status) == [.online, .offline])
+    // A picked chip that is gone falls back to all threads.
+    let both = model.threadMachines(of: solo, threads: [here, there])
+    #expect(ThreadMachineFilter.active("Build box", in: both) == "Build box")
+    #expect(ThreadMachineFilter.active("Build box", in: model.threadMachines(of: solo, threads: [here])) == nil)
+    #expect(ThreadMachineFilter.active("Minis", in: both) == nil)
+    #expect(there.runs(on: "build box") && !there.runs(on: "Office Mac") && here.runs(on: "Office Mac"))
   }
 
   @Test func launchRouteWaitsForData() {

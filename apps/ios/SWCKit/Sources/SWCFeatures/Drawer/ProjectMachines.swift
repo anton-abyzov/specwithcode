@@ -28,10 +28,44 @@ extension AppModel {
     }
   }
 
+  /// The machines a project's threads can be narrowed to, by name: the
+  /// project's own, then any other machine one of its threads runs on.
+  func threadMachines(of project: ProjectSummary, threads: [ThreadSummary]) -> [ProjectMachine] {
+    var list: [ProjectMachine] = []
+    for machine in machines(of: project) where !list.contains(where: { ThreadSummary.sameMachine($0.id, machine.name) }) {
+      list.append(ProjectMachine(id: machine.name, name: machine.name, status: machine.status, statusLabel: machine.statusLabel))
+    }
+    for thread in threads where !list.contains(where: { thread.runs(on: $0.id) }) {
+      let name = thread.runsOnMachine
+      if let machine = machines.first(where: { ThreadSummary.sameMachine($0.displayName, name) }) {
+        list.append(ProjectMachine(id: name, name: machine.displayName, status: machine.displayStatus, statusLabel: machine.statusLabel))
+      } else {
+        // Online describes where the thread lives; a machine it runs on that
+        // this phone doesn't know reads as offline.
+        let status: WeaveStatus = thread.placement.runsOn == nil && thread.machineOnline ? .online : .offline
+        list.append(ProjectMachine(id: name, name: name, status: status, statusLabel: status.label))
+      }
+    }
+    return list
+  }
+
   /// The projects a machine chip keeps: those with a copy on that machine.
   func projectsOn(_ machine: String?, among projects: [ProjectSummary]) -> [ProjectSummary] {
     guard let machine else { return projects }
     return projects.filter { $0.ref.environmentId == machine || $0.members.contains { $0.ref.environmentId == machine } }
+  }
+}
+
+extension ThreadSummary {
+  /// The machine the thread runs on: where it lives unless it runs elsewhere.
+  var runsOnMachine: String { placement.runsOn ?? placement.owner }
+
+  /// Whether it runs on the machine with this name.
+  func runs(on machine: String) -> Bool { Self.sameMachine(runsOnMachine, machine) }
+
+  /// "Anton's M4" and "m4" name the same machine.
+  static func sameMachine(_ a: String, _ b: String) -> Bool {
+    MachineNickname.shortName(a).lowercased() == MachineNickname.shortName(b).lowercased()
   }
 }
 
@@ -84,5 +118,45 @@ struct ProjectMachinesLine: View {
       .font(.weave(.footnote))
       .foregroundStyle(Color.weave.muted)
       .fixedSize(horizontal: false, vertical: true)
+  }
+}
+
+/// All, then one chip per machine a project's threads run on, scrolling
+/// sideways when they don't fit, like the status chips beside them.
+struct ThreadMachineFilter: View {
+  let machines: [ProjectMachine]
+  @Binding var selection: String?
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: WeaveSpacing.s1) {
+        chip(nil) { Text("All").font(.weave(.callout, weight: .medium)) }
+        ForEach(machines) { machine in
+          chip(machine.id) {
+            HStack(spacing: WeaveSpacing.s1) {
+              MachineBadge(status: machine.status, size: 15)
+              Text(machine.name).font(.weave(.callout, weight: .medium))
+            }
+          }
+          .accessibilityLabel("\(machine.name), \(machine.statusLabel)")
+        }
+      }
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityIdentifier("threads.machine-chips")
+  }
+
+  /// The selection while it is one of the chips shown, else all of them.
+  static func active(_ selection: String?, in machines: [ProjectMachine]) -> String? {
+    guard let selection, machines.count > 1, machines.contains(where: { $0.id == selection }) else { return nil }
+    return selection
+  }
+
+  private func chip<Label: View>(_ id: String?, @ViewBuilder label: () -> Label) -> some View {
+    ColumnChip(selected: selection == id) {
+      withAnimation(.snappy) { selection = id }
+    } label: {
+      label()
+    }
   }
 }

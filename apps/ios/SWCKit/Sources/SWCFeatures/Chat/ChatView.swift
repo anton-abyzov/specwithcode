@@ -58,7 +58,6 @@ private struct ChatScreen: View {
   @State private var choosingAttachment = false
   /// Turn folds the person opened, by fold row id.
   @State private var expandedFolds: Set<String> = []
-  @State private var preparingPhotos = 0
 
   /// A thread's thinking rows carry its provider's mark; a coordinator chat has no single provider.
   private var thinkingBrand: String? {
@@ -79,7 +78,10 @@ private struct ChatScreen: View {
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
       .deviceViewer($deviceViewer)
-      .attachmentPickers(isChoosing: $choosingAttachment) { addPhotos($0, failed: $1) }
+      .attachmentPickers(isChoosing: $choosingAttachment, onLoading: { loading in
+        if loading { router.beginPhotoBatch(for: target) }
+        else { router.finishPhotoBatch(for: target) }
+      }) { addPhotos($0, failed: $1) }
       .task(id: router.pendingDeviceViewer) {
         // A launch route opens the viewer once this thread is on screen.
         guard let pending = router.pendingDeviceViewer, pending.machineId == target.threadRef?.environmentId else { return }
@@ -141,6 +143,9 @@ private struct ChatScreen: View {
   private var transcript: some View {
     ScrollView {
       LazyVStack(alignment: .leading, spacing: WeaveSpacing.s4) {
+        if case let .project(project) = target {
+          LinkedCoordinatorBanner(project: project)
+        }
         if !session.isLoaded {
           if showsOfflineTranscript {
             offlineTranscript
@@ -731,8 +736,8 @@ private struct ChatScreen: View {
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
       }
-      if !pendingImages.isEmpty || preparingPhotos > 0 {
-        ComposerAttachmentStrip(images: pendingImages, isLoading: preparingPhotos > 0) { image in
+      if !pendingImages.isEmpty || photosPending {
+        ComposerAttachmentStrip(images: pendingImages, isLoading: photosPending) { image in
           router.attachmentDrafts[target]?.removeAll { $0.id == image.id }
         }
       }
@@ -740,7 +745,7 @@ private struct ChatScreen: View {
         text: draft,
         isRunning: session.isRunning && !session.isStale,
         placeholder: session.isRunning ? nil : placeholder,
-        blockedReason: session.machineOnline ? session.sendBlockedReason : "Machine unavailable. Your draft is kept.",
+        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
         // Set only from a thread's runs, so chats without runs offer none.
         suggestion: session.isStale ? nil : session.promptSuggestion,
@@ -827,6 +832,8 @@ private struct ChatScreen: View {
 
   // MARK: Actions
 
+  private var photosPending: Bool { router.pendingPhotoBatches[target, default: 0] > 0 }
+
   private var pendingImages: [OutgoingImage] { router.attachmentDrafts[target] ?? [] }
 
   private func openThreadLink(_ url: URL, in row: TranscriptRow) {
@@ -856,10 +863,10 @@ private struct ChatScreen: View {
   private func addPhotos(_ photos: [Data], failed: Int) {
     if failed > 0 { session.lastError = failed == 1 ? "A photo could not be loaded. Try again." : "\(failed) photos could not be loaded. Try again." }
     guard !photos.isEmpty else { return }
-    preparingPhotos += 1
     let target = target
+    router.beginPhotoBatch(for: target)
     Task {
-      defer { preparingPhotos -= 1 }
+      defer { router.finishPhotoBatch(for: target) }
       let first = pendingImages.count
       let encoded = await Task.detached(priority: .userInitiated) {
         photos.enumerated().map { index, data in Result { try PhotoAttachmentEncoder.encode(data, index: first + index + 1) } }
@@ -885,6 +892,7 @@ private struct ChatScreen: View {
   }
 
   private func send() {
+    guard !photosPending else { return }
     let original = router.drafts[target] ?? ""
     let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
     let images = pendingImages

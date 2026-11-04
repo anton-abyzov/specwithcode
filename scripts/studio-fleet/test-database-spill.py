@@ -147,14 +147,13 @@ class Capture(unittest.TestCase):
         continuity.capture_connection(self.db, spill=self.folder, visit=lambda table, rows: seen.__setitem__(table, rows))
         self.assertEqual(len(seen['orchestration_events']), 500)
 
-    def test_a_full_scratch_volume_falls_back_to_memory_with_the_same_hashes(self):
-        expected = continuity.capture_connection(self.db)
+    def test_a_full_scratch_volume_aborts_capture_with_the_table_name(self):
         with patch.object(continuity, 'SPILL_RUN_CHARS', 200), patch.object(kept_lines, 'available_disk', return_value=0):
-            self.assertEqual(continuity.capture_connection(self.db, spill=self.folder), expected)
+            with self.assertRaisesRegex(continuity.SpillFailed, 'Cannot capture table orchestration_events within the memory budget'):
+                continuity.capture_connection(self.db, spill=self.folder)
         self.assertEqual(list(self.folder.iterdir()), [])
 
-    def test_a_merge_below_the_floor_falls_back_to_memory(self):
-        expected = continuity.capture_connection(self.db)
+    def test_a_merge_below_the_floor_aborts_capture(self):
         real = kept_lines.available_disk
         calls = []
         def shrinking(folder):
@@ -162,24 +161,39 @@ class Capture(unittest.TestCase):
             return 0 if len(calls) > 20 else real(folder)
         with patch.object(continuity, 'SPILL_RUN_CHARS', 1), patch.object(continuity, 'SPILL_MERGE_FILES', 3), \
                 patch.object(kept_lines, 'available_disk', side_effect=shrinking):
-            self.assertEqual(continuity.capture_connection(self.db, spill=self.folder), expected)
+            with self.assertRaisesRegex(continuity.SpillFailed, 'Cannot capture table orchestration_events within the memory budget'):
+                continuity.capture_connection(self.db, spill=self.folder)
         self.assertEqual(list(self.folder.iterdir()), [])
 
-    def test_a_run_that_cannot_be_opened_falls_back_to_memory(self):
-        expected = continuity.capture_connection(self.db)
+    def test_a_run_that_cannot_be_opened_aborts_capture(self):
         real = open
         def refusing(path, mode='r', *args, **kwargs):
             if 'r' in mode and pathlib.Path(str(path)).name.startswith('run-'):
                 raise OSError(24, 'Too many open files')
             return real(path, mode, *args, **kwargs)
         with patch.object(continuity, 'SPILL_RUN_CHARS', 200), patch('builtins.open', refusing):
-            self.assertEqual(continuity.capture_connection(self.db, spill=self.folder), expected)
+            with self.assertRaisesRegex(continuity.SpillFailed, 'Cannot capture table orchestration_events within the memory budget'):
+                continuity.capture_connection(self.db, spill=self.folder)
         self.assertEqual(list(self.folder.iterdir()), [])
 
-    def test_an_unusable_scratch_folder_falls_back_to_memory(self):
-        expected = continuity.capture_connection(self.db)
+    def test_an_unusable_scratch_folder_aborts_capture(self):
         with patch.object(continuity, 'SPILL_RUN_CHARS', 200):
-            self.assertEqual(continuity.capture_connection(self.db, spill=self.folder / 'missing'), expected)
+            with self.assertRaisesRegex(continuity.SpillFailed, 'Cannot capture table orchestration_events within the memory budget'):
+                continuity.capture_connection(self.db, spill=self.folder / 'missing')
+
+    def test_spill_failure_never_rereads_the_full_table_or_returns_a_capture(self):
+        statements = []
+        self.db.set_trace_callback(statements.append)
+        try:
+            with patch.object(continuity, 'SPILL_RUN_CHARS', 200), patch.object(kept_lines, 'available_disk', return_value=0):
+                with self.assertRaisesRegex(continuity.SpillFailed, 'Cannot capture table orchestration_events'):
+                    continuity.capture_connection(self.db, spill=self.folder)
+            self.assertEqual(statements.count('SELECT * FROM "orchestration_events"'), 1)
+            self.assertTrue(self.db.in_transaction)
+            self.assertEqual(self.db.execute('SELECT count(*) FROM orchestration_events').fetchone()[0], 500)
+            self.assertEqual(list(self.folder.iterdir()), [])
+        finally:
+            self.db.set_trace_callback(None)
 
     def test_kept_lines_still_get_the_lines(self):
         kept = kept_lines.Kept(True, None, always=('orchestration_events',))

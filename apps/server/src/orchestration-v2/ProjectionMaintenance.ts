@@ -58,6 +58,8 @@ export interface CompactEventStoreOptions {
   readonly pageSize?: number;
   /** Waited between discovery pages instead of a bare yield, for background passes. */
   readonly pauseBetweenPages?: Duration.Input;
+  /** Widest incremental gap read as a rowid range; tests lower it to cover the index plan. */
+  readonly touchedRangeScanLimit?: number;
 }
 
 export interface CompactEventStoreResult {
@@ -90,6 +92,15 @@ export interface ProjectionMaintenanceV2Shape {
 /** Events per discovery query: about 40 ms of reads on a cold 20 GB log at 500 rows. */
 export const COMPACTION_PAGE_SIZE = 100;
 const COMPACTION_RECEIPT_PAGE_SIZE = 50;
+
+/**
+ * Widest gap, in events, that touched-stream discovery reads as a rowid range.
+ * A range read costs about one leaf page per event (rows average ~6 KB), so it
+ * grows with the gap; the aggregate_kind covering index costs about the same
+ * at any gap. On the 22 GB M4 log, cold: 20k events 1.2 s range vs 2.4 s index,
+ * 40k about even, 100k 4.0 s vs under 2 s, 500k 7.5 s vs 0.1 s warm.
+ */
+export const TOUCHED_RANGE_SCAN_LIMIT = 40_000;
 
 export class ProjectionMaintenanceV2 extends Context.Service<
   ProjectionMaintenanceV2,
@@ -576,12 +587,27 @@ export const layer: Layer.Layer<
           // Every key includes its stream, so a stream with no event after
           // `since` has nothing newer to supersede what the last pass kept.
           // Only streams that changed, and imported legacy threads, are read.
+          // A short gap is read as a rowid range over the new events (NOT INDEXED);
+          // the default plan walks every thread entry of the aggregate_kind index.
+          // A long gap (a machine asleep for days) keeps the index walk, whose
+          // cost does not grow with the gap. See TOUCHED_RANGE_SCAN_LIMIT.
+          const rangeScan =
+            boundSequence - since <= (options.touchedRangeScanLimit ?? TOUCHED_RANGE_SCAN_LIMIT);
+          const recent = rangeScan
+            ? sql`
+                SELECT DISTINCT stream_id
+                FROM orchestration_events NOT INDEXED
+                WHERE sequence > ${since}
+                  AND sequence <= ${boundSequence}
+                  AND aggregate_kind = 'thread'`
+            : sql`
+                SELECT DISTINCT stream_id
+                FROM orchestration_events
+                WHERE sequence > ${since}
+                  AND sequence <= ${boundSequence}
+                  AND aggregate_kind = 'thread'`;
           const touched = yield* sql<{ readonly stream_id: string }>`
-            SELECT DISTINCT stream_id
-            FROM orchestration_events
-            WHERE sequence > ${since}
-              AND sequence <= ${boundSequence}
-              AND aggregate_kind = 'thread'
+            ${recent}
             UNION
             SELECT DISTINCT event.stream_id
             FROM orchestration_events AS event

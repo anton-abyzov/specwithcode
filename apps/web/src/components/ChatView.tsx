@@ -11875,7 +11875,6 @@ export default function ChatView(props: ChatViewProps) {
           sourceThreadId: input.sourceThreadId,
           targetThreadId,
           runId: input.runId,
-          title: `${activeThread.title} fork`,
         },
       });
       if (result._tag === "Failure") {

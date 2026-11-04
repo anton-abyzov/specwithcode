@@ -18,6 +18,7 @@ import {
   teamRulesMachineRefusal,
   teamRulesMachines,
   teamRulesReachOff,
+  teamRulesReachRefusal,
   type TeamRulesState,
 } from "@specweave-studio/shared/teamRules";
 
@@ -113,8 +114,10 @@ const linkRules = (link: FleetLink) => (link.teamRules ?? readMachineTeamRules)(
  * Whether an earlier reach of a machine still stands. Under a machine rule each
  * credentialed call goes through `reachFleetMachine`, which is where the rule is checked.
  */
-export const fleetReachMayBeRemembered = (link: FleetLink) =>
-  teamRulesMachines(linkRules(link)) === "any";
+export const fleetReachMayBeRemembered = (link: FleetLink) => {
+  const rules = linkRules(link);
+  return teamRulesMachines(rules) === "any" && !teamRulesReachOff(rules, "connect");
+};
 
 /** A bare fetch is a link with no proof key and its own address book (tests, one-off calls). */
 export const toFleetLink = (value: FleetLink | FleetFetch): FleetLink =>
@@ -309,6 +312,9 @@ export async function fleetAuthorization(
   const bound = tokenProofThumbprint(token);
   // Names this machine's rules, for a machine that allows only the same ones.
   const rules = linkRules(link);
+  if (address.transport === "connect" && teamRulesReachOff(rules, "connect")) {
+    throw new FleetError("team-rules", teamRulesReachRefusal(rules, "connect")?.message);
+  }
   const named =
     rules.status === "active" ? { [TEAM_RULES_FINGERPRINT_HEADER]: rules.fingerprint } : {};
   if (bound === undefined) {

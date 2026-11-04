@@ -755,6 +755,44 @@ check 'a passed gate on the pull request that made main continues' main_gate_gre
 rm -rf "$STAGE"
 stub_set RELEASE_STUB_OUTPUT=
 
+# Exercise the real query path with a fake GitHub CLI, including its empty-rollup errors.
+main_gate_query() (
+  eval "$(sed -n '/^q() {/,/^}/p' "$HERE/release_common.sh")"
+  eval "$(sed -n '/^main_required_buckets() {/,/^}/p; /^main_gate_green() {/,/^}/p' "$HERE/release.sh")"
+  MODE=real BUILD="$PWD" PRIVATE_REPO=example/product
+  command_word() { :; }
+  say() { :; }
+  die() { printf '%s\n' "$*" >&2; exit 1; }
+  git() { printf 'abcdef0123456789\n'; }
+  gh() {
+    case "$1" in
+      api)
+        case "$scenario" in
+          pulls-error) printf 'HTTP 503\n' >&2; return 1 ;;
+          direct) return 0 ;;
+        esac
+        printf '348:fix/settings\n' ;;
+      pr)
+        case "$scenario" in
+          checks-error) printf 'HTTP 503\n' >&2; return 1 ;;
+          empty) printf "no required checks reported on the 'fix/settings' branch\n" >&2; return 1 ;;
+          *) printf 'pass\n' ;;
+        esac ;;
+    esac
+  }
+  scenario="$1"
+  main_gate_green
+)
+main_gate_query_fails() {
+  local output
+  if output="$(main_gate_query "$1" 2>&1)"; then return 1; fi
+  [[ "$output" == *"$2"* ]]
+}
+check 'GitHub pull request lookup failure stops the release' main_gate_query_fails pulls-error 'could not look up'
+check 'GitHub required check lookup failure stops the release' main_gate_query_fails checks-error 'could not read required checks'
+check 'an explicit empty required-check rollup is accepted' main_gate_query empty
+check 'a successful direct-push lookup is accepted' main_gate_query direct
+
 # ---------------------------------------------------------------- malformed command calls, sign retry
 
 # `x sums --python3 ...` once ran "--python3" as the command and failed 1.0.44 after signing.

@@ -264,6 +264,38 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     XCTAssertEqual(threadsPane.label, "Threads")
   }
 
+  /// A project on several machines narrows its threads to one of them, on the
+  /// phone's Threads screen and in the list beside the coordinator, and a
+  /// swipe offers Resolve as an icon.
+  func testProjectThreadsFilterByMachine() throws {
+    launch(route: "overview")
+    let filter = app.descendants(matching: .any)["threads.machine-chips"]
+    waitFor(filter)
+    chooseThreadMachine("Build box")
+    saveShot("14 Threads on one machine")
+    chooseThreadMachine(nil)
+
+    let row = button(startingWith: "Add verify gate to CI")
+    waitForHittable(row)
+    row.swipeLeft()
+    let resolve = button("Resolve")
+    waitFor(resolve)
+    XCTAssertTrue(resolve.staticTexts.allElementsBoundByIndex.allSatisfy { $0.label != "Resolve" }, "The swipe shows an icon, not the word")
+    saveShot("15 Swipe to resolve")
+
+    launch(route: "coordinator")
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let allProjects = app.buttons["sidebar.all-projects"]
+    if allProjects.exists { tapLow(allProjects); settle() }
+    tapLow(app.buttons["chat.threads"])
+    waitFor(filter)
+    XCTAssertLessThan(filter.frame.minX, app.frame.width / 2, "The filter sits over the coordinator's threads")
+    chooseThreadMachine("Build box")
+    saveShot("16 Threads beside the coordinator on one machine")
+  }
+
   /// A long reply opens and closes again at once on an unfolded Duo.
   func testLongReplyExpandsAndCollapsesWithoutFreezing() throws {
     launch(fixture: "long")
@@ -300,6 +332,16 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     } else {
       tap(name.map { button(startingWith: $0) } ?? button("All"))
     }
+    settle()
+  }
+
+  private func chooseThreadMachine(_ name: String?) {
+    let chips = app.descendants(matching: .any)["threads.machine-chips"]
+    waitFor(chips)
+    let chip = name.map { chips.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", $0)).firstMatch } ?? chips.buttons["All"]
+    waitFor(chip)
+    if !chip.isHittable { chips.swipeLeft() }
+    tap(chip)
     settle()
   }
 

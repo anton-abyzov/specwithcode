@@ -283,6 +283,20 @@ describe("resolveLaunchIncrement", () => {
     });
   });
 
+  it("honors the increment policy in a configured checkout before its first increment", async () => {
+    const root = await project("enforce");
+    await NodeFSP.rm(NodePath.join(root, ".specweave/increments"), { recursive: true });
+    const home = await temp("launch-increment-home-");
+    expect(await launch(root, { home, isCoordinator: true })).toEqual({
+      ok: false,
+      message: ENFORCED_INCREMENT_MESSAGE,
+    });
+    expect(await launch(root, { home })).toMatchObject({
+      ok: true,
+      value: { brief: UNPLANNED_BRIEF },
+    });
+  });
+
   it("leaves a project without SpecWeave alone", async () => {
     const plain = await temp("launch-increment-plain-");
     expect(await launch(plain, { isCoordinator: true })).toEqual({ ok: true, value: {} });

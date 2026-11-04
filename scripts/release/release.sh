@@ -267,18 +267,36 @@ EOF
 # Stop before the bump when the pull request that made main's head merged with a failed or still
 # running required check. The release/ pull request of an earlier release skips the gates, and a
 # head with no merged pull request (a direct push) is left to stage 1.
+# gh reports an empty check rollup as an error even in JSON mode.
+main_required_buckets() {
+  local number="$1" branch="$2" output rc
+  if output="$(gh pr checks "$number" -R "$PRIVATE_REPO" --required \
+    --json bucket -q '[.[].bucket] | unique | join(" ")' 2>&1)"; then
+    printf '%s\n' "$output"
+  else
+    rc=$?
+    if [ "$rc" -eq 1 ] && { [ "$output" = "no checks reported on the '$branch' branch" ] ||
+      [ "$output" = "no required checks reported on the '$branch' branch" ]; }; then
+      return 0
+    fi
+    printf '%s\n' "$output" >&2
+    return "$rc"
+  fi
+}
+
 main_gate_green() {
   local head pr number buckets
   head="$(q main-sha -C "$BUILD" -- git rev-parse FETCH_HEAD)"
-  pr="$(q main-pr --may-fail -- gh api "repos/$PRIVATE_REPO/commits/$head/pulls" \
-    -q '[.[] | select(.merged_at != null)][0] | "\(.number):\(.head.ref)"')"
+  pr="$(q main-pr -- gh api "repos/$PRIVATE_REPO/commits/$head/pulls" \
+    -q '[.[] | select(.merged_at != null)][0] | "\(.number):\(.head.ref)"')" ||
+    die "main gate: could not look up the merged pull request for ${head:0:12}"
   number="${pr%%:*}"
   case "$pr" in
     "" | null*) say "main gate: no merged pull request made ${head:0:12}; stage 1 decides" && return 0 ;;
     *:release/*) return 0 ;;
   esac
-  buckets="$(q main-pr-buckets --may-fail -- gh pr checks "$number" -R "$PRIVATE_REPO" --required \
-    --json bucket -q '[.[].bucket] | unique | join(" ")')"
+  buckets="$(q main-pr-buckets -- main_required_buckets "$number" "${pr#*:}")" ||
+    die "main gate: could not read required checks for #$number"
   case " $buckets " in
     *" fail "* | *" cancel "*)
       die "main gate: #$number made main's head with a failed required check; fix main first (gh pr checks $number -R $PRIVATE_REPO)" ;;

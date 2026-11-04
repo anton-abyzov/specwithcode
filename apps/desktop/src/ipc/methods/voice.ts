@@ -426,7 +426,10 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
               });
               return reply.text ?? "";
             });
-            const text = correctTranscript(acceptTranscript(heard, prompt, wavPeak(audio)), terms);
+            const text = correctTranscript(
+              acceptTranscript(heard, prompt, wavPeak(audio), terms),
+              terms,
+            );
             return { ok: true as const, text };
           } catch (error) {
             return { ok: false as const, error: messageOf(error, "Could not transcribe.") };

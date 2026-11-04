@@ -93,6 +93,9 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           creationSource: input.creationSource,
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+          // Only this generated placeholder may be replaced on the first message.
+          automaticTitleSeed:
+            input.title === undefined ? `${input.sourceProjection.thread.title} fork` : null,
           // The fork has none of its source's runs, so it cannot tell when the stand-in ended.
           launchFallbackFrom: null,
           activeProviderThreadId: null,

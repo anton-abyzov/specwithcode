@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -220,6 +220,22 @@ const adj = (root: string, pid: number) =>
   NodeFS.readFileSync(NodePath.join(root, String(pid), "oom_score_adj"), "utf8");
 
 describe("a guard pass", () => {
+  it.effect("marks OOM priority but sends no unpinned signal by default", () =>
+    Effect.gen(function* () {
+      const root = fakeProc(TREE, CRITICAL);
+      const kill = vi.spyOn(process, "kill").mockReturnValue(true);
+      try {
+        const guard = yield* makeMemoryGuard({ procRoot: root, rootPid: 1 });
+        yield* guard.pass(false);
+        assert.equal(kill.mock.calls.length, 0);
+        assert.equal(adj(root, 11), String(AGENT_WORK_OOM_SCORE_ADJ));
+        assert.equal(guard.state.lastKillAt, Number.NEGATIVE_INFINITY);
+      } finally {
+        kill.mockRestore();
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("marks the tree on a scan and ends nothing while memory is healthy", () =>
     Effect.gen(function* () {
       const root = fakeProc(TREE, HEALTHY);
@@ -418,6 +434,8 @@ describe("a guard pass", () => {
 
         const guard = yield* makeMemoryGuard({
           rootPid: child.pid!,
+          // This fixture owns the spawned tree; production has no bare-PID default.
+          signal: (pid, name) => void process.kill(pid, name),
           minVictimRssBytes: 40e6,
           memory: AT_THE_KILL,
         });

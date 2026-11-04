@@ -15,7 +15,25 @@ enum FixtureFleet {
     MachineSummary(id: minis, label: "Minis", status: .connected, platform: "macOS · arm64", serverVersion: "1.0.63", address: "http://192.168.1.30:3773", tokenDaysLeft: 28),
   ]
 
-  static let project = ProjectSummary(
+  /// The row as the shell builds it: it opens the copy whose coordinator is
+  /// active with the highest epoch, by the same rule as live data. M4 is
+  /// listed first, so `-SWCLinkedState auto-takeover` shows the row opening
+  /// Minis, which took over.
+  static var project: ProjectSummary {
+    let copies = FixtureEngine.fleetCopies(of: listedProject, machine: { _ in nil }, state: FixtureLinkedState.current, now: Date())
+    guard let active = LinkedProjectResolver.coordinator(copies), active.ref != listedProject.ref,
+          let member = listedProject.members.first(where: { $0.ref == active.ref }) else { return listedProject }
+    let listed = listedProject
+    let members = ([member] + listed.members.filter { $0.ref != active.ref }).map {
+      var copy = $0
+      copy.isCoordinator = $0.ref == active.ref
+      return copy
+    }
+    return ProjectSummary(ref: active.ref, title: listed.title, icon: listed.icon, machineLabel: member.machineLabel, machineOnline: member.machineOnline, isPinned: listed.isPinned, members: members)
+  }
+
+  /// The copies as each machine lists them, M4's coordinator first.
+  static let listedProject = ProjectSummary(
     ref: onM4,
     title: "SpecWeave",
     icon: .symbol(name: "dna", color: "amber"),

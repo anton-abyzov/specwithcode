@@ -60,6 +60,7 @@ it.effect.each([
   "accepted after the turn was interrupted",
   // 1182: a person's row picked for another model stops the turn and runs on its pick.
   "row picked for another model",
+  "row picked for another model after the target ends",
   "row differing only in options",
   // F-05: a row the person removed while it was steering stays removed.
   "refused after the person removed it",
@@ -222,7 +223,8 @@ it.effect.each([
 
         const queuedMessageId = MessageId.make("message:queued");
         const pickedRow =
-          outcome === "row picked for another model" || outcome === "row differing only in options";
+          outcome.startsWith("row picked for another model") ||
+          outcome === "row differing only in options";
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make("queued"),
@@ -231,7 +233,7 @@ it.effect.each([
           text: pickedRow ? "carry on on the cheaper model" : "report from a worker",
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
-          ...(outcome === "row picked for another model"
+          ...(outcome.startsWith("row picked for another model")
             ? { modelSelection: { instanceId, model: "cheaper-model" } }
             : outcome === "row differing only in options"
               ? {
@@ -248,6 +250,34 @@ it.effect.each([
           (run) => run.status === "queued",
         )!;
         assert.isDefined(queuedRun);
+
+        if (outcome === "row picked for another model after the target ends") {
+          // Reproduce the terminal projection before queue recovery has run.
+          yield* sql`UPDATE orchestration_v2_projection_runs
+            SET status = 'completed', payload_json = json_set(payload_json, '$.status', 'completed')
+            WHERE run_id = ${first.runId}`;
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(before.runs.find((run) => run.id === first.runId)?.status, "completed");
+          const error = yield* orchestrator
+            .dispatch({
+              type: "queued-message.promote-to-steer",
+              commandId: CommandId.make("stale-promote"),
+              threadId,
+              queuedRunId: queuedRun.id,
+              targetRunId: first.runId,
+            })
+            .pipe(Effect.flip);
+          assert.include(
+            String((error as { readonly cause?: unknown }).cause),
+            "cannot be steered",
+          );
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(after.runs, before.runs);
+          assert.deepEqual(after.messages, before.messages);
+          assert.isEmpty(steered);
+          assert.lengthOf(started, 1);
+          return;
+        }
 
         yield* orchestrator.dispatch({
           type: "queued-message.promote-to-steer",

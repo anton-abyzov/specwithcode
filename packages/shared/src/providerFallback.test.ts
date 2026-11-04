@@ -1949,6 +1949,106 @@ describe("agents whose billing is unknown", () => {
       ...over,
     });
 
+  describe("ranked model lanes", () => {
+    const saved = { instanceId: spentClaude.instanceId, model: "claude-opus-5-5" };
+    const named = { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" };
+    const higher = { instanceId: ProviderInstanceId.make("ranked-codex"), model: "codex-default" };
+    const codex = (used: number) => provider(higher.instanceId, "codex", used);
+    const rankedRule = {
+      ...switchRule,
+      defaultModelSelection: saved,
+      providerLimitAction: "switch" as const,
+      providerLimitSwitchAtPercent: 95,
+      providerLimitFallbackListOnly: true,
+      providerLimitWaitUnderMinutes: 0,
+      modelLanes: { complex: [saved, higher, named], routine: [] },
+    };
+    const launch = (providers: ServerProvider[], coordinator: typeof higher | null = null) =>
+      resolveWorkerLaunchSelection({
+        preferred: saved,
+        coordinator,
+        providers,
+        rule: rankedRule,
+        nowMs: now,
+      });
+
+    it("lets a worker use the named model when higher-ranked models are spent", () => {
+      expect(launch([spentClaude, codex(100), devin]).selection).toEqual(named);
+    });
+
+    it("keeps a worker within the ranked list when all listed models are unavailable", () => {
+      const outside = provider("outside", "codex", 5, {
+        models: [{ ...opus("gpt-6.1-sol")[0]!, name: "GPT-6.1 Sol" }],
+      });
+      expect(
+        launch([spentClaude, codex(100), outside], {
+          instanceId: outside.instanceId,
+          model: "gpt-6.1-sol",
+        }),
+      ).toEqual({
+        selection: saved,
+        reason: "no-room",
+      });
+    });
+
+    it("keeps a coordinator on a healthy named fallback when a higher rank regains room", () => {
+      expect(
+        resolveCoordinatorTurnSelection({
+          saved,
+          thread: named,
+          providers: [spentClaude, codex(10), devin],
+          rule: rankedRule,
+          nowMs: now,
+        }),
+      ).toEqual({ selection: named, reason: "staying-on-fallback" });
+    });
+    it("uses the explicit fallback list instead of retaining a tier-only agent", () => {
+      expect(
+        resolveCoordinatorTurnSelection({
+          saved,
+          thread: named,
+          providers: [spentClaude, codex(10), devin],
+          rule: { ...rankedRule, providerLimitFallbackModels: [higher] },
+          nowMs: now,
+        }).selection,
+      ).toEqual(higher);
+    });
+
+    it("does not expand a tier onto an unranked unknown-billing model", () => {
+      const exhausted = codex(100);
+      const otherModelOnDevin = { ...devin, models: exhausted.models };
+      const providers = [spentClaude, exhausted, otherModelOnDevin];
+      const entries = describeFallbackOrder({
+        currentInstanceId: saved.instanceId,
+        currentModel: saved.model,
+        providers,
+        rule: rankedRule,
+        nowMs: now,
+        belowPercent: 95,
+      });
+      expect(
+        entries.find(
+          (entry) =>
+            entry.selection.instanceId === devin.instanceId &&
+            entry.selection.model === higher.model,
+        )?.unavailable,
+      ).toBe("per-token");
+      expect(launch(providers)).toEqual({ selection: saved, reason: "no-room" });
+    });
+
+    it("does not retain a different unknown-billing model on a tier-named provider", () => {
+      expect(
+        resolveCoordinatorTurnSelection({
+          saved,
+          thread: { ...named, model: "unranked" },
+          providers: [spentClaude, codex(10), devin],
+          rule: rankedRule,
+          nowMs: now,
+        }),
+      ).toEqual({ selection: named, reason: "fallback" });
+    });
+  });
+
   it("names Devin and other registry agents, never verified Copilot; missing branding fails closed", () => {
     expect(isUnknownBillingAgent(devin)).toBe(true);
     expect(isUnknownBillingAgent(copilot)).toBe(false);

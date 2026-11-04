@@ -512,6 +512,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Automatic fork placeholder; explicit titles clear it. Missing legacy provenance is preserved. */
+  automaticTitleSeed: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** In-flight title regeneration marker; cleared when a new title lands. */
   titleRegeneration: Schema.optional(
     Schema.NullOr(

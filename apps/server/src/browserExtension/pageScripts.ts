@@ -174,9 +174,9 @@ export function keyDefinition(name: string): KeyDefinition | null {
 }
 
 /** Where file bytes wait in the page until `setFilesScript` turns them into files. */
-const UPLOAD_BUFFER = "__swcUploadParts";
+const uploadBuffer = (id: string) => `window[${JSON.stringify(`__swcUploadParts:${id}`)}]`;
 
-export const CLEAR_UPLOAD_SCRIPT = `delete window.${UPLOAD_BUFFER}`;
+export const clearUploadScript = (id: string) => `delete ${uploadBuffer(id)}`;
 
 /** Finds the input into `input`, or says why not in `error`, or `missing` for a stale target. */
 const FILE_INPUT_OF = (target: ElementTarget) => `
@@ -214,10 +214,10 @@ export function findFileInputScript(target: ElementTarget, count: number): strin
 }
 
 /** Decodes one base64 chunk of file `index`; refuses if the page moved, so bytes never reach another page. */
-export function appendChunkScript(index: number, base64: string, href: string): string {
+export function appendChunkScript(id: string, index: number, base64: string, href: string): string {
   return `(() => {
   if (location.href !== ${JSON.stringify(href)}) throw new Error('The page navigated during the upload. The files were not attached.');
-  const parts = (window.${UPLOAD_BUFFER} ??= []);
+  const parts = (${uploadBuffer(id)} ??= []);
   const binary = atob(${JSON.stringify(base64)});
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -227,14 +227,15 @@ export function appendChunkScript(index: number, base64: string, href: string): 
 
 /** Builds the buffered bytes into files and gives them to the input, as a person choosing them would. */
 export function setFilesScript(
+  id: string,
   target: ElementTarget,
   files: ReadonlyArray<{ readonly name: string; readonly type: string; readonly size: number }>,
   href: string,
 ): string {
   return `(() => {
   ${FILE_INPUT_OF(target)}
-  const parts = window.${UPLOAD_BUFFER} ?? [];
-  delete window.${UPLOAD_BUFFER};
+  const parts = ${uploadBuffer(id)} ?? [];
+  delete ${uploadBuffer(id)};
   if (missing || error) return { missing, error };
   if (location.href !== ${JSON.stringify(href)}) return { error: 'The page navigated during the upload. The files were not attached.' };
   const transfer = new DataTransfer();

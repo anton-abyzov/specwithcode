@@ -129,13 +129,14 @@ private func PlatformImage(_ data: Data) -> Image? {
 extension View {
   /// The Attach button's choices: the system Photos picker, which runs out of
   /// process and needs no photo library permission, and the camera where there is one.
-  func attachmentPickers(isChoosing: Binding<Bool>, onPicked: @escaping (_ photos: [Data], _ failed: Int) -> Void) -> some View {
-    modifier(AttachmentPickers(isChoosing: isChoosing, onPicked: onPicked))
+  func attachmentPickers(isChoosing: Binding<Bool>, onLoading: @escaping (Bool) -> Void, onPicked: @escaping (_ photos: [Data], _ failed: Int) -> Void) -> some View {
+    modifier(AttachmentPickers(isChoosing: isChoosing, onLoading: onLoading, onPicked: onPicked))
   }
 }
 
 private struct AttachmentPickers: ViewModifier {
   @Binding var isChoosing: Bool
+  let onLoading: (Bool) -> Void
   let onPicked: ([Data], Int) -> Void
 
   @State private var showingPhotos = false
@@ -160,7 +161,9 @@ private struct AttachmentPickers: ViewModifier {
       .onChange(of: selection) { _, items in
         guard !items.isEmpty else { return }
         selection = []
+        onLoading(true)
         Task {
+          defer { onLoading(false) }
           var loaded: [Data] = []
           for item in items {
             // A photo kept only in iCloud can fail to download here.

@@ -607,7 +607,7 @@ extension LiveEngine {
   }
 
   public func attachmentURL(_ attachment: TranscriptAttachment, on environmentId: String) async throws -> URL? {
-    guard let base = machines[environmentId]?.status.route?.httpBase else { return nil }
+    guard let entry = machines[environmentId], entry.status.route != nil else { return nil }
     let payload: JSONValue = .object(["resource": .object([
       "_tag": .string("attachment"),
       "attachmentId": .string(attachment.id),
@@ -615,10 +615,11 @@ extension LiveEngine {
       "mimeType": .string(attachment.mimeType),
       "disposition": .string("inline"),
     ])])
-    let result = try await withRetry(environmentId) { socket in
-      try await Self.decode(AssetURLResult.self, from: socket.call(tag: RpcMethod.assetsCreateUrl.rawValue, payload: payload))
+    return try await withRetry(environmentId) { socket in
+      let result = try await Self.decode(AssetURLResult.self, from: socket.call(tag: RpcMethod.assetsCreateUrl.rawValue, payload: payload))
+      guard let route = await entry.connection.route(of: socket) else { throw TransportError.closed }
+      return URL(string: result.relativeUrl, relativeTo: route.httpBase)?.absoluteURL
     }
-    return URL(string: result.relativeUrl, relativeTo: base)?.absoluteURL
   }
 
   public func threadLinkMachines() -> [ThreadLinkResolver.Machine]? {

@@ -3808,7 +3808,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   command.limitRecoveryPolicyArm,
                   command.limitRecoveryAffinity,
                 )),
-            ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.title === undefined
+              ? {}
+              : { title: command.title, automaticTitleSeed: null }),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
             ...(command.linkedPullRequest === undefined
@@ -5897,11 +5899,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // A name someone gave the thread before its first real message stays. Generation only
       // replaces the default, this message's seed, a maintenance command's text or a fork's name.
       const currentTitle = projection.thread.title.trim();
+      const automaticTitleSeed = projection.thread.automaticTitleSeed;
       const titleIsAutomatic =
-        currentTitle === "New thread" ||
-        currentTitle === command.titleSeed?.trim() ||
-        currentTitle.endsWith(" fork") ||
-        userMessages.some((message) => message.text.trim() === currentTitle);
+        automaticTitleSeed === undefined
+          ? currentTitle === "New thread" ||
+            currentTitle === command.titleSeed?.trim() ||
+            userMessages.some((message) => message.text.trim() === currentTitle)
+          : automaticTitleSeed === currentTitle;
       if (
         !isNativeMaintenanceCommand(command) &&
         titleIsAutomatic &&
@@ -5915,6 +5919,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const thread: OrchestrationV2AppThread = {
           ...projection.thread,
           title: command.titleSeed ?? projection.thread.title,
+          automaticTitleSeed: null,
           titleRegeneration: { requestId: command.commandId, startedAt: now },
           updatedAt: now,
         };
@@ -9005,6 +9010,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // would drop the pick and put the words on the running model. It runs next on
       // its pick instead, in this thread, and the queue carries on.
       const targetRun = projection.runs.find((candidate) => candidate.id === command.targetRunId);
+      // A stale Run now must not stop background work left by a finished turn.
+      // Preserve the queued row and let its normal completion/recovery path start it.
+      if (targetRun !== undefined && targetRun.status !== "running") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Target run ${targetRun.id} is ${targetRun.status} and cannot be steered.`,
+        });
+      }
       if (
         targetRun !== undefined &&
         queuedMessage.createdBy === "user" &&

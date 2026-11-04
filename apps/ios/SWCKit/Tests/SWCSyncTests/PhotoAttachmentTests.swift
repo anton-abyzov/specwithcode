@@ -121,11 +121,14 @@ import UniformTypeIdentifiers
     #expect(try h.model.threadLink(threadId: "thr_1", environmentId: nil, from: tests.env) == ThreadRef(environmentId: tests.env, threadId: "thr_1"))
   }
 
-  @Test func attachmentURLUsesTheRouteTheMachineIsOn() async throws {
+  @Test func attachmentURLUsesTheSocketRouteEvenWhenPublishedStatusLags() async throws {
     let tests = LiveEngineTests()
     let h = try await tests.harness()
     defer { h.engine.setActive(false) }
     #expect(await tests.loaded(h))
+    // The socket and status feeds are consumed independently during reconnect.
+    let entry = try #require(h.engine.machines[tests.env])
+    entry.status.route = try #require(MachineRoute(httpBase: "https://old-route.invalid"))
     h.machine.answer("assets.createUrl", with: #"{"relativeUrl":"/api/assets/tok.sig","expiresAt":1}"#)
     let shown = TranscriptAttachment(id: "thr-1-abc", name: "a.jpg", mimeType: "image/jpeg", isImage: true)
     let url = try await h.engine.attachmentURL(shown, on: tests.env)

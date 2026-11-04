@@ -68,6 +68,7 @@ interface Receiving {
   readonly key: ReceivingKey | null;
   /** Set by the last chunk; a repeat of it after a lost answer gets the same outcome. */
   finishing: Promise<string> | null;
+  cancelled: boolean;
 }
 type Offer = (Serving | Receiving) & { readonly owner: string; lastUsed: number };
 
@@ -96,7 +97,9 @@ export class FileOffers {
 
   private async close(id: string, offer: Offer) {
     this.offers.delete(id);
-    if (offer.kind === "receive" && offer.finishing === null) await offer.incoming.abandon();
+    if (offer.kind !== "receive") return;
+    offer.cancelled = true;
+    if (offer.finishing === null) await offer.incoming.abandon();
   }
 
   private async sweep() {
@@ -228,6 +231,7 @@ export class FileOffers {
       chunks: chunkCount(input.sizeBytes),
       key,
       finishing: null,
+      cancelled: false,
       owner: caller.coordinatorEnvironmentId,
       lastUsed: this.now(),
     });
@@ -281,14 +285,29 @@ export class FileOffers {
         offer.key !== null
           ? unseal(input.sealed!, offer.key)
           : Buffer.from(input.data ?? "", "base64");
-      await offer.incoming.write(input.index, bytes);
     } catch (cause) {
       await this.close(input.offerId, offer);
       throw writeFailure(cause);
     }
-    if (input.index + 1 < offer.chunks) return { path: null };
-    offer.finishing = offer.incoming.finish(offer.sha256).catch((cause: unknown) => {
+    const finalChunk = input.index + 1 >= offer.chunks;
+    const written = offer.incoming.write(input.index, bytes).catch(async (cause: unknown) => {
+      if (finalChunk) offer.finishing = null;
+      await this.close(input.offerId, offer);
       throw writeFailure(cause);
+    });
+    if (!finalChunk) {
+      await written;
+      return { path: null };
+    }
+    // Reserve finalization before yielding. An overlapping retry joins this write and publish.
+    offer.finishing = written.then(async () => {
+      if (offer.cancelled) {
+        await offer.incoming.abandon();
+        throw new FileTransferRefusal("That transfer was cancelled before publication.");
+      }
+      return offer.incoming.finish(offer.sha256).catch((cause: unknown) => {
+        throw writeFailure(cause);
+      });
     });
     return { path: await offer.finishing };
   }

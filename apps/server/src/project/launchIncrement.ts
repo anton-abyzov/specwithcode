@@ -25,6 +25,7 @@ import { INCREMENTS_DIR } from "./ThreadReports.ts";
 import {
   bindingRootAccepted,
   CLOSED_INCREMENT_STATES,
+  hasSpecweaveConfig,
   incrementExists,
   incrementRootFor,
   readRequireIncrementMode,
@@ -278,7 +279,8 @@ export async function resolveLaunchIncrement(input: {
     }
     // Only a SpecWeave project has increments to inherit or require.
     const root = await incrementRootFor(input.workspaceRoot, input.worktreePath);
-    if (!(await hasIncrements(root))) return { ok: true, value: {} };
+    if (!(await hasSpecweaveConfig(root)) && !(await hasIncrements(root)))
+      return { ok: true, value: {} };
     const inherited =
       input.isCoordinator || input.caller === null
         ? null
