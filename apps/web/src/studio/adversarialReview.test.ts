@@ -42,6 +42,7 @@ describe("adversarialReviewNotice", () => {
     ).toEqual({
       type: "success",
       title: "Adversarial review started on GitHub Copilot · GPT-6.1 Sol",
+      description: "Skipped Codex · GPT-6.1 Sol: at its usage limit.",
       reviewThreadId: "review-thread",
     });
   });

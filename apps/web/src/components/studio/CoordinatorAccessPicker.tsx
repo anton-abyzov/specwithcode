@@ -77,29 +77,37 @@ export function CoordinatorAccessPicker({
       setPending(false);
     }
   }
+  // The same dial as a thread's access control, so the mode reads at a glance.
+  const AccessIcon = runtimeModeConfig[value].icon;
   return (
-    <span className="sws-access-pick inline-flex flex-wrap items-center gap-1 text-xs">
-      <Tip label="Applies to all chats in this project. Active provider turns finish before restarting. App approvals remain separate.">
-        <select
-          aria-label="Project permissions"
-          className="sws-model-trigger sws-access-trigger max-w-40 bg-transparent"
-          value={value}
-          disabled={!allowed || pending || writeMode === null}
-          aria-busy={pending}
-          onChange={(event) => void change(event.target.value as RuntimeMode)}
-        >
-          {runtimeModeOptions.map((mode) => {
-            const permitted = teamRulesModeAllowed(teamRules.state, mode);
-            return (
-              <option key={mode} value={mode} disabled={!permitted}>
-                {permitted
-                  ? runtimeModeConfig[mode].label
-                  : `${runtimeModeConfig[mode].label}: ${TEAM_RULES_ABOVE_LIMIT}`}
-              </option>
-            );
-          })}
-        </select>
-      </Tip>
+    <span
+      className="sws-access-pick inline-flex flex-wrap items-center gap-1 text-xs"
+      data-runtime-mode={value}
+    >
+      <span className="sws-access-field">
+        <AccessIcon className="sws-access-icon" data-access-icon="" />
+        <Tip label="Applies to all chats in this project. Active provider turns finish before restarting. App approvals remain separate.">
+          <select
+            aria-label="Project permissions"
+            className="sws-model-trigger sws-access-trigger max-w-48 bg-transparent"
+            value={value}
+            disabled={!allowed || pending || writeMode === null}
+            aria-busy={pending}
+            onChange={(event) => void change(event.target.value as RuntimeMode)}
+          >
+            {runtimeModeOptions.map((mode) => {
+              const permitted = teamRulesModeAllowed(teamRules.state, mode);
+              return (
+                <option key={mode} value={mode} disabled={!permitted}>
+                  {permitted
+                    ? runtimeModeConfig[mode].label
+                    : `${runtimeModeConfig[mode].label}: ${TEAM_RULES_ABOVE_LIMIT}`}
+                </option>
+              );
+            })}
+          </select>
+        </Tip>
+      </span>
       {error ? (
         <button
           type="button"

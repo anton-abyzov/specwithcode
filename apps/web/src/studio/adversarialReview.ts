@@ -27,13 +27,6 @@ export function adversarialReviewNotice(
   result: StartAdversarialReviewResult,
   providers: ReadonlyArray<ServerProvider>,
 ): AdversarialReviewNotice {
-  if (result.status === "started") {
-    return {
-      type: "success",
-      title: `Adversarial review started on ${fallbackEntryLabel(providers, result.reviewer)}`,
-      reviewThreadId: result.threadId,
-    };
-  }
   const listed = result.skipped
     .slice(0, MAX_LISTED_SKIPS)
     .map(
@@ -41,12 +34,22 @@ export function adversarialReviewNotice(
         `${fallbackEntryLabel(providers, skip.selection)}: ${REVIEWER_SKIP_NOTES[skip.reason]}`,
     );
   const more = result.skipped.length - listed.length;
+  const reasons = `${listed.join("; ")}${more > 0 ? `; and ${more} more` : ""}.`;
+  if (result.status === "started") {
+    return {
+      type: "success",
+      title: `Adversarial review started on ${fallbackEntryLabel(providers, result.reviewer)}`,
+      // Why the models ahead of it in the order did not take the review.
+      ...(listed.length === 0 ? {} : { description: `Skipped ${reasons}` }),
+      reviewThreadId: result.threadId,
+    };
+  }
   return {
     type: "warning",
     title: "No other model family can review now",
     description:
       listed.length === 0
         ? "Enable or sign in to a provider from another model family, then try again."
-        : `${listed.join("; ")}${more > 0 ? `; and ${more} more` : ""}.`,
+        : reasons,
   };
 }

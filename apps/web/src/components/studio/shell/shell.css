@@ -2190,6 +2190,35 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
+/* The access dial sits inside the select's left padding; clicks go through to it. */
+.sws-access-field {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.sws-access-icon {
+  position: absolute;
+  left: 7px;
+  width: 16px;
+  height: 16px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.sws-access-field .sws-access-trigger {
+  padding-left: 27px;
+}
+/* :where keeps this below the Full access color, so the dial and its label stay amber together. */
+.sws-access-field:has(:where(.sws-access-trigger:is(:hover, :focus-visible):not(:disabled)))
+  .sws-access-icon {
+  color: var(--foreground);
+}
+.sws-access-field:has(.sws-access-trigger:disabled) .sws-access-icon {
+  opacity: 0.5;
+}
+/* Full access runs without asking, so it reads at a glance, as in a thread's composer. */
+.sws-access-pick[data-runtime-mode="full-access"] :is(.sws-access-trigger, .sws-access-icon) {
+  color: var(--warning-foreground);
+}
 /* The host name takes only the room left over, so it never pushes the model off the row. */
 .sws-host {
   flex: 1 1 0;

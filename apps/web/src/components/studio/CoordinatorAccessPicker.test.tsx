@@ -142,6 +142,25 @@ it("requires settings write scope", async () => {
   expect(mocks.save).not.toHaveBeenCalled();
 });
 
+it("shows the access dial for every mode, as the thread composer does", async () => {
+  const steps = {
+    "approval-required": "1",
+    "auto-accept-edits": "2",
+    auto: "3",
+    "full-access": "4",
+  } as const;
+  for (const [mode, filled] of Object.entries(steps)) {
+    mocks.settings = { ...DEFAULT_SERVER_SETTINGS, defaultRuntimeMode: mode as never };
+    await mount();
+    const pick = container.querySelector(".sws-access-pick")!;
+    const icon = pick.querySelector("svg[data-access-icon]");
+    expect(icon?.getAttribute("data-access-steps")).toBe(filled);
+    expect(icon?.querySelectorAll("path")).toHaveLength(4);
+    expect(icon?.querySelectorAll("path[data-filled]")).toHaveLength(Number(filled));
+    expect(pick.getAttribute("data-runtime-mode")).toBe(mode);
+  }
+});
+
 it("keeps access in the controls row, right after the model and effort", async () => {
   await act(async () =>
     root.render(
