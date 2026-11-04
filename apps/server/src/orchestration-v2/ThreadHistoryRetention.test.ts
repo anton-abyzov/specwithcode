@@ -3,18 +3,21 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  ProviderDriverKind,
   type ModelSelection,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { createAttachmentId } from "../attachmentStore.ts";
@@ -47,7 +50,7 @@ const TEN_DAYS_AGO = DateTime.makeUnsafe("2026-02-19T00:00:00.000Z");
 const FORTY_DAYS_AGO = DateTime.makeUnsafe("2026-01-20T00:00:00.000Z");
 const TWO_DAYS_AGO = DateTime.makeUnsafe("2026-02-27T00:00:00.000Z");
 const NOW_MS = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-03-01T00:00:00.000Z"));
-const POLICY = { deletedAfterDays: 7, archivedAfterDays: 30 } as const;
+const POLICY = { deletedAfterDays: 7, archivedAfterDays: 30, historyDays: null } as const;
 
 const makeThread = (
   threadId: ThreadId,
@@ -278,6 +281,244 @@ const fresh = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layerTest>
   effect.pipe(Effect.provide(layerTest));
 
 describe("thread history retention", () => {
+  it.effect(
+    "keeps a deleted thread's rows while a fork reads its history from them, and purges it after the fork",
+    () =>
+      fresh(
+        Effect.gen(function* () {
+          const sink = yield* EventSink.EventSinkV2;
+          const sql = yield* SqlClient.SqlClient;
+          const source = ThreadId.make("thread:retention:fork-source");
+          const fork = ThreadId.make("thread:retention:fork");
+          const runId = RunId.make("run:retention:fork-source");
+          const nodeId = NodeId.make("node:retention:fork-source");
+          const sourceThread = makeThread(source);
+          const forkThread = makeThread(fork, {
+            lineage: { parentThreadId: source, relationshipToParent: "fork", rootThreadId: source },
+            forkedFrom: { type: "run", threadId: source, runId },
+          });
+          const events: Array<OrchestrationV2DomainEvent> = [
+            {
+              id: eventId("created"),
+              type: "thread.created",
+              threadId: source,
+              providerInstanceId,
+              occurredAt: CREATED,
+              payload: sourceThread,
+            },
+            {
+              id: eventId("run"),
+              type: "run.updated",
+              threadId: source,
+              runId,
+              nodeId,
+              driver: ProviderDriverKind.make("codex"),
+              occurredAt: CREATED,
+              payload: {
+                id: runId,
+                threadId: source,
+                ordinal: 1,
+                providerInstanceId,
+                modelSelection,
+                providerThreadId: null,
+                userMessageId: MessageId.make("message:retention:fork-source"),
+                rootNodeId: nodeId,
+                activeAttemptId: null,
+                status: "completed",
+                requestedAt: CREATED,
+                startedAt: CREATED,
+                completedAt: CREATED,
+                checkpointId: null,
+                contextHandoffId: null,
+              },
+            },
+            ...[0, 1, 2].map((ordinal): OrchestrationV2DomainEvent => ({
+              id: eventId("item"),
+              type: "turn-item.updated",
+              threadId: source,
+              occurredAt: CREATED,
+              payload: {
+                id: TurnItemId.make(`turn-item:retention:fork-source:${ordinal}`),
+                threadId: source,
+                runId,
+                nodeId: null,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal,
+                status: "completed",
+                title: null,
+                startedAt: CREATED,
+                completedAt: CREATED,
+                updatedAt: CREATED,
+                type: "assistant_message",
+                messageId: MessageId.make(`message:retention:fork-source:item:${ordinal}`),
+                text: `inherited ${ordinal}`,
+                streaming: false,
+              },
+            })),
+            {
+              id: eventId("created"),
+              type: "thread.created",
+              threadId: fork,
+              providerInstanceId,
+              occurredAt: CREATED,
+              payload: forkThread,
+            },
+            {
+              id: eventId("deleted"),
+              type: "thread.deleted",
+              threadId: source,
+              providerInstanceId,
+              occurredAt: TEN_DAYS_AGO,
+              payload: { ...sourceThread, deletedAt: TEN_DAYS_AGO, updatedAt: TEN_DAYS_AGO },
+            },
+          ];
+          for (const event of events) yield* sink.write({ events: [event] });
+
+          const forkView = yield* threadView(fork);
+          const inherited = (yield* (yield* ProjectionStore.ProjectionStoreV2).getThreadProjection(
+            fork,
+          )).visibleTurnItems.filter((row) => row.sourceThreadId === source);
+          assert.isAbove(inherited.length, 0);
+
+          const first = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: POLICY,
+            nowMs: NOW_MS,
+          });
+          assert.equal(first.purgedThreadCount, 0);
+          assert.equal(first.compactedThreadCount, 1);
+          assert.equal(first.skipped.forkSource, 1);
+          // The source lost its events, not the rows the fork reads.
+          assert.deepEqual(
+            (yield* streamSequences(source)).map((row) => row.event_type),
+            ["thread.created", "thread.deleted"],
+          );
+          assert.equal(yield* rowsFor("orchestration_v2_projection_runs", source), 1);
+          assert.equal(yield* rowsFor("orchestration_v2_projection_turn_items", source), 3);
+          assert.strictEqual(yield* threadView(fork), forkView);
+          // A rebuild keeps the source's rows too.
+          assert.isTrue(
+            (yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild).valid,
+          );
+          assert.strictEqual(yield* threadView(fork), forkView);
+
+          // Once the fork is deleted and purged itself, the source goes on the next pass.
+          yield* sink.write({
+            events: [
+              {
+                id: eventId("deleted"),
+                type: "thread.deleted",
+                threadId: fork,
+                providerInstanceId,
+                occurredAt: TEN_DAYS_AGO,
+                payload: { ...forkThread, deletedAt: TEN_DAYS_AGO, updatedAt: TEN_DAYS_AGO },
+              },
+            ],
+          });
+          const second = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: POLICY,
+            nowMs: NOW_MS,
+          });
+          assert.equal(second.purgedThreadCount, 1);
+          assert.equal(second.skipped.forkSource, 1);
+          const third = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: POLICY,
+            nowMs: NOW_MS,
+          });
+          assert.equal(third.purgedThreadCount, 1);
+          assert.equal(third.skipped.forkSource, 0);
+          for (const table of ThreadHistoryRetention.PURGED_THREAD_TABLES) {
+            assert.equal(yield* rowsFor(table, source), 0, table);
+          }
+          const markers = yield* sql<{ readonly thread_id: string; readonly kind: string }>`
+            SELECT thread_id, kind FROM orchestration_v2_thread_history_compactions
+            ORDER BY thread_id
+          `;
+          assert.deepEqual(markers, [
+            { thread_id: fork, kind: "deleted" },
+            { thread_id: source, kind: "deleted" },
+          ]);
+        }),
+      ),
+  );
+
+  it.effect("bounds each event delete by payload bytes as well as rows", () =>
+    Effect.gen(function* () {
+      /** Writes a pass makes (each one asks the gate) for a deleted thread of six items. */
+      const writesFor = (text: string) =>
+        fresh(
+          Effect.gen(function* () {
+            const sink = yield* EventSink.EventSinkV2;
+            const threadId = ThreadId.make("thread:retention:bytes");
+            const thread = makeThread(threadId);
+            const events: Array<OrchestrationV2DomainEvent> = [
+              {
+                id: eventId("created"),
+                type: "thread.created",
+                threadId,
+                providerInstanceId,
+                occurredAt: CREATED,
+                payload: thread,
+              },
+              ...[0, 1, 2, 3, 4, 5].map((ordinal): OrchestrationV2DomainEvent => ({
+                id: eventId("item"),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: CREATED,
+                payload: {
+                  id: TurnItemId.make(`turn-item:retention:bytes:${ordinal}`),
+                  threadId,
+                  runId: null,
+                  nodeId: null,
+                  providerThreadId: null,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal,
+                  status: "completed",
+                  title: null,
+                  startedAt: CREATED,
+                  completedAt: CREATED,
+                  updatedAt: CREATED,
+                  type: "assistant_message",
+                  messageId: MessageId.make(`message:retention:bytes:${ordinal}`),
+                  text,
+                  streaming: false,
+                },
+              })),
+              {
+                id: eventId("deleted"),
+                type: "thread.deleted",
+                threadId,
+                providerInstanceId,
+                occurredAt: TEN_DAYS_AGO,
+                payload: { ...thread, deletedAt: TEN_DAYS_AGO, updatedAt: TEN_DAYS_AGO },
+              },
+            ];
+            for (const event of events) yield* sink.write({ events: [event] });
+            let writes = 0;
+            const result = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+              policy: POLICY,
+              nowMs: NOW_MS,
+              mayDelete: () => {
+                writes += 1;
+                return true;
+              },
+            });
+            assert.equal(result.purgedThreadCount, 1);
+            assert.equal(result.deletedEventCount, 6);
+            return writes;
+          }),
+        );
+      const small = yield* writesFor("small");
+      // 1.5 MB each: two fit the 4 MB bound, so six take three deletes instead of one.
+      const large = yield* writesFor("L".repeat(1_500_000));
+      assert.equal(large - small, 2);
+    }),
+  );
+
   it.effect("does nothing while off", () =>
     fresh(
       Effect.gen(function* () {
@@ -336,7 +577,7 @@ describe("thread history retention", () => {
           assert.isFalse(result.interrupted);
           assert.equal(result.purgedThreadCount, 1);
           assert.equal(result.compactedThreadCount, 1);
-          assert.deepEqual(result.skipped, { linked: 1, busy: 0, legacy: 0 });
+          assert.deepEqual(result.skipped, { linked: 1, busy: 0, legacy: 0, forkSource: 0 });
           // Dry-run accuracy: the same threads, events and rows.
           assert.equal(dryRun.purgedThreadCount, result.purgedThreadCount);
           assert.equal(dryRun.compactedThreadCount, result.compactedThreadCount);
@@ -449,7 +690,7 @@ describe("thread history retention", () => {
           yield* sink.write({ events: [event] });
         }
         const result = yield* ThreadHistoryRetention.runThreadHistoryRetention({
-          policy: { deletedAfterDays: null, archivedAfterDays: 30 },
+          policy: { deletedAfterDays: null, archivedAfterDays: 30, historyDays: null },
           nowMs: NOW_MS,
         });
         assert.equal(result.compactedThreadCount, 1);
@@ -567,7 +808,7 @@ describe("thread history retention", () => {
           ]),
         );
         for (const event of history) yield* sink.write({ events: [event] });
-        const policy = { deletedAfterDays: 7, archivedAfterDays: null } as const;
+        const policy = { deletedAfterDays: 7, archivedAfterDays: null, historyDays: null } as const;
         const marker = sql<{ readonly completed_at: string | null }>`
           SELECT completed_at FROM orchestration_v2_thread_history_compactions
           WHERE thread_id = ${threadId}
@@ -619,4 +860,277 @@ describe("thread history retention", () => {
       }),
     ),
   );
+
+  describe("history horizon", () => {
+    const HORIZON = { deletedAfterDays: null, archivedAfterDays: null, historyDays: 7 } as const;
+    const DAY_MS = 24 * 60 * 60_000;
+    const at = (ms: number) => DateTime.makeUnsafe(ms);
+    const prompt = "Look through the storage code and report.\n".repeat(200);
+    const subagent = (
+      threadId: ThreadId,
+      occurredAt: DateTime.Utc,
+      status: "running" | "completed",
+    ) =>
+      ({
+        id: eventId("subagent"),
+        type: "subagent.updated",
+        threadId,
+        occurredAt,
+        payload: {
+          id: NodeId.make(`subagent:${threadId}`),
+          threadId,
+          runId: null,
+          providerThreadId: null,
+          parentNodeId: NodeId.make(`node:${threadId}:0`),
+          createdBy: "agent",
+          nativeTaskRef: null,
+          model: null,
+          origin: "provider_native",
+          driver: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId: ProviderInstanceId.make("claude"),
+          childThreadId: null,
+          prompt,
+          title: "Inspect storage",
+          status,
+          result: status === "completed" ? "done" : null,
+          startedAt: occurredAt,
+          completedAt: status === "completed" ? occurredAt : null,
+          updatedAt: occurredAt,
+        },
+      }) as OrchestrationV2DomainEvent;
+    /** Rounds ten days ago, a subagent started then, and rounds plus its end two days ago. */
+    const writeLongThread = (threadId: ThreadId, extra: Partial<OrchestrationV2AppThread> = {}) =>
+      Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const old = threadHistory(threadId, 5, "active", TEN_DAYS_AGO, extra).map((event, index) =>
+          index === 0 ? event : { ...event, occurredAt: TEN_DAYS_AGO },
+        );
+        const recent = threadHistory(threadId, 3, "active", TWO_DAYS_AGO, extra)
+          .slice(1)
+          .map((event) => ({ ...event, occurredAt: TWO_DAYS_AGO }));
+        for (const event of [
+          ...old,
+          subagent(threadId, TEN_DAYS_AGO, "running"),
+          ...recent,
+          subagent(threadId, TWO_DAYS_AGO, "completed"),
+        ]) {
+          yield* sink.write({ events: [event] });
+        }
+      });
+
+    it.effect(
+      "folds a live thread's events older than the horizon; its view, rebuild, resume and prompts hold",
+      () =>
+        fresh(
+          Effect.gen(function* () {
+            const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+            const sql = yield* SqlClient.SqlClient;
+            const threadId = ThreadId.make("thread:retention:horizon");
+            const youngId = ThreadId.make("thread:retention:young");
+            const linkedId = ThreadId.make("thread:retention:horizon-linked");
+            yield* writeLongThread(threadId);
+            yield* writeLongThread(linkedId, {
+              execution: {
+                ownerMachineId: EnvironmentId.make("machine-elsewhere"),
+                executionMachineId: EnvironmentId.make("machine-elsewhere"),
+                epoch: 1,
+                history: [],
+              },
+            });
+            const sink = yield* EventSink.EventSinkV2;
+            for (const event of threadHistory(youngId, 3, "active", TWO_DAYS_AGO, {
+              createdAt: TWO_DAYS_AGO,
+            }).map((event) => ({ ...event, occurredAt: TWO_DAYS_AGO }))) {
+              yield* sink.write({ events: [event] });
+            }
+            const view = yield* threadView(threadId);
+            const before = yield* streamSequences(threadId);
+            const untouched = {
+              young: yield* streamSequences(youngId),
+              linked: yield* streamSequences(linkedId),
+              youngView: yield* threadView(youngId),
+            };
+            const anchor = (yield* sql<{ readonly sequence: number }>`
+              SELECT sequence FROM orchestration_events
+              WHERE stream_id = ${threadId} AND event_type = 'subagent.updated'
+              ORDER BY sequence LIMIT 1
+            `)[0]?.sequence;
+            const references = yield* sql<{ readonly anchor: number | null }>`
+              SELECT json_extract(payload_json, '$.promptSequence') AS anchor
+              FROM orchestration_events
+              WHERE stream_id = ${threadId} AND event_type = 'subagent.updated'
+              ORDER BY sequence DESC LIMIT 1
+            `;
+            // The newer snapshot names the older one as its prompt.
+            assert.equal(references[0]?.anchor, anchor);
+
+            const dryRun = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+              policy: HORIZON,
+              nowMs: NOW_MS,
+              dryRun: true,
+            });
+            assert.deepEqual(yield* streamSequences(threadId), before);
+            const result = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+              policy: HORIZON,
+              nowMs: NOW_MS,
+              batchSize: 3,
+            });
+            assert.isFalse(result.interrupted);
+            assert.equal(result.foldedThreadCount, 1);
+            assert.equal(dryRun.foldedThreadCount, 1);
+            assert.equal(dryRun.deletedEventCount, result.deletedEventCount);
+            assert.equal(result.skipped.linked, 1);
+            // 5 old rounds of 3 snapshots go; creation and the prompt anchor stay.
+            assert.equal(result.deletedEventCount, 15);
+            const after = yield* streamSequences(threadId);
+            assert.deepEqual(
+              after.slice(0, 2).map((row) => row.sequence),
+              [before[0]?.sequence, anchor],
+            );
+            assert.deepEqual(
+              after.slice(2),
+              before.filter((row) => row.sequence > (anchor ?? 0)),
+            );
+            // What the user sees is unchanged, and so are young and linked threads.
+            assert.strictEqual(yield* threadView(threadId), view);
+            assert.deepEqual(yield* streamSequences(youngId), untouched.young);
+            assert.deepEqual(yield* streamSequences(linkedId), untouched.linked);
+            assert.strictEqual(yield* threadView(youngId), untouched.youngView);
+
+            // A thread replay still restores the kept snapshot's prompt from its anchor.
+            const events = yield* OrchestrationEventStore.OrchestrationEventStore.pipe(
+              Effect.provide(OrchestrationEventStore.layer),
+            );
+            const replay = yield* events.readAgentEvents({ threadId }).pipe(Stream.runCollect);
+            const subagents = Array.from(replay).filter(
+              (row) => row.event.type === "subagent.updated",
+            );
+            assert.equal(subagents.length, 2);
+            for (const row of subagents) {
+              assert.equal((row.event.payload as { readonly prompt: string }).prompt, prompt);
+            }
+            // A client resuming from before the fold takes a snapshot; one after it replays.
+            const marker = yield* sql<{
+              readonly kind: string;
+              readonly through_sequence: number;
+              readonly completed_at: string | null;
+            }>`
+              SELECT kind, through_sequence, completed_at
+              FROM orchestration_v2_thread_history_compactions WHERE thread_id = ${threadId}
+            `;
+            assert.equal(marker[0]?.kind, "horizon");
+            assert.isNotNull(marker[0]?.completed_at);
+            const through = marker[0]?.through_sequence ?? 0;
+            assert.isTrue(
+              yield* events.threadHistoryCompactedAfter({ threadId, afterSequence: 0 }),
+            );
+            assert.isFalse(
+              yield* events.threadHistoryCompactedAfter({ threadId, afterSequence: through }),
+            );
+            // The application shell stream checks every thread's marker the same way.
+            assert.isTrue(yield* events.historyCompactedAfter(0));
+            assert.isTrue(yield* events.historyCompactedAfter(through - 1));
+            assert.isFalse(yield* events.historyCompactedAfter(through));
+
+            // Verify and a rebuild from the log give the same views.
+            assert.isTrue((yield* maintenance.verify).valid);
+            assert.isTrue((yield* maintenance.rebuild).valid);
+            assert.strictEqual(yield* threadView(threadId), view);
+            assert.strictEqual(yield* threadView(youngId), untouched.youngView);
+
+            // Folded a moment ago: the next pass does not read it again.
+            const again = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+              policy: HORIZON,
+              nowMs: NOW_MS + 60_000,
+            });
+            assert.equal(again.foldedThreadCount, 0);
+            assert.equal(again.deletedEventCount, 0);
+
+            // New work, then a week later: the fold moves forward and the view still holds.
+            const thread = makeThread(threadId);
+            yield* sink.write({
+              events: [
+                {
+                  id: eventId("renamed"),
+                  type: "thread.metadata-updated",
+                  threadId,
+                  providerInstanceId,
+                  occurredAt: at(NOW_MS),
+                  payload: { ...thread, title: "Renamed later", updatedAt: at(NOW_MS) },
+                },
+              ],
+            });
+            const renamed = yield* threadView(threadId);
+            assert.include(renamed, "Renamed later");
+            const later = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+              policy: HORIZON,
+              nowMs: NOW_MS + 9 * DAY_MS,
+            });
+            // The young thread's history is past the horizon now too.
+            assert.equal(later.foldedThreadCount, 2);
+            assert.strictEqual(yield* threadView(youngId), untouched.youngView);
+            const moved = yield* sql<{ readonly through_sequence: number }>`
+              SELECT through_sequence FROM orchestration_v2_thread_history_compactions
+              WHERE thread_id = ${threadId}
+            `;
+            assert.isAbove(moved[0]?.through_sequence ?? 0, through);
+            // Nothing is left but creation and the stream's newest event.
+            assert.deepEqual(
+              (yield* streamSequences(threadId)).map((row) => row.event_type),
+              ["thread.created", "thread.metadata-updated"],
+            );
+            assert.strictEqual(yield* threadView(threadId), renamed);
+            assert.isTrue((yield* maintenance.rebuild).valid);
+            assert.strictEqual(yield* threadView(threadId), renamed);
+          }),
+        ),
+    );
+
+    it.effect("never folds while the update gate is closed or the time budget is spent", () =>
+      fresh(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make("thread:retention:horizon-gated");
+          yield* writeLongThread(threadId);
+          const before = yield* streamSequences(threadId);
+          const gated = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: HORIZON,
+            nowMs: NOW_MS,
+            mayDelete: () => false,
+          });
+          assert.isTrue(gated.interrupted);
+          assert.isFalse(gated.budgetExhausted);
+          const spent = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: HORIZON,
+            nowMs: NOW_MS,
+            timeBudgetMs: 0,
+          });
+          assert.isTrue(spent.interrupted);
+          assert.isTrue(spent.budgetExhausted);
+          assert.deepEqual(yield* streamSequences(threadId), before);
+          const markers = yield* sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS count FROM orchestration_v2_thread_history_compactions
+          `;
+          assert.equal(markers[0]?.count, 0);
+
+          // A fold stopped half-way is resumed by the next pass, then done.
+          let writes = 0;
+          const stopped = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: HORIZON,
+            nowMs: NOW_MS,
+            batchSize: 2,
+            mayDelete: () => (writes += 1) <= 3,
+          });
+          assert.isTrue(stopped.interrupted);
+          assert.isAbove(stopped.deletedEventCount, 0);
+          const resumed = yield* ThreadHistoryRetention.runThreadHistoryRetention({
+            policy: HORIZON,
+            nowMs: NOW_MS,
+          });
+          assert.equal(resumed.foldedThreadCount, 1);
+          assert.equal(stopped.deletedEventCount + resumed.deletedEventCount, 15);
+        }),
+      ),
+    );
+  });
 });

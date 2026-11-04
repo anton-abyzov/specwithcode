@@ -257,7 +257,7 @@ const compactHome = Effect.gen(function* () {
   }).pipe(Effect.provide(layerDatabase(dbPath)));
   const before = sequences(dbPath);
   const sizeBefore = Number((yield* fs.stat(dbPath)).size);
-  const policy = { deletedAfterDays: 7, archivedAfterDays: 30 };
+  const policy = { deletedAfterDays: 7, archivedAfterDays: 30, historyDays: null };
   return {
     fs,
     path,

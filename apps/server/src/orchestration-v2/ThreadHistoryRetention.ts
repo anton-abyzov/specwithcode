@@ -1,9 +1,9 @@
 /**
- * Opt-in retention of old thread history. Off unless a policy names a day
- * count: nothing here runs on a machine whose owner did not turn it on
- * (Settings > Storage, or `specweave-studio db compact`).
+ * Retention of old thread history, on by default (Settings > Storage:
+ * deleted chats 7 days, archived chats 2 days, every other chat's raw event
+ * log 7 days). A policy entry of null turns that part off.
  *
- * Two passes, each over the threads the projection lists:
+ * Three kinds, each over the threads the projection lists:
  *
  * - **Deleted threads**, deleted at least `deletedAfterDays` ago, are purged:
  *   their events and their projection rows (runs, nodes, turn items, messages,
@@ -12,6 +12,15 @@
  *   them; this repeats it for any it missed).
  * - **Archived threads**, archived and untouched for `archivedAfterDays`,
  *   keep every projection row the UI reads and lose only their raw events.
+ * - **Every other thread** (`horizon`) keeps its events of the last
+ *   `historyDays`; older events fold into its projection rows, which the UI
+ *   already reads, exactly as for an archived thread. The fold point is the
+ *   thread's newest event older than the horizon. A thread is folded again
+ *   only once events a day past the horizon piled up, so an active thread is
+ *   read about once a day, not every pass. Kept besides the archived set: the
+ *   events that subagent snapshots after the fold point name as their prompt
+ *   (`promptSequence`, OrchestrationEventStore), so a replay of the kept
+ *   events still finds every prompt.
  *
  * What stays of every thread, so nothing comes back and nothing that counts
  * threads changes: its projection thread row (for a deleted thread, the
@@ -32,6 +41,13 @@
  * its `completed_at` is set only once every delete finished: until then each
  * pass resumes the thread instead of taking it as done.
  *
+ * A deleted thread that a kept thread was forked from at a run
+ * (`forkedFrom.type` "run") is not purged: the fork reads its inherited
+ * history from the source's runs and turn items at read time
+ * (ProjectionStore `visibleTurnItemsThroughRun`), so the source keeps its
+ * rows, and loses only its events (as an archived thread), until every such
+ * fork is purged itself.
+ *
  * Skipped, whatever their age: threads another machine owns or runs
  * (`execution`) or that moved by handoff (`movedTo`/`movedFrom` kind
  * "handoff"), whose copies elsewhere still exchange with this one; threads
@@ -44,6 +60,7 @@
  *
  * @module ThreadHistoryRetention
  */
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -60,15 +77,20 @@ export interface ThreadHistoryRetentionPolicy {
   readonly deletedAfterDays: number | null;
   /** Drop an archived thread's events this many days after it was archived; null never. */
   readonly archivedAfterDays: number | null;
+  /** Fold any other thread's events older than this many days; null never. */
+  readonly historyDays: number | null;
 }
 
 export const RETENTION_OFF: ThreadHistoryRetentionPolicy = {
   deletedAfterDays: null,
   archivedAfterDays: null,
+  historyDays: null,
 };
 
 export const retentionEnabled = (policy: ThreadHistoryRetentionPolicy) =>
-  policy.deletedAfterDays !== null || policy.archivedAfterDays !== null;
+  policy.deletedAfterDays !== null ||
+  policy.archivedAfterDays !== null ||
+  policy.historyDays !== null;
 
 export interface ThreadHistoryRetentionOptions {
   readonly policy: ThreadHistoryRetentionPolicy;
@@ -85,6 +107,12 @@ export interface ThreadHistoryRetentionOptions {
   readonly batchSize?: number;
   /** Threads one pass handles at most; the rest wait for the next pass. */
   readonly maxThreads?: number;
+  /**
+   * Wall-clock milliseconds one pass may take, pauses included. Past it no
+   * further statement runs; a thread stopped half-way keeps an incomplete
+   * marker and the next pass resumes it.
+   */
+  readonly timeBudgetMs?: number;
   /** Removes attachment files by id; omitted, attachments are left alone. */
   readonly removeAttachments?: (attachmentIds: ReadonlyArray<string>) => Effect.Effect<void>;
 }
@@ -96,11 +124,17 @@ export interface ThreadHistoryRetentionResult {
   readonly purgedThreadCount: number;
   /** Archived threads whose events went (or would go). */
   readonly compactedThreadCount: number;
+  /** Other threads whose events older than the horizon went (or would go). */
+  readonly foldedThreadCount: number;
+  /** The pass stopped at its time budget, not at a gate; the next pass goes on. */
+  readonly budgetExhausted: boolean;
   /** Threads old enough but skipped, by reason. */
   readonly skipped: {
     readonly linked: number;
     readonly busy: number;
     readonly legacy: number;
+    /** Deleted threads a kept fork still reads its history from; their events still go. */
+    readonly forkSource: number;
   };
   /** Threads left for a later pass by `maxThreads`. */
   readonly deferredThreadCount: number;
@@ -119,7 +153,22 @@ export interface ThreadHistoryRetentionResult {
 export const RETENTION_BATCH_SIZE = 100;
 /** Threads one background pass handles; `db compact` handles all. */
 export const RETENTION_MAX_THREADS_PER_PASS = 100;
+/**
+ * Wall-clock time of one background pass, pauses included. The pacer works
+ * 25 ms and rests 225 ms, so this is about a minute of delete work.
+ */
+export const RETENTION_PASS_BUDGET_MS = 10 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+/** A delete that held the connection (commit included) longer than this halves the next batch. */
+const SLOW_DELETE_MS = 100;
+/**
+ * Payload bytes one event delete frees at most: large tool outputs free long
+ * overflow chains, and the commit writes every freed page, so a batch is
+ * bounded by bytes as well as rows.
+ */
+export const RETENTION_BATCH_MAX_BYTES = 4 * 1024 * 1024;
+/** A thread is folded again only once events this far past the horizon piled up. */
+export const HORIZON_REFOLD_SLACK_MS = DAY_MS;
 /** Row bytes beyond the sampled payload: ids, index entries, slack (as DatabaseReclaim). */
 const ROW_OVERHEAD_BYTES = { low: 200, high: 1_500 } as const;
 /** Sampled rows per table for the size estimate. */
@@ -148,7 +197,7 @@ const ACTIVE_RUN_STATUSES = ["preparing", "queued", "starting", "running", "wait
 
 type Candidate = {
   readonly thread_id: string;
-  readonly kind: "deleted" | "archived";
+  readonly kind: "deleted" | "archived" | "horizon";
   readonly linked: number;
   readonly legacy_pending: number;
   readonly active_runs: number;
@@ -183,14 +232,22 @@ export const runThreadHistoryRetention = (
     const dryRun = options.dryRun === true;
     const batchSize = Math.max(1, options.batchSize ?? RETENTION_BATCH_SIZE);
     const maxThreads = options.maxThreads ?? Number.POSITIVE_INFINITY;
-    const { deletedAfterDays, archivedAfterDays } = options.policy;
+    const { deletedAfterDays, archivedAfterDays, historyDays } = options.policy;
+    /** Rows per event delete, adapted to how long the last one took. */
+    let eventBatch = batchSize;
+    const deadline =
+      options.timeBudgetMs === undefined
+        ? Number.POSITIVE_INFINITY
+        : (yield* Clock.currentTimeMillis) + options.timeBudgetMs;
     let interrupted = false;
+    let budgetExhausted = false;
     let purgedThreadCount = 0;
     let compactedThreadCount = 0;
+    let foldedThreadCount = 0;
     let deferredThreadCount = 0;
     let deletedEventCount = 0;
     let attachmentIds = 0;
-    const skipped = { linked: 0, busy: 0, legacy: 0 };
+    const skipped = { linked: 0, busy: 0, legacy: 0, forkSource: 0 };
     const deletedRowsByTable: Record<string, number> = {};
     const count = (table: string, rows: number) => {
       if (rows > 0) deletedRowsByTable[table] = (deletedRowsByTable[table] ?? 0) + rows;
@@ -201,6 +258,8 @@ export const runThreadHistoryRetention = (
         interrupted,
         purgedThreadCount,
         compactedThreadCount,
+        foldedThreadCount,
+        budgetExhausted,
         skipped,
         deferredThreadCount,
         deletedEventCount,
@@ -209,13 +268,19 @@ export const runThreadHistoryRetention = (
         estimatedBytes,
       }) satisfies ThreadHistoryRetentionResult;
 
-    if (deletedAfterDays === null && archivedAfterDays === null) {
+    if (!retentionEnabled(options.policy)) {
       return result({ low: 0, high: 0 });
     }
     const deletedCutoff =
       deletedAfterDays === null ? null : isoAt(options.nowMs - deletedAfterDays * DAY_MS);
     const archivedCutoff =
       archivedAfterDays === null ? null : isoAt(options.nowMs - archivedAfterDays * DAY_MS);
+    const historyCutoff = historyDays === null ? null : isoAt(options.nowMs - historyDays * DAY_MS);
+    /** Threads created after this have nothing a day past the horizon yet. */
+    const historyStaleCutoff =
+      historyDays === null
+        ? null
+        : isoAt(options.nowMs - historyDays * DAY_MS - HORIZON_REFOLD_SLACK_MS);
 
     // A database the service has not migrated yet has no markers (and nothing to write them to).
     const hasMarkers = yield* markerTableExists;
@@ -230,7 +295,19 @@ export const runThreadHistoryRetention = (
     const candidates = yield* sql<Candidate>`
       SELECT
         thread.thread_id,
-        CASE WHEN thread.deleted_at IS NOT NULL THEN 'deleted' ELSE 'archived' END AS kind,
+        CASE
+          WHEN thread.deleted_at IS NOT NULL THEN 'deleted'
+          WHEN ${
+            archivedCutoff === null
+              ? sql`0`
+              : sql`(
+                thread.archived_at IS NOT NULL
+                AND thread.archived_at < ${archivedCutoff}
+                AND thread.updated_at < ${archivedCutoff}
+              )`
+          } THEN 'archived'
+          ELSE 'horizon'
+        END AS kind,
         (
           json_type(thread.payload_json, '$.execution') = 'object'
           OR json_extract(thread.payload_json, '$.movedTo.kind') = 'handoff'
@@ -287,7 +364,26 @@ export const runThreadHistoryRetention = (
               AND thread.updated_at < ${archivedCutoff}
             )`
         }
-      ORDER BY thread.thread_id
+        OR ${
+          historyStaleCutoff === null
+            ? sql`0`
+            : sql`(thread.deleted_at IS NULL AND thread.created_at < ${historyStaleCutoff})`
+        }
+        OR ${
+          // A fold a gate or the time budget stopped half-way resumes first.
+          hasMarkers
+            ? sql`EXISTS (
+              SELECT 1 FROM orchestration_v2_thread_history_compactions AS marker
+              WHERE marker.thread_id = thread.thread_id
+                AND marker.completed_at IS NULL
+                AND marker.kind = 'horizon'
+                AND thread.deleted_at IS NULL
+            )`
+            : sql`0`
+        }
+      ORDER BY
+        CASE WHEN thread.deleted_at IS NOT NULL THEN 0 ELSE 1 END,
+        thread.thread_id
     `;
     // Effects in flight, read once through the outbox's status index.
     const busyThreads = new Set(
@@ -297,14 +393,44 @@ export const runThreadHistoryRetention = (
       `).map((row) => row.thread_id),
     );
 
+    // Deleted threads a run fork reads its history from, while that fork
+    // still has its rows (not deleted, or deleted but not purged yet).
+    const forkSources =
+      deletedCutoff === null
+        ? new Set<string>()
+        : new Set(
+            (yield* sql<{ readonly source: string | null }>`
+              SELECT DISTINCT json_extract(child.payload_json, '$.forkedFrom.threadId') AS source
+              FROM orchestration_v2_projection_threads AS child
+              WHERE CASE WHEN json_valid(child.payload_json)
+                THEN json_extract(child.payload_json, '$.forkedFrom.type') = 'run'
+                ELSE 0 END
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_thread_history_compactions AS marker
+                  WHERE marker.thread_id = child.thread_id
+                    AND marker.kind = 'deleted'
+                    AND marker.completed_at IS NOT NULL
+                )
+            `).flatMap((row) => (row.source === null ? [] : [row.source])),
+          );
+
+    /** How long the last write held the connection, its commit included. */
+    let lastWriteMs = 0;
+
     /** Runs one write unless told to stop; false once stopped. */
     const write = <A, E, R>(statement: Effect.Effect<A, E, R>) =>
       Effect.gen(function* () {
         if (interrupted) return false;
+        if ((yield* Clock.currentTimeMillis) >= deadline) {
+          budgetExhausted = true;
+          interrupted = true;
+          return false;
+        }
         if (options.shouldContinue !== undefined && !(yield* options.shouldContinue)) {
           interrupted = true;
           return false;
         }
+        const started = yield* Clock.currentTimeMillis;
         const ran =
           options.mayDelete === undefined
             ? yield* Effect.as(statement, true)
@@ -315,6 +441,7 @@ export const runThreadHistoryRetention = (
                     : Effect.as(statement, true),
                 ),
               );
+        lastWriteMs = (yield* Clock.currentTimeMillis) - started;
         if (!ran) {
           interrupted = true;
           return false;
@@ -324,7 +451,10 @@ export const runThreadHistoryRetention = (
         return true;
       });
 
-    /** The sequences a thread keeps: creation, newest lifecycle event, stream end. */
+    /**
+     * The sequences a thread keeps: creation, newest lifecycle event (none
+     * for a horizon fold), stream end.
+     */
     const keptSequences = (threadId: string, kind: Candidate["kind"]) =>
       Effect.gen(function* () {
         const ends = yield* sql<{ readonly newest: number | null; readonly total: number }>`
@@ -343,7 +473,10 @@ export const runThreadHistoryRetention = (
             AND stream_id = ${threadId}
         `;
         // Newest first from the stream's end: the lifecycle event is near it.
-        const lifecycle = yield* sql<{ readonly sequence: number }>`
+        const lifecycle =
+          kind === "horizon"
+            ? []
+            : yield* sql<{ readonly sequence: number }>`
           SELECT sequence
           FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
           WHERE application_event_version = 2
@@ -362,34 +495,63 @@ export const runThreadHistoryRetention = (
         return { newest, total: ends[0]?.total ?? 0, kept };
       });
 
-    /** Deletes a thread's events outside `kept`, oldest first, a batch per statement. */
-    const deleteEvents = (threadId: string, kept: ReadonlySet<number>, newest: number) =>
+    /**
+     * Deletes a thread's events outside `kept` up to `through` and below the
+     * stream's `newest`, oldest first, a batch per statement.
+     */
+    const deleteEvents = (
+      threadId: string,
+      kept: ReadonlySet<number>,
+      newest: number,
+      through: number,
+    ) =>
       Effect.gen(function* () {
         const keptList = [...kept];
         let after = 0;
         while (!interrupted) {
-          const page = yield* sql<{ readonly sequence: number }>`
-            SELECT sequence
+          const limit = eventBatch;
+          const page = yield* sql<{ readonly sequence: number; readonly bytes: number | null }>`
+            SELECT sequence, octet_length(payload_json) AS bytes
             FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
             WHERE application_event_version = 2
               AND aggregate_kind = 'thread'
               AND stream_id = ${threadId}
               AND sequence > ${after}
               AND sequence < ${newest}
+              AND sequence <= ${through}
               AND sequence NOT IN ${sql.in(keptList)}
             ORDER BY sequence
-            LIMIT ${batchSize}
+            LIMIT ${limit}
           `;
           if (page.length === 0) return;
-          const sequences = page.map((row) => row.sequence);
+          // At least one row, then as many as fit the byte bound.
+          const sequences: Array<number> = [];
+          let pageBytes = 0;
+          for (const row of page) {
+            const rowBytes = row.bytes ?? 0;
+            if (sequences.length > 0 && pageBytes + rowBytes > RETENTION_BATCH_MAX_BYTES) break;
+            sequences.push(row.sequence);
+            pageBytes += rowBytes;
+          }
           const deleted = yield* write(
             sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(sequences)}`,
           );
           if (!deleted) return;
+          // Rows holding large tool output free long overflow chains: a delete
+          // whose transaction (commit included) held the connection long
+          // halves the next batch, a quick one doubles it again, so no single
+          // write stalls requests.
+          const tookMs = lastWriteMs;
+          eventBatch =
+            tookMs > SLOW_DELETE_MS
+              ? Math.max(1, Math.floor(eventBatch / 2))
+              : tookMs < SLOW_DELETE_MS / 4
+                ? Math.min(batchSize, eventBatch * 2)
+                : eventBatch;
           deletedEventCount += sequences.length;
           count(EVENTS, sequences.length);
           after = sequences.at(-1) ?? after;
-          if (page.length < batchSize) return;
+          if (page.length < limit && sequences.length === page.length) return;
         }
       });
 
@@ -498,9 +660,147 @@ export const runThreadHistoryRetention = (
         return [...ids];
       });
 
+    /**
+     * The log's newest sequence whose event happened before `iso`, by binary
+     * search over the sequence key (point reads only). Sequences follow
+     * commit order and events are stamped as they commit, so occurred_at
+     * rises with the sequence; a stray older stamp moves the answer by a few
+     * events at most, and each thread's own fold point is checked again
+     * against `iso` below.
+     */
+    const sequenceBefore = (iso: string) =>
+      Effect.gen(function* () {
+        const at = (sequence: number) =>
+          Effect.map(
+            sql<{ readonly sequence: number; readonly occurred_at: string }>`
+              SELECT sequence, occurred_at FROM orchestration_events
+              WHERE sequence >= ${sequence}
+              ORDER BY sequence
+              LIMIT 1
+            `,
+            (rows) => rows[0] ?? null,
+          );
+        const bounds = yield* sql<{ readonly low: number | null; readonly high: number | null }>`
+          SELECT MIN(sequence) AS low, MAX(sequence) AS high FROM orchestration_events
+        `;
+        let low = bounds[0]?.low ?? null;
+        let high = bounds[0]?.high ?? null;
+        if (low === null || high === null) return null;
+        const first = yield* at(low);
+        if (first === null || first.occurred_at >= iso) return null;
+        low = first.sequence;
+        // Invariant: the row at or after `low` happened before `iso`.
+        while (low < high) {
+          const middle: number = low + Math.ceil((high - low) / 2);
+          const row: { readonly sequence: number; readonly occurred_at: string } | null =
+            yield* at(middle);
+          if (row !== null && row.occurred_at < iso) low = row.sequence;
+          else high = middle - 1;
+        }
+        return low;
+      });
+
+    const historyCutoffSequence =
+      historyCutoff === null ? null : yield* sequenceBefore(historyCutoff);
+    const historyStaleSequence =
+      historyStaleCutoff === null ? null : yield* sequenceBefore(historyStaleCutoff);
+
+    /** A thread's newest event before the horizon: where its fold ends. */
+    const foldPoint = (threadId: string) =>
+      Effect.gen(function* () {
+        if (historyCutoffSequence === null || historyCutoff === null) return null;
+        const rows = yield* sql<{ readonly sequence: number }>`
+          SELECT sequence
+          FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND stream_id = ${threadId}
+            AND sequence <= ${historyCutoffSequence}
+            AND occurred_at < ${historyCutoff}
+          ORDER BY sequence DESC
+          LIMIT 1
+        `;
+        return rows[0]?.sequence ?? null;
+      });
+
+    /**
+     * Whether a thread has an event past the refold slack that its marker
+     * does not cover yet: only creation is kept below the marker anyway.
+     */
+    const hasStaleUnfolded = (threadId: string, foldedThrough: number) =>
+      Effect.gen(function* () {
+        if (historyStaleSequence === null) return false;
+        const rows = yield* sql<{ readonly sequence: number }>`
+          SELECT sequence
+          FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND stream_id = ${threadId}
+            AND sequence > ${foldedThrough}
+            AND sequence <= ${historyStaleSequence}
+            AND event_type <> 'thread.created'
+          LIMIT 1
+        `;
+        return rows.length > 0;
+      });
+
+    /**
+     * Prompt anchors at or before `through` that a kept subagent snapshot
+     * after it names (`promptSequence`): a replay of the kept events reads
+     * the prompt from them, so they stay.
+     */
+    const anchorsAfter = (threadId: string, through: number) =>
+      Effect.gen(function* () {
+        const anchors = new Set<number>();
+        let after = through;
+        for (;;) {
+          const page = yield* sql<{ readonly sequence: number; readonly anchor: number | null }>`
+            SELECT
+              sequence,
+              CASE
+                WHEN event_type IN ('subagent.updated', 'turn-item.updated')
+                  AND instr(payload_json, '"promptSequence"') > 0
+                THEN json_extract(payload_json, '$.promptSequence')
+              END AS anchor
+            FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
+            WHERE application_event_version = 2
+              AND aggregate_kind = 'thread'
+              AND stream_id = ${threadId}
+              AND sequence > ${after}
+            ORDER BY sequence
+            LIMIT ${batchSize}
+          `;
+          for (const row of page) {
+            if (typeof row.anchor === "number" && row.anchor <= through) anchors.add(row.anchor);
+          }
+          if (page.length < batchSize) break;
+          after = page.at(-1)?.sequence ?? after;
+          if (!(yield* betweenReads)) return null;
+        }
+        return anchors;
+      });
+
+    const countEventsThrough = (threadId: string, through: number) =>
+      Effect.map(
+        sql<{ readonly count: number }>`
+          SELECT COUNT(*) AS count
+          FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND stream_id = ${threadId}
+            AND sequence <= ${through}
+        `,
+        (rows) => rows[0]?.count ?? 0,
+      );
+
     let handled = 0;
     for (const candidate of candidates) {
       if (interrupted) break;
+      if ((yield* Clock.currentTimeMillis) >= deadline) {
+        budgetExhausted = true;
+        interrupted = true;
+        break;
+      }
       if (candidate.linked === 1) {
         skipped.linked += 1;
         continue;
@@ -513,23 +813,55 @@ export const runThreadHistoryRetention = (
         skipped.busy += 1;
         continue;
       }
+      // A fork source loses only its events, as an archived thread does.
+      const forkSource = candidate.kind === "deleted" && forkSources.has(candidate.thread_id);
+      if (forkSource) skipped.forkSource += 1;
+      const kind: Candidate["kind"] = forkSource ? "archived" : candidate.kind;
+      const horizon = kind === "horizon";
+      // A horizon fold is due when an event a day past the horizon is not
+      // folded yet, or when the last fold was stopped half-way.
+      if (horizon) {
+        const resume = candidate.compacted_kind === "horizon" && candidate.compacted_complete !== 1;
+        if (
+          !resume &&
+          !(yield* hasStaleUnfolded(candidate.thread_id, candidate.compacted_through ?? -1))
+        ) {
+          continue;
+        }
+      }
+      // A fork source keeps its newest thread.deleted event, as any deleted thread.
       const { newest, total, kept } = yield* keptSequences(candidate.thread_id, candidate.kind);
-      const purge = candidate.kind === "deleted";
+      const purge = kind === "deleted";
       // Done before, and nothing new since: an archived thread's marker also
       // covers its later purge only once that purge ran.
       const done =
+        !horizon &&
         candidate.compacted_complete === 1 &&
         candidate.compacted_through !== null &&
         newest !== null &&
         candidate.compacted_through >= newest &&
         (candidate.compacted_kind === "deleted" || !purge);
       if (done) continue;
+      let through = newest;
+      if (horizon) {
+        through = yield* foldPoint(candidate.thread_id);
+        if (through === null || newest === null) continue;
+        const anchors = yield* anchorsAfter(candidate.thread_id, through);
+        if (anchors === null) break;
+        for (const anchor of anchors) kept.add(anchor);
+      }
       if (handled >= maxThreads) {
         deferredThreadCount += 1;
         continue;
       }
       handled += 1;
-      const removableEvents = newest === null ? 0 : total - kept.size;
+      const removableEvents =
+        newest === null || through === null
+          ? 0
+          : horizon
+            ? (yield* countEventsThrough(candidate.thread_id, Math.min(through, newest - 1))) -
+              [...kept].filter((sequence) => sequence <= Math.min(through, newest - 1)).length
+            : total - kept.size;
 
       if (dryRun) {
         deletedEventCount += removableEvents;
@@ -539,6 +871,8 @@ export const runThreadHistoryRetention = (
             count(table, yield* countRows(table, candidate.thread_id));
           }
           purgedThreadCount += 1;
+        } else if (horizon) {
+          foldedThreadCount += 1;
         } else {
           compactedThreadCount += 1;
         }
@@ -547,15 +881,21 @@ export const runThreadHistoryRetention = (
 
       // The marker first: from here a rebuild keeps this thread's rows and a
       // resuming client takes a snapshot, however far the deletes below get.
-      const through = newest ?? 0;
+      // A fold only ever moves the marker forward.
+      const markedThrough = through ?? 0;
       const marked = yield* write(sql`
         INSERT INTO orchestration_v2_thread_history_compactions (
           thread_id, kind, through_sequence, compacted_at
         )
-        VALUES (${candidate.thread_id}, ${candidate.kind}, ${through}, ${isoAt(options.nowMs)})
+        VALUES (
+          ${candidate.thread_id}, ${kind}, ${markedThrough}, ${isoAt(options.nowMs)}
+        )
         ON CONFLICT(thread_id) DO UPDATE SET
-          kind = excluded.kind,
-          through_sequence = excluded.through_sequence,
+          kind = CASE
+            WHEN excluded.through_sequence >= through_sequence THEN excluded.kind
+            ELSE kind
+          END,
+          through_sequence = MAX(through_sequence, excluded.through_sequence),
           compacted_at = excluded.compacted_at,
           completed_at = NULL
       `);
@@ -572,7 +912,10 @@ export const runThreadHistoryRetention = (
           attachmentIds += ids.length;
         }
       }
-      if (newest !== null) yield* deleteEvents(candidate.thread_id, kept, newest);
+      const before = deletedEventCount;
+      if (newest !== null && through !== null) {
+        yield* deleteEvents(candidate.thread_id, kept, newest, through);
+      }
       if (purge) {
         for (const table of PURGED_THREAD_TABLES) {
           if (interrupted) break;
@@ -588,7 +931,9 @@ export const runThreadHistoryRetention = (
       `);
       if (!completed) break;
       if (purge) purgedThreadCount += 1;
-      else compactedThreadCount += 1;
+      else if (horizon) {
+        if (deletedEventCount > before) foldedThreadCount += 1;
+      } else compactedThreadCount += 1;
     }
 
     return result(yield* estimateBytes(deletedRowsByTable));

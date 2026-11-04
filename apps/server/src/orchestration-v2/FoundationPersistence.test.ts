@@ -437,12 +437,21 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         if (fullEvent.type !== "turn-item.updated") return;
         assert.equal(fullEvent.payload.type, "dynamic_tool");
         if (fullEvent.payload.type !== "dynamic_tool") return;
-        assert.deepEqual(fullEvent.payload.output, output);
+        // Saved capped (TurnItemBodyCap): the head and tail, with the cut recorded.
+        const saved = (fullEvent.payload.output as typeof output).content[0]!.text;
+        assert.isTrue(saved.startsWith("first line\nxxx"));
+        assert.isBelow(saved.length, 65 * 1024);
+        assert.equal(
+          fullEvent.payload.bodyCut?.originalBytes,
+          Buffer.byteLength(JSON.stringify(output)),
+        );
         const detail = (yield* projections.getThreadProjection(thread.id)).turnItems.find(
           (item) => item.id === tool.id,
         )!;
         assert.equal(detail.type, "dynamic_tool");
-        if (detail.type === "dynamic_tool") assert.deepEqual(detail.output, output);
+        if (detail.type === "dynamic_tool") {
+          assert.deepEqual(detail.output, fullEvent.payload.output);
+        }
       }),
     ),
   );

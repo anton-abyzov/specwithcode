@@ -21,6 +21,10 @@ export const HomeSizeWarningGb = Schema.NullOr(
 );
 export const DEFAULT_HOME_SIZE_WARNING_GB = 50;
 
+export const DEFAULT_DELETED_THREAD_HISTORY_AFTER_DAYS = 7;
+export const DEFAULT_ARCHIVED_THREAD_HISTORY_AFTER_DAYS = 2;
+export const DEFAULT_THREAD_HISTORY_DAYS = 7;
+
 export const StorageCleanupSettings = Schema.Struct({
   worktreeAfterDays: StorageRetentionDays.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   worktreeOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -51,13 +55,28 @@ export const StorageCleanupSettings = Schema.Struct({
   homeSizeWarningGb: HomeSizeWarningGb.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_HOME_SIZE_WARNING_GB)),
   ),
-  /** Purge deleted threads' history this many days after deletion. Off (null) by default. */
+  /**
+   * Purge deleted threads' history this many days after deletion. On (7 days)
+   * by default: the state database otherwise keeps every deleted chat's whole
+   * history forever. An explicit null in settings.json still keeps it.
+   */
   deletedThreadHistoryAfterDays: StorageRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DELETED_THREAD_HISTORY_AFTER_DAYS)),
   ),
-  /** Drop archived threads' event log (their messages stay) after this many days. Off by default. */
+  /**
+   * Drop archived threads' event log (their messages, steps and titles stay)
+   * this many days after archiving. Two days by default; null never.
+   */
   archivedThreadHistoryAfterDays: StorageRetentionDays.pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_ARCHIVED_THREAD_HISTORY_AFTER_DAYS)),
+  ),
+  /**
+   * Every other chat keeps its raw event log (replay detail) this many days;
+   * older events fold into the chat's saved rows, which stay readable. Seven
+   * days by default; null keeps the whole log.
+   */
+  threadHistoryDays: StorageRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_HISTORY_DAYS)),
   ),
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
@@ -73,4 +92,5 @@ export const StorageCleanupSettingsPatch = Schema.Struct({
   homeSizeWarningGb: Schema.optionalKey(HomeSizeWarningGb),
   deletedThreadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
   archivedThreadHistoryAfterDays: Schema.optionalKey(StorageRetentionDays),
+  threadHistoryDays: Schema.optionalKey(StorageRetentionDays),
 });

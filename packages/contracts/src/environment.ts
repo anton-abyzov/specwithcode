@@ -127,8 +127,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettlement: Schema.optionalKey(Schema.Boolean),
   storageCleanup: Schema.optionalKey(Schema.Boolean),
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
-  /** Opt-in purge of deleted threads and archived threads' event log (storageCleanup). */
+  /** Purge of deleted threads and archived threads' event log (storageCleanup). */
   threadHistoryRetention: Schema.optionalKey(Schema.Boolean),
+  /** Folds every thread's events older than `storageCleanup.threadHistoryDays`. */
+  threadHistoryHorizon: Schema.optionalKey(Schema.Boolean),
   /** Server honors the `worktreesDirectory` setting. */
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   worktreeLocationMode: Schema.optionalKey(Schema.Boolean),

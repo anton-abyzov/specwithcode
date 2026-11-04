@@ -1537,8 +1537,27 @@ export const OrchestrationV2CommandAction = Schema.Struct({
 });
 export type OrchestrationV2CommandAction = typeof OrchestrationV2CommandAction.Type;
 
+/**
+ * What SpecWithCode cut from a tool item's body when it saved it: the item
+ * keeps a head and a tail of each named field with a note between them. Old
+ * clients ignore it and show the kept text as the output.
+ */
+export const OrchestrationV2TurnItemBodyCut = Schema.Struct({
+  /** The cut fields, e.g. `output`, `input`, `diffStr`. */
+  fields: Schema.Array(TrimmedNonEmptyString),
+  /** UTF-8 bytes of the cut fields as the provider sent them, and as kept. */
+  originalBytes: NonNegativeInt,
+  keptBytes: NonNegativeInt,
+  /** SHA-256 (hex) of the cut fields' original text, to tell whether a re-read matches. */
+  sha256: Schema.optional(TrimmedNonEmptyString),
+  /** `write-cap` when saved; a string so later reasons decode. */
+  reason: TrimmedNonEmptyString,
+});
+export type OrchestrationV2TurnItemBodyCut = typeof OrchestrationV2TurnItemBodyCut.Type;
+
 // Optional fields shared by the runtime and JSON item schemas below.
 const OrchestrationV2FileChangeExtraFields = {
+  bodyCut: Schema.optional(OrchestrationV2TurnItemBodyCut),
   /** Set on the wire when an edit body was withheld or cut; read it with getTurnItem. */
   diffOmitted: Schema.optional(Schema.Boolean),
   /** The user declined the change. Status stays `cancelled` for older clients. */
@@ -1548,6 +1567,7 @@ const OrchestrationV2FileChangeExtraFields = {
 };
 
 const OrchestrationV2CommandExtraFields = {
+  bodyCut: Schema.optional(OrchestrationV2TurnItemBodyCut),
   /** SpecWithCode's ingestion kept only this many trailing characters of the output. */
   outputKeptTailChars: Schema.optional(NonNegativeInt),
   commandActions: Schema.optional(Schema.Array(OrchestrationV2CommandAction)),
@@ -1556,6 +1576,7 @@ const OrchestrationV2CommandExtraFields = {
 };
 
 const OrchestrationV2DynamicToolExtraFields = {
+  bodyCut: Schema.optional(OrchestrationV2TurnItemBodyCut),
   /** SpecWithCode's ingestion kept only this many trailing characters of the output. */
   outputKeptTailChars: Schema.optional(NonNegativeInt),
 };

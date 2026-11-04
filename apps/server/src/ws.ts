@@ -1232,7 +1232,13 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       }
 
       const highWater = yield* applicationEvents.latestApplicationSequence;
-      if (!(yield* canReplayPersistedRange(input.afterSequence, highWater, SHELL_RESUME_MAX_GAP))) {
+      if (
+        !(yield* canReplayPersistedRange(input.afterSequence, highWater, SHELL_RESUME_MAX_GAP)) ||
+        // Retention removed thread history after the cursor (ThreadHistoryRetention): snapshot.
+        (yield* applicationEvents
+          .historyCompactedAfter(input.afterSequence)
+          .pipe(Effect.orElseSucceed(() => true)))
+      ) {
         const loaded = yield* loadSnapshot();
         return composeShellStreamWithEnrichment({
           initial: initialSnapshotItems(loaded),
