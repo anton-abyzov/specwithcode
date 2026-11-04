@@ -1472,9 +1472,9 @@ class FakeCli(object):
         command = list(command)
         with self.fleet.lock:
             self.commands.append(command)
-        assert command[:len(CLI)] == CLI and command[-1] == '--json', command
+        assert command[:len(CLI)] == CLI and command[-2:] == ['--connect-only', '--json'], command
         identity = MACHINES[command[len(CLI)]]
-        flags = command[len(CLI) + 1:-1]
+        flags = command[len(CLI) + 1:-2]
         if identity in self.unreachable:
             return subprocess.CompletedProcess(command, 1, json.dumps(
                 {'error': 'This machine is unavailable over Connect or Tailscale.', 'reason': 'unreachable'}) + '\n', '')
@@ -1525,7 +1525,7 @@ def connect_fleet(clock, extra=('ministorm',), polls=None):
 
 
 class ConnectFallback(unittest.TestCase):
-    """The worker stage reaches a machine over SpecWithCode Connect when SSH gives no answer, and
+    """The worker stage uses SpecWithCode Connect first, falls back to pinned SSH when unavailable, and
     reports a machine reachable by neither instead of waiting on it."""
 
     def test_connect_host_maps_each_command_to_fleet_update(self):
@@ -1539,11 +1539,11 @@ class ConnectFallback(unittest.TestCase):
         host(['check', '--identity', 'm1', '--kickstart'])
         host(['cancel', '--identity', 'm1', '--request', '2026-10-28T12:00:00.000Z'])
         self.assertEqual([command[len(CLI):] for command in cli.commands], [
-            ['m1-id', '--status', '--json'],
-            ['m1-id', '--version', NEW, '--no-hold', '--json'],
-            ['m1-id', '--version', NEW, '--hold-minutes', '7', '--json'],
-            ['m1-id', '--check', '--json'],
-            ['m1-id', '--cancel', '2026-10-28T12:00:00.000Z', '--json']])
+            ['m1-id', '--status', '--connect-only', '--json'],
+            ['m1-id', '--version', NEW, '--no-hold', '--connect-only', '--json'],
+            ['m1-id', '--version', NEW, '--hold-minutes', '7', '--connect-only', '--json'],
+            ['m1-id', '--check', '--connect-only', '--json'],
+            ['m1-id', '--cancel', '2026-10-28T12:00:00.000Z', '--connect-only', '--json']])
 
     def test_connect_host_errors_keep_the_reason_and_mark_no_answer(self):
         def answer(stdout, code):
@@ -1564,21 +1564,21 @@ class ConnectFallback(unittest.TestCase):
         silent = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=answer('', 1))
         with self.assertRaises(fleet_rollout.RolloutError) as caught:
             silent(['status', '--identity', 'm1'])
-        self.assertEqual(fleet_rollout.unanswered(caught.exception), 'exit 1')
+        self.assertIsNone(fleet_rollout.unanswered(caught.exception))
 
         def hang(command, **options):
             raise subprocess.TimeoutExpired(command, options['timeout'])
 
         with self.assertRaises(fleet_rollout.RolloutError) as caught:
             fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=hang)(['status', '--identity', 'm1'])
-        self.assertEqual(fleet_rollout.unanswered(caught.exception), 'timeout')
+        self.assertIsNone(fleet_rollout.unanswered(caught.exception))
 
     def test_a_request_outlasts_an_older_linux_machines_self_update(self):
         timeouts = {}
 
         def answer(command, **options):
             timeouts[command[len(CLI) + 1]] = options['timeout']
-            return subprocess.CompletedProcess(command, 0, json.dumps({'result': 'requested'}) + '\n', '')
+            return subprocess.CompletedProcess(command, 0, json.dumps({'result': 'requested', 'transport': 'connect'}) + '\n', '')
 
         host = fleet_rollout.ConnectHost('ministorm', CLI, 'ministorm-id', run=answer)
         host(['request', '--identity', 'ministorm', '--version', NEW, '--kickstart'])
@@ -1592,12 +1592,12 @@ class ConnectFallback(unittest.TestCase):
         state = {'phase': 'idle', 'requests': 0}
 
         def linux(command, **options):
-            flags = command[len(CLI) + 1:-1]
+            flags = command[len(CLI) + 1:-2]
             if flags[0] == '--version':
                 state['requests'] += 1
                 state['phase'] = 'downloading'
                 reply = {'result': 'requested', 'method': 'boot-service', 'phase': 'downloading',
-                         'request': {'installRequestedAt': None, 'installMode': 'self-update'}}
+                         'request': {'installRequestedAt': None, 'installMode': 'self-update'}, 'transport': 'connect'}
             else:
                 reply = {'version': OLD, 'installedVersion': OLD, 'installFinalized': False,
                          'status': state['phase'], 'message': None, 'lastInstall': None,
@@ -1624,7 +1624,7 @@ class ConnectFallback(unittest.TestCase):
             host(['status', '--identity', 'm1'])
         self.assertEqual(fleet_rollout.unanswered(caught.exception), 'exit 255')
 
-    def test_ssh_exit_255_falls_back_to_connect_and_stays_there(self):
+    def test_connect_is_primary_for_worker_install(self):
         clock, lines = Clock(), []
         fleet = connect_fleet(clock, extra=(), polls={'m1': 1, 'm3': 1})
         cli = FakeCli(fleet)
@@ -1634,34 +1634,108 @@ class ConnectFallback(unittest.TestCase):
         apps = []
         results = fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lines.append,
                                         desktop=lambda identity, say: apps.append(identity) or {'result': 'current'})
-        self.assertEqual(ssh.calls, 1)  # Only the first call tries SSH; the route then stays on Connect.
+        self.assertEqual(ssh.calls, 0)
         self.assertEqual(results['m1']['result'], 'installed')
         self.assertEqual(results['m1']['route'], 'connect')
         self.assertEqual(results['m3']['result'], 'installed')
-        self.assertIn('m1: no SSH answer (exit 255); using SpecWithCode Connect', lines)
         self.assertIn('m1: installed %s' % NEW, ' '.join(lines))
         # The worker policy holds over Connect: one version-bound request, never forced or held.
         requests = [command for command in cli.commands if '--version' in command]
         self.assertEqual(len(requests), 1)
         self.assertIn('--no-hold', requests[0])
         self.assertNotIn('--force', fleet.asked['m1'])
-        # The desktop app step needs SSH: m1's is skipped and reported, m3's runs.
-        self.assertEqual(apps, ['m3'])
-        self.assertEqual(results['m1']['desktopApp'], {'result': 'skipped', 'reason': 'needs SSH'})
-        self.assertTrue(any('m1: desktop app skipped: needs SSH' in line for line in lines))
+        # Service never uses SSH, but the desktop retains its separate inventoried SSH operation.
+        self.assertEqual(sorted(apps), ['m1', 'm3'])
+        self.assertEqual(results['m1']['desktopApp'], {'result': 'current'})
 
-    def test_an_ssh_error_answer_stays_on_ssh(self):
+    def test_connect_service_does_not_hide_real_desktop_failures(self):
+        for error, skipped in (
+                (fleet_rollout.desktop_app_rollout.DesktopSshUnavailable('Connection refused'), True),
+                (fleet_rollout.desktop_app_rollout.DesktopAppError('signature invalid'), False)):
+            with self.subTest(error=error):
+                clock = Clock()
+                fleet = connect_fleet(clock, extra=(), polls={'m1': 1, 'm3': 1})
+                ssh = DeadSsh('m1')
+                hosts = fleet.hosts()
+                hosts['m1'] = fleet_rollout.FallbackHost(
+                    'm1', ssh, fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=FakeCli(fleet)))
+
+                def desktop(identity, _say):
+                    if identity == 'm1':
+                        self.assertEqual(fleet.version[identity], NEW)
+                        raise error
+                    return {'result': 'current'}
+
+                def roll():
+                    return fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock,
+                                                 sleep=clock.sleep, say=lambda _: None, desktop=desktop)
+
+                if skipped:
+                    self.assertEqual(roll()['m1']['desktopApp'],
+                                     {'result': 'skipped', 'reason': 'Connection refused'})
+                else:
+                    with self.assertRaises(fleet_rollout.DesktopAppsFailed) as caught:
+                        roll()
+                    self.assertEqual(caught.exception.results['m1']['desktopApp'],
+                                     {'result': 'failed', 'error': 'signature invalid'})
+                self.assertEqual(ssh.calls, 0)
+
+    def test_connect_denial_does_not_launch_the_desktop_step(self):
+        clock = Clock()
+        fleet = connect_fleet(clock, extra=(), polls={'m3': 1})
+        ssh = DeadSsh('m1')
+        connect = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=lambda command, **options:
+            subprocess.CompletedProcess(command, 1, '{"error":"Team Rules refusal","reason":"unauthorized"}', ''))
+        hosts = fleet.hosts()
+        hosts['m1'] = fleet_rollout.FallbackHost('m1', ssh, connect)
+        apps = []
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'Team Rules refusal'):
+            fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lambda _: None,
+                                  desktop=lambda identity, _: apps.append(identity))
+        self.assertEqual(ssh.calls, 0)
+        self.assertEqual(apps, ['m3'])
+
+    def test_unavailable_connect_falls_back_once_and_pins_ssh(self):
+        clock = Clock()
+        fleet = connect_fleet(clock, extra=(), polls={'m1': 1})
+        cli = FakeCli(fleet, unreachable={'m1'})
+        ssh = fleet.host('m1')
+        ssh.command = ['ssh']
+        ssh.app_command = None
+        host = fleet_rollout.FallbackHost('m1', ssh, fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=cli))
+        result = fleet_rollout.roll_host('m1', host, NEW, False, 15, 1800, 15, clock, clock.sleep, lambda _: None)
+        self.assertEqual(result['result'], 'installed')
+        self.assertEqual(host.route, 'ssh')
+        self.assertEqual(cli.commands, [CLI + ['m1-id', '--status', '--connect-only', '--json']])
+        self.assertEqual(len(fleet.calls('m1', 'request')), 1)
+
+    def test_denials_and_unsupported_cli_do_not_try_ssh(self):
+        for reason in ('unauthorized', 'connect-key-missing', 'identity-mismatch', None):
+            with self.subTest(reason=reason):
+                ssh = DeadSsh('m1')
+                reply = '' if reason is None else json.dumps({'error': 'Connect refused', 'reason': reason})
+                connect = fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=lambda command, **options:
+                    subprocess.CompletedProcess(command, 1, reply, ''))
+                host = fleet_rollout.FallbackHost('m1', ssh, connect)
+                with self.assertRaises(fleet_rollout.RolloutError):
+                    host(['status'])
+                self.assertEqual(ssh.calls, 0)
+
+    def test_connect_mutation_failure_never_retries_over_ssh(self):
         clock = Clock()
         fleet = connect_fleet(clock, extra=())
         cli = FakeCli(fleet)
-        ssh = DeadSsh('m1', message='python3 not found')
+        ssh = DeadSsh('m1')
         host = fleet_rollout.FallbackHost('m1', ssh, fleet_rollout.ConnectHost('m1', CLI, 'm1-id', run=cli))
-        for _ in range(2):
-            with self.assertRaises(fleet_rollout.RolloutError):
-                host(['status', '--identity', 'm1'])
-        self.assertEqual(host.route, 'ssh')
-        self.assertEqual(ssh.calls, 2)
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'status read first'):
+            host(['request', '--version', NEW])
         self.assertEqual(cli.commands, [])
+        host(['status'])
+        cli.unreachable.add('m1')
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'unreachable'):
+            host(['request', '--version', NEW])
+        self.assertEqual(host.route, 'connect')
+        self.assertEqual(ssh.calls, 0)
 
     def test_a_machine_reachable_by_neither_is_reported_not_hung(self):
         clock, lines = Clock(), []
@@ -1673,7 +1747,7 @@ class ConnectFallback(unittest.TestCase):
         begin = clock()
         with self.assertRaises(fleet_rollout.RolloutError) as caught:
             fleet_rollout.rollout(NEW, hosts, only='workers', clock=clock, sleep=clock.sleep, say=lines.append)
-        self.assertIn('m1: unreachable over SSH (exit 255) and SpecWithCode Connect (unreachable)',
+        self.assertIn('m1: unreachable over SpecWithCode Connect (unreachable) and SSH (exit 255)',
                       str(caught.exception))
         self.assertEqual(fleet.calls('m3', 'request')[0][0], 'm3')  # The other worker still went ahead.
         self.assertEqual(fleet.version['m3'], NEW)
@@ -1746,7 +1820,7 @@ class ConnectFallback(unittest.TestCase):
         self.assertIsInstance(hosts['annas-air'], fleet_rollout.Unreachable)
         self.assertIn('no SpecWithCode Connect address', hosts['annas-air'].reason)
         self.assertIn('not proof-bound', hosts['old-box'].reason)
-        self.assertIsInstance(without_cli['m1'], fleet_rollout.Host)
+        self.assertIsInstance(without_cli['m1'], fleet_rollout.Unreachable)
         self.assertIsInstance(without_cli['ministorm'], fleet_rollout.Unreachable)
         for host in hosts.values():  # No token is kept on a host.
             self.assertNotIn('signature', json.dumps(fleet_rollout.plan_route(host)))

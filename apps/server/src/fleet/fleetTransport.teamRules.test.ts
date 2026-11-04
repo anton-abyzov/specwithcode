@@ -82,6 +82,16 @@ const refusalOf = (promise: Promise<unknown>) =>
   );
 
 describe("fleet reach under Team rules", () => {
+  it("refuses Connect-only work when Connect is disabled without probing Tailscale", async () => {
+    const f = machine({});
+    const { link, bound } = await linkUnder(f, active({ reach: { connect: false } }));
+    const refused = await refusalOf(
+      reachFleetMachine({ ...link, connectOnly: true }, target, { token: bound }),
+    );
+    expect(refused.kind).toBe("team-rules");
+    expect(f).not.toHaveBeenCalled();
+  });
+
   it("refuses a credentialed call under none, without touching the network", async () => {
     const f = machine({});
     const { link, bound } = await linkUnder(f, active({ reach: { machines: "none" } }));

@@ -9,6 +9,7 @@ import {
   type ServerPrepareServiceUpdateResult,
 } from "@specweave-studio/contracts";
 import type { StudioFleetUpdateMethod } from "@specweave-studio/contracts/studioFleet";
+import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- a real key file for the link.
@@ -615,6 +616,7 @@ async function primary(input: {
   readonly serverVersion?: string;
   readonly answer: (request: { method: string; path: string; body: unknown }) => Response;
   readonly bound?: boolean;
+  readonly descriptorStatus?: number;
 }) {
   const baseDir = await NodeFSP.mkdtemp(join(NodeOS.tmpdir(), "studio-fleet-update-"));
   dirs.push(baseDir);
@@ -623,7 +625,9 @@ async function primary(input: {
     const target = new URL(String(url));
     if (!input.up.includes(target.origin)) throw new TypeError("offline");
     if (target.pathname === "/.well-known/studio/environment")
-      return Response.json(describeMachine(input.capabilities, input.serverVersion));
+      return Response.json(describeMachine(input.capabilities, input.serverVersion), {
+        status: input.descriptorStatus ?? 200,
+      });
     const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     return input.answer({
       method: init?.method ?? "GET",
@@ -645,6 +649,62 @@ async function primary(input: {
 }
 
 describe("the primary asking a fleet machine to update", () => {
+  it.each([
+    { up: [TAILNET], reason: "unreachable" },
+    { up: [CONNECT, TAILNET], descriptorStatus: 403, reason: "unauthorized" },
+  ])("keeps a Connect-only rollout on Connect when it returns $reason", async (scenario) => {
+    const { fetcher, link, target } = await primary({
+      ...scenario,
+      capabilities: { fleetUpdateRequest: true },
+      answer: () => Response.json({}),
+    });
+    await expect(
+      runFleetUpdate({
+        link: { ...link, connectOnly: true },
+        target,
+        coordinatorEnvironmentId: "primary",
+        action: { kind: "status" },
+      }),
+    ).rejects.toMatchObject({ reason: scenario.reason });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain(CONNECT);
+  });
+
+  it("does not authorize SSH fallback if Connect cannot prove matching Team Rules", async () => {
+    const { fetcher, link, target } = await primary({
+      up: [TAILNET],
+      capabilities: { fleetUpdateRequest: true },
+      answer: () => Response.json({}),
+    });
+    const parsed = parseTeamRulesText(
+      JSON.stringify({
+        version: 1,
+        owner: "Acme",
+        reach: { machines: "same-rules" },
+      }),
+    );
+    if (!parsed.ok) throw new Error(parsed.issues.join("\n"));
+    await expect(
+      runFleetUpdate({
+        link: {
+          ...link,
+          connectOnly: true,
+          teamRules: () => ({
+            status: "active",
+            rules: parsed.rules,
+            fingerprint: "3a9f",
+            warnings: [],
+          }),
+        },
+        target,
+        coordinatorEnvironmentId: PRIMARY,
+        action: { kind: "status" },
+      }),
+    ).rejects.toMatchObject({ reason: "unauthorized" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain(CONNECT);
+  });
+
   it("asks over Connect with the token it holds, a proof and no bearer", async () => {
     const { fetcher, link, target } = await primary({
       up: [CONNECT],

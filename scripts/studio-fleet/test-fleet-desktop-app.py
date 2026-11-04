@@ -718,7 +718,7 @@ class Orchestrator(Machine):
             'm1': ['/bin/sh', '-c', 'cat > /dev/null; echo "ssh: connect to host m1.test port 22: Connection refused"'
                    ' >&2; exit 255'],
             'm3': ['/bin/sleep', '30']}, repo=REPO, sums=lambda: ('a' * 64, 'test'), timeout=1)
-        with self.assertRaises(desktop_app_rollout.DesktopAppError) as caught:
+        with self.assertRaises(desktop_app_rollout.DesktopSshUnavailable) as caught:
             desktop('m1', lambda line: None)
         self.assertEqual(str(caught.exception),
                          'could not be reached over ssh: ssh: connect to host m1.test port 22: Connection refused')
@@ -730,6 +730,16 @@ class Orchestrator(Machine):
         with self.assertRaises(desktop_app_rollout.DesktopAppError) as caught:
             desktop('m9', lambda line: None)
         self.assertIn('no ssh command for m9', str(caught.exception))
+
+    def test_ssh_denial_or_disconnect_is_a_desktop_failure(self):
+        for line in ('Permission denied (publickey).', 'Connection to m1.test closed by remote host.'):
+            with self.subTest(line=line):
+                command = ['/bin/sh', '-c', 'cat > /dev/null; printf "%s\\n" "$0" >&2; exit 255', line]
+                desktop = desktop_app_rollout.DesktopApps(
+                    NEW, {'m1': command}, repo=REPO, sums=lambda: ('a' * 64, 'test'))
+                with self.assertRaises(desktop_app_rollout.DesktopAppError) as caught:
+                    desktop('m1', lambda _: None)
+                self.assertNotIsInstance(caught.exception, desktop_app_rollout.DesktopSshUnavailable)
 
     def test_an_answer_that_does_not_put_the_version_in_is_refused(self):
         def answer(line, dry_run=False):

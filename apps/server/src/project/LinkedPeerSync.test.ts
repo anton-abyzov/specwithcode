@@ -11,6 +11,7 @@ import {
   ProjectPlanError,
   ThreadId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -73,7 +74,9 @@ const harness = (input: {
   readonly self: LogicalProjectMember;
   readonly binding?: ProjectCoordinatorBinding;
   readonly own?: () => LinkedDigestResponse;
-  readonly peer: () => Effect.Effect<LinkedDigestResponse, HandoffPeerError>;
+  readonly peer: (
+    environmentId: EnvironmentId,
+  ) => Effect.Effect<LinkedDigestResponse, HandoffPeerError>;
   /** The whole-memory digest the peer's memory export sends. */
   readonly peerMemoryDigest?: string;
   /** Both plans export, so a plan pass runs. */
@@ -94,6 +97,8 @@ const harness = (input: {
   Effect.gen(function* () {
     const state = yield* LinkedPeerSyncState.make;
     const calls: string[] = [];
+    /** The machines each `linked-digest` went to, in order. */
+    const digestsTo: EnvironmentId[] = [];
     const record =
       <A>(path: string, answer: A) =>
       () =>
@@ -102,8 +107,11 @@ const harness = (input: {
           return answer;
         });
     const peers = {
-      linkedDigest: () =>
-        Effect.sync(() => calls.push("linked-digest")).pipe(Effect.andThen(input.peer())),
+      linkedDigest: (environmentId: EnvironmentId) =>
+        Effect.sync(() => {
+          calls.push("linked-digest");
+          digestsTo.push(environmentId);
+        }).pipe(Effect.andThen(input.peer(environmentId))),
       linkedContent: record("linked-content", {
         ...content,
         member: b,
@@ -204,7 +212,7 @@ const harness = (input: {
     };
     const sync = yield* makeLinkedPeerSync(deps);
     const status = state.status(input.self.projectId);
-    return { sync, state, calls, local, status };
+    return { sync, state, calls, digestsTo, local, status };
   });
 
 const errors = (pairs: ReadonlyArray<LinkedServerSyncPair>) =>
@@ -583,6 +591,207 @@ describe("LinkedPeerSync", () => {
     }),
   );
 
+  it.effect("the copy that took over retries giving way within seconds, not minutes", () =>
+    Effect.gen(function* () {
+      let back = false;
+      const run = yield* harness({
+        self: b,
+        binding: {
+          epoch: 1,
+          state: "active",
+          operationId: "takeover:1",
+          predecessor: a,
+          takenOverAt: "2026-11-03T00:00:00.000Z",
+        },
+        peer: () =>
+          back
+            ? Effect.succeed(described(a, { binding: { epoch: 0, state: "active" } }))
+            : Effect.fail(
+                new HandoffPeerError({ code: "unreachable", message: "No.", uncertain: true }),
+              ),
+      });
+      // Three failed passes in a row would otherwise wait four minutes.
+      for (const seconds of [5, 5, 5]) {
+        yield* run.sync.tick;
+        const at = yield* run.state.nextUrgentAt;
+        assert.strictEqual(at, (yield* Clock.currentTimeMillis) + seconds * 1000);
+        yield* TestClock.adjust(`${seconds} seconds`);
+      }
+      assert.strictEqual(run.calls.filter((call) => call === "linked-digest").length, 3);
+      back = true;
+      yield* run.sync.tick;
+      assert.include(run.calls, "linked-supersede");
+      assert.deepStrictEqual(errors(yield* run.status), { supersede: null });
+      assert.isNull(yield* run.state.nextUrgentAt);
+    }),
+  );
+
+  it.effect("a predecessor gone for good is asked once a minute after ten minutes", () =>
+    Effect.gen(function* () {
+      const run = yield* harness({
+        self: b,
+        binding: {
+          epoch: 1,
+          state: "active",
+          operationId: "takeover:1",
+          predecessor: a,
+          takenOverAt: "2026-11-03T00:00:00.000Z",
+        },
+        peer: () =>
+          Effect.fail(
+            new HandoffPeerError({ code: "unreachable", message: "No.", uncertain: true }),
+          ),
+      });
+      const quick = LinkedPeerSyncState.QUICK_RETRY_WINDOW_MS / 5_000;
+      // Every 5 s for ten minutes (the old coordinator may hold no grant to call back and say
+      // it is there again), then once a minute, never the minutes of a pair's backoff.
+      for (let pass = 0; pass < quick + 3; pass++) {
+        yield* run.sync.tick;
+        const seconds = pass < quick ? 5 : 60;
+        assert.strictEqual(
+          yield* run.state.nextUrgentAt,
+          (yield* Clock.currentTimeMillis) + seconds * 1000,
+        );
+        yield* TestClock.adjust(`${seconds} seconds`);
+      }
+      assert.strictEqual(run.calls.filter((call) => call === "linked-digest").length, quick + 3);
+    }),
+  );
+
+  it.effect("a quick retry asks only the pair waiting for it, not every healthy pair", () =>
+    Effect.gen(function* () {
+      const run = yield* harness({
+        self: b,
+        binding: {
+          epoch: 1,
+          state: "active",
+          operationId: "takeover:1",
+          predecessor: a,
+          takenOverAt: "2026-11-03T00:00:00.000Z",
+        },
+        listed: () => [a, b, c],
+        peer: (environmentId) =>
+          environmentId === a.environmentId
+            ? Effect.fail(
+                new HandoffPeerError({ code: "unreachable", message: "No.", uncertain: true }),
+              )
+            : Effect.succeed(described(c)),
+      });
+      yield* run.sync.tick;
+      const first = run.digestsTo.length;
+      assert.includeMembers(run.digestsTo, [a.environmentId, c.environmentId]);
+      yield* TestClock.adjust("5 seconds");
+      yield* run.sync.urgentTick;
+      assert.deepStrictEqual(run.digestsTo.slice(first), [a.environmentId]);
+    }),
+  );
+
+  it.effect("a copy that only reads its successor's list backs off while it is away", () =>
+    Effect.gen(function* () {
+      const run = yield* harness({
+        self: b,
+        binding: { epoch: 4, state: "transferred", successor: a },
+        peer: () =>
+          Effect.fail(
+            new HandoffPeerError({ code: "unreachable", message: "No.", uncertain: true }),
+          ),
+      });
+      yield* run.sync.tick;
+      yield* run.sync.tick;
+      yield* run.sync.tick;
+      assert.strictEqual(run.calls.filter((call) => call === "linked-digest").length, 1);
+      // Still nothing the app would leave to this server.
+      assert.deepStrictEqual(yield* run.status, []);
+      yield* TestClock.adjust("61 seconds");
+      yield* run.sync.tick;
+      assert.strictEqual(run.calls.filter((call) => call === "linked-digest").length, 2);
+    }),
+  );
+
+  it.effect("only a failed giving-way is retried quickly; other pairs keep their backoff", () =>
+    Effect.gen(function* () {
+      const run = yield* harness({
+        self: a,
+        peer: () =>
+          Effect.fail(
+            new HandoffPeerError({ code: "unreachable", message: "No.", uncertain: true }),
+          ),
+      });
+      yield* run.sync.tick;
+      assert.isNull(yield* run.state.nextUrgentAt);
+      yield* TestClock.adjust("5 seconds");
+      yield* run.sync.tick;
+      assert.strictEqual(run.calls.length, 1);
+    }),
+  );
+
+  describe("after this process resumed from a pause", () => {
+    const thread = `project-coordinator:${b.projectId}`;
+
+    it.effect("holds the coordinator until a pass begun after the resume reached every copy", () =>
+      Effect.gen(function* () {
+        const run = yield* harness({
+          self: b,
+          binding: { epoch: 0, state: "active" },
+          peer: () => Effect.succeed(described(a)),
+        });
+        // Nothing is held before a resume, nor for a thread that is no linked coordinator.
+        yield* run.sync.tick;
+        assert.isFalse(yield* run.state.resumeHeld(thread, 0));
+        yield* run.state.resumed(1_000);
+        assert.isTrue(yield* run.state.resumeHeld(thread, 1_000));
+        assert.isTrue(yield* run.state.resumeHeld(b.coordinatorThreadId, 1_000));
+        assert.isFalse(yield* run.state.resumeHeld("some-other-thread", 1_000));
+        // The resume made every pair due at once.
+        yield* run.sync.tick;
+        assert.strictEqual(run.calls.length, 2);
+        assert.isFalse(yield* run.state.resumeHeld(thread, 1_100));
+      }),
+    );
+
+    it.effect("waits out the bounded hold when a copy cannot be reached", () =>
+      Effect.gen(function* () {
+        const run = yield* harness({
+          self: b,
+          binding: { epoch: 0, state: "active" },
+          peer: () =>
+            Effect.fail(
+              new HandoffPeerError({ code: "unreachable", message: "No.", uncertain: true }),
+            ),
+        });
+        yield* run.sync.tick;
+        yield* run.state.resumed(1_000);
+        yield* run.sync.tick;
+        assert.isTrue(yield* run.state.resumeHeld(thread, 1_000 + 14_999));
+        assert.isFalse(
+          yield* run.state.resumeHeld(thread, 1_000 + LinkedPeerSyncState.RESUME_HOLD_MS),
+        );
+      }),
+    );
+
+    it.effect("never holds a copy with no other copy, or one that does not coordinate", () =>
+      Effect.gen(function* () {
+        const alone = yield* harness({
+          self: b,
+          binding: { epoch: 0, state: "active" },
+          listed: () => [b],
+          peer: () => Effect.succeed(described(a)),
+        });
+        yield* alone.sync.tick;
+        yield* alone.state.resumed(1_000);
+        assert.isFalse(yield* alone.state.resumeHeld(thread, 1_000));
+        const member = yield* harness({
+          self: b,
+          binding: { epoch: 0, state: "transferred", successor: a },
+          peer: () => Effect.succeed(described(a)),
+        });
+        yield* member.sync.tick;
+        yield* member.state.resumed(1_000);
+        assert.isFalse(yield* member.state.resumeHeld(thread, 1_000));
+      }),
+    );
+  });
+
   it.effect("never gives way when the digest answers as another copy than the one called", () =>
     Effect.gen(function* () {
       // Called as a, the answer names c: no takeover is read from it, and no turn is held.
@@ -814,6 +1023,194 @@ describe("LinkedPeerSync", () => {
         yield* TestClock.adjust("10 minutes");
         yield* run.sync.tick;
         assert.strictEqual(sent(), 2);
+      }),
+    );
+
+    // 1.0.179: with A coordinating at the higher ID, B (which drives the pair) holds no grant
+    // on A, so B never learned machines linked on A after it joined.
+    it.effect("a coordinator pushes its list to a copy it only watches, at the higher ID", () =>
+      Effect.gen(function* () {
+        const run = yield* harness({
+          self: b,
+          binding: { epoch: 3, state: "active" },
+          listed: () => [a, b, c],
+          peer: () =>
+            Effect.succeed(
+              described(a, {
+                binding: { epoch: 3, state: "transferred", successor: b },
+                members: [a, b],
+              }),
+            ),
+        });
+        yield* run.sync.tick;
+        assert.include(run.calls, "linked-members 3");
+        // The watch still reports only the takeover check to the app.
+        const watched = (yield* run.status).filter(
+          (pair) => pair.peerEnvironmentId === a.environmentId,
+        );
+        assert.deepStrictEqual(
+          watched.map((pair) => [pair.kind, pair.lastError]),
+          [["supersede", null]],
+        );
+      }),
+    );
+
+    it.effect("a watching coordinator pushes nothing to a copy that gave way to another", () =>
+      Effect.gen(function* () {
+        const run = yield* harness({
+          self: b,
+          binding: { epoch: 3, state: "active" },
+          listed: () => [a, b, c],
+          peer: () =>
+            Effect.succeed(
+              described(a, {
+                binding: { epoch: 3, state: "transferred", successor: c },
+                members: [a, b],
+              }),
+            ),
+        });
+        yield* run.sync.tick;
+        assert.isFalse(run.calls.some((call) => call.startsWith("linked-members")));
+      }),
+    );
+
+    it.effect("a copy that gave way reads its successor's list though the successor drives", () =>
+      Effect.gen(function* () {
+        // B gave way to A (the lower ID): A unlinked C, and B drops it too.
+        let listed: ReadonlyArray<LogicalProjectMember> = [a, b, c];
+        const run = yield* harness({
+          self: b,
+          binding: { epoch: 4, state: "transferred", successor: a },
+          listed: () => listed,
+          onAdopt: (members) => {
+            listed = members;
+          },
+          peer: () =>
+            Effect.succeed(
+              described(a, { binding: { epoch: 4, state: "active" }, members: [a, b] }),
+            ),
+        });
+        yield* run.sync.tick;
+        assert.include(run.local, `adopt 2 from ${a.environmentId} at 4`);
+        // Reading the list is no pair outcome the app would leave to this server.
+        assert.deepStrictEqual(
+          (yield* run.status).filter((pair) => pair.peerEnvironmentId === a.environmentId),
+          [],
+        );
+        // Nor does it read from a copy it did not give way to.
+        const other = yield* harness({
+          self: b,
+          binding: { epoch: 4, state: "transferred", successor: c },
+          listed: () => [a, b, c],
+          peer: () =>
+            Effect.succeed(
+              described(a, { binding: { epoch: 4, state: "active" }, members: [a, b] }),
+            ),
+        });
+        yield* other.sync.tick;
+        assert.isFalse(other.local.some((call) => call.startsWith("adopt")));
+      }),
+    );
+
+    it.effect("a pair that lacked a grant is synced within seconds of the grant appearing", () =>
+      Effect.gen(function* () {
+        let granted = false;
+        const run = yield* harness({
+          self: a,
+          binding: { epoch: 3, state: "active" },
+          listed: () => [a, b, c],
+          reachable: () => granted,
+          peer: () =>
+            granted
+              ? Effect.succeed(
+                  described(b, {
+                    binding: { epoch: 3, state: "transferred", successor: a },
+                    members: [a, b],
+                  }),
+                )
+              : Effect.fail(
+                  new HandoffPeerError({
+                    code: "needs_grant",
+                    message: "No grant there.",
+                    check: "grant",
+                    uncertain: false,
+                    local: true,
+                    grant: "none",
+                  }),
+                ),
+        });
+        yield* run.sync.tick;
+        assert.isFalse(run.calls.some((call) => call.startsWith("linked-members")));
+        // No grant yet: the check changes nothing and the pair waits out its backoff.
+        yield* run.sync.grantCheck;
+        yield* run.sync.tick;
+        assert.isFalse(run.calls.some((call) => call.startsWith("linked-members")));
+        // The grant appears: the next pass, seconds later, syncs the pair and sends the list.
+        granted = true;
+        yield* run.sync.grantCheck;
+        yield* run.sync.tick;
+        assert.include(run.calls, "linked-members 3");
+      }),
+    );
+
+    it.effect("a list refused for want of a grant there goes again within a pass", () =>
+      Effect.gen(function* () {
+        let refused = true;
+        const run = yield* harness({
+          self: a,
+          binding: active,
+          listed: () => [a, b, c],
+          peer: () => Effect.succeed(described(b, { binding: transferred, members: [a, b] })),
+          linkedMembers: () =>
+            refused
+              ? Effect.fail(
+                  new HandoffPeerError({
+                    code: "needs_grant",
+                    message: "This machine's work grant there was revoked",
+                    check: "grant",
+                    uncertain: false,
+                  }),
+                )
+              : Effect.succeed({ replayed: false, changed: true }),
+        });
+        yield* run.sync.tick;
+        refused = false;
+        yield* TestClock.adjust("61 seconds");
+        yield* run.sync.tick;
+        assert.strictEqual(run.calls.filter((call) => call.startsWith("linked-members")).length, 2);
+      }),
+    );
+
+    it.effect("a list that could not reach the peer is not held for ten minutes", () =>
+      Effect.gen(function* () {
+        let fail = true;
+        const run = yield* harness({
+          self: a,
+          binding: { epoch: 3, state: "active" },
+          listed: () => [a, b, c],
+          peer: () =>
+            Effect.succeed(
+              described(b, {
+                binding: { epoch: 3, state: "transferred", successor: a },
+                members: [a, b],
+              }),
+            ),
+          linkedMembers: () =>
+            fail
+              ? Effect.fail(
+                  new HandoffPeerError({
+                    code: "unreachable",
+                    message: "No answer.",
+                    uncertain: true,
+                  }),
+                )
+              : Effect.succeed({ replayed: false, changed: true }),
+        });
+        yield* run.sync.tick;
+        fail = false;
+        yield* TestClock.adjust("61 seconds");
+        yield* run.sync.tick;
+        assert.strictEqual(run.calls.filter((call) => call.startsWith("linked-members")).length, 2);
       }),
     );
 

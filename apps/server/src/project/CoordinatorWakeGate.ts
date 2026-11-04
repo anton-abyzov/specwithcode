@@ -14,6 +14,15 @@
  * Without a standby too: once another copy's digest showed it took over from
  * this one at a higher epoch (`LinkedPeerSync`), this copy's coordinator
  * starts no new turn, until it has given way or no copy claims the takeover.
+ *
+ * And right after this process resumed from a long pause (the process was
+ * stopped, or the machine slept), the coordinator of a linked copy with other
+ * copies starts no new turn until a linked pass begun after the resume
+ * reached every other copy, or `RESUME_HOLD_MS` passed: another copy may have
+ * taken over meanwhile, and this one must see that before it starts a turn.
+ * Meanwhile a turn is refused as for a fence (a queue stays queued), never
+ * waited for under the thread's lock, which giving way may need. Copies that
+ * are not linked, or have no other copy, are never held.
  */
 import type { Project, ThreadId } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -144,6 +153,57 @@ export function isRecordCoordinatorThread(record: CoordinatorLeaseRecord, thread
   );
 }
 
+/** A gap between two looks at the clocks this long means the process was paused. */
+export const RESUME_PAUSE_MS = 30_000;
+/** How often the resume watch looks at the clocks. */
+const RESUME_BEAT_MS = 1_000;
+
+export const COORDINATOR_RESUME_REFUSAL =
+  "This Mac just resumed, so it is checking whether another Mac took over this project's coordinator before running. Send again in a few seconds.";
+
+/**
+ * Notices this process resuming from a long pause, by the gap between two
+ * looks at the clocks: the wall clock (which runs on while the machine
+ * sleeps) and the monotonic one (which runs on while only the process is
+ * stopped). A turn checked before the next regular look notices it itself.
+ */
+export interface ResumeWatch {
+  /** Looks at the clocks; reports a resume to the sync state when the gap was long. */
+  readonly beat: Effect.Effect<void>;
+  /** Whether `threadId` must still wait after a resume; looks at the clocks first. */
+  readonly held: (threadId: string) => Effect.Effect<boolean>;
+}
+
+export const makeResumeWatch = (deps: {
+  readonly state: Pick<LinkedPeerSyncState["Service"], "resumed" | "resumeHeld">;
+  readonly monotonic?: MonotonicClock;
+  readonly wallMs?: () => number;
+}): ResumeWatch => {
+  const monotonic = deps.monotonic ?? systemMonotonicClock;
+  const wall = deps.wallMs ?? Date.now;
+  let lastMono = monotonic.nowMs();
+  let lastWall = wall();
+  const beat = Effect.suspend(() => {
+    const mono = monotonic.nowMs();
+    const now = wall();
+    const gap = Math.max(mono - lastMono, now - lastWall);
+    lastMono = mono;
+    lastWall = now;
+    return gap > RESUME_PAUSE_MS
+      ? Effect.logInfo("This process resumed after a pause; linked coordinators wait for a check", {
+          pausedMs: Math.round(gap),
+        }).pipe(Effect.andThen(deps.state.resumed(mono)))
+      : Effect.void;
+  });
+  return {
+    beat,
+    held: (threadId) =>
+      beat.pipe(
+        Effect.andThen(Effect.suspend(() => deps.state.resumeHeld(threadId, monotonic.nowMs()))),
+      ),
+  };
+};
+
 export interface CoordinatorWakeGateShape {
   /** Null when a turn may start on `threadId`; otherwise why not. Never fails. */
   readonly check: (threadId: ThreadId) => Effect.Effect<string | null>;
@@ -164,6 +224,7 @@ export class CoordinatorWakeGate extends Context.Reference<CoordinatorWakeGateSh
 export const makeCheck = (
   store: CoordinatorLeaseStore["Service"],
   superseded?: LinkedPeerSyncState["Service"]["supersededFor"],
+  resume?: ResumeWatch,
 ): CoordinatorWakeGateShape["check"] => {
   let lastRead: ReadonlyArray<CoordinatorLeaseRecord> | null = null;
   const decide = (
@@ -194,7 +255,7 @@ export const makeCheck = (
         }),
       ),
     );
-  return (threadId) =>
+  const decideNow = (threadId: ThreadId) =>
     superseded === undefined
       ? leaseCheck(threadId)
       : superseded(threadId).pipe(
@@ -204,6 +265,21 @@ export const makeCheck = (
               : Effect.succeed(COORDINATOR_SUPERSEDED_REFUSAL),
           ),
         );
+  return (threadId) =>
+    decideNow(threadId).pipe(
+      Effect.flatMap((refusal) =>
+        refusal !== null || resume === undefined
+          ? Effect.succeed(refusal)
+          : resume.held(threadId).pipe(
+              Effect.map((held) => (held ? COORDINATOR_RESUME_REFUSAL : null)),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Coordinator wake gate could not check for a resume", {
+                  cause,
+                }).pipe(Effect.as(null)),
+              ),
+            ),
+      ),
+    );
 };
 
 export interface FenceSweepDeps {
@@ -270,6 +346,19 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const store = yield* CoordinatorLeaseStore;
     const state = yield* LinkedPeerSyncState;
-    return { check: makeCheck(store, state.supersededFor) };
+    const watch = makeResumeWatch({ state });
+    const run = Effect.runForkWith(yield* Effect.context<never>());
+    // A real timer, not the effect clock: a pause is what the process itself lived through,
+    // and a test clock set years ahead must not replay a look for every second in between.
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        // @effect-diagnostics-next-line globalTimersInEffect:off - looks at the real clocks each second, cleared on release.
+        const timer = setInterval(() => run(watch.beat), RESUME_BEAT_MS);
+        timer.unref?.();
+        return timer;
+      }),
+      (timer) => Effect.sync(() => clearInterval(timer)),
+    );
+    return { check: makeCheck(store, state.supersededFor, watch) };
   }),
 ).pipe(Layer.provide(CoordinatorLeaseStoreLayer), Layer.provide(LinkedPeerSyncStateLayer));

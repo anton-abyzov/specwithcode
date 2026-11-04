@@ -36,7 +36,11 @@ import {
   layer as CoordinatorWakeGateLayer,
   makeCheck,
   makeFenceSweep,
+  makeResumeWatch,
+  COORDINATOR_RESUME_REFUSAL,
+  RESUME_PAUSE_MS,
 } from "./CoordinatorWakeGate.ts";
+import { RESUME_HOLD_MS } from "./LinkedPeerSyncState.ts";
 
 const MINUTE = 60_000;
 const T0 = Date.parse("2026-10-26T14:00:00.000Z");
@@ -155,6 +159,105 @@ describe("CoordinatorWakeGate check", () => {
       expect(yield* run("thread-named")).toBeNull();
     }),
   );
+
+  describe("after this process resumed from a long pause", () => {
+    const projectId = ProjectId.make("easychamp-m4");
+    const thread = "project-coordinator:easychamp-m4";
+    const setup = Effect.gen(function* () {
+      const state = yield* LinkedPeerSyncState.make;
+      // The last pass before the pause found this copy coordinating a linked project.
+      yield* state.passStarted;
+      yield* state.passFinished(1, [{ projectId, coordinatorThreadId: "thread-named" }], new Set());
+      let mono = 5_000;
+      let wall = T0;
+      const watch = makeResumeWatch({
+        state,
+        monotonic: { nowMs: () => mono },
+        wallMs: () => wall,
+      });
+      const pause = (ms: number, sleep = false) => {
+        wall += ms;
+        if (!sleep) mono += ms;
+      };
+      return { state, watch, pause };
+    });
+
+    it.effect("notices a stopped process and a sleeping machine, never a short gap", () =>
+      Effect.gen(function* () {
+        const quiet = yield* setup;
+        quiet.pause(RESUME_PAUSE_MS - 1);
+        expect(yield* quiet.watch.held(thread)).toBe(false);
+
+        const stopped = yield* setup;
+        stopped.pause(60_000);
+        expect(yield* stopped.watch.held(thread)).toBe(true);
+        expect(yield* stopped.watch.held("thread-named")).toBe(true);
+        // Unlinked projects and workers never wait.
+        expect(yield* stopped.watch.held("project-coordinator:another")).toBe(false);
+        expect(yield* stopped.watch.held("thread-worker")).toBe(false);
+
+        // The monotonic clock stands still while the machine sleeps; the wall clock runs on.
+        const slept = yield* setup;
+        slept.pause(10 * MINUTE, true);
+        expect(yield* slept.watch.held(thread)).toBe(true);
+      }),
+    );
+
+    it.effect("refuses a turn until a pass checks the copies, then decides it as before", () =>
+      Effect.gen(function* () {
+        const { state, watch, pause } = yield* setup;
+        const { service } = makeMemory();
+        const check = makeCheck(service, state.supersededFor, watch);
+        pause(60_000);
+        // 40 ms after the resume: refused, never run beside a copy that may have taken over.
+        expect(yield* check(ThreadId.make(thread))).toBe(COORDINATOR_RESUME_REFUSAL);
+        expect(yield* check(ThreadId.make("thread-named"))).toBe(COORDINATOR_RESUME_REFUSAL);
+        // Workers and unlinked projects are never held.
+        expect(yield* check(ThreadId.make("thread-worker"))).toBeNull();
+        expect(yield* check(ThreadId.make("project-coordinator:another"))).toBeNull();
+        // The pass after the resume reads the copy that took over meanwhile.
+        const seq = yield* state.passStarted;
+        yield* state.markSuperseded({
+          projectId,
+          coordinatorThreadId: "thread-named",
+          epoch: 1,
+          successorEnvironmentId: m1.environmentId,
+        });
+        yield* state.passFinished(
+          seq,
+          [{ projectId, coordinatorThreadId: "thread-named" }],
+          new Set([projectId]),
+        );
+        expect(yield* check(ThreadId.make(thread))).toBe(COORDINATOR_SUPERSEDED_REFUSAL);
+        // Had no copy taken over, the pass lets turns start again.
+        yield* state.clearSuperseded(projectId);
+        expect(yield* check(ThreadId.make(thread))).toBeNull();
+      }),
+    );
+
+    it.effect("lets a turn start once the bounded hold ran out, the copies unreachable", () =>
+      Effect.gen(function* () {
+        const { state } = yield* setup;
+        let mono = 0;
+        const watch = makeResumeWatch({ state, monotonic: { nowMs: () => mono } });
+        const { service } = makeMemory();
+        const check = makeCheck(service, state.supersededFor, watch);
+        mono += 60_000;
+        expect(yield* check(ThreadId.make(thread))).toBe(COORDINATOR_RESUME_REFUSAL);
+        // A pass that could not reach every copy does not lift it.
+        const seq = yield* state.passStarted;
+        yield* state.passFinished(
+          seq,
+          [{ projectId, coordinatorThreadId: "thread-named" }],
+          new Set(),
+        );
+        mono += RESUME_HOLD_MS - 1;
+        expect(yield* check(ThreadId.make(thread))).toBe(COORDINATOR_RESUME_REFUSAL);
+        mono += 1;
+        expect(yield* check(ThreadId.make(thread))).toBeNull();
+      }),
+    );
+  });
 
   // The gate and the sync loop must share one state: the production graph provides
   // LinkedPeerSyncState.layer beside a layer that provides it to the gate itself.

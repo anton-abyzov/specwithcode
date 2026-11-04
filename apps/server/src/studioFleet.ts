@@ -311,6 +311,7 @@ export async function jsonRequest(
   target: Pick<FleetTarget, "url">,
   path: string,
   init: RequestInit = {},
+  preserveDenial = false,
 ): Promise<unknown> {
   const response = await fetcher(`${target.url}${path}`, {
     ...init,
@@ -319,18 +320,30 @@ export async function jsonRequest(
   });
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined);
-    throw new FleetError("unreachable");
+    throw new FleetError(
+      preserveDenial && (response.status === 401 || response.status === 403)
+        ? "forbidden"
+        : "unreachable",
+    );
   }
   return readBoundedJson(response);
 }
 export async function checkIdentity(
   fetcher: FleetFetch,
   target: Pick<FleetTarget, "url" | "environmentId">,
+  preserveDenial = false,
 ) {
   let descriptor: unknown;
   try {
-    descriptor = await jsonRequest(fetcher, target, "/.well-known/studio/environment");
-  } catch {
+    descriptor = await jsonRequest(
+      fetcher,
+      target,
+      "/.well-known/studio/environment",
+      {},
+      preserveDenial,
+    );
+  } catch (error) {
+    if (preserveDenial && error instanceof FleetError && error.kind === "forbidden") throw error;
     throw new FleetError("unreachable");
   }
   const decoded = Schema.decodeUnknownOption(ExecutionEnvironmentDescriptor)(descriptor);

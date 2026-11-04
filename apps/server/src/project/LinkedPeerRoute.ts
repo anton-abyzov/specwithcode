@@ -31,7 +31,7 @@ import * as Option from "effect/Option";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectInGrant } from "../fleet/workGrantPolicy.ts";
-import { HandoffPeers } from "../handoff/handoffPeers.ts";
+import { type HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
 import { HandoffRefusal, type ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import {
   LINKED_SYNC_PROTOCOL_VERSION,
@@ -212,6 +212,20 @@ export const describeCopy = (
     } satisfies LinkedDigestResponse;
   });
 
+/**
+ * Why this machine can never read the copy that took over, however often it
+ * tries: a failure on this machine (no fleet entry, no grant, or a grant that
+ * was revoked there or expired), a refusal of this machine's grant there, or
+ * a version without the digest path. No answer, an answer this machine cannot
+ * read, or any other refusal may come from a live copy that would answer
+ * otherwise: the takeover is refused and the copy that took over tries again.
+ */
+const cannotAsk = (error: HandoffPeerError) =>
+  error.local === true ||
+  error.code === "needs_grant" ||
+  error.check === "version" ||
+  (error.code === "not_found" && error.message === "not_found");
+
 export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const link = yield* ProjectLink;
@@ -266,15 +280,22 @@ export const make = Effect.gen(function* () {
 
   /**
    * A takeover is the caller's own word: before this copy gives way, the copy
-   * that took over must confirm it over the peer route, with this machine's
-   * grant there, holding that very binding with this copy as its predecessor.
-   * When this machine holds no grant there at all, the caller (the copy that
-   * took over, signed in with its own grant here, which covers this copy)
-   * stands for itself, as its digest would: otherwise a copy taken over from
-   * could never give way while only the other machine holds a grant. A grant
-   * that was revoked there or expired never counts as none: the takeover then
-   * waits for a confirmation, as it always did. Unconfirmed, the claim must
-   * still be a whole takeover of this very binding, made after it began.
+   * that took over confirms it over the peer route, with this machine's grant
+   * there, holding that very binding with this copy as its predecessor. An
+   * answer that differs refuses the takeover.
+   *
+   * When this machine can never ask (no grant there, revoked or expired, that
+   * machine is not in its fleet, it refuses this machine's grant, or it runs a
+   * version without the digest path), the caller stands for itself, as its
+   * digest would: it signed
+   * in with the work grant this machine issued to it, it may only claim its
+   * own takeover (`fromCaller`) and it is a listed copy of this project. A
+   * confirmation would add freshness only, so that is checked here instead:
+   * the claim must be a whole takeover of this very copy, at a higher epoch
+   * than this copy's, with an operation ID, made after this copy's own
+   * binding began, and a copy that already gave way gives way to no other
+   * copy on a claim alone. Otherwise a copy taken over from could never give
+   * way while only the other machine holds a grant.
    */
   const confirmTakeover = (project: Project, request: LinkedSupersedeRequest) =>
     Effect.gen(function* () {
@@ -290,7 +311,7 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.asSome,
           Effect.catch((error) =>
-            error.code === "needs_grant" && error.local === true && error.grant === "none"
+            cannotAsk(error)
               ? Effect.succeed(Option.none<LinkedDigestResponse>())
               : Effect.fail(
                   refuse(
@@ -304,13 +325,23 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(confirmed)) {
         const claimed = request.coordinatorBinding;
         const own = project.workspaceSettings?.coordinatorBinding;
+        const listed = project.workspaceSettings?.logicalProject?.members ?? [];
         const claimedAt = Date.parse(claimed.takenOverAt ?? "");
         const ownSince = own?.takenOverAt === undefined ? null : Date.parse(own.takenOverAt);
         if (
           claimed.state !== "active" ||
           claimed.predecessor === undefined ||
           logicalProjectMemberKey(claimed.predecessor) !== logicalProjectMemberKey(self) ||
+          !listed.some(
+            (member) =>
+              logicalProjectMemberKey(member) === logicalProjectMemberKey(request.successor),
+          ) ||
           claimed.operationId === undefined ||
+          (own !== undefined && claimed.epoch <= own.epoch) ||
+          (own?.state === "transferred" &&
+            (own.successor === undefined ||
+              logicalProjectMemberKey(own.successor) !==
+                logicalProjectMemberKey(request.successor))) ||
           !Number.isFinite(claimedAt) ||
           (ownSince !== null && Number.isFinite(ownSince) && claimedAt <= ownSince)
         )

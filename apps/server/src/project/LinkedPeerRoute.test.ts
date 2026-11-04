@@ -417,21 +417,152 @@ describe("LinkedPeerReceiver", () => {
         ),
       ).toMatchObject({ status: 409, code: "invalid" });
 
-      // A grant M4 revoked, or one that expired, is no grant never given: M3 still waits
-      // for M4 to confirm the takeover instead of taking its word.
-      for (const grant of ["revoked", "expired"] as const) {
-        const cut = yield* linked(withoutGrant(grant));
+      // Whatever keeps M3 from ever asking M4 back (its grant there revoked or expired, M4 not
+      // in its fleet, M4 refusing M3's grant), M4's own word, sent with the grant M3 issued to
+      // it, stands: two coordinators never stay active for want of a callback.
+      const cannotAsk: ReadonlyArray<HandoffPeerError> = [
+        ...(["revoked", "expired"] as const).map(
+          (grant) =>
+            new HandoffPeerError({
+              code: "needs_grant",
+              message: "M4: no grant",
+              check: "grant",
+              uncertain: false,
+              local: true,
+              grant,
+            }),
+        ),
+        new HandoffPeerError({
+          code: "invalid",
+          message: "That machine is not one of your private machines.",
+          uncertain: false,
+          local: true,
+        }),
+        new HandoffPeerError({ code: "needs_grant", message: "Refused.", uncertain: false }),
+      ];
+      for (const error of cannotAsk) {
+        const cut = yield* linked(() => Effect.fail(error));
         coordinating(cut.pair);
+        const result = yield* cut.onM3((receiver) =>
+          receiver.supersede(cut.m4, {
+            ...cut.ref,
+            successor: cut.pair.kept,
+            coordinatorBinding: takeover(cut.pair),
+          }),
+        );
+        if (!result.ok) return yield* Effect.die(result.refusal);
+        expect(result.value.coordinatorBinding).toMatchObject({ state: "transferred", epoch: 1 });
+      }
+
+      // No answer, or an answer M3 cannot read, may come from a live M4 that would answer
+      // otherwise: M3 refuses for now and M4 tries again, rather than taking its word.
+      for (const error of [
+        new HandoffPeerError({ code: "unreachable", message: "No answer.", uncertain: true }),
+        new HandoffPeerError({ code: "unreachable", message: "No answer.", uncertain: false }),
+      ]) {
+        const silent = yield* linked(() => Effect.fail(error));
+        coordinating(silent.pair);
         expect(
-          yield* cut.refused((receiver) =>
-            receiver.supersede(cut.m4, {
-              ...cut.ref,
-              successor: cut.pair.kept,
-              coordinatorBinding: takeover(cut.pair),
+          yield* silent.refused((receiver) =>
+            receiver.supersede(silent.m4, {
+              ...silent.ref,
+              successor: silent.pair.kept,
+              coordinatorBinding: takeover(silent.pair),
             }),
           ),
         ).toMatchObject({ status: 409, code: "busy" });
+        expect(
+          silent.pair.m3.projects.get(silent.pair.joining.projectId)?.workspaceSettings
+            ?.coordinatorBinding?.state,
+        ).toBe("active");
       }
+
+      // A copy that already gave way to another copy never moves to M4 on M4's word alone.
+      const elsewhere = yield* linked(noGrant);
+      const elsewhereHeld = elsewhere.pair.m3.projects.get(elsewhere.pair.joining.projectId)!;
+      elsewhere.pair.m3.projects.set(elsewhere.pair.joining.projectId, {
+        ...elsewhereHeld,
+        workspaceSettings: {
+          ...elsewhereHeld.workspaceSettings!,
+          coordinatorBinding: {
+            epoch: 0,
+            state: "transferred",
+            successor: {
+              environmentId: EnvironmentId.make("m1"),
+              projectId: ProjectId.make("easychamp-m1"),
+            },
+          },
+        },
+      } as Project);
+      expect(
+        yield* elsewhere.refused((receiver) =>
+          receiver.supersede(elsewhere.m4, {
+            ...elsewhere.ref,
+            successor: elsewhere.pair.kept,
+            coordinatorBinding: takeover(elsewhere.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "invalid" });
+
+      // M4 answers, but refuses the copy outright: that is not taken as its word.
+      const contradicted = yield* linked(() =>
+        Effect.fail(new HandoffPeerError({ code: "failed", message: "No.", uncertain: false })),
+      );
+      coordinating(contradicted.pair);
+      expect(
+        yield* contradicted.refused((receiver) =>
+          receiver.supersede(contradicted.m4, {
+            ...contradicted.ref,
+            successor: contradicted.pair.kept,
+            coordinatorBinding: takeover(contradicted.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "busy" });
+
+      // Unconfirmed, forged or replayed claims are refused: an epoch not above this copy's,
+      // a successor this copy does not list, and a claim sent for another copy than the caller's.
+      const notHigher = yield* linked(noGrant);
+      coordinating(notHigher.pair);
+      const notHigherHeld = notHigher.pair.m3.projects.get(notHigher.pair.joining.projectId)!;
+      notHigher.pair.m3.projects.set(notHigher.pair.joining.projectId, {
+        ...notHigherHeld,
+        workspaceSettings: {
+          ...notHigherHeld.workspaceSettings!,
+          coordinatorBinding: { epoch: 1, state: "active" },
+        },
+      } as Project);
+      expect(
+        yield* notHigher.refused((receiver) =>
+          receiver.supersede(notHigher.m4, {
+            ...notHigher.ref,
+            successor: notHigher.pair.kept,
+            coordinatorBinding: takeover(notHigher.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "invalid" });
+      const unlisted = yield* linked(noGrant);
+      coordinating(unlisted.pair);
+      const stranger = { ...unlisted.pair.kept, projectId: ProjectId.make("not-listed") };
+      expect(
+        yield* unlisted.refused((receiver) =>
+          receiver.supersede(unlisted.m4, {
+            ...unlisted.ref,
+            successor: stranger,
+            coordinatorBinding: takeover(unlisted.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 409, code: "invalid" });
+      const impostor = yield* linked(noGrant);
+      coordinating(impostor.pair);
+      expect(
+        yield* impostor.refused((receiver) =>
+          receiver.supersede(callerFrom("m1", { kind: "all" }), {
+            ...impostor.ref,
+            successor: impostor.pair.kept,
+            coordinatorBinding: takeover(impostor.pair),
+          }),
+        ),
+      ).toMatchObject({ status: 403, code: "needs_grant" });
 
       // Unconfirmed, a claim must be a whole takeover made after this copy's own one began.
       const stale = yield* linked(noGrant);
@@ -469,20 +600,6 @@ describe("LinkedPeerReceiver", () => {
           }),
         ),
       ).toMatchObject({ status: 409, code: "invalid" });
-
-      // M4 could not be reached to confirm it: M3 waits and tries again later.
-      current = undefined;
-      const unreachable = yield* linked(fromM4);
-      coordinating(unreachable.pair);
-      expect(
-        yield* unreachable.refused((receiver) =>
-          receiver.supersede(unreachable.m4, {
-            ...unreachable.ref,
-            successor: unreachable.pair.kept,
-            coordinatorBinding: takeover(unreachable.pair),
-          }),
-        ),
-      ).toMatchObject({ status: 409, code: "busy" });
     }),
   );
 

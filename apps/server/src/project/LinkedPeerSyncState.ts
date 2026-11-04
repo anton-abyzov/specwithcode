@@ -6,7 +6,9 @@
  * pass at once when a linked machine shows it is back, by calling this one or
  * by answering a reachability probe; and the takeovers another copy showed
  * of a copy here that has not given way yet, so its coordinator starts no new
- * turn meanwhile (`CoordinatorWakeGate`).
+ * turn meanwhile (`CoordinatorWakeGate`); and, after this process resumed
+ * from a long pause, which coordinators of linked copies wait for a pass to
+ * check their other copies before they start a turn.
  *
  * In memory only: after a restart the app drives every pair until the first
  * passes succeed again.
@@ -20,7 +22,7 @@ import type {
   LinkedServerSyncPair,
   ProjectId,
 } from "@specweave-studio/contracts";
-import { pairBackoffMs } from "@specweave-studio/shared/linkedPairSync";
+import { LINKED_PAIR_SYNC_MS, pairBackoffMs } from "@specweave-studio/shared/linkedPairSync";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -55,6 +57,20 @@ interface PairState {
   /** Failed passes in a row; reset by a success or by the peer showing it is back. */
   readonly failures: number;
   readonly nextAttemptAt: number;
+  /** Retried on its own short schedule rather than the next pass (`record`'s `retryWithinMs`). */
+  readonly urgent: boolean;
+}
+
+/** How long a quick retry keeps its short interval before it slows to once a pass interval. */
+export const QUICK_RETRY_WINDOW_MS = 10 * 60_000;
+
+/** How long coordinators of linked copies wait, at most, after this process resumed. */
+export const RESUME_HOLD_MS = 15_000;
+
+/** A coordinator of a linked copy here, as the last pass found it. */
+export interface LinkedCoordinator {
+  readonly projectId: ProjectId;
+  readonly coordinatorThreadId: string | undefined;
 }
 
 export class LinkedPeerSyncState extends Context.Service<
@@ -70,7 +86,47 @@ export class LinkedPeerSyncState extends Context.Service<
         readonly kind: LinkedServerSyncKind;
         readonly error: LinkedServerSyncError | null;
       }>,
+      options?: {
+        /**
+         * A failed pair is retried within this long, whatever its backoff, and
+         * wakes the loop for it; after `QUICK_RETRY_WINDOW_MS` of failures in a
+         * row, within one pass interval.
+         */
+        readonly retryWithinMs?: number;
+        /** The pass failed as a whole, with no kind to show (a pair that only reads lists). */
+        readonly failed?: boolean;
+      },
     ) => Effect.Effect<void>;
+    /** When the earliest pair `record` marked for a quick retry is due, if any. */
+    readonly nextUrgentAt: Effect.Effect<number | null>;
+    /** Whether `record` marked the pair for a quick retry; a quick pass runs only those. */
+    readonly urgent: (pair: LinkedPair) => Effect.Effect<boolean>;
+    /** Every pair with `environmentId` is due now, and a pass starts (a grant there appeared). */
+    readonly retryPeer: (environmentId: EnvironmentId) => Effect.Effect<void>;
+    /** A pass begins; its number orders it against `resumed`. */
+    readonly passStarted: Effect.Effect<number>;
+    /**
+     * Pass `seq` ended: `coordinators` are the linked copies this machine
+     * coordinates, and `checked` those of them whose every other copy the pass
+     * reached.
+     */
+    readonly passFinished: (
+      seq: number,
+      coordinators: ReadonlyArray<LinkedCoordinator>,
+      checked: ReadonlySet<ProjectId>,
+    ) => Effect.Effect<void>;
+    /**
+     * This process resumed from a long pause at `atMs` (a monotonic time): every
+     * pair is due, a pass starts, and the coordinators of linked copies wait
+     * for a pass begun after now (`resumeHeld`).
+     */
+    readonly resumed: (atMs: number) => Effect.Effect<void>;
+    /**
+     * Whether `threadId`, the coordinator of a linked copy here, must still
+     * wait at `nowMs` (the clock `resumed` was given): until a pass begun after
+     * the resume reached its every other copy, or `RESUME_HOLD_MS` passed.
+     */
+    readonly resumeHeld: (threadId: string, nowMs: number) => Effect.Effect<boolean>;
     /** The pairs this server drives for `projectId`. */
     readonly status: (projectId: ProjectId) => Effect.Effect<ReadonlyArray<LinkedServerSyncPair>>;
     /** Drops pairs that are no longer linked. */
@@ -129,6 +185,12 @@ export const make = Effect.gen(function* () {
   const pairs = yield* Ref.make(new Map<string, PairState>());
   const signal = yield* Ref.make(yield* Deferred.make<void>());
   const superseded = yield* Ref.make(new Map<string, SupersededCopy>());
+  let passes = 0;
+  /** Coordinator thread id to its project, as the last pass found them. */
+  let coordinators = new Map<string, ProjectId>();
+  /** Per project, the last pass that reached every other copy. */
+  const checkedIn = new Map<ProjectId, number>();
+  let resume: { readonly seq: number; readonly atMs: number } | null = null;
 
   const wake = Ref.get(signal).pipe(
     Effect.flatMap((deferred) => Deferred.succeed(deferred, undefined)),
@@ -138,7 +200,7 @@ export const make = Effect.gen(function* () {
   return LinkedPeerSyncState.of({
     due: (pair, now) =>
       Ref.get(pairs).pipe(Effect.map((all) => (all.get(pairKey(pair))?.nextAttemptAt ?? 0) <= now)),
-    record: (pair, now, outcomes) =>
+    record: (pair, now, outcomes, options) =>
       Ref.update(pairs, (all) => {
         const key = pairKey(pair);
         const current = all.get(key);
@@ -150,14 +212,93 @@ export const make = Effect.gen(function* () {
             lastError: error,
           });
         // A peer too old for a kind never will be: that alone does not back the pair off.
-        const failed = outcomes.some(
-          (outcome) => outcome.error !== null && outcome.error !== "outdated",
-        );
+        const failed =
+          options?.failed === true ||
+          outcomes.some((outcome) => outcome.error !== null && outcome.error !== "outdated");
         const failures = failed ? (current?.failures ?? 0) + 1 : 0;
         const next = new Map(all);
         if (!next.has(key) && next.size >= MAX_ENTRIES) next.delete(next.keys().next().value!);
-        next.set(key, { pair, kinds, failures, nextAttemptAt: now + pairBackoffMs(failures) });
+        const backoff = pairBackoffMs(failures);
+        const retryWithin =
+          options?.retryWithinMs === undefined
+            ? undefined
+            : (current?.failures ?? 0) * options.retryWithinMs < QUICK_RETRY_WINDOW_MS
+              ? options.retryWithinMs
+              : LINKED_PAIR_SYNC_MS;
+        // Every few seconds for the first minutes, then once a minute: a copy gone for good is
+        // not asked every few seconds forever, and one that comes back still gives way soon,
+        // though it may hold no grant to call here and say so.
+        const urgent = failed && retryWithin !== undefined;
+        next.set(key, {
+          pair,
+          kinds,
+          failures,
+          nextAttemptAt: now + (urgent ? Math.min(backoff, retryWithin) : backoff),
+          urgent,
+        });
         return next;
+      }),
+    nextUrgentAt: Ref.get(pairs).pipe(
+      Effect.map((all) => {
+        let earliest: number | null = null;
+        for (const state of all.values())
+          if (state.urgent && (earliest === null || state.nextAttemptAt < earliest))
+            earliest = state.nextAttemptAt;
+        return earliest;
+      }),
+    ),
+    urgent: (pair) =>
+      Ref.get(pairs).pipe(Effect.map((all) => all.get(pairKey(pair))?.urgent ?? false)),
+    retryPeer: (environmentId) =>
+      Ref.update(
+        pairs,
+        (all) =>
+          new Map(
+            [...all].map(([key, state]) =>
+              state.pair.peerEnvironmentId === environmentId
+                ? ([key, { ...state, failures: 0, nextAttemptAt: 0 }] as const)
+                : ([key, state] as const),
+            ),
+          ),
+      ).pipe(Effect.andThen(wake)),
+    passStarted: Effect.sync(() => ++passes),
+    passFinished: (seq, found, checked) =>
+      Effect.sync(() => {
+        const next = new Map<string, ProjectId>();
+        for (const coordinator of found) {
+          next.set(`project-coordinator:${coordinator.projectId}`, coordinator.projectId);
+          if (coordinator.coordinatorThreadId !== undefined)
+            next.set(coordinator.coordinatorThreadId, coordinator.projectId);
+        }
+        coordinators = next;
+        for (const projectId of checked)
+          checkedIn.set(projectId, Math.max(seq, checkedIn.get(projectId) ?? 0));
+        for (const projectId of checkedIn.keys())
+          if (!found.some((coordinator) => coordinator.projectId === projectId))
+            checkedIn.delete(projectId);
+      }),
+    resumed: (atMs) =>
+      Effect.sync(() => {
+        resume = { seq: passes, atMs };
+      }).pipe(
+        Effect.andThen(
+          Ref.update(
+            pairs,
+            (all) =>
+              new Map(
+                [...all].map(([key, state]) => [key, { ...state, nextAttemptAt: 0 }] as const),
+              ),
+          ),
+        ),
+        Effect.andThen(wake),
+      ),
+    resumeHeld: (threadId, nowMs) =>
+      Effect.sync(() => {
+        if (resume === null) return false;
+        if (nowMs - resume.atMs >= RESUME_HOLD_MS) return false;
+        const projectId = coordinators.get(threadId);
+        if (projectId === undefined) return false;
+        return (checkedIn.get(projectId) ?? 0) <= resume.seq;
       }),
     status: (projectId) =>
       Ref.get(pairs).pipe(

@@ -48,21 +48,18 @@ M4 completes verification of the new version, and then together with a plain ver
 request. They are never drained or held.
 
 Once a worker's service is confirmed on the version (installed, or already on it), its desktop
-app is updated to the same version over the same ssh (desktop_app_rollout.py, which runs
+app is updated to the same version over pinned SSH (desktop_app_rollout.py, which runs
 desktop_app_update_remote.sh there), and the rollout reports its version before and after and
 how: already current, the app's own updater on quit, or swapped. A failed app update fails the
 rollout after every service is done, naming the host and the reason; --no-desktop-apps skips the
 step. M4's app is release.sh's desktop stage's.
 
-SSH is tried first. A worker whose ssh gives no answer (exit 255, a timeout, Tailscale off) is
-reached over SpecWithCode Connect instead, when M4's studio-fleet.json lists it with a Connect
-address and a proof-bound management token: each update_request.py command becomes M4's own
-`specweave-studio fleet update <machine> ... --json`, which answers with the same keys, so the
-worker policy above is unchanged (`--no-hold` unless --worker-force). The first call picks the
-route and the host keeps it; the desktop app step needs SSH and is reported as skipped on Connect.
-Fleet machines outside the SSH inventory (ministorm) go over Connect only; one with neither route
-(a bearer-only token, no Connect address) is reported as skipped, and a machine neither route
-answers fails the rollout by name instead of being waited on.
+SpecWithCode Connect is tried first for a linked worker. Each update_request.py command becomes
+M4's own `specweave-studio fleet update <machine> ... --connect-only --json`, which answers with
+the same keys. Only a transport failure during the initial status read can select pinned fleet SSH
+as a fallback. An authorization refusal stops the rollout, and each worker keeps the selected
+route once a request can be sent. The separate desktop app step still needs pinned fleet SSH.
+Workers outside the SSH inventory go over Connect only. A worker with neither route is reported.
 
 Each request is written by update_request.py, streamed with studio_paths.py to the host's
 /usr/bin/python3 (over the pinned fleet SSH key for M1 and M3, the network-transition.py
@@ -203,15 +200,9 @@ class Host(object):
         return value
 
 
-def _no_answer(error, detail):
-    """Marks `error` as the route giving no answer at all (not the host answering with an error)."""
-    error.unanswered = detail
-    return error
-
-
 def unanswered(error):
     """Why a route gave no answer ('exit 255', 'timeout', ...), or None when the host answered."""
-    if getattr(error, 'unanswered', None):
+    if hasattr(error, 'unanswered'):
         return error.unanswered
     text = str(error)
     if 'gave no answer (exit 255)' in text:
@@ -230,7 +221,6 @@ def unanswered(error):
 # killing the CLI before then closes that socket and cancels the download.
 LEGACY_SELF_UPDATE_SECONDS = 600
 CONNECT_REQUEST_TIMEOUT = LEGACY_SELF_UPDATE_SECONDS + 120  # Plus reaching it and its WebSocket ticket.
-CONNECT_UNANSWERED = ('unreachable', 'connect-key-missing')  # fleet update reasons meaning no route answered.
 
 
 class ConnectHost(object):
@@ -271,7 +261,7 @@ class ConnectHost(object):
             raise RolloutError('%s: %s cannot go over SpecWithCode Connect' % (self.identity, kind))
         if None in mapped:
             raise RolloutError('%s: %s is missing a value for SpecWithCode Connect' % (self.identity, kind))
-        return self.command + [self.machine] + mapped + ['--json']
+        return self.command + [self.machine] + mapped + ['--connect-only', '--json']
 
     def __call__(self, argv):
         command = self.argv(argv)
@@ -280,33 +270,33 @@ class ConnectHost(object):
             result = self.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
                               env=self.env)
         except subprocess.TimeoutExpired:
-            raise _no_answer(RolloutError('%s did not answer over SpecWithCode Connect within %ds'
-                                          % (self.identity, timeout)), 'timeout') from None
+            raise RolloutError('%s did not answer over SpecWithCode Connect within %ds'
+                               % (self.identity, timeout)) from None
         except OSError as error:
-            raise _no_answer(RolloutError('%s: could not run the fleet CLI (%s)'
-                                          % (self.identity, type(error).__name__)), 'no fleet CLI') from None
+            raise RolloutError('%s: could not run the fleet CLI (%s)'
+                               % (self.identity, type(error).__name__)) from None
         lines = [line for line in (result.stdout or '').splitlines() if line.strip()]
         try:
             value = json.loads(lines[-1]) if lines else None
         except ValueError:
             value = None
         if not isinstance(value, dict):
-            raise _no_answer(RolloutError('%s gave no answer over SpecWithCode Connect (exit %d)'
-                                          % (self.identity, result.returncode)), 'exit %d' % result.returncode)
+            raise RolloutError('%s: fleet CLI returned no Connect result (exit %d); use a CLI with --connect-only'
+                               % (self.identity, result.returncode))
         if result.returncode != 0 or 'error' in value:
             reason = value.get('reason')
             error = RolloutError('%s: %s%s' % (self.identity, value.get('error') or 'exit %d' % result.returncode,
                                                ' (%s)' % reason if reason else ''))
             error.reply = value
-            if reason in CONNECT_UNANSWERED:
-                error.unanswered = reason
+            error.unanswered = 'unreachable' if reason == 'unreachable' else None
             raise error
+        if value.get('transport') != 'connect':
+            raise RolloutError('%s: fleet CLI did not attest the SpecWithCode Connect route' % self.identity)
         return value
 
 
 class FallbackHost(object):
-    """SSH first, SpecWithCode Connect when SSH gives no answer (exit 255, a timeout or no ssh). The
-    first call picks the route and every later call keeps it; an SSH error answer stays on SSH."""
+    """Connect first. Only an unavailable initial status read permits fallback to pinned SSH."""
 
     def __init__(self, identity, ssh, connect, say=None):
         self.identity = identity
@@ -315,16 +305,25 @@ class FallbackHost(object):
         self.say = say
         self.route = None
         self.command = ssh.command
-
-    @property
-    def app_command(self):
-        return None if self.route == 'connect' else self.ssh.app_command
+        self.app_command = ssh.app_command
 
     def __call__(self, argv):
         if self.route == 'ssh':
             return self.ssh(argv)
         if self.route == 'connect':
             return self.connect(argv)
+        if argv[0] != 'status':
+            raise RolloutError('%s: select the fleet route with a status read first' % self.identity)
+        try:
+            value = self.connect(argv)
+        except RolloutError as error:
+            connect_reason = getattr(error, 'unanswered', None)
+            if connect_reason is None:
+                self.route = 'connect'
+                raise
+        else:
+            self.route = 'connect'
+            return value
         try:
             value = self.ssh(argv)
         except RolloutError as error:
@@ -332,26 +331,13 @@ class FallbackHost(object):
             if ssh_reason is None:
                 self.route = 'ssh'
                 raise
-        else:
-            self.route = 'ssh'
-            return value
-        try:
-            value = self.connect(argv)
-        except RolloutError as error:
-            connect_reason = unanswered(error)
-            if connect_reason is None:  # Connect answered: it is the route, with its refusal.
-                self.route = 'connect'
-                self._note(ssh_reason)
-                raise
-            raise RolloutError('%s: unreachable over SSH (%s) and SpecWithCode Connect (%s)' % (
-                self.identity, ssh_reason, connect_reason)) from None
-        self.route = 'connect'
-        self._note(ssh_reason)
-        return value
-
-    def _note(self, ssh_reason):
+            raise RolloutError('%s: unreachable over SpecWithCode Connect (%s) and SSH (%s)' % (
+                self.identity, connect_reason, ssh_reason)) from None
+        self.route = 'ssh'
         if self.say is not None:
-            self.say('%s: no SSH answer (%s); using SpecWithCode Connect' % (self.identity, ssh_reason))
+            self.say('%s: SpecWithCode Connect unavailable (%s); using pinned fleet SSH' %
+                     (self.identity, connect_reason))
+        return value
 
 
 class Unreachable(object):
@@ -407,7 +393,8 @@ def connect_machines(home):
         label = machine.get('label') if isinstance(machine.get('label'), str) else machine['id']
         slug = re.sub(r"['\u2019]", '', label.strip().lower())  # "Anna's Air" -> annas-air
         identity = re.sub(r'[^a-z0-9]+', '-', slug).strip('-') or machine['id']
-        if not _has_connect(machine):
+        has_connect = _has_connect(machine)
+        if not has_connect:
             reason = 'it has no SpecWithCode Connect address'
         elif not _proof_bound(machine.get('managementToken')):
             reason = ('its management token is not proof-bound, so it is never sent over SpecWithCode Connect; '
@@ -415,7 +402,7 @@ def connect_machines(home):
         else:
             reason = None
         found.append({'identity': identity, 'machine': machine['id'], 'label': label,
-                      'connect': reason is None, 'reason': reason})
+                      'connect': reason is None, 'has_connect': has_connect, 'reason': reason})
     return found
 
 
@@ -434,9 +421,8 @@ def connect_command(home):
 
 
 def fleet(home=None, connect=None):
-    """{identity: host} for M4 (local), every worker in the inventory over SSH (falling back to
-    SpecWithCode Connect when M4's fleet lists it with a Connect address and a proof-bound token),
-    and every other fleet machine: Connect-only when it has that route, else Unreachable.
+    """{identity: host} for M4 (local), linked workers over Connect (pinned SSH as fallback),
+    inventory workers without a Connect address over SSH, and other fleet machines over Connect.
     `connect` is the `fleet update` command prefix (default: M4's installed CLI)."""
     home = pathlib.Path(home or pathlib.Path.home())
     command = connect if connect is not None else connect_command(home)
@@ -451,6 +437,8 @@ def fleet(home=None, connect=None):
             machines.remove(match)
         if match is not None and match['connect'] and command:
             hosts[identity] = FallbackHost(identity, ssh, ConnectHost(identity, command, match['machine']))
+        elif match is not None and match['has_connect']:
+            hosts[identity] = Unreachable(identity, match['reason'] or "M4's installed CLI cannot run fleet update")
         else:
             hosts[identity] = ssh
     for machine in machines:
@@ -925,12 +913,15 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                                    'M1 and M3 never go while M4 is updating' % (version, status.get('version')))
         errors, app_errors, lock = [], [], threading.Lock()
 
-        def update_app(identity):
+        def update_app(identity, via_connect):
             """The worker's desktop app, once its service runs `version`; a failure is reported, not raised."""
             try:
                 return desktop(identity, say)
             except desktop_app_rollout.DesktopAppError as error:
                 reason = str(error)
+                if via_connect and isinstance(error, desktop_app_rollout.DesktopSshUnavailable):
+                    say('%s: desktop app skipped: %s' % (identity, reason))
+                    return {'result': 'skipped', 'reason': reason}
             except Exception as error:  # noqa: BLE001 - an app step never drops out of the results unreported.
                 reason = 'stopped on an unexpected %s: %s' % (type(error).__name__, error)
             say('%s: desktop app not updated to %s: %s' % (identity, version, reason))
@@ -965,12 +956,12 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=115 * 60
                     errors.append('%s stopped on an unexpected %s: %s' % (identity, type(error).__name__, error))
                 return
             if desktop is not None:
-                if getattr(host, 'route', None) == 'connect':
-                    # desktop_app_update_remote.sh runs over SSH only; the service is on the version.
+                via_connect = getattr(host, 'route', None) == 'connect'
+                if via_connect and not host.app_command:
                     say('%s: desktop app skipped: needs SSH (reached over SpecWithCode Connect)' % identity)
                     app = {'result': 'skipped', 'reason': 'needs SSH'}
                 else:
-                    app = update_app(identity)
+                    app = update_app(identity, via_connect)
                 with lock:
                     result['desktopApp'] = app
 
@@ -992,10 +983,10 @@ def plan_route(host):
     if isinstance(host, Unreachable):
         return {'route': 'skipped', 'reason': host.reason}
     if isinstance(host, FallbackHost):
-        return {'route': 'ssh, then SpecWithCode Connect on no answer', 'ssh': host.ssh.command,
-                'connect': host.connect.command + [host.connect.machine, '...', '--json']}
+        return {'route': 'SpecWithCode Connect, then pinned SSH if unavailable', 'ssh': host.ssh.command,
+                'connect': host.connect.command + [host.connect.machine, '...', '--connect-only', '--json']}
     if isinstance(host, ConnectHost):
-        return {'route': 'SpecWithCode Connect', 'connect': host.command + [host.machine, '...', '--json']}
+        return {'route': 'SpecWithCode Connect', 'connect': host.command + [host.machine, '...', '--connect-only', '--json']}
     return {'route': 'local' if host.command[:1] == [SYSTEM_PYTHON] else 'ssh', 'command': host.command}
 
 

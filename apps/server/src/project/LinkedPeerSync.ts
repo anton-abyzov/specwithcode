@@ -10,10 +10,16 @@
  * over from this copy at a higher epoch, this copy gives way itself. So a
  * copy gives way within a pass of reaching the other, whichever of the two
  * holds a grant on the other, and starts no coordinator turn once it has seen
- * the takeover (`CoordinatorWakeGate`). Member lists follow the coordinator:
+ * the takeover (`CoordinatorWakeGate`). A copy that took over and could not
+ * reach the old coordinator retries within seconds rather than backing off
+ * for minutes, so the old one gives way soon after it is back. Member lists
+ * follow the coordinator, best effort and outside the status the app reads:
  * whichever side drives a pair pulls the coordinator's list from its digest
- * or pushes it (`linked-members`), best effort and outside the status the app
- * reads. Calls go over the handoff peer route with this machine's work grant
+ * or pushes it (`linked-members`); a coordinating copy also pushes it to the
+ * copies it only watches, and a copy that gave way reads its successor's list
+ * even when that copy drives the pair, so a list arrives whichever way the
+ * environment IDs sort. A pair that failed for want of a grant here is tried
+ * again within seconds of the grant appearing. Calls go over the handoff peer route with this machine's work grant
  * there, so a pair is driven only toward machines this one holds a grant on;
  * the app keeps driving the rest (`projectLink.syncStatus`).
  *
@@ -73,7 +79,12 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { forkParked } from "../serverActivation.ts";
 import { LinkedMemorySync } from "./LinkedMemorySync.ts";
 import { describeCopy, selfMemberOf } from "./LinkedPeerRoute.ts";
-import { type LinkedPair, LinkedPeerSyncState, pairKey } from "./LinkedPeerSyncState.ts";
+import {
+  type LinkedCoordinator,
+  type LinkedPair,
+  LinkedPeerSyncState,
+  pairKey,
+} from "./LinkedPeerSyncState.ts";
 import {
   coordinatorContentDigest,
   ProjectLink,
@@ -147,8 +158,15 @@ export class LinkedPeerSync extends Context.Service<
   {
     /** One pass over every pair this server drives whose backoff allows it. */
     readonly tick: Effect.Effect<void>;
+    /** A pass over only the pairs marked for a quick retry that are due. */
+    readonly urgentTick: Effect.Effect<void>;
     /** Changes whenever a link is made or removed here; cheap to poll. */
     readonly signature: Effect.Effect<string>;
+    /**
+     * Machines this one had no work grant on when a pass called them: when one
+     * now has a grant, its pairs are due and a pass starts. Cheap to poll.
+     */
+    readonly grantCheck: Effect.Effect<void>;
   }
 >()("specweave-studio/project/LinkedPeerSync") {}
 
@@ -210,6 +228,21 @@ const sameMemo = (memo: Memo | undefined, own: string | null, peer: string | nul
 const MEMBER_HOLD_MS = 10 * 60_000;
 /** Held member list syncs kept; more pairs than any real fleet has. */
 const MEMBER_HOLDS_MAX = 4096;
+/**
+ * How soon the copy that took over tries again to make the old coordinator
+ * give way after a failed attempt, instead of the minutes a pair backs off.
+ */
+export const SUPERSEDE_RETRY_MS = 5_000;
+/** The shortest the loop sleeps before a quick retry. */
+const URGENT_MIN_WAIT_MS = 1_000;
+
+/**
+ * A call that failed on this machine, never got an answer, or was refused for
+ * want of a grant (which can come back at any time): not a refusal of the lists.
+ */
+const notRefused = (error: unknown) =>
+  error instanceof HandoffPeerError &&
+  (error.local === true || error.code === "unreachable" || error.code === "needs_grant");
 
 const memberRefs = (members: ReadonlyArray<LogicalProjectMember>) =>
   [...new Set(members.map(memberRef))].toSorted();
@@ -222,6 +255,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
     const memos = new Map<string, PairMemo>();
     /** Machines that answered `linked-digest`: they drive their own pairs. */
     const current = new Set<string>();
+    /** Machines a pass could not call for want of a work grant there. */
+    const ungranted = new Set<EnvironmentId>();
     const lock = yield* Semaphore.make(1);
 
     /** The copies of `project` this server pairs with, and the side it plays in each. */
@@ -244,14 +279,23 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
           binding.predecessor.projectId === member.projectId;
         // A coordinating copy reads the copies it does not drive each pass, to see a takeover of it.
         const watch = !drive && !successor && coordinates;
+        // A copy that gave way reads its successor's list, though that copy drives the pair.
+        const follow =
+          !drive &&
+          !successor &&
+          !watch &&
+          binding?.state === "transferred" &&
+          binding.successor !== undefined &&
+          logicalProjectMemberKey(binding.successor) === logicalProjectMemberKey(member) &&
+          !project.workspaceSettings?.archived;
         const legacyOnly = watch && !current.has(member.environmentId);
-        if (!drive && !successor && !watch) return [];
+        if (!drive && !successor && !watch && !follow) return [];
         const kinds: LinkedServerSyncKind[] = [
           ...(successor || watch ? (["supersede"] as const) : []),
           ...(drive ? (["replica", "memory", "plan"] as const) : []),
           ...(legacyOnly ? (["memory"] as const) : []),
         ];
-        return [{ identity, self, member, kinds, legacyOnly, successor }];
+        return [{ identity, self, member, kinds, legacyOnly, successor, follow }];
       });
     };
 
@@ -483,7 +527,10 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
      * lists as they were: not tried again until either list changes or the
      * hold runs out, so a list the peer keeps refusing costs one call per hold.
      */
-    const memberHolds = new Map<string, { readonly lists: string; readonly until: number }>();
+    const memberHolds = new Map<
+      string,
+      { readonly lists: string; readonly until: number; readonly peer: EnvironmentId }
+    >();
 
     /**
      * Member lists follow the coordinator, along each copy's own successor: a
@@ -498,7 +545,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
       readonly identityId: string;
       readonly self: LogicalProjectMember;
       readonly member: LogicalProjectMember;
-      readonly own: LinkedDigestResponse;
+      /** This copy's binding as it stands. */
+      readonly ownBinding: LinkedDigestResponse["binding"];
       readonly peer: LinkedDigestResponse;
       readonly pair: LinkedPair;
       readonly ref: {
@@ -508,7 +556,8 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
       };
     }) =>
       Effect.gen(function* () {
-        const { project, own, peer } = input;
+        const { project, peer } = input;
+        const own = { binding: input.ownBinding };
         const held = project.workspaceSettings?.logicalProject?.members;
         if (held === undefined || peer.members === undefined || sameMemberSet(held, peer.members))
           return;
@@ -560,11 +609,21 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         const outcome = yield* Effect.result(call);
         if (Result.isFailure(outcome)) {
           memberHolds.delete(key);
+          // No grant here yet, a grant refused there, or no answer: the pair's own schedule
+          // tries again, not a hold, so a grant issued again carries the list within a pass.
+          if (notRefused(outcome.failure)) {
+            yield* Effect.logDebug("linked member list sync failed", { error: outcome.failure });
+            return;
+          }
           if (memberHolds.size >= MEMBER_HOLDS_MAX) {
             const oldest = memberHolds.keys().next();
             if (!oldest.done) memberHolds.delete(oldest.value);
           }
-          memberHolds.set(key, { lists, until: now + MEMBER_HOLD_MS });
+          memberHolds.set(key, {
+            lists,
+            until: now + MEMBER_HOLD_MS,
+            peer: input.member.environmentId,
+          });
           yield* Effect.logDebug("linked member list sync failed", { error: outcome.failure });
           return;
         }
@@ -584,7 +643,11 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
       readonly legacyOnly: boolean;
       /** This copy took over from the peer's: it drives giving way. */
       readonly successor: boolean;
+      /** This copy gave way to the peer's, which drives the pair: only lists are read. */
+      readonly follow: boolean;
       readonly pair: LinkedPair;
+      /** Called once the peer's digest was read in this pass. */
+      readonly reached: () => void;
       readonly labels: ReadonlyMap<string, string>;
       readonly selfLabel: string;
     }) =>
@@ -612,19 +675,44 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
             error: theirs.failure,
           });
           const error = syncErrorOf(theirs.failure);
+          const failure = theirs.failure;
+          if (
+            failure instanceof HandoffPeerError &&
+            failure.code === "needs_grant" &&
+            failure.local === true
+          )
+            ungranted.add(member.environmentId);
           // An older machine still answers the memory paths: memory moves, the rest stays the app's.
           const memory =
             error === "outdated" && kinds.includes("memory")
               ? yield* syncMemory(selfMember, peerMember)
               : error;
+          // A pair that only reads lists has no kind to show, but still backs off (`tick`).
+          if (input.follow) return [{ kind: "supersede" as const, error }];
           return kinds.map((kind) => ({ kind, error: kind === "memory" ? memory : error }));
         }
         current.add(member.environmentId);
+        ungranted.delete(member.environmentId);
+        input.reached();
         // The peer took over from this copy: give way now, whoever drives the pair.
         const takenOver = yield* yieldToTakeover(project, identityId, self, member, theirs.success);
-        // That machine drives its own pairs: only the watch for a takeover is left to this one.
-        if (!kinds.includes("replica") && !input.successor)
-          return [{ kind: "supersede" as const, error: takenOver }];
+        // That machine drives its own pairs: only the watch for a takeover is left to this one,
+        // and the member list: a coordinator pushes it to a copy that gave way to it (the copy
+        // driving the pair may hold no grant here), and a copy that gave way reads it.
+        if (!kinds.includes("replica") && !input.successor) {
+          if (takenOver === null)
+            yield* syncMembers({
+              project,
+              identityId,
+              self,
+              member,
+              ownBinding: project.workspaceSettings?.coordinatorBinding ?? null,
+              peer: theirs.success,
+              pair,
+              ref,
+            });
+          return input.follow ? [] : [{ kind: "supersede" as const, error: takenOver }];
+        }
         const ours = yield* deps.describe(project, self).pipe(Effect.result);
         if (Result.isFailure(ours))
           return kinds.map((kind) => ({ kind, error: "failed" as const }));
@@ -674,7 +762,16 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
                   };
           });
 
-        yield* syncMembers({ project, identityId, self, member, own, peer, pair, ref });
+        yield* syncMembers({
+          project,
+          identityId,
+          self,
+          member,
+          ownBinding: own.binding,
+          peer,
+          pair,
+          ref,
+        });
 
         if (kinds.includes("supersede") && !input.successor)
           outcomes.push({ kind: "supersede", error: takenOver });
@@ -804,69 +901,145 @@ export const makeLinkedPeerSync = (deps: LinkedPeerSyncDeps) =>
         return outcomes;
       });
 
-    const tick = Effect.gen(function* () {
-      if (yield* deps.isHeld) return;
-      const targets = yield* deps.targets;
-      const labels = new Map<string, string>(targets.map((t) => [t.environmentId, t.label]));
-      const configured = new Set<string>(labels.keys());
-      // A machine that could not be reached and answers again is retried in this pass.
-      yield* Effect.forEach(
-        (yield* state.unreachable(yield* Clock.currentTimeMillis)).filter((environmentId) =>
-          configured.has(environmentId),
-        ),
-        (environmentId) =>
-          peers
-            .reachable(environmentId)
-            .pipe(Effect.flatMap((up) => (up ? state.peerSeen(environmentId) : Effect.void))),
-        { concurrency: 4, discard: true },
-      );
-      const selfLabel = yield* deps.selfLabel;
-      const kept: LinkedPair[] = [];
-      for (const project of yield* deps.listProjects)
-        for (const { identity, self, member, kinds, legacyOnly, successor } of pairsOf(
-          project,
-          configured,
-        )) {
-          const pair: LinkedPair = {
-            projectId: project.id as ProjectId,
-            peerEnvironmentId: member.environmentId,
-            peerProjectId: member.projectId,
-          };
-          kept.push(pair);
-          // A hold that begins mid-pass stops it before the next pair.
-          if (yield* deps.isHeld) continue;
-          if (!(yield* state.due(pair, yield* Clock.currentTimeMillis))) continue;
-          const outcomes = yield* syncPair({
+    const pass = (onlyUrgent: boolean) =>
+      Effect.gen(function* () {
+        if (yield* deps.isHeld) return;
+        const targets = yield* deps.targets;
+        const labels = new Map<string, string>(targets.map((t) => [t.environmentId, t.label]));
+        const configured = new Set<string>(labels.keys());
+        // A machine dropped from the fleet is not asked about its grant any more.
+        for (const environmentId of ungranted)
+          if (!configured.has(environmentId)) ungranted.delete(environmentId);
+        // A machine that could not be reached and answers again is retried in this pass.
+        yield* Effect.forEach(
+          (yield* state.unreachable(yield* Clock.currentTimeMillis)).filter((environmentId) =>
+            configured.has(environmentId),
+          ),
+          (environmentId) =>
+            peers
+              .reachable(environmentId)
+              .pipe(Effect.flatMap((up) => (up ? state.peerSeen(environmentId) : Effect.void))),
+          { concurrency: 4, discard: true },
+        );
+        const selfLabel = yield* deps.selfLabel;
+        const seq = yield* state.passStarted;
+        const kept: LinkedPair[] = [];
+        const reached = new Set<string>();
+        const projects = yield* deps.listProjects;
+        for (const project of projects)
+          for (const { identity, self, member, kinds, legacyOnly, successor, follow } of pairsOf(
             project,
-            identityId: identity.id,
-            self,
-            member,
-            kinds,
-            legacyOnly,
-            successor,
-            pair,
-            labels,
-            selfLabel,
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logDebug("linked peer sync pass failed", { cause }).pipe(
-                Effect.as(kinds.map((kind) => ({ kind, error: "failed" as const }))),
+            configured,
+          )) {
+            const pair: LinkedPair = {
+              projectId: project.id as ProjectId,
+              peerEnvironmentId: member.environmentId,
+              peerProjectId: member.projectId,
+            };
+            kept.push(pair);
+            // A hold that begins mid-pass stops it before the next pair.
+            if (yield* deps.isHeld) continue;
+            if (!(yield* state.due(pair, yield* Clock.currentTimeMillis))) continue;
+            if (onlyUrgent && !(yield* state.urgent(pair))) continue;
+            const outcomes = yield* syncPair({
+              project,
+              identityId: identity.id,
+              self,
+              member,
+              kinds,
+              legacyOnly,
+              successor,
+              follow,
+              pair,
+              reached: () => reached.add(pairKey(pair)),
+              labels,
+              selfLabel,
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logDebug("linked peer sync pass failed", { cause }).pipe(
+                  Effect.as(kinds.map((kind) => ({ kind, error: "failed" as const }))),
+                ),
               ),
-            ),
+            );
+            // The old coordinator gives way within seconds of answering again, not minutes.
+            yield* follow
+              ? state.record(pair, yield* Clock.currentTimeMillis, [], {
+                  failed: outcomes.some((outcome) => outcome.error !== null),
+                })
+              : state.record(
+                  pair,
+                  yield* Clock.currentTimeMillis,
+                  outcomes,
+                  successor &&
+                    outcomes.some(
+                      (outcome) => outcome.kind === "supersede" && outcome.error === "unreachable",
+                    )
+                    ? { retryWithinMs: SUPERSEDE_RETRY_MS }
+                    : undefined,
+                );
+          }
+        // Coordinators of linked copies here, and those whose every other copy this pass reached.
+        const coordinators: Array<LinkedCoordinator> = [];
+        const checked = new Set<ProjectId>();
+        for (const project of projects) {
+          const identity = project.workspaceSettings?.logicalProject;
+          const self = selfMemberOf(project, selfEnvironmentId);
+          if (
+            identity === undefined ||
+            self === undefined ||
+            isPersonalAssistantProject(project) ||
+            project.workspaceSettings?.coordinatorBinding?.state !== "active" ||
+            project.workspaceSettings?.archived
+          )
+            continue;
+          const others = identity.members.filter(
+            (member) => member.environmentId !== selfEnvironmentId,
           );
-          yield* state.record(pair, yield* Clock.currentTimeMillis, outcomes);
+          if (others.length === 0) continue;
+          coordinators.push({
+            projectId: project.id as ProjectId,
+            coordinatorThreadId: self.coordinatorThreadId,
+          });
+          // A copy this machine cannot ask (not in its fleet, no grant there) is still waited for,
+          // up to RESUME_HOLD_MS: it may hold a grant here and tell this one it took over.
+          if (
+            others.every((member) =>
+              reached.has(
+                pairKey({
+                  projectId: project.id as ProjectId,
+                  peerEnvironmentId: member.environmentId,
+                  peerProjectId: member.projectId,
+                }),
+              ),
+            )
+          )
+            checked.add(project.id as ProjectId);
         }
-      yield* state.retain(kept);
-      const keys = new Set(kept.map(pairKey));
-      for (const key of memos.keys()) if (!keys.has(key)) memos.delete(key);
-    }).pipe(
-      lock.withPermits(1),
-      Effect.catchCause((cause) =>
-        Effect.logDebug("Linked copies could not be synced between machines", { cause }),
-      ),
-    );
+        yield* state.passFinished(seq, coordinators, checked);
+        yield* state.retain(kept);
+        const keys = new Set(kept.map(pairKey));
+        for (const key of memos.keys()) if (!keys.has(key)) memos.delete(key);
+      }).pipe(
+        lock.withPermits(1),
+        Effect.catchCause((cause) =>
+          Effect.logDebug("Linked copies could not be synced between machines", { cause }),
+        ),
+      );
+    const tick = pass(false);
+    const urgentTick = pass(true);
 
-    return LinkedPeerSync.of({ tick, signature });
+    const grantCheck = Effect.gen(function* () {
+      for (const environmentId of [...ungranted]) {
+        if (!(yield* peers.reachable(environmentId))) continue;
+        ungranted.delete(environmentId);
+        // Lists refused for want of that grant are sent again at once.
+        for (const [key, hold] of [...memberHolds])
+          if (hold.peer === environmentId) memberHolds.delete(key);
+        yield* state.retryPeer(environmentId);
+      }
+    }).pipe(Effect.catchCause((cause) => Effect.logDebug("Linked grant check failed", { cause })));
+
+    return LinkedPeerSync.of({ tick, urgentTick, signature, grantCheck });
   });
 
 /** Wires the driver to this server's projects, services and peers. */
@@ -1010,21 +1183,32 @@ export const start = Effect.gen(function* () {
   const state = yield* LinkedPeerSyncState;
   const loop = Effect.gen(function* () {
     let seen = yield* sync.signature;
+    let quick = false;
     while (true) {
       const woken = yield* state.nextWake;
-      yield* sync.tick;
+      // A quick retry runs only the pairs waiting for one, not every pair again.
+      yield* quick ? sync.urgentTick : sync.tick;
       seen = yield* sync.signature;
       const linkChanged = Effect.gen(function* () {
         while (true) {
           yield* Effect.sleep(Duration.millis(LINK_WATCH_MS));
           const next = yield* sync.signature;
           if (next !== seen) return;
+          // A grant that appeared wakes the loop through the sync state.
+          yield* sync.grantCheck;
         }
       });
-      yield* Effect.raceAll([
-        Effect.sleep(Duration.millis(LINKED_PAIR_SYNC_MS)),
-        woken,
-        linkChanged,
+      const urgentAt = yield* state.nextUrgentAt;
+      const now = yield* Clock.currentTimeMillis;
+      // Never under a second: a quick retry a held pass skipped stays due, and must not spin.
+      const wait =
+        urgentAt === null
+          ? LINKED_PAIR_SYNC_MS
+          : Math.min(LINKED_PAIR_SYNC_MS, Math.max(URGENT_MIN_WAIT_MS, urgentAt - now));
+      quick = yield* Effect.raceAll([
+        Effect.sleep(Duration.millis(wait)).pipe(Effect.as(wait < LINKED_PAIR_SYNC_MS)),
+        woken.pipe(Effect.as(false)),
+        linkChanged.pipe(Effect.as(false)),
       ]);
     }
   });

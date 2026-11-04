@@ -136,6 +136,7 @@ import {
 } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 import * as Exit from "effect/Exit";
@@ -596,6 +597,10 @@ function isLimitRecoveryResume(command: {
 }): boolean {
   return command.creationSource === "server" && command.commandId.startsWith("limit-resume:");
 }
+
+/** How often a queue a resume hold refused is looked at again, and how many times at most. */
+const RESUME_QUEUE_RETRY_MS = 2_000;
+const RESUME_QUEUE_RETRIES = 12;
 
 /**
  * Provider fallback's continuations of a limit stop on the same provider:
@@ -1714,6 +1719,52 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  // Threads whose queue a resume hold refused: each is looked at again every
+  // few seconds, a bounded number of times, which outlasts the hold.
+  const resumeQueueRetries = new Map<ThreadId, number>();
+  const startQueueAfterResume = (
+    threadId: ThreadId,
+    failedRunId: RunId | undefined,
+  ): Effect.Effect<void> =>
+    Effect.gen(function* () {
+      const tries = resumeQueueRetries.get(threadId);
+      if (tries !== undefined && tries < 0) return;
+      const attempt = (tries ?? 0) + 1;
+      if (attempt > RESUME_QUEUE_RETRIES) {
+        resumeQueueRetries.delete(threadId);
+        return;
+      }
+      // Negative while a retry waits, so a second refusal meanwhile adds none.
+      resumeQueueRetries.set(threadId, -attempt);
+      yield* Effect.forkDetach(
+        Effect.sleep(Duration.millis(RESUME_QUEUE_RETRY_MS)).pipe(
+          Effect.andThen(Effect.sync(() => resumeQueueRetries.set(threadId, attempt))),
+          Effect.andThen(
+            threadDispatch.withLock(
+              threadId,
+              startNextQueuedRun(threadId, failedRunId === undefined ? undefined : { failedRunId }),
+            ),
+          ),
+          Effect.andThen(
+            Effect.sync(() => {
+              // Not refused again: the queue started or no longer waits on the hold.
+              if (resumeQueueRetries.get(threadId) === attempt) resumeQueueRetries.delete(threadId);
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.sync(() => resumeQueueRetries.delete(threadId)).pipe(
+              Effect.andThen(
+                Effect.logWarning("Failed to start a queued V2 run after a resume hold", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+
   /**
    * The queued run as it starts on `selection`. A run that follows the thread
    * onto another selection moves to the thread's root provider thread for that
@@ -1812,7 +1863,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
       // A fenced handoff copy keeps its queue; the machine running it now takes the work.
       if ((yield* handoffGate.check(threadId)) !== null) return;
-      if ((yield* coordinatorGate.check(threadId)) !== null) return;
+      const coordinatorRefusal = yield* coordinatorGate.check(threadId);
+      if (coordinatorRefusal !== null) {
+        // A resume hold ends by itself within seconds, with no queue transition to start it.
+        if (coordinatorRefusal === CoordinatorWakeGate.COORDINATOR_RESUME_REFUSAL)
+          yield* startQueueAfterResume(threadId, options?.failedRunId);
+        return;
+      }
       const projection = yield* readCommandProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||

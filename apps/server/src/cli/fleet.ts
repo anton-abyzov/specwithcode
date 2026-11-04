@@ -526,6 +526,10 @@ const updateCommand = Command.make("update", {
     Flag.withDescription("Cancel the install request made at this time (its installRequestedAt)."),
     Flag.optional,
   ),
+  connectOnly: Flag.Boolean("connect-only").pipe(
+    Flag.withDescription("Use only the SpecWithCode Connect address for this operation."),
+    Flag.withDefault(false),
+  ),
   json: Flag.Boolean("json").pipe(
     Flag.withDescription(
       "Print one JSON line, shaped like update_request.py's, and exit 1 on failure.",
@@ -576,7 +580,10 @@ const updateCommand = Command.make("update", {
       const outcome = yield* Effect.tryPromise({
         try: () =>
           runFleetUpdate({
-            link: makeFleetLink({ fetch: globalThis.fetch, baseDir }),
+            link: {
+              ...makeFleetLink({ fetch: globalThis.fetch, baseDir }),
+              connectOnly: flags.connectOnly,
+            },
             target,
             coordinatorEnvironmentId,
             action,
@@ -586,7 +593,7 @@ const updateCommand = Command.make("update", {
         catch: (error) =>
           error instanceof FleetUpdateFailure
             ? error
-            : new FleetUpdateFailure("unreachable", "The machine could not be reached."),
+            : new FleetUpdateFailure("failed", "Could not run the fleet update."),
       }).pipe(Effect.result);
       if (outcome._tag === "Failure")
         return yield* fail(outcome.failure.reason, outcome.failure.message);

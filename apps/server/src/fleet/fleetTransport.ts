@@ -102,6 +102,7 @@ export interface FleetLink {
   readonly proofKey: () => Promise<FleetProofKey | null>;
   readonly book: FleetAddressBook;
   readonly now?: () => number;
+  readonly connectOnly?: boolean;
   /** The rules this machine runs under. Tests provide another value. */
   readonly teamRules?: () => TeamRulesState;
 }
@@ -216,10 +217,15 @@ export async function reachFleetMachine(
       teamRulesMachineRefusal(rules, { fingerprint: undefined })?.message,
     );
   }
-  const connectOff = teamRulesReachOff(linkRules(link), "connect");
+  const connectRules = linkRules(link);
+  const connectOff = teamRulesReachOff(connectRules, "connect");
+  if (options.token !== undefined && link.connectOnly && connectOff)
+    throw new FleetError("team-rules", teamRulesReachRefusal(connectRules, "connect")?.message);
   const configured = fleetAddresses(target).filter(
     (address) =>
-      !options.exclude?.has(address.origin) && !(connectOff && address.transport === "connect"),
+      !options.exclude?.has(address.origin) &&
+      (!link.connectOnly || address.transport === "connect") &&
+      !(connectOff && address.transport === "connect"),
   );
   const preferred = link.book.preferred(key, now);
   const ordered = [
@@ -246,16 +252,19 @@ export async function reachFleetMachine(
     let machineName: string;
     let peerRules: FleetPeerRules;
     try {
-      const descriptor = await checkIdentity(link.fetch, {
-        url: address.origin,
-        environmentId: target.environmentId,
-      });
+      const descriptor = await checkIdentity(
+        link.fetch,
+        { url: address.origin, environmentId: target.environmentId },
+        link.connectOnly,
+      );
       machineName = descriptor.label;
       peerRules = {
         ...(descriptor.teamRules === undefined ? {} : { teamRules: descriptor.teamRules }),
         carried: descriptor.capabilities.teamRulesCarried === true,
       };
     } catch (error) {
+      if (link.connectOnly && error instanceof FleetError && error.kind === "forbidden")
+        throw error;
       if (error instanceof FleetError && error.kind === "identity-mismatch") mismatch = true;
       link.book.forget(key, address.origin);
       continue;
@@ -376,7 +385,11 @@ export async function fleetRequest(
     } catch {
       link.book.forget(key, address.origin);
       exclude.add(address.origin);
-      if (idempotent && fleetAddresses(target).some((entry) => !exclude.has(entry.origin)))
+      if (
+        idempotent &&
+        !link.connectOnly &&
+        fleetAddresses(target).some((entry) => !exclude.has(entry.origin))
+      )
         continue;
       throw new FleetError("unreachable");
     }

@@ -1,5 +1,5 @@
 """The desktop app on M1 and M3: fleet_rollout updates it once it has confirmed that worker's service on
-the version (DesktopApps), over the same pinned fleet ssh as the service request.
+the version (DesktopApps), over pinned fleet SSH.
 
 The worker runs desktop_app_update_remote.sh, streamed to `/bin/bash -s` with the version, the zip's
 expected sha256 and the public mirror in a preamble. It downloads SpecWithCode-<v>-arm64.zip from the
@@ -32,6 +32,10 @@ VERSION = re.compile(r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0
 HEX64 = re.compile(r'[0-9a-f]{64}')
 HEX40 = re.compile(r'[0-9a-f]{40}')
 REPOSITORY = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}')
+SSH_CONNECT_FAILURE = re.compile(
+    r"ssh: (?:connect to host \S+ port \d+: (?:Operation timed out|Connection timed out|"
+    r"Connection refused|No route to host|Network is unreachable)|Could not resolve hostname \S+: .+)"
+)
 SUMS_LINE = re.compile(r'([0-9a-fA-F]{64}) [ *](\S+)')
 PUBLIC_REPO = 'anton-abyzov/specwithcode'  # release.sh's PUBLIC_REPO; RELEASE_PUBLIC_REPO overrides both.
 STAGING_ROOT = '~/.specwithcode/release-staging'  # release.sh's; RELEASE_STAGING_ROOT overrides both.
@@ -47,6 +51,10 @@ SAID = {'already-current': 'already on %(after)s',
 
 class DesktopAppError(Exception):
     pass
+
+
+class DesktopSshUnavailable(DesktopAppError):
+    """SSH could not connect, so no desktop command reached the worker."""
 
 
 def zip_name(version):
@@ -247,8 +255,8 @@ class DesktopApps(object):
         if last and last[-1].startswith('FAIL '):
             raise DesktopAppError(last[-1][len('FAIL '):])
         tail = lines[-1] if lines else 'no output'
-        if code == 255:
-            raise DesktopAppError('could not be reached over ssh: %s' % tail)
+        if code == 255 and SSH_CONNECT_FAILURE.fullmatch(tail):
+            raise DesktopSshUnavailable('could not be reached over ssh: %s' % tail)
         raise DesktopAppError('exit %d: %s' % (code, tail))
 
     def run(self, command, program, emit):

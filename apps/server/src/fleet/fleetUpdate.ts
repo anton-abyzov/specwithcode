@@ -47,11 +47,11 @@ import type {
   StudioFleetUpdateInput,
   StudioFleetUpdateMethod,
   StudioFleetUpdatePhase,
-  StudioFleetUpdateRefusal,
   StudioFleetUpdateRequestRecord,
   StudioFleetUpdateResult,
   StudioFleetUpdateStatus,
 } from "@specweave-studio/contracts/studioFleet";
+import { StudioFleetUpdateRefusal } from "@specweave-studio/contracts/studioFleet";
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHECKSUMS_FILE,
@@ -93,7 +93,12 @@ import { installedManagedUpdateHelper } from "../managedUpdates/ManagedUpdatesSe
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceUpdatePreparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
 import { checkIdentity, FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
-import { type FleetLink, fleetRequest, reachFleetMachine } from "./fleetTransport.ts";
+import {
+  type FleetLink,
+  fleetReachMayBeRemembered,
+  fleetRequest,
+  reachFleetMachine,
+} from "./fleetTransport.ts";
 
 // ---------------------------------------------------------------------------
 // Shared rules
@@ -936,7 +941,7 @@ const STATUS_KEYS = [
 const transportOf = (origin: { readonly transport: string }) =>
   origin.transport === "connect" ? "connect" : "tailnet";
 
-const fleetFailureOf = (error: unknown): FleetUpdateFailure => {
+const fleetFailureOf = (error: unknown, link: FleetLink): FleetUpdateFailure => {
   if (error instanceof FleetUpdateFailure) return error;
   if (error instanceof FleetError) {
     const reason =
@@ -944,15 +949,21 @@ const fleetFailureOf = (error: unknown): FleetUpdateFailure => {
       error.kind === "connect-key-missing" ||
       error.kind === "identity-mismatch"
         ? error.kind
-        : error.kind === "pairing-unavailable" || error.kind === "forbidden"
+        : error.kind === "pairing-unavailable" ||
+            error.kind === "forbidden" ||
+            error.kind === "team-rules"
           ? "unauthorized"
-          : "unreachable";
+          : error.kind === "unreachable"
+            ? "unreachable"
+            : "failed";
+    if (reason === "unreachable" && link.connectOnly && !fleetReachMayBeRemembered(link))
+      return new FleetUpdateFailure(
+        "unauthorized",
+        "The machine could not be reached over Connect to prove it meets Team Rules.",
+      );
     return new FleetUpdateFailure(reason, error.message);
   }
-  return new FleetUpdateFailure(
-    "unreachable",
-    "This machine is unavailable over Connect or Tailscale.",
-  );
+  return new FleetUpdateFailure("failed", "Could not run the fleet update.");
 };
 
 /** The status line for a machine running the fleet update endpoint. */
@@ -1002,8 +1013,12 @@ async function refusalOf(response: Response): Promise<FleetUpdateFailure> {
       "unauthorized",
       `The management token saved for this machine is not allowed to update it (${message}). On that machine choose Join a main machine again and add the new line here.`,
     );
-  if (record(body) && body._tag === "StudioFleetUpdateError" && typeof body.reason === "string")
-    return new FleetUpdateFailure(body.reason as StudioFleetUpdateRefusal, message);
+  if (
+    record(body) &&
+    body._tag === "StudioFleetUpdateError" &&
+    Schema.is(StudioFleetUpdateRefusal)(body.reason)
+  )
+    return new FleetUpdateFailure(body.reason, message);
   return new FleetUpdateFailure("failed", message);
 }
 
@@ -1057,12 +1072,13 @@ export async function runFleetUpdate(input: FleetUpdateClientInput): Promise<Fle
   let descriptor;
   try {
     reached = await reachFleetMachine(link, target, { token });
-    descriptor = await checkIdentity(link.fetch, {
-      url: reached.origin,
-      environmentId: target.environmentId,
-    });
+    descriptor = await checkIdentity(
+      link.fetch,
+      { url: reached.origin, environmentId: target.environmentId },
+      link.connectOnly,
+    );
   } catch (error) {
-    throw fleetFailureOf(error);
+    throw fleetFailureOf(error, link);
   }
   const transport = transportOf(reached);
   const capabilities = descriptor.capabilities as Record<string, unknown>;
@@ -1124,7 +1140,7 @@ async function runOverEndpoint(
         { method: "GET", token, idempotent: true, timeoutMs: 75_000 },
       ));
     } catch (error) {
-      throw fleetFailureOf(error);
+      throw fleetFailureOf(error, link);
     }
     if (!response.ok) throw await refusalOf(response);
     const body = await answerOf(response);
@@ -1158,7 +1174,7 @@ async function runOverEndpoint(
       timeoutMs: 75_000,
     }));
   } catch (error) {
-    throw fleetFailureOf(error);
+    throw fleetFailureOf(error, link);
   }
   if (!response.ok) throw await refusalOf(response);
   const body = await answerOf(response);
@@ -1282,7 +1298,7 @@ async function runLegacyBootService(
       timeoutMs: 20_000,
     }));
   } catch (error) {
-    throw fleetFailureOf(error);
+    throw fleetFailureOf(error, link);
   }
   if (!response.ok) throw await refusalOf(response);
   const body = await answerOf(response);
