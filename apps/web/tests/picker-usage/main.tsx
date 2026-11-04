@@ -19,6 +19,8 @@ import {
 } from "../../src/components/studio/shell/HostLimits";
 import { fallbackModelState } from "../../src/components/chat/ModelStateTag";
 import type { HostLimitBlock } from "../../src/studio/hostLimitsModel";
+import type { ProviderQuickSetup } from "../../src/hooks/useProviderQuickSetup";
+import type { ProviderInstanceEntry } from "../../src/providerInstances";
 import "../../src/components/studio/shell/usage.css";
 import "./fixture.css";
 
@@ -264,6 +266,37 @@ const scenarioProviders = (scenario: string): ServerProvider[] => [
       : {},
   ),
 ];
+
+function unpreparedQuickSetup(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  install: () => void,
+  pending: ReadonlySet<string> = new Set(),
+): ProviderQuickSetup {
+  const grok = entries.find((entry) => entry.instanceId === "grok");
+  return {
+    installable: new Map([["github-copilot-cm" as ProviderInstanceId, "github-copilot-cli"]]),
+    elsewhere: grok
+      ? [
+          {
+            identity: "driver:grok-elsewhere",
+            driverKind: grok.driverKind,
+            displayName: "Gemini CLI",
+            agentId: "gemini",
+            entry: grok,
+            machineLabels: ["Anton's MacBook M4MAX"],
+          },
+        ]
+      : [],
+    readyOn: (entry) => (entry.instanceId === "github-copilot-cm" ? ["Anton's MacBook M4MAX"] : []),
+    canManage: true,
+    pending,
+    errors: new Map(),
+    install,
+    enableHere: () => {},
+    machineLabel: "M1",
+    remote: true,
+  };
+}
 
 const pickerData = (scenario: string) => {
   const entries = deriveProviderInstanceEntries(scenarioProviders(scenario));
@@ -533,6 +566,15 @@ function Composer(props: {
       : null,
     surface: "thread",
   }));
+  // The M1 case of November 4: Copilot set up but never prepared here, ready on
+  // another machine, plus providers that only the other machine runs.
+  const [quickSetup, setQuickSetup] = useState<ProviderQuickSetup | undefined>(() =>
+    props.scenario === "unprepared" ? unpreparedQuickSetup(entries, () => {}) : undefined,
+  );
+  const installCopilot = () =>
+    setQuickSetup(
+      unpreparedQuickSetup(entries, () => {}, new Set(["github-copilot-cm" as ProviderInstanceId])),
+    );
   return (
     <div className="flex flex-col gap-1">
       {props.label ? <p className="text-xs text-muted-foreground">{props.label}</p> : null}
@@ -549,6 +591,9 @@ function Composer(props: {
           usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
           onOpenProviderSetup={() => {}}
           onManageProviders={() => {}}
+          {...(quickSetup
+            ? { quickSetup: { ...quickSetup, install: () => installCopilot() } }
+            : {})}
           {...(scenario === "limits" ? { secondaryView: limitsView } : {})}
           getModelDisabledReason={
             props.scenario === "locked"

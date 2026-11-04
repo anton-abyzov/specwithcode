@@ -228,7 +228,7 @@ check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -
 DRY_HOME="$WORK/dry-home"
 mkdir -p "$DRY_HOME"
 STUB_ENV=(HOME="$DRY_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=)
-EXPECTED_ORDER="preflight trees prev bump candidate server stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
+EXPECTED_ORDER="preflight trees prev bump candidate server stage1 build bundle sign verify helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
 dry_ok() {
   run 0 9.9.9 --dry-run || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$EXPECTED_ORDER" ] || return 1
@@ -240,13 +240,14 @@ dry_ok() {
     has "verify-sums --dir $DRY_HOME/.specwithcode/release-staging/9.9.9/prev --digests" &&
     has 'fleet-feed: stop unless v9.9.9 is published on anton-abyzov/specwithcode' &&
     has 'public-identity: (in ' && has 'same-sums-public: stop unless' &&
-    has 'fleet-linux: (in ' && has 'linux_rollout.py --version 9.9.9' || return 1
+    has 'fleet-linux: (in ' && has 'linux_rollout.py --version 9.9.9' &&
+    has 'verify-app: (in ' && has 'verify-built-app.mjs --mode all --archive ' || return 1
   run 0 9.9.9 --dry-run --no-project-migrations || return 1
   lacks 'allow-project-migrations' && has '--arg=--allow-existing-browser-heartbeat'
 }
 check 'dry-run lists every stage in order and both plan flags unless told otherwise' dry_ok
 check 'dry-run writes nothing under HOME' test -z "$(find "$DRY_HOME" -mindepth 1 -print -quit)"
-CI_ORDER="preflight trees prev bump candidate stage1 server build bundle sign helpers plan drafts server-wait publish-private publish-public merge"
+CI_ORDER="preflight trees prev bump candidate stage1 server build bundle sign verify helpers plan drafts server-wait publish-private publish-public merge"
 dry_ci_ok() {
   run 0 9.9.9 --dry-run --ci || return 1
   [ "$(sed -n 's/^> \([a-z0-9-]*\).*/\1/p' "$LAST_OUT" | tr '\n' ' ' | sed 's/ $//')" = "$CI_ORDER" ] &&
@@ -295,7 +296,7 @@ BEFORE="$(lines)"
 resume_ok() {
   run 0 1.2.0 --resume --stop-after drafts || return 1
   has '= prev: done' && has '= stage1: done' && has '= bundle: done' && has 'Stopped after drafts' || return 1
-  [ "$(stages_after "$BEFORE")" = "sign helpers plan drafts " ] || return 1
+  [ "$(stages_after "$BEFORE")" = "sign verify helpers plan drafts " ] || return 1
   [ -f "$STAGE/markers/drafts" ] && [ ! -f "$STAGE/markers/server-wait" ]
 }
 check '--resume continues at the failed stage and --stop-after stops' resume_ok
@@ -320,7 +321,7 @@ BEFORE="$(lines)"
 candidate_ok() {
   run 0 1.2.0 --resume --stop-after drafts || return 1
   has 'rerunning last attempt'"'"'s failures first: packages_shared' || return 1
-  [ "$(stages_after "$BEFORE")" = "stage1 build bundle sign helpers plan drafts " ] || return 1
+  [ "$(stages_after "$BEFORE")" = "stage1 build bundle sign verify helpers plan drafts " ] || return 1
   wait_for_server "$SHA_B" || return 1
   # The suite starts beside stage 1, so the failed attempt above already ran it for this candidate.
   awk -F '\t' -v from="$BEFORE_FIX" 'NR > from && $1 == "server"' "$STUB_LOG" | grep -q -- "--changed $SHA_A" &&
@@ -689,7 +690,7 @@ rm -rf "$STAGE"
 ci_release_ok() {
   run 0 1.6.0 --ci || return 1
   has 'SpecWithCode 1.6.0 is released.' && has 'skipped (--ci)' || return 1
-  [ "$(stages_after 0)" = "prev bump candidate stage1 build bundle sign helpers plan drafts publish-private publish-public merge " ] &&
+  [ "$(stages_after 0)" = "prev bump candidate stage1 build bundle sign verify helpers plan drafts publish-private publish-public merge " ] &&
     [ ! -f "$STAGE/markers/fleet-m4" ] && [ ! -f "$STAGE/markers/desktop" ]
 }
 check 'a --ci release publishes both feeds and merges without fleet files' ci_release_ok
@@ -1258,6 +1259,82 @@ linux_failure_ok() {
 }
 check 'a failed Linux worker update warns after merge and the release still finishes' linux_failure_ok
 stub_set RELEASE_STUB_FAIL=
+
+# The verify stage: the signed zip, fresh and upgraded (verify-built-app.mjs --mode all), right
+# after sign and before helpers, plan and drafts; a failed or skipped verify drafts nothing.
+VF="$WORK/verify"
+make_machine "$VF"
+use_machine "$VF" 1.7.0
+first_line_of() {  # first_line_of STAGE: the stub log line of that stage's first command
+  awk -F '\t' -v stage="$1" '$1 == stage { print NR; exit }' "$STUB_LOG"
+}
+verify_order_ok() {
+  run 0 1.7.0 --stop-after drafts || return 1
+  local sign_end verify_line
+  sign_end="$(awk -F '\t' '$1 == "sign" { line = NR } END { print line }' "$STUB_LOG")"
+  verify_line="$(awk -F '\t' '$1 == "verify" && $2 == "verify-app" { print NR; exit }' "$STUB_LOG")"
+  [ -n "$sign_end" ] && [ -n "$verify_line" ] && [ "$sign_end" -lt "$verify_line" ] &&
+    [ "$verify_line" -lt "$(first_line_of helpers)" ] && [ "$verify_line" -lt "$(first_line_of drafts)" ] || return 1
+  # No fixture from 1.1.0 here: its published zip is fetched and checked against its sums first.
+  [ "$(labels_of verify)" = "verify-prev-app verify-prev-app-sums verify-app " ] || return 1
+  stage_line verify verify-prev-app | grep -q '^gh release download v1\.1\.0 .* -p SpecWithCode-1\.1\.0-arm64\.zip ' &&
+    stage_line verify verify-prev-app-sums | grep -q -- "--digests $STAGE/prev/assets.json SpecWithCode-1.1.0-arm64.zip$" || return 1
+  case "$(stage_line verify verify-app)" in
+    "env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node scripts/release/verify-built-app.mjs --mode all --archive $STAGE/assets-aaaaaaaaaaaa/SpecWithCode-1.7.0-arm64.zip --version 1.7.0 --out $STAGE/app-verify-aaaaaaaaaaaa --previous-archive $STAGE/prev/SpecWithCode-1.1.0-arm64.zip --fixture-out $STAGE/verify/state-fixture.tar.gz") ;;
+    *) return 1 ;;
+  esac
+  [ "$(cat "$STAGE/markers/verify")" = "$SHA_A" ] && [ -f "$STAGE/markers/drafts" ]
+}
+check 'verify runs the built app fresh and upgraded after sign and before helpers and drafts' verify_order_ok
+
+VK="$WORK/verify-kept"
+make_machine "$VK"
+use_machine "$VK" 1.7.1
+mkdir -p "$STAGING/1.1.0/verify"
+printf 'stub fixture\n' > "$STAGING/1.1.0/verify/state-fixture.tar.gz"
+verify_kept_ok() {
+  run 0 1.7.1 --stop-after verify || return 1
+  [ "$(labels_of verify)" = "verify-app " ] &&
+    stage_line verify verify-app | grep -q -- "--fixture $STAGING/1.1.0/verify/state-fixture.tar.gz --fixture-out "
+}
+check "verify starts the upgraded home from the previous release's own fixture when it is kept" verify_kept_ok
+
+VX="$WORK/verify-fail"
+make_machine "$VX"
+use_machine "$VX" 1.7.2
+stub_set RELEASE_STUB_FAIL=verify:verify-app
+verify_fail_ok() {
+  run 1 1.7.2 || return 1
+  has 'stage verify failed' || return 1
+  [ ! -f "$STAGE/markers/verify" ] && [ ! -f "$STAGE/markers/drafts" ] &&
+    [ -z "$(first_line_of helpers)" ] && [ -z "$(first_line_of drafts)" ] && ! grep -q 'draft-private' "$STUB_LOG"
+}
+check 'a failed verify stops the release before helpers and drafts' verify_fail_ok
+stub_set RELEASE_STUB_FAIL=
+
+VS="$WORK/verify-skipped"
+make_machine "$VS"
+use_machine "$VS" 1.7.3
+stub_set "RELEASE_STUB_OUTPUT=verify-result=skipped"
+verify_skipped_ok() {
+  run 1 1.7.3 || return 1
+  has "the built app's receipt says skipped" && has 'a skipped or failed verify stops the release' || return 1
+  [ ! -f "$STAGE/markers/verify" ] && [ -z "$(first_line_of drafts)" ]
+}
+check 'a verify whose receipt did not pass counts as a failure and drafts nothing' verify_skipped_ok
+stub_set RELEASE_STUB_OUTPUT=
+unverified_drafts_refused() {
+  (
+    MODE=stub SHA="$SHA_A" SHA12=aaaaaaaaaaaa
+    is_done() { return 1; }
+    die() { printf '%s\n' "$*" >&2; exit 1; }
+    # shellcheck source=release-verify.sh
+    . "$HERE/release-verify.sh"
+    require_verified
+  ) > "$LAST_OUT" 2>&1 && return 1
+  has 'drafts: candidate aaaaaaaaaaaa has no passed verify stage'
+}
+check 'drafts refuse a candidate without a verify marker' unverified_drafts_refused
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
 check 'release_tools.py unit tests' tools_ok

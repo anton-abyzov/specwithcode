@@ -656,6 +656,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               modelOptionsByInstance.get(entry.instanceId) ?? [],
               props.quickSetup?.installable.has(entry.instanceId),
             ) &&
+            // The note over the list already offers setup for the chosen provider.
+            entry.instanceId !== alternativesFor?.instanceId &&
             (selectedEntry
               ? entry.instanceId === selectedEntry.instanceId
               : filteredModels.length === 0),
@@ -821,6 +823,31 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // Fit the list to its rows plus the combobox list `py-1` and LegendList `py-1.5`.
   const modelListHeight =
     filteredItemKeys.length === 0 ? 0 : `calc(${modelListContentSize}px + var(--spacing) * 5)`;
+  // At least four rows stay in view however much the bands above take.
+  const modelListMinHeight = `min(${modelListContentSize}px + var(--spacing) * 5, ${
+    MODEL_LIST_MIN_VISIBLE_ROWS * MODEL_LIST_ESTIMATED_ITEM_SIZE
+  }px + var(--spacing) * 5)`;
+  // What sits above the list inside its row (the wrapped chips, the usage
+  // band or account line, the can't-run note), so the row's floor keeps it.
+  const listRowRef = useRef<HTMLDivElement>(null);
+  const listHeadRef = useRef<HTMLDivElement>(null);
+  const [listRowExtraHeight, setListRowExtraHeight] = useState(0);
+  useLayoutEffect(() => {
+    const row = listRowRef.current;
+    const head = listHeadRef.current;
+    if (!row || !head) return;
+    const chips = providersColumn ? null : (row.firstElementChild as HTMLElement | null);
+    const measure = () => {
+      const chipsHeight = chips && chips !== head.parentElement ? chips.offsetHeight : 0;
+      setListRowExtraHeight(head.offsetHeight + chipsHeight);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(head);
+    if (chips) observer.observe(chips);
+    return () => observer.disconnect();
+  }, [providersColumn, showChips]);
   const updateModelListScrollFades = useCallback(() => {
     const scrollElement = modelListRef.current?.getScrollableNode();
     if (!(scrollElement instanceof HTMLElement)) {
@@ -1232,7 +1259,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   onTouchStart={(e) => e.stopPropagation()}
                 />
               </div>
-              <div className={cn("flex min-h-0 flex-1", providersColumn ? "flex-row" : "flex-col")}>
+              {/* Shrinks to the list's four-row minimum plus what sits above the
+                  list, never below: below it the rows painted over the bands under
+                  the list. The surrounding column scrolls instead. */}
+              <div
+                ref={listRowRef}
+                className={cn("flex min-h-0 flex-1", providersColumn ? "flex-row" : "flex-col")}
+                style={
+                  filteredItemKeys.length > 0
+                    ? {
+                        minHeight: `calc(${modelListMinHeight} + ${listRowExtraHeight}px)`,
+                      }
+                    : undefined
+                }
+              >
                 {showChips ? (
                   <ModelPickerProviderChips
                     layout={providersColumn ? "column" : "wrap"}
@@ -1255,25 +1295,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   />
                 ) : null}
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                  {selectedEntry && !isSearching && alternativesFor === null ? (
-                    <HarnessDescription entry={selectedEntry} />
-                  ) : null}
-                  {usage && selectedEntry && !isSearching && alternativesFor === null ? (
-                    <ModelPickerUsageBand entry={selectedEntry} usage={usage} />
-                  ) : usage ? (
-                    <ModelPickerAccountLine
-                      entries={accountLineEntries}
-                      usage={usage}
-                      markedInstanceId={onToggleModel ? null : accountLineMarked}
-                    />
-                  ) : null}
+                  <div ref={listHeadRef} className="shrink-0">
+                    {selectedEntry && !isSearching && alternativesFor === null ? (
+                      <HarnessDescription entry={selectedEntry} />
+                    ) : null}
+                    {usage && selectedEntry && !isSearching && alternativesFor === null ? (
+                      <ModelPickerUsageBand entry={selectedEntry} usage={usage} />
+                    ) : usage ? (
+                      <ModelPickerAccountLine
+                        entries={accountLineEntries}
+                        usage={usage}
+                        markedInstanceId={onToggleModel ? null : accountLineMarked}
+                      />
+                    ) : null}
 
-                  {alternativesFor !== null ? (
-                    <ModelPickerAlternativesNote
-                      entry={alternativesFor}
-                      hasReady={filteredModels.length > 0}
-                    />
-                  ) : null}
+                    {alternativesFor !== null ? (
+                      <ModelPickerAlternativesNote
+                        entry={alternativesFor}
+                        hasReady={filteredModels.length > 0}
+                        quickSetup={props.quickSetup}
+                        onRequestClose={props.onRequestClose}
+                        onOpenProviderSetup={props.onOpenProviderSetup}
+                      />
+                    ) : null}
+                  </div>
 
                   {/* Model list */}
                   <div
@@ -1284,9 +1329,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       // the fallback status scrolls inside its own band instead.
                       ...(filteredItemKeys.length > 0
                         ? {
-                            minHeight: `min(${modelListContentSize}px + var(--spacing) * 5, ${
-                              MODEL_LIST_MIN_VISIBLE_ROWS * MODEL_LIST_ESTIMATED_ITEM_SIZE
-                            }px + var(--spacing) * 5)`,
+                            minHeight: modelListMinHeight,
                           }
                         : {}),
                     }}
@@ -1457,6 +1500,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 entryByInstanceId={entryByInstanceId}
                 onRequestClose={props.onRequestClose}
                 onOpenProviderSetup={props.onOpenProviderSetup}
+                hideEmpty={alternativesFor !== null}
               />
               {runningNote}
               {effort ? (

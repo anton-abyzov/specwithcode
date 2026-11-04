@@ -46,6 +46,7 @@ export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
   "provider/acp/AcpRegistryAuth.ts": "registry agent terminal sign-in and preflight",
   "provider/acp/AcpRegistrySupport.ts": "registry agent version probes",
   "provider/acp/CopilotStartupModel.ts": "copilot --version and --help probes",
+  "provider/copilotUsageLimits.ts": "gh auth token for the Copilot usage read",
   "provider/antigravityAuthSupport.ts": "Antigravity sign-in browser preflight helper",
   "provider/providerMaintenance.ts": "Homebrew provider upgrades",
   "provider/providerMaintenanceRunner.ts": "provider install and update commands",

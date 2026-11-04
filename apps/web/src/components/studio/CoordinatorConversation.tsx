@@ -48,7 +48,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import {
   coordinatorTurnLayout,
   formatConversationSeparator,
@@ -95,6 +95,7 @@ import { JumpToLatestButton } from "../chat/JumpToLatestButton";
 import { linkedThreadIds, newThreadsByMessage } from "../../studio/projectThreadMentions";
 import { resolveStudioThreadLink } from "../../studio/studioThreadLinks";
 import { type CoordinatorTurnFailure } from "../../studio/coordinatorTurnState";
+import { CoordinatorFailureCard, type CoordinatorFix } from "./CoordinatorFailureCard";
 import ChatMarkdown, {
   type ChatMarkdownContextReference,
   type ChatMarkdownThreadLink,
@@ -210,6 +211,7 @@ export function CoordinatorConversation({
   onRetry,
   retrying,
   retryDisabled,
+  fix,
   progress,
   empty,
 }: {
@@ -233,6 +235,8 @@ export function CoordinatorConversation({
   onRetry: () => void;
   retrying: boolean;
   retryDisabled: boolean;
+  /** The one-click fix for the coordinator's provider, when it cannot run on its machine. */
+  fix?: CoordinatorFix | null;
   /** What the coordinator is doing while its turn runs; null when it is idle. */
   progress: CoordinatorProgress | null;
   /** What to say before the first message. */
@@ -292,6 +296,15 @@ export function CoordinatorConversation({
     [runs, turnItems],
   );
   const machineLabel = useMachineNickname(project.environmentId, executionEnvironment?.label);
+  // The profile and model the failed run used, so its card can name them.
+  const failedRun = failure ? runs?.find((run) => run.id === failure.runId) : undefined;
+  const failedRunLabel = failedRun
+    ? modelLabel(
+        executionProviders.get(failedRun.modelSelection.instanceId) ?? null,
+        failedRun.modelSelection.instanceId,
+        failedRun.modelSelection.model,
+      ).full
+    : null;
   const machineNames = useMachineNicknames();
   const hasRoutineRuns = messages.some((message) => message.scheduledTaskId !== undefined);
   const routines = useKnownRoutines(project.environmentId, hasRoutineRuns);
@@ -712,44 +725,15 @@ export function CoordinatorConversation({
           </div>
         )}
         {failure && (
-          <div
-            className="rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-sm"
-            role="alert"
-            data-coordinator-failure=""
-          >
-            <div className="flex items-start gap-3">
-              <TriangleAlertIcon
-                className="mt-0.5 size-4 shrink-0 text-destructive-foreground"
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1 space-y-3">
-                <div>
-                  <p className="font-medium">The coordinator did not answer.</p>
-                  <p className="mt-1 leading-relaxed text-muted-foreground">{failure.message}</p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={retryDisabled || retrying}
-                  aria-busy={retrying}
-                  onClick={onRetry}
-                >
-                  <RotateCcwIcon aria-hidden />
-                  {retrying ? "Retrying…" : "Retry last message"}
-                </Button>
-                <details className="text-muted-foreground">
-                  <summary className="w-fit cursor-pointer rounded-sm text-xs underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
-                    Error details
-                  </summary>
-                  <dl className="mt-2 grid gap-1 text-xs">
-                    <dt className="font-medium">Run</dt>
-                    <dd className="break-all font-mono">{failure.runId}</dd>
-                  </dl>
-                  <p className="mt-2 whitespace-pre-wrap break-words text-xs">{failure.message}</p>
-                </details>
-              </div>
-            </div>
-          </div>
+          <CoordinatorFailureCard
+            failure={failure}
+            machineLabel={machineLabel}
+            profileLabel={failedRunLabel}
+            onRetry={onRetry}
+            retrying={retrying}
+            retryDisabled={retryDisabled}
+            fix={fix ?? null}
+          />
         )}
         {latest.away ? (
           <div className="project-conversation-latest" data-coordinator-latest="">

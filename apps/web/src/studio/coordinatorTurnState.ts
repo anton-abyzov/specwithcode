@@ -7,7 +7,11 @@
 
 interface CoordinatorShellLike {
   readonly latestRun: { readonly runId: string; readonly status: string } | null;
-  readonly runtime: { readonly lastError: string | null } | null;
+  readonly runtime: {
+    readonly lastError: string | null;
+    readonly lastErrorClass?: string | null;
+    readonly usageLimitResetAt?: string | null;
+  } | null;
 }
 
 interface CoordinatorMessageLike {
@@ -28,6 +32,10 @@ interface CoordinatorRunLike {
 export interface CoordinatorTurnFailure {
   readonly runId: string;
   readonly message: string;
+  /** The host's failure class, such as "usage_limit"; null when it named none. */
+  readonly errorClass?: string | null;
+  /** When the reached usage limit resets, as the host observed it. */
+  readonly resetAt?: string | null;
 }
 
 const FALLBACK_FAILURE = "The coordinator could not start a turn.";
@@ -38,8 +46,14 @@ export function coordinatorTurnFailure(
 ): CoordinatorTurnFailure | null {
   const run = coordinator?.latestRun;
   if (!run || run.status !== "failed") return null;
-  const message = coordinator?.runtime?.lastError?.trim();
-  return { runId: run.runId, message: message || FALLBACK_FAILURE };
+  const runtime = coordinator?.runtime;
+  const message = runtime?.lastError?.trim();
+  return {
+    runId: run.runId,
+    message: message || FALLBACK_FAILURE,
+    errorClass: runtime?.lastErrorClass ?? null,
+    resetAt: runtime?.usageLimitResetAt ?? null,
+  };
 }
 
 function messageRunFailed(
@@ -86,4 +100,13 @@ export function sentStarterIds(
     if (delivered) sent.add(suggestion.id);
   }
   return sent;
+}
+
+/** The highest run ordinal the coordinator's projection holds; -1 with none. */
+export function latestOrdinal(
+  runs: ReadonlyArray<{ readonly ordinal: number }> | null | undefined,
+): number {
+  let latest = -1;
+  for (const run of runs ?? []) if (run.ordinal > latest) latest = run.ordinal;
+  return latest;
 }

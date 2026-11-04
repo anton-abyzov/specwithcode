@@ -15,7 +15,8 @@ const entrypoint = option('--entrypoint'), reportDir = option('--report-dir');
 const wrapperIndex = args.indexOf('--cli-wrapper');
 const wrapper = wrapperIndex >= 0 ? resolve(args[wrapperIndex + 1]) : null;
 mkdirSync(reportDir, { recursive: true, mode: 0o700 });
-const { chromium } = createRequire(import.meta.url)(join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
+// STUDIO_PLAYWRIGHT_MODULE: the Playwright package to load (the release verify stage passes the build's).
+const { chromium } = createRequire(import.meta.url)(process.env.STUDIO_PLAYWRIGHT_MODULE || join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
 const browser = await chromium.launch({ headless: true });
 const proof = { node: process.execPath, version: process.version, entrypoint, cliWrapper: wrapper, browserHeadless: true, inferenceExecuted: false, allNativeProvidersDisabled: true, cases: [] };
 const save = phase => { proof.phase = phase; writeFileSync(join(reportDir, 'receipt.json'), JSON.stringify(proof, null, 2) + '\n', { mode: 0o600 }); };
@@ -106,8 +107,16 @@ try {
         // imports deliberately; never seed settings or disable the product gate.
         await page.waitForURL(url => url.pathname === '/welcome', { timeout: 15000 });
         proof.initialPairedPath = new URL(page.url()).pathname; save('first-run-onboarding');
-        for (let i = 0; i < 2; i++) await page.getByRole('button', { name: 'Continue', exact: true }).click();
-        await page.getByRole('button', { name: 'Do not import projects', exact: true }).click();
+        // This machine as the main one, Continue past the agents step, then no project import.
+        const wizardSteps = [/^Start as a main machine/, /^Continue$/, /^Do not import projects$/];
+        for (const deadline = Date.now() + 30000; new URL(page.url()).pathname === '/welcome' && Date.now() < deadline;) {
+          let clicked = false;
+          for (const name of wizardSteps) {
+            const button = page.getByRole('button', { name }).first();
+            if (await button.isVisible().catch(() => false) && await button.isEnabled().catch(() => false)) { await button.click(); clicked = true; break; }
+          }
+          await delay(clicked ? 200 : 500);
+        }
         save('overview');
         await page.waitForURL(url => url.pathname === '/', { timeout: 15000 });
         await page.locator('#studio-heading').waitFor({ state: 'visible' }); assert.equal(new URL(page.url()).pathname, '/');

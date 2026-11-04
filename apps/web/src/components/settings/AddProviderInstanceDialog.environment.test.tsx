@@ -89,7 +89,7 @@ function findByChildren(tree: ReturnType<typeof render>, children: string) {
   return result!;
 }
 
-async function selectPreparedAcp() {
+async function selectPreparedAcp(agent: AcpRegistrySearchAgent = preparedAgent) {
   const searchStep = render();
   const search = visitElements(
     searchStep,
@@ -97,9 +97,7 @@ async function selectPreparedAcp() {
       typeof element.type === "function" && element.type.name === "AcpRegistrySearchStep",
   );
   expect(search).not.toBeNull();
-  (search?.props.onPrepared as ((agent: AcpRegistrySearchAgent) => void) | undefined)?.(
-    preparedAgent,
-  );
+  (search?.props.onPrepared as ((agent: AcpRegistrySearchAgent) => void) | undefined)?.(agent);
 }
 
 function renderDialog() {
@@ -377,6 +375,66 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await Promise.resolve();
 
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  describe("GitHub Copilot accounts", () => {
+    const copilotAgent: AcpRegistrySearchAgent = {
+      ...preparedAgent,
+      id: "github-copilot-cli",
+      name: "GitHub Copilot",
+      icon: null,
+    };
+    const addCopilot = async () => {
+      await selectPreparedAcp(copilotAgent);
+      const identityStep = render();
+      (findByChildren(identityStep, "Continue to sign-in").props.onClick as () => void)();
+      await Promise.resolve();
+    };
+
+    it("adds the first Copilot account with the default sign-in folder", async () => {
+      await addCopilot();
+      expect(settingsHooks.mutate).toHaveBeenCalledWith({
+        operation: "create",
+        instanceId: "acpRegistry_github_copilot",
+        instance: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          displayName: "GitHub Copilot",
+          config: { agentId: "github-copilot-cli", distribution: "auto" },
+        },
+      });
+    });
+
+    it("gives another GitHub account its own name and sign-in folder", async () => {
+      settingsHooks.read.mockReturnValue({
+        providerInstances: {
+          acpRegistry_github_copilot: {
+            driver: "acpRegistry",
+            enabled: true,
+            displayName: "GitHub Copilot",
+            config: { agentId: "github-copilot-cli" },
+          },
+        },
+      });
+      await addCopilot();
+      expect(settingsHooks.mutate).toHaveBeenCalledWith({
+        operation: "create",
+        instanceId: "acpRegistry_github_copilot_2",
+        instance: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          enabled: true,
+          displayName: "GitHub Copilot (2)",
+          config: { agentId: "github-copilot-cli", distribution: "auto" },
+          environment: [
+            {
+              name: "COPILOT_HOME",
+              value: "~/.copilot-acpRegistry_github_copilot_2",
+              sensitive: false,
+            },
+          ],
+        },
+      });
+    });
   });
 
   it("adds an instance with the selected environment's provider grant alone", async () => {

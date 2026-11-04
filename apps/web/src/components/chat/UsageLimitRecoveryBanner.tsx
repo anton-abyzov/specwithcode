@@ -165,7 +165,7 @@ export function formatResetIn(resetMs: number, nowMs: number): string {
 }
 
 /** Re-renders every half minute while `untilMs` is ahead, then once when it passes. */
-function useNowUntil(untilMs: number): number {
+export function useNowUntil(untilMs: number): number {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const left = untilMs - Date.now();

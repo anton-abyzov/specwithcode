@@ -28,9 +28,12 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SELF="$HERE/run-tests.sh"
 
-# Not unit tests: each needs arguments a release run provides, and is run by that release step.
-#   test-startup.mjs            starts a built server (--entrypoint) under a headless browser
-#   test-installed-startup.mjs  reads the installed M4/M1/M3 services over the fleet ssh keys
+# Not unit tests: each needs a built app and arguments a release run provides. release.sh's verify
+# stage runs both (scripts/release/release-verify.sh, through scripts/release/verify-built-app.mjs).
+#   test-startup.mjs            starts a built server (--entrypoint) under a headless browser (fresh mode)
+#   test-installed-startup.mjs  reads a server's kept projects and sign-ins: --local on the upgraded
+#                               home (upgraded mode), or the installed M4/M1/M3 services over the fleet
+#                               ssh keys
 ACCEPTANCE_PROOFS="test-startup.mjs test-installed-startup.mjs"
 
 die() {

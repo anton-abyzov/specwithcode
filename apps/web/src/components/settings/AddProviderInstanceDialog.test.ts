@@ -4,6 +4,9 @@ import {
   deriveAvailableInstanceId,
   getProviderIdentityDraft,
   isConfiguredAcpRegistryAgent,
+  additionalCopilotHome,
+  configuredAcpRegistryAgentIds,
+  nextCopilotAccountLabel,
   partitionAcpRegistryResults,
   resolveAcpRegistryWizardNavigation,
   resolveWizardNavigation,
@@ -114,6 +117,50 @@ describe("ACP Registry wizard", () => {
       label: "Gemini CLI",
       instanceIdOverride: "acpRegistry_gemini_cli",
     });
+  });
+});
+
+describe("additional Copilot accounts", () => {
+  const copilot = (displayName?: string) => ({
+    driver: "acpRegistry",
+    ...(displayName ? { displayName } : {}),
+    config: { agentId: "github-copilot-cli" },
+  });
+
+  it("counts only registry Copilot instances", () => {
+    const instances = {
+      acpRegistry_github_copilot: copilot("GitHub Copilot"),
+      local: { driver: "acpRegistry", config: { source: "local", agentId: "github-copilot-cli" } },
+      gemini: { driver: "acpRegistry", config: { agentId: "gemini" } },
+    };
+    expect(configuredAcpRegistryAgentIds(instances, "github-copilot-cli")).toEqual([
+      "acpRegistry_github_copilot",
+    ]);
+  });
+
+  it("numbers the next account after the ones already added", () => {
+    expect(nextCopilotAccountLabel({ first: copilot("GitHub Copilot") })).toBe(
+      "GitHub Copilot (2)",
+    );
+    expect(
+      nextCopilotAccountLabel({
+        first: copilot("GitHub Copilot"),
+        second: copilot("GitHub Copilot (2)"),
+      }),
+    ).toBe("GitHub Copilot (3)");
+    // A renamed or removed account never makes two instances share a name.
+    expect(
+      nextCopilotAccountLabel({
+        first: copilot("GitHub Copilot"),
+        other: { driver: "codex", displayName: "GitHub Copilot (2)" },
+      }),
+    ).toBe("GitHub Copilot (3)");
+  });
+
+  it("gives each additional account its own Copilot folder", () => {
+    expect(additionalCopilotHome("acpRegistry_github_copilot_2")).toBe(
+      "~/.copilot-acpRegistry_github_copilot_2",
+    );
   });
 });
 

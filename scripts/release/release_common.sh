@@ -92,6 +92,7 @@ stub_value() {
     draft-state) printf 'true\n' ;;
     tag-sha) printf '%s\n' "$SHA" ;;
     app-version) printf '%s\n' "$VERSION" ;;
+    verify-result) printf 'passed\n' ;;
     pr-required-buckets) printf 'skipping\n' ;;
     pinned-objects) printf '%s\n' "$LAZY_FETCH_PROBE" ;;
     packages) printf 'apps/web\t@specweave-studio/web\npackages/shared\t@specweave-studio/shared\n' ;;

@@ -74,6 +74,8 @@ export function isDirectAnthropicApiKeyEnvironment(environment: NodeJS.ProcessEn
   );
 }
 
+const HOME_PATH_VARIABLES = new Set(["CODEX_HOME", "CLAUDE_CONFIG_DIR", "COPILOT_HOME"]);
+
 export function mergeProviderInstanceEnvironment(
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
@@ -87,10 +89,9 @@ export function mergeProviderInstanceEnvironment(
       continue;
     }
     // Child processes do not apply shell expansion to environment values.
-    next[variable.name] =
-      variable.name === "CODEX_HOME" || variable.name === "CLAUDE_CONFIG_DIR"
-        ? expandHomePath(variable.value)
-        : variable.value;
+    next[variable.name] = HOME_PATH_VARIABLES.has(variable.name)
+      ? expandHomePath(variable.value)
+      : variable.value;
   }
   return next;
 }

@@ -192,8 +192,11 @@ describe("model picker provider management", () => {
       onOpenProviderSetup,
     });
     expect(container.querySelector("[data-model-row]")).toBeNull();
-    expect(container.textContent).toContain("Open provider setup to sign in.");
-    await act(async () => button("Open provider setup")!.click());
+    expect(container.textContent).toContain(
+      "GitHub Copilot is installed on this machine but not signed in.",
+    );
+    expect(container.textContent).not.toContain("No models found");
+    await act(async () => button("Set up GitHub Copilot")!.click());
     expect(calls).toEqual(["close"]);
     expect(onOpenProviderSetup).toHaveBeenCalledWith(instanceId);
     expect(onInstanceModelChange).not.toHaveBeenCalled();
@@ -240,8 +243,10 @@ describe("model picker one-click setup", () => {
       onOpenProviderSetup,
       quickSetup: setup,
     });
-    expect(container.textContent).toContain("not installed on this machine yet");
-    await act(async () => button("Install GitHub Copilot")!.click());
+    expect(container.textContent).toContain("GitHub Copilot isn't installed on this machine yet.");
+    // One install offer, in the note over the list; the footer does not repeat it.
+    expect(container.querySelectorAll("[data-model-picker-install]")).toHaveLength(1);
+    await act(async () => button("Install GitHub Copilot on this machine")!.click());
     expect(setup.install).toHaveBeenCalledWith(instanceId);
     expect(onOpenProviderSetup).not.toHaveBeenCalled();
     expect(calls).toEqual([]);
@@ -468,9 +473,12 @@ describe("model picker when the chosen provider can't run here", () => {
     });
     const rows = [...container.querySelectorAll("[data-model-row]")].map((row) => row.textContent);
     expect(rows).toEqual(["GPT-6.1-Sol"]);
-    expect(container.textContent).toContain("Copilot managed can't run on this machine yet.");
+    expect(container.textContent).toContain("Copilot managed isn't installed on this machine yet.");
+    expect(container.textContent).toContain(
+      "Ready now instead. Picking one switches this chat to that provider.",
+    );
     // Installing stays the user's choice.
-    expect(button("Install Copilot managed")).toBeDefined();
+    expect(button("Install Copilot managed on this machine")).toBeDefined();
     expect(install).not.toHaveBeenCalled();
     expect(onInstanceModelChange).not.toHaveBeenCalled();
   });

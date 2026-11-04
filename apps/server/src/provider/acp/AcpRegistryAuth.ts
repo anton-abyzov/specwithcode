@@ -23,6 +23,7 @@ import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import { teamRulesDriverRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../../teamRules/TeamRules.ts";
 import * as ProviderAuthFlow from "../ProviderAuthFlow.ts";
+import { COPILOT_USAGE_AGENT_ID, resolveCopilotHome } from "../copilotUsageLimits.ts";
 import {
   acpApiKeyCredential,
   normalizeAcpRegistryAuthMethods,
@@ -57,6 +58,35 @@ export interface AcpRegistryCredential {
   readonly authMethodId: string;
   /** The key is already in this machine's environment; only the method is saved. */
   readonly keepEnvironment?: boolean;
+}
+
+/**
+ * The credential store an instance signs in to. Instances of one agent share
+ * a store, except Copilot instances with their own COPILOT_HOME: each of those
+ * holds its own GitHub account.
+ */
+export function acpRegistryCredentialBindingKey(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly settings: AcpRegistrySettings;
+  readonly environment: NodeJS.ProcessEnv;
+  readonly path: Pick<Path.Path, "join" | "resolve">;
+}): string {
+  if (input.settings.source === "local") return `acp:local:${input.instanceId}`;
+  const base = `acp:${input.settings.agentId}`;
+  if (input.settings.agentId !== COPILOT_USAGE_AGENT_ID) return base;
+  const home = input.path.resolve(
+    resolveCopilotHome(
+      { instanceEnvironment: {}, processEnvironment: input.environment },
+      input.path,
+    ),
+  );
+  const defaultHome = input.path.resolve(
+    resolveCopilotHome(
+      { instanceEnvironment: {}, processEnvironment: { HOME: input.environment.HOME } },
+      input.path,
+    ),
+  );
+  return home === defaultHome ? base : `${base}:${home}`;
 }
 
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
@@ -594,8 +624,17 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   return yield* ProviderAuthFlow.make({
     instanceId: options.instanceId,
     // ACP doesn't advertise its credential scope. Conservatively treat all
-    // instances of the same agent on this environment as sharing credentials.
-    credentialBinding: { owner: "provider", key: `acp:${agentKey}` },
+    // instances of the same agent on this environment as sharing credentials,
+    // unless the agent keeps its sign-in in a folder the instance chose.
+    credentialBinding: {
+      owner: "provider",
+      key: acpRegistryCredentialBindingKey({
+        instanceId: options.instanceId,
+        settings: options.settings,
+        environment: options.environment,
+        path,
+      }),
+    },
     methods,
     ...(options.settings.authMethodId ? { defaultMethodId: options.settings.authMethodId } : {}),
     authenticate,

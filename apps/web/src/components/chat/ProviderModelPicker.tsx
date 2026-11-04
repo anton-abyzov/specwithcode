@@ -154,7 +154,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : activeEntry;
   const showInstanceBadge =
     triggerEntry !== null && shouldShowInstanceBadge(triggerEntry, props.instanceEntries);
-  const usage = useModelPickerUsage(props.usage, props.instanceEntries, isMenuOpen);
+  const usage = useModelPickerUsage(
+    props.usage,
+    props.instanceEntries,
+    isMenuOpen,
+    props.selectedModels === undefined ? (props.triggerInstanceId ?? activeInstanceId) : null,
+  );
   const showsSingleModel =
     props.selectedModels === undefined && props.triggerLabel === undefined && !props.unset;
   const selectedUsage =

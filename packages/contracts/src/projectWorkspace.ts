@@ -270,11 +270,26 @@ export const ProjectCoordinatorSendInput = Schema.Struct({
   prompt: Schema.String.check(Schema.isMaxLength(32_000)),
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   sourceThreadId: Schema.optional(ThreadId),
+  /**
+   * A retry: read the coordinator's providers afresh (sign-in and usage)
+   * before choosing where the turn runs, past any cached limit or sign-out.
+   */
+  recheck: Schema.optional(Schema.Literal(true)),
 });
 export type ProjectCoordinatorSendInput = typeof ProjectCoordinatorSendInput.Type;
+/** Where a coordinator turn was sent, and why when it is not the saved model. */
+export const ProjectCoordinatorRouting = Schema.Struct({
+  selection: ModelSelection,
+  /** The reason the host chose it; "saved" when it is the project's saved model. */
+  reason: Schema.String,
+  /** The host read the providers afresh before choosing. */
+  rechecked: Schema.Boolean,
+});
+export type ProjectCoordinatorRouting = typeof ProjectCoordinatorRouting.Type;
 export const ProjectCoordinatorResult = Schema.Struct({
   threadId: ThreadId,
   created: Schema.Boolean,
+  routing: Schema.optional(ProjectCoordinatorRouting),
 });
 export type ProjectCoordinatorResult = typeof ProjectCoordinatorResult.Type;
 export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceError>()(

@@ -21,6 +21,7 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 import {
+  machinesWhereReady,
   oneClickInstallAgentId,
   planEnableHere,
   providersOnOtherMachines,
@@ -81,6 +82,8 @@ export interface ProviderQuickSetup {
   /** Enabled registry agents here that one Install click makes usable. */
   readonly installable: ReadonlyMap<ProviderInstanceId, string>;
   readonly elsewhere: ReadonlyArray<ProviderElsewhere>;
+  /** Other machines where this provider is ready, for one that can't run here. */
+  readonly readyOn?: (entry: ProviderInstanceEntry) => ReadonlyArray<string>;
   readonly canManage: boolean;
   readonly pending: ReadonlySet<string>;
   readonly errors: ReadonlyMap<string, string>;
@@ -336,9 +339,15 @@ export function useProviderQuickSetup(input: {
     [environmentId, machineLabel, persist, prepare, refresh, run, settings],
   );
 
+  const readyOn = useCallback(
+    (entry: ProviderInstanceEntry) => machinesWhereReady(entry, others),
+    [others],
+  );
+
   return {
     installable,
     elsewhere,
+    readyOn,
     canManage,
     pending: pendingHere,
     errors: errorsHere,

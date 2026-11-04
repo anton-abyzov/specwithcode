@@ -198,6 +198,63 @@ const decodePackageInstallReceipt = Schema.decodeUnknownOption(
 const encodePackageInstallReceipt = Schema.encodeSync(
   Schema.fromJsonString(AcpRegistryPackageInstallReceipt),
 );
+
+/**
+ * Receipts store absolute paths. When the data folder is renamed, or replaced
+ * by a symlink to a new name (~/.specweave-studio to ~/.specwithcode), the
+ * stored paths no longer equal the current tools folder although the install
+ * is still in place. Move the paths onto the current install root when the
+ * stored bin folder ends with the same `<tools>/<agent>/<version>/<npm|python>`
+ * layout, or resolves to the same real folder, and the executable exists at
+ * the moved path. Every moved path is built from the current install root, so
+ * a receipt can never point outside the managed tools folder. Anything else is
+ * returned unchanged for the normal checks to reject.
+ */
+const rebasePackageReceiptPaths = (input: {
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly receipt: AcpRegistryPackageInstallReceipt;
+  readonly toolsDir: string;
+  readonly installRoot: string;
+  readonly binDirectory: string;
+}): Effect.Effect<AcpRegistryPackageInstallReceipt> =>
+  Effect.gen(function* () {
+    const { fileSystem, path, receipt, installRoot, binDirectory } = input;
+    if (receipt.binDirectory === binDirectory) return receipt;
+    const suffix = path.relative(path.dirname(input.toolsDir), binDirectory);
+    const sameLayout =
+      suffix !== "" &&
+      !suffix.startsWith("..") &&
+      receipt.binDirectory.endsWith(`${path.sep}${suffix}`);
+    if (!sameLayout) {
+      const [stored, current] = yield* Effect.all([
+        fileSystem.realPath(receipt.binDirectory).pipe(Effect.option),
+        fileSystem.realPath(binDirectory).pipe(Effect.option),
+      ]);
+      if (Option.isNone(stored) || Option.isNone(current) || stored.value !== current.value) {
+        return receipt;
+      }
+    }
+    const oldRoot = path.resolve(receipt.binDirectory, path.relative(binDirectory, installRoot));
+    const rebase = (stored: string) => {
+      const relative = path.relative(oldRoot, stored);
+      return relative.startsWith("..") || path.isAbsolute(relative)
+        ? stored
+        : path.join(installRoot, relative);
+    };
+    const executablePath = rebase(receipt.executablePath);
+    if (path.dirname(executablePath) !== binDirectory) return receipt;
+    const executableExists = yield* fileSystem
+      .exists(executablePath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (!executableExists) return receipt;
+    return {
+      ...receipt,
+      binDirectory,
+      executablePath,
+      ...(receipt.packageRoot !== undefined ? { packageRoot: rebase(receipt.packageRoot) } : {}),
+    };
+  });
 const decodeHttpsUrl = Schema.decodeUnknownEffect(HttpsUrl);
 const decodeBoundedAgentId = Schema.decodeUnknownEffect(BoundedAgentId);
 
@@ -335,28 +392,41 @@ export const acpRegistryManagedBinaryDirectories = (input: {
     const directories: Array<string> = [];
 
     for (const receiptFile of (yield* listDirectories(packageReceiptsDirectory)).toSorted()) {
-      const receipt = yield* input.fileSystem
+      const stored = yield* input.fileSystem
         .readFileString(input.path.join(packageReceiptsDirectory, receiptFile))
         .pipe(
           Effect.map(decodePackageInstallReceipt),
           Effect.orElseSucceed(() => Option.none()),
         );
+      if (Option.isNone(stored)) continue;
+      const installRoot = input.path.join(
+        installsDirectory,
+        stored.value.agentId,
+        encodeURIComponent(stored.value.agentVersion),
+        stored.value.distribution === "npx" ? "npm" : "python",
+      );
+      const expectedBinDirectory =
+        stored.value.distribution === "npx" && input.platform === "win32"
+          ? installRoot
+          : input.path.join(installRoot, "bin");
+      // A renamed or symlinked data folder keeps the install in place; list
+      // it under the current tools folder rather than dropping it.
+      const receipt = yield* rebasePackageReceiptPaths({
+        fileSystem: input.fileSystem,
+        path: input.path,
+        receipt: stored.value,
+        toolsDir: installsDirectory,
+        installRoot,
+        binDirectory: expectedBinDirectory,
+      });
       if (
-        Option.isSome(receipt) &&
-        receipt.value.binDirectory ===
-          input.path.join(
-            installsDirectory,
-            receipt.value.agentId,
-            encodeURIComponent(receipt.value.agentVersion),
-            receipt.value.distribution === "npx" ? "npm" : "python",
-            ...(receipt.value.distribution === "npx" && input.platform === "win32" ? [] : ["bin"]),
-          ) &&
-        input.path.dirname(receipt.value.executablePath) === receipt.value.binDirectory &&
+        receipt.binDirectory === expectedBinDirectory &&
+        input.path.dirname(receipt.executablePath) === receipt.binDirectory &&
         (yield* input.fileSystem
-          .exists(receipt.value.executablePath)
+          .exists(receipt.executablePath)
           .pipe(Effect.orElseSucceed(() => false)))
       ) {
-        directories.push(receipt.value.binDirectory);
+        directories.push(receipt.binDirectory);
       }
     }
 
@@ -532,6 +602,8 @@ const INSTALL_LOCK_RETRY_COUNT = 300;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 const PREPARED_BINARY_RESERVATION_MS = 30 * 1_000;
+/** How long a search that found no receipt to adopt is trusted while the receipts folder is unchanged. */
+export const RECEIPT_ADOPTION_MISS_TTL_MS = 5 * 60 * 1_000;
 
 function isAlreadyExists(error: PlatformError.PlatformError): boolean {
   return error.reason._tag === "AlreadyExists";
@@ -649,6 +721,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const registrySemaphore = yield* Semaphore.make(1);
   const installSemaphore = yield* Semaphore.make(1);
   const preparedBinaryReservations = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  // Searches for a receipt to adopt that found none, by agent, version and
+  // npm path: the expiry and the receipts folder's change time they saw.
+  const receiptAdoptionMisses = yield* Ref.make<
+    ReadonlyMap<string, { readonly until: number; readonly folderChangedAt: number | undefined }>
+  >(new Map());
 
   const managerBinDirectory = Effect.fn("AcpRegistryCatalog.managerBinDirectory")(function* (
     runner: string,
@@ -963,12 +1040,28 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     packageSpec: string,
     managerPath: string,
   ) {
-    const receipt = yield* fileSystem
+    const stored = yield* fileSystem
       .readFileString(yield* packageReceiptPath(agent.id, distribution, managerPath))
       .pipe(
         Effect.map(decodePackageInstallReceipt),
         Effect.orElseSucceed(() => Option.none()),
       );
+    const receipt = Option.isNone(stored)
+      ? stored
+      : Option.some(
+          stored.value.agentId === agent.id &&
+            stored.value.agentVersion === agent.version &&
+            stored.value.distribution === distribution
+            ? yield* rebasePackageReceiptPaths({
+                fileSystem,
+                path,
+                receipt: stored.value,
+                toolsDir: installsDirectory,
+                installRoot: packageInstallRoot(agent, distribution),
+                binDirectory: packageBinDirectory(agent, distribution),
+              })
+            : stored.value,
+        );
     if (
       Option.isNone(receipt) ||
       receipt.value.agentId !== agent.id ||
@@ -1004,6 +1097,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       ) {
         return Option.none<AcpRegistryPackageInstallReceipt>();
       }
+    }
+    // Store the moved paths so later reads and the terminal PATH list match
+    // the current folder directly. Best effort: the receipt is valid either way.
+    if (Option.isSome(stored) && stored.value !== receipt.value) {
+      yield* writePackageReceipt(receipt.value).pipe(Effect.ignore);
     }
     return receipt;
   });
@@ -1053,12 +1151,19 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         receipt.distribution,
         receipt.managerPath,
       );
-      const temporaryPath = `${receiptPath}.${process.pid}.tmp`;
+      // Readers can run at the same time (inspect and launch on first use), so
+      // never remove the receipt first: rename replaces it in one step, and a
+      // unique temporary name keeps parallel writers apart.
+      const temporaryPath = `${receiptPath}.${process.pid}-${yield* crypto.randomUUIDv4}.tmp`;
       yield* fileSystem.makeDirectory(packageReceiptsDirectory, { recursive: true });
-      yield* fileSystem.remove(temporaryPath, { force: true });
-      yield* fileSystem.writeFileString(temporaryPath, `${encodePackageInstallReceipt(receipt)}\n`);
-      yield* fileSystem.remove(receiptPath, { force: true });
-      yield* fileSystem.rename(temporaryPath, receiptPath);
+      yield* fileSystem
+        .writeFileString(temporaryPath, `${encodePackageInstallReceipt(receipt)}\n`)
+        .pipe(
+          Effect.andThen(fileSystem.rename(temporaryPath, receiptPath)),
+          Effect.ensuring(fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore)),
+        );
+      // A new receipt can be the one an earlier search did not find.
+      yield* Ref.set(receiptAdoptionMisses, new Map());
     },
     Effect.mapError((cause) =>
       isAcpRegistryError(cause)
@@ -1227,6 +1332,93 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   // Receipts written before the key moved to the real folder name npm by the
   // path PATH gave it. Carry a valid one over instead of reading it as
   // unprepared, which would stop an installed agent from launching.
+  const readValidPackageReceipt = (
+    agent: AcpRegistryAgent,
+    distribution: "npx" | "uvx",
+    packageSpec: string,
+    managerPath: string,
+  ) =>
+    readPackageReceipt(agent, distribution, packageSpec, managerPath).pipe(
+      Effect.flatMap((found) =>
+        Option.isSome(found)
+          ? Effect.succeed(found)
+          : readRetainedPackageReceipt(agent, distribution, packageSpec, managerPath),
+      ),
+    );
+
+  // The prepared package lives in its own bin folder, but its receipt is keyed
+  // by the npm that installed it. Version managers such as nvm keep npm under
+  // the Node version (~/.nvm/versions/node/v22.x/bin/npm), so switching Node
+  // moves the key and a prepared agent would read as unprepared. Adopt the
+  // newest receipt another npm path wrote, once it passes the same checks as
+  // the current one (executable, bin folder, package manifest).
+  const adoptReceiptFromOtherManager = (
+    agent: AcpRegistryAgent,
+    distribution: "npx" | "uvx",
+    packageSpec: string,
+    managerPath: string,
+  ) =>
+    Effect.gen(function* () {
+      const prefix = `${agent.id}-`;
+      const names = (yield* fileSystem
+        .readDirectory(packageReceiptsDirectory)
+        .pipe(Effect.orElseSucceed((): Array<string> => []))).filter(
+        (name) =>
+          name.startsWith(prefix) && /^[0-9a-f]{16}\.json$/u.test(name.slice(prefix.length)),
+      );
+      let newest:
+        | { readonly receipt: AcpRegistryPackageInstallReceipt; readonly at: number }
+        | undefined;
+      for (const name of names) {
+        const file = path.join(packageReceiptsDirectory, name);
+        const stored = yield* fileSystem.readFileString(file).pipe(
+          Effect.map(decodePackageInstallReceipt),
+          Effect.orElseSucceed(() => Option.none()),
+        );
+        if (
+          Option.isNone(stored) ||
+          stored.value.agentId !== agent.id ||
+          stored.value.distribution !== distribution ||
+          stored.value.managerPath === managerPath ||
+          // The file must be the one its own manager path names, never a copy.
+          (yield* packageReceiptPath(agent.id, distribution, stored.value.managerPath)) !== file
+        ) {
+          continue;
+        }
+        const valid = yield* readValidPackageReceipt(
+          agent,
+          distribution,
+          packageSpec,
+          stored.value.managerPath,
+        );
+        if (Option.isNone(valid)) continue;
+        const at = yield* fileSystem.stat(file).pipe(
+          Effect.map((info) =>
+            Option.getOrElse(
+              Option.map(info.mtime, (date) => date.getTime()),
+              () => 0,
+            ),
+          ),
+          Effect.orElseSucceed(() => 0),
+        );
+        if (newest === undefined || at > newest.at) newest = { receipt: valid.value, at };
+      }
+      if (newest === undefined) return false;
+      yield* writePackageReceipt({ ...newest.receipt, managerPath });
+      return true;
+    });
+
+  const receiptsFolderChangedAt = fileSystem.stat(packageReceiptsDirectory).pipe(
+    Effect.map((info) =>
+      Option.getOrUndefined(Option.map(info.mtime, (changedAt) => changedAt.getTime())),
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+
+  // Receipts written before the key moved to the real folder name npm by the
+  // path PATH gave it. Carry a valid one over instead of reading it as
+  // unprepared, which would stop an installed agent from launching. When
+  // there is none, a receipt written under another npm path is adopted.
   const migrateLegacyReceipt = (
     agent: AcpRegistryAgent,
     distribution: "npx" | "uvx",
@@ -1235,24 +1427,43 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     managerPath: string,
   ) =>
     Effect.gen(function* () {
-      if (resolvedManagerPath === managerPath) return;
-      const current = yield* fileSystem.exists(
-        yield* packageReceiptPath(agent.id, distribution, managerPath),
-      );
-      if (current) return;
-      const legacy = yield* readPackageReceipt(
-        agent,
+      // A valid receipt for this npm needs nothing. One that exists but no
+      // longer passes the checks is replaced by a valid one found elsewhere.
+      const current = yield* readValidPackageReceipt(agent, distribution, packageSpec, managerPath);
+      if (Option.isSome(current)) return;
+      // An unprepared agent has no receipt anywhere. Its next inspect does not
+      // search the receipts again until the folder changes or a few minutes pass.
+      const missKey = [
+        agent.id,
+        agent.version,
         distribution,
-        packageSpec,
+        managerPath,
         resolvedManagerPath,
-      ).pipe(
-        Effect.flatMap((found) =>
-          Option.isSome(found)
-            ? Effect.succeed(found)
-            : readRetainedPackageReceipt(agent, distribution, packageSpec, resolvedManagerPath),
-        ),
-      );
-      if (Option.isSome(legacy)) yield* writePackageReceipt({ ...legacy.value, managerPath });
+      ].join("\u0000");
+      const now = yield* Clock.currentTimeMillis;
+      const folderChangedAt = yield* receiptsFolderChangedAt;
+      const miss = (yield* Ref.get(receiptAdoptionMisses)).get(missKey);
+      if (miss !== undefined && miss.until > now && miss.folderChangedAt === folderChangedAt)
+        return;
+      if (resolvedManagerPath !== managerPath) {
+        const legacy = yield* readValidPackageReceipt(
+          agent,
+          distribution,
+          packageSpec,
+          resolvedManagerPath,
+        );
+        if (Option.isSome(legacy)) {
+          yield* writePackageReceipt({ ...legacy.value, managerPath });
+          return;
+        }
+      }
+      if (yield* adoptReceiptFromOtherManager(agent, distribution, packageSpec, managerPath))
+        return;
+      yield* Ref.update(receiptAdoptionMisses, (misses) => {
+        const next = new Map(Array.from(misses).filter(([, entry]) => entry.until > now));
+        next.set(missKey, { until: now + RECEIPT_ADOPTION_MISS_TTL_MS, folderChangedAt });
+        return next;
+      });
     }).pipe(Effect.ignore);
 
   const ensureGlobalPackage = Effect.fn("AcpRegistryCatalog.ensureGlobalPackage")(function* (

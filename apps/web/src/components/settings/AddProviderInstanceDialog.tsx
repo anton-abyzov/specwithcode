@@ -43,7 +43,11 @@ import {
   ADD_PROVIDER_WIZARD_STEPS,
   ACP_REGISTRY_WIZARD_STEPS,
   LOCAL_ACP_WIZARD_STEPS,
+  COPILOT_ACP_AGENT_ID,
+  additionalCopilotHome,
   deriveAvailableInstanceId,
+  isConfiguredAcpRegistryAgent,
+  nextCopilotAccountLabel,
   resolveAcpRegistryWizardNavigation,
   resolveWizardNavigation,
   updateProviderIdentityDraft,
@@ -131,6 +135,9 @@ export function AddProviderInstanceDialog({
     ReadonlyArray<ProviderInstanceEnvironmentVariable>
   >([]);
   const [isManualAcpConfiguration, setIsManualAcpConfiguration] = useState(false);
+  // Set when Copilot is already added: this instance signs in to another
+  // GitHub account and keeps it in its own COPILOT_HOME.
+  const [isAdditionalCopilotAccount, setIsAdditionalCopilotAccount] = useState(false);
   const [isRegistryLoading, setIsRegistryLoading] = useState(false);
   const [isMoreAgentsOpen, setIsMoreAgentsOpen] = useState(false);
   const [isPreparingRegistryAgent, setIsPreparingRegistryAgent] = useState(false);
@@ -251,7 +258,14 @@ export function AddProviderInstanceDialog({
 
   const handleAcpPrepared = (agent: AcpRegistrySearchAgent) => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
-    const nextLabel = agent.name;
+    const providerInstances = settings.providerInstances ?? {};
+    const additionalCopilotAccount =
+      agent.id === COPILOT_ACP_AGENT_ID &&
+      isConfiguredAcpRegistryAgent(providerInstances, COPILOT_ACP_AGENT_ID);
+    setIsAdditionalCopilotAccount(additionalCopilotAccount);
+    const nextLabel = additionalCopilotAccount
+      ? nextCopilotAccountLabel(providerInstances)
+      : agent.name;
     const registryIconUrl = resolveOfficialAcpRegistryIconUrl(agent.icon);
     const nextInstanceId = deriveAvailableInstanceId(
       (candidateLabel) => deriveInstanceId(ACP_REGISTRY_DRIVER_KIND, candidateLabel),
@@ -281,6 +295,7 @@ export function AddProviderInstanceDialog({
   const handleManualAcpConfiguration = () => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     setSelectedAcp(null);
+    setIsAdditionalCopilotAccount(false);
     setIsManualAcpConfiguration(true);
     setConfigByDriver((existing) => {
       const next = { ...existing };
@@ -299,6 +314,7 @@ export function AddProviderInstanceDialog({
   const handleLocalAcpConfiguration = () => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     setSelectedAcp(null);
+    setIsAdditionalCopilotAccount(false);
     setIsManualAcpConfiguration(true);
     setConfigByDriver((existing) => ({
       ...existing,
@@ -325,6 +341,11 @@ export function AddProviderInstanceDialog({
         ? { ...configByDriver[driver], setupMode: "existing" }
         : (configByDriver[driver] ?? {});
     const hasConfig = Object.keys(config).length > 0;
+    const addsCopilotAccount =
+      isAcpRegistry &&
+      !isLocalAcp &&
+      isAdditionalCopilotAccount &&
+      (config as Record<string, unknown>).agentId === COPILOT_ACP_AGENT_ID;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
     const nextInstance: ProviderInstanceConfig = {
@@ -334,6 +355,13 @@ export function AddProviderInstanceDialog({
       ...(normalizedAccentColor ? { accentColor: normalizedAccentColor } : {}),
       ...(hasConfig ? { config } : {}),
       ...(isLocalAcp && localEnvironment.length > 0 ? { environment: localEnvironment } : {}),
+      ...(addsCopilotAccount
+        ? {
+            environment: [
+              { name: "COPILOT_HOME", value: additionalCopilotHome(instanceId), sensitive: false },
+            ],
+          }
+        : {}),
     };
     // `ProviderInstanceId.make` revalidates the slug; we've already checked
     // it via `validateInstanceId`, but going through the brand constructor

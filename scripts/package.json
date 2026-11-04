@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vp test run --config ../vite.config.ts --dir . --exclude 'studio-*/**/*.test.mjs' && node --test 'studio-*/**/*.test.mjs'",
-    "test:node": "node --test 'studio-*/**/*.test.mjs'"
+    "test": "vp test run --config ../vite.config.ts --dir . --exclude 'studio-*/**/*.test.mjs' --exclude 'release/verify-built-app.test.mjs' && node --test 'studio-*/**/*.test.mjs' release/verify-built-app.test.mjs",
+    "test:node": "node --test 'studio-*/**/*.test.mjs' release/verify-built-app.test.mjs"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",

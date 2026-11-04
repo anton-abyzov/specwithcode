@@ -7,6 +7,7 @@ const read = (name: string) =>
   NodeFS.readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), "utf8");
 
 const original = read("desktop-windows-linux.yml");
+const releaseWorkflow = read("release-windows-linux.yml");
 
 type Mode = "source" | "release";
 
@@ -99,8 +100,10 @@ const runsIn = (expression: string | undefined, mode: Mode): boolean => {
   return reduced === "true";
 };
 
+type OsJob = "linux" | "windows" | "macos";
+
 /** The real-OS gates each job must run, and fail on, in one mode only. */
-const GATES: Record<"linux" | "windows", Record<Mode, string[]>> = {
+const GATES: Record<OsJob, Record<Mode, string[]>> = {
   linux: {
     source: ["Build AppImage and .deb"],
     release: [
@@ -113,9 +116,13 @@ const GATES: Record<"linux" | "windows", Record<Mode, string[]>> = {
     // The published CLI zip is checksummed and smoke-tested in the download step.
     release: ["Download the published installer and CLI archive"],
   },
+  macos: {
+    source: ["Build the unsigned app"],
+    release: ["Download the published zip"],
+  },
 };
 /** The real-OS gates each job must run, and fail on, in both modes. */
-const BOTH: Record<"linux" | "windows", string[]> = {
+const BOTH: Record<OsJob, string[]> = {
   linux: [
     "Install the .deb",
     "Launch the installed .deb app",
@@ -135,10 +142,11 @@ const BOTH: Record<"linux" | "windows", string[]> = {
     "Tray and background service of the installed app",
     "Uninstall silently",
   ],
+  macos: ["Launch the unpacked app", "Verify the unpacked app"],
 };
 
 /** Why a gate would not run, or would not fail its job, in a mode. Empty when every gate holds. */
-const gateProblems = (text: string, jobName: "linux" | "windows", mode: Mode): string[] => {
+const gateProblems = (text: string, jobName: OsJob, mode: Mode): string[] => {
   const parsed = job(text, jobName);
   const problems: string[] = [];
   if (parsed.needs !== undefined) problems.push(`${jobName}: independent OS job has dependencies`);
@@ -164,12 +172,14 @@ describe("desktop-windows-linux.yml real-OS gates", () => {
     ["linux", "release"],
     ["windows", "source"],
     ["windows", "release"],
+    ["macos", "source"],
+    ["macos", "release"],
   ] as const)("runs and fails on every %s gate in %s mode", (jobName, mode) => {
     expect(gateProblems(original, jobName, mode)).toEqual([]);
   });
 
   it("rejects a skipped optional preflight dependency on either OS", () => {
-    for (const os of ["linux", "windows"] as const) {
+    for (const os of ["linux", "windows", "macos"] as const) {
       const text = original
         .replace(
           "jobs:\n",
@@ -336,5 +346,69 @@ describe("desktop-windows-linux.yml with release_tag", () => {
     expect(windows?.run).toContain(
       'node scripts/smoke-cli-archive.ts --archive "release-cli/studio-$v-win32-x64.zip"',
     );
+  });
+});
+
+describe("the built-app verify on every desktop OS", () => {
+  it("verifies the macOS zip as the updater unpacks it, headless, in both modes", () => {
+    const macos = job(original, "macos");
+    expect(macos.needs).toBeUndefined();
+    const verify = macos.steps.get("Verify the unpacked app");
+    expect(verify?.if).toBe("${{ success() || failure() }}");
+    expect(verify?.run).toContain("set -euo pipefail");
+    expect(verify?.run).toContain(
+      'node scripts/release/verify-built-app.mjs --mode fresh --no-proofs --archive "$(ls release/SpecWithCode-*-arm64.zip | head -1)"',
+    );
+    expect(macos.steps.get("Launch the unpacked app")?.run).toContain("ditto -x -k");
+    expect(macos.steps.get("Download the published zip")?.run).toContain(
+      "shasum -a 256 -c --ignore-missing SHA256SUMS",
+    );
+    // The voice helper needs the macOS 26 SDK: a macOS 26 image, and Xcode 26 or later selected.
+    expect(original).toMatch(/\n {2}macos:\n {4}name: [^\n]+\n(?: {4}#[^\n]*\n)* {4}if: [^\n]+\n {4}runs-on: macos-26\n/);
+    const names = [...macos.steps.keys()];
+    expect(names.indexOf("Select Xcode 26")).toBeGreaterThan(-1);
+    expect(names.indexOf("Select Xcode 26")).toBeLessThan(names.indexOf("Build the unsigned app"));
+    expect(macos.steps.get("Select Xcode 26")?.run).toContain('[ "$current" -ge 26 ]');
+    expect(original).toContain('PWDEBUG: "0"');
+  });
+
+  it("catches a macOS verify that masks its failure or is skipped", () => {
+    const masked = original.replace(
+      '--version "$v" --out "$RUNNER_TEMP/verify-macos"\n',
+      '--version "$v" --out "$RUNNER_TEMP/verify-macos" || true\n',
+    );
+    expect(masked).not.toBe(original);
+    expect(gateProblems(masked, "macos", "source")).toContain("Verify the unpacked app: masks failure");
+    const skipped = original.replace(
+      "      - name: Verify the unpacked app\n        if: ${{ success() || failure() }}\n",
+      "      - name: Verify the unpacked app\n        if: env.RELEASE_TAG == ''\n",
+    );
+    expect(skipped).not.toBe(original);
+    expect(gateProblems(skipped, "macos", "release")).toContain(
+      "Verify the unpacked app: skipped in release mode",
+    );
+  });
+
+  it.each([
+    ["windows", '--app "$RUNNER_TEMP/installer/app/SpecWithCode.exe"', "verify-windows"],
+    ["linux", '--app "$exe"', "verify-linux"],
+  ] as const)("runs the same verify in the %s release job before its assets are collected", (name, app, out) => {
+    const release = job(releaseWorkflow, name);
+    const names = [...release.steps.keys()];
+    const verify = release.steps.get("Verify the built app");
+    expect(verify).toBeDefined();
+    expect(verify?.if).toBeUndefined();
+    expect(verify?.continueOnError).toBe(false);
+    expect(verify?.run).toContain("set -euo pipefail");
+    expect(verify?.run).toContain(
+      `node scripts/release/verify-built-app.mjs --mode fresh --no-proofs ${app}`,
+    );
+    expect(verify?.run).toContain(`--version "$VERSION" --out "$RUNNER_TEMP/${out}"`);
+    expect(verify?.run).not.toMatch(/\|\|\s*(?:true|:)\s*$/m);
+    // After the unpacked app exists, before anything is collected for upload.
+    expect(names.indexOf("Verify the built app")).toBeGreaterThan(
+      names.findIndex((step) => step.startsWith("Check the")),
+    );
+    expect(names.indexOf("Verify the built app")).toBeLessThan(names.indexOf("Collect assets"));
   });
 });

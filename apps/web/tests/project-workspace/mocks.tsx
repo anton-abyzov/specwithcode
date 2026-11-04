@@ -1629,3 +1629,22 @@ export const useRelayEnvironmentDiscovery = () => ({
   offline: false,
   error: { _tag: "None" },
 });
+
+// One-click provider setup reads every machine's providers; the fixture has none,
+// so nothing is installable and an install request is only recorded.
+export const useProviderQuickSetup = () => ({
+  installable: new Map(),
+  elsewhere: [],
+  readyOn: () => [],
+  canManage: true,
+  pending: new Set(),
+  errors: new Map(),
+  install: (instanceId) => {
+    window.__providerInstalls = [...(window.__providerInstalls ?? []), instanceId];
+  },
+  enableHere: () => {},
+  machineLabel: "Development Mac",
+  remote: false,
+  steps: new Map(),
+  turnedOn: [],
+});

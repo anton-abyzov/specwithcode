@@ -19,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as Settings from "../serverSettings.ts";
@@ -214,6 +215,109 @@ function lastKnownHasRoom(account: StudioCapacityAccount | undefined, now: numbe
 
 const REFRESH_RETRY_DELAY = "2 seconds";
 
+/** How long a person's "check again" stays waiting for the start it was asked for. */
+export const FORCED_RECHECK_MAX_AGE_MS = 2 * 60_000;
+
+/**
+ * How long a fresh read made for the retry itself stands in for the start's
+ * own native probe, so one retry reads each provider once, not twice.
+ */
+export const FRESH_READ_REUSE_MS = 30_000;
+
+export interface CapacityRecheckRequest {
+  /** When the fresh read was asked for. */
+  readonly requestedAt: number;
+  /** When the asker finished reading this instance afresh itself, if it did. */
+  readonly freshReadAt?: number | undefined;
+}
+
+export interface CapacityRecheckRequestsShape {
+  /** Instance id to its pending check-again request. */
+  readonly get: Effect.Effect<ReadonlyMap<string, CapacityRecheckRequest>>;
+  readonly update: (
+    f: (
+      requested: ReadonlyMap<string, CapacityRecheckRequest>,
+    ) => ReadonlyMap<string, CapacityRecheckRequest>,
+  ) => Effect.Effect<void>;
+}
+
+/**
+ * Instances whose next start must not trust a cached "exhausted" or "signed
+ * out" verdict: a person retried after signing in again or after a limit
+ * reset. One per process, like the fallback holds, so callers need no extra
+ * layer.
+ */
+export const CapacityRecheckRequests = Context.Reference<CapacityRecheckRequestsShape>(
+  "@specweave-studio/server/studio/CapacityRecheckRequests",
+  {
+    defaultValue: () => {
+      const requested = Ref.makeUnsafe<ReadonlyMap<string, CapacityRecheckRequest>>(new Map());
+      return { get: Ref.get(requested), update: (f) => Ref.update(requested, f) };
+    },
+  },
+);
+
+/**
+ * Asks the next start of each instance to read its status and usage afresh.
+ * `freshlyRead` names the instances the asker has just read afresh itself;
+ * that start relies on the read instead of probing the provider again.
+ */
+export const requestCapacityRecheck = (
+  instanceIds: Iterable<string>,
+  freshlyRead: ReadonlySet<string> = new Set(),
+) =>
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const requests = yield* CapacityRecheckRequests;
+    const ids = [...instanceIds];
+    yield* requests.update((requested) => {
+      const next = new Map(requested);
+      for (const id of ids)
+        next.set(id, { requestedAt: now, ...(freshlyRead.has(id) ? { freshReadAt: now } : {}) });
+      return next;
+    });
+  });
+
+/** A check-again request a start has taken. */
+export interface CapacityRecheck {
+  /** The asker read the instance afresh moments ago; probing again adds nothing. */
+  readonly freshlyRead: boolean;
+}
+
+/**
+ * Takes the check-again request for this instance, if one is recent. It is
+ * used up by the first start that takes it, so only that start skips the
+ * exhausted-recheck throttle; expired requests are dropped.
+ *
+ * The request is keyed by instance, not by the thread that asked: another
+ * start of the same instance (a worker, a fallback, a second thread) that runs
+ * first takes it. The asker's start then is not forced, but the asker's fresh
+ * registry read has already replaced the cached verdict that start reads, so
+ * it does not refuse on the stale one.
+ */
+export const takeCapacityRecheck = (instanceId: string, now: number) =>
+  Effect.gen(function* () {
+    const requests = yield* CapacityRecheckRequests;
+    const live = (time: number) => now - time < FORCED_RECHECK_MAX_AGE_MS;
+    let taken: CapacityRecheckRequest | undefined;
+    yield* requests.update((current) => {
+      const own = current.get(instanceId);
+      const stale = [...current].some(([, request]) => !live(request.requestedAt));
+      if (own === undefined && !stale) return current;
+      const next = new Map(current);
+      for (const [id, request] of current) if (!live(request.requestedAt)) next.delete(id);
+      if (own !== undefined && live(own.requestedAt)) taken = own;
+      next.delete(instanceId);
+      return next;
+    });
+    if (taken === undefined) return undefined;
+    const freshReadAt = taken.freshReadAt;
+    return {
+      freshlyRead:
+        freshReadAt !== undefined && now >= freshReadAt && now - freshReadAt < FRESH_READ_REUSE_MS,
+    } satisfies CapacityRecheck;
+  });
+
 type CompanionRefresh =
   | { readonly kind: "read"; readonly raw: unknown }
   | { readonly kind: "busy" | "failed" | "timeout" };
@@ -402,17 +506,23 @@ const make = Effect.gen(function* () {
         return;
       }
       let now = yield* Clock.currentTimeMillis;
+      // A person asked to check again: read status and usage afresh, past every cache.
+      const recheck = yield* takeCapacityRecheck(id, now);
+      const forced = recheck !== undefined;
       let observedProviders = yield* providers.getProviders;
       let native = observedProviders.find(
         (provider) => provider.instanceId === id && provider.driver === entry.driver,
       );
-      // Whether this start already read the native status and the local service afresh.
-      let nativeReread = false;
-      let companionReread = false;
       // Idle hosts stop background probing. Explicit starts must read supported
       // native status once before treating an old cache or a transient probe error
       // as a sign-in failure. Refresh never logs in or admits the cached result.
       const checkCredits = entry.driver === "codex" && options?.allowCredits === true;
+      // Whether this start already read the native status and the local service
+      // afresh. The retry that asked to check again has just read the native
+      // status past every cache, so the registry already holds that read; a
+      // credit check still reads after it starts.
+      let nativeReread = recheck?.freshlyRead === true && !checkCredits;
+      let companionReread = false;
       const creditCheckStartedAt = now;
       // An explicit start can follow a native login or quota reset before the
       // background snapshot expires. Recheck this exact instance once, never
@@ -425,11 +535,19 @@ const make = Effect.gen(function* () {
       // A CLI billed to API credits (Console sign-in or its own key) is not a
       // subscription slot: no plan quota or capacity profile applies to it.
       if (claudeApiBillingAuthorized(native, now)) return;
-      if (!nativeSnapshotAuthorized(native, now) || checkCredits || recheckDenied || lapsedDenial) {
-        const admitCached = lapsedDenial && !recheckDenied && nativeSnapshotAuthorized(native, now);
-        const observed = yield* providers
-          .refreshInstance(id)
-          .pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
+      if (
+        !nativeReread &&
+        (!nativeSnapshotAuthorized(native, now) ||
+          checkCredits ||
+          recheckDenied ||
+          lapsedDenial ||
+          forced)
+      ) {
+        const admitCached =
+          (lapsedDenial || forced) && !recheckDenied && nativeSnapshotAuthorized(native, now);
+        const observed = yield* (
+          forced ? providers.refreshInstance(id, { fresh: true }) : providers.refreshInstance(id)
+        ).pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
         if (Option.isNone(observed)) {
           if (!admitCached)
             return yield* deny(
@@ -647,7 +765,9 @@ const make = Effect.gen(function* () {
         account?.status === "exhausted" &&
         !creditContinuation() &&
         !(nativeReread && companionReread) &&
-        claimExhaustedRecheck(id, now)
+        // The forced start re-reads even inside the minute, and still marks
+        // the minute, so the starts after it keep the throttle.
+        (claimExhaustedRecheck(id, now) || forced)
       ) {
         if (!nativeReread) {
           const reread = yield* providers

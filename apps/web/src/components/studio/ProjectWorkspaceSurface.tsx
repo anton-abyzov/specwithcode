@@ -110,7 +110,14 @@ import { toastManager } from "../ui/toast";
 import { RemoteWorkerCards } from "./RemoteWorkerCards";
 import { useProjectRemoteWorkers } from "../../studio/fleet";
 import { visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
-import { coordinatorTurnFailure, sentStarterIds } from "../../studio/coordinatorTurnState";
+import {
+  coordinatorTurnFailure,
+  latestOrdinal,
+  sentStarterIds,
+} from "../../studio/coordinatorTurnState";
+import { nameMachineInText, retryRoutingNotice } from "../../studio/coordinatorFailure";
+import { CoordinatorFixButton } from "./CoordinatorFailureCard";
+import { useCoordinatorProviderFix } from "./useCoordinatorProviderFix";
 import { coordinatorModelDisplay } from "../../studio/coordinatorRunningModel";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
@@ -373,6 +380,12 @@ export function ProjectWorkspaceSurface({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const retryNotice = useRef<string | null>(null);
+  // Where the coordinator stood when the retry was sent: a newer run or failure ends that notice.
+  const retryNoticeSince = useRef<{ ordinal: number; failedRunId: string | null }>({
+    ordinal: -1,
+    failedRunId: null,
+  });
   const [storedOverviewOpen, setStoredOverviewOpen] = useLocalStorage<boolean, boolean>(
     OVERVIEW_OPEN_STORAGE_KEY,
     true,
@@ -551,13 +564,41 @@ export function ProjectWorkspaceSurface({
     ? coordinatorProgress(coordinatorThread.projection)
     : null;
   const coordinatorWorking = coordinatorWork !== null;
+  // Read when a send's response lands, which can be after its whole turn ran.
+  const latestCoordinatorRuns = useRef(coordinatorThread?.projection.runs);
+  latestCoordinatorRuns.current = coordinatorThread?.projection.runs;
+  const latestCoordinatorWorking = useRef(coordinatorWorking);
+  latestCoordinatorWorking.current = coordinatorWorking;
+  const latestRunOrdinal = latestOrdinal(coordinatorThread?.projection.runs);
+  const failedRunId = coordinatorFailure?.runId ?? null;
+  const latestFailedRunId = useRef(failedRunId);
+  latestFailedRunId.current = failedRunId;
   useEffect(() => {
     // The live line below the conversation now says more than "Queued" could,
     // and once the turn ends a send receipt is stale, whichever order the send
     // response and the projection update arrived in.
-    if (coordinatorWorking) setNotice(null);
-    else setNotice((current) => (current !== null && SEND_NOTICES.has(current) ? null : current));
+    // A retry's "Retrying on <model>" stays while that turn runs, then goes.
+    const routed = retryNotice.current;
+    if (coordinatorWorking) setNotice((current) => (current === routed ? current : null));
+    else {
+      retryNotice.current = null;
+      setNotice((current) =>
+        current !== null && (SEND_NOTICES.has(current) || current === routed) ? null : current,
+      );
+    }
   }, [coordinatorWorking]);
+  useEffect(() => {
+    // A retried run can fail, or finish, before this window ever sees it active: a newer run
+    // that is no longer working, or a new failure, ends "Retrying on <model>" too.
+    const routed = retryNotice.current;
+    if (routed === null) return;
+    const since = retryNoticeSince.current;
+    const newerRunEnded = !coordinatorWorking && latestRunOrdinal > since.ordinal;
+    const newFailure = failedRunId !== null && failedRunId !== since.failedRunId;
+    if (!newerRunEnded && !newFailure) return;
+    retryNotice.current = null;
+    setNotice((current) => (current === routed ? null : current));
+  }, [coordinatorWorking, latestRunOrdinal, failedRunId]);
   // The project shell follows saves made in any window; the snapshot is read once.
   const liveSettings = project.workspaceSettings;
   const hostProviders = environment?.serverConfig?.providers;
@@ -984,6 +1025,8 @@ export function ProjectWorkspaceSurface({
       setError(null);
       setNotice(null);
       const keyParts = [project.id, text, sourceThreadId ?? null, attachments ?? []];
+      const lastOrdinalAtSend = latestOrdinal(latestCoordinatorRuns.current);
+      const failedRunIdAtSend = latestFailedRunId.current;
       await settleAfter(
         async () => {
           const commandId = receipt.forPrompt(
@@ -1003,6 +1046,8 @@ export function ProjectWorkspaceSurface({
                     prompt: text,
                     ...(attachments?.length ? { attachments } : {}),
                     ...(sourceThreadId ? { sourceThreadId } : {}),
+                    // A retry reads sign-in and usage afresh before the host picks a model.
+                    ...(ownsRetryFlight ? { recheck: true as const } : {}),
                   },
                 }),
               { waitForHost: () => whenHostReady(project.environmentId, { cancelled: false }) },
@@ -1017,7 +1062,31 @@ export function ProjectWorkspaceSurface({
           onConfirmed?.();
           receipt.acknowledge(commandId);
           refreshWorkspace();
-          setNotice(sourceThreadId ? SENT_WITH_CONTEXT_NOTICE : QUEUED_NOTICE);
+          const routing = ownsRetryFlight ? result.value.routing : undefined;
+          if (routing) {
+            const picked = retryRoutingNotice(
+              modelLabel(
+                providerEntries.get(routing.selection.instanceId) ?? null,
+                routing.selection.instanceId,
+                routing.selection.model,
+              ).full,
+            );
+            // The retry's turn already started and ended: the projection got
+            // here first, so "Retrying on" would stay with nothing to clear it.
+            const failedSince = latestFailedRunId.current;
+            const turnEnded =
+              (!latestCoordinatorWorking.current &&
+                latestOrdinal(latestCoordinatorRuns.current) > lastOrdinalAtSend) ||
+              (failedSince !== null && failedSince !== failedRunIdAtSend);
+            if (!turnEnded) {
+              retryNoticeSince.current = {
+                ordinal: lastOrdinalAtSend,
+                failedRunId: failedRunIdAtSend,
+              };
+              retryNotice.current = picked;
+              setNotice(picked);
+            }
+          } else setNotice(sourceThreadId ? SENT_WITH_CONTEXT_NOTICE : QUEUED_NOTICE);
         },
         () => {
           if (!ownsRetryFlight) inFlight.current = false;
@@ -1037,11 +1106,11 @@ export function ProjectWorkspaceSurface({
       sendCommand,
       runAfterSave,
       refreshWorkspace,
+      providerEntries,
     ],
   );
   const coordinatorMessages = coordinatorThread?.projection.messages;
   const coordinatorRuns = coordinatorThread?.projection.runs;
-  const failedRunId = coordinatorFailure?.runId ?? null;
   const failedMessage = coordinatorFailure?.message ?? "";
   const coordinatorLoaded = coordinatorRef === null || coordinatorThread !== null;
   const voiceSnapshot = useMemo(
@@ -1132,6 +1201,23 @@ export function ProjectWorkspaceSurface({
     send: routingSend,
     reportError: setError,
     setRetrying: setRetryingCoordinator,
+  });
+  // The machine by name when it has one, so errors say "on M1", not "on this machine".
+  const knownMachine =
+    environment?.label || machineName !== project.environmentId ? machineName : null;
+  // The fix for the provider the failed run used, or the one a refused send names.
+  const failedRunInstance = coordinatorFailure
+    ? (coordinatorThread?.projection.runs.find((run) => run.id === coordinatorFailure.runId)
+        ?.modelSelection ?? coordinator?.modelSelection)
+    : model;
+  const providerFix = useCoordinatorProviderFix({
+    environmentId: project.environmentId,
+    instanceId: failedRunInstance?.instanceId,
+    model: failedRunInstance?.model,
+    providers: hostProviders,
+    settings: hostSettings,
+    machineLabel: knownMachine,
+    failureKey: coordinatorFailure?.runId ?? error ?? null,
   });
   async function resolve(thread: EnvironmentThreadShell) {
     const result = await toggleProjectThreadResolution(thread, actions, archived.refresh);
@@ -1644,6 +1730,7 @@ export function ProjectWorkspaceSurface({
                   failure={coordinatorFailure}
                   onRetry={retryCoordinator}
                   retrying={retryingCoordinator}
+                  fix={providerFix}
                   retryDisabled={
                     Boolean(blocked) ||
                     Boolean(modelCompatibility) ||
@@ -1721,7 +1808,20 @@ export function ProjectWorkspaceSurface({
                         onOpen={onCheckout}
                       />
                     )}
-                    {error && <p role="alert">{error}</p>}
+                    {error && (
+                      <p role="alert">
+                        {nameMachineInText(error, knownMachine)}
+                        {providerFix && !coordinatorFailure ? (
+                          <span className="mt-2 flex">
+                            <CoordinatorFixButton
+                              fix={providerFix}
+                              variant="outline"
+                              doneText="Installed. Send your message again."
+                            />
+                          </span>
+                        ) : null}
+                      </p>
+                    )}
                   </>
                 }
                 notices={

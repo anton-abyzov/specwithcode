@@ -112,6 +112,8 @@ try {
           assert.equal(calls.length, 1);
           assert.equal(calls[0].args.environmentId, "host");
           assert.equal(calls[0].args.input.prompt, "Have you resolved this?");
+          // A retry reads the coordinator's sign-in and usage afresh first.
+          assert.equal(calls[0].args.input.recheck, true);
           assert.deepEqual(
             calls[0].args.input.attachments.map((attachment) => attachment.id),
             ["pending-restored-0", "pending-restored-1"],
@@ -149,7 +151,11 @@ try {
       }
       const details = page.getByText("Error details", { exact: true });
       await details.click();
-      assert(await page.getByText("run-failed", { exact: true }).isVisible());
+      // The run's ID is behind a copy button, not printed in the card.
+      const copyRun = page.getByRole("button", { name: "Copy run ID" });
+      assert(await copyRun.isVisible());
+      assert.equal(await copyRun.getAttribute("title"), "run-failed");
+      assert.equal(await page.getByText("run-failed", { exact: true }).count(), 0);
       await page.screenshot({
         path: path.join(output, `${viewport.width}-${scenario}.png`),
         fullPage: true,

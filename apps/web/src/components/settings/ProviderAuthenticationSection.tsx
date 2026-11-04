@@ -189,6 +189,8 @@ export function ProviderAuthenticationSection({
               className="max-w-full truncate"
             />
           </span>
+        ) : signedIn && !active && provider.auth.login?.trim() ? (
+          <span role="status">Signed in as {provider.auth.login.trim()}</span>
         ) : (
           <span role="status">{accountDescription}</span>
         )

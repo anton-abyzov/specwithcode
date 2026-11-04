@@ -47,9 +47,9 @@ const run = <A, E>(
           Layer.mock(Settings.ServerSettingsService)({ getSettings: Effect.succeed(config) }),
           Layer.mock(Providers.ProviderRegistry)({
             getProviders: Effect.succeed(native),
-            refreshInstance: (id) =>
+            refreshInstance: (id, options) =>
               Effect.sync(() => {
-                refreshIds.push(id);
+                refreshIds.push(options?.fresh ? `${id}:fresh` : id);
                 return refreshed;
               }),
           }),
@@ -1238,6 +1238,116 @@ describe("native session admission", () => {
             ),
           },
         });
+      expect(requests).toEqual(["/api/state", "/api/refresh", "/api/state"]);
+    });
+
+    it("re-reads again inside the minute when a person asks to check again", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const requests: string[] = [];
+      const refreshed: string[] = [];
+      const native = [provider("claudeAgent", "claudeAgent", now)];
+      const options: { refreshedRaw: unknown; requests: string[] } = {
+        refreshedRaw: exhausted(now),
+        requests,
+      };
+      const flow = Effect.flip(start("claudeAgent")).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            options.refreshedRaw = signedIn(now);
+          }),
+        ),
+        Effect.andThen(Capacity.requestCapacityRecheck(["claudeAgent"])),
+        Effect.andThen(start("claudeAgent")),
+      );
+      await expect(
+        run(flow, exhausted(now), native, settings, false, true, native, refreshed, options),
+      ).resolves.toBeUndefined();
+      expect(requests).toEqual(["/api/state", "/api/refresh", "/api/state", "/api/refresh"]);
+      expect(refreshed).toEqual(["claudeAgent", "claudeAgent:fresh"]);
+    });
+
+    it("uses a check-again request once, and drops expired ones", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const late = now + Capacity.FORCED_RECHECK_MAX_AGE_MS + 1;
+      const taken = await Effect.runPromise(
+        Capacity.requestCapacityRecheck(["shared", "late"]).pipe(
+          Effect.andThen(
+            Effect.all([
+              Capacity.takeCapacityRecheck("shared", now),
+              // The first start used it up: a later one keeps the throttle.
+              Capacity.takeCapacityRecheck("shared", now + 1_000),
+              Capacity.takeCapacityRecheck("other", now),
+              Capacity.takeCapacityRecheck("late", late),
+            ]),
+          ),
+        ),
+      );
+      expect(taken).toEqual([{ freshlyRead: false }, undefined, undefined, undefined]);
+    });
+
+    it("relies on the retry's own fresh read for a short while only", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const taken = await Effect.runPromise(
+        Capacity.requestCapacityRecheck(
+          ["fresh-a", "fresh-b", "unread"],
+          new Set(["fresh-a", "fresh-b"]),
+        ).pipe(
+          Effect.andThen(
+            Effect.all([
+              Capacity.takeCapacityRecheck("fresh-a", now),
+              Capacity.takeCapacityRecheck("fresh-b", now + Capacity.FRESH_READ_REUSE_MS),
+              Capacity.takeCapacityRecheck("unread", now),
+            ]),
+          ),
+        ),
+      );
+      expect(taken).toEqual([
+        { freshlyRead: true },
+        { freshlyRead: false },
+        { freshlyRead: false },
+      ]);
+    });
+
+    it("probes a retried provider once: the start uses the retry's fresh read", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const requests: string[] = [];
+      const refreshed: string[] = [];
+      const native = [provider("claudeAgent", "claudeAgent", now)];
+      const options: { refreshedRaw: unknown; requests: string[] } = {
+        refreshedRaw: exhausted(now),
+        requests,
+      };
+      const flow = Effect.flip(start("claudeAgent")).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            options.refreshedRaw = signedIn(now);
+          }),
+        ),
+        // The retry has just read the instance afresh itself.
+        Effect.andThen(Capacity.requestCapacityRecheck(["claudeAgent"], new Set(["claudeAgent"]))),
+        Effect.andThen(start("claudeAgent")),
+      );
+      await expect(
+        run(flow, exhausted(now), native, settings, false, true, native, refreshed, options),
+      ).resolves.toBeUndefined();
+      expect(requests).toEqual(["/api/state", "/api/refresh", "/api/state", "/api/refresh"]);
+      // Only the first start's own recheck probed the provider; the retry's start did not.
+      expect(refreshed).toEqual(["claudeAgent"]);
+    });
+
+    it("keeps the once-a-minute throttle for starts after the retry's", async () => {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      const requests: string[] = [];
+      const native = [provider("claudeAgent", "claudeAgent", now)];
+      const flow = Capacity.requestCapacityRecheck(["claudeAgent"]).pipe(
+        Effect.andThen(Effect.flip(start("claudeAgent"))),
+        Effect.andThen(Effect.flip(start("claudeAgent"))),
+      );
+      await run(flow, exhausted(now), native, settings, false, true, native, [], {
+        refreshedRaw: exhausted(now),
+        requests,
+      });
+      // The forced start re-read; the next one inside the minute did not.
       expect(requests).toEqual(["/api/state", "/api/refresh", "/api/state"]);
     });
 

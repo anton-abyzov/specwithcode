@@ -11,7 +11,10 @@ import { useEnvironmentQuery, type EnvironmentQueryView } from "../../state/quer
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
-import { isConfiguredAcpRegistryAgent } from "./AddProviderInstanceDialog.logic";
+import {
+  COPILOT_ACP_AGENT_ID,
+  isConfiguredAcpRegistryAgent,
+} from "./AddProviderInstanceDialog.logic";
 
 import { FEATURED_ACP_AGENT_IDS } from "../../providerQuickSetup";
 
@@ -122,10 +125,12 @@ export function FeaturedAcpProviderCards({
           )?.[0];
           const preparing = preparingId === id;
           const unavailable = !catalog.isPending && (catalog.error !== null || !agent);
+          // Copilot can run several GitHub accounts, each with its own sign-in.
+          const addsAccount = added && id === COPILOT_ACP_AGENT_ID;
           const blocked =
             !canManageProviders ||
             preparingId !== null ||
-            added ||
+            (added && !addsAccount) ||
             catalog.isPending ||
             unavailable;
           return (
@@ -160,41 +165,56 @@ export function FeaturedAcpProviderCards({
                           ? "Unavailable on this environment"
                           : `v${agent.version} · ${agent.distribution}`}
                 </p>
-                {added && onManage && configuredId ? (
-                  <Button
-                    aria-label={`Manage ${label}`}
-                    disabled={preparingId !== null}
-                    onClick={() => {
-                      if (preparingId === null) onManage(ProviderInstanceId.make(configuredId));
-                    }}
-                    size="xs"
-                    variant="outline"
-                  >
-                    Manage
-                  </Button>
-                ) : unavailable && !added ? (
-                  <Button
-                    aria-label={`Retry ${label} registry lookup`}
-                    disabled={preparingId !== null}
-                    onClick={catalog.refresh}
-                    size="xs"
-                    variant="ghost-muted"
-                  >
-                    Retry
-                  </Button>
-                ) : (
-                  <Button
-                    aria-label={`${added ? "Already added" : preparing ? "Preparing" : "Add"} ${label}`}
-                    disabled={blocked || !agent}
-                    onClick={() => {
-                      if (!blocked && agent) onPrepare(agent);
-                    }}
-                    size="xs"
-                    variant="outline"
-                  >
-                    {added ? "Added" : preparing ? "Preparing…" : "Add"}
-                  </Button>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {addsAccount && agent ? (
+                    <Button
+                      aria-label={preparing ? `Preparing ${label}` : "Add another GitHub account"}
+                      disabled={blocked}
+                      onClick={() => {
+                        if (!blocked) onPrepare(agent);
+                      }}
+                      size="xs"
+                      variant="outline"
+                    >
+                      {preparing ? "Preparing…" : "Add another GitHub account"}
+                    </Button>
+                  ) : null}
+                  {added && onManage && configuredId ? (
+                    <Button
+                      aria-label={`Manage ${label}`}
+                      disabled={preparingId !== null}
+                      onClick={() => {
+                        if (preparingId === null) onManage(ProviderInstanceId.make(configuredId));
+                      }}
+                      size="xs"
+                      variant="outline"
+                    >
+                      Manage
+                    </Button>
+                  ) : unavailable && !added ? (
+                    <Button
+                      aria-label={`Retry ${label} registry lookup`}
+                      disabled={preparingId !== null}
+                      onClick={catalog.refresh}
+                      size="xs"
+                      variant="ghost-muted"
+                    >
+                      Retry
+                    </Button>
+                  ) : addsAccount ? null : (
+                    <Button
+                      aria-label={`${added ? "Already added" : preparing ? "Preparing" : "Add"} ${label}`}
+                      disabled={blocked || !agent}
+                      onClick={() => {
+                        if (!blocked && agent) onPrepare(agent);
+                      }}
+                      size="xs"
+                      variant="outline"
+                    >
+                      {added ? "Added" : preparing ? "Preparing…" : "Add"}
+                    </Button>
+                  )}
+                </div>
               </div>
             </article>
           );

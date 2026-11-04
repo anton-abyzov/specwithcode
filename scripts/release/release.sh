@@ -9,7 +9,7 @@
 #
 # Stages, in order (docs/studio/releasing.md has the runbook):
 #   preflight trees prev bump candidate [server starts here, in the background] stage1
-#   build bundle sign helpers plan drafts server-wait
+#   build bundle sign verify helpers plan drafts server-wait
 #   quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux
 #
 # macOS ships first: this script publishes the macOS app and every asset the fleet reads, rolls the
@@ -75,7 +75,7 @@ RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
 TREES="${RELEASE_TREES:-$HOME/.specwithcode/release.noindex}"
 APP="${RELEASE_DESKTOP_APP:-/Applications/SpecWithCode.app}"
-STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
+STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign verify helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge fleet-linux"
 VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 POLICY_RE='^1\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 STUB_SHA_DEFAULT=1111111111111111111111111111111111111111
@@ -364,6 +364,9 @@ electron_runtime() {
 # retry_jobs, run_group and retry_server_files.
 # shellcheck source=release-retry.sh
 . "$HERE/release-retry.sh"
+# stage_verify (the built app, fresh and upgraded, headless) and require_verified.
+# shellcheck source=release-verify.sh
+. "$HERE/release-verify.sh"
 
 run_job() {  # run_job OUT NAME|DIR|KIND: one stage-1 job, leaving OUT/NAME.exit and .secs
   local out="$1" name dir kind started code
@@ -1449,8 +1452,9 @@ main() {
   run_stage stage1 sha
   if [ "$early_server" -eq 0 ]; then start_server; fi
   run_stage build sha
-  for stage in bundle sign helpers plan drafts; do
+  for stage in bundle sign verify helpers plan drafts; do
     stop_if_server_failed
+    if [ "$stage" = drafts ]; then require_verified; fi
     run_stage "$stage" sha
   done
   run_stage server-wait sha

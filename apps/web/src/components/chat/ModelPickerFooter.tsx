@@ -25,6 +25,8 @@ export function ModelPickerSetupFooter(props: {
   readonly entryByInstanceId: ReadonlyMap<ProviderInstanceId, ProviderInstanceEntry>;
   readonly onRequestClose: (() => void) | undefined;
   readonly onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
+  /** The note over the list already says why nothing is listed. */
+  readonly hideEmpty?: boolean;
 }) {
   const { providerSetupEntries, quickSetup, turnedOnProviders, otherMachineProviders } = props;
   return (
@@ -72,7 +74,7 @@ export function ModelPickerSetupFooter(props: {
             );
           })}
         </div>
-      ) : (
+      ) : props.hideEmpty ? null : (
         <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
       )}
       {quickSetup && (otherMachineProviders.length > 0 || turnedOnProviders.length > 0) ? (

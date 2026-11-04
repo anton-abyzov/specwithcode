@@ -41,6 +41,7 @@ import { provider } from "../studio/fixtures.ts";
 import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import { ServiceUpdateInProgressError } from "../serviceUpdate/ServiceUpdateHold.ts";
 import { UnopenableHolds, UsageLimitHolds } from "../orchestration-v2/UnopenableHolds.ts";
+import { takeCapacityRecheck } from "../studio/Capacity.ts";
 
 const id = ProjectId.make("project:coordinator");
 const commandId = CommandId.make("request:one");
@@ -76,6 +77,8 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   }> = [];
   const updates: Projects.ProjectUpdateInput[] = [];
   let sendFailure: unknown = null;
+  const refreshes: string[] = [];
+  let onRefresh: (instanceId: string) => void = () => {};
   const dependencies = Layer.mergeAll(
     Layer.mock(EventSink.EventSinkV2)({ readByCommandId: () => Stream.empty }),
     Layer.mock(Projects.ProjectService)({
@@ -155,6 +158,12 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     }),
     Layer.mock(Providers.ProviderRegistry)({
       getProviders: Effect.sync(() => providers),
+      refreshInstance: (instanceId, options) =>
+        Effect.sync(() => {
+          refreshes.push(options?.fresh ? `${instanceId}:fresh` : instanceId);
+          onRefresh(instanceId);
+          return providers;
+        }),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getThreadRecords: (() => Effect.sync(() => ({ runs, turnItems }))) as never,
@@ -173,6 +182,10 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
     shells,
     runs,
     turnItems,
+    refreshes,
+    setOnRefresh: (next: (instanceId: string) => void) => {
+      onRefresh = next;
+    },
     get project() {
       return project;
     },
@@ -1086,6 +1099,150 @@ it.effect("returns a coordinator to its saved Claude once that login bills API c
         prompt: "Next",
       });
       expect(f.sends.at(-1)?.modelSelection).toEqual(model);
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+  }),
+);
+
+it.effect("a retry reads the providers afresh and goes back to a saved model that has room", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "codex-model" };
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: model,
+      },
+    });
+    // The last read says the saved Claude is out of room, and a hold keeps it off.
+    const held: ReadonlyMap<string, number> = new Map([[model.instanceId, 0]]);
+    f.setProviders([
+      readyWithUsage(model.instanceId, "claudeAgent", 100),
+      readyWithUsage("codex", "codex", 20),
+    ]);
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      f.shells.set(threadId, { ...f.shells.get(threadId)!, modelSelection: fallback });
+      const plain = yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:cached"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      expect(f.refreshes).toEqual([]);
+      expect(plain.routing).toMatchObject({ selection: fallback, rechecked: false });
+      // A new sign-in shows only in a fresh read: the retry asks for one.
+      f.setOnRefresh(() =>
+        f.setProviders([
+          readyWithUsage(model.instanceId, "claudeAgent", 5),
+          readyWithUsage("codex", "codex", 20),
+        ]),
+      );
+      const retried = yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:recheck"),
+        prompt: "Next",
+        recheck: true,
+      });
+      expect(f.refreshes).toEqual(expect.arrayContaining(["claude:fresh", "codex:fresh"]));
+      expect(f.sends.at(-1)?.modelSelection).toEqual(model);
+      expect(retried.routing).toEqual({ selection: model, reason: "saved", rechecked: true });
+      // The session start that follows skips the cached limit verdict once,
+      // and relies on this fresh read rather than probing the provider again.
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      expect(yield* takeCapacityRecheck(model.instanceId, now)).toEqual({ freshlyRead: true });
+      expect(yield* takeCapacityRecheck(model.instanceId, now)).toBeUndefined();
+    }).pipe(
+      Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))),
+      Effect.provideService(UnopenableHolds, {
+        get: Effect.sync(() => held),
+        set: () => Effect.void,
+      }),
+    );
+  }),
+);
+
+it.effect("a retry counts only the providers it actually read afresh", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "codex-model" };
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: model,
+      },
+    });
+    f.setProviders([
+      readyWithUsage(model.instanceId, "claudeAgent", 100),
+      readyWithUsage("codex", "codex", 20),
+    ]);
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      f.shells.set(threadId, { ...f.shells.get(threadId)!, modelSelection: fallback });
+      // One failing read does not stop the other.
+      f.setOnRefresh((instanceId) => {
+        if (instanceId === "codex") throw new Error("codex read failed");
+        f.setProviders([
+          readyWithUsage(model.instanceId, "claudeAgent", 5),
+          readyWithUsage("codex", "codex", 20),
+        ]);
+      });
+      const partly = yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:recheck-partly"),
+        prompt: "Next",
+        recheck: true,
+      });
+      expect(f.refreshes).toEqual(expect.arrayContaining(["claude:fresh", "codex:fresh"]));
+      expect(partly.routing).toEqual({ selection: model, reason: "saved", rechecked: true });
+      // Only the instance read afresh spares its start a second probe.
+      const now = DateTime.toEpochMillis(yield* DateTime.now);
+      expect(yield* takeCapacityRecheck(model.instanceId, now)).toEqual({ freshlyRead: true });
+      expect(yield* takeCapacityRecheck("codex", now)).toEqual({ freshlyRead: false });
+      // When no read succeeds, the retry does not claim it checked again.
+      f.setOnRefresh(() => {
+        throw new Error("read failed");
+      });
+      const none = yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:recheck-none"),
+        prompt: "Next",
+        recheck: true,
+      });
+      expect(none.routing?.rechecked).toBe(false);
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+  }),
+);
+
+it.effect("a retry keeps the fallback when the fresh read still shows no room", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "codex-model" };
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: model,
+      },
+    });
+    f.setProviders([
+      readyWithUsage(model.instanceId, "claudeAgent", 100),
+      readyWithUsage("codex", "codex", 20),
+    ]);
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      f.shells.set(threadId, { ...f.shells.get(threadId)!, modelSelection: fallback });
+      const retried = yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:still-full"),
+        prompt: "Next",
+        recheck: true,
+      });
+      expect(f.refreshes).toContain("claude:fresh");
+      expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      expect(retried.routing?.selection).toEqual(fallback);
+      expect(retried.routing?.reason).not.toBe("saved");
     }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
   }),
 );

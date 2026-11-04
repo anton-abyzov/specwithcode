@@ -127,6 +127,42 @@ describe("deriveProviderModelsForDisplay", () => {
     expect(markup).toContain("blur-xs");
     expect(markup).not.toContain("developer@example.com");
   });
+  it("shows the GitHub login a Copilot instance is signed in as", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_github_copilot_2");
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const liveProvider: ServerProvider = {
+      instanceId,
+      driver,
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: { status: "authenticated", login: "work-account" },
+      checkedAt: "2026-11-04T12:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    };
+
+    const markup = renderToStaticMarkup(
+      createElement(ProviderInstanceCard, {
+        instanceId,
+        instance: { driver },
+        driverOption: undefined,
+        liveProvider,
+        mode: "editor",
+        onUpdate: () => undefined,
+        hiddenModels: [],
+        favoriteModels: [],
+        modelOrder: [],
+        onHiddenModelsChange: () => undefined,
+        onFavoriteModelsChange: () => undefined,
+        onModelOrderChange: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("Signed in as work-account");
+  });
   it("surfaces a failed probe message in both the list row and the editor", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const driver = ProviderDriverKind.make("codex");

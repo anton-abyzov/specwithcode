@@ -202,4 +202,15 @@ describe("provider device consent", () => {
     expect(state.open).not.toHaveBeenCalled();
     expect(state.copy).not.toHaveBeenCalled();
   });
+
+  it("names the GitHub login the instance is signed in as", () => {
+    state.auth = { ...state.auth!, phase: "succeeded", interaction: null };
+    const tree = render({
+      provider: { ...provider, auth: { status: "authenticated", login: "work-account" } },
+    }) as ReactElement<{ description: unknown }>;
+    expect(text(tree.props.description).replace(/\s+/g, " ")).toContain(
+      "Signed in as work-account",
+    );
+    expect(button(tree, "Change account")).not.toBeNull();
+  });
 });

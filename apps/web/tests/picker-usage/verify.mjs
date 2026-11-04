@@ -85,6 +85,34 @@ try {
     const box = await page.locator("[data-model-picker-content]").boundingBox();
     assert.ok(box && box.x >= 0 && box.x + box.width <= width + 0.5, "picker leaves the viewport");
   };
+  // Every band under the list is on top where it is drawn: no model row paints over it.
+  const noOverlap = async (width, theme) => {
+    const covered = await page.evaluate(() => {
+      const bands = [
+        ...document.querySelectorAll(
+          "[data-model-picker-alternatives], [data-model-picker-elsewhere], [data-model-picker-actions]",
+        ),
+      ];
+      const out = [];
+      for (const band of bands) {
+        const box = band.getBoundingClientRect();
+        if (box.height === 0) continue;
+        for (const fx of [0.25, 0.5, 0.75]) {
+          for (const fy of [0.2, 0.5, 0.8]) {
+            const x = box.left + box.width * fx;
+            const y = box.top + box.height * fy;
+            const top = document.elementFromPoint(x, y);
+            if (top && !band.contains(top) && top.closest("[role=option]"))
+              out.push(
+                `${band.getAttribute("data-model-picker-elsewhere") !== null ? "elsewhere" : band.hasAttribute("data-model-picker-actions") ? "actions" : "note"} at ${Math.round(x)},${Math.round(y)}`,
+              );
+          }
+        }
+      }
+      return out;
+    });
+    assert.deepEqual(covered, [], `model rows cover picker bands at ${width}px ${theme}`);
+  };
   const rail = (name) => page.locator(`[data-model-picker-sidebar] button[aria-label^="${name}"]`);
   const warned = () => page.locator("[data-model-usage-warning=true]").count();
   const pickerText = () => page.locator("[data-model-picker-content]").innerText();
@@ -238,10 +266,39 @@ try {
       await contained(width);
       await page.locator("[data-model-picker-alternatives]").waitFor();
       const unpreparedText = await pickerText();
-      assert.match(unpreparedText, /Copilot managed can't run on this machine yet/);
+      assert.match(unpreparedText, /Copilot managed isn't installed on M1 yet\./);
+      assert.match(unpreparedText, /Ready on Anton's MacBook M4MAX/);
+      assert.match(unpreparedText, /Ready now instead\. Picking one switches this chat/);
       assert.match(unpreparedText, /GPT-6\.1-Sol/);
       assert.match(unpreparedText, /Claude Opus 5\.5[\s\S]*Claude/);
+      // One install offer, in the note; the footer no longer repeats it.
+      assert.equal(await page.locator("[data-model-picker-install]").count(), 1);
       await page.screenshot({ path: join(output, `unprepared-${width}-${theme}.png`) });
+      await noOverlap(width, theme);
+      // The list keeps its own scroll: the picker fits the window and the list
+      // either shows every model or scrolls inside itself.
+      const listFit = await page.evaluate(() => {
+        const option = document.querySelector("[role=option]");
+        let scroller = option?.parentElement ?? null;
+        while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY))
+          scroller = scroller.parentElement;
+        const picker = document.querySelector("[data-model-picker-content]").getBoundingClientRect();
+        return {
+          pickerFits: picker.bottom <= window.innerHeight + 0.5 && picker.top >= -0.5,
+          scrollerHeight: scroller ? scroller.clientHeight : 0,
+          scrolls: scroller ? scroller.scrollHeight > scroller.clientHeight : false,
+          options: document.querySelectorAll("[role=option]").length,
+        };
+      });
+      assert.ok(listFit.pickerFits, `picker overflows the window at ${width}px`);
+      assert.ok(listFit.scrollerHeight >= 60, `list has no room at ${width}px: ${JSON.stringify(listFit)}`);
+      await page.locator("[data-model-picker-install]").click();
+      await page.getByText("Installing on M1…").waitFor();
+      checks.push(`unprepared ${width}px ${theme}: one-click install on M1, no overlap`);
+      await page.keyboard.press("Escape");
+      await closed();
+      await open("unprepared", theme, width);
+      await page.locator("[data-model-picker-alternatives]").waitFor();
       await page.getByText("GPT-6.1-Sol", { exact: true }).first().click();
       await page.getByTestId("selection").filter({ hasText: "codex:gpt-6.1-sol" }).waitFor();
       checks.push(

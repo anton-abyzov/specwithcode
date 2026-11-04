@@ -1,8 +1,15 @@
+// The installed services keep their projects, threads and sign-ins across an update, read in a
+// headless browser through one-time pairing. Fleet mode reads the installed M4/M1/M3 services over
+// the fleet ssh keys (--report-dir --artifact-sha --source-commit --fleet-proof). --local reads one
+// server this machine started on a seeded home (the release verify stage, verify-built-app.mjs):
+//   --local --origin http://127.0.0.1:PORT --cli-wrapper <wrapper> --base-dir <dir> --expected <capture.json> --report-dir <dir>
+// where the wrapper runs the build's CLI and the capture is update.py verify --local's from before
+// that server first started. STUDIO_PLAYWRIGHT_MODULE names the Playwright package to load.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { fleetSshTargets } from './fleet-hosts.mjs';
@@ -11,20 +18,40 @@ assert.equal(process.version, 'v22.20.0');
 assert.equal(process.env.PWDEBUG, '0'); assert.equal(process.env.PLAYWRIGHT_HTML_OPEN, 'never');
 const args = process.argv.slice(2);
 const option = name => { const i = args.indexOf(name); assert.ok(i >= 0 && args[i + 1]); return args[i + 1]; };
-const directory = resolve(option('--report-dir')), archiveSha256 = option('--artifact-sha'), sourceCommit = option('--source-commit');
-assert.match(archiveSha256, /^[a-f0-9]{64}$/); assert.match(sourceCommit, /^[a-f0-9]{40}$/);
-const fleet = JSON.parse(readFileSync(resolve(option('--fleet-proof')), 'utf8'));
+const local = args.includes('--local');
+const directory = resolve(option('--report-dir'));
+let archiveSha256 = null, sourceCommit = null, fleet = null, hosts, wrapper = null, baseDir = null;
+if (local) {
+  const origin = new URL(option('--origin')); assert.equal(origin.hostname, '127.0.0.1'); assert.notEqual(origin.port, '8319');
+  wrapper = resolve(option('--cli-wrapper')); baseDir = resolve(option('--base-dir'));
+  // A local run works on a throwaway home only: never the account's own HOME.
+  assert.ok(process.env.HOME && resolve(process.env.HOME) !== resolve(userInfo().homedir), 'Local mode needs a scratch HOME, not the real one');
+  const expected = JSON.parse(readFileSync(resolve(option('--expected')), 'utf8')).rows;
+  assert.ok(Array.isArray(expected?.projectIds) && Array.isArray(expected?.threadIds), 'The capture has no project and thread ids');
+  // The seeded home's projects and threads, as the capture before the new build started read them.
+  fleet = { hosts: { local: { finalSnapshot: { rows: { projectIds: [...expected.projectIds].sort(), threadIds: [...expected.threadIds].sort() } } } } };
+  hosts = [{ id: 'local', origin: origin.origin }];
+} else {
+  archiveSha256 = option('--artifact-sha'); sourceCommit = option('--source-commit');
+  assert.match(archiveSha256, /^[a-f0-9]{64}$/); assert.match(sourceCommit, /^[a-f0-9]{40}$/);
+  fleet = JSON.parse(readFileSync(resolve(option('--fleet-proof')), 'utf8'));
+  const workers = fleetSshTargets();
+  hosts = [{ id: 'm4', origin: 'http://127.0.0.1:8319' },
+    { id: 'm1', origin: 'http://127.0.0.1:18319', ssh: workers.m1 },
+    { id: 'm3', origin: 'http://127.0.0.1:28319', ssh: workers.m3 }];
+}
 mkdirSync(directory, { recursive: true, mode: 0o700 });
 const ssh = ['-F', '/dev/null', '-i', join(homedir(), '.local/share/specweave/fleet/id_ed25519'), '-o', 'IdentitiesOnly=yes',
   '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + join(homedir(), '.local/share/specweave/fleet/known_hosts'),
   '-o', 'ConnectTimeout=5', '-o', 'ControlMaster=no'];
 const quote = value => "'" + String(value).replaceAll("'", "'\\''") + "'";
-const workers = fleetSshTargets();
-const hosts = [{ id: 'm4', origin: 'http://127.0.0.1:8319' },
-  { id: 'm1', origin: 'http://127.0.0.1:18319', ssh: workers.m1 },
-  { id: 'm3', origin: 'http://127.0.0.1:28319', ssh: workers.m3 }];
+// Local mode's CLI: the scratch HOME the caller gave (verify-built-app.mjs), STUDIO_HOME the seeded home.
+const localEnv = () => ({ PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: process.env.HOME, TMPDIR: process.env.TMPDIR ?? '/tmp',
+  LANG: process.env.LANG ?? 'en_US.UTF-8', USER: process.env.USER, LOGNAME: process.env.LOGNAME ?? process.env.USER,
+  STUDIO_HOME: baseDir, STUDIO_ENABLE_HOSTED_SERVICES: 'false', STUDIO_LOG_LEVEL: 'Warn', PWDEBUG: '0', PLAYWRIGHT_HTML_OPEN: 'never' });
 function cli(host, command) {
-  const result = host.ssh ? spawnSync('/usr/bin/ssh', [...ssh, host.ssh, '"$HOME/.local/bin/specweave-studio" ' + command.map(quote).join(' ')], { encoding: 'utf8', timeout: 20000 })
+  const result = local ? spawnSync(wrapper, [...command, '--base-dir', baseDir], { encoding: 'utf8', timeout: 20000, env: localEnv() })
+    : host.ssh ? spawnSync('/usr/bin/ssh', [...ssh, host.ssh, '"$HOME/.local/bin/specweave-studio" ' + command.map(quote).join(' ')], { encoding: 'utf8', timeout: 20000 })
     : spawnSync(join(homedir(), '.local/bin/specweave-studio'), command, { encoding: 'utf8', timeout: 20000 });
   assert.equal(result.status, 0, 'Installed owned CLI operation failed; private output withheld'); return result.stdout;
 }
@@ -48,16 +75,16 @@ async function welcome(context, origin) {
     });
   });
 }
-const { chromium } = createRequire(import.meta.url)(join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
+const { chromium } = createRequire(import.meta.url)(process.env.STUDIO_PLAYWRIGHT_MODULE || join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
 const browser = await chromium.launch({ headless: true });
-const proof = { artifactSha256: archiveSha256, artifactSourceCommit: sourceCommit, node: process.execPath, version: process.version,
+const proof = { mode: local ? 'local' : 'fleet', artifactSha256: archiveSha256, artifactSourceCommit: sourceCommit, node: process.execPath, version: process.version,
   browserHeadless: true, inferenceExecuted: false, nativeAuthActions: false, hosts: [] };
 const save = () => writeFileSync(join(directory, 'receipt.json'), JSON.stringify(proof, null, 2) + '\n', { mode: 0o600 });
 try {
   for (const host of hosts) {
     proof.currentHost = host.id; proof.phase = 'installed-provenance'; save();
     const installed = fleet.hosts[host.id].finalSnapshot;
-    assert.equal(installed.archiveSha256, archiveSha256); assert.equal(installed.artifactSourceCommit, sourceCommit);
+    if (!local) { assert.equal(installed.archiveSha256, archiveSha256); assert.equal(installed.artifactSourceCommit, sourceCommit); }
     const pairingBefore = JSON.parse(cli(host, ['auth', 'pairing', 'list', '--json']));
     const sessionsBefore = JSON.parse(cli(host, ['auth', 'session', 'list', '--json']));
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
@@ -69,7 +96,7 @@ try {
       grant = JSON.parse(cli(host, ['auth', 'pairing', 'create', '--ttl', '5m', '--label', '0885 T15 owned startup ' + randomUUID(), '--base-url', host.origin, '--scope', 'orchestration:read', '--json']));
       page = await context.newPage(); await page.goto(grant.pairUrl, { waitUntil: 'domcontentloaded' });
       let paired = false;
-      for (let i = 0; i < 100; i++) { paired = (await context.cookies(host.origin)).some(cookie => cookie.name === installed.cookieName) && new URL(page.url()).hash === ''; if (paired) break; await delay(100); }
+      for (let i = 0; i < 100; i++) { paired = (await context.cookies(host.origin)).some(cookie => local ? cookie.name.startsWith('studio_session_') : cookie.name === installed.cookieName) && new URL(page.url()).hash === ''; if (paired) break; await delay(100); }
       assert.ok(paired); assert.equal(new URL(page.url()).hash, ''); grant.credential = ''; grant.pairUrl = '';
       const previousSessionIds = new Set(sessionsBefore.map(session => session.sessionId));
       const newSessions = JSON.parse(cli(host, ['auth', 'session', 'list', '--json'])).filter(session => !previousSessionIds.has(session.sessionId));
@@ -87,7 +114,8 @@ try {
       await page.reload({ waitUntil: 'domcontentloaded' }); await page.locator('#studio-heading').waitFor({ state: 'visible' });
       assert.equal(new URL(page.url()).pathname, '/'); assert.equal(new URL(page.url()).hash, '');
       proof.phase = 'connected-overview'; save();
-      await page.getByText('Authenticated connection', { exact: true }).first().waitFor({ state: 'visible' });
+      // The overview's host card for this machine (CapacityFleet: 'Connected' once its connection is authenticated).
+      await page.locator('.studio-host-state.connected').getByText('Connected', { exact: true }).first().waitFor({ state: 'visible' });
       const afterResponse = await context.request.get(host.origin + '/api/orchestration/shell', { headers: protocolHeaders }); assert.equal(afterResponse.status(), 200);
       const after = shellIds(await afterResponse.json()); assert.deepEqual(after, before);
       await page.screenshot({ path: join(directory, host.id + '-installed-overview.png'), fullPage: true });

@@ -13,6 +13,7 @@ import {
   windowName,
   windowTitle,
 } from "@specweave-studio/shared/usageWindows";
+import { AuthOrchestrationReadScope, type EnvironmentId } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { usePrimarySettings } from "~/hooks/useSettings";
@@ -35,6 +36,18 @@ import {
   type ModelAvailability,
 } from "../../studio/modelAvailability";
 import { usageTone } from "../../studio/usageIndicatorModel";
+import {
+  chipNeedsUsageRecheck,
+  CHIP_RECHECK_THROTTLE_MS,
+  needsUsageRecheck,
+  planUsageRecheck,
+  USAGE_RECHECK_MAX_PER_OPEN,
+  USAGE_RECHECK_THROTTLE_MS,
+  USAGE_RECHECK_TIMEOUT_MS,
+} from "../../studio/usageRecheck";
+import { serverEnvironment } from "../../state/server";
+import { readEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import "../studio/shell/usage.css";
 
@@ -75,6 +88,8 @@ export function useModelPickerUsage(
   config: ModelPickerUsageConfig | undefined,
   entries: ReadonlyArray<ProviderInstanceEntry>,
   open: boolean,
+  /** The instance the composer chip shows, re-read while closed when its limit is unsure. */
+  chipInstanceId?: ProviderInstanceId | null,
 ): ModelPickerUsage | undefined {
   const [nowMs, setNowMs] = useState(Date.now);
   useEffect(() => {
@@ -92,7 +107,7 @@ export function useModelPickerUsage(
   const connected = config?.connected;
   const machineLabel = config?.machineLabel ?? null;
   const switchedAt = useAccountSwitches(config?.environmentId ?? "", entries);
-  const availability = useCallback(
+  const readState = useCallback(
     (instanceId: ProviderInstanceId, model: string | null) =>
       modelAvailability({
         provider: byId.get(instanceId)?.snapshot,
@@ -103,6 +118,27 @@ export function useModelPickerUsage(
         previousAccountReadAt: switchedAt.get(instanceId) ?? null,
       }),
     [byId, connected, machineLabel, nowMs, switchedAt],
+  );
+  const checking = useUsageRecheck({
+    environmentId: config?.environmentId ?? null,
+    connected: connected !== false,
+    entries,
+    open,
+    chipInstanceId: chipInstanceId ?? null,
+    readState,
+  });
+  const availability = useCallback(
+    (instanceId: ProviderInstanceId, model: string | null): ModelAvailability => {
+      const state = readState(instanceId, model);
+      // An unsure reading being read again says so instead of its old words.
+      // A confirmed limit keeps warning while it is read again.
+      return checking.has(instanceId) &&
+        needsUsageRecheck(state, nowMs) &&
+        !isAvailabilityBlocking(state)
+        ? { kind: "loading", refreshing: true }
+        : state;
+    },
+    [checking, nowMs, readState],
   );
   const text = useCallback(
     (instanceId: ProviderInstanceId, state: ModelAvailability) => {
@@ -128,6 +164,119 @@ export function useModelPickerUsage(
     () => (config ? { ...config, nowMs, availability, text, warningReason, formatAt } : undefined),
     [availability, warningReason, config, formatAt, nowMs, text],
   );
+}
+
+/** When each instance was last asked for a fresh read, by `${environmentId}\0${instanceId}`. */
+const lastUsageRecheckAt = new Map<string, number>();
+const usageRechecksInFlight = new Set<string>();
+const NO_CHECKING: ReadonlySet<ProviderInstanceId> = new Set();
+
+/**
+ * Reads usage again on the chat's machine when a reading is old or unsure:
+ * every enabled provider when the picker opens, and the chip's own provider
+ * while it shows a limit it can't vouch for. Returns the instances being read.
+ */
+function useUsageRecheck(input: {
+  readonly environmentId: string | null;
+  readonly connected: boolean;
+  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
+  readonly open: boolean;
+  readonly chipInstanceId: ProviderInstanceId | null;
+  readonly readState: (instanceId: ProviderInstanceId, model: string | null) => ModelAvailability;
+}): ReadonlySet<ProviderInstanceId> {
+  const { environmentId, connected, entries, open, chipInstanceId, readState } = input;
+  const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
+  const [checking, setChecking] = useState<ReadonlySet<ProviderInstanceId>>(NO_CHECKING);
+  // While the closed chip shows a limit it can't vouch for, ask again each
+  // throttle period even when nothing else changes.
+  const [tick, setTick] = useState(0);
+  const chipUnsure =
+    !open && chipInstanceId !== null && chipNeedsUsageRecheck(readState(chipInstanceId, null));
+  useEffect(() => {
+    if (!chipUnsure) return;
+    const timer = setInterval(() => setTick((value) => value + 1), CHIP_RECHECK_THROTTLE_MS);
+    return () => clearInterval(timer);
+  }, [chipUnsure]);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (environmentId === null || !connected) return;
+    const env = environmentId as EnvironmentId;
+    if (!readEnvironmentScope(env, AuthOrchestrationReadScope)) return;
+    const nowMs = Date.now();
+    const scope = `${environmentId}\u0000`;
+    const lastAskedAt = new Map(
+      [...lastUsageRecheckAt].flatMap(([key, at]) =>
+        key.startsWith(scope) ? [[key.slice(scope.length), at] as const] : [],
+      ),
+    );
+    const inFlight = new Set(
+      [...usageRechecksInFlight].flatMap((key) =>
+        key.startsWith(scope) ? [key.slice(scope.length)] : [],
+      ),
+    );
+    const due = open
+      ? planUsageRecheck({
+          // The chip's own provider first; a full check per provider is not
+          // free, so one opening asks a few at most.
+          candidates: entries
+            .filter((entry) => entry.enabled && entry.installed)
+            .toSorted(
+              (left, right) =>
+                Number(right.instanceId === chipInstanceId) -
+                Number(left.instanceId === chipInstanceId),
+            )
+            .map((entry) => ({
+              instanceId: entry.instanceId,
+              state: readState(entry.instanceId, null),
+            })),
+          nowMs,
+          lastAskedAt,
+          inFlight,
+          throttleMs: USAGE_RECHECK_THROTTLE_MS,
+        }).slice(0, USAGE_RECHECK_MAX_PER_OPEN)
+      : chipInstanceId !== null &&
+          entries.some((entry) => entry.instanceId === chipInstanceId && entry.enabled)
+        ? planUsageRecheck({
+            candidates: [{ instanceId: chipInstanceId, state: readState(chipInstanceId, null) }],
+            nowMs,
+            lastAskedAt,
+            inFlight,
+            throttleMs: CHIP_RECHECK_THROTTLE_MS,
+            needs: chipNeedsUsageRecheck,
+          })
+        : [];
+    for (const instanceId of due) {
+      const key = `${scope}${instanceId}`;
+      lastUsageRecheckAt.set(key, nowMs);
+      usageRechecksInFlight.add(key);
+      setChecking((previous) => new Set(previous).add(instanceId));
+      const done = () => {
+        usageRechecksInFlight.delete(key);
+        if (!mounted.current) return;
+        setChecking((previous) => {
+          if (!previous.has(instanceId)) return previous;
+          const next = new Set(previous);
+          next.delete(instanceId);
+          return next;
+        });
+      };
+      const timeout = new Promise<void>((resolve) => setTimeout(resolve, USAGE_RECHECK_TIMEOUT_MS));
+      void Promise.race([
+        refresh({ environmentId: env, input: { instanceId } }).then(
+          () => undefined,
+          () => undefined,
+        ),
+        timeout,
+      ]).finally(done);
+    }
+  }, [chipInstanceId, connected, entries, environmentId, open, readState, refresh, tick]);
+  return checking;
 }
 
 /**

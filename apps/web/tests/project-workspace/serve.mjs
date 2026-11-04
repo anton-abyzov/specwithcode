@@ -33,6 +33,7 @@ const stubs = [
   "components/WorkspacePageHeader",
   "components/ui/sidebar",
   "components/studio/ProjectModels",
+  "hooks/useProviderQuickSetup",
 ];
 // Another run of the fixture may hold the default port; PROJECT_UI_PORT picks a different one.
 const port = Number(process.env.PROJECT_UI_PORT ?? 5788);

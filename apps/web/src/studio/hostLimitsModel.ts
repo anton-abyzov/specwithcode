@@ -247,7 +247,11 @@ function providerRows(
         peak: peakOf(windows),
         bankedResets: limits?.resetCredits?.availableCount ?? 0,
         notice,
-        checkedAt: limits ? Date.parse(limits.checkedAt) || null : null,
+        // A full read's time, as the picker counts it: a turn's sparse update
+        // bumps checkedAt without reading every window.
+        checkedAt: limits
+          ? Date.parse(limits.nativeAllowanceObservedAt ?? limits.checkedAt) || null
+          : null,
       };
     })
     .sort(

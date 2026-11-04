@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { applyProviderInstanceSettings, deriveProviderInstanceEntries } from "./providerInstances";
 import {
   oneClickInstallAgentId,
+  machinesWhereReady,
   planEnableHere,
   providersOnOtherMachines,
   turnOnOutcome,
@@ -68,6 +69,15 @@ const m4 = {
     m4Settings,
   ),
 };
+
+describe("machinesWhereReady", () => {
+  it("names the machines that run a provider this machine can't run yet", () => {
+    const copilot = m4.entries.find((entry) => entry.instanceId === "copilot");
+    expect(copilot).toBeDefined();
+    expect(machinesWhereReady(copilot!, [m4])).toEqual(["M4 Max"]);
+    expect(machinesWhereReady(copilot!, [])).toEqual([]);
+  });
+});
 
 describe("providersOnOtherMachines", () => {
   it("offers what another machine runs and this one does not", () => {

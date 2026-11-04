@@ -15,6 +15,16 @@ import {
 } from "./ProjectWorkspace.test-fixtures";
 import { ProjectWorkspace } from "./ProjectWorkspace";
 
+/** Enter in the coordinator's composer, as a person sends a message. */
+async function enter() {
+  const input = container.querySelector<HTMLTextAreaElement>("#project-prompt")!;
+  await act(async () => {
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  });
+}
+
 describe("a coordinator turn that failed", () => {
   const failedCoordinator = (lastError: string | null) =>
     shell("coord", {
@@ -56,8 +66,210 @@ describe("a coordinator turn that failed", () => {
       "Preserve this draft",
     );
     expect(document.querySelector('[data-native-thread="coord"]')).toBeNull();
-    expect(alert!.querySelector("details")!.textContent).toContain("run-1");
+    // A retry asks the host to read sign-in and usage afresh first.
+    expect(state.send.mock.calls.at(-1)![0].input.recheck).toBe(true);
+    // The run's ID is there to copy, not to read.
+    const details = alert!.querySelector("details")!;
+    expect(details.textContent).not.toContain("run-1");
+    const copy = details.querySelector<HTMLButtonElement>("[data-coordinator-copy-run]")!;
+    expect(copy.textContent).toBe("Copy run ID");
+    expect(copy.title).toBe("run-1");
     expect(state.navigate).not.toHaveBeenCalled();
+  });
+
+  it("says who ran out of usage, where, and when it resets, without repeating the host", async () => {
+    const hostText =
+      "This native subscription profile has no remaining permitted usage under its current usage limit. Next observed reset: 2099-11-06T02:00:00.000Z. Select an eligible profile for a new session.";
+    state.runs = [
+      {
+        id: "run-1",
+        ordinal: 1,
+        status: "failed",
+        requestedAt: "2026-11-04T12:00:00Z",
+        modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+      },
+    ];
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-1", status: "failed" },
+        runtime: {
+          lastError: hostText,
+          lastErrorClass: "usage_limit",
+          usageLimitResetAt: "2099-11-06T02:00:00.000Z",
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    const alert = container.querySelector("[data-coordinator-failure]")!;
+    const body = alert.querySelector("[data-coordinator-failure-body]")!.textContent!;
+    expect(body).toMatch(/^Claude Code · .+ on Test host has no usage left\. It resets \w{3} /);
+    expect(body).toContain("Retry checks again, or pick another model.");
+    expect(body).not.toContain("2099-11-06T02:00:00.000Z");
+    // The host's text appears once, in the details, never next to its own summary.
+    expect(alert.textContent!.split("no remaining permitted usage")).toHaveLength(2);
+    expect(alert.querySelector("[data-coordinator-failure-detail]")!.textContent).toBe(hostText);
+  });
+
+  it("says which model a retry went to once the host picked it", async () => {
+    // Its own run and message: a retry is sent once per failed run and message.
+    state.messages = [{ ...state.messages[0]!, id: "m-routing", runId: "run-routing" }];
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-routing", status: "failed" },
+        runtime: {
+          lastError: "This native subscription profile has no remaining permitted usage.",
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    state.send.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        threadId: "coord",
+        created: false,
+        routing: {
+          selection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+          reason: "saved",
+          rechecked: true,
+        },
+      },
+    });
+    await render();
+    const retry = container.querySelector<HTMLButtonElement>("[data-coordinator-failure] button")!;
+    await act(async () => retry.click());
+    expect(state.send.mock.calls.at(-1)![0].input.recheck).toBe(true);
+    // The new run starts; the old failure gives way to where it runs.
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-2", status: "completed" },
+        runtime: { lastError: null },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    expect(container.textContent).toMatch(/Retrying on Claude Code · [^.]+\./);
+  });
+
+  it("does not leave 'Retrying on' behind when the retry's turn ended before the response", async () => {
+    state.messages = [{ ...state.messages[0]!, id: "m-ended", runId: "run-ended" }];
+    state.runs = [
+      { id: "run-ended", ordinal: 1, status: "failed", requestedAt: "2026-11-04T12:00:00Z" },
+    ];
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-ended", status: "failed" },
+        runtime: { lastError: "Provider session failed to open." },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    let respond: (value: unknown) => void = () => {};
+    state.send.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          respond = resolve;
+        }),
+    );
+    await render();
+    const retry = container.querySelector<HTMLButtonElement>("[data-coordinator-failure] button")!;
+    await act(async () => retry.click());
+    // The retry's run starts and finishes before its send response lands.
+    state.runs = [
+      ...state.runs,
+      { id: "run-2", ordinal: 2, status: "completed", requestedAt: "2026-11-04T12:01:00Z" },
+    ];
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-2", status: "completed" },
+        runtime: { lastError: null },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    await act(async () =>
+      respond({
+        _tag: "Success",
+        value: {
+          threadId: "coord",
+          created: false,
+          routing: {
+            selection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+            reason: "saved",
+            rechecked: true,
+          },
+        },
+      }),
+    );
+    await render();
+    expect(container.textContent).not.toContain("Retrying on");
+  });
+
+  it("drops 'Retrying on' when the retried run fails without ever being seen working", async () => {
+    state.messages = [{ ...state.messages[0]!, id: "m-straight", runId: "run-straight" }];
+    state.runs = [
+      { id: "run-straight", ordinal: 1, status: "failed", requestedAt: "2026-11-04T12:00:00Z" },
+    ];
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-straight", status: "failed" },
+        runtime: { lastError: "Provider session failed to open." },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    state.send.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        threadId: "coord",
+        created: false,
+        routing: {
+          selection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+          reason: "saved",
+          rechecked: true,
+        },
+      },
+    });
+    await render();
+    const retry = container.querySelector<HTMLButtonElement>("[data-coordinator-failure] button")!;
+    await act(async () => retry.click());
+    await render();
+    // The retried run arrives already failed: the client never saw it queued or running.
+    state.runs = [
+      ...state.runs,
+      { id: "run-3", ordinal: 2, status: "failed", requestedAt: "2026-11-04T12:01:00Z" },
+    ];
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-3", status: "failed" },
+        runtime: { lastError: "Provider session failed to open again." },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    expect(container.textContent).not.toContain("Retrying on");
+    expect(container.querySelector("[data-coordinator-failure]")!.textContent).toContain(
+      "failed to open again",
+    );
+    // Once that failure is no longer shown, the retry's routing does not come back with it.
+    state.shells = [
+      shell("coord", {
+        latestRun: { runId: "run-3", status: "completed" },
+        runtime: { lastError: null },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    expect(container.querySelector("[data-coordinator-failure]")).toBeNull();
+    expect(container.textContent).not.toContain("Retrying on");
+  });
+
+  it("does not ask an ordinary send to read the providers again", async () => {
+    state.shells = [shell("coord"), shell("worker")];
+    await render();
+    await prompt("Hello");
+    await enter();
+    const sent = state.send.mock.calls.find((call) => call[0]?.input?.prompt === "Hello");
+    expect(sent).toBeDefined();
+    expect(sent![0].input.recheck).toBeUndefined();
   });
 
   it("still says the turn failed when the host gave no reason", async () => {
@@ -557,5 +769,223 @@ describe("coordinator progress", () => {
     await render();
     expect(container.querySelector(".sws-coordinator-working")).toBeNull();
     expect(container.querySelector("[data-coordinator-failure]")).not.toBeNull();
+  });
+});
+
+describe("a coordinator whose provider is not prepared on its machine", () => {
+  const unprepared =
+    "ACP Registry agent 'github-copilot-cli' has not been prepared on this environment.";
+  const hostText = `Copilot · Auto cannot run on this machine: ${unprepared} No other provider has room to run the coordinator instead. Open Settings > Providers > Copilot on that machine and choose Install / update agent, or choose another coordinator model.`;
+  beforeEach(async () => {
+    const { DEFAULT_SERVER_SETTINGS } = await import("@specweave-studio/contracts");
+    state.providers = [
+      {
+        instanceId: "copilot",
+        driver: "acpRegistry",
+        displayName: "GitHub Copilot",
+        enabled: true,
+        installed: false,
+        status: "error",
+        auth: { status: "unknown" },
+        checkedAt: "2026-11-04T12:00:00Z",
+        version: null,
+        message: unprepared,
+        models: [{ slug: "auto", name: "Auto", isCustom: false, capabilities: null }],
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    state.hostSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        copilot: {
+          driver: "acpRegistry",
+          enabled: true,
+          config: { source: "registry", agentId: "github-copilot-cli" },
+        },
+      },
+    };
+    state.messages = [
+      {
+        id: "m1",
+        role: "user",
+        createdBy: "user",
+        runId: "run-1",
+        text: "Plan the week",
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    state.runs = [
+      {
+        id: "run-1",
+        ordinal: 1,
+        status: "failed",
+        requestedAt: "2026-11-04T12:00:00Z",
+        modelSelection: { instanceId: "copilot", model: "auto" },
+      },
+    ];
+    state.shells = [
+      shell("coord", {
+        modelSelection: { instanceId: "copilot", model: "auto" },
+        latestRun: { runId: "run-1", status: "failed" },
+        runtime: { lastError: hostText, lastErrorClass: "provider_error" },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+  });
+
+  it("names the machine and installs the agent there in one click, then offers a retry", async () => {
+    await render();
+    const alert = container.querySelector("[data-coordinator-failure]")!;
+    const body = alert.querySelector("[data-coordinator-failure-body]")!.textContent!;
+    expect(body).toContain("cannot run on Test host");
+    expect(body).toContain("Copilot on Test host");
+    expect(body).not.toMatch(/(this|that) machine/);
+    const install = alert.querySelector<HTMLButtonElement>("[data-coordinator-fix='install']")!;
+    expect(install.textContent).toBe("Install Copilot on Test host");
+    await act(async () => install.click());
+    const calls = state.send.mock.calls.map((call) => call[0]);
+    expect(calls).toContainEqual({
+      environmentId: "host",
+      input: { agentId: "github-copilot-cli" },
+    });
+    expect(calls).toContainEqual({
+      environmentId: "host",
+      input: { instanceId: "copilot", refreshModels: true },
+    });
+    await render();
+    expect(alert.querySelector("[data-coordinator-fix-done]")!.textContent).toBe(
+      "Installed. Retry to send it again.",
+    );
+    expect(
+      [...alert.querySelectorAll("button")].some((b) => b.textContent === "Retry last message"),
+    ).toBe(true);
+  });
+
+  it("drops 'Installed' once a later run fails for another reason, with no fix button", async () => {
+    await render();
+    const alert = () => container.querySelector("[data-coordinator-failure]")!;
+    await act(async () =>
+      alert().querySelector<HTMLButtonElement>("[data-coordinator-fix='install']")!.click(),
+    );
+    await render();
+    expect(alert().querySelector("[data-coordinator-fix-done]")).not.toBeNull();
+    // Copilot now runs, and the next turn hits its usage limit instead.
+    state.providers = [
+      {
+        ...(state.providers[0] as object),
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        message: null,
+      },
+    ];
+    state.runs = [
+      ...state.runs,
+      {
+        id: "run-2",
+        ordinal: 2,
+        status: "failed",
+        requestedAt: "2026-11-04T12:05:00Z",
+        modelSelection: { instanceId: "copilot", model: "auto" },
+      },
+    ];
+    state.shells = [
+      shell("coord", {
+        modelSelection: { instanceId: "copilot", model: "auto" },
+        latestRun: { runId: "run-2", status: "failed" },
+        runtime: {
+          lastError: "You have reached your monthly usage limit.",
+          lastErrorClass: "usage_limit",
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    expect(alert().querySelector("[data-coordinator-failure-body]")!.textContent).toContain(
+      "has no usage left",
+    );
+    expect(alert().textContent).not.toContain("Installed");
+    expect(alert().querySelector("[data-coordinator-fix]")).toBeNull();
+    expect(alert().querySelector("[data-coordinator-fix-done]")).toBeNull();
+  });
+
+  it("says Retry should work once a usage limit's reset has passed", async () => {
+    state.providers = [
+      {
+        ...(state.providers[0] as object),
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        message: null,
+      },
+    ];
+    state.shells = [
+      shell("coord", {
+        modelSelection: { instanceId: "copilot", model: "auto" },
+        latestRun: { runId: "run-1", status: "failed" },
+        runtime: {
+          lastError: "You have reached your monthly usage limit.",
+          lastErrorClass: "usage_limit",
+          usageLimitResetAt: "2020-01-01T00:00:00.000Z",
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    await render();
+    const body = container.querySelector("[data-coordinator-failure-body]")!.textContent!;
+    expect(body).toMatch(/hit its usage limit\. The limit reset \w{3} .+, so Retry should work\./);
+    expect(body).not.toContain("no usage left");
+    expect(container.querySelector("[data-coordinator-failure] [data-coordinator-fix]")).toBeNull();
+  });
+
+  it("offers provider setup for a signed-out provider instead of an install", async () => {
+    state.providers = [
+      {
+        ...(state.providers[0] as object),
+        installed: true,
+        status: "ready",
+        auth: { status: "unauthenticated" },
+        message: "Copilot is not signed in.",
+      },
+    ];
+    await render();
+    const action = container.querySelector<HTMLButtonElement>(
+      "[data-coordinator-failure] [data-coordinator-fix]",
+    )!;
+    expect(action.dataset.coordinatorFix).toBe("sign-in");
+    expect(action.textContent).toBe("Sign in to Copilot on Test host");
+    await act(async () => action.click());
+    expect(state.navigate).toHaveBeenCalledWith({
+      to: "/settings/providers",
+      search: { environmentId: "host", instanceId: "copilot" },
+    });
+  });
+
+  it("shows the same fix beside a send the host refused", async () => {
+    state.shells = [
+      shell("coord", {
+        modelSelection: { instanceId: "copilot", model: "auto" },
+      } as unknown as Partial<EnvironmentThreadShell>),
+      shell("worker"),
+    ];
+    state.runs = [];
+    state.coordinatorModel = { instanceId: "copilot", model: "auto" };
+    state.send.mockImplementation(async (request: { input?: { prompt?: string } }) =>
+      request.input?.prompt === "Hello"
+        ? { _tag: "Failure", error: new Error(hostText) }
+        : { _tag: "Success", value: { threadId: "coord", created: false } },
+    );
+    await render();
+    await prompt("Hello");
+    await enter();
+    const text = alertText();
+    expect(text).toContain("cannot run on Test host");
+    expect(text).not.toMatch(/(this|that) machine/);
+    const install = [
+      ...container.querySelectorAll<HTMLButtonElement>("[role='alert'] button"),
+    ].find((button) => button.dataset.coordinatorFix === "install");
+    expect(install?.textContent).toBe("Install Copilot on Test host");
   });
 });

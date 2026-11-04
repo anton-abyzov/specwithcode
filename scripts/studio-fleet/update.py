@@ -1411,6 +1411,9 @@ def main():
         held = lambda database: os.path.exists(str(database) + '-shm')  # A running service: read as apply does.
         sys.exit(disk_room.main(sys.argv[2:], live=lambda database: update_apply.live_migration(database) or disk_room.live_migration(database),
                                 largest=lambda database: (update_apply.largest_table_bytes if held(database) else disk_room.largest_table_bytes)(database)))
+    if sys.argv[1:2] == ['verify']:  # The post-update check on a home no service runs (post_update_check.py); reads only.
+        import post_update_check
+        sys.exit(post_update_check.main(sys.argv[2:]))
     parser = argparse.ArgumentParser()
     parser.add_argument('--identity', required=True)
     parser.add_argument('--snapshot', type=pathlib.Path)

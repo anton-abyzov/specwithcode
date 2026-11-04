@@ -122,6 +122,25 @@ export function providersOnOtherMachines(input: {
   return [...found.values()];
 }
 
+/**
+ * The other machines where the same provider as `entry` is ready, for a
+ * provider that is set up here but can't run here yet. Empty when the
+ * provider has no cross-machine identity.
+ */
+export function machinesWhereReady(
+  entry: ProviderInstanceEntry,
+  others: ReadonlyArray<MachineProviders>,
+): ReadonlyArray<string> {
+  const identity = providerIdentity(entry);
+  if (!identity) return [];
+  // The same readiness rule as "On your other machines", with nothing here to exclude.
+  return (
+    providersOnOtherMachines({ here: [], others }).find(
+      (provider) => provider.identity === identity,
+    )?.machineLabels ?? []
+  );
+}
+
 export interface EnableHerePlan {
   readonly instanceId: ProviderInstanceId;
   readonly mutation: ProviderInstanceMutation;

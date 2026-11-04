@@ -18,6 +18,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
@@ -1484,6 +1485,390 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  const preparedUnderNodeSwitch = (
+    prefix: string,
+    afterPrepare: (cacheDir: string) => Effect.Effect<void, never, FileSystem.FileSystem>,
+    options: {
+      readonly registryVersionAfterPrepare?: string;
+      /** Breaks the adopted receipt, then inspects again from a new catalog. */
+      readonly breakAdoptedReceipt?: boolean;
+    } = {},
+  ) => {
+    const agent = {
+      ...makeAgent({ npx: { package: "@google/gemini-cli@1.2.3", args: ["--acp"] } }),
+      id: "gemini",
+    };
+    let served: AcpRegistrySupport.AcpRegistryAgent = agent;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const packageEnvironment = {
+        FAKE_NPM_PACKAGE: "@google/gemini-cli",
+        FAKE_NPM_EXECUTABLE_NAME: "gemini",
+        FAKE_NPM_MANIFEST: encodeUnknownJson({
+          name: "@google/gemini-cli",
+          version: "1.2.3",
+          bin: { gemini: "dist/index.js" },
+        }),
+      };
+      const first = { ...toolchain.environment, ...packageEnvironment };
+      const catalogFrom = (environment: NodeJS.ProcessEnv) =>
+        AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      yield* (yield* catalogFrom(first)).prepare({ agentId: "gemini" });
+      yield* afterPrepare(cacheDir);
+      const nextVersion = options.registryVersionAfterPrepare;
+      if (nextVersion !== undefined) {
+        // The registry moved on after preparation; the next catalog reads
+        // the new version from its cached index.
+        served = {
+          ...makeAgent({
+            npx: { package: `@google/gemini-cli@${nextVersion}`, args: ["--acp"] },
+          }),
+          id: "gemini",
+          version: nextVersion,
+        };
+        yield* fileSystem.writeFileString(
+          `${cacheDir}/acp-registry/registry.json`,
+          makeRegistry(served),
+        );
+      }
+
+      // nvm keeps npm under the Node version, so switching Node moves npm.
+      const switchedBin = `${cacheDir}/nvm/versions/node/v24.0.0/bin`;
+      yield* fileSystem.makeDirectory(switchedBin, { recursive: true });
+      yield* fileSystem.copyFile(toolchain.npmPath, `${switchedBin}/npm`);
+      yield* fileSystem.chmod(`${switchedBin}/npm`, 0o755);
+      const switched = { ...first, PATH: `${switchedBin}:${first.PATH ?? ""}` };
+      const switchedCatalog = yield* catalogFrom(switched);
+      const inspected = yield* switchedCatalog.inspect(settings({ agentId: "gemini" }), switched);
+      const launched = yield* switchedCatalog
+        .resolve(settings({ agentId: "gemini" }), "/workspace", switched)
+        .pipe(
+          Effect.map((resolved) => resolved.spawn.command),
+          Effect.option,
+        );
+      const receiptsDirectory = `${cacheDir}/acp-registry/package-installs`;
+      const receipts = yield* fileSystem.readDirectory(receiptsDirectory);
+      const storedReceipts: Array<Record<string, unknown>> = [];
+      for (const name of receipts) {
+        storedReceipts.push(
+          JSON.parse(yield* fileSystem.readFileString(`${receiptsDirectory}/${name}`)),
+        );
+      }
+      let reinspected: unknown;
+      if (options.breakAdoptedReceipt === true) {
+        const adopted = receipts.find((_, index) =>
+          String(storedReceipts[index]?.managerPath ?? "").includes("/nvm/"),
+        );
+        if (adopted === undefined) throw new Error("no adopted receipt to break");
+        yield* fileSystem.writeFileString(`${receiptsDirectory}/${adopted}`, "{ broken");
+        reinspected = yield* (yield* catalogFrom(switched)).inspect(
+          settings({ agentId: "gemini" }),
+          switched,
+        );
+      }
+      return { cacheDir, inspected, launched, receipts, storedReceipts, reinspected };
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(served)))),
+        ),
+      ),
+    );
+  };
+
+  // Moves the prepared receipt's paths under `oldTools`, the way a receipt
+  // written before the data folder was renamed stores them.
+  const movePreparedReceiptTo =
+    (oldTools: (cacheDir: string) => string, link = false) =>
+    (cacheDir: string) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const directory = `${cacheDir}/acp-registry/package-installs`;
+        const [name] = yield* fileSystem.readDirectory(directory);
+        const receipt = JSON.parse(yield* fileSystem.readFileString(`${directory}/${name}`));
+        const target = oldTools(cacheDir);
+        if (link) {
+          yield* fileSystem.makeDirectory(target.slice(0, target.lastIndexOf("/")), {
+            recursive: true,
+          });
+          yield* fileSystem.symlink(`${cacheDir}/tools`, target);
+        }
+        const move = (stored: string) => stored.replace(`${cacheDir}/tools`, target);
+        yield* fileSystem.writeFileString(
+          `${directory}/${name}`,
+          JSON.stringify({
+            ...receipt,
+            binDirectory: move(receipt.binDirectory),
+            executablePath: move(receipt.executablePath),
+            packageRoot: move(receipt.packageRoot),
+          }),
+        );
+      }).pipe(Effect.orDie);
+
+  itOnLinuxHost(
+    "adopts a renamed data folder's receipt from another npm at its prepared version",
+    () =>
+      preparedUnderNodeSwitch(
+        "studio-acp-registry-renamed-base-",
+        // ~/.specweave-studio is now a link to ~/.specwithcode.
+        movePreparedReceiptTo((cacheDir) => `${cacheDir}/old-base/tools`, true),
+        { registryVersionAfterPrepare: "1.2.4" },
+      ).pipe(
+        Effect.map(({ cacheDir, inspected, launched, receipts, storedReceipts }) => {
+          expect(inspected).toMatchObject({
+            status: "ready",
+            agentId: "gemini",
+            version: "1.2.3",
+            availableVersion: "1.2.4",
+          });
+          expect(Option.getOrUndefined(launched)).toBe(
+            `${cacheDir}/tools/gemini/1.2.3/npm/bin/gemini`,
+          );
+          expect(receipts.filter((name) => name.startsWith("gemini-"))).toHaveLength(2);
+          for (const stored of storedReceipts) {
+            expect(stored).toMatchObject({
+              agentVersion: "1.2.3",
+              binDirectory: `${cacheDir}/tools/gemini/1.2.3/npm/bin`,
+              executablePath: `${cacheDir}/tools/gemini/1.2.3/npm/bin/gemini`,
+              packageRoot: `${cacheDir}/tools/gemini/1.2.3/npm/lib/node_modules/@google/gemini-cli`,
+            });
+          }
+        }),
+      ),
+  );
+
+  itOnLinuxHost("adopts a receipt whose old data folder no longer exists", () =>
+    preparedUnderNodeSwitch(
+      "studio-acp-registry-renamed-gone-",
+      movePreparedReceiptTo((cacheDir) => `${cacheDir}/removed-base/tools`),
+    ).pipe(
+      Effect.map(({ inspected, receipts }) => {
+        expect(inspected).toMatchObject({ status: "ready", agentId: "gemini", version: "1.2.3" });
+        expect(receipts.filter((name) => name.startsWith("gemini-"))).toHaveLength(2);
+      }),
+    ),
+  );
+
+  itOnLinuxHost("adopts a receipt whose bin folder is a link to the current one", () =>
+    preparedUnderNodeSwitch(
+      "studio-acp-registry-linked-tools-",
+      movePreparedReceiptTo((cacheDir) => `${cacheDir}/alias-tools`, true),
+    ).pipe(
+      Effect.map(({ cacheDir, inspected, storedReceipts }) => {
+        expect(inspected).toMatchObject({ status: "ready", agentId: "gemini" });
+        expect(storedReceipts.map((stored) => stored.binDirectory)).toEqual([
+          `${cacheDir}/tools/gemini/1.2.3/npm/bin`,
+          `${cacheDir}/tools/gemini/1.2.3/npm/bin`,
+        ]);
+      }),
+    ),
+  );
+
+  itOnLinuxHost("does not adopt a receipt whose bin folder has another layout", () =>
+    preparedUnderNodeSwitch(
+      "studio-acp-registry-renamed-elsewhere-",
+      movePreparedReceiptTo((cacheDir) => `${cacheDir}/elsewhere`),
+    ).pipe(
+      Effect.map(({ inspected, launched, receipts }) => {
+        expect(inspected).toMatchObject({ status: "unprepared", agentId: "gemini" });
+        expect(Option.isNone(launched)).toBe(true);
+        expect(receipts.filter((name) => name.startsWith("gemini-"))).toHaveLength(1);
+      }),
+    ),
+  );
+
+  itOnLinuxHost("keeps a renamed folder's receipt readable while parallel reads store it", () => {
+    const agent = {
+      ...makeAgent({ npx: { package: "@google/gemini-cli@1.2.3", args: ["--acp"] } }),
+      id: "gemini",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-renamed-parallel-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = {
+        ...toolchain.environment,
+        FAKE_NPM_PACKAGE: "@google/gemini-cli",
+        FAKE_NPM_EXECUTABLE_NAME: "gemini",
+        FAKE_NPM_MANIFEST: encodeUnknownJson({
+          name: "@google/gemini-cli",
+          version: "1.2.3",
+          bin: { gemini: "dist/index.js" },
+        }),
+      } satisfies NodeJS.ProcessEnv;
+      const catalogFor = () =>
+        AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      yield* (yield* catalogFor()).prepare({ agentId: "gemini" });
+      yield* movePreparedReceiptTo((root) => `${root}/old-base/tools`)(cacheDir);
+
+      const catalog = yield* catalogFor();
+      const executable = `${cacheDir}/tools/gemini/1.2.3/npm/bin/gemini`;
+      for (let round = 0; round < 3; round++) {
+        const results = yield* Effect.all(
+          [
+            catalog.inspect(settings({ agentId: "gemini" }), environment),
+            catalog.inspect(settings({ agentId: "gemini" }), environment),
+            catalog
+              .resolve(settings({ agentId: "gemini" }), "/workspace", environment)
+              .pipe(Effect.map((resolved) => resolved.spawn.command)),
+            catalog
+              .resolve(settings({ agentId: "gemini" }), "/workspace", environment)
+              .pipe(Effect.map((resolved) => resolved.spawn.command)),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(results).toEqual([
+          expect.objectContaining({ status: "ready", agentId: "gemini" }),
+          expect.objectContaining({ status: "ready", agentId: "gemini" }),
+          executable,
+          executable,
+        ]);
+      }
+      const directory = `${cacheDir}/acp-registry/package-installs`;
+      const names = yield* fileSystem.readDirectory(directory);
+      expect(names.filter((name) => name.endsWith(".tmp"))).toEqual([]);
+      const [stored] = names.filter((name) => name.startsWith("gemini-"));
+      expect(JSON.parse(yield* fileSystem.readFileString(`${directory}/${stored}`))).toMatchObject({
+        binDirectory: `${cacheDir}/tools/gemini/1.2.3/npm/bin`,
+        executablePath: executable,
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  itOnLinuxHost("adopts a prepared package's receipt after npm moves with a Node switch", () =>
+    preparedUnderNodeSwitch("studio-acp-registry-node-switch-", () => Effect.void).pipe(
+      Effect.map(({ inspected, receipts }) => {
+        expect(inspected).toMatchObject({ status: "ready", agentId: "gemini" });
+        expect(receipts.filter((name) => name.startsWith("gemini-"))).toHaveLength(2);
+      }),
+    ),
+  );
+
+  itOnLinuxHost("replaces an invalid receipt for the current npm with a valid one elsewhere", () =>
+    preparedUnderNodeSwitch("studio-acp-registry-node-switch-broken-", () => Effect.void, {
+      breakAdoptedReceipt: true,
+    }).pipe(
+      Effect.map(({ inspected, reinspected }) => {
+        expect(inspected).toMatchObject({ status: "ready", agentId: "gemini" });
+        expect(reinspected).toMatchObject({ status: "ready", agentId: "gemini" });
+      }),
+    ),
+  );
+
+  itOnLinuxHost("does not adopt another npm path's receipt when its executable is gone", () =>
+    preparedUnderNodeSwitch("studio-acp-registry-node-switch-missing-", (cacheDir) =>
+      Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
+        fileSystem.remove(`${cacheDir}/tools/gemini/1.2.3/npm/bin/gemini`).pipe(Effect.orDie),
+      ),
+    ).pipe(
+      Effect.map(({ inspected, receipts }) => {
+        expect(inspected).toMatchObject({ status: "unprepared", agentId: "gemini" });
+        expect(receipts.filter((name) => name.startsWith("gemini-"))).toHaveLength(1);
+      }),
+    ),
+  );
+
+  itOnLinuxHost(
+    "searches for a receipt to adopt once while nothing changes, and adopts one written later",
+    () => {
+      const agent = {
+        ...makeAgent({ npx: { package: "@google/gemini-cli@1.2.3", args: ["--acp"] } }),
+        id: "gemini",
+      };
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-acp-registry-adoption-miss-",
+        });
+        const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+        const first = {
+          ...toolchain.environment,
+          FAKE_NPM_PACKAGE: "@google/gemini-cli",
+          FAKE_NPM_EXECUTABLE_NAME: "gemini",
+          FAKE_NPM_MANIFEST: encodeUnknownJson({
+            name: "@google/gemini-cli",
+            version: "1.2.3",
+            bin: { gemini: "dist/index.js" },
+          }),
+        } satisfies NodeJS.ProcessEnv;
+        const switchedBin = `${cacheDir}/nvm/versions/node/v24.0.0/bin`;
+        yield* fileSystem.makeDirectory(switchedBin, { recursive: true });
+        yield* fileSystem.copyFile(toolchain.npmPath, `${switchedBin}/npm`);
+        yield* fileSystem.chmod(`${switchedBin}/npm`, 0o755);
+        const switched = { ...first, PATH: `${switchedBin}:${first.PATH ?? ""}` };
+        const receiptsDirectory = `${cacheDir}/acp-registry/package-installs`;
+        // A receipt written under the first npm, so the folder exists.
+        const firstCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(HostProcessEnvironment, first));
+        yield* firstCatalog.prepare({ agentId: "gemini" });
+        const [preparedName] = yield* fileSystem.readDirectory(receiptsDirectory);
+        const prepared = yield* fileSystem.readFileString(`${receiptsDirectory}/${preparedName}`);
+        yield* fileSystem.remove(`${receiptsDirectory}/${preparedName}`);
+
+        let scans = 0;
+        const counting: FileSystem.FileSystem = {
+          ...fileSystem,
+          readDirectory: (path, options) => {
+            if (path === receiptsDirectory) scans += 1;
+            return fileSystem.readDirectory(path, options);
+          },
+        };
+        const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcessEnvironment, switched),
+          Effect.provideService(FileSystem.FileSystem, counting),
+        );
+        for (let round = 0; round < 3; round++) {
+          expect(yield* catalog.inspect(settings({ agentId: "gemini" }), switched)).toMatchObject({
+            status: "unprepared",
+          });
+        }
+        expect(scans).toBe(1);
+
+        // A receipt another npm writes later changes the folder and is adopted.
+        yield* fileSystem.writeFileString(`${receiptsDirectory}/${preparedName}`, prepared);
+        expect(yield* catalog.inspect(settings({ agentId: "gemini" }), switched)).toMatchObject({
+          status: "ready",
+          agentId: "gemini",
+        });
+        expect(scans).toBe(2);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+          ),
+        ),
+      );
+    },
+  );
+
   itOnLinuxHost("does not shadow a command the machine already has on PATH", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3", args: ["--stdio"] } });
     return Effect.gen(function* () {
@@ -2170,6 +2555,118 @@ describe("acpRegistryManagedBinaryDirectories", () => {
         architecture: "x64",
       });
       expect(missing).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("lists a Windows npm package prepared under a renamed data folder", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-bins-renamed-win32-",
+      });
+      const toolsDir = path.join(cacheDir, "m1", "tools");
+      // On Windows npm puts the command shims in the install root itself.
+      const installRoot = path.join(toolsDir, "github-copilot-cli", "1.0.97", "npm");
+      yield* fileSystem.makeDirectory(installRoot, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(installRoot, "copilot.cmd"), "@echo off\r\n");
+      const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
+      yield* fileSystem.makeDirectory(receiptsDirectory, { recursive: true });
+      const receiptFor = (oldInstallRoot: string, binDirectory = oldInstallRoot) =>
+        encodeUnknownJson({
+          agentId: "github-copilot-cli",
+          agentVersion: "1.0.97",
+          distribution: "npx",
+          packageSpec: "@github/copilot@1.0.97",
+          managerPath: "C:/Program Files/nodejs/npm.cmd",
+          binDirectory,
+          executablePath: path.join(binDirectory, "copilot.cmd"),
+          packageRoot: path.join(oldInstallRoot, "node_modules", "@github", "copilot"),
+          packageVersion: "1.0.97",
+        });
+      const write = (name: string, text: string) =>
+        fileSystem.writeFileString(path.join(receiptsDirectory, name), text);
+      const listed = AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
+        fileSystem,
+        path,
+        cacheDir,
+        toolsDir,
+        platform: "win32",
+        architecture: "x64",
+      });
+
+      yield* write(
+        "github-copilot-cli-renamed.json",
+        receiptFor(
+          path.join(cacheDir, "old-base", "m1", "tools", "github-copilot-cli", "1.0.97", "npm"),
+        ),
+      );
+      expect(yield* listed).toEqual([installRoot]);
+
+      yield* fileSystem.remove(path.join(receiptsDirectory, "github-copilot-cli-renamed.json"));
+      // Same agent and version, but not the managed tools layout.
+      yield* write(
+        "github-copilot-cli-elsewhere.json",
+        receiptFor(path.join(cacheDir, "elsewhere", "github-copilot-cli", "1.0.97", "npm")),
+      );
+      // The Linux layout, with a bin folder under the install root.
+      const oldRoot = path.join(cacheDir, "old-base", "m1", "tools", "github-copilot-cli");
+      yield* write(
+        "github-copilot-cli-bin.json",
+        receiptFor(path.join(oldRoot, "1.0.97", "npm"), path.join(oldRoot, "1.0.97", "npm", "bin")),
+      );
+      expect(yield* listed).toEqual([]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("lists a package prepared under a renamed data folder at its current path", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-acp-registry-bins-renamed-",
+      });
+      const toolsDir = path.join(cacheDir, "m1", "tools");
+      const installRoot = path.join(toolsDir, "github-copilot-cli", "1.0.97", "npm");
+      const globalBin = path.join(installRoot, "bin");
+      yield* fileSystem.makeDirectory(globalBin, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(globalBin, "copilot"), "#!/bin/sh\n");
+      yield* fileSystem.chmod(path.join(globalBin, "copilot"), 0o755);
+      const receiptsDirectory = path.join(cacheDir, "acp-registry", "package-installs");
+      yield* fileSystem.makeDirectory(receiptsDirectory, { recursive: true });
+      const receiptFor = (oldInstallRoot: string) =>
+        encodeUnknownJson({
+          agentId: "github-copilot-cli",
+          agentVersion: "1.0.97",
+          distribution: "npx",
+          packageSpec: "@github/copilot@1.0.97",
+          managerPath: "/opt/homebrew/bin/npm",
+          binDirectory: path.join(oldInstallRoot, "bin"),
+          executablePath: path.join(oldInstallRoot, "bin", "copilot"),
+          packageRoot: path.join(oldInstallRoot, "lib", "node_modules", "@github", "copilot"),
+          packageVersion: "1.0.97",
+        });
+      yield* fileSystem.writeFileString(
+        path.join(receiptsDirectory, "github-copilot-cli-renamed.json"),
+        receiptFor(
+          path.join(cacheDir, "old-base", "m1", "tools", "github-copilot-cli", "1.0.97", "npm"),
+        ),
+      );
+      // Same agent and version, but not the managed tools layout.
+      yield* fileSystem.writeFileString(
+        path.join(receiptsDirectory, "github-copilot-cli-elsewhere.json"),
+        receiptFor(path.join(cacheDir, "elsewhere", "github-copilot-cli", "1.0.97", "npm")),
+      );
+
+      const directories = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
+        fileSystem,
+        path,
+        cacheDir,
+        toolsDir,
+        platform: "linux",
+        architecture: "x64",
+      });
+      expect(directories).toEqual([globalBin]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

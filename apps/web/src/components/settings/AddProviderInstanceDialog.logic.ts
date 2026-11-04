@@ -88,11 +88,31 @@ export function deriveAvailableInstanceId(
   }
 }
 
+type ConfiguredInstances = Readonly<
+  Record<
+    string,
+    {
+      readonly driver: string;
+      readonly displayName?: string | undefined;
+      readonly config?: unknown;
+    }
+  >
+>;
+
 export function isConfiguredAcpRegistryAgent(
-  instances: Readonly<Record<string, { readonly driver: string; readonly config?: unknown }>>,
+  instances: ConfiguredInstances,
   agentId: string,
 ): boolean {
-  return Object.values(instances).some((instance) => {
+  return configuredAcpRegistryAgentIds(instances, agentId).length > 0;
+}
+
+/** Instance ids of the registry (not local) instances that run `agentId`. */
+export function configuredAcpRegistryAgentIds(
+  instances: ConfiguredInstances,
+  agentId: string,
+): ReadonlyArray<string> {
+  return Object.keys(instances).filter((instanceId) => {
+    const instance = instances[instanceId]!;
     if (
       instance.driver !== "acpRegistry" ||
       !instance.config ||
@@ -103,6 +123,36 @@ export function isConfiguredAcpRegistryAgent(
     const config = instance.config as Record<string, unknown>;
     return config.source !== "local" && config.agentId === agentId;
   });
+}
+
+/** The ACP Registry id of GitHub Copilot, which can run several GitHub accounts. */
+export const COPILOT_ACP_AGENT_ID = "github-copilot-cli";
+
+/**
+ * Name of one more Copilot account, such as "GitHub Copilot (2)". The number
+ * skips names already in use.
+ */
+export function nextCopilotAccountLabel(instances: ConfiguredInstances): string {
+  const usedLabels = new Set(
+    Object.values(instances).map((instance) => instance.displayName?.trim() ?? ""),
+  );
+  for (
+    let number = configuredAcpRegistryAgentIds(instances, COPILOT_ACP_AGENT_ID).length + 1;
+    ;
+    number += 1
+  ) {
+    const label = `GitHub Copilot (${number})`;
+    if (!usedLabels.has(label)) return label;
+  }
+}
+
+/**
+ * The folder where one more Copilot account keeps its sign-in, so it never
+ * touches the first account's `~/.copilot`. The server expands `~` on the
+ * machine that runs Copilot, which may not be this one.
+ */
+export function additionalCopilotHome(instanceId: string): string {
+  return `~/.copilot-${instanceId}`;
 }
 
 /**

@@ -600,6 +600,7 @@ export function ProviderInstanceCard({
     ? getProviderSummary(liveProvider)
     : { headline: "Disabled", detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
+  const authLogin = liveProvider?.auth.login?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =
     enabled && liveProvider?.auth.status === "authenticated"
@@ -796,6 +797,17 @@ export function ProviderInstanceCard({
         ) : null}
         <span className="min-w-0 [overflow-wrap:anywhere]">
           Authenticated as <ProviderAuthEmail email={authEmail} />
+          {authLabel ? ` · ${authLabel}` : null}
+          {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+        </span>
+      </>
+    ) : isAuthenticated && authLogin ? (
+      <>
+        {needsAttention && statusDotNode ? (
+          <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
+        ) : null}
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          Signed in as {authLogin}
           {authLabel ? ` · ${authLabel}` : null}
           {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
         </span>

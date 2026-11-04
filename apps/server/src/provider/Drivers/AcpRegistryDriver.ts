@@ -17,6 +17,7 @@ import { createModelCapabilities } from "@specweave-studio/shared/model";
 import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
+import type * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as DateTime from "effect/DateTime";
@@ -26,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
@@ -38,6 +40,16 @@ import * as ServerSettings from "../../serverSettings.ts";
 import type { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import {
+  COPILOT_USAGE_AGENT_ID,
+  type CachedCopilotUsage,
+  type CopilotUsageReading,
+  makeCachedCopilotUsageLimits,
+  readCopilotSignedInLogin,
+  readCopilotUsage,
+  readCopilotAccountStamp,
+  resolveCopilotHome,
+} from "../copilotUsageLimits.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   defaultProviderContinuationIdentity,
@@ -561,6 +573,118 @@ export function withLastProbedSignOut(
     : placeholder;
 }
 
+/**
+ * Shows the account a Copilot instance is signed in as. A signed-out
+ * instance shows none, even when its CLI still remembers the last login.
+ */
+export function withCopilotLogin(
+  provider: ServerProvider,
+  login: string | undefined,
+): ServerProvider {
+  const trimmed = login?.trim();
+  if (trimmed && provider.auth.status !== "unauthenticated") {
+    return provider.auth.login === trimmed
+      ? provider
+      : { ...provider, auth: { ...provider.auth, login: trimmed } };
+  }
+  if (provider.auth.login === undefined) return provider;
+  const { login: _login, ...auth } = provider.auth;
+  return { ...provider, auth };
+}
+
+/**
+ * Picks the Copilot login to show after a usage read. The login in the
+ * CLI's config.json wins, because the usage read may be cached from before
+ * the user switched accounts. Without one, the read's login is used, then
+ * the last known one.
+ */
+export function resolveCopilotLogin(input: {
+  readonly configLogin: string | undefined;
+  readonly readingLogin: string | undefined;
+  readonly known: string | undefined;
+}): string | undefined {
+  return input.configLogin ?? input.readingLogin ?? input.known;
+}
+
+/** How long a status check waits on a Copilot usage read before it moves on. */
+export const COPILOT_USAGE_CHECK_BUDGET = "6 seconds";
+
+/**
+ * The cache key of a Copilot usage reading: the CLI's sign-in folder, the
+ * login it last signed in as and a stamp of gh's sign-in. A switch to another
+ * account, in the CLI or through gh, changes the key, so the previous
+ * account's quota and subscription are never shown for it.
+ */
+export function copilotUsageCacheKey(input: {
+  readonly copilotHome: string;
+  readonly login: string | undefined;
+  /** Changes when gh's sign-in changes (see `readCopilotAccountStamp`). */
+  readonly accountStamp?: string | undefined;
+}): string {
+  return JSON.stringify([
+    input.copilotHome,
+    input.login?.trim().toLowerCase() ?? null,
+    input.accountStamp ?? null,
+  ]);
+}
+
+/**
+ * Adds a Copilot instance's usage to its status. The reading is keyed by the
+ * account the CLI signs in as, so a new sign-in or another COPILOT_HOME
+ * reads afresh. The check waits at most `budget`; a slower read keeps
+ * running and fills the cache for the next check, and until then the last
+ * good bars stay (a probeFailed reading keeps them).
+ */
+export const withCopilotUsage = <R>(input: {
+  readonly provider: ServerProvider;
+  readonly cache: CachedCopilotUsage<CopilotUsageReading, R>;
+  readonly copilotHome: string;
+  /** The login in the CLI's config.json on this status check, if any. */
+  readonly configLogin: Ref.Ref<string | undefined>;
+  /** The login shown for the instance. */
+  readonly login: Ref.Ref<string | undefined>;
+  /** gh's sign-in stamp on this status check, if read. */
+  readonly accountStamp?: Ref.Ref<string | undefined>;
+  readonly budget?: Duration.Input;
+}): Effect.Effect<ServerProvider, never, R> =>
+  Effect.gen(function* () {
+    const { provider } = input;
+    if (!provider.enabled || !provider.installed || provider.auth.status === "unauthenticated") {
+      return provider;
+    }
+    const configLogin = yield* Ref.get(input.configLogin);
+    const accountStamp =
+      input.accountStamp === undefined ? undefined : yield* Ref.get(input.accountStamp);
+    const reading = yield* input.cache
+      .get(
+        copilotUsageCacheKey({ copilotHome: input.copilotHome, login: configLogin, accountStamp }),
+      )
+      .pipe(Effect.timeoutOption(input.budget ?? COPILOT_USAGE_CHECK_BUDGET));
+    let usageLimits: ServerProvider["usageLimits"];
+    if (Option.isSome(reading)) {
+      yield* Ref.update(input.login, (known) =>
+        resolveCopilotLogin({ configLogin, readingLogin: reading.value.login, known }),
+      );
+      usageLimits = reading.value.limits;
+    } else {
+      usageLimits = {
+        checkedAt: DateTime.formatIso(yield* DateTime.now),
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      };
+    }
+    return withCopilotLogin({ ...provider, usageLimits }, yield* Ref.get(input.login));
+  });
+
+/**
+ * What an explicit fresh refresh clears: the Copilot usage reading and the
+ * agent probe (sign-in, models, commands), so a retry reads both again.
+ */
+export const invalidateAcpRegistryCaches = (input: {
+  readonly copilotUsage: Effect.Effect<void>;
+  readonly enrichment: Effect.Effect<void>;
+}): Effect.Effect<void> => input.copilotUsage.pipe(Effect.andThen(input.enrichment));
+
 /** Publishes local executable readiness without starting an ACP process. */
 export const checkAcpRegistryProviderReadiness = Effect.fn(
   "AcpRegistryDriver.checkProviderReadiness",
@@ -596,6 +720,7 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
 
 export type AcpRegistryDriverEnv =
   | AcpRegistryAdapterV2DriverEnv
+  | HttpClient.HttpClient
   | BackgroundPolicy.BackgroundPolicy
   | ServerSettings.ServerSettingsService;
 
@@ -673,16 +798,53 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           environment,
           processEnvironment,
         });
+      const isCopilotInstance =
+        effectiveConfig.source !== "local" && effectiveConfig.agentId === COPILOT_USAGE_AGENT_ID;
+      const copilotUsageInput = {
+        instanceEnvironment: Object.fromEntries(
+          (environment ?? []).map((variable) => [variable.name, variable.value]),
+        ),
+        processEnvironment,
+      };
+      // The GitHub account this Copilot instance's CLI is signed in as.
+      const copilotLogin = yield* Ref.make<string | undefined>(undefined);
+      // The login read from config.json on the latest status check, if any.
+      const copilotConfigLogin = yield* Ref.make<string | undefined>(undefined);
+      // gh's sign-in stamp on the latest status check, so a gh account switch reads afresh.
+      const copilotAccountStamp = yield* Ref.make<string | undefined>(undefined);
+      const refreshCopilotLogin = isCopilotInstance
+        ? readCopilotSignedInLogin(copilotUsageInput).pipe(
+            Effect.tap(() =>
+              readCopilotAccountStamp(copilotUsageInput).pipe(
+                Effect.flatMap((stamp) => Ref.set(copilotAccountStamp, stamp)),
+              ),
+            ),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.flatMap((signedIn) =>
+              // A token in the environment decides the account; the usage
+              // read reports its login.
+              signedIn.fromEnvironmentToken
+                ? Ref.set(copilotConfigLogin, undefined)
+                : Ref.set(copilotConfigLogin, signedIn.login).pipe(
+                    Effect.andThen(Ref.set(copilotLogin, signedIn.login)),
+                  ),
+            ),
+          )
+        : Effect.void;
       const withLiveRuntimeState = (input: ServerProvider) =>
         Effect.gen(function* () {
           if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
-          const provider =
+          const confirmed =
             input.enabled &&
             input.installed &&
             input.auth.status === "unknown" &&
             (yield* confirmedAuthentication.get)
               ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
               : input;
+          const provider = isCopilotInstance
+            ? withCopilotLogin(confirmed, yield* Ref.get(copilotLogin))
+            : confirmed;
           return yield* Option.isNone(runtimeCoordinator)
             ? Effect.succeed(provider)
             : Effect.all({
@@ -706,13 +868,45 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               );
         });
       const lastProbedAuth = yield* Ref.make<ServerProvider["auth"]["status"] | null>(null);
-      const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+      const checkProvider = refreshCopilotLogin.pipe(
+        Effect.andThen(checkAcpRegistryProviderReadiness(readinessInput)),
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.flatMap(withLiveRuntimeState),
         Effect.flatMap((provider) =>
           Ref.get(lastProbedAuth).pipe(Effect.map((auth) => withLastProbedSignOut(provider, auth))),
         ),
       );
+      // Copilot's ACP agent reports no quota; read it from GitHub on each
+      // status check, reusing a read for a few minutes. A failed read never
+      // fails the check.
+      const httpClient = yield* HttpClient.HttpClient;
+      const cachedCopilotUsage = isCopilotInstance
+        ? yield* makeCachedCopilotUsageLimits(
+            readCopilotUsage(copilotUsageInput).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
+          )
+        : undefined;
+      const copilotHome = isCopilotInstance ? resolveCopilotHome(copilotUsageInput, path) : "";
+      const invalidateCopilotUsage = cachedCopilotUsage?.invalidate ?? Effect.void;
+      const checkProviderWithUsage =
+        cachedCopilotUsage === undefined
+          ? checkProvider
+          : checkProvider.pipe(
+              Effect.flatMap((provider) =>
+                withCopilotUsage({
+                  provider,
+                  cache: cachedCopilotUsage,
+                  copilotHome,
+                  configLogin: copilotConfigLogin,
+                  login: copilotLogin,
+                  accountStamp: copilotAccountStamp,
+                }),
+              ),
+            );
       const enrichProvider = checkAcpRegistryProviderStatus(
         {
           ...readinessInput,
@@ -776,7 +970,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: () => checkProvider,
-        checkProvider,
+        checkProvider: checkProviderWithUsage,
         enrichSnapshot: (input) =>
           Effect.flatMap(currentTeamRules, (rules) => {
             // The probe starts the agent, and a hold must not revive one the rules blocked.
@@ -943,6 +1137,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             .set(authenticated)
             .pipe(
               Effect.andThen(authenticated ? Effect.void : clearLiveState),
+              Effect.andThen(invalidateCopilotUsage),
               Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
               Effect.andThen(snapshot.refresh),
               Effect.asVoid,
@@ -982,6 +1177,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         invalidate: (controller.invalidate ?? Effect.void).pipe(
           Effect.andThen(confirmedAuthentication.set(false)),
           Effect.andThen(clearLiveState),
+          Effect.andThen(invalidateCopilotUsage),
           Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
           Effect.andThen(snapshot.refresh),
           Effect.asVoid,
@@ -996,6 +1192,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         accentColor,
         enabled,
         auth,
+        // A fresh refresh (a person's retry or refresh) reads usage and the
+        // agent's sign-in, models and commands again, past both caches.
+        invalidateCaches: invalidateAcpRegistryCaches({
+          copilotUsage: invalidateCopilotUsage,
+          enrichment: liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache),
+        }),
         snapshot: {
           ...snapshot,
           refresh: snapshot.refresh.pipe(
@@ -1079,6 +1281,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Crypto.Crypto, crypto),
               Effect.tap(() => confirmedAuthentication.set(false)),
+              Effect.tap(() => invalidateCopilotUsage),
               Effect.tap(() =>
                 liveSnapshotSemaphore.withPermit(
                   invalidateEnrichmentCache.pipe(

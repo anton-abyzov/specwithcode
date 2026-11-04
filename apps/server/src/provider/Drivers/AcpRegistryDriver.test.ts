@@ -5,8 +5,11 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AcpRegistrySupport from "../acp/AcpRegistrySupport.ts";
 import {
@@ -15,10 +18,16 @@ import {
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
   withLastProbedSignOut,
+  withCopilotLogin,
+  resolveCopilotLogin,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
   saveAcpRegistryCredential,
+  copilotUsageCacheKey,
+  invalidateAcpRegistryCaches,
+  withCopilotUsage,
 } from "./AcpRegistryDriver.ts";
+import { makeCachedCopilotUsageLimits } from "../copilotUsageLimits.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -193,6 +202,51 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
     for (const probed of [null, "unknown", "authenticated"] as const)
       expect(withLastProbedSignOut(placeholder, probed)).toBe(placeholder);
+  });
+
+  it("shows the Copilot login next to the sign-in, never as the plan label", () => {
+    const placeholder = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "github-copilot-cli" }),
+      checkedAt: "2026-11-04T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "github-copilot-cli",
+        version: null,
+        distribution: "binary",
+      },
+    });
+    const signedIn = withCopilotLogin(placeholder, " octocat ");
+    expect(signedIn.auth.login).toBe("octocat");
+    expect(signedIn.auth.label).toBeUndefined();
+    expect(withCopilotLogin(signedIn, "octocat")).toBe(signedIn);
+    expect(withCopilotLogin(placeholder, undefined)).toBe(placeholder);
+
+    const signedOut = withLastProbedSignOut(signedIn, "unauthenticated");
+    expect(withCopilotLogin(signedOut, "octocat").auth.login).toBeUndefined();
+    expect(withCopilotLogin(signedIn, undefined).auth.login).toBeUndefined();
+  });
+
+  it("prefers the config.json login over a cached usage read after an account switch", () => {
+    // First check: config.json and the usage read both say account A.
+    const first = resolveCopilotLogin({
+      configLogin: "account-a",
+      readingLogin: "account-a",
+      known: undefined,
+    });
+    expect(first).toBe("account-a");
+    // Second check inside the cache window: config.json now says B, the
+    // cached read still says A.
+    expect(
+      resolveCopilotLogin({ configLogin: "account-b", readingLogin: "account-a", known: first }),
+    ).toBe("account-b");
+    // No config login (token in the environment or gh fallback): the read decides.
+    expect(
+      resolveCopilotLogin({ configLogin: undefined, readingLogin: "account-c", known: first }),
+    ).toBe("account-c");
+    expect(
+      resolveCopilotLogin({ configLogin: undefined, readingLogin: undefined, known: first }),
+    ).toBe("account-a");
   });
 
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
@@ -652,6 +706,149 @@ describe("acpRegistrySnapshotReadiness", () => {
         message: "Checking ACP authentication, models, and commands in the background...",
       });
     }),
+  );
+});
+
+describe("withCopilotUsage", () => {
+  const copilotPlaceholder = buildCheckedAcpRegistrySnapshot({
+    ...identity,
+    settings: decodeSettings({ agentId: "github-copilot-cli" }),
+    checkedAt: "2026-11-04T10:00:00.000Z",
+    inspection: {
+      status: "ready",
+      agentId: "github-copilot-cli",
+      version: null,
+      distribution: "binary",
+    },
+  });
+  const usageFor = (login: string, usedPercent: number) => ({
+    limits: {
+      checkedAt: "2026-11-04T10:00:00.000Z",
+      windows: [
+        {
+          id: "premium_interactions",
+          kind: "monthly" as const,
+          label: "Premium requests",
+          usedPercent,
+        },
+      ],
+      subscriptionKey: `copilot:${login}`,
+    },
+    login,
+  });
+  // A GitHub read that answers for whichever account is signed in now.
+  const setup = (delay: "0 seconds" | "15 seconds" = "0 seconds") =>
+    Effect.gen(function* () {
+      const account = yield* Ref.make("account-a");
+      const reads = yield* Ref.make(0);
+      const read = Ref.update(reads, (count) => count + 1).pipe(
+        Effect.andThen(Effect.sleep(delay)),
+        Effect.andThen(Ref.get(account)),
+        Effect.map((login) => usageFor(login, login === "account-a" ? 90 : 10)),
+      );
+      const cache = yield* makeCachedCopilotUsageLimits(read);
+      const configLogin = yield* Ref.make<string | undefined>("account-a");
+      const login = yield* Ref.make<string | undefined>(undefined);
+      const check = withCopilotUsage({
+        provider: copilotPlaceholder,
+        cache,
+        copilotHome: "/home/me/.copilot",
+        configLogin,
+        login,
+      });
+      return { account, reads, cache, configLogin, check };
+    });
+
+  it("keys a reading by the sign-in folder and the account", () => {
+    expect(copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: " Octocat " })).toBe(
+      copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: "octocat" }),
+    );
+    expect(copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: "a" })).not.toBe(
+      copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: "b" }),
+    );
+    expect(copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: "a" })).not.toBe(
+      copilotUsageCacheKey({ copilotHome: "/h/.copilot-work", login: "a" }),
+    );
+    // With no login in config.json, a gh account switch still changes the key.
+    expect(
+      copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: undefined, accountStamp: "gh:1" }),
+    ).not.toBe(
+      copilotUsageCacheKey({ copilotHome: "/h/.copilot", login: undefined, accountStamp: "gh:2" }),
+    );
+  });
+
+  it.effect("reads afresh after a gh account switch when config.json names no login", () =>
+    Effect.gen(function* () {
+      const { account, reads, cache } = yield* setup();
+      const configLogin = yield* Ref.make<string | undefined>(undefined);
+      const login = yield* Ref.make<string | undefined>(undefined);
+      const accountStamp = yield* Ref.make<string | undefined>("gh:1");
+      const check = withCopilotUsage({
+        provider: copilotPlaceholder,
+        cache,
+        copilotHome: "/home/me/.copilot",
+        configLogin,
+        login,
+        accountStamp,
+      });
+      expect((yield* check).usageLimits?.subscriptionKey).toBe("copilot:account-a");
+      yield* Ref.set(account, "account-b");
+      yield* Ref.set(accountStamp, "gh:2");
+      expect((yield* check).usageLimits?.subscriptionKey).toBe("copilot:account-b");
+      expect(yield* Ref.get(reads)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("never shows the previous account's quota after an account switch", () =>
+    Effect.gen(function* () {
+      const { account, reads, configLogin, check } = yield* setup();
+      const first = yield* check;
+      expect(first.usageLimits?.subscriptionKey).toBe("copilot:account-a");
+      expect(first.auth.login).toBe("account-a");
+      yield* check;
+      expect(yield* Ref.get(reads)).toBe(1);
+      // The CLI signs in as another account well inside the cache lifetime.
+      yield* Ref.set(account, "account-b");
+      yield* Ref.set(configLogin, "account-b");
+      const switched = yield* check;
+      expect(switched.usageLimits?.subscriptionKey).toBe("copilot:account-b");
+      expect(switched.usageLimits?.windows[0]?.usedPercent).toBe(10);
+      expect(switched.auth.login).toBe("account-b");
+      expect(yield* Ref.get(reads)).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reads afresh after the caches are invalidated", () =>
+    Effect.gen(function* () {
+      const { reads, cache, check } = yield* setup();
+      const enrichment = yield* Ref.make(0);
+      const invalidate = invalidateAcpRegistryCaches({
+        copilotUsage: cache.invalidate,
+        enrichment: Ref.update(enrichment, (count) => count + 1),
+      });
+      yield* check;
+      yield* invalidate;
+      yield* check;
+      expect(yield* Ref.get(reads)).toBe(2);
+      expect(yield* Ref.get(enrichment)).toBe(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows usage once a read slower than the check budget finishes", () =>
+    Effect.gen(function* () {
+      const { reads, check } = yield* setup("15 seconds");
+      const slow = yield* Effect.forkChild(check);
+      yield* TestClock.adjust("6 seconds");
+      expect((yield* Fiber.join(slow)).usageLimits?.unavailable?.reason).toBe("probeFailed");
+      // The next check joins the running read rather than starting another.
+      const waiting = yield* Effect.forkChild(check);
+      yield* TestClock.adjust("6 seconds");
+      yield* Fiber.join(waiting);
+      yield* TestClock.adjust("6 seconds");
+      const later = yield* check;
+      expect(later.usageLimits?.subscriptionKey).toBe("copilot:account-a");
+      expect(yield* Ref.get(reads)).toBe(1);
+    }).pipe(Effect.scoped),
   );
 });
 

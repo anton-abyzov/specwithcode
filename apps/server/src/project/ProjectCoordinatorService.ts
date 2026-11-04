@@ -9,6 +9,7 @@ import {
   ThreadId,
   type ModelSelection,
   type ProjectCoordinatorResult,
+  type ProjectCoordinatorRouting,
   type ProjectCoordinatorSendInput,
   type ProjectCoordinatorStartInput,
   type ProjectId,
@@ -23,8 +24,10 @@ import {
 } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  canTakeTurn,
   limitStopWaitsForReset,
   resolveCoordinatorTurnSelection,
+  usageDeniesTurn,
 } from "@specweave-studio/shared/providerFallback";
 import * as DateTime from "effect/DateTime";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
@@ -57,6 +60,10 @@ import {
 } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import { heldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
+import { requestCapacityRecheck } from "../studio/Capacity.ts";
+
+/** How long a retry waits for each provider's fresh status and usage read. */
+const RECHECK_TIMEOUT = "20 seconds";
 
 export interface ProjectCoordinatorRouteInput {
   readonly projectId: ProjectId;
@@ -256,16 +263,26 @@ const make = Effect.gen(function* () {
     projectId: ProjectId,
     threadId: ThreadId,
     settings: { readonly coordinatorModelSelection: ModelSelection | null },
+    /** Instances just read afresh for a retry: a fresh read with room clears their old stops. */
+    rechecked: ReadonlySet<string> = new Set(),
   ) =>
     Effect.gen(function* () {
       const saved = settings.coordinatorModelSelection;
       // Set when the saved provider cannot run and no fallback had room either.
       let nothingElseHasRoom = false;
+      let reason = "saved";
       const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
       const found = yield* projects.getById(projectId);
       if (Option.isNone(found)) return yield* fail(projectId, "not_found");
       const project = found.value;
       const providers = yield* providerRegistry.getProviders;
+      // A provider read afresh for a retry that now shows room: its sign-in or
+      // limit came back, so an earlier stop or hold says nothing about it.
+      const recovered = (instanceId: string) => {
+        if (!rechecked.has(instanceId)) return false;
+        const fresh = providers.find((provider) => provider.instanceId === instanceId);
+        return fresh !== undefined && canTakeTurn(fresh) && !usageDeniesTurn(fresh);
+      };
       const compatibility = {
         project,
         providers,
@@ -291,9 +308,11 @@ const make = Effect.gen(function* () {
         // A provider a thread recently could not open, or one that reports no
         // usage but stopped a thread on its limit, is held off fallbacks; the
         // coordinator keeps off it too, whatever its snapshot still says.
-        for (const instanceId of yield* heldInstances(nowMs)) limited.add(instanceId);
+        for (const instanceId of yield* heldInstances(nowMs))
+          if (!recovered(instanceId)) limited.add(instanceId);
         if (
           shell &&
+          !recovered(shell.providerInstanceId) &&
           shell.status === "failed" &&
           shell.lastErrorClass === "usage_limit" &&
           limitStopIsCurrent(shell, nowMs) &&
@@ -354,6 +373,7 @@ const make = Effect.gen(function* () {
           savedStopWasPlanLimit: savedStop?.planLimit === true,
         });
         nothingElseHasRoom = decision.reason === "saved-unavailable";
+        reason = decision.reason;
         if (decision.reason !== "saved")
           yield* Effect.logInfo("project.coordinator.turn-model", {
             projectId,
@@ -385,8 +405,54 @@ const make = Effect.gen(function* () {
         !isProjectModelSelectionCompatible({ ...compatibility, selection: effectiveSelection })
       )
         return yield* fail(projectId, "unsupported_provider");
-      return selection;
+      return { selection, reason, effective: effectiveSelection ?? null };
     });
+  /**
+   * A retry reads the coordinator's providers afresh, past cached probes and
+   * limit verdicts: a person who just signed in again, or whose limit reset,
+   * gets that answer now rather than after the next background read. The
+   * session start that follows uses these reads rather than probing again,
+   * and skips its cached limit verdict once (see Capacity).
+   */
+  const recheckProviders = (projectId: ProjectId) =>
+    Effect.gen(function* () {
+      const found = yield* projects.getById(projectId);
+      if (Option.isNone(found)) return new Set<string>();
+      const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const shell = settings.coordinatorThreadId
+        ? yield* threads
+            .getThreadShell(settings.coordinatorThreadId)
+            .pipe(Effect.orElseSucceed(() => null))
+        : null;
+      const ids = new Set<string>();
+      if (settings.coordinatorModelSelection)
+        ids.add(settings.coordinatorModelSelection.instanceId);
+      if (shell) {
+        ids.add(shell.modelSelection.instanceId);
+        ids.add(shell.providerInstanceId);
+      }
+      // Each read stands alone: one that fails or times out stops none of the others.
+      const read = yield* Effect.forEach(
+        ids,
+        (instanceId) =>
+          providerRegistry
+            .refreshInstance(instanceId as ModelSelection["instanceId"], { fresh: true })
+            .pipe(
+              Effect.timeoutOption(RECHECK_TIMEOUT),
+              Effect.map((observed) => (Option.isSome(observed) ? instanceId : null)),
+              Effect.catchCause(() => Effect.succeed(null)),
+            ),
+        { concurrency: "unbounded" },
+      );
+      // Only instances actually read afresh count as rechecked.
+      const rechecked = new Set(
+        read.filter((instanceId): instanceId is string => instanceId !== null),
+      );
+      // The start that follows relies on these reads instead of probing each
+      // provider a second time; one that was not read probes afresh itself.
+      yield* requestCapacityRecheck(ids, rechecked);
+      return rechecked;
+    }).pipe(Effect.orElseSucceed(() => new Set<string>()));
   /**
    * The user's words into the coordinator's conversation, once per command.
    * `checkSender` runs again under the admission lock; `text` builds the stored
@@ -406,13 +472,21 @@ const make = Effect.gen(function* () {
       yield* CoordinatorAttachments.validate(input);
       yield* sender.check;
       const result = yield* ensure(input);
+      // Read outside the admission lock: a slow provider must not hold other sends.
+      const rechecked = input.recheck === true ? yield* recheckProviders(input.projectId) : null;
       return yield* admission.withLock(
         input.projectId,
         Effect.gen(function* () {
           yield* sender.check;
           yield* workspace.assertAdmission(input.projectId);
           const settings = (yield* workspace.readWorkspace(input)).settings;
-          const modelSelection = yield* turnSelection(input.projectId, result.threadId, settings);
+          const turn = yield* turnSelection(
+            input.projectId,
+            result.threadId,
+            settings,
+            rechecked ?? undefined,
+          );
+          const modelSelection = turn.selection;
           const messageId = CoordinatorAttachments.messageId(input);
           yield* CoordinatorAttachments.send({
             projectId: input.projectId,
@@ -432,7 +506,14 @@ const make = Effect.gen(function* () {
             Effect.provideService(ServerConfig.ServerConfig, config),
             Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
           );
-          return { ...result, messageId };
+          const routing: ProjectCoordinatorRouting | undefined = turn.effective
+            ? {
+                selection: turn.effective,
+                reason: turn.reason,
+                rechecked: rechecked !== null && rechecked.size > 0,
+              }
+            : undefined;
+          return { ...result, messageId, ...(routing ? { routing } : {}) };
         }),
       );
     });
@@ -457,7 +538,11 @@ const make = Effect.gen(function* () {
           ? input.prompt
           : workerFollowUpPrefix(sourceThreadId, messageId) + input.prompt,
     }).pipe(
-      Effect.map(({ threadId, created }) => ({ threadId, created })),
+      Effect.map(({ threadId, created, routing }) => ({
+        threadId,
+        created,
+        ...(routing ? { routing } : {}),
+      })),
       mapProjectFailure(input.projectId, "coordinator.send"),
     );
   };
@@ -526,7 +611,9 @@ const make = Effect.gen(function* () {
       const coordinatorThreadId = settings.coordinatorThreadId;
       if (!coordinatorThreadId || (threadId !== null && coordinatorThreadId !== threadId))
         return undefined;
-      return (yield* turnSelection(projectId, coordinatorThreadId, settings)) ?? undefined;
+      return (
+        (yield* turnSelection(projectId, coordinatorThreadId, settings)).selection ?? undefined
+      );
     }).pipe(Effect.orElseSucceed(() => undefined));
   return ProjectCoordinatorService.of({ start, send, route, coordinatorModes, nextTurnModel });
 });

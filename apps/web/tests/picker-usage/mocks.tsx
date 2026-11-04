@@ -30,7 +30,8 @@ export const useUpdateClientSettings = () => (patch: Partial<typeof settings>) =
 };
 export const primaryServerKeybindingsAtom = Atom.make({ bindings: [], warnings: [] });
 export const ChatGptSharingControl = () => null;
-export const serverEnvironment = {};
+// The picker re-reads old usage through this command; the fixture has no machine to ask.
+export const serverEnvironment = { refreshProviders: { label: "refreshProviders" } };
 export const environmentPresentations = { presentationsAtom: Atom.make(new Map()) };
 export const environmentSummaries = {};
 export const useEnvironmentPresentation = () => ({ presentation: null });

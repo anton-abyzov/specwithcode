@@ -358,6 +358,46 @@ it.effect("keeps local credentials separate from a matching registry agent ID", 
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("gives each Copilot COPILOT_HOME its own credential binding", () =>
+  Effect.gen(function* () {
+    const copilot = decodeSettings({ agentId: "github-copilot-cli" });
+    const binding = (environment: NodeJS.ProcessEnv) =>
+      makeHarness(browserMethod, false, copilot, instanceId, {}, false, { environment }).pipe(
+        Effect.map((h) => h.controller.credentialBinding),
+      );
+    const defaultStore = yield* binding({ HOME: "/home/dev" });
+    const explicitDefault = yield* binding({
+      HOME: "/home/dev",
+      COPILOT_HOME: "/home/dev/.copilot/",
+    });
+    const work = yield* binding({ HOME: "/home/dev", COPILOT_HOME: "/home/dev/.copilot-work" });
+    const tilde = yield* binding({ HOME: "/home/dev", COPILOT_HOME: "~/.copilot-work" });
+    assert.deepEqual(defaultStore, { owner: "provider", key: "acp:github-copilot-cli" });
+    assert.deepEqual(explicitDefault, defaultStore);
+    assert.deepEqual(work, {
+      owner: "provider",
+      key: "acp:github-copilot-cli:/home/dev/.copilot-work",
+    });
+    assert.deepEqual(tilde, work);
+    // Other agents keep one shared store whatever COPILOT_HOME says.
+    const other = yield* makeHarness(
+      browserMethod,
+      false,
+      decodeSettings({ agentId: "test-agent" }),
+      instanceId,
+      {},
+      false,
+      {
+        environment: { HOME: "/home/dev", COPILOT_HOME: "/home/dev/.copilot-work" },
+      },
+    );
+    assert.deepEqual(other.controller.credentialBinding, {
+      owner: "provider",
+      key: "acp:test-agent",
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect(
   "discovers methods without signing in, then waits for browser consent and session verification",
   () =>

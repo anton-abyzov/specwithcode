@@ -136,8 +136,53 @@ describe("FeaturedAcpProviders", () => {
         grok: { driver: ProviderDriverKind.make("grok"), config: {} },
       },
     });
-    expect(byLabel(configured, "Already added GitHub Copilot").props.disabled).toBe(true);
+    expect(byLabel(configured, "Add Gemini CLI").props.disabled).toBe(false);
+    expect(
+      visitElements(
+        configured,
+        (element) => element.props["aria-label"] === "Already added GitHub Copilot",
+      ),
+    ).toBeNull();
+    expect(byLabel(configured, "Add another GitHub account").props.disabled).toBe(false);
     expect(byLabel(configured, "Add Grok Build").props.disabled).toBe(false);
+    const configuredGemini = render({
+      providerInstances: {
+        gemini_work: {
+          driver: ProviderDriverKind.make("acpRegistry"),
+          config: { agentId: gemini.id },
+        },
+      },
+    });
+    expect(byLabel(configuredGemini, "Already added Gemini CLI").props.disabled).toBe(true);
+    expect(
+      visitElements(
+        configuredGemini,
+        (element) => element.props["aria-label"] === "Add another GitHub account",
+      ),
+    ).toBeNull();
+  });
+
+  it("adds another GitHub account once Copilot exists, next to Manage", () => {
+    const onPrepare = vi.fn();
+    const onManage = vi.fn();
+    const providerInstances = {
+      copilot_work: {
+        driver: ProviderDriverKind.make("acpRegistry"),
+        config: { agentId: copilot.id },
+      },
+    };
+    const tree = render({ providerInstances, onPrepare, onManage });
+    byLabel(tree, "Manage GitHub Copilot");
+    (byLabel(tree, "Add another GitHub account").props.onClick as () => void)();
+    expect(onPrepare).toHaveBeenCalledExactlyOnceWith(copilot);
+
+    const readonly = render({ providerInstances, onPrepare, canManageProviders: false });
+    const blocked = byLabel(readonly, "Add another GitHub account");
+    expect(blocked.props.disabled).toBe(true);
+    (blocked.props.onClick as () => void)();
+    const preparing = render({ providerInstances, onPrepare, preparingId: copilot.id });
+    expect(byLabel(preparing, "Preparing GitHub Copilot").props.disabled).toBe(true);
+    expect(onPrepare).toHaveBeenCalledOnce();
   });
   it("opens an existing instance even if the registry is unavailable, without preparing it", () => {
     const onManage = vi.fn();

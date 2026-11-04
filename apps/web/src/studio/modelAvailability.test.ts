@@ -11,7 +11,9 @@ import {
   availabilityDisabledReason,
   availabilityText,
   isAvailabilityBlocking,
+  accountLimitPhrase,
   modelAvailability,
+  STALE_LIMIT_EXPIRY_MS,
   USAGE_FRESH_MS,
 } from "./modelAvailability";
 
@@ -139,7 +141,48 @@ describe("modelAvailability", () => {
     const state = modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now });
     expect(state).toMatchObject({ kind: "stale", wasExhausted: true });
     expect(isAvailabilityBlocking(state)).toBe(false);
-    expect(text(provider, "claude-opus-5-5").short).toBe("Limit reached 16m ago");
+    expect(text(provider, "claude-opus-5-5").short).toBe("Limit reached 16m ago · resets in 2d 2h");
+  });
+
+  it("drops an old limit with no reset time instead of showing Limit? forever", () => {
+    const noReset: ServerProviderUsageWindow = { ...weekly(100), resetsAt: undefined };
+    const recent = claude([noReset], {}, now - 37 * 60_000);
+    expect(modelAvailability({ provider: recent, model: "m", nowMs: now })).toMatchObject({
+      kind: "stale",
+      wasExhausted: true,
+      resetsAt: null,
+    });
+    const old = claude([noReset], {}, now - STALE_LIMIT_EXPIRY_MS - 60_000);
+    expect(modelAvailability({ provider: old, model: "m", nowMs: now })).toEqual({
+      kind: "unknown",
+      reason: "notRead",
+    });
+  });
+
+  it("keeps an old limit while its reported reset is still ahead", () => {
+    const provider = claude([weekly(100, 33 * HOUR)], {}, now - 3 * HOUR);
+    const state = modelAvailability({ provider, model: "m", nowMs: now });
+    expect(state).toMatchObject({ kind: "stale", wasExhausted: true });
+    expect(text(provider, "m").short).toBe("Limit reached 3h 0m ago · resets in 1d 9h");
+  });
+
+  it("says how old a trusted read is once it is worth saying", () => {
+    const fresh = modelAvailability({
+      provider: claude([weekly(100)], {}, now - 60_000),
+      model: "m",
+      nowMs: now,
+    });
+    expect(accountLimitPhrase(fresh, { nowMs: now, short: "" })).toBe(
+      "weekly limit reached · 2d 2h",
+    );
+    const older = modelAvailability({
+      provider: claude([weekly(100)], {}, now - 7 * 60_000),
+      model: "m",
+      nowMs: now,
+    });
+    expect(accountLimitPhrase(older, { nowMs: now, short: "" })).toBe(
+      "weekly limit reached · 2d 2h · checked 7m ago",
+    );
   });
 
   it("treats a reset that passed since the read as unknown, not as room", () => {
@@ -194,7 +237,16 @@ describe("modelAvailability", () => {
         ordinaryUsageAllowed: false,
       },
     });
+    // The server still refuses turns on a denial, so an old one stays shown.
     expect(modelAvailability({ provider: old, model: "x", nowMs: now }).kind).toBe("stale");
+    const recent = claude(null, {
+      usageLimits: {
+        checkedAt: iso(now - 30 * 60_000),
+        windows: [session(60)],
+        ordinaryUsageAllowed: false,
+      },
+    });
+    expect(modelAvailability({ provider: recent, model: "x", nowMs: now }).kind).toBe("stale");
   });
 
   it("keeps honest states for missing telemetry and never blocks on them", () => {
@@ -374,7 +426,7 @@ describe("modelAvailability", () => {
     expect(state).toMatchObject({ kind: "room", leftPercent: 5, tone: "warn" });
     expect(words.label).toBe("5% of 5-hour limit left");
     expect(words.long).toBe(
-      "5% of the 5-hour limit is left on the Claude Max account on MacBook M4MAX; it resets in 55m. Every Claude model on the account shares it, including use from other machines and apps.",
+      "5% of the 5-hour limit is left on the Claude Max account on MacBook M4MAX; it resets in 55m. Every Claude model on the account shares it, including use from other machines and apps. Checked 1m ago.",
     );
     expect(words.long).not.toMatch(/@/);
     const fable = availabilityText(

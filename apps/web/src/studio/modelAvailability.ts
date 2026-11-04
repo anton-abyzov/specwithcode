@@ -29,6 +29,17 @@ import { leftPercent, usageTone, type UsageTone } from "./usageIndicatorModel";
 /** A read older than this is shown as old and never disables anything. */
 export const USAGE_FRESH_MS = MACHINE_USAGE_MAX_AGE_MS;
 
+/** A read older than this is checked again when the picker opens, and shows its age. */
+export const USAGE_RECHECK_AFTER_MS = 5 * 60_000;
+
+/**
+ * An old "limit reached" with no reset time stops counting after this long:
+ * without a reset time nothing says the limit still holds, so the state becomes
+ * "not read" and is checked again instead of lingering as "Limit?" forever.
+ * A known reset time is honoured however old the read is.
+ */
+export const STALE_LIMIT_EXPIRY_MS = 60 * 60_000;
+
 /** Drivers whose signed-in instances always report subscription windows. */
 const SUBSCRIPTION_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
 
@@ -88,9 +99,14 @@ export type ModelAvailability =
       readonly wasExhausted: boolean;
       readonly checkedAt: number;
       readonly resetSinceRead: boolean;
+      /** When the spent window it showed resets, if reported and still ahead. */
+      readonly resetsAt?: number | null;
     }
-  /** Signed in to a subscription but no usage read has arrived yet. */
-  | { readonly kind: "loading" }
+  /**
+   * Signed in to a subscription but no usage read has arrived yet, or
+   * (`refreshing`) an old reading is being read again right now.
+   */
+  | { readonly kind: "loading"; readonly refreshing?: boolean }
   /** The provider could not be read, or reported no windows. */
   | {
       readonly kind: "unknown";
@@ -191,6 +207,13 @@ export function modelAvailability(input: ModelAvailabilityInput): ModelAvailabil
     );
   // A reset passing is no proof of room: the server reads again before it trusts it.
   const resetSinceRead = windows.length > live.length;
+  const spentResetsAt =
+    spent
+      .map((window) => parseMs(window.resetsAt))
+      .find((at): at is number => at !== null && at > nowMs) ?? null;
+  // An old spent read with no reset time ahead no longer says anything.
+  const expired = (at: number) =>
+    !resetSinceRead && spentResetsAt === null && nowMs - at > STALE_LIMIT_EXPIRY_MS;
 
   if (usageDeniesTurn(provider)) {
     // A sparse denial is stamped on its own; it is as fresh as when it was seen.
@@ -203,12 +226,15 @@ export function modelAvailability(input: ModelAvailabilityInput): ModelAvailabil
         checkedAt: deniedAt,
       };
     }
+    // The server still refuses turns on this denial, so it never expires here;
+    // opening the picker reads it again instead.
     return {
       kind: "stale",
       leftPercent: null,
       wasExhausted: true,
       checkedAt: deniedAt,
       resetSinceRead,
+      resetsAt: spentResetsAt,
     };
   }
   // A lookup without quota data: kept windows are history, not a read.
@@ -237,12 +263,14 @@ export function modelAvailability(input: ModelAvailabilityInput): ModelAvailabil
   const trusted = fresh && !unreadable && (!resetSinceRead || spent.length > 0);
 
   if (!trusted || least === null) {
+    if (spent.length > 0 && expired(checkedAt)) return { kind: "unknown", reason: "notRead" };
     return {
       kind: "stale",
       leftPercent: left,
       wasExhausted: spent.length > 0,
       checkedAt,
       resetSinceRead,
+      resetsAt: spentResetsAt,
     };
   }
   if (spent[0]) {
@@ -300,7 +328,20 @@ function resetPhrase(resetsAt: number | null, nowMs: number, formatAt?: (ms: num
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 
 function agoPhrase(checkedAt: number, nowMs: number) {
-  return checkedAt > 0 ? `${formatDuration(nowMs - checkedAt)} ago` : "a while ago";
+  if (checkedAt <= 0) return "a while ago";
+  return nowMs - checkedAt < 60_000 ? "just now" : `${formatDuration(nowMs - checkedAt)} ago`;
+}
+
+/** When a trusted read was taken, for the tooltip: `Checked just now.` */
+function readSentence(checkedAt: number, nowMs: number) {
+  return `Checked ${agoPhrase(checkedAt, nowMs)}.`;
+}
+
+/** ` · checked 7m ago` once a trusted read is old enough to matter; empty before. */
+export function readAgeSuffix(checkedAt: number, nowMs: number): string {
+  return checkedAt > 0 && nowMs - checkedAt >= USAGE_RECHECK_AFTER_MS
+    ? ` · checked ${agoPhrase(checkedAt, nowMs)}`
+    : "";
 }
 
 export interface AvailabilityText {
@@ -350,7 +391,7 @@ export function availabilityText(
       return {
         short: `${scoped ? `${window.family} ` : ""}${left}% left${reset ? ` · ${reset}` : ""}`,
         label: `${left}% of ${window.name} limit left`,
-        long: `${left}% of the ${window.name} limit is left on ${account}${longReset ? `; it ${longReset}` : ""}. ${scopeSentence(window)}`,
+        long: `${left}% of the ${window.name} limit is left on ${account}${longReset ? `; it ${longReset}` : ""}. ${scopeSentence(window)} ${readSentence(availability.checkedAt, nowMs)}`,
         tone: availability.tone === "ok" ? "ok" : availability.tone,
       };
     }
@@ -373,14 +414,14 @@ export function availabilityText(
         return {
           short: `${window.family} limit reached${reset ? ` · ${reset}` : ""}`,
           label: `${window.name} limit reached${reset ? `, ${reset}` : ""}`,
-          long: `The ${window.name} limit is used up on ${account}, so ${window.family} models can't run ${until}. It counts only ${window.family} models; other ${provider} models still have their own room.`,
+          long: `The ${window.name} limit is used up on ${account}, so ${window.family} models can't run ${until}. It counts only ${window.family} models; other ${provider} models still have their own room. ${readSentence(availability.checkedAt, nowMs)}`,
           tone: "full",
         };
       }
       return {
         short: `${upperFirst(window.name)} limit reached${reset ? ` · ${reset}` : ""}`,
         label: `${window.name} limit reached${reset ? `, ${reset}` : ""}`,
-        long: `The ${window.name} limit is used up on ${account}. Every ${provider} model on the account shares it, so none can run ${until}.`,
+        long: `The ${window.name} limit is used up on ${account}. Every ${provider} model on the account shares it, so none can run ${until}. ${readSentence(availability.checkedAt, nowMs)}`,
         tone: "full",
       };
     }
@@ -406,10 +447,12 @@ export function availabilityText(
         };
       }
       if (availability.wasExhausted) {
+        const reset = resetPhrase(availability.resetsAt ?? null, nowMs);
+        const longReset = resetPhrase(availability.resetsAt ?? null, nowMs, formatAt);
         return {
-          short: `Limit reached ${ago}`,
-          label: `limit reached when last read ${ago}`,
-          long: `Usage on ${account} was last read ${ago} and showed the limit reached. That read is too old to rely on, so the model stays selectable; the turn may still wait for the reset.`,
+          short: `Limit reached ${ago}${reset ? ` · ${reset}` : ""}`,
+          label: `limit reached when last read ${ago}${reset ? `, ${reset}` : ""}`,
+          long: `Usage on ${account} was last read ${ago} and showed the limit reached${longReset ? `; it ${longReset}` : ""}. That read is too old to rely on, so the model stays selectable and is read again when the picker opens; the turn may still wait for the reset.`,
           tone: "warn",
         };
       }
@@ -438,7 +481,9 @@ export function availabilityText(
       return {
         short: "Checking usage…",
         label: "checking usage",
-        long: `${provider} usage has not been read yet.`,
+        long: availability.refreshing
+          ? `Reading ${provider} usage again now; the last reading was too old to rely on.`
+          : `${provider} usage has not been read yet.`,
         tone: "muted",
       };
     case "unknown": {
@@ -456,7 +501,7 @@ export function availabilityText(
             : availability.reason === "notRead"
               ? {
                   short: "Usage not read",
-                  long: `${provider} usage has not been read on this machine yet, so its room is unknown. The model stays selectable.`,
+                  long: `${provider} usage has not been read on this machine recently, so its room is unknown. Opening the model picker reads it again. The model stays selectable.`,
                 }
               : {
                   short: "No limits reported",
@@ -510,11 +555,11 @@ export function accountLimitPhrase(
     at !== null && at > input.nowMs ? ` · ${formatDuration(at - input.nowMs)}` : "";
   switch (availability.kind) {
     case "room":
-      return `${availability.leftPercent}% of ${availability.binding.name}${reset(availability.binding.resetsAt)}`;
+      return `${availability.leftPercent}% of ${availability.binding.name}${reset(availability.binding.resetsAt)}${readAgeSuffix(availability.checkedAt, input.nowMs)}`;
     case "exhausted":
       return availability.providerAllows
-        ? `${availability.binding.name} limit reached, extra usage allowed`
-        : `${availability.binding.name} limit reached${reset(availability.binding.resetsAt)}`;
+        ? `${availability.binding.name} limit reached, extra usage allowed${readAgeSuffix(availability.checkedAt, input.nowMs)}`
+        : `${availability.binding.name} limit reached${reset(availability.binding.resetsAt)}${readAgeSuffix(availability.checkedAt, input.nowMs)}`;
     case "denied":
       return `paused new turns${reset(availability.resetsAt)}`;
     case "unreported":
