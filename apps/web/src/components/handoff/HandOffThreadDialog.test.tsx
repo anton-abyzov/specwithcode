@@ -192,11 +192,62 @@ it("switches the model here without a machine choice", async () => {
   expect(button("Switch and continue")!.disabled).toBe(false);
 });
 
+it("says a chat outside Git can't move at all, not that the machine can't take it", async () => {
+  await render(
+    props({
+      preflight: {
+        state: "done",
+        results: [
+          check({
+            ok: false,
+            failures: [
+              {
+                check: "checkpoint",
+                message: "Handoff mode needs the thread's folder to be a Git repository.",
+              },
+            ],
+          }),
+        ],
+      },
+    }),
+  );
+  expect(text()).toContain("This thread can't move:");
+  expect(text()).not.toContain("Minis can't take it yet");
+  expect(text()).toContain("Only a thread whose folder is a Git repository can move");
+  expect(button("Move to Minis")).toBeUndefined();
+  expect(button("Can't move")!.disabled).toBe(true);
+});
+
+it("keeps blaming the destination when its own folder is not a Git repository", async () => {
+  await render(
+    props({
+      preflight: {
+        state: "done",
+        results: [
+          check({
+            ok: false,
+            failures: [
+              {
+                check: "checkpoint",
+                message: "The mapped repository folder is not a Git repository here.",
+              },
+            ],
+          }),
+        ],
+      },
+    }),
+  );
+  expect(text()).toContain("Minis can't take it yet");
+  expect(text()).not.toContain("This thread can't move:");
+  expect(button("Can't move")).toBeUndefined();
+});
+
 it("labels the main button for each state", () => {
   const base = { mode: "move", submitting: false, checking: false, machine: "Minis" } as const;
   expect(handOffPrimaryLabel(base)).toBe("Move to Minis");
   expect(handOffPrimaryLabel({ ...base, checking: true })).toBe("Checking…");
   expect(handOffPrimaryLabel({ ...base, submitting: true })).toBe("Moving…");
+  expect(handOffPrimaryLabel({ ...base, blockedHere: true })).toBe("Can't move");
   expect(handOffPrimaryLabel({ ...base, mode: "switch-model" })).toBe("Switch and continue");
   expect(handOffPrimaryLabel({ ...base, mode: "switch-model", submitting: true })).toBe(
     "Switching…",

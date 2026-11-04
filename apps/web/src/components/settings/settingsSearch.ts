@@ -115,7 +115,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/mods": "Mods",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
-  "/settings/connections": "Connections",
+  "/settings/connections": "Advanced connections",
   "/settings/machines": "Machines",
   "/settings/chrome": "Chrome",
   "/settings/integrations": "Integrations",
@@ -204,6 +204,12 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
  * that may not be mounted point at their nearest stable section instead.
  */
 export const SETTINGS_SEARCH_ITEMS = [
+  {
+    id: "mcp-connections",
+    title: "MCP connections",
+    to: "/settings/integrations",
+    searchTerms: ["external services integrations mcp servers tools connections"],
+  },
   {
     id: "privacy-data",
     title: "Your data",
@@ -1066,14 +1072,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "environment-icon",
     title: "Environment icon",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: ["machine glyph sidebar mac mini studio laptop desktop server cloud vm"],
   },
   {
     id: "local-environment",
     title: "Local environment",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: ["turn off on disable enable local server agents remote only restart"],
     desktopOnly: true,
@@ -1081,7 +1087,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "network-access",
     title: "Network access",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: [
       "expose backend remote pairing local machine interfaces host restart lan http unencrypted",
@@ -1091,7 +1097,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "tailscale-https",
     title: "Tailscale HTTPS",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: ["serve magicdns endpoint remote secure network"],
     desktopOnly: true,
@@ -1100,7 +1106,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "wsl-backend",
     title: "WSL backend",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "windows subsystem linux distro second server projects stop windows backend restart",
     ],
@@ -1113,7 +1119,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "studio-connect",
     localEnvironmentOnly: true,
     title: "SpecWithCode Connect",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: [
       "managed tunnel cloud other devices remote",
@@ -1124,7 +1130,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "private-machines-add",
     title: "Add a machine",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "fleet invite add machine worker tailscale connect another computer mac linux vps network",
       "vps linux server rent hetzner",
@@ -1133,7 +1139,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "private-machines-invite",
     title: "Join a main machine",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "fleet invite join main machine primary tailscale connect serve line swc-machine add this mac",
       "invite this machine to another one make a join line",
@@ -1165,14 +1171,14 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "private-machines-auto-connect",
     title: "Connect private machines automatically",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: ["reconnect restart reboot fleet tailscale m1 m3 pair auto connect machines"],
   },
   {
     id: "hold-webhooks-while-offline",
     localEnvironmentOnly: true,
     title: "Hold webhooks while offline",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: ["webhook automations offline queue mailbox specweave-studio connect"],
     cloudOnly: true,
@@ -1182,7 +1188,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "publish-agent-activity",
     localEnvironmentOnly: true,
     title: "Publish agent activity",
-    to: "/settings/connections",
+    to: "/settings/machines",
     targetId: "connections-environment",
     searchTerms: ["mobile push notifications live activities cloud tunnel"],
     cloudOnly: true,
@@ -1190,7 +1196,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "pair-phone",
     title: "Pair a phone with a private QR code",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "phone iphone ios mobile app pair pairing qr code scan link tailscale network direct",
     ],
@@ -1198,7 +1204,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "connections-environment",
     title: "This machine",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
     ],
@@ -1206,7 +1212,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "remote-environments",
     title: "Environments",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "add pair backend host code ssh config agent tunnel saved specweave-studio connect",
     ],
@@ -1223,7 +1229,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "load-balancing",
     title: "Load balancing",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: [
       "automatic machine environment resources cpu memory capacity preference weight shared projects",
     ],
@@ -1231,7 +1237,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "github-routing",
     title: "GitHub sharing",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
   {

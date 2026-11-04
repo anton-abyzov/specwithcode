@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 import { visitElements } from "../../test/reactElementTree";
+import { fleetInviteCommand } from "../../studio/fleetWorkers";
 import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 const runtime = vi.hoisted(() => ({
   snapshot: null as StudioFleetSnapshot | null,
@@ -69,6 +70,7 @@ vi.mock("../../connection/onboarding", () => ({ connectPairing: {} }));
 vi.mock("../../studio/machineHandoff", () => ({ machineHandoff: { sentSecrets: {} } }));
 vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: () => null }));
 import { MachineTerminal, MachineTerminalButton } from "./MachineTerminal";
+import { SettingHelp } from "./SettingHelp";
 import {
   FleetWorkersRow,
   fleetConnectionReason,
@@ -269,6 +271,24 @@ describe("private machine roster", () => {
         }),
       ),
     ).toBeNull();
+  });
+  it("does not announce an empty fleet as an empty composed machine inventory", () => {
+    const tree = render({
+      snapshot: { ...snapshot, machines: [] },
+      renderMachine: (_id, controls) => controls,
+      additionalMachines: <li>Connected remote machine</li>,
+    });
+    expect(
+      visitElements(
+        tree,
+        (element) =>
+          typeof element.props.children === "string" &&
+          element.props.children.includes("No other machines yet"),
+      ),
+    ).toBeNull();
+    expect(
+      visitElements(tree, (element) => element.props.children === "Connected remote machine"),
+    ).not.toBeNull();
   });
   it("shows an unpaired M1 in a fresh browser and calls pairing only on an explicit click", () => {
     const onPair = vi.fn();
@@ -720,6 +740,12 @@ describe("workers on private machines", () => {
       onAction: vi.fn(),
     };
     expect(button(FleetWorkersRow(props), "Allow workers")?.props.disabled).toBe(true);
+    const helpLabels: unknown[] = [];
+    visitElements(FleetWorkersRow(props), (element) => {
+      if (element.type === SettingHelp) helpLabels.push(element.props.label);
+      return false;
+    });
+    expect(helpLabels).toEqual(["workers", "the most access a worker gets"]);
     const ready = FleetWorkersRow({ ...props, draft: { access: "auto", pairingCode: "code" } });
     const allow = button(ready, "Allow workers")!;
     expect(allow.props.disabled).toBe(false);
@@ -829,13 +855,19 @@ describe("inviting this machine from its own roster", () => {
     expect(label(render())).toContain("Reachable");
   });
   it("puts SpecWithCode Connect first in the Add a machine steps, with this machine's id", () => {
-    const hint = label(
-      render({ onAddMachine: vi.fn(), onInvitationChange: vi.fn(), canManageWorkers: true }),
-    );
-    expect(hint).toContain("link SpecWithCode Connect");
+    const tree = render({
+      onAddMachine: vi.fn(),
+      onInvitationChange: vi.fn(),
+      canManageWorkers: true,
+    });
+    const hint = label(tree);
+    expect(hint).toContain("Open Settings > Machines > SpecWithCode Connect there");
+    expect(
+      visitElements(tree, (element) => element.props.value === fleetInviteCommand(m4)),
+    ).not.toBeNull();
     expect(hint).toContain("This machine does not need to be signed in");
-    expect(hint).toContain("choose Join a main machine under Settings > Connections");
-    expect(hint).toContain(`specwithcode fleet invite --coordinator '${m4}'`);
+    expect(hint).toContain("choose Join a main machine under Settings > Machines");
+    expect(hint).not.toContain("no line needed");
     expect(hint).not.toContain("<main-machine-environment-id>");
     expect(hint).not.toContain("Tailscale");
     expect(hint.indexOf("SpecWithCode Connect")).toBeLessThan(hint.indexOf("Join a main machine"));

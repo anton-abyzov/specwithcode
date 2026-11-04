@@ -25,6 +25,8 @@ import {
 import {
   DEFAULT_FLEET_WORKER_ACCESS,
   FLEET_WORKER_ACCESS_CHOICES,
+  fleetInviteCommand,
+  fleetWorkersHelp,
   fleetWorkerDraftAccess,
   fleetRemoveNotice,
   sentSecretsWarning,
@@ -59,6 +61,7 @@ import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
 import { MachineTerminal, MachineTerminalButton, useCloseMachineTerminal } from "./MachineTerminal";
 import { ConnectionReason } from "./ConnectionReason";
 import { ProvisionMachineButton } from "./ProvisionMachineSheet";
+import { SettingHelp } from "./SettingHelp";
 import { SettingsRow, SettingsSection, TeamRulesLabel } from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import type { TeamRulesSummary } from "@specweave-studio/contracts";
@@ -168,7 +171,15 @@ export function FleetWorkersRow({
   return (
     <div className="min-w-0 space-y-1.5" aria-label={`Workers on ${machine.label}`}>
       <p className="text-xs text-muted-foreground">
-        <span className="text-foreground/80">Workers</span> · {view.summary}
+        <span className="text-foreground/80">Workers</span>{" "}
+        <SettingHelp label="workers">
+          <div className="space-y-1.5">
+            {fleetWorkersHelp(machine.label).map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        </SettingHelp>{" "}
+        · {view.summary}
         {view.action === "allow" && !canManage ? " Allowing them needs Manage access." : null}
       </p>
       {view.accessHint ? <p className="text-xs text-muted-foreground">{view.accessHint}</p> : null}
@@ -203,6 +214,20 @@ export function FleetWorkersRow({
               </SelectGroup>
             </SelectPopup>
           </Select>
+          <SettingHelp label="the most access a worker gets">
+            <p className="mb-1.5">
+              The most a worker started on {machine.label} may do, even when its coordinator has
+              more.
+            </p>
+            <dl className="space-y-1">
+              {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
+                <div key={choice.value}>
+                  <dt className="inline font-medium">{choice.label}: </dt>
+                  <dd className="inline text-muted-foreground">{choice.description}</dd>
+                </div>
+              ))}
+            </dl>
+          </SettingHelp>
           {codeNeeded ? (
             <input
               aria-label={`Pairing code made on ${machine.label}`}
@@ -229,6 +254,7 @@ export function FleetWorkersRow({
             <Button
               size="xs"
               disabled={busy || (codeNeeded && !draft.pairingCode.trim())}
+              title={`Let coordinators on this machine start threads on ${machine.label}`}
               onClick={() => onAction("allow")}
             >
               Allow workers
@@ -240,11 +266,21 @@ export function FleetWorkersRow({
   );
 }
 
-interface Props {
+export interface FleetInventoryComposition {
+  renderMachine?: (environmentId: EnvironmentId, controls: ReactNode) => ReactNode;
+  additionalMachines?: ReactNode;
+}
+
+interface Props extends FleetInventoryComposition {
   environmentId: EnvironmentId;
   savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }
-export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: Props) {
+export function StudioFleetConnections({
+  environmentId,
+  savedEnvironmentIds,
+  renderMachine,
+  additionalMachines,
+}: Props) {
   const { snapshot, loading, failed, refresh } = useStudioFleet(environmentId);
   const canPair = useEnvironmentScope(
     environmentId,
@@ -437,6 +473,8 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   });
   return (
     <StudioFleetRoster
+      renderMachine={renderMachine}
+      additionalMachines={additionalMachines}
       banner={<ConnectReachBanner machines={unreachable} />}
       teamRules={teamRules}
       snapshot={snapshot}
@@ -496,20 +534,39 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
  * that other machine's host as if it were its own.
  */
 /** The ID with a Copy beside it, since nobody retypes one by hand. */
-function CopyEnvironmentId({ environmentId }: { readonly environmentId: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "environment ID" });
+/** A command or ID to copy, as its own line so it reads the same on every platform. */
+function CopyableCode({ value, label }: { readonly value: string; readonly label: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: label });
   return (
-    <span className="inline-flex max-w-full items-center gap-1 align-middle">
-      <code className="min-w-0 truncate font-mono select-all">{environmentId}</code>
+    <span className="mt-1 flex min-w-0 items-center gap-2 rounded-md border border-border/60 bg-muted/40 py-1 ps-2 pe-1">
+      <code className="min-w-0 flex-1 font-mono text-xs break-all text-foreground select-all">
+        {value}
+      </code>
       <Button
         type="button"
         size="xs"
         variant="ghost-muted"
-        onClick={() => copyToClipboard(environmentId, undefined)}
+        aria-label={`Copy ${label}`}
+        onClick={() => copyToClipboard(value, undefined)}
       >
         {isCopied ? "Copied" : "Copy"}
       </Button>
     </span>
+  );
+}
+
+function AddMachineStep({
+  title,
+  children,
+}: {
+  readonly title: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <li className="min-w-0 text-xs text-muted-foreground">
+      <span className="text-foreground/80">{title}</span>
+      <div className="mt-0.5 space-y-1">{children}</div>
+    </li>
   );
 }
 
@@ -606,6 +663,8 @@ export function fleetMachineNeedsReinvite(
 }
 
 export function StudioFleetRoster({
+  renderMachine,
+  additionalMachines,
   snapshot,
   loading,
   failed,
@@ -638,6 +697,8 @@ export function StudioFleetRoster({
   banner = null,
   teamRules,
 }: {
+  renderMachine?: FleetInventoryComposition["renderMachine"];
+  additionalMachines?: ReactNode;
   /** This machine's rules, which refuse new links and machines they do not match. */
   teamRules?: TeamRulesSummary | undefined;
   snapshot: StudioFleetSnapshot | null;
@@ -689,8 +750,8 @@ export function StudioFleetRoster({
   const linkLock = teamRulesMachineLinkLock(teamRules);
   return (
     <SettingsSection
-      id="private-machines"
-      title="Your private machines"
+      id={renderMachine ? "machines" : "private-machines"}
+      title={renderMachine ? "Machines" : "Your private machines"}
       headerAction={
         <Button
           size="xs"
@@ -708,6 +769,9 @@ export function StudioFleetRoster({
         <div className="px-3 py-2.5 sm:px-4">
           <TeamRulesLockNote lock={linkLock} />
         </div>
+      ) : null}
+      {additionalMachines ? (
+        <ul className="divide-y divide-border/60">{additionalMachines}</ul>
       ) : null}
       {failed ? (
         <p role="status" className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
@@ -762,7 +826,7 @@ export function StudioFleetRoster({
                     fingerprint: machine.teamRules?.fingerprint,
                   })
                 : linkLock;
-            return (
+            const controls = (
               <li
                 key={machine.id}
                 className="flex min-w-0 flex-col gap-2 px-3 py-3 sm:px-4"
@@ -858,6 +922,12 @@ export function StudioFleetRoster({
                               Stop workers
                             </MenuItem>
                           ) : null}
+                          {canStop ? (
+                            <p className="max-w-64 px-2 pb-2 text-xs text-muted-foreground">
+                              Coordinators on this machine can no longer start threads on{" "}
+                              {machine.label}. Workers already running there keep running.
+                            </p>
+                          ) : null}
                           {canStop && canRemove ? <MenuSeparator /> : null}
                           {canRemove ? (
                             <MenuItem
@@ -940,13 +1010,14 @@ export function StudioFleetRoster({
                 ) : null}
               </li>
             );
+            return renderMachine ? renderMachine(machine.environmentId, controls) : controls;
           })}
         </ul>
-      ) : (
+      ) : renderMachine ? null : (
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           {loading
             ? "Checking your private machines…"
-            : "No private machines yet. Add a second Mac or your own Linux VPS below."}
+            : "No other machines yet. Add another computer or a server you rent below."}
         </p>
       )}
       {!failed && snapshot?.invalidEntries?.length ? (
@@ -997,81 +1068,87 @@ export function StudioFleetRoster({
       {onAddMachine && onInvitationChange ? (
         <form
           id={searchableSetting("private-machines-add").id}
-          className="flex min-w-0 flex-col gap-2 border-t border-border/60 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+          className="flex min-w-0 flex-col gap-3 border-t border-border/60 px-3 py-3 sm:px-4"
           onSubmit={(event) => {
             event.preventDefault();
             onAddMachine();
           }}
         >
-          <span className="min-w-0 sm:flex-1">
+          <div className="min-w-0">
             <span className="block text-sm">Add a machine</span>
-            <span className="mt-1 block text-xs text-muted-foreground">
-              Already see it under{" "}
-              <Link to="/settings/machines" className="underline underline-offset-2">
-                Settings &gt; Machines
-              </Link>
-              ? Choose Add for agents there; no line needed. Otherwise:
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Let agents on this machine start work on another computer.
             </span>
-            <ol className="mt-1 list-decimal space-y-0.5 ps-4 text-xs text-muted-foreground">
-              <li>
-                On the other machine, link SpecWithCode Connect (Settings &gt; Connections &gt;
-                SpecWithCode Connect, or{" "}
-                <code className="font-mono">specwithcode connect link</code>
-                ). Any Connect account works. This machine does not need to be signed in: the line
-                gives it its own key to that machine.
-              </li>
-              <li>
-                There, choose Join a main machine under Settings &gt; Connections and paste this
-                machine’s environment ID: <CopyEnvironmentId environmentId={environmentId} />
-              </li>
-              <li>
-                Paste the line it makes here within an hour (it works once), then choose Allow
-                workers on its card.
-              </li>
-            </ol>
-            <span className="mt-1 block text-xs text-muted-foreground">
-              Without its window, run{" "}
-              <code className="font-mono">
-                {`specwithcode fleet invite --coordinator '${environmentId}'`}
-              </code>{" "}
-              on that machine instead. For a Linux server you rent (a VPS), start with the{" "}
-              <a
-                className="underline underline-offset-2"
-                href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
-                target="_blank"
-                rel="noreferrer noopener"
-              >
-                Linux worker guide
-              </a>
-              .
-            </span>
-          </span>
-          <TeamRulesInert lock={linkLock}>
-            <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">
-              <input
-                aria-label="Invitation from the other machine"
-                className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
-                placeholder="swc-machine-…"
-                autoComplete="off"
-                spellCheck={false}
-                value={invitation}
-                disabled={pending !== null || !canManageWorkers}
-                onChange={(event) => onInvitationChange(event.target.value)}
-              />
-              <Button
-                type="submit"
-                size="xs"
-                variant="outline"
-                disabled={pending !== null || !canManageWorkers || !invitation.trim()}
-              >
-                {pending === "add-machine"
-                  ? "Adding…"
-                  : canManageWorkers
-                    ? "Add machine"
-                    : "Manage access required"}
-              </Button>
-            </div>
-          </TeamRulesInert>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Already connected to it? Open{" "}
+            <Link to="/settings/machines" className="underline underline-offset-2">
+              Settings &gt; Machines
+            </Link>{" "}
+            and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these
+            steps:
+          </p>
+          <ol className="list-decimal space-y-2.5 ps-4 marker:text-xs marker:text-muted-foreground">
+            <AddMachineStep title="Link SpecWithCode Connect on the other machine">
+              <p>
+                Open Settings &gt; Machines &gt; SpecWithCode Connect there, or run this command.
+                Any Connect account works. This machine does not need to be signed in.
+              </p>
+              <CopyableCode value="specwithcode connect link" label="Connect command" />
+            </AddMachineStep>
+            <AddMachineStep title="Make a join line there">
+              <p>
+                There, choose Join a main machine under Settings &gt; Machines and enter this
+                machine&rsquo;s ID:
+              </p>
+              <CopyableCode value={environmentId} label="this machine's ID" />
+              <p>Without its window, run this command on that machine instead:</p>
+              <CopyableCode value={fleetInviteCommand(environmentId)} label="join line command" />
+            </AddMachineStep>
+            <AddMachineStep title="Paste the join line here">
+              <p>It works once, within an hour.</p>
+              <TeamRulesInert lock={linkLock}>
+                <div className="flex min-w-0 gap-2">
+                  <input
+                    aria-label="Invitation from the other machine"
+                    className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
+                    placeholder="swc-machine-…"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={invitation}
+                    disabled={pending !== null || !canManageWorkers}
+                    onChange={(event) => onInvitationChange(event.target.value)}
+                  />
+                  <Button
+                    type="submit"
+                    size="xs"
+                    disabled={pending !== null || !canManageWorkers || !invitation.trim()}
+                  >
+                    {pending === "add-machine"
+                      ? "Adding…"
+                      : canManageWorkers
+                        ? "Add machine"
+                        : "Manage access required"}
+                  </Button>
+                </div>
+              </TeamRulesInert>
+            </AddMachineStep>
+            <AddMachineStep title="Allow workers">
+              <p>Choose Allow workers on its card above.</p>
+            </AddMachineStep>
+          </ol>
+          <p className="text-xs text-muted-foreground">
+            Adding a Linux server you rent? Start with the{" "}
+            <a
+              className="underline underline-offset-2"
+              href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              Linux worker guide
+            </a>
+            .
+          </p>
         </form>
       ) : null}
       {onInvite ? (

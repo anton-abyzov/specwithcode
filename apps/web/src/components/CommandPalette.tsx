@@ -547,7 +547,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
     [],
   );
-  const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
+  const openAddProject = useCallback(
+    (environmentId?: EnvironmentId) =>
+      dispatch({ _tag: "OpenAddProject", ...(environmentId ? { environmentId } : {}) }),
+    [],
+  );
   const aideEnabled = useAideEnabled();
   const openNewAssistant = useCallback(
     () => dispatch({ _tag: "OpenNewAssistant", aideEnabled }),
@@ -688,7 +692,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         if (detail.open === "new-thread-in") {
           openNewThreadIn();
         } else if (detail.open === "add-project") {
-          openAddProject();
+          openAddProject(detail.environmentId);
         } else if (detail.open === "new-assistant") {
           openNewAssistant();
         } else if (detail.query !== undefined) {
@@ -1997,33 +2001,53 @@ function OpenCommandPaletteDialog(props: {
     [addProjectEnvironmentItems],
   );
 
-  const openAddProjectFlow = useCallback(() => {
-    // With no connected environment there is nothing to browse, so the only
-    // useful next step is connecting one.
-    if (!addProjectEnvironmentOptions.some((option) => option.isConnected)) {
-      setOpen(false);
-      void navigate({ to: "/settings/connections" });
-      return;
-    }
+  const openAddProjectFlow = useCallback(
+    (environmentId?: EnvironmentId) => {
+      if (environmentId !== undefined) {
+        const target = addProjectEnvironmentOptions.find(
+          (option) => option.environmentId === environmentId,
+        );
+        if (!target?.isConnected) {
+          setOpen(false);
+          toastManager.add({
+            type: "error",
+            title: "Cannot add a project on this machine",
+            description:
+              "Reconnect the selected machine with permission to start work, then try again.",
+          });
+          return;
+        }
+        void startAddProjectSourceSelection(environmentId);
+        return;
+      }
+      // With no connected environment there is nothing to browse, so the only
+      // useful next step is connecting one.
+      if (!addProjectEnvironmentOptions.some((option) => option.isConnected)) {
+        setOpen(false);
+        void navigate({ to: "/settings/connections" });
+        return;
+      }
 
-    if (defaultAddProjectEnvironmentId === null) {
-      pushPaletteView({
-        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
-        groups: addProjectEnvironmentGroups,
-      });
-      return;
-    }
+      if (defaultAddProjectEnvironmentId === null) {
+        pushPaletteView({
+          addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+          groups: addProjectEnvironmentGroups,
+        });
+        return;
+      }
 
-    void startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
-  }, [
-    addProjectEnvironmentGroups,
-    addProjectEnvironmentOptions.length,
-    defaultAddProjectEnvironmentId,
-    navigate,
-    pushPaletteView,
-    setOpen,
-    startAddProjectSourceSelection,
-  ]);
+      void startAddProjectSourceSelection(defaultAddProjectEnvironmentId);
+    },
+    [
+      addProjectEnvironmentGroups,
+      addProjectEnvironmentOptions,
+      defaultAddProjectEnvironmentId,
+      navigate,
+      pushPaletteView,
+      setOpen,
+      startAddProjectSourceSelection,
+    ],
+  );
 
   const openMachineAssistant = (assistant: (typeof projects)[number]) => {
     setOpen(false);
@@ -2139,7 +2163,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     clearOpenIntent();
-    openAddProjectFlow();
+    openAddProjectFlow(openIntent.environmentId);
   }, [clearOpenIntent, openAddProjectFlow, openIntent]);
 
   // The sidebar's Personal assistant row opens straight on the name step.

@@ -11,6 +11,8 @@ const COMMAND_PALETTE_OPEN_EVENT = "studio:open-command-palette";
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-assistant" | "new-thread-in";
+  /** An explicit add-project target never falls back to the local machine. */
+  readonly environmentId?: EnvironmentId;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
 }

@@ -101,11 +101,34 @@ describe("machine rows", () => {
     expect(rows.map((row) => [row.label, row.seen.state, row.seen.text])).toEqual([
       ["M4MAX", "this-machine", "This machine"],
       ["MacBook Pro", "connected", "This app can see it"],
-      ["M1Max", "not-connected", "This app cannot see it"],
+      ["M1Max", "reachable", "Reachable · not open in this window"],
     ]);
     // Connect only for the machine this app cannot see; both ways only for a connected private machine.
     expect(rows.map((row) => row.connect?.label ?? null)).toEqual([null, null, "Connect"]);
     expect(rows.map((row) => row.connectBothWays)).toEqual([false, true, false]);
+  });
+
+  it("agrees with Settings > Machines on a machine this window has not opened", () => {
+    const rows = buildMachineRows({
+      environments: [env(m4, "M4MAX")],
+      primaryEnvironmentId: m4,
+      fleet: fleet([
+        fleetMachine(m1, "m1", { transport: "connect" }),
+        fleetMachine(m3, "m3", { transport: "tailnet" }),
+        fleetMachine(laptop, "Laptop", { status: "unreachable" }),
+        fleetMachine(EnvironmentId.make("env-moved"), "Moved", { status: "identity-mismatch" }),
+      ]),
+      canPair: true,
+      projects: [],
+      hostBlocks: [],
+    });
+    expect(rows.slice(1).map((row) => [row.label, row.seen.state, row.seen.text])).toEqual([
+      ["m1", "reachable", "Reachable via SpecWithCode Connect · not open in this window"],
+      ["m3", "reachable", "Reachable via Tailscale · not open in this window"],
+      ["Laptop", "not-connected", "Unreachable"],
+      ["Moved", "not-connected", "Address needs attention"],
+    ]);
+    expect(rows.every((row) => !row.seen.text.includes("cannot see"))).toBe(true);
   });
 
   it("explains why Connect cannot be pressed yet", () => {
@@ -322,7 +345,7 @@ describe("connect both ways", () => {
 
   it("names the exact place to paste the link", () => {
     expect(connectBothWaysInstruction("MacBook Pro")).toBe(
-      "On MacBook Pro, open Settings > Connections > Add environment > Remote link and paste this link.",
+      "On MacBook Pro, open Settings > Machines > Advanced routes and saved connections > Add environment > Remote link and paste this link.",
     );
   });
 

@@ -936,3 +936,13 @@ describe("collapseRestartedBrowsePath", () => {
     expect(collapseRestartedBrowsePath("https://github.com/o/r")).toBe("https://github.com/o/r");
   });
 });
+
+it("retains an explicit machine through the add-project intent", () => {
+  const target = "remote" as import("@specweave-studio/contracts").EnvironmentId;
+  expect(
+    reduceCommandPaletteUiState(
+      { open: false, mode: "command", openIntent: null },
+      { _tag: "OpenAddProject", environmentId: target },
+    ).openIntent,
+  ).toEqual({ kind: "add-project", environmentId: target });
+});

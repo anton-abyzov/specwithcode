@@ -178,7 +178,7 @@ export interface ThreadActionMenuState {
   /**
    * The thread's "Keep ready to move" setting and what it resolves to;
    * undefined where the server has no handoff mode. `continued` disables
-   * "Move to another machine…" and "Switch model and continue…". `inherited`
+   * "Move thread…" and "Switch model and continue…". `inherited`
    * is what Default resolves to and where that value comes from.
    */
   readonly handoff?:
@@ -382,7 +382,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "hand-off" as const,
-            label: "Move to another machine…",
+            label: "Move thread…",
             icon: "laptop",
             separatorBefore: true,
             disabled: state.handoff.continued,

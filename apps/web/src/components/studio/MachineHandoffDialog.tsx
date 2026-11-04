@@ -70,7 +70,7 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       aria-label="Continue this project on another machine"
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Hand off project</span>
+      <span>Move project execution</span>
     </Button>
   );
 }
@@ -322,7 +322,7 @@ export function MachineHandoffDialog({
                   disabled={busy || !consent || !target || !!target.unavailable}
                   onClick={onContinue}
                 >
-                  {busy ? "Handing off…" : `Hand off to ${target?.label ?? "selected machine"}`}
+                  {busy ? "Moving…" : `Move project to ${target?.label ?? "selected machine"}`}
                 </Button>
               </>
             ) : (
@@ -344,7 +344,7 @@ export function MachineHandoffDialog({
                   disabled={busy || !target || !!target.unavailable}
                   onClick={onReview}
                 >
-                  {busy ? "Checking…" : machineLabel ? `Hand off to ${machineLabel}` : "Hand off"}
+                  {busy ? "Checking…" : machineLabel ? `Move project to ${machineLabel}` : "Hand off"}
                 </Button>
               </>
             )}

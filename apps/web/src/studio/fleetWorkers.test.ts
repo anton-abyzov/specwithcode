@@ -9,6 +9,8 @@ import {
   sentSecretsWarning,
   fleetRemoveNotice,
   fleetWorkerDraftAccess,
+  fleetInviteCommand,
+  fleetWorkersHelp,
   fleetWorkersView,
   moveWorkerMachine,
   workerMachineChoices,
@@ -227,5 +229,27 @@ describe("worker machine lists", () => {
     const view = workerMachineListView(choices, [m3, local]);
     expect(view.rows.map((row) => row.label)).toEqual(["m3", "This machine"]);
     expect(view.addable).toEqual([]);
+  });
+});
+
+describe("fleetWorkersHelp", () => {
+  it("defines the word, says what Stop leaves running, and exempts a person's typing", () => {
+    const help = fleetWorkersHelp("M3").join(" ");
+    expect(help).toContain("A worker is a thread that a coordinator starts");
+    expect(help).toContain("start those threads on M3");
+    expect(help).toContain("Moving your threads there needs it too.");
+    expect(help).toContain("Workers already running there keep running");
+    expect(help).toContain("What you type in a thread yourself does not need it.");
+  });
+});
+
+describe("fleetInviteCommand", () => {
+  it("leaves out quotes that cmd would pass through literally", () => {
+    expect(fleetInviteCommand("2cd57c57-eecc-4be4-8e94-b783c2ca0d5c")).toBe(
+      "specwithcode fleet invite --coordinator 2cd57c57-eecc-4be4-8e94-b783c2ca0d5c",
+    );
+  });
+  it("quotes anything else", () => {
+    expect(fleetInviteCommand("odd id")).toBe('specwithcode fleet invite --coordinator "odd id"');
   });
 });

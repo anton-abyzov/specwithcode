@@ -50,6 +50,7 @@ import { FleetInviteFailure } from "../../studio/fleet";
 import type { StudioFleetTailscaleStatus } from "@specweave-studio/contracts/studioFleet";
 import {
   FleetInvitePanel,
+  ConnectLinkedNote,
   ConnectReadinessNotice,
   TailscaleReadinessNotice,
   countsAsTailscaleCheckFailure,
@@ -398,6 +399,35 @@ describe("Tailscale on this machine before the line", () => {
         onCopyCommand: vi.fn(),
       }),
     ).toBeNull();
+  });
+
+  it("says Connect is linked here from the server's status, without a sign-in in this window", () => {
+    const linked = readiness(
+      tailscale({
+        state: "not_installed",
+        backendState: null,
+        connect: { linked: true, origin: "https://prod-0123456789abcdef.spec-weave.com" },
+      }),
+    );
+    expect(text(ConnectLinkedNote({ readiness: linked }))).toContain(
+      "SpecWithCode Connect is linked on this machine",
+    );
+    expect(
+      ConnectLinkedNote({
+        readiness: readiness(
+          tailscale({
+            connect: { linked: false, origin: null },
+          }),
+        ),
+      }),
+    ).toBeNull();
+    expect(ConnectLinkedNote({ readiness: readiness(null) })).toBeNull();
+    cloud.configured = false;
+    try {
+      expect(ConnectLinkedNote({ readiness: linked })).toBeNull();
+    } finally {
+      cloud.configured = true;
+    }
   });
 
   it("says it is checking until the first answer, and nothing when the check failed", () => {

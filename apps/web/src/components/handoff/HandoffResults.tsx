@@ -84,6 +84,35 @@ export function HandoffPreflightFailures({ result }: { result: HandoffPreflightR
   );
 }
 
+// Only this machine's own checkpoint refusal (HandoffMode, bundleGit). A
+// destination's "mapped repository folder is not a Git repository here" is
+// about that machine, and another one may take the thread.
+const NOT_A_REPOSITORY = /\bthread's folder (?:to be|is not) a Git repository\b/i;
+
+/**
+ * True when the thread cannot move from here whichever machine is picked: this
+ * machine could not checkpoint it because its folder is not a Git repository
+ * (a chat outside a project). Picking another machine does not help.
+ */
+export function folderNotGit(result: HandoffPreflightResult): boolean {
+  return (
+    !result.ok &&
+    result.failures.length > 0 &&
+    result.failures.every(
+      (failure) => failure.check === "checkpoint" && NOT_A_REPOSITORY.test(failure.message),
+    )
+  );
+}
+
+/** Every checked thread is {@link folderNotGit}: nothing in the dialog can move it. */
+export function preflightBlockedHere(preflight: PreflightView): boolean {
+  return (
+    preflight.state === "done" &&
+    preflight.results.length > 0 &&
+    preflight.results.every(folderNotGit)
+  );
+}
+
 const VERSION_FAILURE = /^(.+?) runs SpecWithCode .* Update (.+) first\.$/s;
 
 /**
@@ -118,6 +147,7 @@ export function preflightSummary(
       ? "Ready. The current turn keeps running."
       : "Ready. It will wait for your next message.";
   }
+  if (folderNotGit(result)) return "This thread can't move:";
   if (!result.ok) return `${machine} can't take it yet:`;
   return result.resume
     ? "Ready. The current turn keeps running there."
@@ -171,6 +201,13 @@ export function HandoffPreflightPanel({
                 {preflightSummary(result, capitalize(machine), here)}
               </p>
               <HandoffPreflightFailures result={result} />
+              {!here && folderNotGit(result) ? (
+                <p className="text-xs text-muted-foreground">
+                  Only a thread whose folder is a Git repository can move to another machine. To
+                  move this work, make its folder a Git repository or continue it in a project with
+                  a Git folder.
+                </p>
+              ) : null}
             </div>
           ))}
         </div>

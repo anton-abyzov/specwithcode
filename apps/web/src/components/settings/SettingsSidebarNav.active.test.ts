@@ -12,6 +12,10 @@ describe("isSettingsNavItemActive", () => {
     ).toBe(false);
   });
 
+  it("keeps advanced machine setup under Machines", () => {
+    expect(isSettingsNavItemActive("/settings/machines", "/settings/connections", null)).toBe(true);
+  });
+
   it("follows the location once nothing is pending", () => {
     expect(isSettingsNavItemActive("/settings/general", "/settings/general", null)).toBe(true);
     expect(isSettingsNavItemActive("/settings/providers", "/settings/providers/claude", null)).toBe(

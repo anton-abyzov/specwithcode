@@ -1,7 +1,22 @@
-# Remote access
+# Remote control with SpecWithCode
 
 Connect a phone, browser, or another desktop app to SpecWithCode running on a different
 machine. That machine must stay running and reachable while you work.
+
+Remote control operates the app on the selected machine. Its agents, commands,
+files and terminals stay there; changing the machine you view does not move a
+thread or its coordinator. Access depends on the destination's grant. A view-only
+connection lets you inspect work without starting it. This is control of
+SpecWithCode, not whole-desktop screen sharing.
+
+**Run on** selects the initial execution machine for a new thread. **Runs on**
+reports the location of an existing thread. To change that location, use the
+separate **Move thread** action and review destination readiness. See
+[Move work between machines](./portable-handoffs.md).
+
+Each machine uses its own installed agents and sign-ins. Devices using the same
+provider account share that account's limits. Pairing a device does not grant
+worker access in both directions; each direction is authorized separately.
 
 SpecWithCode Connect is the default way to reach a machine from anywhere.
 Tailscale is optional: it adds a direct private route on your tailnet, which is
@@ -9,13 +24,19 @@ often faster on the same network. A Linux VPS you rent can be reached the same
 ways; to let your main machine start work on it, see
 [Linux worker](./linux-worker.md).
 
+Open **Settings → Machines** to add or join a machine. A connected remote machine offers
+**Remote control**, or **View** when its grant is read-only. Open a thread from that
+panel to view its work; closing the panel leaves the current thread unchanged.
+Advanced routes and saved connections are folded below the machine setup controls.
+External MCP services are under **Settings → Integrations → MCP connections**.
+
 ## SpecWithCode Connect
 
 SpecWithCode Connect makes an environment available to your other devices (the
 desktop app, a browser or your iPhone) through a Cloudflare tunnel, with no
 Tailscale and no router forwarding. In the desktop app on the host, open the account button at the bottom of the
 sidebar and choose **Sign in to SpecWithCode Connect**, then enable
-**SpecWithCode Connect** for that environment in **Settings → Connections**.
+**SpecWithCode Connect** for that environment in **Settings → Machines**.
 The account is optional: without it, SpecWithCode runs the same on this machine
 and you can still pair devices directly.
 
@@ -44,7 +65,7 @@ disconnect an otherwise healthy conversation.
 
 Use direct pairing when the other device can reach the host's network address.
 
-On a desktop host, open **Settings → Connections**, enable **Network access**,
+On a desktop host, open **Settings → Machines**, enable **Network access**,
 then create a pairing link using an address the other device can reach. Changing
 network access restarts the desktop app. You can turn it off in the same place.
 
@@ -62,14 +83,14 @@ specwithcode pair
 ```
 
 Scan the QR code on your phone or paste the pairing URL into **Add environment**
-in the receiving app. Connection settings are under **Settings → Connections**
+in the receiving app. Connection settings are under **Settings → Machines**
 on web and desktop and **Settings → Environments** on mobile. A loopback address
 such as `127.0.0.1` reaches only the device opening the link.
 
 Pairing authorizes that device for future connections. Use a fresh one-time link
 for each new device; you do not need the original token to reconnect. Links
 created in Settings can only be copied from the client that created them while
-its Connections page stays open. If you leave or reload that page, create
+its Machines page stays open. If you leave or reload that page, create
 another link to share.
 
 ### Sign in from a device you already use
@@ -93,7 +114,7 @@ other devices or manage access. Requests expire after five minutes, each address
 can have at most three waiting, and at most twenty can wait in total. The
 machine only answers requests from its own page opened at an IP address,
 `localhost`, a single-word or `.local` name, a Tailscale name, or an address
-configured as trusted. Revoke a device later under **Settings → Connections**.
+configured as trusted. Revoke a device later under **Settings → Machines**.
 
 ### Reach one machine several ways
 
@@ -120,7 +141,7 @@ later route, SpecWithCode checks the earlier ones when your network changes, whe
 return to the app, and every minute, and moves back as soon as one works.
 
 On web and desktop, select the route count under the machine's name in
-**Settings → Connections** to see its routes. Drag a route to change the order,
+**Settings → Machines** to see its routes. Drag a route to change the order,
 or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**. Signing out of SpecWithCode Connect removes only that route; a machine
 you can still reach another way stays saved.
@@ -128,7 +149,7 @@ you can still reach another way stays saved.
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
-**Settings → Connections → Load balancing** to automatically choose a machine for
+**Settings → Machines → Load balancing** to automatically choose a machine for
 new threads in projects grouped across connected environments. The section
 appears once two or more machines are switched on.
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
@@ -148,7 +169,7 @@ Mobile keeps its manual environment selection.
 Tailscale is not needed to reach a machine; SpecWithCode Connect does that. Use
 Tailscale HTTPS when you also want a direct private route on your tailnet. Join
 both devices to the same tailnet. In the desktop app, enable **Tailscale
-HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
+HTTPS** in **Settings → Machines**. Turn it off there to remove that route.
 
 To start a command-line server with Tailscale HTTPS:
 
@@ -186,7 +207,7 @@ scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
 ## Desktop-managed SSH
 
-In the desktop app, open **Settings → Connections → Add environment**, choose
+In the desktop app, open **Settings → Machines → Add environment**, choose
 **SSH**, and enter a host or SSH alias such as `user@example.com`. SpecWithCode starts
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
@@ -268,7 +289,7 @@ through its MCP server. See [outside agents](./outside-agents.md) for setup.
 
 ## Manage or revoke access
 
-On the host, **Settings → Connections** lets authorized administrators create
+On the host, **Settings → Machines** lets authorized administrators create
 pairing links and revoke client sessions. Revoking an unused link prevents new
 pairings; revoke a device's session to remove its existing access. Command-line
 management is available through `specwithcode auth --help`.
@@ -367,7 +388,7 @@ devices. For server version warnings, follow [Updating SpecWithCode](./updating.
 ## Using the Desktop App as a Remote Only
 
 If a computer should only drive work running elsewhere, turn off its local environment. In the
-desktop app, open **Settings → Connections** and switch off **Local
+desktop app, open **Settings → Machines** and switch off **Local
 environment**. SpecWithCode restarts without a local server: no local agents or terminals run, WSL
 backends stay off, and other devices can no longer connect to this computer. Your projects,
 history, and saved connections are kept, and you keep working through pairing, SpecWithCode Connect, or SSH.

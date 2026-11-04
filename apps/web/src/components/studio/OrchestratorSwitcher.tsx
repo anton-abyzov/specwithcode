@@ -155,15 +155,15 @@ export function OrchestratorSwitcher({
             <ChevronDownIcon aria-hidden />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            Viewing {label}'s orchestrator. Viewing changes nothing; handing off the coordinator is
-            a separate, confirmed action.
+            Viewing {label}'s orchestrator. Work stays on {label}. Moving the coordinator is a
+            separate, confirmed action.
           </TooltipPopup>
         </Tooltip>
       </span>
       <MenuPopup align="start" side="top" className="min-w-64">
         <AfterUnmount pending={pendingView} />
         <MenuGroup>
-          <MenuGroupLabel>View orchestrator</MenuGroupLabel>
+          <MenuGroupLabel>View this project on</MenuGroupLabel>
           <MenuRadioGroup
             value={current}
             onValueChange={(value) => {
@@ -221,7 +221,7 @@ export function OrchestratorSwitcher({
         {movable.map((copy) => (
           <MenuItem key={copy.key} onClick={() => onMove?.(copy.key)}>
             <SendIcon aria-hidden />
-            Hand off coordinator to {nameOf(copy)}…
+            Move coordinator to {nameOf(copy)}…
           </MenuItem>
         ))}
         <MenuItem

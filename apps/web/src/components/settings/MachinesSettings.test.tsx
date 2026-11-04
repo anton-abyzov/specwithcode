@@ -23,6 +23,7 @@ const runtime = vi.hoisted(() => ({
   createCredential: vi.fn(),
 }));
 
+vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => [] }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
@@ -78,6 +79,7 @@ vi.mock("../../state/environments", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => runtime.projects,
+  useThreadShells: () => [],
   useServerConfigs: () => new Map(),
 }));
 vi.mock("../../state/session", () => ({
@@ -109,6 +111,18 @@ vi.mock("../../environments/primary", () => ({
   readPrimaryEnvironmentTarget: () => ({ target: { httpBaseUrl: "https://m4max.tailnet.ts.net" } }),
 }));
 
+vi.mock("./ConnectionsSettings", () => ({
+  ConnectionsSettings: ({ additionalMachines, renderMachine }: any) => (
+    <>
+      <ul>
+        {additionalMachines}
+        {(runtime.fleet as { snapshot?: StudioFleetSnapshot })?.snapshot?.machines?.map(
+          (machine: any) => renderMachine(machine.environmentId, null),
+        )}
+      </ul>
+    </>
+  ),
+}));
 import { AddForAgentsView, ConnectBothWaysView, MachinesSettingsPanel } from "./MachinesSettings";
 
 const machine = (
@@ -274,7 +288,8 @@ describe("Settings > Machines", () => {
     expect(html).toContain("M4MAX");
     expect(html).toContain("This machine");
     expect(html).toContain("This app can see it");
-    expect(html).toContain("This app cannot see it");
+    expect(html).toContain("not open in this window");
+    expect(html).not.toContain("This app cannot see it");
     expect(html).toContain("Workers allowed");
     expect(html).toContain("EasyChamp");
     expect(html).toContain("Runs workers only");
@@ -436,7 +451,7 @@ describe("Settings > Machines", () => {
     const input = rendered!.root.findByType("input");
     expect(input.props.value).toBe("https://m4max.tailnet.ts.net/pair#token=pairing-secret");
     expect(JSON.stringify(rendered!.toJSON())).toContain(
-      "On MacBook Pro, open Settings > Connections > Add environment > Remote link and paste this link.",
+      "On MacBook Pro, open Settings > Machines > Advanced routes and saved connections > Add environment > Remote link and paste this link.",
     );
   });
 

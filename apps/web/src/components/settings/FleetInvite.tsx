@@ -785,6 +785,26 @@ export function ConnectReadinessNotice({
   );
 }
 
+/**
+ * Beside Join a main machine, once this machine's server reports its own
+ * SpecWithCode Connect link: the line can be made now, with no sign-in in
+ * this window. The link is the server's, so a window that never signed in
+ * (a paired browser) still sees it.
+ */
+export function ConnectLinkedNote({
+  readiness,
+}: {
+  readonly readiness: Pick<TailscaleReadiness, "status">;
+}) {
+  if (!hasCloudPublicConfig() || readiness.status?.connect?.linked !== true) return null;
+  return (
+    <p role="status" className="text-xs text-muted-foreground">
+      SpecWithCode Connect is linked on this machine, so you can make the line now. No sign-in is
+      needed in this window.
+    </p>
+  );
+}
+
 /** Linking needs a Connect account in this window; once signed in, link in Settings. */
 function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
   const { isLoaded, isSignedIn } = useAuth();
@@ -915,6 +935,7 @@ export function FleetInviteArea({
           onCopyCommand={(command) => copyToClipboard(command, undefined)}
         />
       ) : null}
+      {canManage && !open ? <ConnectLinkedNote readiness={readiness} /> : null}
       <FleetInviteDialog
         environmentId={environmentId}
         defaultName={defaultName}

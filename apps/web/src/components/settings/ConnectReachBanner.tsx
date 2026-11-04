@@ -52,7 +52,7 @@ export function connectReachCopy(
   const notLinked = machines.filter(
     (machine) => !machine.onConnect && !discoveredIds.has(machine.environmentId),
   );
-  const linkHint = `On ${notLinked.length === 1 ? "that machine" : "each of them"}, open Settings > Connections > SpecWithCode Connect and link it with your account, or run \`specweave-studio connect link\`. It then connects here on its own.`;
+  const linkHint = `On ${notLinked.length === 1 ? "that machine" : "each of them"}, open Settings > Machines > SpecWithCode Connect and link it with your account, or run \`specweave-studio connect link\`. It then connects here on its own.`;
   // On this account's Connect list, but this window has no Connect route for
   // them (removed here earlier, or not added yet): offer it rather than
   // staying quiet while only other addresses are tried.

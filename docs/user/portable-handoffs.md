@@ -1,4 +1,17 @@
-# Context in portable handoffs
+# Move work between machines
+
+Remote control keeps execution on the machine you are viewing. Moving a thread
+changes where supported continuation runs. Review the source, destination,
+project folder and readiness before confirming a move. This is a checked handoff,
+not migration of a live process. Credentials remain on each machine.
+
+Preparing or copying a project folder does not start work or move an existing
+thread. Moving a coordinator is a separate action from moving one thread or
+changing the machine you view. Existing Stop holds and destination permissions
+still apply. When moving several threads, check each outcome; partial success
+does not mean every thread moved.
+
+## Context in portable handoffs
 
 SpecWithCode transfers conversation context when you switch providers, continue through a portable
 restart, or use a fork that the provider cannot resume itself.

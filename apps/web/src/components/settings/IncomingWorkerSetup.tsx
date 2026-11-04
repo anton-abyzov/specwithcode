@@ -31,7 +31,7 @@ export async function setUpIncomingWorkers(
     .add(input.coordinator, input.here, input.hereLabel)
     .catch((failure: unknown) => {
       throw new Error(
-        `Setup did not finish. A management key may already have been issued on ${input.hereLabel}. Before retrying, review Settings > Connections > Authorized clients on ${input.hereLabel} and revoke the unused setup session if present. ${failure instanceof Error ? failure.message : "Could not add this machine."}`,
+        `Setup did not finish. A management key may already have been issued on ${input.hereLabel}. Before retrying, review Settings > Machines > Authorized clients on ${input.hereLabel} and revoke the unused setup session if present. ${failure instanceof Error ? failure.message : "Could not add this machine."}`,
       );
     });
   if (added.environmentId !== input.here)
@@ -47,7 +47,7 @@ export async function setUpIncomingWorkers(
     return result;
   } catch (failure) {
     throw new Error(
-      `This machine was added there, but worker access was not confirmed. Open Settings > Connections on that machine and choose Allow workers on ${input.hereLabel}'s card. ${failure instanceof Error ? failure.message : "Refresh to retry."}`,
+      `This machine was added there, but worker access was not confirmed. Open Settings > Machines on that machine and choose Allow workers on ${input.hereLabel}'s card. ${failure instanceof Error ? failure.message : "Refresh to retry."}`,
     );
   }
 }
@@ -103,8 +103,8 @@ export function IncomingWorkerSetup({
       </label>
       {!candidates.length ? (
         <p className="text-xs text-muted-foreground">
-          Connect the other machine in Settings &gt; Connections first. Machines already listed
-          above use their existing access controls.
+          Connect the other machine in Settings &gt; Machines first. Machines already listed above
+          use their existing access controls.
         </p>
       ) : null}
       {chosen ? (
@@ -195,8 +195,8 @@ function IncomingWorkerAction({
       </label>
       {unavailable ? (
         <p role="status" className="text-xs text-muted-foreground">
-          {unavailable} On {coordinatorLabel}, you can also open Settings &gt; Connections &gt; Your
-          private machines and choose Allow workers on {hereLabel}'s card.
+          {unavailable} On {coordinatorLabel}, open Settings &gt; Machines, expand Access, routes
+          and worker permissions on {hereLabel}'s card, and choose Allow workers.
         </p>
       ) : (
         <Button size="xs" disabled={pending || done} onClick={() => void allow()}>

@@ -62,7 +62,7 @@ describe("buildThreadActionMenuItems", () => {
       ["Off", false],
     ]);
     expect(items.find((item) => item.id === "hand-off")).toMatchObject({
-      label: "Move to another machine…",
+      label: "Move thread…",
       disabled: false,
     });
     expect(items.find((item) => item.id === "switch-model")).toMatchObject({

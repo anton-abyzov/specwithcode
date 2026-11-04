@@ -29,6 +29,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   HandoffPreflightPanel,
+  preflightBlockedHere,
   type HandoffDestination,
   type PreflightView,
 } from "./HandoffResults";
@@ -124,9 +125,12 @@ export function handOffPrimaryLabel(props: {
   submitting: boolean;
   checking: boolean;
   machine: string | null;
+  /** No machine can take it from here (its folder is not a Git repository). */
+  blockedHere?: boolean;
 }): string {
   if (props.submitting) return props.mode === "move" ? "Moving…" : "Switching…";
   if (props.checking) return "Checking…";
+  if (props.blockedHere && props.mode === "move") return "Can't move";
   if (props.mode === "switch-model") return "Switch and continue";
   return props.machine ? `Move to ${props.machine}` : "Move";
 }
@@ -140,6 +144,8 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
     props.preflight.state === "done" && props.preflight.results.every((result) => result.ok);
   const canRetry =
     props.preflight.state === "error" || (props.preflight.state === "done" && !ready);
+  // Not about the picked machine: say so on the button, which stays disabled.
+  const blockedHere = mode === "move" && preflightBlockedHere(props.preflight);
   const choices = props.destinations.filter((item) => item.state !== "this-machine");
   const noneOnline = !choices.some((item) => item.state === "reachable");
   const modelMissing = props.modelSummary === null;
@@ -313,6 +319,7 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
                     submitting: props.submitting,
                     checking: props.preflight.state === "checking",
                     machine,
+                    blockedHere,
                   })}
                 </Button>
               </>

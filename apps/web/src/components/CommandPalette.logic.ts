@@ -61,7 +61,8 @@ export function browseInputEndPaddingClass(input: {
 export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
-  | { readonly kind: "add-project" | "new-assistant" | "new-thread-in" | "change-theme" }
+  | { readonly kind: "add-project"; readonly environmentId?: EnvironmentId }
+  | { readonly kind: "new-assistant" | "new-thread-in" | "change-theme" }
   | {
       readonly kind: "search";
       readonly query: string;
@@ -82,7 +83,7 @@ export type CommandPaletteUiAction =
       readonly query: string;
       readonly linkedThreads?: CommandPaletteLinkedThreads;
     }
-  | { readonly _tag: "OpenAddProject" }
+  | { readonly _tag: "OpenAddProject"; readonly environmentId?: EnvironmentId }
   // `aideEnabled` false (Settings → General) leaves the palette as it is: no setup.
   | { readonly _tag: "OpenNewAssistant"; readonly aideEnabled: boolean }
   | { readonly _tag: "OpenNewThreadIn" }
@@ -113,7 +114,14 @@ export function reduceCommandPaletteUiState(
         },
       };
     case "OpenAddProject":
-      return { open: true, mode: "command", openIntent: { kind: "add-project" } };
+      return {
+        open: true,
+        mode: "command",
+        openIntent: {
+          kind: "add-project",
+          ...(action.environmentId ? { environmentId: action.environmentId } : {}),
+        },
+      };
     case "OpenNewAssistant":
       return action.aideEnabled
         ? { open: true, mode: "command", openIntent: { kind: "new-assistant" } }

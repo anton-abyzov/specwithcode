@@ -508,7 +508,7 @@ export function DraftMachinePicker(props: Props) {
         {groups && groups.addable.length > 0 && (
           <MenuItem closeOnClick={false} disabled={locked} onClick={() => setView("add")}>
             <PlusIcon aria-hidden />
-            Add to another machine
+            Prepare project on machine…
             <ChevronRightIcon aria-hidden className="ms-auto" />
           </MenuItem>
         )}

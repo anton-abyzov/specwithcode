@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { ConnectionsSettings } from "../components/settings/ConnectionsSettings";
+import { MachinesSettingsPanel } from "../components/settings/MachinesSettings";
 
 export const Route = createFileRoute("/settings/connections")({
-  component: ConnectionsSettings,
+  component: MachinesSettingsPanel,
 });

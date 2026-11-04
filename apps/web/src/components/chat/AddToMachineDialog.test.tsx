@@ -171,7 +171,8 @@ const calls = (name: string) => state.calls.filter(([entry]) => entry === name).
 
 it("shows the source, the destination folder and the clone URL", async () => {
   await render();
-  expect(text()).toContain("Add App to Mini");
+  expect(text()).toContain("Prepare App on Mini");
+  expect(text()).toContain("Preparing it does not start work or move this thread.");
   expect(text()).toContain("M4");
   expect(text()).toContain("/Users/me/Projects/app");
   expect(text()).toContain("Clone over SSH");

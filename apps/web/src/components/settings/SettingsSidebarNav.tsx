@@ -128,6 +128,7 @@ export function isSettingsNavItemActive(
 ) {
   if (pendingSection !== null) return pendingSection === to;
   if (to === "/settings/general" && pathname === "/settings/open-source-licenses") return true;
+  if (to === "/settings/machines" && pathname === "/settings/connections") return true;
   return pathname === to || pathname.startsWith(`${to}/`);
 }
 
@@ -143,13 +144,18 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const scopeSearch = useMemo(() => validateSettingsScopeSearch(currentSearch), [currentSearch]);
   const navItems = SETTINGS_NAV_ITEMS.filter(
     // Skills also has a machine-wide view, so it shows without a project.
-    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
+    (item) =>
+      item.to !== "/settings/connections" &&
+      (item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch)),
   );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
-  const navSections = useMemo(() => navItems.map((item) => item.to), [navItems]);
+  const navSections = useMemo(
+    () => [...navItems.map((item) => item.to), "/settings/connections" as const],
+    [navItems],
+  );
   const results = useMemo(
     () => searchSettingsBySection(query, searchableItems, navSections),
     [navSections, query, searchableItems],

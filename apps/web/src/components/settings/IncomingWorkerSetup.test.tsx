@@ -60,7 +60,7 @@ describe("incoming worker setup", () => {
       "A management key may already have been issued on M4",
     );
     expect((failure as Error).message).toContain(
-      "Settings > Connections > Authorized clients on M4",
+      "Settings > Machines > Authorized clients on M4",
     );
     expect((failure as Error).message).toContain("Could not save machine configuration");
     expect(ops.allow).not.toHaveBeenCalled();

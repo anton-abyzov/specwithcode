@@ -69,7 +69,13 @@ export interface MachineProjectInput {
     | undefined;
 }
 
-export type MachineSeenState = "this-machine" | "connected" | "elsewhere" | "not-connected";
+export type MachineSeenState =
+  | "this-machine"
+  | "connected"
+  | "elsewhere"
+  /** This server reaches it, but this window has not opened it. */
+  | "reachable"
+  | "not-connected";
 
 export type SharedProjectRole = "coordinator" | "runs-workers" | "handoff-pending";
 
@@ -221,6 +227,27 @@ function workHereFor(
     label: WORK_HERE_LABELS[grant.status],
     detail: `${workGrantProjectsSummary(grant, grants.projects, grants.projectsUnreadable === true)} · ${workGrantStatus(grant)}`,
   };
+}
+
+/**
+ * How a private machine this window has not opened reads: the server's own
+ * check, in the words Settings > Machines uses, then that this window is
+ * not connected to it. "This app cannot see it" read as if the machine were
+ * down while Connections listed it as reachable.
+ */
+export function unopenedFleetMachineSeen(
+  machine: Pick<StudioFleetMachine, "status" | "transport">,
+): MachineRowModel["seen"] {
+  if (machine.status === "identity-mismatch")
+    return { state: "not-connected", text: "Address needs attention" };
+  if (machine.status !== "reachable") return { state: "not-connected", text: "Unreachable" };
+  const via =
+    machine.transport === "connect"
+      ? " via SpecWithCode Connect"
+      : machine.transport === "tailnet"
+        ? " via Tailscale"
+        : "";
+  return { state: "reachable", text: `Reachable${via} · not open in this window` };
 }
 
 /** Connect for a private machine, or why it cannot be pressed yet. */
@@ -509,7 +536,7 @@ export function buildMachineRows(input: {
       label: machine.label,
       machineName:
         machine.machineName && machine.machineName !== machine.label ? machine.machineName : null,
-      seen: { state: "not-connected", text: "This app cannot see it" },
+      seen: unopenedFleetMachineSeen(machine),
       fleetMachine: machine,
       connect: fleetConnectAction(machine, input.canPair),
       workers: workerGrant(machine),
@@ -569,5 +596,5 @@ export function pairingLinkBaseUrl(input: {
 
 /** Where to paste the link on the other machine. */
 export function connectBothWaysInstruction(machineLabel: string): string {
-  return `On ${machineLabel}, open Settings > Connections > Add environment > Remote link and paste this link.`;
+  return `On ${machineLabel}, open Settings > Machines > Advanced routes and saved connections > Add environment > Remote link and paste this link.`;
 }

@@ -95,6 +95,7 @@ import {
 } from "./ConnectionsSettings.logic";
 import {
   SettingsPageContainer,
+  SettingsDisclosure,
   SettingsRow,
   TeamRulesLabel,
   SettingsSection,
@@ -121,7 +122,6 @@ import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnecti
 import { TeamRulesInert } from "./TeamRulesLock";
 import { teamRulesReachLock } from "../../teamRules/teamRulesView";
 import { useTeamRules } from "../../teamRules/useTeamRules";
-import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
 import { PairPhoneSettings } from "./PairPhoneSettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
@@ -2093,7 +2093,10 @@ function CloudRemoteEnvironmentRows({
   ) : null;
 }
 
-export function ConnectionsSettings() {
+export function ConnectionsSettings({
+  renderMachine,
+  additionalMachines,
+}: import("./StudioFleetConnections").FleetInventoryComposition = {}) {
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
@@ -4218,9 +4221,15 @@ export function ConnectionsSettings() {
     <SettingsPageContainer width="wide">
       {primaryEnvironmentId ? (
         <StudioFleetConnections
+          {...(renderMachine ? { renderMachine } : {})}
+          additionalMachines={additionalMachines}
           environmentId={primaryEnvironmentId}
           savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
         />
+      ) : additionalMachines ? (
+        <SettingsSection id="machines" title="Machines">
+          <ul>{additionalMachines}</ul>
+        </SettingsSection>
       ) : null}
       {primaryEnvironmentId !== null ? <PhoneConnectSettings /> : null}
       {primaryEnvironmentId !== null ? (
@@ -4236,101 +4245,102 @@ export function ConnectionsSettings() {
           teamRulesLock={teamRulesReachLock(primaryServerConfig?.teamRules, "phones")}
         />
       ) : null}
-      <ConnectionsLibrarySettings />
       {primarySettings}
-      <SettingsSection
-        {...searchableSetting("remote-environments")}
-        title="Machine connections"
-        headerAction={
-          <div className="flex items-center gap-1">
-            {savedServerUpdateTargets.length > 0 ? (
-              <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
-            ) : null}
-            <Dialog
-              open={addBackendDialogOpen}
-              onOpenChange={(open) => {
-                setAddBackendDialogOpen(open);
-                if (open) {
-                  setRouteTarget(null);
-                } else {
-                  setSavedBackendError(null);
-                }
-              }}
-            >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <DialogTrigger
-                      render={
-                        <Button size="xs" variant="ghost-muted" aria-label="Add environment">
-                          <PlusIcon className="size-3" />
-                          <span>Add environment</span>
-                        </Button>
-                      }
-                    />
+      <SettingsDisclosure title="Advanced routes and saved connections">
+        <SettingsSection
+          {...searchableSetting("remote-environments")}
+          title="Advanced routes and saved connections"
+          headerAction={
+            <div className="flex items-center gap-1">
+              {savedServerUpdateTargets.length > 0 ? (
+                <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
+              ) : null}
+              <Dialog
+                open={addBackendDialogOpen}
+                onOpenChange={(open) => {
+                  setAddBackendDialogOpen(open);
+                  if (open) {
+                    setRouteTarget(null);
+                  } else {
+                    setSavedBackendError(null);
                   }
-                />
-                <TooltipPopup side="top">Add environment</TooltipPopup>
-              </Tooltip>
-              <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
-                <DialogHeader>
-                  <DialogTitle>
-                    {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
-                  </DialogTitle>
-                  <DialogDescription>
-                    {routeTarget
-                      ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-                      : "Pair another environment to this client."}
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogPanel>
-                  <div className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {renderConnectionModeCard({
-                        mode: "remote",
-                        title: "Remote link",
-                        description: "Enter a backend host and pairing code.",
-                        icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
-                      })}
-                      {desktopBridge
-                        ? renderConnectionModeCard({
-                            mode: "ssh",
-                            title: "SSH",
-                            description:
-                              "Use local SSH config, agent, and tunnels for the backend.",
-                            icon: <TerminalIcon aria-hidden className="size-4" />,
-                          })
-                        : null}
+                }}
+              >
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <DialogTrigger
+                        render={
+                          <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                            <PlusIcon className="size-3" />
+                            <span>Add environment</span>
+                          </Button>
+                        }
+                      />
+                    }
+                  />
+                  <TooltipPopup side="top">Add environment</TooltipPopup>
+                </Tooltip>
+                <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+                    </DialogTitle>
+                    <DialogDescription>
+                      {routeTarget
+                        ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
+                        : "Pair another environment to this client."}
+                    </DialogDescription>
+                  </DialogHeader>
+                  <DialogPanel>
+                    <div className="space-y-4">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {renderConnectionModeCard({
+                          mode: "remote",
+                          title: "Remote link",
+                          description: "Enter a backend host and pairing code.",
+                          icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
+                        })}
+                        {desktopBridge
+                          ? renderConnectionModeCard({
+                              mode: "ssh",
+                              title: "SSH",
+                              description:
+                                "Use local SSH config, agent, and tunnels for the backend.",
+                              icon: <TerminalIcon aria-hidden className="size-4" />,
+                            })
+                          : null}
+                      </div>
+                      <AnimatedHeight>
+                        {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
+                      </AnimatedHeight>
                     </div>
-                    <AnimatedHeight>
-                      {savedBackendMode === "ssh" ? renderSshFields() : renderRemoteModeBody()}
-                    </AnimatedHeight>
-                  </div>
-                </DialogPanel>
-              </DialogPopup>
-            </Dialog>
-          </div>
-        }
-      >
-        {listedEnvironments.map((environment) => (
-          <SavedBackendListRow
-            key={environment.environmentId}
-            environment={environment}
-            removingEnvironmentId={removingSavedEnvironmentId}
-            onSetEnabled={handleSetSavedBackendEnabled}
-            onRemove={handleRemoveSavedBackend}
-            onAddRoute={(target) => {
-              setRouteTarget(target);
-              setSavedBackendError(null);
-              setAddBackendDialogOpen(true);
-            }}
+                  </DialogPanel>
+                </DialogPopup>
+              </Dialog>
+            </div>
+          }
+        >
+          {listedEnvironments.map((environment) => (
+            <SavedBackendListRow
+              key={environment.environmentId}
+              environment={environment}
+              removingEnvironmentId={removingSavedEnvironmentId}
+              onSetEnabled={handleSetSavedBackendEnabled}
+              onRemove={handleRemoveSavedBackend}
+              onAddRoute={(target) => {
+                setRouteTarget(target);
+                setSavedBackendError(null);
+                setAddBackendDialogOpen(true);
+              }}
+            />
+          ))}
+          <CloudRemoteEnvironmentRows
+            primaryEnvironmentId={primaryEnvironmentId}
+            savedEnvironments={savedEnvironments}
           />
-        ))}
-        <CloudRemoteEnvironmentRows
-          primaryEnvironmentId={primaryEnvironmentId}
-          savedEnvironments={savedEnvironments}
-        />
-      </SettingsSection>
+        </SettingsSection>
+      </SettingsDisclosure>
       {hasCloudPublicConfig() ? (
         <RemoveStudioConnectEnvironmentDialog
           environmentLabel={pendingStudioConnectRemoval?.label ?? null}

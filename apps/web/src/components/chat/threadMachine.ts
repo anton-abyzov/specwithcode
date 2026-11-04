@@ -15,7 +15,7 @@ import { useEnvironmentScope } from "~/state/session";
 
 /**
  * The machine a sent chat runs on, as the chat itself shows it. The label is
- * not a picker: a chat is moved only by "Move to another machine…" in its thread menu,
+ * not a picker: a chat is moved only by "Move thread…" in its thread menu,
  * which continues it on the other machine and leaves this copy read-only, so
  * one label covers every turn, command, file and terminal in it.
  */
@@ -37,7 +37,7 @@ const OS_LABELS: Record<ExecutionEnvironmentPlatformOs, string | null> = {
 };
 
 /**
- * "available": the menu has an enabled "Move to another machine…". "continued": it is
+ * "available": the menu has an enabled "Move thread…". "continued": it is
  * greyed out because the chat already continued elsewhere. "private": a
  * personal assistant's chat, which never leaves its machine. "none": the
  * machine has no handoff mode, or its state is not known yet.
@@ -45,7 +45,7 @@ const OS_LABELS: Record<ExecutionEnvironmentPlatformOs, string | null> = {
 export type ThreadMachineHandoff = "available" | "continued" | "private" | "none";
 
 const HANDOFF_TIPS: Record<ThreadMachineHandoff, string> = {
-  available: " To move it, use ⋯ › Move to another machine.",
+  available: " To move it, use ⋯ › Move thread.",
   continued: " It already moved to another machine, so this copy stays here to read.",
   private: " A personal assistant's chats stay on their machine.",
   none: "",
@@ -60,7 +60,7 @@ export function threadMachinePresentation(input: {
   readonly phase: Parameters<typeof machineStatus>[0]["phase"];
   readonly error: string | null;
   readonly canOperate: boolean;
-  /** How the thread's own menu offers "Move to another machine…" now; the tip says no more than that. */
+  /** How the thread's own menu offers "Move thread…" now; the tip says no more than that. */
   readonly handoff: ThreadMachineHandoff;
 }): ThreadMachine {
   const os = input.os ? OS_LABELS[input.os] : null;
@@ -83,7 +83,7 @@ export function threadMachinePresentation(input: {
         : status.retryable
           ? "Can't reach"
           : status.text;
-  // The menu greys out "Move to another machine…" for a viewer who cannot operate the machine.
+  // The menu greys out "Move thread…" for a viewer who cannot operate the machine.
   const handoff = input.handoff === "available" && !input.canOperate ? "none" : input.handoff;
   return {
     kind: input.kind,

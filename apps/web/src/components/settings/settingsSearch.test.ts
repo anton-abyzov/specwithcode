@@ -27,7 +27,7 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
     id: "network-access",
     title: "Network access",
-    to: "/settings/connections",
+    to: "/settings/machines",
     searchTerms: ["remote pairing backend"],
   },
   {
@@ -69,7 +69,7 @@ describe("searchSettings", () => {
   it("matches titles, sections, and remembered setting details", () => {
     expect(searchSettings("word", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
     expect(searchSettings("network", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
-    expect(searchSettings("connections", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
+    expect(searchSettings("machines", ITEMS).map((item) => item.id)).toEqual(["network-access"]);
     expect(searchSettings("claude", ITEMS).map((item) => item.id)).toEqual(["providers"]);
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
   });
@@ -191,7 +191,7 @@ describe("searchSettings", () => {
     expect(SETTINGS_SEARCH_ITEMS.find((item) => item.id === "wsl-backend")).toMatchObject({
       id: "wsl-backend",
       title: "WSL backend",
-      to: "/settings/connections",
+      to: "/settings/machines",
       desktopOnly: true,
       windowsOnly: true,
     });
@@ -630,5 +630,11 @@ it("retires inactivity completion search destinations while keeping Resolve disc
   );
   expect(searchSettings("days before auto-settle").map((item) => item.id)).not.toContain(
     "days-before-auto-settle",
+  );
+});
+
+it("routes external MCP connections to Integrations", () => {
+  expect(searchSettings("mcp").find((item) => item.id === "mcp-connections")?.to).toBe(
+    "/settings/integrations",
   );
 });

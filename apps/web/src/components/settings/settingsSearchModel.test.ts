@@ -40,15 +40,15 @@ describe("searchSettingsGrouped", () => {
 });
 
 describe("searchSettingsBySection", () => {
-  it("lists the Connections section itself before its subsections", () => {
-    const results = searchSettingsBySection("connections");
+  it("lists the Machines section itself before its subsections", () => {
+    const results = searchSettingsBySection("machines");
     expect(results[0]).toMatchObject({
       kind: "section",
-      section: "/settings/connections",
-      label: "Connections",
+      section: "/settings/machines",
+      label: "Machines",
       matched: true,
     });
-    expect(results.slice(1).every((r) => r.section === "/settings/connections")).toBe(true);
+    expect(results.slice(1).every((r) => r.section === "/settings/machines")).toBe(true);
     expect(results.filter((r) => r.kind === "row").length).toBeGreaterThan(3);
   });
 

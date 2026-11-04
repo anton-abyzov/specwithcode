@@ -170,7 +170,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
             {props.run ? null : (
               <DialogDescription>
                 {
-                  "They continue on the machine you pick. Anything that can't move stays here, untouched."
+                  "Review readiness before moving the selected threads. They continue on the machine you pick. Anything that can't move stays here, untouched."
                 }
                 {props.projectName
                   ? ` ${props.projectName}'s coordinator stays on ${props.machineName}.`

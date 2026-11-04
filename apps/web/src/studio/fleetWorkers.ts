@@ -16,7 +16,32 @@ import { runtimeModeConfig, runtimeModeOptions } from "../components/chat/runtim
 export const FLEET_WORKER_ACCESS_CHOICES: ReadonlyArray<{
   readonly value: StudioFleetWorkerAccess;
   readonly label: string;
-}> = runtimeModeOptions.map((mode) => ({ value: mode, label: runtimeModeConfig[mode].label }));
+  readonly description: string;
+}> = runtimeModeOptions.map((mode) => ({
+  value: mode,
+  label: runtimeModeConfig[mode].label,
+  description: runtimeModeConfig[mode].description,
+}));
+
+/**
+ * Runs on the other machine, whose shell is unknown here. An ID of plain letters,
+ * digits and dashes needs no quotes in zsh, bash, PowerShell or cmd, and single
+ * quotes would reach the program literally under cmd.
+ */
+export function fleetInviteCommand(environmentId: string): string {
+  const id = /^[A-Za-z0-9-]+$/.test(environmentId) ? environmentId : `"${environmentId}"`;
+  return `specwithcode fleet invite --coordinator ${id}`;
+}
+
+/** What the Workers row's help says, for someone who has not met the word yet. */
+export function fleetWorkersHelp(machineLabel: string): readonly string[] {
+  return [
+    "A worker is a thread that a coordinator starts to do one job.",
+    `Allow workers lets coordinators on this machine start those threads on ${machineLabel}. Moving your threads there needs it too.`,
+    "Stop workers takes that permission away. Workers already running there keep running, but this machine stops following them.",
+    "What you type in a thread yourself does not need it.",
+  ];
+}
 
 /**
  * Private machines are the owner's own, so workers there start with full

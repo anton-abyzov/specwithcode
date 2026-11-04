@@ -11,7 +11,7 @@ import type { ThreadMachine } from "./threadMachine";
 /**
  * The machine a sent chat runs on, first in the composer's controls, the way
  * a draft's "Run on" picker sits there before the first message. It only
- * names the machine: a sent chat cannot move, so there is nothing to pick.
+ * names the machine; moving a sent chat uses Move thread in its thread menu.
  * It keeps its name at every width: the toolbar's other controls give up room
  * first, and on a narrow composer a long name ends in an ellipsis.
  */

@@ -400,7 +400,7 @@ export function MachineWorkGrantsList({
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           {loading
             ? "Checking who can run work here…"
-            : "No other machine can start work here. Choose a machine below, or open Connections on that machine and choose Allow workers on this machine’s card."}
+            : "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card."}
         </p>
       )}
       {setup}
@@ -483,7 +483,7 @@ export function MachineWorkGrants({
         );
       else if (next.action === "restore")
         setNotice(
-          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, choose Allow workers on this machine's card in Settings > Connections.`,
+          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, choose Allow workers on this machine's card in Settings > Machines.`,
         );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not save this change.");

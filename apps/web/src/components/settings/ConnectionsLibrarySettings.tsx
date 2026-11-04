@@ -32,7 +32,7 @@ const choiceLabel = (choice: Choice) =>
 
 /**
  * The MCP servers a machine, or a project's checkout on it, declares. One
- * section of Settings > Connections: it renders inside that page's container,
+ * section of Settings > Integrations: it renders inside that page's container,
  * so it is only as tall as its content.
  */
 export function ConnectionsLibrarySettings() {

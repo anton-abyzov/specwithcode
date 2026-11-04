@@ -1,3 +1,5 @@
+import { ConnectionsSettings } from "./ConnectionsSettings";
+import { MachineRemoteControl } from "./MachineRemoteControl";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthAccessWriteScope,
@@ -10,7 +12,7 @@ import { Link } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { InfoIcon, LaptopIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
+import { LaptopIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 
 import { isThisMachineTarget } from "../../connection/desktopLocal";
@@ -56,7 +58,8 @@ import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
-import { SettingsPageContainer, SettingsSection, TeamRulesLabel } from "./settingsLayout";
+import { SettingHelp } from "./SettingHelp";
+import { SettingsSection, TeamRulesLabel } from "./settingsLayout";
 import { TeamRulesInert, TeamRulesLockNote } from "./TeamRulesLock";
 import type { TeamRulesLock } from "../../teamRules/teamRulesView";
 import { usePrimaryFleet } from "./usePrimaryFleet";
@@ -145,25 +148,64 @@ export function MachinesSettingsPanel() {
     }
   }
 
+  const renderRow = (row: MachineRowModel, details?: ReactNode) => (
+    <MachineRow
+      key={row.environmentId}
+      row={row}
+      pending={pending}
+      onConnect={(machine) => void connect(machine)}
+      remoteControl={
+        row.seen.state === "this-machine" ? null : (
+          <MachineRemoteControl environmentId={row.environmentId} name={row.label} />
+        )
+      }
+      addForAgents={
+        row.canAddForAgents && fleet.primaryEnvironmentId ? (
+          <AddForAgents row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
+        ) : null
+      }
+      connectBothWays={
+        row.connectBothWays && fleet.primaryEnvironmentId ? (
+          <ConnectBothWays row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
+        ) : null
+      }
+      details={details}
+    />
+  );
   return (
-    <SettingsPageContainer>
-      <MachineListSection
-        rows={rows}
-        loading={fleet.loading}
-        pending={pending}
-        error={error}
-        onRefresh={fleet.refresh}
-        onConnect={(machine) => void connect(machine)}
-        renderAddForAgents={(row) =>
-          fleet.primaryEnvironmentId === null ? null : (
-            <AddForAgents row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
+    <div className="space-y-6">
+      <p className="px-4 text-sm text-muted-foreground">
+        Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed
+        action.
+      </p>
+      {error ? (
+        <p role="alert" className="text-sm text-destructive-foreground">
+          {error}
+        </p>
+      ) : null}
+      <ConnectionsSettings
+        additionalMachines={rows
+          .filter(
+            (row) =>
+              !fleet.snapshot?.machines.some(
+                (machine) => machine.environmentId === row.environmentId,
+              ),
           )
-        }
-        renderConnectBothWays={(row) =>
-          fleet.primaryEnvironmentId === null ? null : (
-            <ConnectBothWays row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
-          )
-        }
+          .map((row) => renderRow(row))}
+        renderMachine={(environmentId, controls) => {
+          const row = rows.find((item) => item.environmentId === environmentId);
+          return row
+            ? renderRow(
+                row,
+                <details className="pl-7 text-sm">
+                  <summary className="cursor-pointer">
+                    Access, routes and worker permissions
+                  </summary>
+                  <ul>{controls}</ul>
+                </details>,
+              )
+            : controls;
+        }}
       />
       {fleet.primaryEnvironmentId ? (
         <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
@@ -171,7 +213,7 @@ export function MachinesSettingsPanel() {
       {fleet.primaryEnvironmentId ? (
         <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}
-    </SettingsPageContainer>
+    </div>
   );
 }
 
@@ -228,9 +270,9 @@ export function MachineListSection({
         </ul>
       )}
       <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-        Add machines and allow or stop workers on them in{" "}
-        <Link to="/settings/connections" className="underline underline-offset-2">
-          Settings &gt; Connections
+        Add a machine, manage its routes and allow or stop workers in{" "}
+        <Link to="/settings/machines" className="underline underline-offset-2">
+          Advanced connection settings
         </Link>
         . Machines that may run work here are under Who can run work here. To disconnect one, use
         its card there: Remove machine stops agents here from using it, and Remove under
@@ -252,6 +294,7 @@ const SEEN_DOT: Readonly<Record<MachineRowModel["seen"]["state"], string>> = {
   "this-machine": "bg-success",
   connected: "bg-success",
   elsewhere: "bg-warning",
+  reachable: "bg-success/60",
   "not-connected": "bg-muted-foreground/50",
 };
 
@@ -277,7 +320,7 @@ function DetailLine({
   children,
 }: {
   label: string;
-  /** Shown on hover beside the label. */
+  /** Shown on hover or tap beside the label. */
   help?: string;
   children: ReactNode;
 }) {
@@ -285,21 +328,7 @@ function DetailLine({
     <div className="min-w-0 space-y-1 pl-7">
       <p className="flex items-center gap-1 text-xs text-foreground/80">
         {label}
-        {help ? (
-          <Tooltip>
-            <TooltipTrigger
-              delay={200}
-              render={
-                <Button size="icon-micro" variant="ghost-muted" aria-label={`About ${label}`}>
-                  <InfoIcon className="size-3" />
-                </Button>
-              }
-            />
-            <TooltipPopup side="top" className="max-w-72">
-              {help}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
+        {help ? <SettingHelp label={label}>{help}</SettingHelp> : null}
       </p>
       {children}
     </div>
@@ -537,12 +566,16 @@ function ProjectList({
 }
 
 export function MachineRow({
+  remoteControl,
+  details,
   row,
   pending,
   onConnect,
   addForAgents,
   connectBothWays,
 }: {
+  remoteControl?: ReactNode;
+  details?: ReactNode;
   row: MachineRowModel;
   pending: EnvironmentId | null;
   onConnect: (machine: StudioFleetMachine) => void;
@@ -558,10 +591,10 @@ export function MachineRow({
   const here = { name: nickname, seen: row.seen };
   return (
     <li className="flex min-w-0 flex-col gap-2 px-3 py-2.5 sm:px-4" aria-label={nickname}>
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
         <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm">
+          <h3 className="text-sm break-words sm:truncate">
             {nickname}
             {hostNames ? <span className="text-muted-foreground"> · {hostNames}</span> : null}
           </h3>
@@ -570,7 +603,7 @@ export function MachineRow({
               aria-hidden
               className={`size-1.5 shrink-0 rounded-full ${SEEN_DOT[row.seen.state]}`}
             />
-            <span className="truncate text-foreground/80">{row.seen.text}</span>
+            <span className="break-words text-foreground/80 sm:truncate">{row.seen.text}</span>
           </p>
         </div>
         <Button
@@ -589,24 +622,30 @@ export function MachineRow({
           open={renaming}
           onOpenChange={setRenaming}
         />
-        {row.connect && row.fleetMachine ? (
-          <>
-            {row.connectLock ? <TeamRulesLabel>{row.connectLock.setBy}</TeamRulesLabel> : null}
-            <TeamRulesInert lock={row.connectLock}>
-              <Button
-                className="shrink-0"
-                size="xs"
-                variant="outline"
-                disabled={pending !== null || !row.connect.enabled}
-                onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
-              >
-                {pending === row.environmentId ? "Connecting…" : row.connect.label}
-              </Button>
-            </TeamRulesInert>
-          </>
+        {remoteControl || row.connect ? (
+          <div className="flex w-full flex-wrap items-center gap-2 pl-7 sm:w-auto sm:pl-0">
+            {remoteControl}
+            {row.connect && row.fleetMachine ? (
+              <>
+                {row.connectLock ? <TeamRulesLabel>{row.connectLock.setBy}</TeamRulesLabel> : null}
+                <TeamRulesInert lock={row.connectLock}>
+                  <Button
+                    className="shrink-0"
+                    size="xs"
+                    variant="outline"
+                    disabled={pending !== null || !row.connect.enabled}
+                    onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
+                  >
+                    {pending === row.environmentId ? "Connecting…" : row.connect.label}
+                  </Button>
+                </TeamRulesInert>
+              </>
+            ) : null}
+          </div>
         ) : null}
       </div>
 
+      {details}
       {row.connect && row.connectLock ? (
         <div className="pl-7">
           <p className="text-xs text-muted-foreground">{row.connectLock.message}</p>
@@ -624,7 +663,7 @@ export function MachineRow({
             </Badge>
             <span>{row.workers.detail}</span>
             {row.workers.status === "not-allowed" ? (
-              <Link to="/settings/connections" className="underline underline-offset-2">
+              <Link to="/settings/machines" className="underline underline-offset-2">
                 Allow workers
               </Link>
             ) : null}
@@ -789,7 +828,7 @@ export function AddForAgentsView({
           {added ? (
             <>
               Added {machineLabel}. Next,{" "}
-              <Link to="/settings/connections" className="underline underline-offset-2">
+              <Link to="/settings/machines" className="underline underline-offset-2">
                 allow workers
               </Link>{" "}
               on its card.
@@ -797,7 +836,7 @@ export function AddForAgentsView({
           ) : allowed ? (
             `This app can see ${machineLabel}, but agents on this machine cannot use it yet.`
           ) : (
-            `Adding ${machineLabel} from here needs the desktop app with full access to it. Otherwise, on ${machineLabel}, choose Join a main machine under Settings > Connections.`
+            `Adding ${machineLabel} from here needs the desktop app with full access to it. Otherwise, on ${machineLabel}, choose Join a main machine under Settings > Machines.`
           )}
         </p>
         {allowed && !added ? (
@@ -960,7 +999,7 @@ export function ConnectBothWaysView({
           <p className="text-xs text-foreground/80">
             {created.link
               ? connectBothWaysInstruction(machineLabel)
-              : `On ${machineLabel}, open Settings > Connections > Add environment > Remote link, enter this machine's private address and this pairing code.`}
+              : `On ${machineLabel}, open Settings > Machines > Add environment > Remote link, enter this machine's private address and this pairing code.`}
           </p>
           <div className="flex min-w-0 gap-2">
             <Input

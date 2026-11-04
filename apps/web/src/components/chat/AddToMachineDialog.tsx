@@ -458,10 +458,11 @@ function AddToMachineBody({
     <>
       <DialogHeader>
         <DialogTitle>
-          Add {title} to {destName}
+          Prepare {title} on {destName}
         </DialogTitle>
         <DialogDescription>
-          {destName} gets its own checkout. The coordinator stays on {sourceName} and sends it work.
+          {destName} gets its own checkout. Preparing it does not start work or move this thread.
+          The coordinator stays on {sourceName}.
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
