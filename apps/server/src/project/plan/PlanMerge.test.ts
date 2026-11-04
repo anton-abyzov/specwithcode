@@ -344,4 +344,43 @@ describe("mergeNativePlans", () => {
     expect(result.changed).toBe(false);
     expect(result.plan.contentRevision).toBe(1);
   });
+
+  it("does not rewrite an unchanged plan when two drivers name the peer differently", () => {
+    // The server names the peer from the fleet, the app window from its saved connection.
+    const stored = { ...base(), machines: [{ environmentId: envB, label: "Ministorm" }] };
+    expect(mergeNativePlans(a(stored), b(base()), "Ministorm").changed).toBe(false);
+    expect(mergeNativePlans(a(stored), b(base()), "Another machine").changed).toBe(false);
+  });
+
+  it("stores the caller's label with a real change, and keeps a label when none is sent", () => {
+    const stored = { ...base(), machines: [{ environmentId: envB, label: "Ministorm" }] };
+    const edited = {
+      ...base(),
+      spec: "Ship it now.",
+      contentRevision: 2,
+      definitionStamp: { at: at(5), environmentId: envB },
+    };
+    const renamed = mergeNativePlans(a(stored), b(edited), "Ministorm 2");
+    expect(renamed.changed).toBe(true);
+    expect(renamed.plan.spec).toBe("Ship it now.");
+    expect(renamed.plan.machines).toEqual([{ environmentId: envB, label: "Ministorm 2" }]);
+    // A driver that sends no name keeps the stored one, even with a real change.
+    const unnamed = mergeNativePlans(a(stored), b(edited), "");
+    expect(unnamed.plan.machines).toEqual([{ environmentId: envB, label: "Ministorm" }]);
+  });
+
+  it("leaves a machine unlabelled when no driver names it", () => {
+    const unlabelled = { ...base(), machines: [{ environmentId: envB, label: "" }] };
+    const merged = mergeNativePlans(a(unlabelled), b(base()), "");
+    expect(merged.changed).toBe(false);
+    expect(merged.plan.machines).toEqual([{ environmentId: envB, label: "" }]);
+  });
+
+  it("still records a peer's first label and a newly linked machine", () => {
+    const unlabelled = { ...base(), machines: [{ environmentId: envB, label: "" }] };
+    const labelled = mergeNativePlans(a(unlabelled), b(base()), "Mac B");
+    expect(labelled.changed).toBe(true);
+    expect(labelled.plan.machines).toEqual([{ environmentId: envB, label: "Mac B" }]);
+    expect(mergeNativePlans(a(base()), b(base()), "Mac B").changed).toBe(true);
+  });
 });

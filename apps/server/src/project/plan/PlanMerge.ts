@@ -290,5 +290,25 @@ export function mergeNativePlans(
       local.environmentId,
     ),
   };
-  return { plan, changed: stableJson(plan) !== stableJson(localCopy.plan) };
+  return { plan, changed: substance(plan) !== substance(localCopy.plan) };
 }
+
+/**
+ * The plan as a merge compares it: a machine's label counts only as present or
+ * missing. The app window and the server name a peer from different sources
+ * (its saved connection, the fleet), so comparing labels made each driver flip
+ * the stored label back and rewrite an unchanged plan on every pass. A renamed
+ * machine shows its new label with the next change that is really new.
+ */
+const substance = (plan: ProjectNativePlan): string =>
+  stableJson({
+    ...plan,
+    ...(plan.machines
+      ? {
+          machines: plan.machines.map((machine) => ({
+            environmentId: machine.environmentId,
+            labelled: machine.label.trim().length > 0,
+          })),
+        }
+      : {}),
+  });

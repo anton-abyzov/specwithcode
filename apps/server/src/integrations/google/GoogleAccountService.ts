@@ -1,27 +1,4 @@
-/**
- * GoogleAccountService - the Google accounts of one Studio host, read-only
- * except for reply drafts the person chooses to send.
- *
- * A host keeps up to ten accounts. Each has its own refresh token, the services
- * Google granted it, and per-project switches; each project names the account
- * its agents use when they name none. Ids agents receive carry their account
- * (`<account>:<id>`, bare for the primary account), so a read, draft or send
- * always reaches the mailbox the message came from.
- *
- * Sign-in uses the OAuth client shipped with Studio ("Desktop app" type) or,
- * when the person saved one, their own; theirs wins. Either way the person
- * signs in through Google's consent screen. Google redirects the browser back to this
- * host's loopback callback; when the browser runs elsewhere, the person pastes
- * the address it landed on. Sign-in uses PKCE and a single-use state that
- * expires after 15 minutes.
- *
- * The client secret and refresh token live in the host's secret store and are
- * never returned to clients. Agents read Gmail, Calendar and Drive only for
- * projects the person turned each service on for, through the project-bound
- * MCP tools in `mcp/toolkits/google`.
- *
- * @module GoogleAccountService
- */
+/** Google accounts, per-project access, reads, drafts, and explicitly approved immutable sends. */
 // @effect-diagnostics-next-line nodeBuiltinImport:off - a pure, synchronous id hash; Effect Crypto would make the id builder effectful.
 import * as NodeCrypto from "node:crypto";
 import {
@@ -54,6 +31,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as GoogleApi from "./GoogleApi.ts";
+import * as GmailSendApproval from "./GmailSendApproval.ts";
 import {
   googleHealthFailure,
   googleHealthRequest,
@@ -240,16 +218,24 @@ export class GoogleAccountService extends Context.Service<
       projectId: ProjectId,
       draftId: string,
     ) => Effect.Effect<GmailDraftView, GoogleAccountError>;
+    readonly gmailPrepareSend: (
+      projectId: ProjectId,
+      chatId: string,
+      draftId: string,
+    ) => Effect.Effect<GmailSendApproval.GmailApprovalPreview, GoogleAccountError>;
     /**
-     * Sends a saved draft. Only the reply card's Send answer may lead here: the
+     * Sends an immutable approved copy, retaining the source draft. Only the reply card's Send answer may lead here: the
      * caller checks that answer before calling, and nothing else in Studio sends mail.
      */
     readonly gmailSendDraft: (
       projectId: ProjectId,
       draftId: string,
+      chatId: string,
+      snapshotId: string,
     ) => Effect.Effect<
       {
         readonly sent: true;
+        readonly sourceDraftRetained: true;
         readonly from: string | null;
         readonly messageId: string | null;
         readonly threadId: string | null;
@@ -1171,24 +1157,38 @@ const make = Effect.gen(function* () {
       };
     });
 
-  const gmailSendDraft = (projectId: ProjectId, draftId: string) =>
-    Effect.gen(function* () {
-      const { account, id } = yield* accountOfId(projectId, "gmailDrafts", draftId, "Gmail draft");
-      const sent = (yield* withToken(account, (token) =>
-        api.postJson({
-          operation: "Gmail send",
-          url: `${api.endpoints.gmail}/users/me/drafts/send`,
-          body: { id },
-          accessToken: token,
-        }),
-      )) as { id?: string; threadId?: string };
-      return {
-        sent: true as const,
-        from: account.email ?? accountName(account),
-        messageId: typeof sent.id === "string" ? qualifiedId(account.id, sent.id) : null,
-        threadId: typeof sent.threadId === "string" ? sent.threadId : null,
-      };
-    });
+  const { gmailPrepareSend, gmailSendDraft } = yield* GmailSendApproval.makeSending({
+    exclusive: (effect) => writes.withPermits(1)(effect),
+    authorize: (projectId, draftId) =>
+      Effect.gen(function* () {
+        const { account, id } = yield* accountOfId(
+          projectId,
+          "gmailDrafts",
+          draftId,
+          "Gmail draft",
+        );
+        if (!account.email)
+          return yield* fail(
+            "The sending account has no verified address. Review this draft in Gmail.",
+          );
+        const token = yield* accessToken(account, false);
+        const refresh = (yield* Ref.get(refreshRef)).get(account.id);
+        if (!refresh) return yield* fail(NOT_CONNECTED);
+        const accountKey = GmailSendApproval.accountFingerprint([
+          account.id,
+          account.email,
+          account.clientId ?? "",
+          Redacted.value(refresh),
+        ]);
+        return {
+          accountId: account.id,
+          email: account.email,
+          id,
+          token,
+          accountKey,
+        };
+      }),
+  });
 
   const briefingState = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
@@ -1481,6 +1481,7 @@ const make = Effect.gen(function* () {
     gmailCreateDraft,
     gmailDraft,
     gmailSendDraft,
+    gmailPrepareSend,
     calendarEvents,
     briefingState,
     markBriefingSetUp,

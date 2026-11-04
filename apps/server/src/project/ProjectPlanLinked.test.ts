@@ -11,6 +11,8 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as SqlClient from "effect/sql/SqlClient";
 import type {
   ProjectPlanActor,
   ProjectPlanLinkExport,
@@ -22,6 +24,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as Projects from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { holdLayer } from "./LinkedMemorySync.testkit.ts";
 import * as Plans from "./ProjectPlanService.ts";
 
 const envA = EnvironmentId.make("env-a");
@@ -41,8 +44,12 @@ const logical: LogicalProject = {
   ],
 };
 
-/** One machine: its own database, its own identity, its own project row. */
-const machineLayer = (environmentId: EnvironmentId) =>
+/**
+ * One machine: its own database, its own identity, its own project row. The
+ * update hold comes from outside the plan service's own layer, as the server
+ * provides the real hold to its whole runtime (`server.ts`), not to this layer.
+ */
+const machineLayer = (environmentId: EnvironmentId, held?: Ref.Ref<boolean>) =>
   Layer.fresh(
     Plans.layer.pipe(
       Layer.provideMerge(
@@ -61,6 +68,7 @@ const machineLayer = (environmentId: EnvironmentId) =>
           }),
         ).pipe(Layer.provideMerge(Sqlite.layerMemory)),
       ),
+      Layer.provideMerge(held === undefined ? Layer.empty : holdLayer(held)),
     ),
   );
 
@@ -69,9 +77,10 @@ const machine = (
   projectId: ProjectId,
   linked = true,
   kind: "code" | "personal" = "code",
+  held?: Ref.Ref<boolean>,
 ) =>
   Effect.gen(function* () {
-    const context = yield* Layer.build(machineLayer(environmentId));
+    const context = yield* Layer.build(machineLayer(environmentId, held));
     yield* Context.get(context, Projects.ProjectStoreV2).apply({
       sequence: 1,
       eventId: EventId.make(`event:${projectId}`),
@@ -98,7 +107,20 @@ const machine = (
         },
       },
     });
-    return { environmentId, projectId, plans: Context.get(context, Plans.ProjectPlanService) };
+    const sql = Context.get(context, SqlClient.SqlClient);
+    /** The stored row exactly as the update's page proof compares it. */
+    const row = sql<{
+      revision: number;
+      document_json: string;
+    }>`SELECT revision, document_json FROM project_plans WHERE project_id=${projectId}`.pipe(
+      Effect.map((rows) => rows[0]),
+    );
+    return {
+      environmentId,
+      projectId,
+      plans: Context.get(context, Plans.ProjectPlanService),
+      row,
+    };
   });
 type Machine = Effect.Success<ReturnType<typeof machine>>;
 
@@ -381,6 +403,93 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("linked plan claims"
       const kept = yield* household.plans.read({ projectId: projectA });
       assert.equal(kept.revision, 1);
       assert.isUndefined(kept.native!.machines);
+    }),
+  );
+  it.effect("writes no linked merge while an update holds the service, and merges after it", () =>
+    Effect.gen(function* () {
+      const held = yield* Ref.make(false);
+      const a = yield* machine(envA, projectA);
+      const b = yield* machine(envB, projectB, true, "code", held);
+      yield* a.plans.replace({ projectId: projectA, actor: user, expectedRevision: 0, definition });
+      assert.isTrue((yield* sync(a, b, "Mac A")).changed);
+      const before = yield* b.plans.read({ projectId: projectB });
+
+      // The update restarted the service and is verifying it: a window or a peer merges in.
+      yield* Ref.set(held, true);
+      yield* a.plans.claim({
+        projectId: projectA,
+        expectedRevision: 1,
+        taskId: "T-1",
+        actor: worker("app-a:worker"),
+      });
+      const during = yield* sync(a, b, "Mac A");
+      assert.isFalse(during.changed);
+      assert.equal(during.revision, before.revision);
+      const unchanged = yield* b.plans.read({ projectId: projectB });
+      assert.equal(unchanged.revision, before.revision);
+      assert.isNull(task(unchanged).owner);
+
+      yield* Ref.set(held, false);
+      assert.isTrue((yield* sync(a, b, "Mac A")).changed);
+      assert.isNotNull(task(yield* b.plans.read({ projectId: projectB })).owner);
+    }),
+  );
+
+  it.effect("keeps the stored plan row byte-identical across an update's hold", () =>
+    Effect.gen(function* () {
+      const held = yield* Ref.make(false);
+      const a = yield* machine(envA, projectA);
+      const b = yield* machine(envB, projectB, true, "code", held);
+      yield* a.plans.replace({ projectId: projectA, actor: user, expectedRevision: 0, definition });
+      assert.isTrue((yield* sync(a, b, "Ministorm")).changed);
+      const before = yield* b.row;
+
+      // M4's restart: the window (its saved connection's name, or none) and the server (the
+      // fleet's name) both merge, again and again, while the update verifies the service.
+      yield* Ref.set(held, true);
+      for (let cycle = 0; cycle < 3; cycle += 1)
+        for (const label of ["", "Another machine", "Ministorm"])
+          assert.isFalse((yield* sync(a, b, label)).changed);
+      assert.deepStrictEqual(yield* b.row, before);
+
+      // Nothing changed meanwhile, so the hold's end writes nothing either.
+      yield* Ref.set(held, false);
+      for (let cycle = 0; cycle < 3; cycle += 1)
+        for (const label of ["", "Another machine", "Ministorm"])
+          assert.isFalse((yield* sync(a, b, label)).changed);
+      assert.deepStrictEqual(yield* b.row, before);
+    }),
+  );
+
+  it.effect("stores the fleet's name when the window merged first without one", () =>
+    Effect.gen(function* () {
+      const a = yield* machine(envA, projectA);
+      const b = yield* machine(envB, projectB);
+      yield* a.plans.replace({ projectId: projectA, actor: user, expectedRevision: 0, definition });
+      // The window sends no name for a machine its saved connection does not name.
+      assert.isTrue((yield* sync(a, b, "")).changed);
+      assert.deepStrictEqual((yield* b.plans.read({ projectId: projectB })).native!.machines, [
+        { environmentId: envA, label: "" },
+      ]);
+      assert.isTrue((yield* sync(a, b, "Ministorm")).changed);
+      assert.isFalse((yield* sync(a, b, "")).changed);
+      assert.deepStrictEqual((yield* b.plans.read({ projectId: projectB })).native!.machines, [
+        { environmentId: envA, label: "Ministorm" },
+      ]);
+    }),
+  );
+
+  it.effect("does not bump the revision when two drivers name the peer differently", () =>
+    Effect.gen(function* () {
+      const a = yield* machine(envA, projectA);
+      const b = yield* machine(envB, projectB);
+      yield* a.plans.replace({ projectId: projectA, actor: user, expectedRevision: 0, definition });
+      assert.isTrue((yield* sync(a, b, "Ministorm")).changed);
+      const settled = yield* b.plans.read({ projectId: projectB });
+      // The app window names the machine from its saved connection, the server from the fleet.
+      assert.isFalse((yield* sync(a, b, "Another machine")).changed);
+      assert.isFalse((yield* sync(a, b, "Ministorm")).changed);
+      assert.equal((yield* b.plans.read({ projectId: projectB })).revision, settled.revision);
     }),
   );
 });

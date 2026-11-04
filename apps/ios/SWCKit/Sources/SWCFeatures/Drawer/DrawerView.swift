@@ -71,7 +71,7 @@ struct DrawerView: View {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       let target = ChatTarget.aide(aide.ref)
-      WeaveRow("Aide", titleLineLimit: 1, action: { router.open(target) }) {
+      WeaveRow("Aide", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel, titleLineLimit: 1, action: { router.open(target) }) {
         ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
           .frame(width: 28)
           .accessibilityHidden(true)

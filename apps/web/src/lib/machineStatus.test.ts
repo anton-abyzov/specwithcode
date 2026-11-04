@@ -11,6 +11,7 @@ import {
   machineDetail,
   machineStatus,
   machineUnavailableTitle,
+  readableConnectionReason,
   reasonNeedsPairing,
   savedMachineStatus,
 } from "./machineStatus";
@@ -212,5 +213,51 @@ describe("a send refused while the machine is not connected", () => {
       description:
         "Your message stays in the composer. Send it once M1 is back, or continue on M3.",
     });
+  });
+});
+
+describe("readableConnectionReason", () => {
+  it("says which host did not answer instead of the raw HTTP client error", () => {
+    expect(
+      readableConnectionReason(
+        "Failed to fetch environment endpoint https://box.tailnet.ts.net:8444/.well-known/studio/environment (HttpClientError: Transport error (GET https://box.tailnet.ts.net:8444/.well-known/studio/environment)).",
+      ),
+    ).toBe("No answer from box.tailnet.ts.net:8444.");
+    expect(
+      readableConnectionReason(
+        "Environment endpoint https://box.tailnet.ts.net/.well-known/studio/environment timed out after 8000ms.",
+      ),
+    ).toBe("No answer from box.tailnet.ts.net within 8s.");
+  });
+  it("shows the unreachable reason readably in the machine status", () => {
+    expect(
+      machineStatus({
+        phase: "reconnecting",
+        error:
+          "Failed to fetch environment endpoint https://box.tailnet.ts.net/.well-known/studio/environment (TypeError: fetch failed).",
+      }).reason,
+    ).toBe("No answer from box.tailnet.ts.net.");
+  });
+  it("keeps the cause when the address answered but the request still failed", () => {
+    const certificate =
+      "Failed to fetch environment endpoint https://box.tailnet.ts.net/.well-known/studio/environment (HttpClientError: InvalidUrl (GET https://box.tailnet.ts.net/.well-known/studio/environment)).";
+    expect(readableConnectionReason(certificate)).toBe(certificate);
+  });
+  it("reads the same on a saved machine's row", () => {
+    expect(
+      savedMachineStatus(
+        {
+          phase: "reconnecting",
+          error:
+            "Failed to fetch environment endpoint https://box.tailnet.ts.net/.well-known/studio/environment (HttpClientError: Transport error (GET https://box.tailnet.ts.net/.well-known/studio/environment)).",
+        },
+        true,
+      ).reason,
+    ).toBe("No answer from box.tailnet.ts.net.");
+  });
+  it("passes other reasons through", () => {
+    expect(readableConnectionReason("Failed to fetch environment endpoint")).toBe(
+      "Failed to fetch environment endpoint",
+    );
   });
 });

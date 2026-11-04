@@ -10,10 +10,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import { projectFixture } from "./ProjectWorkspace.testkit.ts";
@@ -34,6 +36,20 @@ export const members = [alpha, beta].map((member) => ({
   coordinatorThreadId: ThreadId.make(`coordinator:${member.projectId}`),
 }));
 
+/**
+ * An update hold that is held while `held` is true. Given to a service layer
+ * from outside, as the server provides the real hold to the whole runtime.
+ */
+export const holdLayer = (held: Ref.Ref<boolean>) =>
+  Layer.mock(ServiceUpdateHold.ServiceUpdateHold)({
+    isHeld: Ref.get(held),
+    installGated: Ref.get(held),
+    awaitReleased: Effect.void,
+    current: Effect.succeedNone,
+    recordRefusal: () => Effect.void,
+    withAdmission: (_action, effect) => effect,
+  });
+
 /** One machine: its own database, memory, version history and sync service. */
 export const machine = (
   self: typeof alpha,
@@ -44,6 +60,7 @@ export const machine = (
   },
   kind: "code" | "personal" = "code",
   coordinatorBinding?: ProjectCoordinatorBinding,
+  held?: Ref.Ref<boolean>,
 ) =>
   Effect.gen(function* () {
     const project = projectFixture(self.projectId, {
@@ -81,6 +98,7 @@ export const machine = (
           } as unknown as ProjectService.ProjectService["Service"]),
         ),
       ),
+      Layer.provideMerge(held === undefined ? Layer.empty : holdLayer(held)),
     );
     const context = yield* Layer.buildWithMemoMap(
       layer,

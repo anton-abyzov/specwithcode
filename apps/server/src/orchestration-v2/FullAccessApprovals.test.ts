@@ -18,7 +18,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as FullAccessApprovals from "./FullAccessApprovals.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
-import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
+import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -495,6 +495,51 @@ describe("FullAccessApprovals", () => {
       const ids = dispatched.map((command) => (command as { commandId: CommandId }).commandId);
       assert.lengthOf(new Set(ids), 3, "each attempt uses its own command ID");
     }),
+  );
+
+  it.effect.each(["ceiling", "hold", "mode"] as const)(
+    "leaves a prompt pending when %s tightens during retry",
+    (restriction) =>
+      Effect.gen(function* () {
+        const prompt = request("runtime-request:exec-retry-policy");
+        const fake: FakeThread = { thread: thread("full-access"), runtimeRequests: [prompt] };
+        const { accepted, use, firstSnapshot } = harness(
+          { [workerId]: fake },
+          { failAccepts: 1, retryDelay: 1000, streamDomainEvents: Stream.never },
+        );
+        const parsed = parseTeamRulesText(
+          '{"version":1,"owner":"Acme","agents":{"ceiling":"auto"}}',
+        );
+        if (!parsed.ok) throw new Error(parsed.issues.join());
+        let rules: TeamRulesState = { status: "none" };
+        yield* use((reactor) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              fake.runtimeRequests = [];
+              yield* reactor.start();
+              yield* firstSnapshot;
+              fake.runtimeRequests = [prompt];
+              yield* reactor.process(pendingEvent(workerId, prompt) as OrchestrationV2DomainEvent);
+              assert.lengthOf(accepted(), 1);
+              if (restriction === "ceiling") {
+                rules = {
+                  status: "active",
+                  rules: parsed.rules,
+                  fingerprint: "tightened",
+                  warnings: [],
+                };
+              } else if (restriction === "hold") {
+                rules = { status: "hold", issues: ["Unreadable rules"] };
+              } else {
+                fake.thread = { ...fake.thread, runtimeMode: "approval-required" };
+              }
+              yield* TestClock.adjust(1000);
+              assert.lengthOf(accepted(), 1);
+              assert.equal(fake.runtimeRequests[0]?.status, "pending");
+            }),
+          ),
+        ).pipe(Effect.provideService(TeamRules, { current: Effect.sync(() => rules) }));
+      }),
   );
 
   it.effect("retries in the background without holding up the next event", () =>

@@ -2299,7 +2299,7 @@ describe("environmentUnavailableBanner", () => {
     expect(banner.calm).toBe(false);
     expect(banner.variant).toBe("warning");
     expect(banner.title).toBe("Can't reach M1");
-    expect(banner.status.reason).toBe(stall.error);
+    expect(banner.status.reason).toBe("No answer from 127.0.0.1:8319 within 10s.");
     expect(banner.status.retryable).toBe(true);
     expect(
       environmentUnavailableBanner({

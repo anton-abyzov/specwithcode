@@ -17,9 +17,7 @@ struct MessageAttachments: View {
         if attachment.isImage {
           MessageImage(attachment: attachment, environmentId: environmentId)
         } else {
-          Label(attachment.name, systemImage: "doc")
-            .font(.weave(.callout))
-            .foregroundStyle(Color.weave.muted)
+          MessageFile(attachment: attachment, environmentId: environmentId)
         }
       }
     }
@@ -36,15 +34,26 @@ private struct MessageImage: View {
   @State private var url: URL?
   @State private var failed = false
   @State private var loaded = false
+  @State private var enlarged = false
+
+  /// Only a picture that is on screen can open; a failed or loading one stays put.
+  private var canEnlarge: Bool { attachment.preview != nil || loaded }
 
   var body: some View {
-    content
-      .frame(width: 220, height: 165)
-      .background(Color.weave.sunken)
-      .clipShape(RoundedRectangle(cornerRadius: WeaveRadius.bubble, style: .continuous))
-      .accessibilityElement()
+    Button { enlarged = true } label: {
+      content
+        .frame(width: 220, height: 165)
+        .background(Color.weave.sunken)
+        .clipShape(RoundedRectangle(cornerRadius: WeaveRadius.bubble, style: .continuous))
+    }
+      .buttonStyle(PressableStyle())
+      .disabled(!canEnlarge)
       .accessibilityLabel("Photo, \(attachment.name)")
+      .accessibilityHint(canEnlarge ? "Opens the photo" : "")
       .accessibilityIdentifier("message.attachment")
+      .imageViewerCover(isPresented: $enlarged) {
+        AttachmentImageViewer(name: attachment.name, preview: attachment.preview, url: url)
+      }
       // Keyed on the connection too, so a picture that failed loads after a reconnect.
       .task(id: "\(attachment.id)-\(model.machine(environmentId)?.status.isOnline == true)") {
         guard attachment.preview == nil, !loaded else { return }
@@ -72,6 +81,150 @@ private struct MessageImage: View {
         }
       }
     }
+  }
+}
+
+/// A non-image attachment on a user message. The machine serves it, and the system opens it.
+private struct MessageFile: View {
+  let attachment: TranscriptAttachment
+  let environmentId: String
+
+  @Environment(AppModel.self) private var model
+  @Environment(AppRouter.self) private var router
+  @Environment(\.openURL) private var openURL
+  @State private var opening = false
+
+  private struct Unavailable: LocalizedError {
+    var errorDescription: String? { "This file is on a machine that isn't connected." }
+  }
+
+  var body: some View {
+    Button(action: open) {
+      Label(attachment.name, systemImage: "doc")
+        .font(.weave(.callout))
+        .foregroundStyle(Color.weave.muted)
+        .frame(minHeight: WeaveSize.minTap)
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(PressableStyle())
+    .disabled(opening)
+    .accessibilityHint("Opens the file")
+    .accessibilityIdentifier("message.file")
+  }
+
+  private func open() {
+    opening = true
+    Task {
+      defer { opening = false }
+      do {
+        guard let url = try await model.engine.attachmentURL(attachment, on: environmentId) else { throw Unavailable() }
+        openURL(url)
+      } catch { router.showError(error) }
+    }
+  }
+}
+
+/// How far a picture opened from a message can zoom.
+enum ImageZoom {
+  static let range: ClosedRange<CGFloat> = 1...5
+
+  static func clamped(_ scale: CGFloat) -> CGFloat {
+    min(max(scale, range.lowerBound), range.upperBound)
+  }
+
+  /// A double tap zooms in, and zooms back out from any zoomed state.
+  static func afterDoubleTap(from scale: CGFloat) -> CGFloat {
+    scale > range.lowerBound ? range.lowerBound : 2.5
+  }
+}
+
+/// A message's picture on its own: pinch or double tap to zoom, drag to move while zoomed.
+private struct AttachmentImageViewer: View {
+  let name: String
+  let preview: Data?
+  let url: URL?
+
+  @Environment(\.dismiss) private var dismiss
+  @State private var scale: CGFloat = 1
+  @State private var offset: CGSize = .zero
+  @GestureState private var pinch: CGFloat = 1
+  @GestureState private var pan: CGSize = .zero
+
+  var body: some View {
+    ZStack(alignment: .topTrailing) {
+      Color.black.ignoresSafeArea()
+      picture
+        .scaleEffect(ImageZoom.clamped(scale * pinch))
+        .offset(x: offset.width + pan.width, y: offset.height + pan.height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .accessibilityLabel("Photo, \(name)")
+        .accessibilityIdentifier("message.attachment.viewer")
+        .gesture(magnify)
+        .simultaneousGesture(move)
+        .onTapGesture(count: 2) {
+          withAnimation(.snappy) {
+            scale = ImageZoom.afterDoubleTap(from: scale)
+            offset = .zero
+          }
+        }
+      Button { dismiss() } label: {
+        Image(systemName: "xmark")
+          .font(.system(size: 17, weight: .semibold))
+          .foregroundStyle(.white)
+          .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(PressableStyle())
+      .accessibilityLabel("Close")
+      .accessibilityIdentifier("message.attachment.close")
+      .padding(WeaveSpacing.s2)
+    }
+  }
+
+  @ViewBuilder private var picture: some View {
+    if let preview, let image = PlatformImage(preview) {
+      image.resizable().scaledToFit()
+    } else {
+      AsyncImage(url: url) { phase in
+        switch phase {
+        case let .success(image): image.resizable().scaledToFit()
+        case .failure: Image(systemName: "photo").foregroundStyle(.white)
+        case .empty: ProgressView().tint(.white)
+        @unknown default: ProgressView().tint(.white)
+        }
+      }
+    }
+  }
+
+  private var magnify: some Gesture {
+    MagnifyGesture()
+      .updating($pinch) { value, state, _ in state = value.magnification }
+      .onEnded { value in
+        scale = ImageZoom.clamped(scale * value.magnification)
+        if scale == ImageZoom.range.lowerBound { offset = .zero }
+      }
+  }
+
+  /// Off until zoomed in, so a resting picture has nothing to drag.
+  private var move: some Gesture {
+    DragGesture(minimumDistance: scale > ImageZoom.range.lowerBound ? 0 : .infinity)
+      .updating($pan) { value, state, _ in state = value.translation }
+      .onEnded { value in
+        offset.width += value.translation.width
+        offset.height += value.translation.height
+      }
+  }
+}
+
+private extension View {
+  /// Full screen on iOS. The Mac build this package also compiles for has only sheets.
+  @ViewBuilder func imageViewerCover<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
+    #if os(iOS)
+    fullScreenCover(isPresented: isPresented, content: content)
+    #else
+    sheet(isPresented: isPresented, content: content)
+    #endif
   }
 }
 

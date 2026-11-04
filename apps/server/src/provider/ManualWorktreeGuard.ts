@@ -2,13 +2,15 @@
 /**
  * Holds the project's Use worktrees setting for every provider. A thread that
  * works in the project's own checkout gets a `git` first on its PATH that
- * refuses `git worktree add` and runs the real git for everything else, so an
+ * refuses project `git worktree add` and runs the real git for everything else, so an
  * agent cannot leave a worktree behind that no thread owns. The server never
  * puts the directory on its own PATH, so its git calls and worktree threads are
- * unaffected. There is no variable that turns it off: the agent could set one.
+ * unaffected. POSIX disposable repositories may create worktrees within their
+ * own physical temporary sandbox. Windows remains strict. There is no variable that turns it off: the agent could set one.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
 
 export const MANUAL_WORKTREE_REFUSAL =
   "Use worktrees is off for this project; work in the checkout this thread was given. If the user wants a separate worktree, start a SpecWithCode thread with its own worktree, or turn on Use worktrees in project settings for new threads.";
@@ -57,17 +59,90 @@ export function isGitWorktreeAdd(args: ReadonlyArray<string>): boolean {
 const shSingleQuoted = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
 /** The POSIX sh shim; isGitWorktreeAdd is the same parse in TypeScript. */
-export function posixGitShim(realGit: string): string {
+export function posixGitShim(realGit: string, temporaryRoot?: string): string {
   const refusal = shSingleQuoted(`fatal: ${MANUAL_WORKTREE_REFUSAL}`);
   return `#!/bin/sh
 # Written by SpecWithCode for threads that work in the project's own checkout.
 real_git=${shSingleQuoted(realGit)}
+# Fixture permission is limited to one physical temporary sandbox. The source
+# repository and destination must both stay there; project repositories still
+# cannot create worktrees, even when their destination is temporary.
+fixture_worktree() (
+  # Git -C resolves relative to cwd and never searches the shell CDPATH.
+  unset CDPATH
+  fixture_nl='
+'
+  # Preserve command output through substitution, then reject newline path bytes.
+  # The command's one output delimiter is removed only after the sentinel.
+  fixture_path() (
+    fixture_value=$("$@" && printf '.') || exit 1
+    fixture_value=\${fixture_value%.}
+    fixture_value=\${fixture_value%"$fixture_nl"}
+    case "$fixture_value" in *"$fixture_nl"*) exit 1 ;; esac
+    printf '%s' "$fixture_value"
+  )
+  for fixture_arg do
+    case "$fixture_arg" in *"$fixture_nl"*) exit 1 ;; esac
+  done
+  fixture_path pwd -P >/dev/null || exit 1
+  fixture_temp=${shSingleQuoted(temporaryRoot ?? "")}
+  [ -n "$fixture_temp" ] || exit 1
+  case "$fixture_temp" in *"$fixture_nl"*) exit 1 ;; esac
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -C)
+        [ "$#" -ge 2 ] || exit 1
+        # Shell cd '-' uses OLDPWD; Git -C '-' is a literal directory.
+        [ "$2" != - ] || exit 1
+        cd -P -- "$2" || exit 1
+        shift 2 ;;
+      --no-pager|-P) shift ;;
+      worktree) shift; break ;;
+      *) exit 1 ;;
+    esac
+  done
+  [ "$1" = add ] || exit 1
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -b|-B|-qb) [ "$#" -ge 2 ] || exit 1; shift 2 ;;
+      --detach|-d|--force|-f|--quiet|-q|--no-checkout) shift ;;
+      --) shift; break ;;
+      -*) exit 1 ;;
+      *) break ;;
+    esac
+  done
+  [ "$#" -gt 0 ] || exit 1
+  fixture_common=$(fixture_path "$real_git" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 1
+  fixture_common=$(cd -P -- "$fixture_common" && fixture_path pwd -P) || exit 1
+  case "$fixture_common" in "$fixture_temp"/*/*) ;; *) exit 1 ;; esac
+  fixture_relative=\${fixture_common#"$fixture_temp"/}
+  fixture_sandbox="$fixture_temp/\${fixture_relative%%/*}"
+  fixture_parent=$(fixture_path dirname -- "$1") || exit 1
+  # Prefix relative parents so a literal '-' cannot invoke shell OLDPWD.
+  case "$fixture_parent" in /*) ;; *) fixture_parent="./$fixture_parent" ;; esac
+  fixture_name=$(fixture_path basename -- "$1") || exit 1
+  case "$fixture_name" in .|..|'') exit 1 ;; esac
+  fixture_suffix=
+  while [ ! -d "$fixture_parent" ]; do
+    fixture_part=$(fixture_path basename -- "$fixture_parent") || exit 1
+    case "$fixture_part" in .|..|'') exit 1 ;; esac
+    [ ! -L "$fixture_parent" ] || exit 1
+    fixture_suffix="/$fixture_part$fixture_suffix"
+    fixture_parent=$(fixture_path dirname -- "$fixture_parent") || exit 1
+  done
+  fixture_parent=$(cd -P -- "$fixture_parent" && fixture_path pwd -P) || exit 1
+  fixture_parent="$fixture_parent$fixture_suffix"
+  case "$fixture_parent/" in "$fixture_sandbox/"*) ;; *) exit 1 ;; esac
+  [ ! -L "$fixture_parent/$fixture_name" ] || exit 1
+)
 skip=
 sub=
 for arg do
   if [ -n "$skip" ]; then skip=; continue; fi
   if [ -n "$sub" ]; then
     if [ "$sub" = worktree ] && [ "$arg" = add ]; then
+      if fixture_worktree "$@"; then exec "$real_git" "$@"; fi
       printf '%s\\n' ${refusal} >&2
       exit 128
     fi
@@ -127,8 +202,9 @@ export function msysPath(windowsPath: string): string {
 export function manualWorktreeGuardFiles(
   platform: NodeJS.Platform,
   realGit: string,
+  temporaryRoot?: string,
 ): ReadonlyArray<readonly [name: string, content: string]> {
-  if (platform !== "win32") return [["git", posixGitShim(realGit)]];
+  if (platform !== "win32") return [["git", posixGitShim(realGit, temporaryRoot)]];
   return [
     ["git.cmd", windowsGitShim(realGit)],
     ["git", posixGitShim(msysPath(realGit))],
@@ -188,7 +264,7 @@ export function installManualWorktreeGuard(input: {
   });
   if (realGit === null) return null;
   NodeFS.mkdirSync(directory, { recursive: true });
-  for (const [name, content] of manualWorktreeGuardFiles(platform, realGit)) {
+  for (const [name, content] of manualWorktreeGuardFiles(platform, realGit, NodeFS.realpathSync(NodeOS.tmpdir()))) {
     const target = NodePath.join(directory, name);
     const temporary = `${target}.tmp`;
     NodeFS.writeFileSync(temporary, content, { mode: 0o755 });

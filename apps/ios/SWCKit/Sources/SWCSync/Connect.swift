@@ -78,6 +78,13 @@ public struct ConnectState: Sendable, Hashable {
 
   public var isSignedIn: Bool { user != nil }
 
+  /// The Connect row on a machine's screen. Someone signed in is not told to sign in.
+  public var machineRowSubtitle: String {
+    guard let user else { return "Primary connection · sign in to reach your computers" }
+    guard let name = user.email ?? user.displayName else { return "Primary connection · signed in" }
+    return "Primary connection · signed in as \(name)"
+  }
+
   /// Shown while signed out after this phone was removed from the account.
   public static let removedMessage = ConnectError.deviceRemovedMessage
 }

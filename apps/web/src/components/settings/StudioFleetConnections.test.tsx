@@ -71,6 +71,7 @@ vi.mock("./settingsLayout", () => ({ SettingsRow: () => null, SettingsSection: (
 import { MachineTerminal, MachineTerminalButton } from "./MachineTerminal";
 import {
   FleetWorkersRow,
+  fleetConnectionReason,
   fleetMachineAddress,
   StudioFleetConnections,
   StudioFleetRoster,
@@ -124,6 +125,41 @@ const autoConnectSwitch = (tree: unknown) =>
     tree,
     (element) => element.props["aria-label"] === "Connect private machines automatically",
   );
+describe("why a saved machine can't be reached", () => {
+  const raw = (url: string) =>
+    `Failed to fetch environment endpoint ${url}/.well-known/studio/environment (HttpClientError: Transport error (GET ${url}/.well-known/studio/environment)).`;
+  const m3 = {
+    id: "m3",
+    environmentId: EnvironmentId.make("env-m3"),
+    label: "Mac M3",
+    url: "https://m3.tailnet.ts.net",
+    connectUrl: "https://prod-m3.example.com",
+  };
+  const machines = [...snapshot.machines, m3];
+  it("names an old relay port on another machine instead of the raw HTTP error", () => {
+    expect(
+      fleetConnectionReason(raw("https://fixture.tailnet.ts.net:8444"), m3.environmentId, machines),
+    ).toBe("No answer from a relay on Mac M4, port 8444 (fixture.tailnet.ts.net:8444).");
+  });
+  it("names a relay port even when it is the address the fleet lists for the machine", () => {
+    expect(
+      fleetConnectionReason(raw("https://fixture.tailnet.ts.net:8443"), m1, snapshot.machines),
+    ).toBe("No answer from a relay on Mac M4, port 8443 (fixture.tailnet.ts.net:8443).");
+  });
+  it("names the machine's own Tailscale and Connect addresses", () => {
+    expect(fleetConnectionReason(raw(m3.url), m3.environmentId, machines)).toBe(
+      "No answer from its Tailscale address (m3.tailnet.ts.net).",
+    );
+    expect(fleetConnectionReason(raw(m3.connectUrl), m3.environmentId, machines)).toBe(
+      "No answer from its SpecWithCode Connect address (prod-m3.example.com).",
+    );
+  });
+  it("leaves other reasons as they are", () => {
+    expect(fleetConnectionReason("Approve this device again.", m3.environmentId, machines)).toBe(
+      "Approve this device again.",
+    );
+  });
+});
 describe("private machine address", () => {
   it("names the relay for a machine reached through another machine's private name", () => {
     expect(fleetMachineAddress(snapshot.machines[1]!, snapshot.machines)).toBe(

@@ -27,7 +27,6 @@ export const SEND_LABEL = "Send";
 export const SKIP_LABEL = "Don't send";
 export const MAX_DRAFTS_PER_CARD = 5;
 const REOPEN_PREFIX = "update-reopen:";
-const BODY_PREVIEW = 1500;
 
 const part = (value: string) => encodeURIComponent(value);
 
@@ -37,13 +36,16 @@ export function sendRequestId(threadId: string, draftIds: ReadonlyArray<string>)
     .update([...draftIds].toSorted().join(","))
     .digest("hex")
     .slice(0, 16);
-  return RuntimeRequestId.make(`gmail-send:${part(threadId)}:${digest}`);
+  return RuntimeRequestId.make(`gmail-send:v2:${part(threadId)}:${digest}`);
 }
 
-export const draftQuestionId = (draftId: string) => `draft:${draftId}`;
+export const draftQuestionId = (draftId: string, snapshotId: string) =>
+  `draft:${draftId}:snapshot:${snapshotId}`;
 
 export interface CardDraft {
   readonly draftId: string;
+  readonly snapshotId: string;
+  readonly headers: string;
   /** The address it is sent from; named on the card so the person sees which mailbox. */
   readonly from?: string | null | undefined;
   readonly to: string | null;
@@ -65,17 +67,23 @@ export function sendQuestions(
   drafts: ReadonlyArray<CardDraft>,
 ): ReadonlyArray<OrchestrationV2UserInputQuestion> {
   return drafts.map((draft) => {
-    const body =
-      draft.body.length > BODY_PREVIEW ? `${draft.body.slice(0, BODY_PREVIEW)}…` : draft.body;
+    const fence = "`".repeat(
+      Math.max(
+        3,
+        ...[...draft.body.matchAll(/`+/gu), ...draft.headers.matchAll(/`+/gu)].map(
+          (match) => match[0].length + 1,
+        ),
+      ),
+    );
     return {
-      id: draftQuestionId(draft.draftId),
+      id: draftQuestionId(draft.draftId, draft.snapshotId),
       header: sendHeader(draft),
-      question: `${draft.subject ?? "(no subject)"}\n\n${body.trim() || "(empty reply)"}`,
+      question: `Send this exact copy from ${draft.from}? The original draft will remain in Gmail after sending.\n\n${fence}text\n${draft.headers}\n\n${draft.body}\n${fence}`,
       options: [
         {
           label: SEND_LABEL,
           description: draft.from
-            ? `Send this reply from ${draft.from} now.`
+            ? `Send this exact copy from ${draft.from}; keep the original draft.`
             : "Send this reply from your Gmail now.",
         },
         {
@@ -113,19 +121,20 @@ export function sendRefusal(input: {
   readonly threadId: string;
   readonly approvalRequestId: string;
   readonly draftId: string;
+  readonly snapshotId: string;
   readonly requests: ReadonlyArray<
     Pick<OrchestrationV2RuntimeRequest, "id" | "kind" | "status" | "answers">
   >;
 }): string | null {
   const base = baseRequestId(input.approvalRequestId);
-  if (!base.startsWith(`gmail-send:${part(input.threadId)}:`)) {
+  if (!base.startsWith(`gmail-send:v2:${part(input.threadId)}:`)) {
     return "That is not a reply card from this thread. Show the draft with studio_google_gmail_propose_send first.";
   }
   const cards = input.requests.filter(
     (request) => request.kind === "user_input" && baseRequestId(request.id) === base,
   );
   if (cards.length === 0) return "That reply card was not found in this thread.";
-  const questionId = draftQuestionId(input.draftId);
+  const questionId = draftQuestionId(input.draftId, input.snapshotId);
   const answered = cards.filter(
     (card) => card.status === "resolved" && card.answers?.[questionId] !== undefined,
   );
@@ -177,7 +186,15 @@ export const proposeSend = Effect.fn("mcp.google.proposeSend")(function* (
   }
   const { scope, thread, threads, records } = yield* callerRecords("Proposing a reply");
   const threadId: ThreadId = thread.threadId;
-  const requestId = sendRequestId(threadId, unique);
+  const drafts = yield* Effect.forEach(unique, (draftId) =>
+    service
+      .gmailPrepareSend(projectId, threadId, draftId)
+      .pipe(Effect.mapError((error) => failure(`Draft ${draftId}: ${error.detail}`))),
+  );
+  const requestId = sendRequestId(
+    threadId,
+    drafts.map((draft) => draft.snapshotId),
+  );
   // A card an update reopened is the one still waiting; prefer it to the closed original.
   const family = records.runtimeRequests.filter(
     (request) => baseRequestId(request.id) === requestId,
@@ -207,11 +224,6 @@ export const proposeSend = Effect.fn("mcp.google.proposeSend")(function* (
       "Showing the reply card needs a live turn of this thread. List the drafts in your reply instead.",
     );
   }
-  const drafts = yield* Effect.forEach(unique, (draftId) =>
-    service
-      .gmailDraft(projectId, draftId)
-      .pipe(Effect.mapError((error) => failure(`Draft ${draftId}: ${error.detail}`))),
-  );
   const suffix = requestId.slice("gmail-send:".length);
   yield* threads
     .dispatch({
@@ -247,14 +259,32 @@ export const sendApproved = Effect.fn("mcp.google.sendApproved")(function* (
   input: { readonly draftId: string; readonly approvalRequestId: string },
 ) {
   const { thread, records } = yield* callerRecords("Sending a reply");
+  const base = baseRequestId(input.approvalRequestId);
+  const prefix = `draft:${input.draftId}:snapshot:`;
+  const snapshotIds = [
+    ...new Set(
+      records.runtimeRequests
+        .filter((request) => baseRequestId(request.id) === base)
+        .flatMap((request) => Object.keys(request.answers ?? {}))
+        .filter((id) => id.startsWith(prefix))
+        .map((id) => id.slice(prefix.length)),
+    ),
+  ];
+  const snapshotId = snapshotIds[0];
+  if (snapshotIds.length !== 1 || !snapshotId || !/^[a-f0-9]{64}$/u.test(snapshotId))
+    return yield* failure(
+      "Show a new reply card; this card has no immutable message snapshot.",
+      "capability_denied",
+    );
   const refused = sendRefusal({
     threadId: thread.threadId,
     approvalRequestId: input.approvalRequestId,
     draftId: input.draftId,
+    snapshotId,
     requests: records.runtimeRequests,
   });
   if (refused !== null) return yield* failure(refused, "capability_denied");
   return yield* service
-    .gmailSendDraft(projectId, input.draftId)
+    .gmailSendDraft(projectId, input.draftId, thread.threadId, snapshotId)
     .pipe(Effect.mapError((error) => failure(error.detail)));
 });

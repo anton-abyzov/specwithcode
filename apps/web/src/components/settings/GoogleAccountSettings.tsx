@@ -681,9 +681,9 @@ export function GoogleAccountSettingsPanel() {
               <div className="flex flex-col gap-1">
                 <span className="font-medium text-sm">Connect your Google account</span>
                 <span className="text-muted-foreground text-xs">
-                  Pick what SpecWithCode may read. Gmail drafts lets your assistant save reply
-                  drafts for you to send; nothing is ever sent. Google asks you to confirm in your
-                  browser.
+                  Pick what SpecWithCode may read. Gmail drafts lets your assistant save replies and
+                  send an exact copy only after you choose Send on its review card. The original
+                  draft stays in Gmail. Google asks you to confirm access in your browser.
                 </span>
               </div>
             )}

@@ -584,7 +584,11 @@ public final class FixtureEngine: AppEngine {
     case let .thread(ref):
       if let thread = model.thread(ref) {
         session.title = thread.title
-        session.subtitle = thread.projectTitle ?? "Thread"
+        session.subtitle = ChatSession.threadSubtitle(
+          thread.projectTitle ?? "Thread",
+          machine: machine.map { MachineNickname.shortName($0.label) } ?? "",
+          isPersonal: thread.projectRef.flatMap { model.project($0) }?.kind == .personal
+        )
       }
     }
   }

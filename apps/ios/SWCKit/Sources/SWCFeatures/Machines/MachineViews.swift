@@ -148,7 +148,7 @@ struct MachineDetailView: View {
   private func connectionActions(_ machine: MachineSummary) -> some View {
     GroupedCard(separatorInset: 56) {
       if model.connect != nil {
-        WeaveRow("SpecWithCode Connect", subtitle: "Primary connection · sign in or manage your computers", symbol: "person.crop.circle", showsChevron: true) { router.sheet = .globalSettings }
+        WeaveRow("SpecWithCode Connect", subtitle: model.connect?.machineRowSubtitle, symbol: "person.crop.circle", showsChevron: true) { router.sheet = .globalSettings }
           .accessibilityIdentifier("machine.connect")
       }
       if machine.isDisconnected {

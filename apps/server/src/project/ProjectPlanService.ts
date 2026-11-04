@@ -38,6 +38,7 @@ import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import {
   PlanDocument,
   emptyDocument,
@@ -123,6 +124,8 @@ const make = Effect.gen(function* () {
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const runner = yield* ProcessRunner.ProcessRunner;
   const admission = yield* ProjectAdmission.ProjectAdmission;
+  // Absent in tests and tools that run without the update hold: never held.
+  const updateHold = yield* ServiceUpdateHold.optional;
   const self = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity).getEnvironmentId;
   const stamp = () => ({ at: nowIso(), environmentId: self });
   // Capture filesystem services at construction; the public service has no ambient requirements.
@@ -620,6 +623,12 @@ const make = Effect.gen(function* () {
         )
           return yield* fail(projectId, "not_linked");
         const stored = yield* load(projectId);
+        // While an update is held or being verified, a linked copy's merge waits: the update
+        // proves the database unchanged across its restart, and a merge would rewrite a plan
+        // the person never changed. The peer route already refuses every call while held (503
+        // busy, so a driving peer never takes the pair as in step) and this server's own pass
+        // skips; this covers the app window's merge, whose next 60 s pass brings it in.
+        if (yield* updateHold.isHeld) return { changed: false, revision: stored.revision };
         const plan = yield* nativePlan(projectId, stored);
         const merged = mergeNativePlans(
           { plan, environmentId: self },

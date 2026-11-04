@@ -354,7 +354,7 @@ struct SidebarView: View {
       EmptyView()
     } else if let aide = model.aide, !aide.archived {
       Section {
-        SidebarRow(title: "Aide") {
+        SidebarRow(title: "Aide", subtitle: aide.machineLabel.isEmpty ? nil : aide.machineLabel) {
           ProjectAvatar(icon: aide.icon.avatarIcon, title: aide.title, size: 24, style: .plain)
         } trailing: {
           ProjectStatusGlyphs(project: aide)

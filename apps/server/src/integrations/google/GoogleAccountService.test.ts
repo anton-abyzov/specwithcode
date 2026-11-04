@@ -40,6 +40,9 @@ const makeHarness = (
   /** Pass a previous harness's secrets to model a restart. */
   secrets = new Map<string, Uint8Array>(),
 ) => {
+  const draftRaw = Buffer.from(
+    "To: Ann <ann@example.com>\r\nSubject: Re: Dinner\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nThursday works.",
+  ).toString("base64url");
   const calls: Call[] = [];
   /** Which client id each token call used. */
   const tokenClients: string[] = [];
@@ -116,6 +119,7 @@ const makeHarness = (
             id: "d1",
             message: {
               id: "dm1",
+              raw: draftRaw,
               threadId: "t1",
               payload: {
                 mimeType: "text/plain",
@@ -157,7 +161,18 @@ const makeHarness = (
           ServerSecretStore.ServerSecretStore.of({
             get: (name) => Effect.succeed(Option.fromNullishOr(secrets.get(name))),
             set: (name, value) => Effect.sync(() => void secrets.set(name, value)),
-            create: (name, value) => Effect.sync(() => void secrets.set(name, value)),
+            create: (name, value) =>
+              Effect.suspend(() => {
+                if (secrets.has(name))
+                  return Effect.fail(
+                    new ServerSecretStore.SecretStorePersistError({
+                      resource: name,
+                      cause: "EEXIST",
+                    }),
+                  );
+                secrets.set(name, value);
+                return Effect.void;
+              }),
             getOrCreateRandom: () => Effect.die("unused"),
             remove: (name) => Effect.sync(() => void secrets.delete(name)),
           }),
@@ -186,6 +201,7 @@ const makeHarness = (
     secrets,
     calls,
     posts,
+    draftRaw,
     revoked,
     tokenClients,
     failRefresh: (error: GoogleApi.GoogleApiError | null) => {
@@ -747,46 +763,53 @@ it.effect("drops a saved sign-in after a restart with a different SpecWithCode c
   }),
 );
 
-it.effect("reads a draft back and sends it only through Gmail drafts", () =>
-  Effect.gen(function* () {
-    const harness = makeHarness();
-    yield* Effect.gen(function* () {
-      const google = yield* GoogleAccountService.GoogleAccountService;
-      yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
-      harness.grantDrafts();
-      const signIn = yield* google.startSignIn({ services: ["gmail", "gmailDrafts"] });
-      const authorize = new URL(signIn.signIn!.authorizationUrl);
-      yield* google.completeSignIn({
-        callbackUrl: `?code=good-code&state=${authorize.searchParams.get("state")}`,
-      });
-      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail"] });
-      assert.include(
-        failureDetail(yield* Effect.exit(google.gmailSendDraft(PROJECT, "d1"))),
-        "Gmail drafts is not turned on for this project",
-      );
-      assert.strictEqual(harness.posts.length, 0);
-      yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail", "gmailDrafts"] });
-      assert.deepStrictEqual(yield* google.gmailDraft(PROJECT, "d1"), {
-        draftId: "d1",
-        messageId: "dm1",
-        threadId: "t1",
-        to: "Ann <ann@example.com>",
-        subject: "Re: Dinner",
-        body: "Thursday works.",
-        from: "me@example.com",
-      });
-      assert.include(
-        failureDetail(yield* Effect.exit(google.gmailSendDraft(PROJECT, "../send"))),
-        "not a Gmail draft id",
-      );
-      yield* google.gmailSendDraft(PROJECT, "d1");
-      assert.deepStrictEqual(harness.posts.at(-1), {
-        operation: "Gmail send",
-        url: "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
-        body: { id: "d1" },
-      });
-    }).pipe(Effect.provide(harness.layer));
-  }),
+it.effect(
+  "reads a draft back and sends only its immutable approved copy, retaining the original",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const google = yield* GoogleAccountService.GoogleAccountService;
+        yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+        harness.grantDrafts();
+        const signIn = yield* google.startSignIn({ services: ["gmail", "gmailDrafts"] });
+        const authorize = new URL(signIn.signIn!.authorizationUrl);
+        yield* google.completeSignIn({
+          callbackUrl: `?code=good-code&state=${authorize.searchParams.get("state")}`,
+        });
+        yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail"] });
+        assert.include(
+          failureDetail(
+            yield* Effect.exit(google.gmailSendDraft(PROJECT, "d1", "chat", "invalid")),
+          ),
+          "Gmail drafts is not turned on for this project",
+        );
+        assert.strictEqual(harness.posts.length, 0);
+        yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail", "gmailDrafts"] });
+        assert.deepStrictEqual(yield* google.gmailDraft(PROJECT, "d1"), {
+          draftId: "d1",
+          messageId: "dm1",
+          threadId: "t1",
+          to: "Ann <ann@example.com>",
+          subject: "Re: Dinner",
+          body: "Thursday works.",
+          from: "me@example.com",
+        });
+        assert.include(
+          failureDetail(
+            yield* Effect.exit(google.gmailSendDraft(PROJECT, "../send", "chat", "invalid")),
+          ),
+          "not a Gmail draft id",
+        );
+        const approval = yield* google.gmailPrepareSend(PROJECT, "chat", "d1");
+        yield* google.gmailSendDraft(PROJECT, "d1", "chat", approval.snapshotId);
+        assert.deepStrictEqual(harness.posts.at(-1), {
+          operation: "Gmail send approved copy",
+          url: "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+          body: { raw: harness.draftRaw, threadId: "t1" },
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
 );
 
 it.effect("remembers where the briefing was set up until another account connects", () =>
@@ -1019,10 +1042,17 @@ it.effect("drafts and sends from the mailbox that received the message", () =>
       );
       const shown = yield* google.gmailDraft(PROJECT, draft.draftId);
       assert.strictEqual(shown.from, WORK);
-      const sent = yield* google.gmailSendDraft(PROJECT, draft.draftId);
+      const approval = yield* google.gmailPrepareSend(PROJECT, "chat", draft.draftId);
+      const sent = yield* google.gmailSendDraft(
+        PROJECT,
+        draft.draftId,
+        "chat",
+        approval.snapshotId,
+      );
       assert.strictEqual(sent.from, WORK);
       const send = harness.posts.at(-1)!;
-      assert.deepStrictEqual(send.body, { id: "d1" });
+      assert.deepStrictEqual(send.body, { raw: harness.draftRaw, threadId: "t1" });
+      assert.isTrue(sent.sourceDraftRetained);
       // Both calls went out with the work account's token.
       const workCalls = harness.calls.slice(-2).map((call) => call.token);
       assert.strictEqual(new Set(workCalls).size, 1);
@@ -1094,3 +1124,26 @@ it.effect("an update keeps the one saved account, its switches and its briefing"
     }).pipe(Effect.provide(restarted.layer));
   }),
 );
+
+it.effect("an approved draft cannot move to a replacement account in the same primary slot", () => {
+  const harness = makeHarness();
+  harness.grantDrafts();
+  return Effect.gen(function* () {
+    const google = yield* GoogleAccountService.GoogleAccountService;
+    yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+    yield* connectForHealth(google);
+    yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail", "gmailDrafts"] });
+    const approved = yield* google.gmailPrepareSend(PROJECT, "chat", "d1");
+    yield* google.disconnect({ forget: true });
+    harness.signInAs("replacement@example.com");
+    yield* connectForHealth(google);
+    yield* google.setProjectAccess({ projectId: PROJECT, services: ["gmail", "gmailDrafts"] });
+    assert.include(
+      failureDetail(
+        yield* Effect.exit(google.gmailSendDraft(PROJECT, "d1", "chat", approved.snapshotId)),
+      ),
+      "draft or sending account changed",
+    );
+    assert.strictEqual(harness.posts.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});

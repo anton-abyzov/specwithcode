@@ -338,7 +338,7 @@ final class LiveServerTests: XCTestCase {
 
   /// A drawer row, labelled with its title; status is spoken as its value.
   private func drawerRow(_ title: String) -> XCUIElement {
-    app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
+    app.buttons.matching(NSPredicate(format: "label == %@ OR label BEGINSWITH %@", title, "\(title),")).firstMatch
   }
 
   /// The drawer's machine row, e.g. "Live Test Mac, Online". The thread

@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
 import {
   applyMergeStepToHistory,
@@ -131,6 +132,8 @@ const make = Effect.gen(function* () {
   const workspace = yield* ProjectWorkspaceService.ProjectWorkspaceService;
   const histories = yield* LinkedMemoryHistory.LinkedMemoryHistory;
   const environment = yield* ServerEnvironment.ServerEnvironment;
+  // Absent in tests and tools that run without the update hold: never held.
+  const updateHold = yield* ServiceUpdateHold.optional;
 
   const load = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -462,6 +465,11 @@ const make = Effect.gen(function* () {
     admission.withLock(
       input.projectId,
       Effect.gen(function* () {
+        // While an update is held or being verified, nothing is merged in: the update proves
+        // `project_memory` unchanged across its restart. The peer route already refuses while
+        // held; this covers the app window's merge. Its next pass merges after the hold.
+        if (yield* updateHold.isHeld)
+          return yield* fail("paused", "This machine is updating; try again in a minute.");
         const project = yield* load(input.projectId);
         // ...nor takes another machine's in.
         if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");

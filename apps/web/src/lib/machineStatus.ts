@@ -26,7 +26,7 @@ export function machineStatus(
   canOperate = true,
   isThisMachine = false,
 ): MachineStatus {
-  const reason = connection.error ?? null;
+  const reason = connection.error ? readableConnectionReason(connection.error) : null;
   if (isThisMachine && isThisMachineCatchingUp(connection.phase))
     return { text: THIS_MACHINE_CATCHING_UP, reason: null, retryable: false };
   switch (connection.phase) {
@@ -137,7 +137,7 @@ export function savedMachineStatus(
     return { text: "Off", tone: "muted", ...quiet };
   if (isThisMachine && isThisMachineCatchingUp(connection.phase))
     return { text: "Catching up", tone: "muted", ...quiet };
-  const reason = connection.error ?? null;
+  const reason = connection.error ? readableConnectionReason(connection.error) : null;
   switch (connection.phase) {
     case "connected":
       return { text: "Connected", tone: "muted", ...quiet };
@@ -215,4 +215,41 @@ export function environmentUnavailableSendToast(input: {
       : "Not connected: message not sent",
     description: `Your message stays in the composer. Send it once ${input.label ?? "the machine"} is back${input.continueOn ? `, or continue on ${input.continueOn}` : ""}.`,
   };
+}
+
+/**
+ * Says which address did not answer instead of the raw HTTP client error
+ * ("Failed to fetch environment endpoint https://…/.well-known/studio/environment
+ * (HttpClientError: Transport error (GET …))"). `describe` names the address in
+ * words (for example "a relay on M4 Max, port 8444"); without it, or when it
+ * returns null, the host is shown. Other reasons pass through unchanged.
+ */
+export function readableConnectionReason(
+  reason: string,
+  describe?: (url: URL) => string | null,
+): string {
+  // Only a request that got no answer at all; a certificate, CORS or encoding
+  // failure keeps its own wording, since "no answer" would point the wrong way.
+  const failed =
+    /^Failed to fetch environment endpoint (https?:\/\/\S+) \((?:[^()]*: )?(?:Transport error|TypeError: (?:fetch failed|Failed to fetch|Load failed|NetworkError))/.exec(
+      reason,
+    );
+  const timedOut = /^Environment endpoint (https?:\/\/\S+) timed out after (\d+)ms\.?$/.exec(
+    reason,
+  );
+  const raw = failed?.[1] ?? timedOut?.[1];
+  if (raw === undefined) return reason;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return reason;
+  }
+  const words = describe?.(url) ?? null;
+  const where = words ? `${words} (${url.host})` : url.host;
+  if (timedOut) {
+    const seconds = Math.max(1, Math.round(Number(timedOut[2]) / 1000));
+    return `No answer from ${where} within ${seconds}s.`;
+  }
+  return `No answer from ${where}.`;
 }

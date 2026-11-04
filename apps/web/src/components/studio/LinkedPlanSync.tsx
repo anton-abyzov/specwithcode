@@ -36,7 +36,9 @@ export function LinkedPlanSync() {
         environment.serverConfig?.environment.capabilities.linkedPlans === true &&
         operate.has(environmentId) &&
         read.has(environmentId)
-        ? { label: environment.label || "Another machine" }
+        ? // No placeholder: an empty name keeps the one the plan stores (the server's, from the
+          // fleet), where a placeholder merged first would have stayed.
+          { label: environment.label }
         : null;
     });
   }, [projects, environments, operate, read]);

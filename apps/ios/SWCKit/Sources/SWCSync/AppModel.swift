@@ -388,6 +388,11 @@ public final class ChatSession: Identifiable {
   /// Opening this chat may create the project's coordinator thread.
   public var startsCoordinator = true
 
+  /// The line under a thread's title. Each machine has its own Aide, so an Aide thread names the machine it runs on.
+  public static func threadSubtitle(_ projectTitle: String, machine: String, isPersonal: Bool) -> String {
+    isPersonal && !machine.isEmpty ? "\(projectTitle) · \(machine)" : projectTitle
+  }
+
   public init(id: ChatTarget, title: String, subtitle: String, machineLabel: String, machineOnline: Bool) {
     self.id = id
     self.title = title
@@ -683,7 +688,7 @@ public final class AppModel {
     case let .thread(t):
       let summary = thread(t)
       let machine = machine(t.environmentId)
-      s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: summary?.projectTitle ?? "Thread", machineLabel: machine?.displayName ?? "", machineOnline: machine?.status.isOnline ?? false)
+      s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: ChatSession.threadSubtitle(summary?.projectTitle ?? "Thread", machine: machine?.displayName ?? "", isPersonal: summary?.projectRef.flatMap { project($0) }?.kind == .personal), machineLabel: machine?.displayName ?? "", machineOnline: machine?.status.isOnline ?? false)
     }
     sessions[target] = s
     return s

@@ -22,7 +22,8 @@ import { GoogleToolkit } from "./tools.ts";
 
 const EPOCH = DateTime.makeUnsafe("2026-11-03T08:00:00.000Z");
 const caller = liveThreadShell(ThreadId.make("briefing-thread"));
-const card = sendRequestId(caller.id, ["d1", "d2"]);
+const snapshot = (id: string) => (id === "d1" ? "a" : "b").repeat(64);
+const card = sendRequestId(caller.id, [snapshot("d1"), snapshot("d2")]);
 
 const request = (
   id: string,
@@ -36,13 +37,18 @@ const request = (
 });
 
 describe("sendRefusal", () => {
-  const base = { threadId: caller.id, approvalRequestId: card, draftId: "d1" };
+  const base = {
+    threadId: caller.id,
+    approvalRequestId: card,
+    draftId: "d1",
+    snapshotId: snapshot("d1"),
+  };
 
   it("allows a draft answered Send on this thread's card", () => {
     expect(
       sendRefusal({
         ...base,
-        requests: [request(card, "resolved", { [draftQuestionId("d1")]: "Send" })],
+        requests: [request(card, "resolved", { [draftQuestionId("d1", snapshot("d1"))]: "Send" })],
       }),
     ).toBeNull();
     // A card an update reopened carries a prefixed id; the reopened answer counts.
@@ -51,7 +57,9 @@ describe("sendRefusal", () => {
         ...base,
         requests: [
           request(card, "cancelled"),
-          request(`update-reopen:${card}`, "resolved", { [draftQuestionId("d1")]: ["Send"] }),
+          request(`update-reopen:${card}`, "resolved", {
+            [draftQuestionId("d1", snapshot("d1"))]: ["Send"],
+          }),
         ],
       }),
     ).toBeNull();
@@ -61,17 +69,21 @@ describe("sendRefusal", () => {
     ["an unanswered card", [request(card, "pending")], /not answered/u],
     [
       "Don't send",
-      [request(card, "resolved", { [draftQuestionId("d1")]: "Don't send" })],
+      [request(card, "resolved", { [draftQuestionId("d1", snapshot("d1"))]: "Don't send" })],
       /did not choose Send/u,
     ],
     [
       "a typed answer",
-      [request(card, "resolved", { [draftQuestionId("d1")]: "Send it but say Friday" })],
+      [
+        request(card, "resolved", {
+          [draftQuestionId("d1", snapshot("d1"))]: "Send it but say Friday",
+        }),
+      ],
       /did not choose Send/u,
     ],
     [
       "Send for a different draft",
-      [request(card, "resolved", { [draftQuestionId("d2")]: "Send" })],
+      [request(card, "resolved", { [draftQuestionId("d2", snapshot("d2"))]: "Send" })],
       /no answer for that draft/u,
     ],
     ["no card at all", [], /not found/u],
@@ -85,7 +97,7 @@ describe("sendRefusal", () => {
       sendRefusal({
         ...base,
         approvalRequestId: other,
-        requests: [request(other, "resolved", { [draftQuestionId("d1")]: "Send" })],
+        requests: [request(other, "resolved", { [draftQuestionId("d1", snapshot("d1"))]: "Send" })],
       }),
     ).toMatch(/not a reply card from this thread/u);
     expect(
@@ -93,7 +105,9 @@ describe("sendRefusal", () => {
         ...base,
         approvalRequestId: "ask-user:briefing-thread:x",
         requests: [
-          request("ask-user:briefing-thread:x", "resolved", { [draftQuestionId("d1")]: "Send" }),
+          request("ask-user:briefing-thread:x", "resolved", {
+            [draftQuestionId("d1", snapshot("d1"))]: "Send",
+          }),
         ],
       }),
     ).toMatch(/not a reply card/u);
@@ -101,12 +115,19 @@ describe("sendRefusal", () => {
 
   it("asks one Send or Don't send question per draft with the reply as Gmail holds it", () => {
     const [question] = sendQuestions([
-      { draftId: "d1", to: "Dana <dana@example.com>", subject: "Re: Lunch", body: "Friday works." },
+      {
+        draftId: "d1",
+        snapshotId: snapshot("d1"),
+        headers: "to: Dana <dana@example.com>",
+        to: "Dana <dana@example.com>",
+        subject: "Re: Lunch",
+        body: "Friday works.",
+      },
     ]);
     expect(question).toMatchObject({
-      id: "draft:d1",
+      id: draftQuestionId("d1", snapshot("d1")),
       header: "Reply to Dana <dana@example.com>",
-      question: "Re: Lunch\n\nFriday works.",
+      question: expect.stringContaining("Friday works."),
       allowCustomAnswer: true,
     });
     expect(question?.options.map((option) => option.label)).toEqual(["Send", "Don't send"]);
@@ -116,6 +137,8 @@ describe("sendRefusal", () => {
     const [question] = sendQuestions([
       {
         draftId: "0123456789ab:d1",
+        snapshotId: snapshot("d1"),
+        headers: "to: dana@example.com",
         from: "work@example.com",
         to: "Dana <dana@example.com>",
         subject: "Re: Lunch",
@@ -123,7 +146,9 @@ describe("sendRefusal", () => {
       },
     ]);
     expect(question?.header).toBe("Reply to Dana <dana@example.com> from work@example.com");
-    expect(question?.options[0]?.description).toBe("Send this reply from work@example.com now.");
+    expect(question?.options[0]?.description).toBe(
+      "Send this exact copy from work@example.com; keep the original draft.",
+    );
   });
 });
 
@@ -145,9 +170,11 @@ const fixture = (requests: ReadonlyArray<ReturnType<typeof request>>) => {
   const dispatched: unknown[] = [];
   const deps = Layer.mergeAll(
     Layer.mock(Google.GoogleAccountService)({
-      gmailDraft: (_projectId, draftId) =>
+      gmailPrepareSend: (_projectId, _chatId, draftId) =>
         Effect.succeed({
           draftId,
+          snapshotId: snapshot(draftId),
+          headers: "to: dana@example.com",
           messageId: `m-${draftId}`,
           threadId: "t1",
           to: "dana@example.com",
@@ -160,6 +187,7 @@ const fixture = (requests: ReadonlyArray<ReturnType<typeof request>>) => {
           sent.push(draftId);
           return {
             sent: true as const,
+            sourceDraftRetained: true as const,
             from: "me@example.com",
             messageId: "sent-1",
             threadId: "t1",
@@ -222,8 +250,14 @@ it.effect("shows one reply card in the calling thread with each draft from Gmail
       threadId: caller.id,
       requestId: card,
       questions: [
-        { id: "draft:d1", question: "Re: Lunch\n\nReply d1" },
-        { id: "draft:d2", question: "Re: Lunch\n\nReply d2" },
+        {
+          id: draftQuestionId("d1", snapshot("d1")),
+          question: expect.stringContaining("Reply d1"),
+        },
+        {
+          id: draftQuestionId("d2", snapshot("d2")),
+          question: expect.stringContaining("Reply d2"),
+        },
       ],
     });
     expect(f.sent).toEqual([]);
@@ -231,7 +265,12 @@ it.effect("shows one reply card in the calling thread with each draft from Gmail
 });
 
 it.effect("sends a draft only after the person chose Send for it", () => {
-  const f = fixture([request(card, "resolved", { "draft:d1": "Send", "draft:d2": "Don't send" })]);
+  const f = fixture([
+    request(card, "resolved", {
+      [draftQuestionId("d1", snapshot("d1"))]: "Send",
+      [draftQuestionId("d2", snapshot("d2"))]: "Don't send",
+    }),
+  ]);
   return Effect.gen(function* () {
     const sent = yield* call("studio_google_gmail_send_draft", {
       draftId: "d1",
@@ -257,4 +296,33 @@ it.effect("sends nothing while the card waits for an answer", () => {
     expect(refused).toMatchObject({ code: "capability_denied" });
     expect(f.sent).toEqual([]);
   }).pipe(Effect.provide(f.layer));
+});
+
+it("refuses legacy cards and includes the complete headers/body without markdown escape", () => {
+  const legacy = `gmail-send:${caller.id}:legacy`;
+  expect(
+    sendRefusal({
+      threadId: caller.id,
+      draftId: "d1",
+      snapshotId: snapshot("d1"),
+      approvalRequestId: legacy,
+      requests: [request(legacy, "resolved", { "draft:d1": "Send" })],
+    }),
+  ).toMatch(/not a reply card/);
+  const body = "x".repeat(1800) + "\n```\nEND OF APPROVED MESSAGE";
+  const [question] = sendQuestions([
+    {
+      draftId: "d1",
+      snapshotId: snapshot("d1"),
+      from: "me@example.com",
+      to: "ann@example.com",
+      subject: "Hi",
+      headers: "to: ann@example.com\nbcc: visible@example.com",
+      body,
+    },
+  ]);
+  expect(question?.question).toContain(body);
+  expect(question?.question).toContain("bcc: visible@example.com");
+  expect(question?.question).toContain("````text");
+  expect(question?.question).toContain("original draft will remain");
 });

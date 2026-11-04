@@ -192,6 +192,23 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
       attempt: number,
     ): Effect.Effect<"done" | "retry"> =>
       Effect.gen(function* () {
+        // A delayed retry must use today's mode, prompt and policy, not admission's snapshot.
+        const records = yield* threads
+          .getThreadRecords(threadId, ["runtimeRequests"])
+          .pipe(Effect.orElseSucceed(() => undefined));
+        if (records === undefined) return "done";
+        if (
+          (yield* runtimeModeOf(records.thread).pipe(Effect.orElseSucceed(() => undefined))) !==
+          "full-access"
+        )
+          return "done";
+        if (
+          !records.runtimeRequests.some(
+            (candidate) => candidate.id === request.id && isFullAccessPrompt(candidate),
+          )
+        )
+          return "done";
+        if (!teamRulesAllowsFullAccessApprovals(yield* currentTeamRules)) return "done";
         const exit = yield* Effect.exit(
           threads.dispatch({
             type: "runtime-request.respond",

@@ -37,7 +37,12 @@ import {
 } from "../../studio/fleetAutoConnect";
 import { useEnvironments } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import { isThisMachineCatchingUp, lastSeenLabel, machineStatus } from "../../lib/machineStatus";
+import {
+  isThisMachineCatchingUp,
+  lastSeenLabel,
+  machineStatus,
+  readableConnectionReason,
+} from "../../lib/machineStatus";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
@@ -285,7 +290,14 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       lastSeen: quiet
         ? null
         : lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now()),
-      reason: quiet ? null : status.reason,
+      reason:
+        quiet || status.reason === null
+          ? null
+          : fleetConnectionReason(
+              environment.connection.error ?? "",
+              environment.environmentId,
+              snapshot?.machines ?? [],
+            ),
       retryable: status.retryable,
       tone: environment.connection.phase === "unsupported" ? "muted" : "error",
     };
@@ -504,14 +516,65 @@ export function fleetMachineAddress(
   if (machine.transport === "connect" && machine.connectUrl)
     return new URL(machine.connectUrl).host;
   const url = new URL(machine.url);
-  const relay = url.port
-    ? machines.find((other) => {
-        if (other.id === machine.id) return false;
-        const otherUrl = new URL(other.url);
-        return otherUrl.hostname === url.hostname && !otherUrl.port;
-      })
-    : undefined;
+  const relay = relayHostMachine(url, machine.id, machines);
   return relay ? `Through ${relay.label}, port ${url.port}` : url.host;
+}
+
+/**
+ * The other machine whose private name an address is a port on (a relay to
+ * this machine), or undefined when the address is not a relay port.
+ */
+function relayHostMachine<M extends Pick<StudioFleetMachine, "id" | "url">>(
+  url: URL,
+  excludeId: string,
+  machines: ReadonlyArray<M>,
+): M | undefined {
+  if (!url.port) return undefined;
+  return machines.find((other) => {
+    if (other.id === excludeId) return false;
+    try {
+      const otherUrl = new URL(other.url);
+      return otherUrl.hostname === url.hostname && !otherUrl.port;
+    } catch {
+      return false;
+    }
+  });
+}
+
+function originOf(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Why a saved machine can't be reached, naming the address this window tried
+ * in words: its own Tailscale or SpecWithCode Connect address, or a relay port
+ * on another machine. The fleet card shows the address the main machine's
+ * server reached, which can differ from the one saved in this window.
+ */
+export function fleetConnectionReason(
+  reason: string,
+  environmentId: string,
+  machines: ReadonlyArray<
+    Pick<StudioFleetMachine, "id" | "label" | "url" | "connectUrl" | "environmentId">
+  >,
+): string {
+  const machine = machines.find((candidate) => candidate.environmentId === environmentId);
+  return readableConnectionReason(reason, (url) => {
+    if (machine && url.origin === originOf(machine.connectUrl))
+      return "its SpecWithCode Connect address";
+    // A relay port on another machine reads as such even when it is the
+    // address the fleet lists for this machine.
+    const relay = relayHostMachine(url, machine?.id ?? "", machines);
+    if (relay) return `a relay on ${relay.label}, port ${url.port}`;
+    if (machine && url.origin === originOf(machine.url))
+      return url.hostname.toLowerCase().endsWith(".ts.net") ? "its Tailscale address" : null;
+    return null;
+  });
 }
 
 /** Which address answered the last check, in words. */

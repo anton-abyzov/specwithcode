@@ -9,6 +9,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
@@ -305,6 +306,29 @@ it.effect("replicates deletions but never MEMORY.md", () =>
       assert.deepStrictEqual(result.onRight.applied, ["MEMORY.md"]);
       assert.deepStrictEqual(yield* a.contents, { "MEMORY.md": "# index" });
       assert.deepStrictEqual(yield* b.contents, { "MEMORY.md": "# index" });
+    }),
+  ),
+);
+
+it.effect("merges no memory while an update holds the service, and merges after it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const held = yield* Ref.make(false);
+      const a = yield* machine(alpha, "Alpha");
+      const b = yield* machine(beta, "Beta", undefined, "code", undefined, held);
+      yield* a.write("notes.md", "v1");
+      const memory = yield* a.exported;
+      const versions = yield* b.history;
+
+      // The update restarted the service and is verifying it: the app window merges in.
+      yield* Ref.set(held, true);
+      assert.strictEqual(refusal(yield* Effect.exit(b.merge(alpha, memory))), "paused");
+      assert.deepStrictEqual(yield* b.contents, {});
+      assert.deepStrictEqual(yield* b.history, versions);
+
+      yield* Ref.set(held, false);
+      assert.deepStrictEqual((yield* b.merge(alpha, memory)).applied, ["notes.md"]);
+      assert.deepStrictEqual(yield* b.contents, { "notes.md": "v1" });
     }),
   ),
 );
