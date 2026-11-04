@@ -199,6 +199,48 @@ describe("thread view delivery status", () => {
     expect(currentLifecycleRequest(projection({ laterMessage: true }))).toBeNull();
   });
 
+  it("only accepts a deployment exemption for an app-owned delegated worker", () => {
+    const completed = projection();
+    const worker: typeof completed.thread = {
+      ...completed.thread,
+      creationSource: "mcp",
+      lineage: {
+        parentThreadId: "coordinator",
+        rootThreadId: "coordinator",
+        relationshipToParent: "subagent",
+      } as typeof completed.thread.lineage,
+      forkedFrom: { type: "node", nodeId: "delegation" } as typeof completed.thread.forkedFrom,
+    };
+    const workerRequest = currentLifecycleRequest({ ...completed, thread: worker })!;
+    const deployment = {
+      status: "not_applicable",
+      rationale: "The assigned work ends at merge. The parent owns release.",
+    } as const;
+    const receipt = { ...ready, ...workerRequest, deployment };
+    expect(evaluateLifecycleEvidence(workerRequest, receipt, now)).toBe("accepted");
+    for (const patch of [
+      { creationSource: "provider" as const },
+      { forkedFrom: null },
+      { lineage: { ...worker.lineage, parentThreadId: null } },
+    ]) {
+      const unqualified = currentLifecycleRequest({
+        ...completed,
+        thread: { ...worker, ...patch },
+      })!;
+      expect(evaluateLifecycleEvidence(unqualified, receipt, now)).toBe("incomplete_evidence");
+    }
+    for (const patch of [
+      { deployment: { ...deployment, rationale: " " } },
+      { deployment: { status: "pending" as const, reason: "Release required" } },
+      { push: deployment },
+      { merge: deployment },
+    ]) {
+      expect(evaluateLifecycleEvidence(workerRequest, { ...receipt, ...patch }, now)).toBe(
+        "incomplete_evidence",
+      );
+    }
+  });
+
   it("keeps a steer into the turn with its request", () => {
     expect(currentLifecycleRequest(projection({ steer: true }))?.runId).toBe("run-1");
   });

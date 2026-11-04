@@ -32,12 +32,15 @@ const PART_LABELS: Readonly<Record<string, string>> = {
 /** A part key of an app folder measurement as people read it. */
 export const homeUsagePartLabel = (key: string): string => PART_LABELS[key] ?? key;
 
-/** "worktrees 102 GB, database 23 GB, update backups 21 GB": the largest parts first. */
+/** Names the shown categories and explicitly accounts for any omitted bytes. */
 export function describeHomeUsageParts(usage: StorageHomeUsage, limit = 3): string {
-  return usage.parts
-    .slice(0, limit)
-    .map((part) => `${homeUsagePartLabel(part.key)} ${formatStorageFreeSpace(part.bytes)}`)
-    .join(", ");
+  const shown = usage.parts.slice(0, limit);
+  const descriptions = shown.map(
+    (part) => `${homeUsagePartLabel(part.key)} ${formatStorageFreeSpace(part.bytes)}`,
+  );
+  const remaining = usage.totalBytes - shown.reduce((sum, part) => sum + part.bytes, 0);
+  if (remaining > 0) descriptions.push(`remaining categories ${formatStorageFreeSpace(remaining)}`);
+  return descriptions.join(", ");
 }
 
 function homeUsageNotice(

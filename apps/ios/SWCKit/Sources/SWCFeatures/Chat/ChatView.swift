@@ -78,10 +78,6 @@ private struct ChatScreen: View {
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
       .deviceViewer($deviceViewer)
-      .attachmentPickers(isChoosing: $choosingAttachment, onLoading: { loading in
-        if loading { router.beginPhotoBatch(for: target) }
-        else { router.finishPhotoBatch(for: target) }
-      }) { addPhotos($0, failed: $1) }
       .task(id: router.pendingDeviceViewer) {
         // A launch route opens the viewer once this thread is on screen.
         guard let pending = router.pendingDeviceViewer, pending.machineId == target.threadRef?.environmentId else { return }
@@ -113,13 +109,13 @@ private struct ChatScreen: View {
         }
         Button("Cancel", role: .cancel) {}
       }
-      .confirmationDialog("Archive this thread?", isPresented: $confirmArchive, titleVisibility: .visible) {
+      .alert("Archive this thread?", isPresented: $confirmArchive) {
         Button("Archive thread") { if let thread = target.threadRef { perform(.archive, on: thread) } }
         Button("Cancel", role: .cancel) {}
       } message: {
         Text("It leaves your lists. You can find it again in SpecWithCode on \(session.machineLabel).")
       }
-      .confirmationDialog("Delete this thread?", isPresented: $confirmDelete, titleVisibility: .visible) {
+      .alert("Delete this thread?", isPresented: $confirmDelete) {
         Button("Delete thread", role: .destructive) { if let thread = target.threadRef { perform(.delete, on: thread) } }
         Button("Cancel", role: .cancel) {}
       } message: {
@@ -752,9 +748,17 @@ private struct ChatScreen: View {
         focus: $composerFocused,
         onSend: { send() },
         onStop: session.isStale ? nil : { stop() },
-        onAttach: { choosingAttachment = true },
         onAcceptSuggestion: { draft.wrappedValue = $0 }
       )
+      .attachmentControl {
+        WeaveIconButton("plus", label: "Attach", style: .sunken, size: WeaveSize.innerControl) {
+          choosingAttachment = true
+        }
+        .attachmentPickers(isChoosing: $choosingAttachment, onLoading: { loading in
+          if loading { router.beginPhotoBatch(for: target) }
+          else { router.finishPhotoBatch(for: target) }
+        }) { addPhotos($0, failed: $1) }
+      }
     }
     .frame(maxWidth: WeaveSize.readableColumn)
     .frame(maxWidth: .infinity)

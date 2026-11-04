@@ -302,13 +302,13 @@ private struct AttachmentPickers: ViewModifier {
     content
       .confirmationDialog("Attach", isPresented: showingChoice, titleVisibility: .hidden) {
         Button("Photo Library") { showingPhotos = true }
-        Button("Take Photo") { showingCamera = true }
+        Button("Take Photo") { showingCamera = true }.disabled(!Self.hasCamera)
         Button("Cancel", role: .cancel) {}
       }
       .onChange(of: isChoosing) { _, choosing in
         guard choosing else { return }
         // Without a camera the only choice is the library, so skip the question.
-        if !Self.hasCamera { isChoosing = false; showingPhotos = true }
+        if !Self.offersChoices { isChoosing = false; showingPhotos = true }
       }
       .photosPicker(isPresented: $showingPhotos, selection: $selection, maxSelectionCount: Self.maximumAtOnce, matching: .images, preferredItemEncoding: .current)
       .onChange(of: selection) { _, items in
@@ -334,7 +334,16 @@ private struct AttachmentPickers: ViewModifier {
   }
 
   private var showingChoice: Binding<Bool> {
-    Binding(get: { isChoosing && Self.hasCamera }, set: { isChoosing = $0 })
+    Binding(get: { isChoosing && Self.offersChoices }, set: { isChoosing = $0 })
+  }
+
+  private static var offersChoices: Bool {
+    #if DEBUG
+    // Exercise iPad anchoring in a camera-less simulator, only on sample data.
+    let args = ProcessInfo.processInfo.arguments
+    if args.contains("-SWCFixture") && args.contains("-SWCAttachmentChoices") { return true }
+    #endif
+    return hasCamera
   }
 
   private static var hasCamera: Bool {

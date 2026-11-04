@@ -41,7 +41,42 @@ function measurePicker(input: { clientWidth: number; flexGrow: string; maxWidth?
 
 afterEach(() => vi.unstubAllGlobals());
 
+function measureWithMachine(chipWidth: number) {
+  const box = (width: number) => ({ getBoundingClientRect: () => ({ width }) });
+  const picker = { ...box(80), querySelector: () => null, querySelectorAll: () => [] };
+  const nodes: Record<string, unknown> = {
+    "[data-chat-provider-model-picker]": picker,
+    "[data-resting-controls-overflow]": box(24),
+    "[data-thread-machine-chip]": box(chipWidth),
+    "[data-thread-machine-separator]": box(1),
+  };
+  const controls = {
+    querySelector: (selector: string) => nodes[selector] ?? null,
+    querySelectorAll: () => [{ dataset: {}, querySelectorAll: () => [], ...box(140) }],
+  };
+  vi.stubGlobal("getComputedStyle", (element: unknown) =>
+    element === picker ? { minWidth: "52px", maxWidth: "none" } : { columnGap: "4px" },
+  );
+  return measureRestingComposerControls(controls as unknown as HTMLElement)!;
+}
+
 describe("measureRestingComposerControls", () => {
+  it("counts the machine chip, so other controls give way before its name does", () => {
+    const measurement = measureWithMachine(90);
+
+    // The chip and its separator, each with one gap, on top of the picker.
+    expect(measurement.naturalFixedWidth).toBe(80 + 94 + 5);
+    expect(measurement.minimumFixedWidth).toBe(52 + 94 + 5);
+    expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 330 })).toMatchObject({
+      hiddenCount: 0,
+      visible: true,
+    });
+    expect(resolveRestingComposerControlsLayout({ ...measurement, hostWidth: 280 })).toMatchObject({
+      hiddenCount: 1,
+      visible: true,
+    });
+  });
+
   it("keeps controls inline when the model label is deliberately collapsed", () => {
     const measurement = measurePicker({ clientWidth: 0, flexGrow: "0" });
 

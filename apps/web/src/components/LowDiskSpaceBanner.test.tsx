@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { LowDiskSpaceNoticeCard } from "./LowDiskSpaceBanner";
-import { resolveLowDiskSpaceNotices } from "./LowDiskSpaceBanner.logic";
+import { describeHomeUsageParts, resolveLowDiskSpaceNotices } from "./LowDiskSpaceBanner.logic";
 
 const THIS_MAC = EnvironmentId.make("env-m4");
 const REMOTE = EnvironmentId.make("env-m1");
@@ -123,7 +123,7 @@ describe("app folder notices", () => {
         action: "review-storage",
         title: "SpecWithCode folder is large",
         message:
-          "The SpecWithCode folder on this Mac takes 172 GB (worktrees 102 GB, database 23 GB, update backups 21 GB). Cloned files count in full, so the disk may hold less. Review storage to clean up what is safe.",
+          "The SpecWithCode folder on this Mac takes 172 GB (worktrees 102 GB, database 23 GB, update backups 21 GB, remaining categories 26 GB). Cloned files count in full, so the disk may hold less. Review storage to clean up what is safe.",
       }),
     ]);
   });
@@ -184,5 +184,55 @@ describe("LowDiskSpaceNoticeCard", () => {
     expect(markup).toContain("Low disk space");
     expect(markup).toContain("This Mac is almost out of disk space (3.2 GB free).");
     expect(markup).toContain('aria-label="Dismiss low disk space notice"');
+  });
+});
+
+describe("storage category breakdown", () => {
+  it("accounts for the omitted categories in the reported 159 GB", () => {
+    expect(
+      describeHomeUsageParts(
+        homeUsage("large", {
+          totalBytes: 159e9,
+          parts: [
+            { key: "backups", bytes: 67e9 },
+            { key: "worktrees", bytes: 29e9 },
+            { key: "database", bytes: 22e9 },
+            { key: "other", bytes: 19e9 },
+            { key: "release", bytes: 15e9 },
+            { key: "scratch", bytes: 7e9 },
+          ],
+        }),
+      ),
+    ).toBe("update backups 67 GB, worktrees 29 GB, database 22 GB, remaining categories 41 GB");
+  });
+
+  it("does not invent a remainder when every category is shown", () => {
+    expect(
+      describeHomeUsageParts(
+        homeUsage("large", {
+          totalBytes: 52e9,
+          parts: [
+            { key: "other", bytes: 20e9 },
+            { key: "scratch", bytes: 17e9 },
+            { key: "release", bytes: 15e9 },
+          ],
+        }),
+      ),
+    ).toBe("other 20 GB, scratch folders 17 GB, release builds 15 GB");
+  });
+
+  it("calculates the remainder before rounding each displayed size", () => {
+    expect(
+      describeHomeUsageParts(
+        homeUsage("large", {
+          totalBytes: 159261579019,
+          parts: [
+            { key: "backups", bytes: 67120023378 },
+            { key: "worktrees", bytes: 29226333773 },
+            { key: "database", bytes: 22236545024 },
+          ],
+        }),
+      ),
+    ).toContain("remaining categories 41 GB");
   });
 });

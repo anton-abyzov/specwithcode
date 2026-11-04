@@ -60,13 +60,13 @@ struct ProjectSettingsSheet: View {
           .presentationDetents([.medium, .large])
           .presentationDragIndicator(.visible)
       }
-      .confirmationDialog("Archive \(draft.title.isEmpty ? "this project" : draft.title)?", isPresented: $confirmArchive, titleVisibility: .visible) {
+      .alert("Archive \(draft.title.isEmpty ? "this project" : draft.title)?", isPresented: $confirmArchive) {
         Button("Archive project", role: .destructive) { archive() }
         Button("Cancel", role: .cancel) {}
       } message: {
         Text("It leaves the drawer and its coordinator stops. You can restore it in SpecWithCode on \(summary?.machineLabel ?? "your computer").")
       }
-      .confirmationDialog("Discard changes?", isPresented: $confirmDiscard, titleVisibility: .visible) {
+      .alert("Discard changes?", isPresented: $confirmDiscard) {
         Button("Discard changes", role: .destructive) { dismiss() }
         Button("Keep editing", role: .cancel) {}
       } message: {

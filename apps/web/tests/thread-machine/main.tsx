@@ -1,25 +1,29 @@
 import { RelayedMessage } from "../../src/components/studio/RelayedMessage";
 import { MOBILE_CARRY_FORWARD, MOBILE_USER_RESULTS } from "../agent-messages/internalReceipts";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChevronDownIcon, ShieldIcon } from "lucide-react";
 
-import {
-  ComposerControl,
-  ComposerControlSeparator,
-} from "../../src/components/chat/ComposerControl";
+import { ComposerControl } from "../../src/components/chat/ComposerControl";
 import { ThreadMachineComposerChip } from "../../src/components/chat/ThreadMachineComposerChip";
 import { ThreadMetaRow } from "../../src/components/chat/ThreadMetaRow";
+import {
+  modelChipShows,
+  type ModelChipFit,
+  type ModelChipPart,
+} from "../../src/components/chat/modelChipFit";
+import { measureRestingComposerControls } from "../../src/components/chat/restingComposerControlsMeasurement";
+import { resolveRestingComposerControlsLayout } from "../../src/components/composerFooterLayout";
 import { threadMachinePresentation } from "../../src/components/chat/threadMachine";
 import "./fixture.css";
 
-// Real chip, meta row and presentation; the provider controls are stand-ins.
+// Real chip, meta row, presentation and fit decision; the provider controls are stand-ins.
 const params = new URLSearchParams(location.search);
 document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
 const unreachable = params.has("unreachable");
 const machine = threadMachinePresentation({
-  name: "linuxbox",
-  hostLabel: "linuxbox",
+  name: params.get("name") ?? "linuxbox",
+  hostLabel: params.get("name") ?? "linuxbox",
   kind: "laptop",
   os: "linux",
   isThisMachine: false,
@@ -28,6 +32,87 @@ const machine = threadMachinePresentation({
   canOperate: true,
   handoff: "available",
 });
+
+function ComposerRow() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [hiddenCount, setHiddenCount] = useState(0);
+  const [fit, setFit] = useState<ModelChipFit>("full");
+  useLayoutEffect(() => {
+    const controls = ref.current!;
+    const measure = () => {
+      const measurement = measureRestingComposerControls(controls);
+      if (!measurement) return;
+      const layout = resolveRestingComposerControlsLayout({
+        ...measurement,
+        hostWidth: controls.clientWidth,
+      });
+      setHiddenCount(layout.hiddenCount);
+      setFit(layout.pickerFit ?? "full");
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(controls);
+    return () => observer.disconnect();
+  }, []);
+  // Parts a fit leaves out stay mounted out of flow, as the fit rules in shell.css keep them.
+  const part = (name: ModelChipPart, content: string) => (
+    <span
+      data-model-chip-part={name}
+      className={modelChipShows(fit, name) ? "whitespace-nowrap" : "invisible absolute w-max"}
+    >
+      {content}
+    </span>
+  );
+  const blocks = [
+    <ComposerControl key="access">
+      <ShieldIcon /> Full access <ChevronDownIcon className="size-3" />
+    </ComposerControl>,
+    <ComposerControl key="traits">
+      Medium 1M · Thinking <ChevronDownIcon className="size-3" />
+    </ComposerControl>,
+  ];
+  return (
+    <div className="flex items-center gap-2 px-3 pb-3">
+      <div
+        ref={ref}
+        data-fixture-controls
+        className="relative flex min-w-0 flex-1 items-center gap-1"
+      >
+        <ThreadMachineComposerChip machine={machine} size="sm" />
+        <ComposerControl data-chat-provider-model-picker="" data-fit={fit} className="shrink-0">
+          {part("mark", "✳")}
+          {part("provider", "Claude Code")}
+          {part("model", "Opus 5.5")}
+          {part("usage-value", "8%")}
+        </ComposerControl>
+        {blocks.map((block, index) => (
+          <div
+            key={block.key}
+            data-resting-block={block.key}
+            className={
+              index >= blocks.length - hiddenCount
+                ? "pointer-events-none invisible absolute flex w-max"
+                : "flex w-max shrink-0"
+            }
+          >
+            {block}
+          </div>
+        ))}
+        <div
+          data-resting-controls-overflow
+          className={hiddenCount === 0 ? "pointer-events-none invisible absolute" : "shrink-0"}
+        >
+          <ComposerControl>
+            <ChevronDownIcon className="size-3" />
+          </ComposerControl>
+        </div>
+      </div>
+      <div className="flex w-36 shrink-0 justify-end">
+        <ComposerControl>Skills 118</ComposerControl>
+      </div>
+    </div>
+  );
+}
 
 function Fixture() {
   const [scenario, setScenario] = useState("settled");
@@ -123,20 +208,7 @@ function Fixture() {
           <div className="px-4 pt-3 pb-8 text-sm text-muted-foreground">
             Ask anything, @tag files/folders, $use skills, or / for commands
           </div>
-          <div className="flex items-center gap-1 px-3 pb-3">
-            <ThreadMachineComposerChip machine={machine} size="sm" />
-            <ComposerControl>
-              Claude Code · Opus 5.5 <ChevronDownIcon className="size-3" />
-            </ComposerControl>
-            <ComposerControlSeparator />
-            <ComposerControl>
-              Medium 1M · Thinking <ChevronDownIcon className="size-3" />
-            </ComposerControl>
-            <ComposerControlSeparator />
-            <ComposerControl>
-              <ShieldIcon /> Full access <ChevronDownIcon className="size-3" />
-            </ComposerControl>
-          </div>
+          <ComposerRow />
         </div>
       </div>
     </main>

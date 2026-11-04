@@ -25,9 +25,10 @@ export function KeptProjectPages({
 }) {
   const [kept, setKept] = useState<readonly KeptPage[]>([]);
   // A hidden page's popups cannot finish closing (see PagePopups), so a page left
-  // with one open stays shown for two more commits before paint: the first closes
-  // its popups, the second unmounts them, and only then does it hide.
-  const [leaving, setLeaving] = useState<{ key: string; step: 0 | 1 | 2 } | null>(null);
+  // with one open stays shown for three more commits before paint: the first closes
+  // its popups, the second requests unmount, and the third lets Base UI dropdowns publish
+  // their mounted state to their stores before Activity pauses their effects.
+  const [leaving, setLeaving] = useState<{ key: string; step: 0 | 1 | 2 | 3 } | null>(null);
   const [pagePopups] = useState(() => new Map<string, PagePopups>());
   // The element the shown page last committed with. A page being left is held and
   // kept with it, not with the element it was entered with: that one carries stale
@@ -36,18 +37,18 @@ export function KeptProjectPages({
   // the page entirely.
   const lastShown = useRef<KeptPage | null>(null);
   useLayoutEffect(() => {
-    if (leaving === null || leaving.step === 2) return;
+    if (leaving === null || leaving.step === 3) return;
     const popups = pagePopups.get(leaving.key);
     if (leaving.step === 0) popups?.closeAll();
-    else popups?.unmountAll();
+    else if (leaving.step === 1) popups?.unmountAll();
     // oxlint-disable-next-line react/set-state-in-effect -- Each step must commit before the next.
-    setLeaving({ key: leaving.key, step: leaving.step === 0 ? 1 : 2 });
+    setLeaving({ key: leaving.key, step: leaving.step === 0 ? 1 : leaving.step === 1 ? 2 : 3 });
   }, [leaving, pagePopups]);
   const shownKey = kept[0]?.key;
   const switching = shownKey !== undefined && shownKey !== pageKey;
   const holding =
     switching &&
-    (leaving?.key === shownKey ? leaving.step < 2 : pagePopups.get(shownKey)?.mounted() === true);
+    (leaving?.key === shownKey ? leaving.step < 3 : pagePopups.get(shownKey)?.mounted() === true);
   if (holding && leaving?.key !== shownKey) setLeaving({ key: shownKey, step: 0 });
   if (!switching && leaving !== null) setLeaving(null);
   const latest = (entry: KeptPage) =>

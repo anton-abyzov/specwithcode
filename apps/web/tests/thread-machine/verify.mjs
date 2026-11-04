@@ -1,5 +1,6 @@
 // Headless captures of the thread machine chips: light and dark, wide and
-// phone width, reachable and unreachable. Build first with
+// phone width, reachable and unreachable, and the composer row at narrow widths,
+// which must keep the machine's name and give up other controls first. Build first with
 // `node node_modules/vite-plus/bin/vp build --config apps/web/tests/thread-machine/vite.config.ts`.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
@@ -55,11 +56,47 @@ try {
         if (!label?.includes("linuxbox"))
           failures.push(`${theme}/${name}/${state}: composer chip lacks the name`);
         const shown = await chip.innerText();
-        if (name === "wide" && !shown.includes("linuxbox"))
-          failures.push(`${theme}/${name}/${state}: wide composer hides the name`);
+        if (!shown.includes("linuxbox"))
+          failures.push(`${theme}/${name}/${state}: composer hides the name`);
         await page.screenshot({ path: NodePath.join(output, `${theme}-${name}-${state}.png`) });
         await page.close();
       }
+    }
+  }
+  for (const [name, long] of [
+    ["linuxbox", false],
+    ["Anton's MacBook Pro M4", true],
+  ]) {
+    for (const width of [390, 430, 480, 560, 720]) {
+      const label = `${long ? "long" : "short"}-${width}`;
+      const page = await browser.newPage({ viewport: { width, height: 720 } });
+      await page.goto(`${base}?theme=light&name=${encodeURIComponent(name)}`);
+      await page.locator("[data-thread-machine-chip]").waitFor();
+      await page.waitForTimeout(100);
+      const row = await page.evaluate(() => {
+        const controls = document.querySelector("[data-fixture-controls]");
+        const chip = document.querySelector("[data-thread-machine-chip]");
+        const text = chip.querySelector("span.truncate");
+        const box = controls.getBoundingClientRect();
+        const picker = document.querySelector("[data-chat-provider-model-picker]");
+        return {
+          chip: chip.getBoundingClientRect().width,
+          name: getComputedStyle(text).display === "none" ? 0 : text.getBoundingClientRect().width,
+          cut: text.scrollWidth > text.clientWidth,
+          overflow: picker.getBoundingClientRect().right - box.right,
+          hidden: document.querySelectorAll("[data-resting-block].invisible").length,
+          trailing: [...controls.querySelectorAll("[data-resting-block]:not(.invisible)")].map(
+            (block) => block.getBoundingClientRect().right - box.right,
+          ),
+        };
+      });
+      if (row.name < 24) failures.push(`${label}: name squeezed to ${row.name}px`);
+      if (!long && row.cut) failures.push(`${label}: a short name ends in an ellipsis`);
+      if (row.overflow > 0) failures.push(`${label}: model pushed out by ${row.overflow}px`);
+      if (row.trailing.some((over) => over > 0)) failures.push(`${label}: a control is clipped`);
+      if (width < 520 && row.chip > 105) failures.push(`${label}: chip is ${row.chip}px wide`);
+      await page.screenshot({ path: NodePath.join(output, `composer-${label}.png`) });
+      await page.close();
     }
   }
 } finally {

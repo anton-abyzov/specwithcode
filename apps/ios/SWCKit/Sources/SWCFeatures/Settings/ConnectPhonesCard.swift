@@ -43,10 +43,9 @@ struct ConnectPhonesCard: View {
       }
     }
     .task(id: state.user?.id) { await load() }
-    .confirmationDialog(
+    .alert(
       pendingRemoval.map { Self.confirmTitle($0) } ?? "",
       isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
-      titleVisibility: .visible,
       presenting: pendingRemoval
     ) { phone in
       Button(phone.isThisPhone ? "Remove and sign out" : "Remove", role: .destructive) { remove(phone) }

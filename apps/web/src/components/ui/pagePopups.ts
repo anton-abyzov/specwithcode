@@ -1,4 +1,5 @@
-import { createContext, use, useLayoutEffect, useRef, type RefObject } from "react";
+import { createChangeEventDetails } from "@base-ui/react/internals/createBaseUIEventDetails";
+import { createContext, use, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * The popups of a page that can be hidden under an `<Activity>` (a project page
@@ -45,6 +46,7 @@ export function createPagePopups(): PagePopups {
 export const PagePopupsContext = createContext<PagePopups | null>(null);
 
 interface PopupActions {
+  prepareForPageHide?: () => void;
   close: () => void;
   unmount: () => void;
 }
@@ -87,6 +89,9 @@ export function usePagePopup<Props extends PopupRootProps>(props: Props): Props 
     return popups.register({
       mounted: () => state.mounted,
       close() {
+        // A dropdown may already be animating closed. It still needs a live
+        // unmount action before the page pauses its effects.
+        if (state.mounted) state.actionsRef.current?.prepareForPageHide?.();
         if (state.open) state.actionsRef.current?.close();
       },
       // Unmounting in the commit that closes a controlled popup would mount it
@@ -118,4 +123,59 @@ export function usePagePopup<Props extends PopupRootProps>(props: Props): Props 
       if (!open) popup.current.mounted = false;
     },
   };
+}
+
+/** Select and Combobox expose unmount but no imperative close action. Keep their
+ * uncontrolled open state here so page navigation can request the same cancellable
+ * close as a user interaction. Controlled owners retain their final say. */
+export function usePageDropdown<
+  Props extends Omit<PopupRootProps, "actionsRef"> & {
+    actionsRef?: RefObject<{ unmount: () => void } | null> | undefined;
+  },
+>(props: Props): Props {
+  const popups = use(PagePopupsContext);
+  const [localOpen, setLocalOpen] = useState(props.defaultOpen ?? false);
+  const [pageClosing, setPageClosing] = useState(false);
+  const open = props.open ?? localOpen;
+  const localActions = useRef<{ unmount: () => void } | null>(null);
+  const actions = props.actionsRef ?? localActions;
+  // Base UI owns normal exit animations. Take manual unmount ownership only
+  // for navigation, then give it back when the control opens again.
+  useLayoutEffect(() => {
+    if (open && pageClosing) setPageClosing(false);
+  }, [open, pageClosing]);
+  const latest = useRef({ props, actions });
+  useLayoutEffect(() => {
+    latest.current = { props, actions };
+  });
+  const bridge = useRef<PopupActions>({
+    prepareForPageHide() {
+      setPageClosing(true);
+    },
+    close() {
+      const current = latest.current.props;
+      const details = createChangeEventDetails("none");
+      current.onOpenChange?.(false, details as never);
+      if (details.isCanceled) setPageClosing(false);
+      else if (current.open === undefined) setLocalOpen(false);
+    },
+    unmount() {
+      latest.current.actions.current?.unmount();
+    },
+  });
+  const registered = usePagePopup({
+    ...props,
+    open,
+    actionsRef: bridge,
+    onOpenChange(next: boolean, details: { isCanceled: boolean }) {
+      props.onOpenChange?.(next, details as never);
+      if (!details.isCanceled && props.open === undefined) setLocalOpen(next);
+    },
+  });
+  return popups
+    ? ({
+        ...registered,
+        actionsRef: props.actionsRef ?? (pageClosing ? localActions : undefined),
+      } as Props)
+    : props;
 }

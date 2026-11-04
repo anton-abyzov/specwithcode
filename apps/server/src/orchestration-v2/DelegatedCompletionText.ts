@@ -6,7 +6,12 @@
  * tells it to hand verification to a worker instead of checking it itself.
  */
 export const DELEGATED_RESULT_VERIFY_SENTENCE =
-  "The result is the child's claim: check it against the real state (git diff or commits, test output, the files named) before you rely on it or report it. A project coordinator does not check it itself: only when it will act on the result, it starts a worker to verify it.";
+  "Check the child's claim against the actual deliverable and evidence before relying on it. " +
+  "Record independently verified delivery with studio_thread_record_delivery for childThreadId. " +
+  "Use latestTerminalRunId from task_status, or childRunId for the original result when no later run is reported. " +
+  "After a follow-up, confirm the current completed run with studio_thread_read. Record only a current successful result with no newer work pending. Skip already settled threads. " +
+  "A project coordinator routes verification to a worker. Reuse the existing independent verifier or include the receipt in work that already needs verification. " +
+  "Do not start another worker just to verify a verifier's receipt.";
 
 export function delegatedCompletionWakeText(taskIds: ReadonlyArray<string>): string {
   const taskList = taskIds.join(", ");

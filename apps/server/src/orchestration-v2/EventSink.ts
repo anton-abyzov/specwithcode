@@ -843,7 +843,8 @@ const layerBase: Layer.Layer<
             input.expectedThreadSequence !== undefined &&
             (input.commandType === "thread.deferred-resolution.request" ||
               input.commandType === "thread.deferred-resolution.finish" ||
-              input.commandType === "thread.lifecycle-receipt.record") &&
+              input.commandType === "thread.lifecycle-receipt.record" ||
+              input.commandType === "thread.auto-settle") &&
             (yield* eventStore.latestSequence({ threadId: input.threadId })) !==
               input.expectedThreadSequence
           ) {
@@ -861,6 +862,11 @@ const layerBase: Layer.Layer<
                     "The thread changed while delivery evidence was recorded. Read it again.",
                 }),
               );
+            }
+            if (input.commandType === "thread.auto-settle") {
+              return yield* new DeferredResolutionConflict({
+                message: "The thread changed before automatic resolution committed.",
+              });
             }
             // Provider writes do not take the command lock. Revoke a stale
             // finish inside this transaction and never enqueue its detaches.

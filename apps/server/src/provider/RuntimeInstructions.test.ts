@@ -298,7 +298,12 @@ it("separates finite assignments from durable user goals in both response styles
     expect(text).toContain("An answered destination decision stays answered");
     expect(text).toContain("does not release a live owner's work");
     expect(text).toContain("Keep the overall user goal open");
-    expect(text).toContain("studio_thread_record_delivery");
+    expect(text).toContain(
+      "Record independently verified delivery and goal obligations with studio_thread_record_delivery",
+    );
+    expect(text).toContain(
+      "At closeout, give your scope and evidence to the existing independent completion owner",
+    );
     expect(text).toContain("acknowledgment-only turns");
     expect(text).toContain("Required CI and readiness gates remain required");
   }

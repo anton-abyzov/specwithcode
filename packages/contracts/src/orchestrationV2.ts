@@ -3736,7 +3736,14 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 
 /** Everything the server's orchestrator accepts: client commands plus internal ones. */
 export type OrchestrationV2ServerCommand =
-  | Exclude<OrchestrationV2Command, { readonly type: "thread.metadata.update" | "thread.create" }>
+  | Exclude<
+      OrchestrationV2Command,
+      { readonly type: "thread.metadata.update" | "thread.create" | "thread.auto-settle" }
+    >
+  | (Extract<OrchestrationV2Command, { readonly type: "thread.auto-settle" }> & {
+      /** Server only: retry a recorded receipt independently of the PR merge setting. */
+      readonly fromDeliveryReceipt?: true;
+    })
   | (Extract<OrchestrationV2Command, { readonly type: "thread.create" }> & {
       /**
        * Server only: who outside this machine's UI started the thread. Absent

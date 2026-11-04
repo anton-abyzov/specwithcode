@@ -123,13 +123,13 @@ struct ConnectAccountCard: View {
         }
       }
     }
-    .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+    .alert("Sign out?", isPresented: $confirmSignOut) {
       Button("Sign out", role: .destructive) { Task { await model.engine.connectSignOut() } }
       Button("Cancel", role: .cancel) {}
     } message: {
       Text("This phone forgets the Macs it reached through your account. Macs you paired with a link or QR code stay.")
     }
-    .confirmationDialog("Delete your account?", isPresented: $confirmDelete, titleVisibility: .visible) {
+    .alert("Delete your account?", isPresented: $confirmDelete) {
       Button("Delete account", role: .destructive) { deleteAccount() }
       Button("Cancel", role: .cancel) {}
     } message: {

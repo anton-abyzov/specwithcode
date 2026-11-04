@@ -45,7 +45,10 @@ import {
   questionAnswerMessageText,
   type QuestionAnswerReply,
 } from "./questionAnswerText.ts";
-import { makeAutomaticResolutionGuard } from "./ThreadAutomaticResolutionGuard.ts";
+import {
+  canAutomaticallyResolve,
+  makeAutomaticResolutionGuard,
+} from "./ThreadAutomaticResolutionGuard.ts";
 import { runTerminalRunReactor } from "./TerminalRunReactor.ts";
 import {
   isContinuableProviderFailure,
@@ -12457,35 +12460,49 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
-        if (
-          !(yield* automaticResolutionAllowed({
-            thread,
-            snapshotAt: command.snapshotAt,
-            snapshotSequence: command.snapshotSequence,
-            currentSequence: yield* eventSink
-              .latestSequence({ threadId: command.threadId })
-              .pipe(Effect.orDie),
-          }))
-        ) {
+        const guard = {
+          thread,
+          snapshotAt: command.snapshotAt,
+          snapshotSequence: command.snapshotSequence,
+          currentSequence: yield* eventSink
+            .latestSequence({ threadId: command.threadId })
+            .pipe(Effect.orDie),
+        };
+        const allowed = command.fromDeliveryReceipt
+          ? canAutomaticallyResolve(guard)
+          : yield* automaticResolutionAllowed(guard);
+        if (!allowed) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
-        if (lifecycleEvidenceRequired) {
+        let note: string | undefined;
+        if (
+          command.fromDeliveryReceipt ||
+          lifecycleEvidenceRequired ||
+          thread.lifecycleReceipt != null
+        ) {
           const currentProjection = yield* getProjectionWithPendingEvents(command.threadId, events);
           const acceptanceNow = yield* DateTime.now;
-          const acceptedRunId = currentProjection.thread.lifecycleReceipt?.runId;
-          const acceptedRun = currentProjection.runs.find((run) => run.id === acceptedRunId);
+          const receipt = currentProjection.thread.lifecycleReceipt;
           if (
+            receipt == null ||
             !hasCurrentLifecycleAcceptance(
               currentProjection,
               DateTime.toEpochMillis(acceptanceNow),
             ) ||
-            acceptedRun === undefined ||
-            deferredResolutionBlocked(currentProjection, acceptedRun.id) ||
-            (yield* stopReachedRun(command, command.threadId, acceptedRun.id))
+            deferredResolutionBlocked(
+              command.fromDeliveryReceipt
+                ? {
+                    ...currentProjection,
+                    thread: { ...currentProjection.thread, deferredResolution: null },
+                  }
+                : currentProjection,
+              RunId.make(receipt.runId),
+            ) ||
+            (yield* stopReachedRun(command, command.threadId, RunId.make(receipt.runId)))
           ) {
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
@@ -12494,6 +12511,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 "Automatic resolution requires verified delivery evidence for the current request and acceptance revision.",
             });
           }
+          if (command.fromDeliveryReceipt) note = settledNoteFromScope(receipt.scope);
         }
         yield* dispatchThreadMutation(
           {
@@ -12501,6 +12519,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             threadId: command.threadId,
             ...(command.settledAt === undefined ? {} : { settledAt: command.settledAt }),
+            ...(note === undefined ? {} : { note }),
           },
           events,
           effects,
@@ -13072,14 +13091,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* refuseCommandByTeamRules(command);
 
     const expectedThreadSequence =
-      command.type === "thread.deferred-resolution.request" ||
-      command.type === "thread.deferred-resolution.finish" ||
-      command.type === "thread.lifecycle-receipt.record" ||
-      (command.type === "thread.archive" && command.inactive !== undefined)
-        ? yield* eventSink
-            .latestSequence({ threadId: command.threadId })
-            .pipe(mapDispatchError(command))
-        : undefined;
+      command.type === "thread.auto-settle"
+        ? command.snapshotSequence
+        : command.type === "thread.deferred-resolution.request" ||
+            command.type === "thread.deferred-resolution.finish" ||
+            command.type === "thread.lifecycle-receipt.record" ||
+            (command.type === "thread.archive" && command.inactive !== undefined)
+          ? yield* eventSink
+              .latestSequence({ threadId: command.threadId })
+              .pipe(mapDispatchError(command))
+          : undefined;
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
@@ -13115,7 +13136,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // An answer's id is stable per request and answer, so a retry after a
           // refusal that has since cleared (a handoff fence, a session not yet
           // projected) must be judged again, not replay that refusal.
-          if (command.type === "runtime-request.respond") return yield* cause;
+          if (
+            command.type === "runtime-request.respond" ||
+            (command.type === "thread.auto-settle" && command.fromDeliveryReceipt)
+          )
+            return yield* cause;
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink
             .commitRejectedCommand({

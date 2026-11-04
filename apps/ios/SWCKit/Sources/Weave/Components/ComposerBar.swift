@@ -16,6 +16,7 @@ public struct ComposerBar: View {
   let onStop: (() -> Void)?
   let onAttach: (() -> Void)?
   let onMic: (() -> Void)?
+  private var attachmentControl: AnyView?
   let onAcceptSuggestion: ((String) -> Void)?
 
   @FocusState private var ownFocus: Bool
@@ -57,6 +58,14 @@ public struct ComposerBar: View {
     self.onAttach = onAttach
     self.onMic = onMic
     self.onAcceptSuggestion = onAcceptSuggestion
+  }
+
+  /// Places a feature-owned attachment control at the actual composer anchor.
+  /// Its menus and pickers must be attached here, not to the enclosing screen.
+  public func attachmentControl<Control: View>(@ViewBuilder _ control: () -> Control) -> Self {
+    var copy = self
+    copy.attachmentControl = AnyView(control())
+    return copy
   }
 
   /// The stop square is a small solid shape; at the default scale it reads
@@ -105,7 +114,11 @@ public struct ComposerBar: View {
         .transition(.opacity)
       }
       HStack(alignment: .bottom, spacing: WeaveSpacing.s2) {
-        if let onAttach {
+        if let attachmentControl {
+          attachmentControl
+            .frame(width: WeaveSize.innerControl, height: WeaveSize.innerControl)
+            .disabled(isBlocked)
+        } else if let onAttach {
           WeaveIconButton("plus", label: "Attach", style: .sunken, size: WeaveSize.innerControl, action: onAttach)
             .frame(width: WeaveSize.innerControl, height: WeaveSize.innerControl)
             .disabled(isBlocked)
@@ -119,7 +132,7 @@ public struct ComposerBar: View {
           .focused(focus ?? $ownFocus)
           .disabled(isBlocked)
           .padding(.vertical, 7)
-          .padding(.leading, onAttach == nil ? WeaveSpacing.s2 : 0)
+          .padding(.leading, onAttach == nil && attachmentControl == nil ? WeaveSpacing.s2 : 0)
           .frame(minHeight: WeaveSize.innerControl)
           .accessibilityLabel("Message")
         if let onMic, isEmpty, !showsStop {

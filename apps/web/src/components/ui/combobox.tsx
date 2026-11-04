@@ -4,6 +4,8 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react/combobox";
 import { ChevronsUpDownIcon, SearchIcon, XIcon } from "lucide-react";
 import * as React from "react";
 
+import { usePageDropdown } from "./pagePopups";
+
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -23,7 +25,7 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
   const value = React.useMemo(() => ({ chipsRef, multiple: !!props.multiple }), [props.multiple]);
   return (
     <ComboboxContext value={value}>
-      <ComboboxPrimitive.Root {...props} />
+      <ComboboxPrimitive.Root {...usePageDropdown(props)} />
     </ComboboxContext>
   );
 }

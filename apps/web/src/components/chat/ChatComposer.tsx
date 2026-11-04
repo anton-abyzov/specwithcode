@@ -1256,7 +1256,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
       // the coordinator's effort, which the fit leaves room for.
       controls
         .querySelectorAll<HTMLElement>(
-          "[data-resting-block], [data-composer-control-label], [data-chat-provider-model-picker-label], [data-model-chip-part], [data-chat-provider-model-picker] ~ *",
+          "[data-resting-block], [data-composer-control-label], [data-chat-provider-model-picker-label], [data-model-chip-part], [data-chat-provider-model-picker] ~ *, [data-thread-machine-chip]",
         )
         .forEach((element) => observer.observe(element));
       measure();

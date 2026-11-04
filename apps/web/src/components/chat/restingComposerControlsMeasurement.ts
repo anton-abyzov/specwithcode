@@ -91,6 +91,17 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
   return { natural, iconOnly: Math.min(natural, iconOnly) };
 }
 
+/** The machine chip and its separator, each with the gap it takes in the row. */
+function machineChipWidth(controls: HTMLElement, gap: number): number {
+  let width = 0;
+  for (const selector of ["[data-thread-machine-chip]", "[data-thread-machine-separator]"]) {
+    const element = controls.querySelector<HTMLElement>(selector);
+    const outer = element ? elementOuterWidth(element) : 0;
+    if (outer > 0) width += outer + gap;
+  }
+  return width;
+}
+
 /**
  * Read the natural widths of the resting composer controls from the DOM.
  *
@@ -116,6 +127,8 @@ export function measureRestingComposerControls(
   const separatorWidth = separator ? elementOuterWidth(separator) : 0;
   const overflow = controls.querySelector<HTMLElement>("[data-resting-controls-overflow]");
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
+  // The machine chip keeps its name at every fit, so the rest of the row gives way to it.
+  const machineWidth = machineChipWidth(controls, gap);
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map(controlBlockWidths);
   // Controls that ride in the picker's own group, such as the coordinator's effort,
@@ -129,7 +142,11 @@ export function measureRestingComposerControls(
     ? (Object.fromEntries(
         MODEL_CHIP_FITS.map((fit) => [
           fit,
-          chip[fit] + elementInlineMarginWidth(picker!) + groupWidth + separatorAndGapWidth,
+          chip[fit] +
+            elementInlineMarginWidth(picker!) +
+            groupWidth +
+            separatorAndGapWidth +
+            machineWidth,
         ]),
       ) as unknown as ModelChipFitWidths)
     : null;
@@ -139,12 +156,14 @@ export function measureRestingComposerControls(
       pickerFitWidths?.full ??
       (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
         groupWidth +
-        separatorAndGapWidth,
+        separatorAndGapWidth +
+        machineWidth,
     minimumFixedWidth:
       pickerFitWidths?.icon ??
       (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
         groupWidth +
-        separatorAndGapWidth,
+        separatorAndGapWidth +
+        machineWidth,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,

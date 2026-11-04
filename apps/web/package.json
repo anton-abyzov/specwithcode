@@ -1,6 +1,6 @@
 {
   "name": "@specweave-studio/web",
-  "version": "1.0.181",
+  "version": "1.0.183",
   "private": true,
   "type": "module",
   "scripts": {

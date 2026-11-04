@@ -9,7 +9,7 @@ import {
   ThreadId,
   type OrchestrationProjectShell,
   type OrchestrationV2AppThread,
-  type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
@@ -56,7 +56,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestUserAuthoredMessageAt" | "lifecycleReceipt"
+  >;
 
 // A fixture's user message is one the user wrote unless the test sets
 // latestUserAuthoredMessageAt on its own.
@@ -418,7 +421,10 @@ describe("autoSettlementSettingsKey", () => {
   });
 });
 
-type AutoSettleCommand = Extract<OrchestrationV2Command, { readonly type: "thread.auto-settle" }>;
+type AutoSettleCommand = Extract<
+  OrchestrationV2ServerCommand,
+  { readonly type: "thread.auto-settle" }
+>;
 
 const testCrypto = Crypto.make({
   randomBytes: (size) => new Uint8Array(size).fill(1),
@@ -758,46 +764,72 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
-  it.effect("settles a merged pull request stored only in the thread links", () =>
+  const mergedLink = {
+    host: "example.test",
+    repository: "owner/repository",
+    number: 42,
+    url: "https://example.test/owner/repository/pull/42",
+    source: "manual",
+    linkedAt: "2026-08-20T00:00:00.000Z",
+    snapshot: {
+      state: "merged",
+      title: "Pull request",
+      headBranch: "feature",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: NOW,
+      syncedAt: NOW,
+      mergedAt: NOW,
+      checksState: "passing",
+      reviewDecision: "approved",
+    },
+    stack: null,
+  } as const;
+
+  it.effect.each([
+    { name: "linked merge", merge: true, receipt: null, expected: "merge" },
+    {
+      name: "stored receipt without a PR",
+      merge: false,
+      receipt: ACCEPTED_RECEIPT,
+      expected: "receipt",
+    },
+    {
+      name: "merge with a deployment obligation",
+      merge: true,
+      receipt: {
+        ...ACCEPTED_RECEIPT,
+        deployment: { status: "pending", reason: "Release is queued" },
+      },
+      expected: null,
+    },
+    {
+      name: "merge with an expired receipt",
+      merge: true,
+      receipt: { ...ACCEPTED_RECEIPT, validUntil: NOW },
+      expected: null,
+    },
+  ] as const)("uses the correct settlement path for $name", ({ merge, receipt, expected }) =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
         const thread = makeThread("merged-link", {
-          pullRequests: [
-            {
-              host: "example.test",
-              repository: "owner/repository",
-              number: 42,
-              url: "https://example.test/owner/repository/pull/42",
-              source: "manual",
-              linkedAt: "2026-08-20T00:00:00.000Z",
-              snapshot: {
-                state: "merged",
-                title: "Pull request",
-                headBranch: "feature",
-                baseBranch: "main",
-                isDraft: false,
-                updatedAt: NOW,
-                syncedAt: NOW,
-                mergedAt: NOW,
-                checksState: "passing",
-                reviewDecision: "approved",
-              },
-              stack: null,
-            },
-          ],
+          pullRequests: merge ? [mergedLink] : [],
+          lifecycleReceipt: receipt,
         });
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([thread]),
-          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleOnMerge: merge },
+          lifecycleReceipt: receipt,
         });
-
         yield* Effect.gen(function* () {
           const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
           yield* startHarness(service, fixture.activation, fixture.snapshotReads);
-          expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
-            thread.id,
-          ]);
+          const commands = yield* Ref.get(fixture.commands);
+          expect(commands.map((command) => command.threadId)).toEqual(expected ? [thread.id] : []);
+          expect(
+            commands.map((command) => (command.fromDeliveryReceipt ? "receipt" : "merge")),
+          ).toEqual(expected ? [expected] : []);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
@@ -869,29 +901,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(NOW));
           const thread = makeThread("merged-without-evidence", {
-            pullRequests: [
-              {
-                host: "example.test",
-                repository: "owner/repository",
-                number: 42,
-                url: "https://example.test/owner/repository/pull/42",
-                source: "manual",
-                linkedAt: "2026-08-20T00:00:00.000Z",
-                snapshot: {
-                  state: "merged",
-                  title: "Pull request",
-                  headBranch: "feature",
-                  baseBranch: "main",
-                  isDraft: false,
-                  updatedAt: NOW,
-                  syncedAt: NOW,
-                  mergedAt: NOW,
-                  checksState: "passing",
-                  reviewDecision: "approved",
-                },
-                stack: null,
-              },
-            ],
+            pullRequests: [mergedLink],
           });
           const fixture = yield* makeHarness({
             snapshot: makeSnapshot([thread]),
@@ -923,29 +933,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         const gated = yield* makeGatedHold({ pollMs }).pipe(Effect.provide(NodeServices.layer));
         const branchThread = makeThread("gated-branch", { branch: "feature" });
         const thread = makeThread("gated-merged-link", {
-          pullRequests: [
-            {
-              host: "example.test",
-              repository: "owner/repository",
-              number: 42,
-              url: "https://example.test/owner/repository/pull/42",
-              source: "manual",
-              linkedAt: "2026-08-20T00:00:00.000Z",
-              snapshot: {
-                state: "merged",
-                title: "Pull request",
-                headBranch: "feature",
-                baseBranch: "main",
-                isDraft: false,
-                updatedAt: NOW,
-                syncedAt: NOW,
-                mergedAt: NOW,
-                checksState: "passing",
-                reviewDecision: "approved",
-              },
-              stack: null,
-            },
-          ],
+          pullRequests: [mergedLink],
         });
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([thread, branchThread]),

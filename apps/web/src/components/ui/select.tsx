@@ -6,9 +6,15 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
+import { usePageDropdown } from "./pagePopups";
+
 import { cn } from "~/lib/utils";
 
-const Select = SelectPrimitive.Root;
+function Select<Value, Multiple extends boolean | undefined = false>(
+  props: SelectPrimitive.Root.Props<Value, Multiple>,
+) {
+  return <SelectPrimitive.Root {...usePageDropdown(props)} />;
+}
 
 const selectTriggerVariants = cva(
   "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-lg text-left text-base outline-none transition-[color,box-shadow,background-color,border-color] duration-[120ms] ease-out-quint motion-reduce:transition-none data-disabled:pointer-events-none data-disabled:opacity-(--disabled-opacity) sm:text-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",

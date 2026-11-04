@@ -1,3 +1,4 @@
+import { hasRelayRoute } from "@specweave-studio/client-runtime/connection";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 import { CheckIcon, EllipsisIcon, LaptopIcon, ListChecksIcon, RefreshCwIcon } from "lucide-react";
@@ -428,6 +429,10 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       environmentId: environment.environmentId,
       label: machine?.label ?? environment.label,
       onConnect: Boolean(machine?.connectUrl),
+      // The window's own primary never takes a Connect route.
+      hasConnectRoute:
+        environment.entry.target._tag === "PrimaryConnectionTarget" ||
+        hasRelayRoute(environment.entry),
     };
   });
   return (

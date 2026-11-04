@@ -92,7 +92,7 @@ struct MachineDetailView: View {
       }
     }
     .deviceViewer($deviceViewer)
-    .confirmationDialog("Remove \(machine?.displayName ?? "this machine")?", isPresented: $confirmRemove, titleVisibility: .visible) {
+    .alert("Remove \(machine?.displayName ?? "this machine")?", isPresented: $confirmRemove) {
       Button("Remove machine", role: .destructive) {
         model.engine.removeMachine(id: machineId)
         dismiss()
