@@ -20,7 +20,12 @@ import { threadEnvironment } from "../state/threads";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { isScratchMember } from "../studio/projectListVisibility";
-import { threadMoveStartsByDefault, threadMoveTargets } from "./threadMove.logic";
+import {
+  type MoveTargetLabel,
+  threadMoveStartsByDefault,
+  threadMoveTargetLabels,
+  threadMoveTargets,
+} from "./threadMove.logic";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import {
@@ -97,6 +102,7 @@ function ThreadMoveDialog({ threadRef }: { readonly threadRef: ScopedThreadRef }
           ),
     [configs, projects, thread],
   );
+  const labels = useMemo(() => threadMoveTargetLabels(targets, projects), [projects, targets]);
   const sourceProject = projects.find(
     (project) =>
       project.environmentId === threadRef.environmentId && project.id === thread?.projectId,
@@ -248,12 +254,18 @@ function ThreadMoveDialog({ threadRef }: { readonly threadRef: ScopedThreadRef }
                     }}
                   >
                     <SelectTrigger id={`${id}-project`} size="sm">
-                      <SelectValue>{target?.title ?? "Choose a project"}</SelectValue>
+                      <SelectValue>
+                        {target ? (
+                          <MoveTargetName label={labels.get(target.id)} fallback={target.title} />
+                        ) : (
+                          "Choose a project"
+                        )}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectPopup>
                       {targets.map((project) => (
                         <SelectItem key={project.id} value={project.id}>
-                          {project.title}
+                          <MoveTargetName label={labels.get(project.id)} fallback={project.title} />
                         </SelectItem>
                       ))}
                     </SelectPopup>
@@ -327,5 +339,21 @@ function ThreadMoveDialog({ threadRef }: { readonly threadRef: ScopedThreadRef }
         </form>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+/** A move target's name, with "shared" or "this machine only" when two share it. */
+function MoveTargetName({
+  label,
+  fallback,
+}: {
+  readonly label: MoveTargetLabel | undefined;
+  readonly fallback: string;
+}) {
+  return (
+    <>
+      {label?.title ?? fallback}
+      {label?.hint ? <span className="ms-1.5 text-muted-foreground">{label.hint}</span> : null}
+    </>
   );
 }

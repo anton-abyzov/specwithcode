@@ -397,6 +397,44 @@ export function repositoryGroupingKeyOf(identity: RepositoryIdentity): string {
   return identity.origin?.canonicalKey ?? identity.canonicalKey;
 }
 
+const normalizeRepositoryPath = (path: string) =>
+  path.trim().replaceAll("\\", "/").replace(/\/+$/u, "");
+
+/**
+ * Where a project folder sits inside its repository: "" at the root, null when unknown.
+ * Git reports the repository root with links resolved, so on a machine whose home is a
+ * link (`/home/anton` to `/srv/work`) the root and the project folder are spelled
+ * differently. When the folder is not under the root as spelled, the two still match
+ * when the folder ends with the root's last two folder names (or all of a shorter root),
+ * and what follows is the place inside the repository.
+ */
+export function repositoryRelativePathOf(
+  workspaceRoot: string,
+  rootPath: string | null | undefined,
+): string | null {
+  if (!rootPath) return null;
+  const root = normalizeRepositoryPath(rootPath);
+  const workspace = normalizeRepositoryPath(workspaceRoot);
+  if (root.length === 0 || workspace.length === 0) return null;
+  if (workspace === root) return "";
+  if (workspace.startsWith(`${root}/`)) return workspace.slice(root.length + 1);
+  const rootParts = root.split("/").filter(Boolean);
+  const parts = workspace.split("/").filter(Boolean);
+  // The workspace reaches the repository through a linked folder (for example
+  // /home/anton linked to /srv/work), so only the root's last names appear in it.
+  // Two names first; one when the link sits right above the repository. The first
+  // place they appear, since the link is near the start of the path.
+  for (const size of new Set([Math.min(2, rootParts.length), 1])) {
+    const tail = rootParts.slice(-size);
+    if (tail.length === 0) continue;
+    for (let end = tail.length; end <= parts.length; end++) {
+      if (tail.every((name, index) => parts[end - tail.length + index] === name))
+        return parts.slice(end).join("/");
+    }
+  }
+  return null;
+}
+
 /** Label clients show for a checkout's repository, matching `repositoryGroupingKeyOf`. */
 export function repositoryGroupingDisplayNameOf(identity: RepositoryIdentity): string | undefined {
   return identity.origin

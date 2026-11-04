@@ -216,3 +216,28 @@ it("never offers a copy already linked to a machine this app does not list", () 
     ).has("b"),
   ).toBe(true);
 });
+
+it("offers a copy to join a shared project whose Linux member sits behind a home link", () => {
+  // Ministorm's git reports /srv/work/... for a project added as /home/anton/...
+  const MS = "env-ministorm" as EnvironmentId;
+  const logicalProject = {
+    id: "logical:1",
+    members: [
+      { environmentId: M4, projectId: "p-m4", workspaceRoot: "/Users/a/p-m4" },
+      { environmentId: MS, projectId: "p-ms", workspaceRoot: "/home/anton/repos/specweave" },
+    ],
+  };
+  const shared = group(
+    "a",
+    project(M4, "p-m4", REPO, { workspaceSettings: { logicalProject } as never }),
+    project(MS, "p-ms", REPO, {
+      workspaceRoot: "/home/anton/repos/specweave",
+      repositoryIdentity: identity(REPO, "/srv/work/repos/specweave") as never,
+      workspaceSettings: { logicalProject } as never,
+    }),
+  );
+  const single = group("b", project(M1, "p-m1", REPO));
+  const suggestion = duplicateLinkSuggestions([shared, single], options).get("b");
+  expect(suggestion?.candidate.id).toBe("p-m1");
+  expect(suggestion?.anchorTitle).toBe("specweave");
+});

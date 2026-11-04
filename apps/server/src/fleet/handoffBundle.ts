@@ -151,14 +151,18 @@ export function planNoteImport(
 
 /**
  * The destination's model policy for a moved coordinator. A project this machine has
- * no limit policy for gets one that never spends or switches on its own; one it
- * already has, such as a copy the coordinator moves back to, keeps what was chosen here.
+ * no limit policy for gets one that never spends on its own: it keeps this machine's
+ * limit action, so a limit-stopped thread still switches to another subscription here
+ * under `switch`, but redeems, credits, API keys, fallback models and machine targets
+ * stay off. One it already has, such as a copy the coordinator moves back to, keeps
+ * what was chosen here.
  */
 export const destinationModelPolicy = (
   resolved: Pick<
     ServerSettings,
     | "defaultModelSelection"
     | "defaultRuntimeMode"
+    | "providerLimitAction"
     | "providerLimitExcludedModels"
     | "providerLimitSwitchAtPercent"
     | "providerLimitWaitUnderMinutes"
@@ -171,7 +175,7 @@ export const destinationModelPolicy = (
   ...(own?.providerLimitAction !== undefined
     ? {}
     : {
-        providerLimitAction: "ask" as const,
+        providerLimitAction: resolved.providerLimitAction,
         providerLimitFallbackModelSelection: null,
         providerLimitFallbackModels: [],
         providerLimitExcludedModels: resolved.providerLimitExcludedModels,

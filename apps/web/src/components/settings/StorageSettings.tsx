@@ -504,7 +504,7 @@ export function StorageSettingsPanel() {
             title="Warn when the app folder is large"
             status={ruleStatus("homeSizeWarningGb")}
             mixed={ruleMixed("homeSizeWarningGb")}
-            description="Show a notice when this machine's app folder passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours."
+            description="Mark the app folder here when it passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours. A notice appears only when the disk itself runs low."
             serverScoped
             control={
               <AppFolderSizeWarningControl

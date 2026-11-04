@@ -368,11 +368,13 @@ describe("MachineHandoff", () => {
       const result = yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
       const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
       expect(settings.projectSettingsOverrides[result.projectId]).toMatchObject({
-        providerLimitAction: "ask",
+        // This machine's own action (the default `switch`), never a spending step.
+        providerLimitAction: "switch",
         providerLimitFallbackModelSelection: null,
         providerLimitRedeemResets: false,
         providerLimitSpendCredits: false,
         providerLimitUseApiCredits: false,
+        providerLimitMachineTargets: [],
       });
       expect(h.projects.get(result.projectId)?.title).toBe("Project");
       expect(

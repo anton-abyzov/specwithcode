@@ -66,6 +66,84 @@ export function threadMoveTargets<M extends ProjectListMember>(
   );
 }
 
+/** What the move dialog needs to tell projects of one name apart. */
+export interface MoveTargetProject {
+  readonly environmentId: EnvironmentId;
+  readonly id: ProjectId;
+  readonly title: string;
+  readonly workspaceRoot?: string | undefined;
+  readonly workspaceSettings?:
+    | {
+        readonly logicalProject?:
+          | {
+              readonly title?: string | undefined;
+              readonly members: ReadonlyArray<{
+                readonly environmentId: EnvironmentId;
+                readonly projectId: ProjectId;
+              }>;
+            }
+          | null
+          | undefined;
+      }
+    | null
+    | undefined;
+}
+
+export interface MoveTargetLabel {
+  readonly title: string;
+  /** Shown muted after the title when another project has the same name; null otherwise. */
+  readonly hint: string | null;
+}
+
+const isShared = (project: MoveTargetProject) =>
+  (project.workspaceSettings?.logicalProject?.members ?? []).some(
+    (member) => member.environmentId !== project.environmentId || member.projectId !== project.id,
+  );
+const nameKey = (title: string) => title.trim().toLowerCase();
+const folderName = (root: string | undefined) =>
+  root?.replaceAll("\\", "/").replace(/\/+$/u, "").split("/").findLast(Boolean) ?? null;
+
+/**
+ * Labels for the move dialog's projects. Two projects can share a name: the same
+ * repository added on this machine on its own is listed next to the shared project
+ * that spans several machines. Each row then says which one it is, "shared" or
+ * "this machine only", and a folder name when that still leaves two alike.
+ */
+export function threadMoveTargetLabels(
+  targets: ReadonlyArray<MoveTargetProject>,
+  allProjects: ReadonlyArray<MoveTargetProject>,
+): Map<string, MoveTargetLabel> {
+  const sharedNames = new Set(
+    allProjects.filter(isShared).map((project) => nameKey(titleOf(project))),
+  );
+  const counts = new Map<string, number>();
+  for (const target of targets) {
+    const key = nameKey(titleOf(target));
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const labels = new Map<string, MoveTargetLabel>();
+  for (const target of targets) {
+    const title = titleOf(target);
+    const key = nameKey(title);
+    const shared = isShared(target);
+    const namesake = (counts.get(key) ?? 0) > 1 || (!shared && sharedNames.has(key));
+    if (!namesake) {
+      labels.set(target.id, { title, hint: null });
+      continue;
+    }
+    const parts = [shared ? "shared" : "this machine only"];
+    const folder = folderName(target.workspaceRoot);
+    if ((counts.get(key) ?? 0) > 1 && folder !== null) parts.push(folder);
+    labels.set(target.id, { title, hint: parts.join(" · ") });
+  }
+  return labels;
+}
+
+/** A shared project's name, as every machine shows it; else this copy's own. */
+function titleOf(project: MoveTargetProject): string {
+  return project.workspaceSettings?.logicalProject?.title?.trim() || project.title;
+}
+
 /**
  * Whether the new thread should start working right away. Work that was still
  * running is restarted; a thread the user had stopped or that had finished waits

@@ -228,7 +228,13 @@ def covers(holder, version):
     return isinstance(holder, dict) and holder.get('version') == version and holder.get('only') in ('all', 'workers')
 
 
+LOCK_ENV = 'STUDIO_FLEET_ROLLOUT_LOCK'  # Tests point it at a temporary file, never M4's real lock.
+
+
 def lock_path(home=None):
+    override = os.environ.get(LOCK_ENV)
+    if override:
+        return pathlib.Path(override)
     return studio_paths.identity_home(pathlib.Path(home or pathlib.Path.home()), LOCAL) / 'updates' / LOCK_NAME
 
 

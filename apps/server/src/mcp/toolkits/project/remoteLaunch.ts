@@ -10,16 +10,19 @@ import {
   type RuntimeMode,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
 import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
 import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
 import type { Caller } from "../../threadAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
-import { addToMachineHint } from "./addToMachine.ts";
+import { addToMachineHint, type ExistingCopyOutcome, linkExistingCopy } from "./addToMachine.ts";
+import { workGrantOf } from "../../workGrantAccess.ts";
 
 export interface LaunchTargetInput {
   readonly machine?: string | undefined;
@@ -248,47 +251,108 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
         new Map([...(yield* remote.machineLabels), [context.scope.environmentId, "this machine"]]),
       ),
     });
-  const launched = remote.launch({
-    machine: input.machine.machine,
-    commandId: input.commandId,
-    ...(caller === undefined ? {} : { callerThreadId: caller.id }),
-    launchedBy: principal.launchedBy,
-    localProject: project,
-    machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
-    title: params.title,
-    explicitModelSelection: params.modelSelection,
-    inheritedModelSelection:
-      (isCoordinator
-        ? project?.defaultModelSelection
-        : (caller?.modelSelection ?? project?.defaultModelSelection)) ?? undefined,
-    runtimeMode: input.runtimeMode,
-    requestedRuntimeMode: params.runtimeMode,
-    interactionMode: input.interactionMode,
-    workspaceStrategy: params.workspaceStrategy,
-    userAskedForWorktree: params.userAskedForWorktree === true,
-    message: params.message,
-    // Resolved by the machine that runs the thread, against its own checkout.
-    increment: params.increment,
-    // Only a thread here can be woken when its worker finishes.
-    reportBack: principal.kind === "thread" && (params.reportBack ?? true),
-    delegation: outgoing.delegation,
-    // Display text for the badge there: the client's name, or the thread here.
-    originHint:
-      principal.kind === "client"
-        ? { clientLabel: principal.client.label }
-        : { parentThreadId: principal.caller.id },
-  });
-  // A project that is not there yet can be put there over MCP.
-  return yield* project === undefined
-    ? launched
-    : launched.pipe(
-        Effect.mapError((error) =>
-          error.code === "project_unavailable_on_machine"
-            ? new OrchestratorMcpFailure({
-                code: error.code,
-                message: `${error.message} ${addToMachineHint(input.machine.machine, project.id)}`,
-              })
-            : error,
-        ),
-      );
+  const launch = (localProject: Project | undefined = project) =>
+    remote.launch({
+      machine: input.machine.machine,
+      commandId: input.commandId,
+      ...(caller === undefined ? {} : { callerThreadId: caller.id }),
+      launchedBy: principal.launchedBy,
+      localProject,
+      machineProjectId: params.scratch === true ? undefined : params.machineProjectId,
+      title: params.title,
+      explicitModelSelection: params.modelSelection,
+      inheritedModelSelection:
+        (isCoordinator
+          ? project?.defaultModelSelection
+          : (caller?.modelSelection ?? project?.defaultModelSelection)) ?? undefined,
+      runtimeMode: input.runtimeMode,
+      requestedRuntimeMode: params.runtimeMode,
+      interactionMode: input.interactionMode,
+      workspaceStrategy: params.workspaceStrategy,
+      userAskedForWorktree: params.userAskedForWorktree === true,
+      message: params.message,
+      // Resolved by the machine that runs the thread, against its own checkout.
+      increment: params.increment,
+      // Only a thread here can be woken when its worker finishes.
+      reportBack: principal.kind === "thread" && (params.reportBack ?? true),
+      delegation: outgoing.delegation,
+      // Display text for the badge there: the client's name, or the thread here.
+      originHint:
+        principal.kind === "client"
+          ? { clientLabel: principal.client.label }
+          : { parentThreadId: principal.caller.id },
+    });
+  if (project === undefined) return yield* launch();
+  const machine = input.machine.machine;
+  const hinted = (error: OrchestratorMcpFailure, extra: string) =>
+    new OrchestratorMcpFailure({ code: error.code, message: `${error.message} ${extra}` });
+  return yield* launch().pipe(
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        if (error.code !== "project_unavailable_on_machine") return yield* error;
+        // The repository may already be a project of its own there, added on that
+        // machine separately, so every machine lists it twice. Link that copy into
+        // this project and launch in it. Work another machine started here cannot
+        // change projects elsewhere, and a person's explicit choice there is kept.
+        // Only when this project has nothing there at all: a listed member that could
+        // not be read or no longer matches (the person unlinked it there, or that
+        // machine is briefly out), or a saved project for that machine, is not a
+        // missing copy, and linking another one would undo their choice.
+        const logical = project.workspaceSettings?.logicalProject;
+        const listedThere =
+          logical?.members.some((member) => member.environmentId === machine.environmentId) ===
+            true || RemoteWorkers.savedWorkerMachine(project, machine)?.projectId != null;
+        if (listedThere)
+          return yield* hinted(
+            error,
+            `This project already names a copy on ${machine.label}, and it cannot be used now: that machine may be briefly out, or the copy was moved or unlinked there. Do not add another copy. Check studio_machine_list, try again later, or ask the user to relink it (its sidebar menu > Link…).`,
+          );
+        const linkable =
+          logical != null &&
+          params.machineProjectId === undefined &&
+          (yield* workGrantOf(context)) === undefined;
+        const existing = linkable
+          ? yield* linkExistingCopy({ project, machine }).pipe(
+              Effect.catch(() => Effect.succeed({ kind: "none" } as ExistingCopyOutcome)),
+            )
+          : ({ kind: "none" } as ExistingCopyOutcome);
+        const projects = yield* ProjectService.ProjectService;
+        const reread = projects.getById(project.id).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (existing.kind === "linked")
+          // The link added that machine's copy to this project's members.
+          return yield* launch((yield* reread) ?? project);
+        if (existing.kind === "unlinked") {
+          // Another launch may have linked the same copy a moment ago.
+          const fresh = yield* reread;
+          if (
+            fresh?.workspaceSettings?.logicalProject?.members.some(
+              (member) =>
+                member.environmentId === machine.environmentId &&
+                member.projectId === existing.copy.id,
+            )
+          )
+            return yield* launch(fresh);
+        }
+        if (existing.kind === "ambiguous")
+          return yield* hinted(
+            error,
+            `${machine.label} has several projects of this repository: ${existing.candidates
+              .map((copy) => `${copy.title} (${copy.id}, ${copy.workspaceRoot})`)
+              .join(
+                ", ",
+              )}. Ask the user which one to link (its sidebar menu > Link…), then launch again.`,
+          );
+        if (existing.kind === "unlinked")
+          return yield* hinted(
+            error,
+            `${machine.label} has this repository as a separate project, ${existing.copy.title} (${existing.copy.id}), not linked to this one. ${existing.problem}`,
+          );
+        // A project that is not there yet can be put there over MCP.
+        return yield* hinted(error, addToMachineHint(machine, project.id));
+      }),
+    ),
+  );
 });

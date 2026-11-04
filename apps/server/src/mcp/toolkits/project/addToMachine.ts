@@ -14,6 +14,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import {
+  canMatchRemoteCopies,
+  halfLinkedRemoteCopies,
+  unlinkedRemoteCopies,
+} from "../../../fleet/remoteWorkerMatching.ts";
 import { randomUuidV4 } from "../../../orchestration-v2/RandomUuid.ts";
 import * as ProjectLink from "../../../project/ProjectLink.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -140,6 +145,50 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
     );
   const machine = target.machine;
   const source = input.projectId === undefined ? undefined : yield* readCloneUrl(input.projectId);
+  // The repository is already there as a project of its own: link it rather than
+  // cloning a second copy, which every machine would list as one more project.
+  if (source !== undefined && input.destinationPath === undefined) {
+    // This project already names a copy there (linked, or saved as its project on that
+    // machine). One that cannot be used is repaired or relinked, never replaced by
+    // linking or cloning another, which would undo an unlink or make two copies there.
+    const listedThere =
+      source.project.workspaceSettings?.logicalProject?.members.find(
+        (member) => member.environmentId === machine.environmentId,
+      )?.projectId ?? RemoteWorkers.savedWorkerMachine(source.project, machine)?.projectId;
+    if (listedThere != null)
+      return yield* invalid(
+        `This project already has ${listedThere} as its copy on ${machine.label}. Launch there with machineProjectId:"${listedThere}"; if that copy is gone or was unlinked, ask the user to relink it (its sidebar menu > Link…) or remove it in Settings > Machines, or pass destinationPath to clone one more copy.`,
+      );
+    // A failed search is reported, not read as "no copy": cloning then would add the
+    // very duplicate this check prevents.
+    const existing = yield* linkExistingCopy({ project: source.project, machine }).pipe(
+      Effect.mapError((error) =>
+        invalid(
+          `Could not check ${machine.label} for a project of this repository it already has: ${error.message} Retry, or pass destinationPath to clone one more copy anyway.`,
+        ),
+      ),
+    );
+    if (existing.kind === "ambiguous")
+      return yield* invalid(
+        `${machine.label} already has ${existing.candidates.length} projects of this repository: ${existing.candidates
+          .map((copy) => `${copy.title} (${copy.id}, ${copy.workspaceRoot})`)
+          .join(
+            ", ",
+          )}. Ask the user which one to link (its sidebar menu > Link…), or pass destinationPath to clone one more copy.`,
+      );
+    if (existing.kind === "linked" || existing.kind === "unlinked")
+      return {
+        machine,
+        projectId: existing.copy.id,
+        title: existing.copy.title,
+        workspaceRoot: existing.copy.workspaceRoot,
+        remoteUrl: source.cloneUrl,
+        ...(existing.kind === "linked"
+          ? { linked: true, existingCopy: true }
+          : { linked: false, existingCopy: true, linkProblem: existing.problem }),
+        next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${existing.copy.id}"}.`,
+      };
+  }
   const cloneUrl = source?.cloneUrl ?? input.cloneUrl!;
   const destinationPath =
     input.destinationPath ??
@@ -233,6 +282,118 @@ export const addProjectToMachine = Effect.fn("mcp.addProjectToMachine")(function
         : { linked: false, linkProblem: link.problem }),
     next: `Launch there with studio_thread_launch {machine:"${machine.label}", machineProjectId:"${created.id}"${strategy}}.`,
   };
+});
+
+const decodeListedProject = Schema.decodeUnknownOption(Project);
+
+// A machine lists at most this many pages of 100 projects for a copy search.
+const MAX_COPY_SEARCH_PAGES = 10;
+
+/** Every project another machine lists, newest snapshot, for finding a copy there. */
+const listProjectsOn = Effect.fn("mcp.addToMachine.listProjectsOn")(function* (
+  machine: OrchestratorMcpMachineRef,
+) {
+  const remote = yield* RemoteWorkers.RemoteWorkers;
+  const listed: Project[] = [];
+  let cursor: number | null = 0;
+  for (let page = 0; page < MAX_COPY_SEARCH_PAGES && cursor !== null; page++) {
+    const answer: unknown = yield* remote.proxy({
+      machine,
+      tool: "studio_project_list",
+      arguments: { cursor, limit: 100 },
+    });
+    const record = typeof answer === "object" && answer !== null ? answer : {};
+    const rows = "projects" in record && Array.isArray(record.projects) ? record.projects : [];
+    for (const row of rows) {
+      const decoded = decodeListedProject(row);
+      if (Option.isSome(decoded)) listed.push(decoded.value);
+    }
+    cursor =
+      "nextCursor" in record && typeof record.nextCursor === "number" ? record.nextCursor : null;
+  }
+  if (cursor !== null)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `${machine.label} lists more than ${MAX_COPY_SEARCH_PAGES * 100} projects, so not all of them were checked.`,
+    });
+  return listed;
+});
+
+export type ExistingCopyOutcome =
+  | { readonly kind: "none" }
+  | { readonly kind: "ambiguous"; readonly candidates: ReadonlyArray<Project> }
+  | { readonly kind: "linked"; readonly copy: Project }
+  | { readonly kind: "unlinked"; readonly copy: Project; readonly problem: string };
+
+/**
+ * True only when the project `copyId` on `machine` has never had a thread, archived
+ * and subagent ones included. Linking a copy hands its coordinating to this project,
+ * so a copy with history of its own is left for the person to link with Link…, where
+ * they compare both and choose what to keep. An answer that cannot be read counts
+ * as history.
+ */
+const copyHasNoThreads = (machine: OrchestratorMcpMachineRef, copyId: ProjectId) =>
+  Effect.gen(function* () {
+    const remote = yield* RemoteWorkers.RemoteWorkers;
+    const answer: unknown = yield* remote.proxy({
+      machine,
+      tool: "studio_thread_list",
+      arguments: { projectId: copyId, includeArchived: true, includeSubagents: true, limit: 1 },
+    });
+    const record = typeof answer === "object" && answer !== null ? answer : {};
+    const threads = "threads" in record && Array.isArray(record.threads) ? record.threads : null;
+    const total = "total" in record && typeof record.total === "number" ? record.total : null;
+    // An older machine ignores includeArchived and lists only active threads; it says
+    // so by not echoing the flag, and then archived history cannot be ruled out.
+    const archivedCounted = "includeArchived" in record && record.includeArchived === true;
+    return archivedCounted && threads !== null && threads.length === 0 && total === 0;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+/**
+ * The same repository was added on `machine` on its own, so it is listed there as a
+ * second project with the same name. Links that copy into this project, as Link…
+ * does, so one project spans both machines. Only a single certain copy that has no
+ * threads of its own is linked; several are left for the person to choose, and one
+ * with history for them to link with Link…. A copy that already joined this project
+ * there, when the link's last step here did not finish, is linked again to finish it.
+ */
+export const linkExistingCopy = Effect.fn("mcp.addToMachine.linkExistingCopy")(function* (input: {
+  readonly project: Project;
+  readonly machine: OrchestratorMcpMachineRef;
+}) {
+  const shared = input.project.workspaceSettings?.logicalProject != null;
+  if (!shared && !canMatchRemoteCopies(input.project))
+    return { kind: "none" } as ExistingCopyOutcome;
+  const listed = yield* listProjectsOn(input.machine);
+  const halfLinked = halfLinkedRemoteCopies({
+    local: input.project,
+    environmentId: input.machine.environmentId,
+    remote: listed,
+  });
+  if (halfLinked.length > 1)
+    return { kind: "ambiguous", candidates: halfLinked } as ExistingCopyOutcome;
+  const resumed = halfLinked[0];
+  if (resumed === undefined && !canMatchRemoteCopies(input.project))
+    return { kind: "none" } as ExistingCopyOutcome;
+  const copies =
+    resumed === undefined ? unlinkedRemoteCopies({ local: input.project, remote: listed }) : [];
+  if (resumed === undefined && copies.length === 0) return { kind: "none" } as ExistingCopyOutcome;
+  if (copies.length > 1) return { kind: "ambiguous", candidates: copies } as ExistingCopyOutcome;
+  const copy = resumed ?? copies[0]!;
+  if (resumed === undefined && !(yield* copyHasNoThreads(input.machine, copy.id)))
+    return {
+      kind: "unlinked",
+      copy,
+      problem: `It has threads of its own, so it was not linked automatically: linking makes this project's coordinator the one for both copies. Open its menu in the sidebar and choose Link… to compare both and choose what to keep.`,
+    } as ExistingCopyOutcome;
+  const outcome = yield* linkCopy({
+    sourceId: input.project.id,
+    machine: input.machine,
+    copyId: copy.id,
+  });
+  return (
+    outcome.linked ? { kind: "linked", copy } : { kind: "unlinked", copy, problem: outcome.problem }
+  ) as ExistingCopyOutcome;
 });
 
 type LinkOutcome = { readonly linked: true } | { readonly linked: false; readonly problem: string };

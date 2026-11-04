@@ -12,6 +12,7 @@ import {
   type RepositoryIdentity,
   type RuntimeMode,
   repositoryGroupingKeyOf,
+  repositoryRelativePathOf,
 } from "@specweave-studio/contracts";
 import type { StudioFleetWorkers } from "@specweave-studio/contracts/studioFleet";
 import { studioThreadLinkLabel } from "@specweave-studio/shared/studioThreadLinks";
@@ -45,17 +46,9 @@ export interface MatchableProject {
   readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
 }
 
-const normalizePath = (path: string) => path.trim().replaceAll("\\", "/").replace(/\/+$/u, "");
-
 /** Where a project sits inside its repository: "" at the root, null when unknown. */
 export function repositoryRelativePath(project: MatchableProject): string | null {
-  const rootPath = project.repositoryIdentity?.rootPath;
-  if (!rootPath) return null;
-  const root = normalizePath(rootPath);
-  const workspace = normalizePath(project.workspaceRoot);
-  if (root.length === 0 || workspace.length === 0) return null;
-  if (workspace === root) return "";
-  return workspace.startsWith(`${root}/`) ? workspace.slice(root.length + 1) : null;
+  return repositoryRelativePathOf(project.workspaceRoot, project.repositoryIdentity?.rootPath);
 }
 
 const groupingKey = (project: MatchableProject) =>
@@ -177,6 +170,74 @@ export function matchRemoteProject(input: {
     candidates: candidates.map((project) => ({ projectId: project.id, title: project.title })),
     reason: "Several projects on that machine match; pass machineProjectId.",
   };
+}
+
+/** A project whose repository and place in it are known, so a copy elsewhere can be found. */
+export const canMatchRemoteCopies = (local: MatchableProject): boolean =>
+  groupingKey(local) !== undefined && repositoryRelativePath(local) !== null;
+
+/**
+ * Projects on another machine that are separate copies of `local`'s repository, not yet
+ * part of any shared project: the same repository and place in it, a code project that
+ * is not deleted, archived, automated or personal, an identity naming only itself, and
+ * a coordinator binding no link, handoff or unlink ever wrote.
+ * Each one shows as a second project with the same name until it is linked. Resemblance
+ * only finds the candidate; linking it still runs the link flow, which compares both
+ * folders before anything changes.
+ */
+export function unlinkedRemoteCopies(input: {
+  readonly local: MatchableProject;
+  readonly remote: ReadonlyArray<Project>;
+}): ReadonlyArray<Project> {
+  if (!canMatchRemoteCopies(input.local)) return [];
+  const localKey = groupingKey(input.local);
+  const localPath = repositoryRelativePath(input.local);
+  return input.remote.filter((project) => {
+    const settings = project.workspaceSettings;
+    if (project.deletedAt !== null) return false;
+    if (settings?.archived === true || settings?.origin === "automated") return false;
+    if (settings?.kind !== undefined && settings.kind !== "code") return false;
+    const members = settings?.logicalProject?.members ?? [];
+    if (members.some((member) => member.projectId !== project.id)) return false;
+    // A copy that was ever linked, handed off or unlinked carries an operation in its
+    // binding; leaving a shared project was the person's choice, so only a copy that
+    // never took part in one is offered.
+    const binding = settings?.coordinatorBinding;
+    if (
+      binding !== undefined &&
+      (binding.operationId !== undefined || binding.epoch !== 0 || binding.state !== "active")
+    )
+      return false;
+    return groupingKey(project) === localKey && repositoryRelativePath(project) === localPath;
+  });
+}
+
+/**
+ * Copies on the machine `environmentId` that already joined `local`'s shared
+ * project there, while `local` does not list them yet: a link whose last step here
+ * did not finish. Linking one again finishes it.
+ */
+export function halfLinkedRemoteCopies(input: {
+  readonly local: Project;
+  readonly environmentId: EnvironmentId;
+  readonly remote: ReadonlyArray<Project>;
+}): ReadonlyArray<Project> {
+  const logical = input.local.workspaceSettings?.logicalProject;
+  if (logical == null) return [];
+  return input.remote.filter((project) => {
+    if (project.deletedAt !== null || project.workspaceSettings?.archived === true) return false;
+    const theirs = project.workspaceSettings?.logicalProject;
+    if (theirs?.id !== logical.id) return false;
+    const listedHere = logical.members.some(
+      (member) => member.environmentId === input.environmentId && member.projectId === project.id,
+    );
+    const namesThisCopy = theirs.members.some((member) =>
+      logical.members.some(
+        (own) => own.environmentId === member.environmentId && own.projectId === member.projectId,
+      ),
+    );
+    return !listedHere && namesThisCopy;
+  });
 }
 
 export type ModelTranslation =

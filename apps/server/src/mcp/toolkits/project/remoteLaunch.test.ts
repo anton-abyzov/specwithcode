@@ -24,6 +24,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ProjectLink from "../../../project/ProjectLink.ts";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
@@ -75,6 +76,15 @@ const setup = (
     readonly personal?: boolean;
     /** The calling thread is a scratch chat here, outside every project. */
     readonly callerInScratch?: boolean;
+    /**
+     * The project is shared (M4 only so far) and M1 holds these projects; the launch
+     * there is refused until one of them is linked into the shared project.
+     */
+    readonly sharedWithCopiesOnM1?: ReadonlyArray<Record<string, unknown>>;
+    /** Threads M1's copy already has; none unless set. */
+    readonly m1CopyThreads?: ReadonlyArray<Record<string, unknown>>;
+    /** The shared project still lists an M1 member that M1 no longer has (unlinked there). */
+    readonly staleM1Member?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -89,6 +99,38 @@ const setup = (
     deletedAt: null,
   } as OrchestrationV2ThreadShell;
   const remoteLaunches: RemoteWorkers.RemoteLaunchInput[] = [];
+  const proxied: string[] = [];
+  const linkSteps: string[] = [];
+  let linkedCopy: string | null = null;
+  const kept = {
+    environmentId: EnvironmentId.make("env-m4"),
+    projectId,
+    coordinatorThreadId: ThreadId.make(`project-coordinator:${projectId}`),
+  };
+  const sharedIdentity = {
+    canonicalKey: "github.com/example/widgets",
+    locator: {
+      source: "git-remote",
+      remoteName: "origin",
+      remoteUrl: "https://github.com/example/widgets.git",
+    },
+    rootPath: "/Users/example/widgets",
+  } as const;
+  const logicalProject = {
+    id: "logical:widgets",
+    title: "Widgets",
+    coordinatorId: "coordinator:logical:widgets",
+    members: options.staleM1Member
+      ? [
+          kept,
+          {
+            environmentId: M1.environmentId,
+            projectId: ProjectId.make("m1-widgets"),
+            coordinatorThreadId: ThreadId.make("project-coordinator:m1-widgets"),
+          },
+        ]
+      : [kept],
+  };
   const localLaunches: ThreadLaunch.ThreadLaunchInput[] = [];
   const project = projectFixture(projectId, {
     defaultModelSelection: workerModel,
@@ -111,7 +153,11 @@ const setup = (
           }
         : {}),
       ...(options.workerMachines ? { workerMachines: options.workerMachines.map(listEntry) } : {}),
+      ...(options.sharedWithCopiesOnM1 ? { logicalProject } : {}),
     },
+    ...(options.sharedWithCopiesOnM1
+      ? { workspaceRoot: "/Users/example/widgets", repositoryIdentity: sharedIdentity as never }
+      : {}),
   });
   const remote: RemoteWorkers.RemoteWorkersShape = {
     ...RemoteWorkers.RemoteWorkers.defaultValue(),
@@ -127,6 +173,23 @@ const setup = (
     launch: (input) =>
       Effect.suspend(() => {
         remoteLaunches.push(input);
+        if (options.sharedWithCopiesOnM1 !== undefined) {
+          const members = input.localProject?.workspaceSettings?.logicalProject?.members ?? [];
+          if (options.staleM1Member)
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "project_unavailable_on_machine",
+                message: "The destination project no longer belongs to this logical project.",
+              }),
+            );
+          if (!members.some((member) => member.environmentId === M1.environmentId))
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "project_unavailable_on_machine",
+                message: "M1: This logical project has no execution binding on this machine.",
+              }),
+            );
+        }
         const failing =
           options.failingMachines === undefined
             ? options.remoteFails !== undefined
@@ -147,6 +210,7 @@ const setup = (
           threadRef: "studio://thread/env-m1/b-thread",
           threadLink: "[Fix CI](studio://thread/env-m1/b-thread)",
           reportsBack: input.reportBack,
+          ...(linkedCopy === null ? {} : { projectId: ProjectId.make(linkedCopy) }),
           ...(options.grantedRuntimeMode === undefined
             ? { runtimeMode: input.runtimeMode }
             : {
@@ -156,9 +220,92 @@ const setup = (
         });
       }),
   };
+  const proxy: RemoteWorkers.RemoteWorkersShape["proxy"] = (input) =>
+    Effect.suspend((): Effect.Effect<Record<string, unknown>, OrchestratorMcpFailure> => {
+      proxied.push(input.tool);
+      if (input.tool === "studio_project_list")
+        return Effect.succeed({ projects: options.sharedWithCopiesOnM1 ?? [], nextCursor: null });
+      if (input.tool === "studio_thread_list")
+        return Effect.succeed({
+          projectId: input.arguments.projectId,
+          currentThreadId: null,
+          threads: options.m1CopyThreads ?? [],
+          nextCursor: null,
+          total: (options.m1CopyThreads ?? []).length,
+          includeArchived: true,
+        });
+      if (input.tool === "studio_project_link_accept") {
+        const joined = {
+          environmentId: M1.environmentId,
+          projectId: ProjectId.make(String(input.arguments.projectId)),
+          coordinatorThreadId: ThreadId.make(`project-coordinator:${input.arguments.projectId}`),
+        };
+        return Effect.succeed({
+          operationId: input.arguments.operationId,
+          member: joined,
+          logicalProject: { ...logicalProject, members: [kept, joined] },
+          coordinatorBinding: {
+            epoch: 0,
+            state: "transferred",
+            operationId: input.arguments.operationId,
+            successor: kept,
+          },
+          replayed: false,
+        });
+      }
+      return Effect.die(`unexpected tool ${input.tool}`);
+    });
+  const linkedProject = () =>
+    linkedCopy === null
+      ? project
+      : {
+          ...project,
+          workspaceSettings: {
+            ...project.workspaceSettings!,
+            logicalProject: {
+              ...logicalProject,
+              members: [
+                kept,
+                {
+                  environmentId: M1.environmentId,
+                  projectId: ProjectId.make(linkedCopy),
+                  coordinatorThreadId: ThreadId.make(`project-coordinator:${linkedCopy}`),
+                },
+              ],
+            },
+          },
+        };
   const layerDependencies = Layer.mergeAll(
     NodeCrypto.layer,
-    Layer.succeed(RemoteWorkers.RemoteWorkers, remote),
+    Layer.succeed(RemoteWorkers.RemoteWorkers, { ...remote, proxy }),
+    Layer.mock(ProjectLink.ProjectLink)({
+      prepare: (input) => {
+        linkSteps.push(`prepare:${input.joining.projectId}`);
+        return Effect.succeed({
+          operationId: input.operationId,
+          kept,
+          logicalProject,
+          coordinatorBinding: { epoch: 0, state: "active" as const },
+          fingerprint: {
+            root: "repository" as const,
+            repositories: [],
+            skippedLinks: 0,
+            truncated: false,
+          },
+          adopted: false,
+        });
+      },
+      commit: (input) => {
+        linkSteps.push(`commit:${input.joining.projectId}`);
+        linkedCopy = input.joining.projectId;
+        return Effect.succeed({
+          operationId: input.operationId,
+          logicalProject: { ...logicalProject, members: [kept, input.joining] },
+          notesWritten: 0,
+          replayed: false,
+        });
+      },
+    }),
     Layer.succeed(WorkGrants.WorkGrants, {
       ...WorkGrants.WorkGrants.defaultValue(),
       enabled: true,
@@ -209,7 +356,7 @@ const setup = (
                       defaultModelSelection: workerModel,
                       workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "code" },
                     })
-                  : project,
+                  : linkedProject(),
               ),
         ),
     }),
@@ -253,7 +400,7 @@ const setup = (
       ),
       Effect.map((results) => results.at(-1)?.encodedResult as Record<string, unknown>),
     );
-  return { launch, launchEncoded, remoteLaunches, localLaunches };
+  return { launch, launchEncoded, remoteLaunches, localLaunches, proxied, linkSteps };
 };
 
 it.effect(
@@ -704,5 +851,121 @@ it.effect("starts work here first when this machine heads the list", () => {
     });
     expect(routed.remoteLaunches).toEqual([]);
     expect(routed.localLaunches).toHaveLength(1);
+  });
+});
+
+/** M1's own project of the same repository, added there by itself: not shared yet. */
+const m1Copy = (id: string, extra: Record<string, unknown> = {}) =>
+  projectFixture(ProjectId.make(id), {
+    title: "widgets",
+    workspaceRoot: "/home/example/Projects/widgets",
+    repositoryIdentity: {
+      canonicalKey: "github.com/example/widgets",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/example/widgets.git",
+      },
+      // Git reports the root with the home link resolved.
+      rootPath: "/srv/work/Projects/widgets",
+    } as never,
+    ...extra,
+  });
+
+it.effect(
+  "links the machine's own copy of the repository into the shared project, then launches",
+  () => {
+    const out = setup({ sharedWithCopiesOnM1: [m1Copy("m1-widgets")] });
+    return Effect.gen(function* () {
+      const result = yield* out.launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+      expect(result).toMatchObject({ projectId: "m1-widgets", machine: M1 });
+      expect(out.linkSteps).toEqual(["prepare:m1-widgets", "commit:m1-widgets"]);
+      expect(out.proxied).toEqual([
+        "studio_project_list",
+        "studio_thread_list",
+        "studio_project_link_accept",
+      ]);
+      expect(out.remoteLaunches).toHaveLength(2);
+    });
+  },
+);
+
+it.effect("never links a copy that is already shared, nor guesses between two copies", () => {
+  const sharedElsewhere = setup({
+    sharedWithCopiesOnM1: [
+      m1Copy("m1-other", {
+        workspaceSettings: {
+          ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          logicalProject: {
+            id: "logical:other",
+            title: "widgets",
+            coordinatorId: "coordinator:logical:other",
+            members: [
+              { environmentId: M1.environmentId, projectId: "m1-other", coordinatorThreadId: "c1" },
+              { environmentId: M3.environmentId, projectId: "m3-other", coordinatorThreadId: "c3" },
+            ],
+          },
+        },
+      }),
+    ],
+  });
+  const two = setup({ sharedWithCopiesOnM1: [m1Copy("m1-a"), m1Copy("m1-b")] });
+  return Effect.gen(function* () {
+    const refused = yield* sharedElsewhere.launch({ title: "Fix", message: "Fix", machine: "M1" });
+    expect(refused).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(String(refused.message)).toContain("studio_project_add_to_machine");
+    expect(sharedElsewhere.linkSteps).toEqual([]);
+    const ambiguous = yield* two.launch({ title: "Fix", message: "Fix", machine: "M1" });
+    expect(ambiguous).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(String(ambiguous.message)).toContain("m1-a");
+    expect(String(ambiguous.message)).toContain("m1-b");
+    expect(two.linkSteps).toEqual([]);
+  });
+});
+
+it.effect("leaves a copy with threads of its own for the person to link with Link…", () => {
+  const out = setup({
+    sharedWithCopiesOnM1: [m1Copy("m1-widgets")],
+    m1CopyThreads: [{ threadId: "thread-on-m1" }],
+  });
+  return Effect.gen(function* () {
+    const refused = yield* out.launch({ title: "Fix", message: "Fix", machine: "M1" });
+    expect(refused).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(String(refused.message)).toContain("m1-widgets");
+    expect(String(refused.message)).toContain("Link…");
+    expect(out.linkSteps).toEqual([]);
+  });
+});
+
+it.effect("never relinks a copy this project still lists there, as after an unlink there", () => {
+  const out = setup({ sharedWithCopiesOnM1: [m1Copy("m1-widgets")], staleM1Member: true });
+  return Effect.gen(function* () {
+    const refused = yield* out.launch({ title: "Fix", message: "Fix", machine: "M1" });
+    expect(refused).toMatchObject({ code: "project_unavailable_on_machine" });
+    expect(out.proxied).toEqual([]);
+    expect(out.linkSteps).toEqual([]);
+  });
+});
+
+it.effect("keeps an explicit machineProjectId and never links for another machine's work", () => {
+  const explicit = setup({ sharedWithCopiesOnM1: [m1Copy("m1-widgets")] });
+  const relayed = setup({
+    sharedWithCopiesOnM1: [m1Copy("m1-widgets")],
+    origin: {
+      coordinatorEnvironmentId: EnvironmentId.make("env-m3"),
+      path: [EnvironmentId.make("env-m3")],
+      hops: 1,
+    } as unknown as WorkOrigin,
+  });
+  return Effect.gen(function* () {
+    yield* explicit.launch({
+      title: "Fix",
+      message: "Fix",
+      machine: "M1",
+      machineProjectId: "m1-widgets",
+    });
+    expect(explicit.linkSteps).toEqual([]);
+    yield* relayed.launch({ title: "Fix", message: "Fix", machine: "M1" });
+    expect(relayed.linkSteps).toEqual([]);
   });
 });

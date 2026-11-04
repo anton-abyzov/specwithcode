@@ -312,14 +312,21 @@ describe("a coordinator moving to a copy that already has its own setup", () => 
     providerLimitExcludedModels: [],
     providerLimitSwitchAtPercent: 90,
     providerLimitWaitUnderMinutes: 5,
+    providerLimitAction: "switch",
   } as unknown as Parameters<typeof destinationModelPolicy>[0];
 
   it("pins a safe limit policy only where this machine has none", () => {
     expect(destinationModelPolicy(resolved, undefined, undefined)).toMatchObject({
-      providerLimitAction: "ask",
+      providerLimitAction: "switch",
+      providerLimitRedeemResets: false,
       providerLimitSpendCredits: false,
+      providerLimitUseApiCredits: false,
       providerLimitFallbackModels: [],
+      providerLimitMachineTargets: [],
     });
+    expect(
+      destinationModelPolicy({ ...resolved, providerLimitAction: "ask" }, undefined, undefined),
+    ).toMatchObject({ providerLimitAction: "ask" });
     const kept = destinationModelPolicy(
       resolved,
       { providerLimitAction: "switch" } as Parameters<typeof destinationModelPolicy>[1],

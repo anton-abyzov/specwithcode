@@ -7,6 +7,7 @@ import {
   threadMoveBanner,
   threadMoveBlockedReason,
   threadMoveStartsByDefault,
+  threadMoveTargetLabels,
   threadMoveTargets,
 } from "./threadMove.logic";
 import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
@@ -294,5 +295,56 @@ describe("threadMoveBanner", () => {
         },
       }),
     ).toBeNull();
+  });
+});
+
+describe("threadMoveTargetLabels", () => {
+  const m1 = EnvironmentId.make("env-m1");
+  const logicalProject = {
+    title: "specweave",
+    members: [
+      { environmentId: here, projectId: specweave },
+      { environmentId: elsewhere, projectId: ProjectId.make("specweave-m3") },
+    ],
+  };
+  const sharedHere = {
+    environmentId: here,
+    id: specweave,
+    title: "specweave",
+    workspaceRoot: "/Users/a/repos/specweave",
+    workspaceSettings: { logicalProject },
+  };
+  const localOnly = (id: string, root: string, environmentId = here) => ({
+    environmentId,
+    id: ProjectId.make(id),
+    title: "specweave",
+    workspaceRoot: root,
+    workspaceSettings: {
+      logicalProject: { members: [{ environmentId, projectId: ProjectId.make(id) }] },
+    },
+  });
+
+  it("says which of two same-named projects is shared", () => {
+    const own = localOnly("specweave-own", "/Users/a/scratch/specweave-copy");
+    const labels = threadMoveTargetLabels([sharedHere, own], [sharedHere, own]);
+    expect(labels.get(specweave)).toEqual({ title: "specweave", hint: "shared · specweave" });
+    expect(labels.get(own.id)).toEqual({
+      title: "specweave",
+      hint: "this machine only · specweave-copy",
+    });
+  });
+
+  it("marks a machine's own copy when the shared one is elsewhere", () => {
+    const own = localOnly("specweave-m1", "/Users/b/specweave", m1);
+    const labels = threadMoveTargetLabels([own], [sharedHere, own]);
+    expect(labels.get(own.id)).toEqual({ title: "specweave", hint: "this machine only" });
+  });
+
+  it("leaves unique names alone", () => {
+    const other = { environmentId: here, id: easychamp, title: "EasyChamp" };
+    expect(threadMoveTargetLabels([other], [other]).get(easychamp)).toEqual({
+      title: "EasyChamp",
+      hint: null,
+    });
   });
 });

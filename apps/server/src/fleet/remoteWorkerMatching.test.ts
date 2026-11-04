@@ -23,6 +23,7 @@ import {
   remoteWorkerLost,
   remoteWorkerWake,
   translateModel,
+  unlinkedRemoteCopies,
 } from "./remoteWorkerMatching.ts";
 
 const identity = (key: string, rootPath: string, origin?: string): RepositoryIdentity => ({
@@ -366,5 +367,49 @@ describe("remoteWorkerWake", () => {
     expect(remoteWorkerLost(base).notification.summary).toBe(
       "Lost contact with [T](studio://thread/e/t) on B.",
     );
+  });
+});
+
+describe("unlinkedRemoteCopies", () => {
+  const copy = (id: string, settings: Record<string, unknown> = {}, root = "/home/b/code/app") =>
+    ({
+      ...project(id, root, identity("github.com/acme/app", "/home/b/code/app")),
+      deletedAt: null,
+      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, ...settings },
+    }) as unknown as Project;
+
+  it("finds the other machine's own project of the same repository and place", () => {
+    const found = unlinkedRemoteCopies({
+      local,
+      remote: [
+        copy("same"),
+        copy("archived", { archived: true }),
+        copy("check", { origin: "automated" }),
+        copy("personal", { kind: "personal" }),
+        copy("elsewhere", {}, "/home/b/code/app/packages/x"),
+        {
+          ...copy("deleted"),
+          deletedAt: "2026-11-01T00:00:00.000Z",
+        } as unknown as Project,
+        copy("shared", {
+          logicalProject: {
+            id: "logical:x",
+            title: "app",
+            coordinatorId: "coordinator:logical:x",
+            members: [
+              { environmentId: "env-m1", projectId: "shared", coordinatorThreadId: "c" },
+              { environmentId: "env-m3", projectId: "other", coordinatorThreadId: "d" },
+            ],
+          },
+        }),
+      ],
+    });
+    expect(found.map((entry) => entry.id)).toEqual(["same"]);
+  });
+
+  it("finds nothing for a project without a known place in its repository", () => {
+    expect(
+      unlinkedRemoteCopies({ local: project("bare", "/Users/a/bare"), remote: [copy("same")] }),
+    ).toEqual([]);
   });
 });

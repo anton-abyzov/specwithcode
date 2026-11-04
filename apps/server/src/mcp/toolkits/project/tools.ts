@@ -223,6 +223,12 @@ const ProjectAddToMachineTool = Tool.make("studio_project_add_to_machine", {
     linkProblem: Schema.optional(
       Schema.String.annotate({ description: "Why the copy is not linked. Tell the user." }),
     ),
+    existingCopy: Schema.optional(
+      Schema.Boolean.annotate({
+        description:
+          "True when that machine already had this repository as a project of its own, so it was linked instead of cloned again.",
+      }),
+    ),
     next: Schema.String.annotate({ description: "How to start work there. Follow it." }),
   }),
 })

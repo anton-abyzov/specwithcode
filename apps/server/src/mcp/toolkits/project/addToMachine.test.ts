@@ -80,6 +80,15 @@ const setup = (
     readonly noLinkAccept?: boolean;
     /** This machine's project was made by a check. */
     readonly automated?: boolean;
+    /** Projects M1 already lists; the project here then has a known place in its repository. */
+    readonly m1Projects?: ReadonlyArray<Record<string, unknown>>;
+    readonly m1CopyThreads?: ReadonlyArray<Record<string, unknown>>;
+    readonly listFails?: boolean;
+    readonly sharedHere?: boolean;
+    /** M1 runs a build that ignores includeArchived and does not echo it. */
+    readonly olderM1?: boolean;
+    /** The shared project here already lists a member on M1. */
+    readonly m1MemberHere?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -97,11 +106,39 @@ const setup = (
   const project = projectFixture(projectId, {
     title: "Widgets",
     workspaceRoot: "/Users/example/Projects/widgets",
-    repositoryIdentity: forkIdentity,
+    repositoryIdentity:
+      options.m1Projects === undefined
+        ? forkIdentity
+        : ({ ...forkIdentity, rootPath: "/Users/example/Projects/widgets" } as RepositoryIdentity),
     workspaceSettings: {
       ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
       coordinatorThreadId: callerId,
       ...(options.automated ? { origin: "automated" } : {}),
+      ...(options.sharedHere
+        ? {
+            logicalProject: {
+              id: "logical:widgets",
+              title: "Widgets",
+              coordinatorId: "coordinator:logical:widgets",
+              members: [
+                {
+                  environmentId: EnvironmentId.make("env-m4"),
+                  projectId,
+                  coordinatorThreadId: ThreadId.make(`project-coordinator:${projectId}`),
+                },
+                ...(options.m1MemberHere
+                  ? [
+                      {
+                        environmentId: EnvironmentId.make("env-m1"),
+                        projectId: ProjectId.make("m1-gone"),
+                        coordinatorThreadId: ThreadId.make("project-coordinator:m1-gone"),
+                      },
+                    ]
+                  : []),
+              ],
+            },
+          }
+        : {}),
     },
   });
   const kept: LogicalProjectMember = {
@@ -135,6 +172,24 @@ const setup = (
     proxy: (input) =>
       Effect.suspend((): Effect.Effect<Record<string, unknown>, OrchestratorMcpFailure> => {
         calls.push({ tool: input.tool, arguments: input.arguments });
+        if (input.tool === "studio_project_list")
+          return options.listFails
+            ? Effect.fail(
+                new OrchestratorMcpFailure({
+                  code: "orchestration_error",
+                  message: "M1 is offline.",
+                }),
+              )
+            : Effect.succeed({ projects: options.m1Projects ?? [], nextCursor: null });
+        if (input.tool === "studio_thread_list")
+          return Effect.succeed({
+            projectId: input.arguments.projectId,
+            currentThreadId: null,
+            threads: options.m1CopyThreads ?? [],
+            nextCursor: null,
+            total: (options.m1CopyThreads ?? []).length,
+            ...(options.olderM1 ? {} : { includeArchived: true }),
+          });
         if (input.tool === "studio_project_clone") {
           if (options.cloneFails !== undefined)
             return Effect.fail(
@@ -511,5 +566,176 @@ describe("add-to-machine helpers", () => {
     ])
       expect(isCredentialFailure(message), message).toBe(true);
     expect(isCredentialFailure("fatal: destination path 'x' already exists")).toBe(false);
+  });
+
+  const m1Widgets = (id: string) =>
+    projectFixture(ProjectId.make(id), {
+      title: "widgets",
+      workspaceRoot: "/home/example/Projects/widgets",
+      repositoryIdentity: {
+        ...forkIdentity,
+        rootPath: "/home/example/Projects/widgets",
+      } as RepositoryIdentity,
+    });
+
+  it.effect("links the repository M1 already has instead of cloning a second copy", () => {
+    const { add, calls, linkCalls } = setup({ m1Projects: [m1Widgets("m1-widgets")] });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(calls.map((entry) => entry.tool)).toEqual([
+        "studio_project_list",
+        "studio_thread_list",
+        "studio_project_link_accept",
+      ]);
+      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare", "commit"]);
+      expect(result).toMatchObject({
+        projectId: "m1-widgets",
+        workspaceRoot: "/home/example/Projects/widgets",
+        linked: true,
+        existingCopy: true,
+      });
+      expect(String(result.next)).toContain('machineProjectId:"m1-widgets"');
+    });
+  });
+
+  it.effect("leaves a copy with threads of its own for the person to link", () => {
+    const { add, calls, linkCalls } = setup({
+      m1Projects: [m1Widgets("m1-widgets")],
+      m1CopyThreads: [{ threadId: "thread-on-m1" }],
+    });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(calls.map((entry) => entry.tool)).toEqual([
+        "studio_project_list",
+        "studio_thread_list",
+      ]);
+      expect(calls[1]?.arguments).toMatchObject({
+        projectId: "m1-widgets",
+        includeArchived: true,
+        includeSubagents: true,
+      });
+      expect(linkCalls).toEqual([]);
+      expect(result).toMatchObject({ projectId: "m1-widgets", linked: false, existingCopy: true });
+      expect(String(result.linkProblem)).toContain("Link…");
+    });
+  });
+
+  it.effect("reports a failed search for a copy instead of cloning a second one", () => {
+    const { add, calls } = setup({ m1Projects: [], listFails: true });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(result).toMatchObject({ code: "invalid_request" });
+      expect(String(result.message)).toContain("M1 is offline.");
+      expect(calls.map((entry) => entry.tool)).toEqual(["studio_project_list"]);
+    });
+  });
+
+  it.effect("finishes a link whose last step here did not run", () => {
+    const halfLinked = projectFixture(ProjectId.make("m1-widgets"), {
+      title: "widgets",
+      workspaceRoot: "/home/example/Projects/widgets",
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        logicalProject: {
+          id: "logical:widgets",
+          title: "Widgets",
+          coordinatorId: "coordinator:logical:widgets",
+          members: [
+            {
+              environmentId: EnvironmentId.make("env-m4"),
+              projectId,
+              coordinatorThreadId: ThreadId.make(`project-coordinator:${projectId}`),
+            },
+            {
+              environmentId: M1.environmentId,
+              projectId: ProjectId.make("m1-widgets"),
+              coordinatorThreadId: ThreadId.make("project-coordinator:m1-widgets"),
+            },
+          ],
+        },
+      },
+    });
+    const { add, calls, linkCalls } = setup({
+      m1Projects: [halfLinked],
+      m1CopyThreads: [{ threadId: "thread-on-m1" }],
+      sharedHere: true,
+    });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(calls.map((entry) => entry.tool)).toEqual([
+        "studio_project_list",
+        "studio_project_link_accept",
+      ]);
+      expect(linkCalls.map((entry) => entry.step)).toEqual(["prepare", "commit"]);
+      expect(result).toMatchObject({ projectId: "m1-widgets", linked: true, existingCopy: true });
+    });
+  });
+
+  it.effect("never links a copy someone unlinked, nor one an older M1 cannot vouch for", () => {
+    const unlinked = setup({
+      m1Projects: [
+        {
+          ...m1Widgets("m1-widgets"),
+          workspaceSettings: {
+            ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+            coordinatorBinding: { epoch: 0, state: "active", operationId: "unlink-1" },
+          },
+        },
+      ],
+    });
+    const older = setup({ m1Projects: [m1Widgets("m1-widgets")], olderM1: true });
+    return Effect.gen(function* () {
+      yield* unlinked.add({ machine: "M1", projectId });
+      // It clones a fresh copy and links that one; the unlinked copy stays as it is.
+      expect(unlinked.calls.map((entry) => entry.tool)).toContain("studio_project_clone");
+      expect(
+        unlinked.calls.filter(
+          (entry) =>
+            entry.tool === "studio_project_link_accept" &&
+            entry.arguments.projectId === "m1-widgets",
+        ),
+      ).toEqual([]);
+      const result = yield* older.add({ machine: "M1", projectId });
+      expect(older.linkCalls).toEqual([]);
+      expect(result).toMatchObject({ projectId: "m1-widgets", linked: false, existingCopy: true });
+    });
+  });
+
+  it.effect("refuses to add another copy where this project already names one", () => {
+    const { add, calls } = setup({
+      m1Projects: [m1Widgets("m1-widgets")],
+      sharedHere: true,
+      m1MemberHere: true,
+    });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(result).toMatchObject({ code: "invalid_request" });
+      expect(String(result.message)).toContain("m1-gone");
+      expect(calls).toEqual([]);
+    });
+  });
+
+  it.effect("asks which copy to link when M1 has several, and clones none", () => {
+    const { add, calls } = setup({ m1Projects: [m1Widgets("m1-a"), m1Widgets("m1-b")] });
+    return Effect.gen(function* () {
+      const result = yield* add({ machine: "M1", projectId });
+      expect(result).toMatchObject({ code: "invalid_request" });
+      expect(String(result.message)).toContain("m1-a");
+      expect(String(result.message)).toContain("destinationPath");
+      expect(calls.map((entry) => entry.tool)).toEqual(["studio_project_list"]);
+    });
+  });
+
+  it.effect("still clones when M1 has no copy of the repository", () => {
+    const { add, calls } = setup({ m1Projects: [] });
+    return Effect.gen(function* () {
+      yield* add({ machine: "M1", projectId });
+      expect(calls.map((entry) => entry.tool)).toEqual([
+        "studio_project_list",
+        "studio_project_clone",
+        "studio_project_create",
+        "studio_project_link_accept",
+      ]);
+    });
   });
 });

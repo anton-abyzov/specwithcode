@@ -2,6 +2,7 @@ import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/
 import {
   repositoryGroupingDisplayNameOf,
   repositoryGroupingKeyOf,
+  repositoryRelativePathOf,
   type EnvironmentId,
   type ProjectId,
 } from "@specweave-studio/contracts";
@@ -36,8 +37,6 @@ export interface SuggestionGroup {
 const refKey = (project: Pick<EnvironmentProject, "environmentId" | "id">) =>
   `${project.environmentId}:${project.id}`;
 
-const normalizePath = (path: string) => path.trim().replaceAll("\\", "/").replace(/\/+$/u, "");
-
 /**
  * Where a project sits inside its repository: "" at the root, null when unknown. Two
  * projects in one monorepo (apps/web and apps/api) are different work, so the place
@@ -46,13 +45,8 @@ const normalizePath = (path: string) => path.trim().replaceAll("\\", "/").replac
 export function repositoryRelativePath(
   project: Pick<EnvironmentProject, "repositoryIdentity" | "workspaceRoot">,
 ): string | null {
-  const rootPath = project.repositoryIdentity?.rootPath;
-  if (!rootPath || typeof project.workspaceRoot !== "string") return null;
-  const root = normalizePath(rootPath);
-  const workspace = normalizePath(project.workspaceRoot);
-  if (root.length === 0 || workspace.length === 0) return null;
-  if (workspace === root) return "";
-  return workspace.startsWith(`${root}/`) ? workspace.slice(root.length + 1) : null;
+  if (typeof project.workspaceRoot !== "string") return null;
+  return repositoryRelativePathOf(project.workspaceRoot, project.repositoryIdentity?.rootPath);
 }
 
 /** The one repository, and place in it, that every copy in the group is; null otherwise. */

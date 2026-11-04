@@ -117,6 +117,8 @@ fi
 command -v "${PYTHON:-python3}" > /dev/null || die "python3 not found; set PYTHON"
 export STUDIO_TEST_NODE
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never
+# Never M4's real fleet rollout lock (fleet_rollout.lock_path): a test neither waits for nor blocks a release.
+export STUDIO_FLEET_ROLLOUT_LOCK="${TMPDIR:-/tmp}/fleet-rollout-test-$$.lock"
 export PYTHONDONTWRITEBYTECODE=1
 
 cd "$HERE"

@@ -1,23 +1,29 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { HardDriveIcon, XIcon } from "lucide-react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 
 import { APP_BASE_NAME } from "../branding";
 import { isElectron } from "../env";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { environmentStorageStatusesAtom } from "../state/server";
-import { resolveLowDiskSpaceNotices, type LowDiskSpaceNotice } from "./LowDiskSpaceBanner.logic";
+import {
+  forgetRecoveredDismissals,
+  resolveLowDiskSpaceNotices,
+  type LowDiskSpaceNotice,
+} from "./LowDiskSpaceBanner.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 
-const DISMISSED_STORAGE_KEY = "studio:low-disk-space-dismissed:v1";
+const DISMISSED_STORAGE_KEY = "studio:low-disk-space-dismissed:v2";
 
-// Dismissals last for the window session: a reload keeps the banner closed,
-// a new launch shows it again while the disk is still low.
+// Dismissals stick on this device across reloads, launches and windows. Keys
+// are per machine and level, so a dismissed low notice comes back if that
+// disk turns critical; once the disk has room again its dismissals are
+// forgotten, so the next low episode warns again.
 function readDismissed(): ReadonlySet<string> {
   try {
-    const raw = window.sessionStorage.getItem(DISMISSED_STORAGE_KEY);
+    const raw = window.localStorage.getItem(DISMISSED_STORAGE_KEY);
     const parsed: unknown = raw === null ? [] : JSON.parse(raw);
     return new Set(
       Array.isArray(parsed) ? parsed.filter((key) => typeof key === "string") : undefined,
@@ -29,7 +35,7 @@ function readDismissed(): ReadonlySet<string> {
 
 function writeDismissed(dismissed: ReadonlySet<string>) {
   try {
-    window.sessionStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify([...dismissed]));
+    window.localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify([...dismissed]));
   } catch {
     // Unavailable storage still dismisses for as long as this page lives.
   }
@@ -65,11 +71,7 @@ export const LowDiskSpaceNoticeCard = memo(function LowDiskSpaceNoticeCard({
       </AlertDescription>
       <AlertAction>
         <Button
-          aria-label={
-            notice.action === "review-storage"
-              ? "Dismiss app folder notice"
-              : "Dismiss low disk space notice"
-          }
+          aria-label="Dismiss low disk space notice"
           onClick={onDismiss}
           size="icon-xs"
           variant="ghost-muted"
@@ -82,8 +84,10 @@ export const LowDiskSpaceNoticeCard = memo(function LowDiskSpaceNoticeCard({
 });
 
 /**
- * The app shell's one place for a full disk: a single notice per machine,
- * instead of every thread and chat reporting its own timeout.
+ * The app shell's one place for a full disk: a single notice per machine
+ * that is actually running low (see resolveLowDiskSpaceNotices), instead of
+ * every thread and chat reporting its own timeout. Folder size alone shows
+ * only in Settings > Storage.
  */
 export function LowDiskSpaceBanner() {
   const statuses = useAtomValue(environmentStorageStatusesAtom);
@@ -94,6 +98,27 @@ export function LowDiskSpaceBanner() {
   const reviewStorage = useCallback(() => {
     void navigate({ to: "/settings/storage" });
   }, [navigate]);
+
+  // Another window dismissed a notice, or forgot dismissals.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === DISMISSED_STORAGE_KEY) setDismissed(readDismissed());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  // A machine whose disk has room again loses its dismissals, adjusted
+  // during render when the statuses change.
+  const [checkedStatuses, setCheckedStatuses] = useState(statuses);
+  if (checkedStatuses !== statuses) {
+    setCheckedStatuses(statuses);
+    const next = forgetRecoveredDismissals(dismissed, statuses);
+    if (next !== dismissed) setDismissed(next);
+  }
+
+  // Equal values are not rewritten, so windows do not echo each other.
+  useEffect(() => writeDismissed(dismissed), [dismissed]);
 
   const notices = useMemo(() => {
     const labels = new Map(environments.map(({ environmentId, label }) => [environmentId, label]));
@@ -108,11 +133,7 @@ export function LowDiskSpaceBanner() {
   }, [dismissed, environments, primaryEnvironmentId, statuses]);
 
   const dismiss = useCallback((key: string) => {
-    setDismissed((current) => {
-      const next = new Set(current).add(key);
-      writeDismissed(next);
-      return next;
-    });
+    setDismissed((current) => new Set(current).add(key));
   }, []);
 
   if (notices.length === 0) return null;

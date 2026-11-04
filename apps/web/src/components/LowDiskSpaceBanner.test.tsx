@@ -7,7 +7,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { LowDiskSpaceNoticeCard } from "./LowDiskSpaceBanner";
-import { describeHomeUsageParts, resolveLowDiskSpaceNotices } from "./LowDiskSpaceBanner.logic";
+import {
+  describeHomeUsageParts,
+  forgetRecoveredDismissals,
+  resolveLowDiskSpaceNotices,
+} from "./LowDiskSpaceBanner.logic";
 
 const THIS_MAC = EnvironmentId.make("env-m4");
 const REMOTE = EnvironmentId.make("env-m1");
@@ -107,67 +111,113 @@ const homeUsage = (
   ...overrides,
 });
 
-describe("app folder notices", () => {
-  it("warns when the app folder passes its warning size, with the largest parts", () => {
+describe("app folder size", () => {
+  it("raises no notice for a large or growing folder while the disk has room", () => {
+    for (const level of ["large", "growing"] as const)
+      expect(
+        resolve([
+          {
+            environmentId: THIS_MAC,
+            os: "darwin",
+            storage: { ...storage("ok", 40e9), homeUsage: homeUsage(level) },
+          },
+          {
+            environmentId: REMOTE,
+            os: "darwin",
+            storage: { ...storage("ok", 300e9), homeUsage: homeUsage(level) },
+          },
+        ]),
+      ).toEqual([]);
+  });
+
+  it("puts the folder breakdown on the one low disk card for the primary machine", () => {
     const notices = resolve([
       {
         environmentId: THIS_MAC,
         os: "darwin",
-        storage: { ...storage("ok", 40e9), homeUsage: homeUsage("large") },
+        storage: { ...storage("low", 3e9), homeUsage: homeUsage("large") },
       },
     ]);
     expect(notices).toEqual([
       expect.objectContaining({
-        key: "env-m4:home-large",
+        key: "env-m4:low",
         level: "low",
         action: "review-storage",
-        title: "SpecWithCode folder is large",
+        title: "Low disk space",
         message:
-          "The SpecWithCode folder on this Mac takes 172 GB (worktrees 102 GB, database 23 GB, update backups 21 GB, remaining categories 26 GB). Cloned files count in full, so the disk may hold less. Review storage to clean up what is safe.",
+          "This Mac is almost out of disk space (3.0 GB free). SpecWithCode may stop responding until you free some space. The SpecWithCode folder takes 172 GB (worktrees 102 GB, database 23 GB, update backups 21 GB, remaining categories 26 GB), counting cloned files in full.",
       }),
     ]);
+    const markup = renderToStaticMarkup(
+      <LowDiskSpaceNoticeCard
+        notice={notices[0]!}
+        onDismiss={() => {}}
+        onReviewStorage={() => {}}
+      />,
+    );
+    expect(markup).toContain("Review storage");
+    expect(markup).toContain('aria-label="Dismiss low disk space notice"');
   });
 
-  it("names the part that grew fast, after a low disk notice for the same machine", () => {
-    const usage = homeUsage("growing", {
-      totalBytes: 40e9,
-      parts: [{ key: "scratch", bytes: 16e9, grewBytes: 12e9 }],
+  it("stays quiet for a low disk on another machine and speaks up when it is critical", () => {
+    const remote = (level: StorageStatus["level"], freeBytes: number) => ({
+      environmentId: REMOTE,
+      os: "darwin",
+      storage: { ...storage(level, freeBytes), homeUsage: homeUsage("large") },
     });
-    const notices = resolve([
-      {
-        environmentId: REMOTE,
-        os: "darwin",
-        storage: { ...storage("low", 3e9), homeUsage: usage },
-      },
+    expect(resolve([remote("low", 3e9)])).toEqual([]);
+    const notices = resolve([remote("critical", 6e8)]);
+    expect(notices.map(({ key, action }) => [key, action])).toEqual([
+      ["env-m1:critical", "review-storage"],
     ]);
-    expect(notices.map(({ key }) => key)).toEqual(["env-m1:low", "env-m1:home-growing"]);
-    expect(notices[1]?.message).toBe(
-      "The SpecWithCode folder on Anton's MacBook M1 takes 40 GB: scratch folders grew 12 GB since the last check. Review storage to clean up what is safe.",
+    expect(notices[0]?.message).toBe(
+      "Anton's MacBook M1 is almost out of disk space (600 MB free). SpecWithCode on it may stop responding until you free some space. The SpecWithCode folder takes 172 GB (worktrees 102 GB, database 23 GB, update backups 21 GB, remaining categories 26 GB), counting cloned files in full.",
     );
   });
 
-  it("stays quiet for a normal folder and while dismissed", () => {
-    const ok = { ...storage("ok", 40e9), homeUsage: homeUsage("ok") };
-    expect(resolve([{ environmentId: THIS_MAC, os: "darwin", storage: ok }])).toEqual([]);
-    const large = { ...storage("ok", 40e9), homeUsage: homeUsage("large") };
-    expect(
-      resolve([{ environmentId: THIS_MAC, os: "darwin", storage: large }], ["env-m4:home-large"]),
-    ).toEqual([]);
+  it("keeps a dismissed low card hidden and shows it again when the disk turns critical", () => {
+    const status = (level: StorageStatus["level"], freeBytes: number) => ({
+      environmentId: THIS_MAC,
+      os: "darwin",
+      storage: { ...storage(level, freeBytes), homeUsage: homeUsage("large") },
+    });
+    expect(resolve([status("low", 3e9)], ["env-m4:low"])).toEqual([]);
+    expect(resolve([status("critical", 4e8)], ["env-m4:low"]).map(({ key }) => key)).toEqual([
+      "env-m4:critical",
+    ]);
+  });
+});
+
+describe("dismissals", () => {
+  it("are forgotten once that machine's disk has room again, and kept for others", () => {
+    const dismissed = new Set(["env-m4:low", "env-m4:critical", "env-m1:critical"]);
+    const next = forgetRecoveredDismissals(dismissed, [
+      { environmentId: THIS_MAC, os: "darwin", storage: storage("ok", 40e9) },
+      { environmentId: REMOTE, os: "darwin", storage: storage("critical", 4e8) },
+    ]);
+    expect([...next]).toEqual(["env-m1:critical"]);
+    const same = forgetRecoveredDismissals(next, [
+      { environmentId: REMOTE, os: "darwin", storage: storage("critical", 4e8) },
+    ]);
+    expect(same).toBe(next);
   });
 
-  it("offers a way to Storage settings", () => {
+  it("call a stopped-early folder check a lower bound", () => {
     const [notice] = resolve([
       {
         environmentId: THIS_MAC,
         os: "darwin",
-        storage: { ...storage("ok", 40e9), homeUsage: homeUsage("large") },
+        storage: {
+          ...storage("low", 3e9),
+          homeUsage: homeUsage("ok", { complete: false, totalBytes: 40e9, parts: [] }),
+        },
       },
     ]);
-    const markup = renderToStaticMarkup(
-      <LowDiskSpaceNoticeCard notice={notice!} onDismiss={() => {}} onReviewStorage={() => {}} />,
-    );
-    expect(markup).toContain("Review storage");
-    expect(markup).toContain('aria-label="Dismiss app folder notice"');
+    expect(
+      notice?.message.endsWith(
+        "The SpecWithCode folder takes at least 40 GB, counting cloned files in full.",
+      ),
+    ).toBe(true);
   });
 });
 

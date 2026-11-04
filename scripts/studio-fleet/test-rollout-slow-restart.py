@@ -12,6 +12,11 @@ import unittest
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import os
+import tempfile
+# Never M4's real rollout lock: a test run must neither wait for a live release nor block one.
+os.environ['STUDIO_FLEET_ROLLOUT_LOCK'] = os.path.join(
+    tempfile.mkdtemp(prefix='fleet-rollout-lock-'), 'fleet-rollout.lock')
 import fleet_rollout  # noqa: E402
 from rollout_test_fakes import NEW, Clock, Fleet, quiet  # noqa: E402
 

@@ -18,6 +18,9 @@ from unittest import mock
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+# Never M4's real rollout lock: a test run must neither wait for a live release nor block one.
+os.environ['STUDIO_FLEET_ROLLOUT_LOCK'] = os.path.join(
+    tempfile.mkdtemp(prefix='fleet-rollout-lock-'), 'fleet-rollout.lock')
 import fleet_rollout  # noqa: E402
 from rollout_test_fakes import NEW, Clock, Fleet, quiet  # noqa: E402
 
@@ -139,6 +142,14 @@ class Lock(unittest.TestCase):
             self.assertEqual(json.loads(self.path.read_text())['version'], NEW)
             lock.release()
         self.assertEqual(self.path.read_text(), '')
+
+    def test_tests_never_use_the_real_lock(self):
+        self.assertTrue(os.environ.get(fleet_rollout.LOCK_ENV))
+        self.assertEqual(fleet_rollout.lock_path(), pathlib.Path(os.environ[fleet_rollout.LOCK_ENV]))
+        with mock.patch.dict(os.environ, {fleet_rollout.LOCK_ENV: ''}):
+            self.assertEqual(fleet_rollout.lock_path(self.dir.name),
+                             fleet_rollout.studio_paths.identity_home(pathlib.Path(self.dir.name), 'm4')
+                             / 'updates' / fleet_rollout.LOCK_NAME)
 
     def test_reconcile_implies_workers_and_refuses_only_m4(self):
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as caught:

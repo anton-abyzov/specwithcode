@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ExecutionEnvironmentDescriptor, repositoryRelativePathOf } from "./environment.ts";
 
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 
@@ -117,4 +117,45 @@ it("exposes an optional authoritative managed-worktree root", () => {
       capabilities: { worktreeLocationMode: true },
     }).defaultWorktreesDirectory,
   ).toBe("/private/app/worktrees");
+});
+
+describe("repositoryRelativePathOf", () => {
+  it("places a folder inside its repository", () => {
+    expect(repositoryRelativePathOf("/Users/a/mono", "/Users/a/mono")).toBe("");
+    expect(repositoryRelativePathOf("/Users/a/mono/apps/web/", "/Users/a/mono")).toBe("apps/web");
+    expect(repositoryRelativePathOf("C:\\src\\mono\\apps", "C:\\src\\mono")).toBe("apps");
+  });
+
+  it("matches a root git reports with the home link resolved", () => {
+    const root = "/srv/work/github/specweave-umb/repositories/anton-abyzov/specweave";
+    expect(
+      repositoryRelativePathOf(
+        "/home/anton/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
+        root,
+      ),
+    ).toBe("");
+    expect(
+      repositoryRelativePathOf(
+        "/home/anton/Projects/github/specweave-umb/repositories/anton-abyzov/specweave/docs",
+        root,
+      ),
+    ).toBe("docs");
+  });
+
+  it("matches a repository right below the linked folder", () => {
+    // /home/anton links to /srv/work, so git reports /srv/work/app for /home/anton/app.
+    expect(repositoryRelativePathOf("/home/anton/app", "/srv/work/app")).toBe("");
+    expect(repositoryRelativePathOf("/home/anton/app/docs", "/srv/work/app")).toBe("docs");
+  });
+
+  it("places a folder that repeats the repository's names", () => {
+    expect(repositoryRelativePathOf("/home/u/a/lib/packages/a/lib", "/srv/a/lib")).toBe(
+      "packages/a/lib",
+    );
+  });
+
+  it("knows nothing without a root or with an unrelated folder", () => {
+    expect(repositoryRelativePathOf("/Users/a/mono", undefined)).toBeNull();
+    expect(repositoryRelativePathOf("/Users/a/other", "/srv/work/mono")).toBeNull();
+  });
 });

@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
@@ -24,6 +25,7 @@ import * as Projects from "../project/ProjectService.ts";
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
+import { destinationModelPolicy } from "../fleet/handoffBundle.ts";
 import { provider } from "../studio/fixtures.ts";
 import { makeSweep, ProviderFallbackEnv } from "./ProviderFallbackWorker.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -444,4 +446,29 @@ describe("fallback current policy commits", () => {
       }),
     );
   }
+});
+
+describe("a project this machine received by handoff", () => {
+  it.effect("still switches a limit-stopped thread under this machine's switch rule", () =>
+    Effect.gen(function* () {
+      const h = yield* harness("switch");
+      const current = yield* h.settings.getSettings;
+      yield* h.settings.updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: destinationModelPolicy(
+            resolveProjectSettings(current, projectId).settings,
+            undefined,
+            undefined,
+          ),
+        },
+      });
+      yield* h.sweep();
+      expect(h.state.dispatched).toHaveLength(1);
+      const [command] = h.state.dispatched;
+      expect(command?.commandId.startsWith("limit-fallback:")).toBe(true);
+      expect(command?.type === "message.dispatch" && command.modelSelection?.instanceId).toBe(
+        codexId,
+      );
+    }),
+  );
 });
