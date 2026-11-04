@@ -237,10 +237,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
   | "reportedBlocker"
-> &
-  Pick<OrchestrationV2AppThread, "lifecycleReceipt"> & {
-    readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
-  };
+> & { readonly latestUserAuthoredMessageAt: DateTime.Utc | null };
 
 const ProjectionCheckpointContext = Schema.Struct({
   runs: Schema.Array(
@@ -454,7 +451,6 @@ export interface ProjectionStoreV2Shape {
   /** Every candidate, or only `threadId` when a sweep checks one thread. */
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
-    options?: { readonly receiptsOnly: boolean },
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
   /**
    * Active (not deleted, not archived) threads with at least one pull request
@@ -6260,10 +6256,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return { providerThreadsByThreadId, pendingTurnItemsByThreadId };
       });
 
-    const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
-      threadId,
-      options,
-    ) =>
+    const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (threadId) =>
       sql
         .withTransaction(
           Effect.gen(function* () {
@@ -6316,7 +6309,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             )
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
-              ${options?.receiptsOnly ? sql`AND json_extract(t.payload_json, '$.lifecycleReceipt') IS NOT NULL` : sql``}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
               AND json_extract(t.payload_json, '$.settledOverride') IS NULL
               AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
@@ -7012,14 +7004,13 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           return projection.thread;
         }),
-      getSettlementCandidates: (threadId, options) =>
+      getSettlementCandidates: (threadId) =>
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
           return [...projections.values()]
             .filter(
               ({ thread, runs, runtimeRequests }) =>
                 (threadId === undefined || thread.id === threadId) &&
-                (!options?.receiptsOnly || thread.lifecycleReceipt != null) &&
                 thread.deletedAt === null &&
                 thread.archivedAt === null &&
                 thread.settledOverride === null &&
@@ -7032,7 +7023,6 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const shell = threadShellFromProjection(projection);
               return {
                 ...shell,
-                lifecycleReceipt: projection.thread.lifecycleReceipt,
                 latestUserAuthoredMessageAt: shell.latestUserAuthoredMessageAt ?? null,
               };
             })

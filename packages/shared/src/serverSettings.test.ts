@@ -41,9 +41,8 @@ describe("serverSettings helpers", () => {
       logsAfterDays: 30,
       scratchAfterDays: null,
       homeSizeWarningGb: 50,
-      deletedThreadHistoryAfterDays: 7,
-      archivedThreadHistoryAfterDays: 2,
-      threadHistoryDays: 7,
+      deletedThreadHistoryAfterDays: null,
+      archivedThreadHistoryAfterDays: null,
     });
   });
   it("replaces GitHub host choices so a cleared account pin does not survive", () => {

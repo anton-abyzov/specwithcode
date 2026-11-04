@@ -209,8 +209,8 @@ const formatRows = (rows: Readonly<Record<string, number>>) =>
 
 const formatRetention = (retention: ThreadHistoryRetention.ThreadHistoryRetentionResult) =>
   [
-    `Deleted threads purged: ${retention.purgedThreadCount}; archived threads compacted: ${retention.compactedThreadCount}; other threads folded to the history horizon: ${retention.foldedThreadCount}.`,
-    `Skipped: ${retention.skipped.linked} linked to another machine, ${retention.skipped.busy} with work in flight, ${retention.skipped.legacy} legacy threads not yet hydrated, ${retention.skipped.forkSource} deleted threads kept for a fork (events only).`,
+    `Deleted threads purged: ${retention.purgedThreadCount}; archived threads compacted: ${retention.compactedThreadCount}.`,
+    `Skipped: ${retention.skipped.linked} linked to another machine, ${retention.skipped.busy} with work in flight, ${retention.skipped.legacy} legacy threads not yet hydrated.`,
     `Rows: ${formatRows(retention.deletedRowsByTable)}.`,
     `Estimated space: ${formatBytes(retention.estimatedBytes.low)} to ${formatBytes(retention.estimatedBytes.high)}.`,
   ].join("\n");
@@ -234,12 +234,6 @@ const compactCommand = Command.make("compact", {
     "archived-after-days",
     30,
     "Drop the event log of threads archived (and untouched)",
-  ),
-  historyDays: Flag.Int("history-days").pipe(
-    Flag.withDescription(
-      "Also fold every other thread's events older than this many days into its saved rows (messages and steps stay readable). Off unless given.",
-    ),
-    Flag.optional,
   ),
   deletedOnly: Flag.Boolean("deleted-only").pipe(
     Flag.withDescription("Purge deleted threads only; leave archived threads' events alone."),
@@ -272,14 +266,9 @@ const compactCommand = Command.make("compact", {
           return yield* new CliDatabaseError({ reason: `${name} must be 0 or more.` });
         }
       }
-      const historyDays = Option.getOrNull(flags.historyDays);
-      if (historyDays !== null && historyDays < 1) {
-        return yield* new CliDatabaseError({ reason: "--history-days must be 1 or more." });
-      }
       const policy: ThreadHistoryRetention.ThreadHistoryRetentionPolicy = {
         deletedAfterDays: flags.deletedAfterDays,
         archivedAfterDays: flags.deletedOnly ? null : flags.archivedAfterDays,
-        historyDays: flags.deletedOnly ? null : historyDays,
       };
       if (flags.dryRun) {
         const { storage, retention } = yield* DatabaseReclaim.compactDryRun({

@@ -69,7 +69,6 @@ import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
-  bodyCutNotice,
   outputKeptTailNotice,
   ToolCodePanel,
   toolCodePagingLabel,
@@ -578,8 +577,6 @@ function useFetchedTurnItem(
     item.type === "command_execution" || item.type === "dynamic_tool"
       ? item.outputKeptTailChars
       : undefined;
-  const bodyCut =
-    item.type === "command_execution" || item.type === "dynamic_tool" ? item.bodyCut : undefined;
   return {
     item,
     read,
@@ -590,13 +587,7 @@ function useFetchedTurnItem(
       anchor: item.type === "command_execution" ? ("end" as const) : ("start" as const),
       reader,
       format,
-      notice:
-        [
-          keptTail === undefined ? null : outputKeptTailNotice(keptTail),
-          bodyCut === undefined ? null : bodyCutNotice(bodyCut),
-        ]
-          .filter((notice) => notice !== null)
-          .join(". ") || null,
+      notice: keptTail === undefined ? null : outputKeptTailNotice(keptTail),
       waiting:
         item.type === "command_execution" && live && !streamsToolOutput && output === null
           ? "Output appears when the command ends"

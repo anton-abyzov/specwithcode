@@ -123,25 +123,3 @@ export function endConnectRouteRemoval(environmentId: string, removed: boolean):
 export function isConnectRouteRemoving(environmentId: string): boolean {
   return removingConnectRoutes.has(environmentId);
 }
-
-const connectRouteRequestListeners = new Set<(environmentIds: ReadonlyArray<string>) => void>();
-
-/**
- * The user asked to use SpecWithCode Connect for these machines (from the
- * Connections banner). Lifts an earlier removal on this device and asks the
- * reconciler to add the routes now, Connect first, with its usual bookkeeping.
- */
-export function requestConnectRoutes(environmentIds: ReadonlyArray<string>): void {
-  for (const environmentId of environmentIds) setConnectRouteDeclined(environmentId, false);
-  for (const listener of connectRouteRequestListeners) listener(environmentIds);
-}
-
-/** The reconciler listens here for `requestConnectRoutes`. */
-export function onConnectRouteRequest(
-  listener: (environmentIds: ReadonlyArray<string>) => void,
-): () => void {
-  connectRouteRequestListeners.add(listener);
-  return () => {
-    connectRouteRequestListeners.delete(listener);
-  };
-}

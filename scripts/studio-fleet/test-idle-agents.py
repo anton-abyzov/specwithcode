@@ -238,7 +238,6 @@ CREATE TABLE orchestration_v2_projection_runs(run_id TEXT PRIMARY KEY, thread_id
 CREATE TABLE orchestration_v2_projection_runtime_requests(request_id TEXT, status TEXT);
 CREATE TABLE orchestration_v2_effect_outbox(effect_id TEXT, status TEXT);
 CREATE TABLE orchestration_v2_projection_provider_sessions(session_id TEXT, status TEXT);
-CREATE TABLE orchestration_v2_thread_history_compactions(thread_id TEXT PRIMARY KEY, kind TEXT);
 CREATE TABLE unguarded_cache(value TEXT);
 """
 T0 = datetime.datetime(2026, 10, 19, 9, 0, tzinfo=datetime.timezone.utc)
@@ -353,8 +352,6 @@ class SnapshotFallback(unittest.TestCase):
         self.refuse(0)
         # A thread waiting on a usage limit checks availability every five minutes.
         self.sql("INSERT INTO orchestration_events VALUES ('t', 'availability'); INSERT INTO unguarded_cache VALUES ('x');")
-        # History retention folds an idle thread: it writes a marker and no session runs.
-        self.sql("INSERT INTO orchestration_v2_thread_history_compactions VALUES ('t', 'horizon');")
         self.assertEqual(self.refuse(10), 'REFUSAL idle-agents codex=1 stopped=9')
 
     def test_work_in_the_database_keeps_waiting_and_restarts_the_window(self):

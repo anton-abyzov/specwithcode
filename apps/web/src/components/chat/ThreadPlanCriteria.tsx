@@ -67,17 +67,6 @@ export function criteriaSummary(criteria: ReadonlyArray<ThreadIncrementCriterion
     .join(" · ");
 }
 
-/** Criteria proven `verified` out of all of them, for the plan card's "AC 1/4". */
-export function verifiedCriteriaCount(criteria: ReadonlyArray<ThreadIncrementCriterion>): {
-  verified: number;
-  total: number;
-} {
-  return {
-    verified: criteria.filter((criterion) => criterionState(criterion) === "verified").length,
-    total: criteria.length,
-  };
-}
-
 function CriterionIcon({ state }: { state: CriterionPresentationState }) {
   const base = "mt-0.5 size-4 shrink-0";
   switch (state) {

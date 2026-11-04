@@ -67,7 +67,6 @@ const increment: ThreadIncrementProgress = {
       status: "done",
       criteria: ["AC-02"],
       note: null,
-      commit: "4bf5d46e27",
     },
     {
       id: "T-03",
@@ -93,7 +92,7 @@ const increment: ThreadIncrementProgress = {
   ],
   criteria: [
     { id: "AC-01", text: "A thread shows done, current and next", met: false },
-    { id: "AC-02", text: "Increment state comes from ledger.jsonl", met: true, state: "verified" },
+    { id: "AC-02", text: "Increment state comes from ledger.jsonl", met: true },
     { id: "AC-03", text: "The card links the increment and its spec", met: false },
     { id: "AC-04", text: "Lists show compact progress", met: false },
   ],

@@ -36,16 +36,12 @@
  * here, in small `incremental_vacuum` steps; see `specweave-studio db reclaim`
  * for why that mode is opt-in.
  *
- * After a completed pass the same pass applies the owner's history retention
- * (Settings > Storage, `storageCleanup.deletedThreadHistoryAfterDays`,
- * `archivedThreadHistoryAfterDays` and `threadHistoryDays`; on by default at
- * 7, 2 and 7 days, null turns each off): it purges old deleted threads, drops
- * old archived threads' events and folds every other thread's events older
- * than the horizon into its projection rows (ThreadHistoryRetention.ts), for
- * up to RETENTION_PASS_BUDGET_MS per pass, behind the same update checks
- * before every delete. A pass every COMPACTION_INTERVAL_MS (30 minutes) also
- * removes a finished turn's running snapshots soon, so the file's high-water
- * mark stays low.
+ * After a completed pass, and only when the owner turned it on (Settings >
+ * Storage, `storageCleanup.deletedThreadHistoryAfterDays` and
+ * `archivedThreadHistoryAfterDays`, both off by default), the same pass purges
+ * old deleted threads and drops old archived threads' events
+ * (ThreadHistoryRetention.ts), up to RETENTION_MAX_THREADS_PER_PASS threads,
+ * behind the same update checks before every delete.
  *
  * Active runs do not stop a pass. Every statement shares the server's one
  * connection, so a delete never interleaves with an event write, and a
@@ -80,8 +76,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as UpdateInstallGate from "../serviceUpdate/UpdateInstallGate.ts";
 
-/** Incremental passes read only threads that changed, so they can run often. */
-export const COMPACTION_INTERVAL_MS = 30 * 60_000;
+export const COMPACTION_INTERVAL_MS = 6 * 60 * 60_000;
 /** A full pass reads the whole log; incremental passes read changed threads only. */
 export const FULL_PASS_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 /** After start: long enough for startup reads and the update helper's checks to finish. */
@@ -239,7 +234,7 @@ export interface StorageMaintenanceRun {
   readonly compaction: ProjectionMaintenance.CompactEventStoreResult | null;
   /** Expired and revoked auth rows deleted; null when the pass never reached that step. */
   readonly authPruning: AuthRowPruning.PruneAuthRowsResult | null;
-  /** Thread history retention after the pass; null when off or not reached. */
+  /** Opt-in thread history retention after the pass; null when off or not reached. */
   readonly retention: ThreadHistoryRetention.ThreadHistoryRetentionResult | null;
   readonly reclaimedPages: number;
 }
@@ -258,8 +253,6 @@ export interface StorageMaintenanceOptions {
   readonly pagePause?: Duration.Input;
   /** How long an expired or revoked auth row stays: AuthRowPruning.AUTH_ROW_RETENTION_MS. */
   readonly authRowRetentionMs?: number;
-  /** Wall-clock budget of the retention step of one pass (ThreadHistoryRetention). */
-  readonly retentionBudgetMs?: number;
   /** The owner's retention choice, read at each pass; absent or off retains everything. */
   readonly retentionPolicy?: Effect.Effect<ThreadHistoryRetention.ThreadHistoryRetentionPolicy>;
   /** Removes a purged thread's attachment files. */
@@ -412,7 +405,7 @@ export const make = (options: StorageMaintenanceOptions) =>
         return result;
       });
 
-    /** The owner's retention, behind the pass's gate; null when it is off. */
+    /** The owner's opt-in retention, behind the pass's gate; null when it is off. */
     const runRetention = (gate: {
       readonly check: Effect.Effect<boolean>;
       readonly mayDelete: () => boolean;
@@ -431,8 +424,7 @@ export const make = (options: StorageMaintenanceOptions) =>
           shouldContinue: gate.check,
           mayDelete: gate.mayDelete,
           betweenBatches: Effect.andThen(Effect.sleep(pagePause), yield* makeCompactionPacer),
-          timeBudgetMs:
-            options.retentionBudgetMs ?? ThreadHistoryRetention.RETENTION_PASS_BUDGET_MS,
+          maxThreads: ThreadHistoryRetention.RETENTION_MAX_THREADS_PER_PASS,
           ...(options.removeAttachments === undefined
             ? {}
             : { removeAttachments: options.removeAttachments }),
@@ -440,8 +432,6 @@ export const make = (options: StorageMaintenanceOptions) =>
         yield* Effect.logInfo("storage-maintenance.retention.completed", {
           purgedThreadCount: result.purgedThreadCount,
           compactedThreadCount: result.compactedThreadCount,
-          foldedThreadCount: result.foldedThreadCount,
-          budgetExhausted: result.budgetExhausted,
           deferredThreadCount: result.deferredThreadCount,
           skipped: result.skipped,
           deletedEventCount: result.deletedEventCount,
@@ -600,7 +590,6 @@ export const layerStart = Layer.effectDiscard(
             Effect.map(({ storageCleanup }) => ({
               deletedAfterDays: storageCleanup.deletedThreadHistoryAfterDays,
               archivedAfterDays: storageCleanup.archivedThreadHistoryAfterDays,
-              historyDays: storageCleanup.threadHistoryDays,
             })),
             Effect.orElseSucceed(() => ThreadHistoryRetention.RETENTION_OFF),
           ),

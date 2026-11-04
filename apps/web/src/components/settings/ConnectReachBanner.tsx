@@ -1,7 +1,6 @@
 import { useAuth } from "@clerk/react";
-import { LinkIcon, LogInIcon } from "lucide-react";
+import { LogInIcon } from "lucide-react";
 
-import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useRelayEnvironmentDiscovery } from "../../state/environments";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
@@ -13,8 +12,6 @@ export interface UnreachableMachine {
   readonly label: string;
   /** The machine has a SpecWithCode Connect address on the main machine's list. */
   readonly onConnect: boolean;
-  /** This window already has a SpecWithCode Connect route for the machine. */
-  readonly hasConnectRoute?: boolean;
 }
 
 export function connectReachCopy(
@@ -25,8 +22,6 @@ export function connectReachCopy(
   readonly title: string;
   readonly description: string;
   readonly signIn: boolean;
-  /** Machines to give a SpecWithCode Connect route from the banner's button. */
-  readonly addRoutes?: ReadonlyArray<UnreachableMachine>;
 } | null {
   if (machines.length === 0) return null;
   if (!signedIn) {
@@ -52,32 +47,11 @@ export function connectReachCopy(
   const notLinked = machines.filter(
     (machine) => !machine.onConnect && !discoveredIds.has(machine.environmentId),
   );
-  const linkHint = `On ${notLinked.length === 1 ? "that machine" : "each of them"}, open Settings > Connections > SpecWithCode Connect and link it with your account, or run \`specweave-studio connect link\`. It then connects here on its own.`;
-  // On this account's Connect list, but this window has no Connect route for
-  // them (removed here earlier, or not added yet): offer it rather than
-  // staying quiet while only other addresses are tried.
-  const missingRoute = machines.filter(
-    (machine) => machine.hasConnectRoute === false && discoveredIds.has(machine.environmentId),
-  );
-  if (missingRoute.length > 0) {
-    const names = listNames(missingRoute.map((machine) => machine.label));
-    const one = missingRoute.length === 1;
-    const unlinked =
-      notLinked.length === 0
-        ? ""
-        : ` ${listNames(notLinked.map((machine) => machine.label))} ${notLinked.length === 1 ? "isn't" : "aren't"} on SpecWithCode Connect yet. ${linkHint}`;
-    return {
-      title: `${names} ${one ? "is" : "are"} on SpecWithCode Connect`,
-      description: `This window doesn't use SpecWithCode Connect for ${one ? "it" : "them"} yet, so only other addresses are tried. Use Connect to reach ${one ? "it" : "them"} here; Tailscale stays as a fallback.${unlinked}`,
-      signIn: false,
-      addRoutes: missingRoute,
-    };
-  }
   if (notLinked.length === 0) return null;
   const names = listNames(notLinked.map((machine) => machine.label));
   return {
     title: `${names} ${notLinked.length === 1 ? "isn't" : "aren't"} on SpecWithCode Connect`,
-    description: linkHint,
+    description: `On ${notLinked.length === 1 ? "that machine" : "each of them"}, open Settings > Connections > SpecWithCode Connect and link it with your account, or run \`specweave-studio connect link\`. It then connects here on its own.`,
     signIn: false,
   };
 }
@@ -114,7 +88,6 @@ function ConfiguredConnectReachBanner({
     return null;
   const copy = connectReachCopy(machines, isSignedIn === true, discovery.environments);
   if (copy === null) return null;
-  const addRoutes = copy.addRoutes;
   return (
     <div className="px-3 pt-3 sm:px-4">
       <Alert variant={copy.signIn ? "warning" : "info"} role="status">
@@ -125,18 +98,6 @@ function ConfiguredConnectReachBanner({
             <Button size="xs" onClick={openAuthPrompt}>
               <LogInIcon className="size-3" />
               Sign in to SpecWithCode Connect
-            </Button>
-          </AlertAction>
-        ) : addRoutes ? (
-          <AlertAction>
-            <Button
-              size="xs"
-              onClick={() =>
-                requestConnectRoutes(addRoutes.map((machine) => machine.environmentId))
-              }
-            >
-              <LinkIcon className="size-3" />
-              Use SpecWithCode Connect
             </Button>
           </AlertAction>
         ) : null}

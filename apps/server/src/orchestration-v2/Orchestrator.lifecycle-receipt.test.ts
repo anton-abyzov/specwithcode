@@ -5,14 +5,11 @@ import {
   EventId,
   type LifecycleReceiptReport,
   MessageId,
-  NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
-  RuntimeRequestId,
   ThreadId,
-  TurnItemId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -245,11 +242,7 @@ it.layer(layerTest)("recorded delivery evidence", (it) => {
   );
 });
 
-const autoSettle = (
-  threadId: ThreadId,
-  name: string,
-  options: { readonly fromDeliveryReceipt?: true; readonly snapshotSequence?: number } = {},
-) =>
+const autoSettle = (threadId: ThreadId, name: string) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -260,8 +253,7 @@ const autoSettle = (
         commandId: CommandId.make(`receipt:${name}:auto-settle`),
         threadId,
         snapshotAt: (yield* projections.getThread(threadId)).updatedAt,
-        snapshotSequence: options.snapshotSequence ?? (yield* sink.latestSequence({ threadId })),
-        ...(options.fromDeliveryReceipt ? { fromDeliveryReceipt: true } : {}),
+        snapshotSequence: yield* sink.latestSequence({ threadId }),
       }),
     );
   });
@@ -299,200 +291,6 @@ it.effect("with the gate on, automatic settlement needs current accepted evidenc
     assert.equal((yield* autoSettle(threadId, "gate-on-waiting"))._tag, "Failure");
     assert.notEqual((yield* projections.getThread(threadId)).settledOverride, "settled");
   }).pipe(Effect.provide(layerTest), Effect.provideService(LifecycleEvidenceActivation, true)),
-);
-
-it.effect("retries a persisted receipt once the thread is eligible", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const sink = yield* EventSink.EventSinkV2;
-    const { threadId, run } = yield* completedThread("receipt-retry");
-    const mode = { fromDeliveryReceipt: true } as const;
-    yield* orchestrator.dispatch({
-      type: "thread.pin",
-      commandId: CommandId.make("receipt:receipt-retry:pin"),
-      threadId,
-    });
-    const noCode = { status: "not_applicable", rationale: "Answer only" } as const;
-    yield* record(
-      threadId,
-      run.id,
-      "receipt-retry",
-      report(yield* DateTime.now, {
-        kind: "no_code",
-        scope: "Delivered and verified the requested answer",
-        push: noCode,
-        merge: noCode,
-        deployment: noCode,
-      }),
-    );
-    const snapshotSequence = yield* sink.latestSequence({ threadId });
-    assert.equal((yield* autoSettle(threadId, "receipt-retry-pinned", mode))._tag, "Failure");
-    assert.isNull((yield* projections.getThread(threadId)).settledOverride);
-    yield* orchestrator.dispatch({
-      type: "thread.unpin",
-      commandId: CommandId.make("receipt:receipt-retry:unpin"),
-      threadId,
-    });
-    assert.equal(
-      (yield* autoSettle(threadId, "receipt-retry-stale-snapshot", { ...mode, snapshotSequence }))
-        ._tag,
-      "Failure",
-    );
-    assert.equal((yield* autoSettle(threadId, "receipt-retry-accepted", mode))._tag, "Success");
-    const settled = yield* projections.getThread(threadId);
-    assert.equal(settled.settledOverride, "settled");
-    assert.equal(
-      settled.settledNote,
-      "Delivery verified: Delivered and verified the requested answer",
-    );
-    assert.equal(settled.lifecycleReceipt?.runId, run.id);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("receipt retries reject missing evidence and protect a newer request", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const { threadId, run } = yield* completedThread("receipt-protect");
-    const mode = { fromDeliveryReceipt: true } as const;
-    assert.equal((yield* autoSettle(threadId, "receipt-protect-missing", mode))._tag, "Failure");
-    yield* orchestrator.dispatch({
-      type: "thread.pin",
-      commandId: CommandId.make("receipt:receipt-protect:pin"),
-      threadId,
-    });
-    yield* record(threadId, run.id, "receipt-protect", report(yield* DateTime.now));
-    yield* orchestrator.dispatch({
-      type: "thread.unpin",
-      commandId: CommandId.make("receipt:receipt-protect:unpin"),
-      threadId,
-    });
-    yield* orchestrator.dispatch({
-      type: "message.dispatch",
-      commandId: CommandId.make("receipt:receipt-protect:next"),
-      threadId,
-      messageId: MessageId.make("receipt:receipt-protect:next"),
-      text: "One more change",
-      attachments: [],
-      dispatchMode: { type: "defer_start" },
-      createdBy: "user",
-      creationSource: "web",
-    });
-    assert.equal((yield* autoSettle(threadId, "receipt-protect-newer", mode))._tag, "Failure");
-    const projection = yield* projections.getThreadProjection(threadId);
-    assert.isNull(projection.thread.settledOverride);
-    const newest = projection.runs.at(-1);
-    assert.equal(newest?.userMessageId, "receipt:receipt-protect:next");
-    assert.oneOf(newest?.status, ["queued", "preparing"]);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("a stored verified receipt cannot override Stop", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const sink = yield* EventSink.EventSinkV2;
-    const { threadId, run } = yield* completedThread("receipt-stop");
-    const now = yield* DateTime.now;
-    yield* sink.write({
-      events: [
-        {
-          id: EventId.make("receipt:stop"),
-          type: "turn-item.updated",
-          threadId,
-          occurredAt: now,
-          payload: {
-            id: TurnItemId.make("receipt:stop"),
-            type: "run_interrupt_request",
-            threadId,
-            runId: run.id,
-            nodeId: run.rootNodeId,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 2,
-            status: "completed",
-            title: "Interrupt requested",
-            message: "Stopped",
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
-          },
-        },
-      ],
-    });
-    yield* record(threadId, run.id, "receipt-stop", report(now));
-    assert.equal(
-      (yield* autoSettle(threadId, "receipt-stop", { fromDeliveryReceipt: true }))._tag,
-      "Failure",
-    );
-    const projection = yield* projections.getThreadProjection(threadId);
-    assert.isNull(projection.thread.settledOverride);
-    assert.equal(projection.thread.lifecycleReceipt?.runId, run.id);
-    assert.equal(projection.runs.length, 1);
-    assert.equal(projection.turnItems.at(-1)?.type, "run_interrupt_request");
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("receipt settlement cannot commit over a new provider approval", () =>
-  Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const sink = yield* EventSink.EventSinkV2;
-    const { threadId } = yield* completedThread("receipt-race");
-    const planned = yield* projections.getThread(threadId);
-    const expectedThreadSequence = yield* sink.latestSequence({ threadId });
-    const now = yield* DateTime.now;
-    const requestId = RuntimeRequestId.make("receipt:race:approval");
-    yield* sink.write({
-      guardPendingUserInputCancellations: true,
-      events: [
-        {
-          id: EventId.make("receipt:race:approval"),
-          type: "runtime-request.updated",
-          threadId,
-          occurredAt: now,
-          payload: {
-            id: requestId,
-            nodeId: NodeId.make("receipt:race:approval-node"),
-            providerTurnId: null,
-            nativeRequestRef: null,
-            kind: "command",
-            status: "pending",
-            responseCapability: { type: "not_resumable", reason: "Fixture" },
-            createdAt: now,
-            resolvedAt: null,
-          },
-        },
-      ],
-    });
-    const result = yield* Effect.exit(
-      sink.commitCommand({
-        commandId: CommandId.make("receipt:race:commit"),
-        threadId,
-        commandType: "thread.auto-settle",
-        expectedThreadSequence,
-        acceptedAt: now,
-        effects: [],
-        events: [
-          {
-            id: EventId.make("receipt:race:settle"),
-            type: "thread.settled",
-            threadId,
-            occurredAt: now,
-            payload: { ...planned, settledOverride: "settled", settledAt: now },
-          },
-        ],
-      }),
-    );
-    assert.equal(result._tag, "Failure");
-    const current = yield* projections.getThreadProjection(threadId);
-    assert.isNull(current.thread.settledOverride);
-    assert.equal(
-      current.runtimeRequests.find((request) => request.id === requestId)?.status,
-      "pending",
-    );
-  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("a steer into the turn belongs to its request", () =>

@@ -39,8 +39,7 @@ MARKER = 'idle-agents.json'
 CODE = 'idle-agents'
 DEFAULT_QUIET_MINUTES = 10  # update_agent.DEFAULT_CONFIG['quietMinutes']
 # update_agent.BOOKKEEPING_COUNTS: logs the service appends to on its own while it waits.
-BOOKKEEPING_COUNTS = ('orchestration_events', 'orchestration_command_receipts',
-                      'orchestration_v2_thread_history_compactions')
+BOOKKEEPING_COUNTS = ('orchestration_events', 'orchestration_command_receipts')
 # update.native_work_counts keys that are work; `held` (queued runs in a held queue) is not.
 WORK_KEYS = ('runs', 'queued', 'requests', 'effects', 'sessions')
 FUTURE_SKEW = datetime.timedelta(minutes=5)

@@ -35,10 +35,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
-import {
-  hasCurrentLifecycleAcceptance,
-  LifecycleEvidenceActivation,
-} from "./ThreadLifecycleAcceptance.ts";
+import { LifecycleEvidenceActivation } from "./ThreadLifecycleAcceptance.ts";
 
 import { resolutionMergeAt, type ResolutionPullRequest } from "./ThreadResolutionPolicy.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -249,30 +246,24 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) {
     const settings = yield* settingsService.getSettings;
-    const mergeSettlementEnabled = autoSettlementConfigured(settings);
+    if (!autoSettlementConfigured(settings)) {
+      return;
+    }
     // A sweep for one thread reads only that thread's candidate row.
     // Events and projections commit atomically. Any candidate whose per-thread
     // sequence crosses this earlier watermark changed during/after the read.
     const beforeReadSequence = yield* eventSink.latestSequence();
-    const threads = yield* projections.getSettlementCandidates(threadId, {
-      receiptsOnly: !mergeSettlementEnabled,
-    });
+    const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
+    const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const projects = new Map(projectShells.map((project) => [project.id, project]));
     // A merge event re-sweeps every candidate, not just the threads linked to
     // the merged pull request: most threads carry no link and settle from
     // their branch lookup, which would otherwise wait for the next minute's
     // sweep on a possibly stale cached answer.
     const snapshotSequences = new Map<ThreadId, number>();
-    const hasUnexpiredReceipt = (thread: (typeof threads)[number]) =>
-      thread.lifecycleReceipt != null && Date.parse(thread.lifecycleReceipt.validUntil) > nowMs;
-    const eligible = threads.filter(
-      (thread) =>
-        hasUnexpiredReceipt(thread) ||
-        (thread.lifecycleReceipt == null &&
-          mergeSettlementEnabled &&
-          isAutoSettlementCandidate(thread, nowMs)),
-    );
+    const eligible = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
     // Threads share projects, so each project is asked once per sweep.
     const scratchProjects = new Set<ProjectId>();
     yield* Effect.forEach(
@@ -283,7 +274,7 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.map((scratch) => void (scratch && scratchProjects.add(projectId)))),
       { concurrency: 8, discard: true },
     );
-    const stableCandidates = (yield* Effect.forEach(
+    const candidates = (yield* Effect.forEach(
       eligible,
       (thread) =>
         Effect.gen(function* () {
@@ -297,47 +288,6 @@ export const make = Effect.gen(function* () {
         }),
       { concurrency: 8 },
     )).filter((thread) => thread !== null);
-
-    // A recorded receipt can become usable after a restart or after pending
-    // work clears. Applying it needs no PR lookup or new reporter.
-    yield* Effect.forEach(
-      stableCandidates.filter(hasUnexpiredReceipt),
-      (thread) =>
-        Effect.gen(function* () {
-          const records = yield* projections.getThreadRecords(thread.id, ["runs", "messages"], {
-            messageRoles: ["user"],
-          });
-          if (!hasCurrentLifecycleAcceptance(records, nowMs)) return;
-          const sequence = snapshotSequences.get(thread.id)!;
-          yield* orchestrator.dispatch({
-            type: "thread.auto-settle",
-            commandId: CommandId.make(`server:apply-delivery-receipt:${thread.id}:${sequence}`),
-            threadId: thread.id,
-            snapshotAt: thread.updatedAt,
-            snapshotSequence: sequence,
-            fromDeliveryReceipt: true,
-          });
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasInterruptsOnly(cause)
-              ? Effect.failCause(cause)
-              : Effect.logDebug("applying a delivery receipt was skipped", {
-                  threadId: thread.id,
-                  cause: Cause.pretty(cause),
-                }),
-          ),
-        ),
-      { concurrency: 8, discard: true },
-    );
-    if (!mergeSettlementEnabled) return;
-    // An adjudicated thread follows its receipt even when the legacy merge
-    // setting is on. A merge cannot override an open delivery obligation.
-    const candidates = stableCandidates.filter(
-      (thread) => thread.lifecycleReceipt == null && isAutoSettlementCandidate(thread, nowMs),
-    );
-    if (candidates.length === 0) return;
-    const projectShells = yield* projectStore.listShells();
-    const projects = new Map(projectShells.map((project) => [project.id, project]));
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {

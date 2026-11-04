@@ -7,7 +7,6 @@ import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@specweave
 import { withVisibleControlCharacters } from "@specweave-studio/client-runtime/work-log/command-label";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
-  bodyCutNotice,
   outputKeptTailNotice,
   ToolCodePanel,
   toolActivitySummary,
@@ -341,12 +340,6 @@ describe("terminal output and paging", () => {
     expect(element.querySelector('[aria-label="Show raw output"]')).toBeNull();
     expect(element.querySelector("code")!.textContent).toBe("ok\ndone\n");
   });
-  it("says how much of a tool body was cut when saved", () => {
-    expect(
-      bodyCutNotice({ originalBytes: 617 * 1024, keptBytes: 16 * 1024, reason: "write-cap" }),
-    ).toBe("Cut to 16 KB of 617 KB when saved: the start and the end are kept");
-  });
-
   it("labels a tail and a head window", () => {
     expect(
       toolCodePagingLabel({ anchor: "end", offset: 86_016, end: 348_160, totalLength: 348_160 }),

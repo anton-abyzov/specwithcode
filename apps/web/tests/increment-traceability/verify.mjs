@@ -56,11 +56,7 @@ try {
     page.on("pageerror", (error) => errors.push(String(error)));
 
     await page.goto(`${origin}/?view=card&theme=${theme}`);
-    // An increment card opens its acceptance criteria by default.
-    assert.equal(
-      await page.getByRole("button", { name: /Acceptance criteria/ }).getAttribute("aria-expanded"),
-      "true",
-    );
+    await page.getByRole("button", { name: /Acceptance criteria/ }).click();
     const summary = await page.locator("[data-plan-criteria-summary]").innerText();
     const rows = await page.locator("[data-plan-criteria] li").allInnerTexts();
     assert.match(rows.join("\n"), /AC-02[\s\S]*T-01, T-02/);

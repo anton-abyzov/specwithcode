@@ -326,7 +326,7 @@ export function StorageSettingsPanel() {
                 title="Purge deleted chats"
                 status={ruleStatus("deletedThreadHistoryAfterDays")}
                 mixed={ruleMixed("deletedThreadHistoryAfterDays")}
-                description="Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. 7 days by default; it cannot be undone."
+                description="Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. Off by default; it cannot be undone."
                 serverScoped
                 control={
                   <RetentionControl
@@ -345,7 +345,7 @@ export function StorageSettingsPanel() {
                 title="Compact archived chats"
                 status={ruleStatus("archivedThreadHistoryAfterDays")}
                 mixed={ruleMixed("archivedThreadHistoryAfterDays")}
-                description="Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. 2 days by default."
+                description="Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. Off by default."
                 serverScoped
                 control={
                   <RetentionControl
@@ -353,35 +353,13 @@ export function StorageSettingsPanel() {
                     value={settings.archivedThreadHistoryAfterDays}
                     mixed={ruleMixed("archivedThreadHistoryAfterDays")}
                     daysMixed={daysMixed("archivedThreadHistoryAfterDays")}
-                    enableWith={2}
+                    enableWith={30}
                     onChange={(archivedThreadHistoryAfterDays) =>
                       update({ archivedThreadHistoryAfterDays })
                     }
                   />
                 }
               />
-              {connectedEnvironments.every(
-                (environment) =>
-                  environment.serverConfig?.environment.capabilities.threadHistoryHorizon === true,
-              ) && (
-                <SettingsRow
-                  title="Detailed history"
-                  status={ruleStatus("threadHistoryDays")}
-                  mixed={ruleMixed("threadHistoryDays")}
-                  description="Keep every chat's raw event log (replay detail) this many days. Older activity folds into the chat itself: messages, steps, titles and pull request links stay readable. Chats linked to another machine or still working are never folded. 7 days by default."
-                  serverScoped
-                  control={
-                    <RetentionControl
-                      label="Detailed history"
-                      value={settings.threadHistoryDays}
-                      mixed={ruleMixed("threadHistoryDays")}
-                      daysMixed={daysMixed("threadHistoryDays")}
-                      enableWith={7}
-                      onChange={(threadHistoryDays) => update({ threadHistoryDays })}
-                    />
-                  }
-                />
-              )}
             </>
           )}
       </SettingsSection>

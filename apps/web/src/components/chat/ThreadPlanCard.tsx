@@ -3,10 +3,8 @@
  * SpecWeave increment the thread works on ("Increment 0996") or the agent's
  * own todo list ("Checklist", which says it is not an increment).
  * Collapsed it is one chip-high line that shares the row with the thread's
- * meta chips, with "AC 1/4" (criteria verified) beside the task count for an
- * increment; open it takes the whole row and lists every step, the
- * increment's acceptance criteria (open by default) and links to its spec
- * and folder. A worker
+ * meta chips; open it takes the whole row and lists every step, the
+ * increment's acceptance criteria and links to its spec and folder. A worker
  * thread with neither still shows one: what it is doing now, or a small
  * "No plan" chip that opens "Link increment". A thread that changed code
  * without an increment says so and offers "Link increment" and "No increment
@@ -42,7 +40,7 @@ import {
   type ThreadPlanStep,
   type ThreadPlanView,
 } from "../../studio/threadPlanProgress";
-import { criteriaSummary, ThreadPlanCriteria, verifiedCriteriaCount } from "./ThreadPlanCriteria";
+import { criteriaSummary, ThreadPlanCriteria } from "./ThreadPlanCriteria";
 
 /** Opens an https step link in the system browser, like the thread's other link cards. */
 function openStepLinkExternally(url: string) {
@@ -211,19 +209,14 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   defaultExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
+  const [criteriaOpen, setCriteriaOpen] = useState(false);
+  const listId = useId();
   const { increment } = plan;
   const fromIncrement = plan.source === "increment" && increment !== null;
-  // An increment's criteria are what done means, so they show when the card
-  // opens until someone toggles them (null: not toggled yet).
-  const [criteriaToggled, setCriteriaToggled] = useState<boolean | null>(null);
-  const criteriaOpen = criteriaToggled ?? fromIncrement;
-  const listId = useId();
   // A bound increment names the card even while its steps come from the agent's checklist.
   const bound = increment !== null;
   const criteria = fromIncrement ? increment.criteria : [];
   const allDone = plan.total > 0 && plan.completed >= plan.total;
-  const acCount = criteria.length > 0 ? verifiedCriteriaCount(criteria) : null;
-  const allVerified = acCount !== null && acCount.verified === acCount.total;
   const unplanned = plan.unplanned === true && increment === null;
   // Nothing to say yet: a chip, not a full-width bar.
   const empty = plan.source === "none" && status === null && !unplanned;
@@ -318,22 +311,6 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
             {plan.completed}/{plan.total}
           </span>
         ) : null}
-        {acCount ? (
-          <span
-            className={cn(
-              "shrink-0 tabular-nums",
-              allVerified ? "text-success-foreground" : "text-muted-foreground",
-            )}
-            data-plan-criteria-count
-          >
-            <span aria-hidden>
-              AC {acCount.verified}/{acCount.total}
-            </span>
-            <span className="sr-only">
-              {acCount.verified} of {acCount.total} acceptance criteria verified
-            </span>
-          </span>
-        ) : null}
         <ChevronDownIcon
           aria-hidden
           className={cn(
@@ -405,7 +382,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                 type="button"
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
                 aria-expanded={criteriaOpen}
-                onClick={() => setCriteriaToggled((open) => !(open ?? fromIncrement))}
+                onClick={() => setCriteriaOpen((open) => !open)}
               >
                 <ChevronDownIcon
                   aria-hidden

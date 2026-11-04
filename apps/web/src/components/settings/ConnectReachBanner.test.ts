@@ -26,22 +26,4 @@ describe("connectReachCopy", () => {
     expect(copy?.title).toBe("Anna isn't on SpecWithCode Connect");
     expect(copy?.signIn).toBe(false);
   });
-
-  it("offers the Connect route to a discovered machine this window has no route for", () => {
-    const m3 = { environmentId: "env-m3", label: "M3", onConnect: true, hasConnectRoute: false };
-    const copy = connectReachCopy([m3, anna], true, new Set(["env-m3"]));
-    expect(copy).toMatchObject({
-      title: "M3 is on SpecWithCode Connect",
-      signIn: false,
-      addRoutes: [m3],
-    });
-    expect(copy?.description).toContain("Tailscale stays as a fallback");
-    // An unlinked machine still gets its guidance alongside.
-    expect(copy?.description).toContain("Anna isn't on SpecWithCode Connect yet");
-  });
-
-  it("stays quiet about a machine that already has its Connect route", () => {
-    const m3 = { environmentId: "env-m3", label: "M3", onConnect: true, hasConnectRoute: true };
-    expect(connectReachCopy([m3], true, new Set(["env-m3"]))).toBeNull();
-  });
 });

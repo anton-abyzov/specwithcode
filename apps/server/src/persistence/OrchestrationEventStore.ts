@@ -107,15 +107,6 @@ export class OrchestrationEventStore extends Context.Service<
     }) => Effect.Effect<boolean, OrchestrationEventStoreError>;
 
     /**
-     * Whether retention removed any thread's history past `afterSequence`:
-     * an application-wide replay from there (the shell stream) would miss
-     * those events, so the reader takes a snapshot instead.
-     */
-    readonly historyCompactedAfter: (
-      afterSequence: number,
-    ) => Effect.Effect<boolean, OrchestrationEventStoreError>;
-
-    /**
      * Measure the retained application-event range `(afterSequence, throughSequence]`
      * without loading or decoding its payloads.
      */
@@ -661,19 +652,6 @@ const makeEventStore = Effect.gen(function* () {
         ),
       );
 
-  const historyCompactedAfter: OrchestrationEventStore["Service"]["historyCompactedAfter"] = (
-    afterSequence,
-  ) =>
-    sql<{ readonly compacted: number }>`
-      SELECT EXISTS (
-        SELECT 1 FROM orchestration_v2_thread_history_compactions
-        WHERE through_sequence > ${afterSequence}
-      ) AS compacted
-    `.pipe(
-      Effect.map((rows) => (rows[0]?.compacted ?? 0) !== 0),
-      Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.historyCompactedAfter:query")),
-    );
-
   const getReplayStats: OrchestrationEventStore["Service"]["getReplayStats"] = (input) =>
     sql<{ readonly eventCount: number; readonly rawPayloadBytes: number }>`
       SELECT
@@ -804,7 +782,6 @@ const makeEventStore = Effect.gen(function* () {
     readAgentEvents,
     getAgentReplayStats,
     threadHistoryCompactedAfter,
-    historyCompactedAfter,
     getReplayStats,
     latestAgentSequence,
     latestApplicationSequence,

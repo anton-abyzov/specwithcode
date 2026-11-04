@@ -114,11 +114,8 @@ SERVICE_LOGS = ('stdout.log', 'stderr.log')
 HELPER_TAIL = 4096  # Bytes of a failed helper's output kept in its fallback receipt.
 # The service appends to these logs on its own while a thread waits on a usage limit
 # (one availability check every five minutes), so they cannot tell work from waiting.
-# Work by a session always adds rows elsewhere: messages, turn items, runs. History retention
-# (ThreadHistoryRetention.ts) deletes events and writes one marker row per thread it folds,
-# with no session running, so its marker table is bookkeeping too.
-BOOKKEEPING_COUNTS = ('orchestration_events', 'orchestration_command_receipts',
-                      'orchestration_v2_thread_history_compactions')
+# Work by a session always adds rows elsewhere: messages, turn items, runs.
+BOOKKEEPING_COUNTS = ('orchestration_events', 'orchestration_command_receipts')
 HEX40 = re.compile('[0-9a-f]{40}')
 HEX64 = re.compile('[0-9a-f]{64}')
 SEMVER = r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})'
