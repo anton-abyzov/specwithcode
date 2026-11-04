@@ -5,12 +5,16 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
   type LearnedModelPreference,
+  type ModelLane,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
   type ProjectRepository,
+  type ProviderInstanceId,
+  type ProviderModelTier,
   type ThreadEnvMode,
 } from "@specweave-studio/contracts";
+import { launchTier, launchTierModel } from "../../launchTier.ts";
 import { sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
 import {
   learnedPreferenceBillingBlock,
@@ -137,6 +141,44 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
     message:
       "The user sees an approval card in this thread. End your turn now; their decision and what changed arrive as their answer.",
   };
+});
+
+/** The tier model of a provider the caller named without a model (see launchTier.ts). */
+const providerTierSelection = Effect.fn("mcp.providerTierSelection")(function* (input: {
+  readonly project: ProjectRecord | undefined;
+  readonly instanceId: ProviderInstanceId;
+  readonly tier: ProviderModelTier | undefined;
+  readonly taskLane: ModelLane | undefined;
+}) {
+  const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+  const provider = providers.find((entry) => entry.instanceId === input.instanceId);
+  if (provider === undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `Provider ${input.instanceId} is not registered. orchestrator_capabilities lists providers.`,
+    });
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const settings = Option.isNone(settingsService)
+    ? null
+    : yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
+  const tiers =
+    settings === null
+      ? undefined
+      : resolveProjectSettings(settings, input.project?.id ?? null, input.project).settings
+          .modelTiers;
+  const model = launchTierModel({
+    provider,
+    tier: input.tier,
+    taskLane: input.taskLane,
+    tiers,
+  });
+  if (model === undefined)
+    return yield* new OrchestratorMcpFailure({
+      code: "model_unavailable",
+      message: `Provider ${input.instanceId} offers no ${launchTier(input.tier, input.taskLane)} model. Pass modelSelection; orchestrator_capabilities lists its models.`,
+    });
+  const selection: ModelSelection = { instanceId: provider.instanceId, model };
+  return selection;
 });
 
 /** Whether the project's own "Use worktrees" switch is on. */
@@ -325,6 +367,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               message:
                 "effort applies to threads on this machine. For another machine, pass the effort as modelSelection.options using that machine's option id from orchestrator_capabilities.",
             });
+          if (input.provider !== undefined || input.tier !== undefined)
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                "provider and tier pick a model on this machine. For another machine, pass modelSelection with that machine's instance id and model from orchestrator_capabilities.",
+            });
           const launched = yield* launchRemote({
             context,
             machine,
@@ -476,10 +524,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message: incrementResolution.message,
           });
         const increment = incrementResolution.value;
+        // A provider named without a model starts on its tier model; an
+        // explicit model wins, and naming neither keeps the picks below.
+        const namedSelection =
+          input.modelSelection ??
+          (input.provider === undefined
+            ? undefined
+            : yield* providerTierSelection({
+                project,
+                instanceId: input.provider,
+                tier: input.tier,
+                taskLane: input.taskLane,
+              }));
         // A coordinator's thread starts on the project's worker model, else this
         // host's default worker model (the same pick delegate_task makes), moved
         // off a provider with no room (see workerLaunchWithRoom).
-        const coordinatorPicks = isCoordinator && input.modelSelection === undefined && project;
+        const coordinatorPicks = isCoordinator && namedSelection === undefined && project;
         const workerProviders = coordinatorPicks
           ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
           : [];
@@ -503,7 +563,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? (preferredWorker ?? project?.defaultModelSelection)
             : workerLaunch.selection;
         const modelSelection =
-          input.modelSelection ??
+          namedSelection ??
           (isCoordinator
             ? workerSelection
             : (caller?.modelSelection ?? project?.defaultModelSelection)) ??
@@ -511,7 +571,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // The model the thread stands in for: the worker model the room check
         // moved it off, else, on the caller's own model, what the caller stands in for.
         const standsInFor =
-          input.modelSelection !== undefined
+          namedSelection !== undefined
             ? null
             : isCoordinator
               ? (workerLaunch?.fallbackFrom ?? null)
@@ -530,7 +590,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           project !== undefined &&
           (work === undefined || work.grant.accounts.kind === "all") &&
           autoRoutingApplies({
-            pinned: input.modelSelection !== undefined,
+            pinned: namedSelection !== undefined,
             isCoordinator,
             taskClass: input.taskClass,
             taskLane: input.taskLane,

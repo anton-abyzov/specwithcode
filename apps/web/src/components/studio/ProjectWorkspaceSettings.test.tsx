@@ -166,6 +166,9 @@ vi.mock("../settings/settingsLayout", () => ({
 vi.mock("../settings/ProviderLimitSettings", () => ({
   ProviderLimitSettings: () => <p>When a provider runs out</p>,
 }));
+vi.mock("../settings/AdversarialReviewSettings", () => ({
+  AdversarialReviewSettings: () => null,
+}));
 vi.mock("../settings/RecommendedModelProviders", () => ({
   RecommendedModelProviders: () => <h3>Also served by</h3>,
 }));

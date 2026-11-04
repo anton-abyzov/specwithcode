@@ -64,6 +64,7 @@ import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { useStartAdversarialReview } from "./useStartAdversarialReview";
 import { useClientSettings } from "./useSettings";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import { isScratchMember } from "../studio/projectListVisibility";
@@ -140,6 +141,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const handleNewThread = useNewThreadHandler();
+  const startAdversarialReview = useStartAdversarialReview();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -398,6 +400,9 @@ export function useThreadActionMenu(input: {
           case "switch-model":
             requestSwitchModel(threadRef);
             return;
+          case "adversarial-review":
+            await startAdversarialReview(threadRef);
+            return;
           case "move-to-project":
             await requestThreadMove(threadRef);
             return;
@@ -475,6 +480,7 @@ export function useThreadActionMenu(input: {
       setThreadAutoSettle,
       settleThread,
       snoozeThread,
+      startAdversarialReview,
       threadRef,
       timestampFormat,
       unsettleThread,

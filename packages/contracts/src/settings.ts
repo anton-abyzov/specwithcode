@@ -48,6 +48,11 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { LearnedModelPreferences, ModelLanes, TaskRoutingSettings } from "./taskRouting.ts";
+import {
+  AdversarialReviewSettings,
+  AdversarialReviewSettingsPatch,
+  ProviderModelTiers,
+} from "./adversarialReview.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { TeamRulesRefusal } from "./teamRules.ts";
@@ -1556,6 +1561,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitUnknownUsageEligible",
   "taskRouting",
   "modelLanes",
+  "modelTiers",
+  "adversarialReview",
   "learnedModelPreferences",
   "keepActiveThreadsPerProject",
 ] as const;
@@ -1614,6 +1621,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
   modelLanes: Schema.optionalKey(ModelLanes),
+  modelTiers: Schema.optionalKey(ProviderModelTiers),
+  adversarialReview: Schema.optionalKey(AdversarialReviewSettings),
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   keepActiveThreadsPerProject: Schema.optionalKey(KeepActiveThreadsPerProject),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1910,6 +1919,16 @@ export const ServerSettings = Schema.Struct({
    * run now (see `@specweave-studio/shared/modelLanes`). Empty lists change nothing.
    */
   modelLanes: ModelLanes.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * Each provider's regular and frontier model (see `@specweave-studio/shared/modelTiers`).
+   * Empty uses the built-in tier models.
+   */
+  modelTiers: ProviderModelTiers.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * Review of finished work by a different model family (see
+   * `@specweave-studio/shared/adversarialReview`). Automatic review is off by default.
+   */
+  adversarialReview: AdversarialReviewSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** What a project learned from its user about which model suits which work. */
   learnedModelPreferences: LearnedModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -2346,6 +2365,10 @@ export const ServerSettingsPatch = Schema.Struct({
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
   /** Replaces both lists. */
   modelLanes: Schema.optionalKey(ModelLanes),
+  /** Replaces every provider's tier models. */
+  modelTiers: Schema.optionalKey(ProviderModelTiers),
+  /** Changes only the fields it names; a list replaces the whole list. */
+  adversarialReview: Schema.optionalKey(AdversarialReviewSettingsPatch),
   /** Replaces the whole list. */
   learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   backgroundActivity: Schema.optionalKey(

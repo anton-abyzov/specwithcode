@@ -1,3 +1,4 @@
+import { launchTierModel } from "./launchTier.ts";
 import { orchestratorFeatures } from "./orchestratorFeatures.ts";
 import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
 import { isPaidModel } from "@specweave-studio/shared/modelBilling";
@@ -67,6 +68,7 @@ import {
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   type ModelLane,
+  type ProviderModelTiers,
   type TaskClass,
   type TaskRoutingDecision,
   type EnvironmentId,
@@ -1193,6 +1195,17 @@ const make = Effect.gen(function* () {
       return scheduledTaskWorkspaceStrategy({ boundToThread, resolved, separateClones });
     });
 
+  /** The project's tier models, for a worker whose caller names a provider but no model. */
+  const projectModelTiers = (project: Effect.Success<ReturnType<typeof requireProject>>) =>
+    Option.isNone(serverSettings)
+      ? Effect.succeed(undefined)
+      : serverSettings.value.getSettings.pipe(
+          Effect.map(
+            (settings) => resolveProjectSettings(settings, project.id, project).settings.modelTiers,
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+
   /** A client has no thread to inherit a model from, so it falls back to the project default. */
   const projectDefaultModelSelection = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
@@ -1650,6 +1663,9 @@ const make = Effect.gen(function* () {
       Partial<Pick<OrchestrationV2ThreadProjection, "messages" | "runs">>;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    /** Picks the tier when a provider is named without a model: complex means frontier. */
+    readonly taskLane?: ModelLane | undefined;
+    readonly modelTiers?: ProviderModelTiers | undefined;
   }): Effect.Effect<ResolvedTarget, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       const requestedInstanceId = input.target?.providerInstanceId;
@@ -1716,8 +1732,20 @@ const make = Effect.gen(function* () {
 
       const inheritedSelection = input.parent.thread.modelSelection;
       const requestedModel = input.target?.model;
+      // A provider named without a model starts on its tier model.
+      const tierModel =
+        requestedModel === undefined &&
+        (requestedInstanceId !== undefined || requestedDriver !== undefined)
+          ? launchTierModel({
+              provider,
+              tier: input.target?.tier,
+              taskLane: input.taskLane,
+              tiers: input.modelTiers,
+            })
+          : undefined;
       const model =
         requestedModel ??
+        tierModel ??
         (instanceId === inheritedSelection.instanceId
           ? inheritedSelection.model
           : provider?.models[0]?.slug);
@@ -2660,6 +2688,8 @@ const make = Effect.gen(function* () {
             parent,
             target: delegationTarget,
             providers,
+            taskLane: input.taskLane,
+            modelTiers: yield* projectModelTiers(project),
           }),
         });
         const launchFallbackFrom = workerLaunchFallbackFrom(
@@ -3036,6 +3066,8 @@ const make = Effect.gen(function* () {
                   parent,
                   target: delegationTarget,
                   providers,
+                  taskLane: request.taskLane,
+                  modelTiers: yield* projectModelTiers(latest),
                 }),
               });
               const launchFallbackFrom = workerLaunchFallbackFrom(

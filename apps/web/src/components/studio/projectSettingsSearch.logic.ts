@@ -87,6 +87,15 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["provider order copilot same model fallback"],
   },
   {
+    id: "project-adversarial-review",
+    title: "Adversarial review",
+    tab: "general",
+    anchors: ["Adversarial review"],
+    searchTerms: [
+      "review second opinion critique other model family reviewer order frontier automatic finished feature",
+    ],
+  },
+  {
     id: "project-auto-resume",
     title: "Auto-continue when limits reset",
     tab: "general",

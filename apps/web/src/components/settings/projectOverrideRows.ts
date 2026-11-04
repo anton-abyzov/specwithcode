@@ -60,6 +60,8 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   },
   taskRouting: { label: "Auto model routing", page: "Providers" },
   modelLanes: { label: "Model tiers", page: "Providers" },
+  modelTiers: { label: "Regular and frontier models", page: "Providers" },
+  adversarialReview: { label: "Adversarial review", page: "Providers" },
   learnedModelPreferences: { label: "Learned model preferences", page: "Providers" },
   keepActiveThreadsPerProject: { label: "Keep active chats per project", page: "Storage" },
 };

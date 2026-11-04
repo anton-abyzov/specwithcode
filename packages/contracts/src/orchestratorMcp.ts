@@ -29,6 +29,7 @@ import {
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
 import { HandoffMachineThreadOutcome } from "./handoffMode.ts";
+import { ProviderModelTier } from "./adversarialReview.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   LearnedModelPreference,
@@ -177,6 +178,11 @@ export const OrchestratorMcpTargetOptions = Schema.Union([
 ]);
 export type OrchestratorMcpTargetOptions = typeof OrchestratorMcpTargetOptions.Type;
 
+export const OrchestratorMcpTierHint = ProviderModelTier.annotate({
+  description:
+    "With a provider named and no model: regular starts on that provider's everyday model, frontier on its strongest. Omitted means frontier when taskLane is complex, else regular. A named model always wins.",
+});
+
 const OrchestratorMcpTargetFields = {
   providerInstanceId: Schema.optional(
     ProviderInstanceId.annotate({
@@ -211,6 +217,7 @@ const OrchestratorMcpTargetFields = {
         "Reasoning effort the user asked for, e.g. 'low', 'medium', 'high', 'xhigh' (extra high) or 'max'. Mapped to the model's own effort option; when the model lacks that level the nearest one it offers is used, and a model without an effort setting is rejected.",
     }),
   ),
+  tier: Schema.optional(OrchestratorMcpTierHint),
 };
 // An unknown key (for example `reasoningEffort`) must fail the call instead
 // of being dropped, or the child silently runs at the default.

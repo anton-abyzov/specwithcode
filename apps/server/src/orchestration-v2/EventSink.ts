@@ -31,6 +31,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { replayAndBufferProjectedLiveEvents } from "./LiveStreamBudget.ts";
 import type { UnsequencedProjectEvent } from "../persistence/OrchestrationEventStore.ts";
 import { projectDomainEventForWire } from "./WireProjection.ts";
+import { capTurnItemBody } from "./TurnItemBodyCap.ts";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -622,7 +623,9 @@ const layerBase: Layer.Layer<
           event.type === "turn-item.updated"
             ? turnItemPositions
                 .normalize(
-                  event.payload,
+                  // Caps tool bodies here, once, for every adapter: the event,
+                  // the projection row and the live update carry the same item.
+                  capTurnItemBody(event.payload),
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
@@ -843,7 +846,8 @@ const layerBase: Layer.Layer<
             input.expectedThreadSequence !== undefined &&
             (input.commandType === "thread.deferred-resolution.request" ||
               input.commandType === "thread.deferred-resolution.finish" ||
-              input.commandType === "thread.lifecycle-receipt.record") &&
+              input.commandType === "thread.lifecycle-receipt.record" ||
+              input.commandType === "thread.auto-settle") &&
             (yield* eventStore.latestSequence({ threadId: input.threadId })) !==
               input.expectedThreadSequence
           ) {
@@ -861,6 +865,11 @@ const layerBase: Layer.Layer<
                     "The thread changed while delivery evidence was recorded. Read it again.",
                 }),
               );
+            }
+            if (input.commandType === "thread.auto-settle") {
+              return yield* new DeferredResolutionConflict({
+                message: "The thread changed before automatic resolution committed.",
+              });
             }
             // Provider writes do not take the command lock. Revoke a stale
             // finish inside this transaction and never enqueue its detaches.

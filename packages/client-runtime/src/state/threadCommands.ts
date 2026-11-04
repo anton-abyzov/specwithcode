@@ -45,6 +45,7 @@ import {
   type SetThreadAutoSettleInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
+  type StartAdversarialReviewInput,
   type StartThreadTurnInput,
   type StopThreadSessionInput,
   type UnarchiveThreadInput,
@@ -83,6 +84,7 @@ import {
   setThreadAutoSettle,
   settleThread,
   snoozeThread,
+  startAdversarialReview,
   startThreadTurn,
   stopThreadSession,
   unarchiveThread,
@@ -127,6 +129,7 @@ export type {
   SetThreadAutoSettleInput,
   SettleThreadInput,
   SnoozeThreadInput,
+  StartAdversarialReviewInput,
   StartThreadTurnInput,
   StopThreadSessionInput,
   ThreadCommandInput,
@@ -316,6 +319,14 @@ export function createThreadEnvironmentAtoms<R, E>(
     stopSession: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:stop-session",
       execute: (input: StopThreadSessionInput) => stopThreadSession(input),
+      scheduler,
+      concurrency,
+    }),
+    // Starts a new review thread; keyed by the reviewed thread so a double click
+    // waits for the first review instead of racing it.
+    startAdversarialReview: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:start-adversarial-review",
+      execute: (input: StartAdversarialReviewInput) => startAdversarialReview(input),
       scheduler,
       concurrency,
     }),

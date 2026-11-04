@@ -23,6 +23,7 @@ import {
   type ProjectWorkspacePatch,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
+  type ProviderModelTier,
   type ProviderUserInputAnswers,
   type RunId,
   type RuntimeMode,
@@ -255,6 +256,14 @@ export interface MergeThreadBackInput extends CommandMetadata {
   readonly sourceThreadId: ThreadId;
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
+}
+
+/** A review of a thread's work by a different model family; the server picks the reviewer. */
+export interface StartAdversarialReviewInput extends CommandMetadata {
+  readonly threadId: ThreadId;
+  /** A reviewer the person picked; the server still refuses the author's model family. */
+  readonly reviewer?: ModelSelection;
+  readonly tier?: ProviderModelTier;
 }
 
 export interface ReorderQueuedRunInput extends ThreadCommandInput {
@@ -1047,6 +1056,17 @@ export const forkThreadFromRun = Effect.fn("EnvironmentCommands.forkThreadFromRu
     ...(input.title === undefined ? {} : { title: input.title }),
   });
 });
+
+export const startAdversarialReview = Effect.fn("EnvironmentCommands.startAdversarialReview")(
+  function* (input: StartAdversarialReviewInput) {
+    return yield* request(ORCHESTRATION_V2_WS_METHODS.startAdversarialReview, {
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      ...(input.reviewer === undefined ? {} : { reviewer: input.reviewer }),
+      ...(input.tier === undefined ? {} : { tier: input.tier }),
+    });
+  },
+);
 
 export const moveThreadToProject = Effect.fn("EnvironmentCommands.moveThreadToProject")(function* (
   input: MoveThreadToProjectInput,

@@ -54,7 +54,7 @@ PROJECT_SCOPED_KEYS = frozenset((
     'providerLimitWaitUnderMinutes', 'providerLimitRedeemResets', 'autoApproveSubscriptionChange',
     'providerLimitSpendCredits',
     'providerLimitUseApiCredits', 'providerLimitMachineTargets', 'providerLimitTargetOrder',
-    'providerLimitUnknownUsageEligible', 'taskRouting', 'modelLanes', 'learnedModelPreferences',
+    'providerLimitUnknownUsageEligible', 'taskRouting', 'modelLanes', 'modelTiers', 'adversarialReview', 'learnedModelPreferences',
     'keepActiveThreadsPerProject'))
 OVERRIDES = 'projectSettingsOverrides'
 SIMPLIFIED_MARKER = '/projectSettingsSimplified'

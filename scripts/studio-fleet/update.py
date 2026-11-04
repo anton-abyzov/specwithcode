@@ -1027,6 +1027,13 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         watermark.close()  # No connection of this helper stays open while the service closes its own.
         # Refused before the stop, with the old service running: no room for the copy, or no time left.
         assert_clone_headroom(own, home)
+        # A migration the page proof refuses means the full read after the restart: its room too,
+        # in page mode or not, beside the backup's reserve and less the kept lines it lets go first.
+        database_file = own / 'userdata' / 'statev2.sqlite'
+        pending = update_apply.fallback_room(
+            database_file, page_mode.live_migration if page_mode else update_apply.live_migration(database_file),
+            backup_space_needed(own, home, _clonefile())[0], 0 if page_mode else kept.disk_bytes())
+        if pending: progress['fullReadMigrations'] = pending
         budget_left()  # At least MIN_READINESS_SECONDS left before ready_by.
         lap('finalCheck')
         # Stopped and unloaded before the copy, so no writer can change the files it clones. If the
@@ -1074,14 +1081,18 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         wait_until_answering(identity, before['servicePid'], archive_sha, manifest['sourceCommit'], ready_by)
         lap('readinessCheap')
         # Also for a release that may migrate: the page proof refuses any schema change other than
-        # declared additive migrations' new tables and indexes (additive_migrations; the full read with
-        # widen_from then decides), and otherwise returns what that read would, since a capture gains
+        # declared additive migrations' new tables and indexes and declared rebuilds (additive_migrations;
+        # the full read with widen_from then decides), and otherwise returns what that read would, since a capture gains
         # `widened` only when a table widened. Data a migration rewrites is re-read as any touched table is.
         page_after = page_mode.after(held, restart_started_at, policy) if page_mode else None
         if page_mode and page_after is None:
             progress_file.expect(False, _database_bytes(own))  # Before the clone's full read, not after it.
+            # pageFallback, and every process refusal it waited through, recorded before the full
+            # read: a failure there (no room for its runs) must still say why the page proof refused.
+            page_mode.report(progress)
+            output.write_text(json.dumps(progress, indent=2) + '\n')
+            kept.clear()  # Nothing the page path reads; its room goes to the full read's runs.
             before, original_auth = page_mode.full_baseline(held, before)
-            page_mode.report(progress)  # pageFallback, and every process refusal it waited through.
             widen = ({'widen_from': before['databaseCapture']['schema']['columns']} if allow_project_migrations else {})
         reads = (None if page_mode else after_proof.decide(
             own / 'userdata', held, kept, base['before'], before['rows'], capture_auth, progress, lap))
@@ -1153,7 +1164,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
         result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings', 'diskIoPolicy', 'readDeltaMisses',
-                                                      'serviceRestartBeganAt', 'releaseStagedAhead', 'gateAcknowledged', 'pageModeRefused')
+                                                      'serviceRestartBeganAt', 'releaseStagedAhead', 'gateAcknowledged', 'pageModeRefused',
+                                                      'fullReadMigrations')
                        if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.

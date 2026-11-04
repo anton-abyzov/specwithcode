@@ -10,6 +10,11 @@ With `migrations` (an update allowed to migrate), a schema delta that is exactly
 additive migrations create (additive_migrations.delta: new tables and indexes only, every earlier
 schema entry and migration row unchanged) keeps this proof: the new b-trees are new data, each of
 their pages freshly written, and every page of every earlier b-tree is proven as without a delta.
+A declared rebuild (additive_migrations.REBUILT, migration 072: a table recreated under its name
+with the same columns and a wider CHECK) keeps it too: the old trees' typed rows equal the new
+trees' row for row (within MAX_CHANGED_ROWS), the new index is consistent with the new table, every page of
+the new trees was written after the stop, every page of the old trees is free in the live database
+or reused by a tree whose rows are compared, and every other b-tree is proven page by page.
 Anything else still refuses 'schema' and takes the full read.
 """
 import os
@@ -28,6 +33,7 @@ import update_read
 Refused = after_proof.Refused
 MAX_CHANGED_ROWS = 50000
 MAX_CHANGED_BYTES = 64 << 20
+MAX_REBUILT_PAGES = 16384  # Interior and leaf pages of one rebuilt tree, per version.
 
 
 def prove(state, held, restart_started_at, observed_after_at, *, identity='m4', web_session_policy=None, migrations=False):
@@ -52,7 +58,8 @@ class PageProof(after_proof._Proof):
     def __init__(self, database, held, started, observed, identity, policy, migrations=False):
         super().__init__(os.path.abspath(database), held, SimpleNamespace(tables={}), {}, {}, None, True)
         self.snapshot = None
-        self.migrations, self.delta, self.added = migrations, None, {}
+        self.migrations, self.delta, self.added, self.rebuilt = migrations, None, {}, {}
+        self.rebuilt_rows = 0
         self.started, self.observed, self.identity, self.policy = started, observed, identity, policy
         self.decoded_rows = self.decoded_bytes = 0
 
@@ -106,9 +113,10 @@ class PageProof(after_proof._Proof):
             self.delta = additive_migrations.delta(old, live, self.clone_db, self.db)
         except additive_migrations.Undeclared as error:
             raise Refused('schema:' + str(error)) from None
-        self.added, self.master = self.delta['objects'], live
+        self.added, self.rebuilt, self.master = self.delta['objects'], self.delta['rebuilt'], live
         self.structure = continuity.schema(self.db)
-        if continuity.encoded(additive_migrations.without(self.structure, self.added)) != continuity.encoded(self.capture['schema']):
+        if continuity.encoded(additive_migrations.without(self.structure, self.added, self.rebuilt)) != \
+                continuity.encoded(additive_migrations.without(self.capture['schema'], {}, self.rebuilt)):
             raise Refused('schema:structure')
         if 1 in self.gap and not self.reference:
             raise Refused('gap-touches-schema')
@@ -124,9 +132,9 @@ class PageProof(after_proof._Proof):
             raise Refused('auto-vacuum')
 
     def walk(self):
-        """after_proof's walk, where an added b-tree exists only in the live version; then
-        check_added."""
-        if not self.added:
+        """after_proof's walk, where an added b-tree exists only in the live version and a rebuilt one
+        has its old root in the clone; then check_added and check_rebuilt."""
+        if not self.added and not self.rebuilt:
             return super().walk()
         self.trees = [(after_proof.SCHEMA, 1, 'table', after_proof.SCHEMA)] + [
             (name, root, kind, table) for kind, name, table, root, _ in self.master if kind in ('table', 'index') and root]
@@ -137,6 +145,8 @@ class PageProof(after_proof._Proof):
                 if version == 'clone' and name in self.added:
                     self.leaves[version, name] = []
                     continue
+                if version == 'clone' and name in self.rebuilt:
+                    root = self.rebuilt[name][2]
                 interior, leaves, family = self.tree(version, root)
                 for number in self.paged.intersection(interior):
                     self.claim(version, number, name)
@@ -150,6 +160,7 @@ class PageProof(after_proof._Proof):
                 if owner is not None and owner != after_proof.FREE and number not in self.overflow[version]:
                     self.cells(version, number, owner)
         self.check_added()
+        self.check_rebuilt()
 
     def check_added(self):
         """Every page of an added b-tree (interior, leaf, overflow) was written after the stop, so
@@ -170,10 +181,118 @@ class PageProof(after_proof._Proof):
             if not pages <= self.live_changed:
                 raise Refused('added-tree-page-unchanged')
 
+    def tree_pages(self, version, root, family):
+        """Every page of the b-tree at `root` in `version`: (interior and leaf pages, overflow pages)."""
+        interior, leaves, found = self.tree(version, root)
+        if found != family:
+            raise Refused('rebuild-tree-kind')
+        if len(interior) + len(leaves) > MAX_REBUILT_PAGES:
+            raise Refused('rebuild-budget')
+        overflow = set()
+        for number in interior + leaves:
+            page = self.page(version, number)
+            kind = page[100 if number == 1 else 0]
+            if kind == 5:
+                continue
+            for _, count, link in self.cell_links(page, 100 if number == 1 else 0, kind):
+                overflow.update(self.chain(version, count, link))
+        return set(interior) | set(leaves), overflow
+
+    def free_pages(self, version):
+        """Every page on `version`'s freelist (freelist() already checked its shape)."""
+        trunk, total = struct.unpack_from('>II', self.page(version, 1), 32)
+        pages = set()
+        while trunk:
+            if trunk in pages:
+                raise Refused('freelist')
+            pages.add(trunk)
+            page = self.page(version, trunk)
+            trunk, count = struct.unpack_from('>II', page, 0)
+            if count > self.usable // 4 - 2:
+                raise Refused('freelist')
+            pages.update(struct.unpack_from('>%dI' % count, page, 8))
+            if len(pages) > total:
+                raise Refused('freelist')
+        if len(pages) != total:
+            raise Refused('freelist')
+        return pages
+
+    def check_rebuilt(self):
+        """A declared rebuild's trees: every page of each new tree (interior, leaf, overflow) was
+        written after the stop, and every page of each old tree is on the live freelist, in a new
+        tree, or a changed page another tree now owns (whose rows touched() then compares). The
+        changed and gap pages of both are claimed for the rebuilt name, so a page another tree also
+        claims refuses ('page-owned-twice'). The rows themselves are compared in assemble()."""
+        if not self.rebuilt:
+            return
+        old_pages, new_pages = set(), set()
+        for name, (kind, _, old_root, new_root) in sorted(self.rebuilt.items()):
+            family = after_proof.TABLE_PAGES if kind == 'table' else after_proof.INDEX_PAGES
+            for version, root, pages in (('clone', old_root, old_pages), ('live', new_root, new_pages)):
+                nodes, overflow = self.tree_pages(version, root, family)
+                for number in sorted((nodes | overflow) & self.paged):
+                    owner = self.owners[version].get(number)
+                    if owner is None:
+                        self.claim(version, number, name, overflow=number in overflow)
+                    elif owner != name:
+                        raise Refused('page-owned-twice')
+                pages.update(nodes | overflow)
+        if not new_pages <= self.live_changed:
+            raise Refused('rebuild-tree-page-unchanged')
+        free = self.free_pages('live')
+        for number in sorted(old_pages - new_pages - free):
+            owner = self.owners['live'].get(number) if number in self.changed else None
+            if owner in (None, after_proof.FREE) or owner in self.rebuilt:
+                raise Refused('rebuild-old-page-kept')
+
+    def rebuilt_lines(self, db, query):
+        """The sorted typed rows `query` reads from `db`, counted against MAX_CHANGED_ROWS and
+        MAX_CHANGED_BYTES as changed rows are: both sides are held in memory at once."""
+        values = []
+        for row in db.execute(query):
+            self.decoded_rows += 1
+            self.decoded_bytes += sum(len(value) if isinstance(value, (str, bytes)) else 8 for value in row)
+            if self.decoded_rows > MAX_CHANGED_ROWS or self.decoded_bytes > MAX_CHANGED_BYTES:
+                raise Refused('changed-row-budget')
+            values.append(continuity.typed_line(row))
+        return sorted(values)
+
+    def compare_rebuilt(self):
+        """A rebuilt table's typed rows in the clone equal the live table's row for row (ordered by
+        their typed cells: the copy renumbers rowids), and each rebuilt index in the live database
+        holds exactly the live table's rows (the old index is gone with the old tree, whose pages
+        check_rebuilt accounts for). Bounded by MAX_CHANGED_ROWS and MAX_CHANGED_BYTES, as changed
+        rows are.
+
+        Equality is strict, also for rows the new service could write after the migration: the
+        proof runs after the restart, so a retention marker inserted or completed in between
+        refuses 'rebuild-rows', exactly as any write to this table refuses
+        'authority-table-changed' in an update without the rebuild, and the full read refuses it
+        too (the table's count and hash are guarded). ThreadHistoryRetention runs every write behind
+        shouldContinue, which stops while an update helper holds its snapshot or the install gate,
+        and a marker is always followed by event deletes the proof refuses anyway."""
+        for name, (kind, table, _, _) in sorted(self.rebuilt.items()):
+            if not re.fullmatch('[a-z0-9_]+', name):
+                raise Refused('table-name')
+            if kind == 'table':
+                old, new = (self.rebuilt_lines(db, 'SELECT * FROM ' + name + ' NOT INDEXED') for db in (self.clone_db, self.db))
+                if old != new:
+                    raise Refused('rebuild-rows:' + name)
+                self.rebuilt_rows += len(new)
+                continue
+            columns = [row[2] for row in self.db.execute('PRAGMA index_xinfo(' + name + ')') if row[5]]
+            if not columns or not all(isinstance(column, str) and re.fullmatch('[a-z0-9_]+', column) for column in columns):
+                raise Refused('rebuild-index:' + name)
+            selected = ', '.join(columns) + ', rowid FROM ' + table
+            if self.rebuilt_lines(self.db, 'SELECT ' + selected + ' INDEXED BY ' + name) != \
+                    self.rebuilt_lines(self.db, 'SELECT ' + selected + ' NOT INDEXED'):
+                raise Refused('rebuild-index:' + name)
+
     def touched(self):
-        """after_proof's touched(), where sqlite_schema pages (their rows proven by delta()) and an
-        added b-tree's pages (check_added) belong to no compared table."""
-        if not self.added:
+        """after_proof's touched(), where sqlite_schema pages (their rows proven by delta()), an
+        added b-tree's pages (check_added) and a rebuilt one's (compare_rebuilt) belong to no
+        compared table."""
+        if not self.added and not self.rebuilt:
             return super().touched()
         for number in self.paged:
             if number != 1 and not (self.owners['clone'].get(number) or (number in self.changed and self.owners['live'].get(number))):
@@ -182,7 +301,7 @@ class PageProof(after_proof._Proof):
         for version, pages in (('clone', self.paged), ('live', self.changed)):
             for number in pages:
                 owner = self.owners[version].get(number)
-                if owner in (None, after_proof.FREE, after_proof.SCHEMA) or owner in self.added:
+                if owner in (None, after_proof.FREE, after_proof.SCHEMA) or owner in self.added or owner in self.rebuilt:
                     continue
                 (indexed if self.tree_kind[owner] == 'index' else tables).add(self.tree_table[owner])
                 if version == 'clone' and number in self.gap and not self.reference:
@@ -228,6 +347,7 @@ class PageProof(after_proof._Proof):
         return new - old
 
     def assemble(self, touched):
+        self.compare_rebuilt()
         changes = {table: self.changed_rows(table) for table in sorted(touched)}
         appended, streams = {}, set()
         for table in update_read.LOG_TABLES:
@@ -308,7 +428,9 @@ class PageProof(after_proof._Proof):
                 'schemaSha256': continuity.digest(continuity.encoded(self.structure)),
                 'appendedRows': appended, 'touchedStreams': sorted(streams), 'authHeartbeat': witness,
                 'decodedRows': self.decoded_rows, 'decodedBytes': self.decoded_bytes,
-                **({'schemaDelta': {'migrations': self.delta['migrations'], 'objects': sorted(self.added)}}
+                **({'schemaDelta': {'migrations': self.delta['migrations'], 'objects': sorted(self.added),
+                                    **({'rebuilt': sorted(self.rebuilt), 'rebuiltRows': self.rebuilt_rows}
+                                       if self.rebuilt else {})}}
                    if self.delta is not None else {})}
 
     def projections(self):

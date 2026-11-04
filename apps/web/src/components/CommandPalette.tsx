@@ -84,6 +84,7 @@ import {
   PuzzleIcon,
   RotateCcwIcon,
   SettingsIcon,
+  ShieldCheckIcon,
   SquarePenIcon,
   SunIcon,
   TextSearchIcon,
@@ -108,6 +109,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useStartAdversarialReview } from "../hooks/useStartAdversarialReview";
+import { ADVERSARIAL_REVIEW_DESCRIPTION, ADVERSARIAL_REVIEW_LABEL } from "./threadActionMenu.logic";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useAideEnabled, useClientSettings } from "../hooks/useSettings";
@@ -852,6 +855,7 @@ function OpenCommandPaletteDialog(props: {
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
+  const startAdversarialReview = useStartAdversarialReview();
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -2276,6 +2280,30 @@ function OpenCommandPaletteDialog(props: {
         openLinkIncrementDialog(threadRef);
       },
     });
+    // The thread menu's "Adversarial review", for the thread on screen; never for a chat.
+    const activeThreadProject = allProjects.find(
+      (project) =>
+        project.id === activeThread.projectId &&
+        project.environmentId === activeThread.environmentId,
+    );
+    const isChat =
+      activeThreadProject !== undefined &&
+      isScratchProject(
+        activeThreadProject,
+        scratchWorkspaceRootFor(activeThreadProject.environmentId),
+      );
+    if (!isChat)
+      actionItems.push({
+        kind: "action",
+        value: "action:adversarial-review",
+        searchTerms: ["adversarial", "review", "second opinion", "critique", "other model", "qa"],
+        title: ADVERSARIAL_REVIEW_LABEL,
+        description: ADVERSARIAL_REVIEW_DESCRIPTION,
+        icon: <ShieldCheckIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await startAdversarialReview(threadRef);
+        },
+      });
   }
 
   if (

@@ -19,6 +19,7 @@ import {
   connectFirstRouteOrder,
   isConnectRouteRemoving,
   machinesMissingConnectRoute,
+  onConnectRouteRequest,
   readDeclinedConnectRoutes,
   setConnectRouteDeclined,
   unreachableMachines,
@@ -47,6 +48,9 @@ export function ConnectRouteReconciler() {
     label: "Add SpecWithCode Connect route",
     reportFailure: false,
   });
+  const registerRequested = useAtomCommand(environmentCatalog.register, {
+    label: "Add SpecWithCode Connect route",
+  });
   const reorder = useAtomCommand(environmentCatalog.reorderRoutes, {
     label: "Put SpecWithCode Connect first",
     reportFailure: false,
@@ -65,6 +69,23 @@ export function ConnectRouteReconciler() {
   const sawRefreshRef = useRef(false);
   const reorderAttemptsRef = useRef<Map<string, number>>(new Map());
   const [pendingOrder, setPendingOrder] = useState<ReadonlySet<string>>(() => new Set());
+  // Bumped when the user asks for Connect routes from the Connections banner,
+  // so the add runs now and gets fresh attempts.
+  const [requests, setRequests] = useState(0);
+  // Machines the user asked for: a failed add is reported, not retried silently.
+  const requestedRef = useRef<Set<string>>(new Set());
+  useEffect(
+    () =>
+      onConnectRouteRequest((environmentIds) => {
+        for (const environmentId of environmentIds) addAttemptsRef.current.delete(environmentId);
+        for (const environmentId of environmentIds) requestedRef.current.add(environmentId);
+        setRequests((current) => current + 1);
+        // A fresh listing for this account, so the add runs even if this
+        // component missed the refresh that filled the current list.
+        void refreshDiscovery();
+      }),
+    [refreshDiscovery],
+  );
 
   useEffect(() => {
     if (discovery.refreshing) {
@@ -94,7 +115,8 @@ export function ConnectRouteReconciler() {
         machine.environmentId,
         (addAttemptsRef.current.get(machine.environmentId) ?? 0) + 1,
       );
-      void register(
+      const requested = requestedRef.current.delete(machine.environmentId);
+      void (requested ? registerRequested : register)(
         new RelayConnectionRegistration({
           target: new RelayConnectionTarget({
             environmentId: machine.environmentId,
@@ -132,7 +154,7 @@ export function ConnectRouteReconciler() {
         }),
       ).then(() => inFlightRef.current.delete(machine.environmentId));
     }
-  }, [discovery, environments, projects, register]);
+  }, [discovery, environments, projects, register, registerRequested, requests]);
 
   // Reorder once the catalog shows the new route, so the order lists every route.
   useEffect(() => {

@@ -13,6 +13,7 @@ import re
 
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat, restore_witness, utc_timestamp,
                             verify_restart_witness)
+import additive_migrations
 import database_continuity as continuity
 from update_read import (ACTIVITY_KEY, AUTHORITY_TABLES, LOG_TABLES, _read_state, carried_applies,
                          is_projection_table, log_rows_carried)
@@ -389,7 +390,10 @@ def assert_migration_protected_schema(before_capture, after_capture, before, wid
     A foreign key with ON UPDATE or ON DELETE CASCADE lets a write to another table rewrite
     or delete protected rows, and a trigger on any table could write sessions or credentials
     after the update verified. A trigger may sit on any table, including projections and
-    project tables, as long as it names none of these tables. New indexes stay allowed."""
+    project tables, as long as it names none of these tables. New indexes stay allowed. A table
+    definition may change only as a declared rebuild (additive_migrations.REBUILT, 072): the exact
+    SQL before and after, the declared columns on both sides, and that migration's row in the
+    database after (the capture's `rebuilt`, additive_migrations.recorded_rebuilds)."""
     old, new = before_capture['schema'], after_capture['schema']
     def definition(objects, table):
         return [item for item in objects if item[0] == 'table' and item[1] == table]
@@ -405,7 +409,17 @@ def assert_migration_protected_schema(before_capture, after_capture, before, wid
             continue
         assert old['columns'].get(table) == new['columns'].get(table), \
             'History, provider, schedule or pairing columns changed during migration'
-        assert definition(old['objects'], table) == definition(new['objects'], table), \
+        before_definition, after_definition = definition(old['objects'], table), definition(new['objects'], table)
+        if before_definition != after_definition and len(before_definition) == len(after_definition) == 1 and \
+                table not in (before_capture.get('rebuilt') or {}) and \
+                additive_migrations.rebuild_accepted(table, before_definition[0][3], after_definition[0][3],
+                                                     old['columns'].get(table), new['columns'].get(table),
+                                                     after_capture.get('rebuilt')):
+            # A declared rebuild (072: the same columns, a wider CHECK) whose migration row the
+            # database after records and the database before does not; its rows are compared as
+            # every protected table's are.
+            continue
+        assert before_definition == after_definition, \
             'History, provider, schedule or pairing table definition changed during migration'
     # A trigger on a protected table stays as it was: dropping 067's pairing trigger would let
     # pairing links of a revoked principal be created again.

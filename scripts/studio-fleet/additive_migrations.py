@@ -23,6 +23,16 @@ delta() proves the schema delta between the stopped clone and the live database:
     authority or log table.
 Rows written to the new tables after activation are new data; the page proof still checks every
 page of every pre-existing b-tree as before.
+
+REBUILT lists, for each migration that rebuilds a table only to change a constraint SQLite cannot
+alter (CREATE _next, copy, DROP, RENAME), the exact sqlite_schema SQL of the table before and after,
+its columns (PRAGMA table_xinfo, the same on both sides) and the indexes SQLite recreates for it.
+delta() then also accepts exactly those entries changed (new root pages, the declared SQL on each
+side) when that migration's row is among the added ones; the page proof (page_continuity) requires
+the table's typed rows equal row for row, its new index to hold exactly those rows, every page of
+the new trees written after the stop and every page of the old trees freed or reused, and the full
+read's schema check (update_migration.assert_migration_protected_schema) accepts the same change
+and nothing else (recorded_rebuilds).
 """
 import re
 
@@ -86,6 +96,63 @@ DECLARED = {
     )),
 }
 
+# Server migrations the page proof refuses (a rebuild, alter, drop or rename): an update that runs
+# one takes the full read of the stopped clone and the live database, which spills its sorted
+# runs to disk (database_continuity.SortedRuns). Each server migration since FIRST_TRACKED is in
+# DECLARED or here; test-page-continuity.py fails a release that adds one to neither, so the helper
+# shipped with a release always knows whether that release's migrations keep the page proof.
+FULL_READ = {
+    # 069_AuthSessionProofKeyThumbprint.ts: alters auth_sessions (a widening the full read accepts).
+    69: 'AuthSessionProofKeyThumbprint',
+}
+FIRST_TRACKED = 68
+
+_COMPACTIONS = 'orchestration_v2_thread_history_compactions'
+
+
+def _declared_sql(number, kind, name):
+    """The SQL DECLARED[number] holds for the (kind, name) entry, looked up by name, not position."""
+    found = [sql for entry_kind, entry_name, _, sql in DECLARED[number][1] if (entry_kind, entry_name) == (kind, name)]
+    assert len(found) == 1, (number, kind, name)
+    return found[0]
+
+
+# Declared rebuilds: {migration: (name, {table: {'before', 'after', 'columns', 'indexes'}})}. 'before'
+# and 'after' are the table's sqlite_schema SQL (normalized) on each side; ALTER TABLE RENAME writes
+# the new name quoted. 'columns' is PRAGMA table_xinfo on both sides; 'indexes' the indexes SQLite
+# itself keeps for the table (sql NULL), which the rebuild recreates under the same names.
+REBUILT = {
+    # 072_RetentionHorizon.ts: rebuilds the table 070 created to widen its kind CHECK to 'horizon'.
+    72: ('RetentionHorizon', {
+        _COMPACTIONS: {
+            'before': _declared_sql(70, 'table', _COMPACTIONS),
+            'after': "CREATE TABLE \"orchestration_v2_thread_history_compactions\" ( thread_id TEXT PRIMARY KEY, "
+                     "kind TEXT NOT NULL CHECK (kind IN ('deleted', 'archived', 'horizon')), through_sequence INTEGER NOT NULL, "
+                     "compacted_at TEXT NOT NULL, completed_at TEXT )",
+            'columns': [[0, 'thread_id', 'TEXT', 0, None, 1, 0], [1, 'kind', 'TEXT', 1, None, 0, 0],
+                        [2, 'through_sequence', 'INTEGER', 1, None, 0, 0], [3, 'compacted_at', 'TEXT', 1, None, 0, 0],
+                        [4, 'completed_at', 'TEXT', 0, None, 0, 0]],
+            'indexes': ('sqlite_autoindex_orchestration_v2_thread_history_compactions_1',),
+        },
+    }),
+}
+
+
+def full_read_pending(live_max):
+    """The FULL_READ migrations a database whose newest effect_sql_migrations row is `live_max`
+    has not run yet, sorted. None (no migrations table, or it cannot tell) counts none: a database
+    the helper cannot place would otherwise be refused for room it may never need."""
+    return [] if live_max is None else sorted(number for number in FULL_READ if number > live_max)
+
+
+def newest(db):
+    """The newest migration id `db` recorded, or None when it has no migrations table."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (MIGRATIONS_TABLE,)).fetchone():
+        return None
+    value = db.execute('SELECT max(migration_id) FROM ' + MIGRATIONS_TABLE).fetchone()[0]
+    return value if type(value) is int else None
+
+
 # Never added by an additive migration the page proof accepts: they carry authority or history
 # with their own proofs (update_read.AUTHORITY_TABLES and LOG_TABLES, and SQLite's own tables).
 _PROTECTED = re.compile(r'^(?:auth_|provider_session_runtime$|scheduled_task|orchestration_events$|'
@@ -104,22 +171,60 @@ def _migrations(db):
     return rows
 
 
+def _columns(db, table):
+    return [list(row) for row in db.execute('PRAGMA table_xinfo(' + table + ')')]
+
+
 def delta(old_master, new_master, old_db, new_db):
-    """{'migrations': [ids], 'objects': {name: (type, tbl_name, rootpage)}} the live database added,
-    proven as above; raises Undeclared otherwise. `*_master`: (type, name, tbl_name, rootpage, sql)
-    rows of sqlite_master from each database."""
+    """{'migrations': [ids], 'objects': {name: (type, tbl_name, rootpage)},
+    'rebuilt': {name: (type, tbl_name, old rootpage, new rootpage)}} the live database added or
+    rebuilt, proven as above; raises Undeclared otherwise. `*_master`: (type, name, tbl_name,
+    rootpage, sql) rows of sqlite_master from each database."""
     old = {(row[0], row[1]): tuple(row) for row in old_master}
     new = {(row[0], row[1]): tuple(row) for row in new_master}
     if len(old) != len(old_master) or len(new) != len(new_master):
         raise Undeclared('schema-duplicate')
-    for key, row in old.items():
-        if new.get(key) != row:
-            raise Undeclared('schema-existing-changed')
     before, after = _migrations(old_db), _migrations(new_db)
     for key, row in before.items():
         if after.get(key) != row:
             raise Undeclared('migration-row-changed')
     added_ids = sorted(set(after) - set(before))
+    # Entries a declared rebuild among the added migrations may change, and how.
+    rebuilding = {}
+    for number in added_ids:
+        if number in REBUILT and after[number][2] == REBUILT[number][0]:
+            for table, declared in REBUILT[number][1].items():
+                rebuilding[('table', table)] = (table, declared['before'], declared['after'], declared)
+                for index in declared['indexes']:
+                    rebuilding[('index', index)] = (table, None, None, declared)
+    rebuilt = {}
+    for key, row in old.items():
+        if new.get(key) == row:
+            continue
+        if key not in rebuilding or key not in new:
+            raise Undeclared('schema-existing-changed')
+        table, sql_before, sql_after, declared = rebuilding[key]
+        current = new[key]
+        if row[2] != table or current[2] != table or normalized(row[4]) != sql_before:
+            raise Undeclared('schema-existing-changed')
+        if normalized(current[4]) != sql_after:
+            raise Undeclared('rebuild-sql:' + key[1])
+        if _PROTECTED.match(key[1]) or _PROTECTED.match(table):
+            raise Undeclared('schema-protected:' + key[1])
+        if type(current[3]) is not int or current[3] < 2 or current[3] == row[3]:
+            raise Undeclared('rebuild-root:' + key[1])
+        rebuilt[key[1]] = (key[0], table, row[3], current[3])
+    for key, (table, _, _, declared) in rebuilding.items():
+        if key[0] == 'table' and key in old:
+            # Every entry of a declared rebuild of an existing table changes together: the table
+            # and each of its indexes, and nothing else on that table.
+            names = {table} | set(declared['indexes'])
+            if set(rebuilt) & names != names or \
+                    {k[1] for k in new if new[k][2] == table} != {k[1] for k in old if old[k][2] == table}:
+                raise Undeclared('rebuild-partial:' + table)
+            for db in (old_db, new_db):
+                if _columns(db, table) != declared['columns']:
+                    raise Undeclared('rebuild-columns:' + table)
     if not added_ids:
         raise Undeclared('schema-without-migration')
     if before and added_ids[0] <= max(before):
@@ -127,10 +232,19 @@ def delta(old_master, new_master, old_db, new_db):
     expected = {}
     for number in added_ids:
         declared = DECLARED.get(number)
-        if declared is None or after[number][2] != declared[0]:
+        if declared is None:
+            if number in REBUILT and after[number][2] == REBUILT[number][0]:
+                continue
+            raise Undeclared('migration-undeclared:%d' % number)
+        if after[number][2] != declared[0]:
             raise Undeclared('migration-undeclared:%d' % number)
         for kind, name, table, sql in declared[1]:
             expected[(kind, name)] = (table, sql)
+    for key, (table, _, sql_after, _) in rebuilding.items():
+        # A table created and rebuilt in this same update (070 and 072 both pending) is added in
+        # its rebuilt form.
+        if key in expected and key not in old:
+            expected[key] = (table, sql_after)
     added = {key: row for key, row in new.items() if key not in old}
     objects = {}
     for key, row in added.items():
@@ -153,14 +267,53 @@ def delta(old_master, new_master, old_db, new_db):
         present = old.get(key)
         if present is None or (present[2], normalized(present[4])) != (table, sql):
             raise Undeclared('schema-missing:' + key[1])
-    if not objects:
+    for key, (table, _, _, _) in rebuilding.items():
+        if key[0] == 'table' and key not in old and key not in added:
+            raise Undeclared('rebuild-missing:' + table)
+    if not objects and not rebuilt:
         raise Undeclared('schema-without-objects')
-    return {'migrations': added_ids, 'objects': objects}
+    return {'migrations': added_ids, 'objects': objects, 'rebuilt': rebuilt}
 
 
-def without(structure, objects):
-    """database_continuity.schema(db) without the added `objects`: what the stopped clone held."""
+def recorded_rebuilds(db, structure):
+    """{table: [migration id, name]} of each declared rebuild `db` records: its effect_sql_migrations
+    row and the table's declared SQL after it (structure: database_continuity.schema(db)). The full
+    read's schema check accepts exactly these (update_migration.assert_migration_protected_schema)."""
+    rows = {}
+    try:
+        rows = _migrations(db)
+    except Undeclared:
+        return {}
+    sql = {item[1]: item[3] for item in structure['objects'] if item[0] == 'table'}
+    found = {}
+    for number, (name, tables) in REBUILT.items():
+        if rows.get(number, (None, None, None))[2] != name:
+            continue
+        for table, declared in tables.items():
+            if normalized(sql.get(table)) == declared['after']:
+                found[table] = [number, name]
+    return found
+
+
+def rebuild_accepted(table, old_sql, new_sql, old_columns, new_columns, recorded):
+    """True when `table` changed from its declared SQL before a rebuild to the declared SQL after it,
+    with the declared columns on both sides, and the database after records that migration's row."""
+    for number, (name, tables) in REBUILT.items():
+        declared = tables.get(table)
+        if declared is None:
+            continue
+        if (recorded or {}).get(table) == [number, name] and normalized(old_sql) == declared['before'] \
+                and normalized(new_sql) == declared['after'] \
+                and old_columns == declared['columns'] and new_columns == declared['columns']:
+            return True
+    return False
+
+
+def without(structure, objects, rebuilt=()):
+    """database_continuity.schema(db) without the added `objects`: what the stopped clone held.
+    The schema entries of `rebuilt` objects (their SQL proven on each side by delta()) are left out
+    too, from either database; their columns and foreign keys stay compared."""
     tables = {name for name, (kind, _, _) in objects.items() if kind == 'table'}
-    return {'objects': [item for item in structure['objects'] if item[1] not in objects],
+    return {'objects': [item for item in structure['objects'] if item[1] not in objects and item[1] not in rebuilt],
             'columns': {table: value for table, value in structure['columns'].items() if table not in tables},
             'foreignKeys': {table: value for table, value in structure['foreignKeys'].items() if table not in tables}}

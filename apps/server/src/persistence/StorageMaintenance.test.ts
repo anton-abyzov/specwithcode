@@ -394,7 +394,8 @@ it.layer(layerTest)("storage maintenance", (it) => {
           let policy: {
             deletedAfterDays: number | null;
             archivedAfterDays: number | null;
-          } = { deletedAfterDays: null, archivedAfterDays: null };
+            historyDays: number | null;
+          } = { deletedAfterDays: null, archivedAfterDays: null, historyDays: null };
           const service = yield* StorageMaintenance.make({
             statePath: path.join(updates, "retention", StorageMaintenance.STATE_FILE),
             snapshotMarkerPath,
@@ -417,7 +418,7 @@ it.layer(layerTest)("storage maintenance", (it) => {
           assert.isAbove(retained, 2);
 
           // Turned on, but an update helper's snapshot is live: nothing at all.
-          policy = { deletedAfterDays: 7, archivedAfterDays: null };
+          policy = { deletedAfterDays: 7, archivedAfterDays: null, historyDays: null };
           const now = yield* Clock.currentTimeMillis;
           yield* fs.writeFileString(
             snapshotMarkerPath,

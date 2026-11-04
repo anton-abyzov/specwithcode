@@ -255,6 +255,14 @@
       "types": "./src/modelLanes.ts",
       "import": "./src/modelLanes.ts"
     },
+    "./modelTiers": {
+      "types": "./src/modelTiers.ts",
+      "import": "./src/modelTiers.ts"
+    },
+    "./adversarialReview": {
+      "types": "./src/adversarialReview.ts",
+      "import": "./src/adversarialReview.ts"
+    },
     "./machineFallback": {
       "types": "./src/machineFallback.ts",
       "import": "./src/machineFallback.ts"

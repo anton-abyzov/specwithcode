@@ -95,8 +95,9 @@ describe("storage cleanup settings", () => {
       logsAfterDays: 14,
       scratchAfterDays: null,
       homeSizeWarningGb: 50,
-      deletedThreadHistoryAfterDays: null,
-      archivedThreadHistoryAfterDays: null,
+      deletedThreadHistoryAfterDays: 7,
+      archivedThreadHistoryAfterDays: 2,
+      threadHistoryDays: 7,
     });
   });
 

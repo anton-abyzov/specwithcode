@@ -84,6 +84,31 @@ describe("buildThreadActionMenuItems", () => {
     expect(readOnly.find((item) => item.id === "switch-model")?.disabled).toBe(true);
   });
 
+  it("offers adversarial review to a project thread, right after the handoff items", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      handoff: { mode: "inherit", effective: "on", continued: false },
+    });
+    const order = items.map((item) => item.id);
+    expect(order.indexOf("adversarial-review")).toBe(order.indexOf("handoff-mode") + 1);
+    expect(items.find((item) => item.id === "adversarial-review")).toMatchObject({
+      label: "Adversarial review",
+      icon: "shield-check",
+    });
+    // Without handoff it still shows, in its own group before archive.
+    const plain = buildThreadActionMenuItems(baseState);
+    expect(plain.find((item) => item.id === "adversarial-review")?.separatorBefore).toBe(true);
+    expect(plain.map((item) => item.id).indexOf("adversarial-review")).toBe(
+      plain.map((item) => item.id).indexOf("archive") - 1,
+    );
+  });
+
+  it("keeps adversarial review out of a chat and disabled for read-only clients", () => {
+    expect(ids({ ...baseState, isChat: true })).not.toContain("adversarial-review");
+    const readOnly = buildThreadActionMenuItems({ ...baseState, canOperate: false });
+    expect(readOnly.find((item) => item.id === "adversarial-review")?.disabled).toBe(true);
+  });
+
   it("names where Keep ready to move's Default comes from", () => {
     const snapshot = (projectModes: Record<string, "on" | "off">) =>
       ({
@@ -147,6 +172,7 @@ describe("buildThreadActionMenuItems", () => {
             "rename",
             "regenerate-title",
             "auto-settle",
+            "adversarial-review",
             "archive",
             "delete",
           ]
@@ -157,6 +183,7 @@ describe("buildThreadActionMenuItems", () => {
             "rename",
             "regenerate-title",
             "auto-settle",
+            "adversarial-review",
             "archive",
             "delete",
           ];
@@ -192,10 +219,18 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "rename",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "adversarial-review",
+      "archive",
+      "delete",
+    ]);
   });
 
-  it("groups project settings with utility actions before archive", () => {
+  it("groups project settings with utility actions before the thread's own actions", () => {
     const items = buildThreadActionMenuItems(baseState);
     const copyIndex = items.findIndex((item) => item.id === "copy");
     expect(items[copyIndex + 1]).toMatchObject({
@@ -203,7 +238,8 @@ describe("buildThreadActionMenuItems", () => {
       label: "Project settings",
       icon: "settings",
     });
-    expect(items[copyIndex + 2]?.id).toBe("archive");
+    expect(items[copyIndex + 2]?.id).toBe("adversarial-review");
+    expect(items[copyIndex + 3]?.id).toBe("archive");
   });
 
   it("offers a project window right before project settings where the shell supports it", () => {
@@ -217,6 +253,7 @@ describe("buildThreadActionMenuItems", () => {
       "auto-settle",
       "copy",
       "project-settings",
+      "adversarial-review",
       "archive",
       "delete",
     ];

@@ -525,6 +525,7 @@ export function applyServerSettingsPatch(
     // Policy replacement: deepMerge would keep a cleared class tier or exclusion.
     ...(patch.taskRouting !== undefined ? { taskRouting: patch.taskRouting } : {}),
     ...(patch.modelLanes !== undefined ? { modelLanes: patch.modelLanes } : {}),
+    ...(patch.modelTiers !== undefined ? { modelTiers: patch.modelTiers } : {}),
     ...(patch.learnedModelPreferences !== undefined
       ? { learnedModelPreferences: patch.learnedModelPreferences }
       : {}),

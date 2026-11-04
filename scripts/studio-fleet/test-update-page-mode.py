@@ -3,8 +3,10 @@
 import datetime
 import json
 import random
+import re
 import sqlite3
 import subprocess
+import tempfile
 import time
 import state_backup
 import importlib.util
@@ -24,6 +26,15 @@ spec = importlib.util.spec_from_file_location('page_apply_fixture', pathlib.Path
 f = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(f)
 START, END = '2026-10-22T14:00:00Z', '2026-10-22T14:06:00Z'
+
+
+MIGRATED_THROUGH_71 = (
+    ('CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, created_at TEXT, name TEXT)', []),
+    ("INSERT INTO effect_sql_migrations VALUES (71, 'now', 'HotReadPartialIndexes')", []))
+# Before 069, the one migration left that the page proof refuses (072 is a declared rebuild).
+MIGRATED_THROUGH_68 = (
+    ('CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, created_at TEXT, name TEXT)', []),
+    ("INSERT INTO effect_sql_migrations VALUES (68, 'now', 'ActiveTurnItemIndexes')", []))
 
 
 class Clock(datetime.datetime):
@@ -383,6 +394,34 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(mode.verdict['schemaDelta']['migrations'], [70, 71])
         self.assertEqual(mode.verdict['appendedRows']['orchestration_events'], 30)
 
+    def test_declared_rebuild_072_keeps_the_page_proof(self):
+        """M1 1.0.179 and ministorm 1.0.180 onwards: the new service runs 072's own SQL (rebuild of
+        orchestration_v2_thread_history_compactions) on a database that ran 070 and 071."""
+        source = sorted((pathlib.Path(__file__).resolve().parents[2] / 'apps/server/src/persistence/Migrations')
+                        .glob('072_RetentionHorizon.ts'))[0].read_text()
+        self.flow = f.Update(self, written=[
+            ('CREATE TABLE "effect_sql_migrations" (migration_id integer PRIMARY KEY NOT NULL, '
+             'created_at datetime NOT NULL DEFAULT current_timestamp, name VARCHAR(255) NOT NULL)', [])] + [
+            (sql, []) for number in (70, 71) for _, _, _, sql in additive_migrations.DECLARED[number][1] if sql is not None] + [
+            ("INSERT INTO effect_sql_migrations(migration_id, name) VALUES (70, 'ThreadHistoryCompactions'), (71, 'HotReadPartialIndexes')", [])] + [
+            ('INSERT INTO orchestration_v2_thread_history_compactions VALUES (?, ?, ?, ?, NULL)',
+             ['thread-%d' % index, 'deleted', index, 'now']) for index in range(40)])
+        self.addCleanup(self.flow.kept.clear)
+        mode = update_apply.PageMode.prepare(self.n, 'm4', self.expected, True, migrations=True)
+        before, auth, _ = mode.snapshot()
+        self.assertEqual(mode.assert_fallback_room(), [])  # 072 pending asks no full-read room.
+        self.flow.mark();self.flow.stop();self.flow.clone()
+        mode.stopped(self.flow.held, before, auth, START, 'browser-cookie')
+        new = self.flow.restart(writes=False);self.pid = 101
+        new.commit(*[(sql, []) for sql in re.findall(r'sql`(.*?)`', source, re.S)],
+                   ("INSERT INTO effect_sql_migrations(migration_id, name) VALUES (72, 'RetentionHorizon')", []))
+        for batch in f.startup_writes(random.Random(7)):
+            new.commit(*batch)
+        after = mode.after(self.flow.held, START, 'browser-cookie')
+        self.assertIsNotNone(after, mode.fallback_reason)
+        self.assertEqual(mode.verdict['schemaDelta']['migrations'], [72])
+        self.assertEqual(mode.verdict['schemaDelta']['rebuiltRows'], 40)
+
     def test_additive_migrations_without_permission_take_the_full_read(self):
         mode, after = self.migrated(False)
         self.assertIsNone(after)
@@ -404,6 +443,25 @@ class Pipeline(unittest.TestCase):
         mode.verdict = None;self.pid = 100
         self.assertIsNone(mode.after(self.flow.held, START, 'browser-cookie'))
         self.assertIsNone(mode.verdict)
+
+    def test_fallback_room_counts_only_migrations_the_database_has_not_run(self):
+        mode, _, _ = self.prepare()
+        self.assertIsNone(mode.live_migration)  # No migrations table: nothing to place it by, nothing counted.
+        with patch.object(kept_lines, 'available_disk', return_value=1):
+            self.assertEqual(mode.assert_fallback_room(), [])
+        self.flow.old.commit(*MIGRATED_THROUGH_68)
+        with patch.object(kept_lines, 'available_disk', return_value=1):
+            mode.read()
+            self.assertEqual(mode.live_migration, 68)
+            with self.assertRaisesRegex(AssertionError, 'migration 069'): mode.assert_fallback_room()
+            self.flow.old.commit(("INSERT INTO effect_sql_migrations VALUES (69, 'now', 'AuthSessionProofKeyThumbprint')", []))
+            mode.read()
+            self.assertEqual(mode.assert_fallback_room(), [])  # Already migrated: the page proof applies.
+            # 072 still to run asks no room: its declared rebuild keeps the page proof.
+            self.flow.old.commit(("INSERT INTO effect_sql_migrations VALUES (71, 'now', 'HotReadPartialIndexes')", []))
+            mode.read()
+            self.assertEqual(mode.live_migration, 71)
+            self.assertEqual(mode.assert_fallback_room(), [])
 
     def test_unheld_admission_keeps_full_protocol(self):
         self.assertIsNone(update_apply.PageMode.prepare(self.n, 'm4', {}, True))
@@ -494,11 +552,179 @@ class ApplyBranches(unittest.TestCase):
         self.assertIn('stopped-full-only', result['pageFallback'])
         self.assertNotIn('databasePageProof', result)
 
+    def test_full_read_failure_keeps_the_page_fallback_reason(self):
+        """M4 1.0.184: the full read after the page proof refused ran out of scratch room, and the
+        receipt lost why the page proof refused (pageFallback was written only after that read)."""
+        seen = []
+        def no_room(held, before):
+            # What the update agent polls while the full read runs: the reason is already there,
+            # so a helper killed during that read (no failure handler) still left it.
+            seen.append(json.loads(self.h.output.read_text()))
+            raise continuity.SpillFailed('Cannot capture table orchestration_events within the memory budget: '
+                                         '[Errno 28] Scratch volume is below its floor')
+        with patch.object(self.update.after_proof, 'mark', return_value=None), \
+             patch.object(update_apply.PageMode, 'full_baseline', side_effect=no_room), \
+             self.assertRaisesRegex(continuity.SpillFailed, 'below its floor'):
+            self.run_apply()
+        self.assertEqual(seen[0]['phase'], 'restart-requested')
+        self.assertIn('stopped-full-only', seen[0]['pageFallback'])
+        result = json.loads(self.h.output.read_text())
+        self.assertEqual(result['result'], 'update-failed')
+        self.assertIn('stopped-full-only', result['pageFallback'])
+
+    def test_full_read_migration_without_room_refuses_before_stop(self):
+        """A release that runs a migration the page proof refuses needs the full read's room; without
+        it the update refuses with the old service still running, not after the restart."""
+        self.old.commit(*MIGRATED_THROUGH_68)  # 069 still to run.
+        with patch.object(kept_lines, 'available_disk', return_value=12 * 10 ** 9), \
+             patch.object(update_apply, 'largest_table_bytes', return_value=11_500_000_000), \
+             self.assertRaisesRegex(AssertionError, r'full database read that migration 069 needs.*needs (\d+\.\d) GB, 12.0 GB free') as caught:
+            self.run_apply()
+        reserve = self.update.backup_space_needed(self.h.own, self.h.home, self.update._clonefile())[0]
+        self.assertIn('needs %.1f GB' % ((int(update_apply.FULL_READ_LINE_FACTOR * 11_500_000_000) + kept_lines.DISK_FLOOR_MARGIN + reserve) / 1e9), str(caught.exception))
+        self.assertEqual(self.h.stops, [])
+        self.assertEqual(self.h.restart_calls, [])
+        self.assertNotEqual(json.loads(self.h.output.read_text()).get('pointers'), 'new-release')
+
+    def test_full_read_migration_with_room_is_named_in_the_receipt(self):
+        self.old.commit(*MIGRATED_THROUGH_68)
+        with patch.object(kept_lines, 'available_disk', return_value=60 * 10 ** 9):
+            self.run_apply()
+        result = json.loads(self.h.output.read_text())
+        self.assertEqual(result['phase'], 'verified')
+        self.assertEqual(result['fullReadMigrations'], [69])
+
+    def test_database_that_already_ran_every_full_read_migration_is_not_checked(self):
+        self.old.commit(*MIGRATED_THROUGH_68, ("INSERT INTO effect_sql_migrations VALUES (69, 'now', 'AuthSessionProofKeyThumbprint')", []))
+        with patch.object(kept_lines, 'available_disk', return_value=1):
+            self.run_apply()
+        result = json.loads(self.h.output.read_text())
+        self.assertEqual(result['phase'], 'verified')
+        self.assertNotIn('fullReadMigrations', result)
+
     def test_actual_apply_cancelled_during_staging_does_not_stop(self):
         self.h.on_stage = lambda: (self.h.own / 'updates/config.json').write_text('{}')
         with self.assertRaisesRegex(AssertionError, self.update.HOLD_REFUSAL): self.run_apply()
         self.assertEqual(self.h.stops, [])
         self.assertEqual(self.h.restart_calls, [])
+
+
+class FallbackRoom(unittest.TestCase):
+    """fallback_room sizes the full read's sorted runs by the largest table, not the whole file."""
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = pathlib.Path(folder.name)
+        self.database = self.folder / 'userdata' / 'statev2.sqlite'
+        self.database.parent.mkdir()
+        (self.folder / 'updates').mkdir()
+        db = sqlite3.connect(str(self.database), isolation_level=None)
+        db.executescript('''PRAGMA journal_mode=WAL;
+            CREATE TABLE orchestration_events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, stream TEXT, body TEXT);
+            CREATE INDEX events_stream ON orchestration_events(stream);
+            CREATE TABLE small(id TEXT PRIMARY KEY, body TEXT);
+            CREATE TABLE medium(id INTEGER PRIMARY KEY, body TEXT);
+            CREATE TABLE keyed(key TEXT PRIMARY KEY, body TEXT) WITHOUT ROWID;
+            CREATE TABLE effect_sql_migrations (migration_id INTEGER PRIMARY KEY, created_at TEXT, name TEXT);
+            INSERT INTO effect_sql_migrations VALUES (71, 'now', 'HotReadPartialIndexes');''')
+        rng = random.Random(4)
+        db.execute('BEGIN')
+        for number in range(6000):
+            # JSON payloads, mostly in-page, some with overflow pages, as M4's events are.
+            size = 9000 if number % 50 == 0 else 300
+            body = json.dumps({'type': 'turn.item', 'threadId': 't-%d' % (number % 40),
+                               'payload': {'text': ''.join(rng.choice('abcdef ') for _ in range(size))}})
+            db.execute('INSERT INTO orchestration_events(stream, body) VALUES (?, ?)', ('t-%d' % (number % 40), body))
+        for number in range(1500):
+            db.execute('INSERT INTO medium(body) VALUES (?)', ('m' * 200,))
+        db.execute("INSERT INTO small VALUES ('a', 'one')")
+        for number in range(30):  # A WITHOUT ROWID table (an index b-tree) with overflow pages.
+            db.execute('INSERT INTO keyed VALUES (?, ?)', ('k%d' % number, 'k' * 6000))
+        db.execute('COMMIT')
+        db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        self.db = db
+        self.addCleanup(db.close)
+
+    def btree_bytes(self, name):
+        return self.db.execute('SELECT sum(pgsize) FROM dbstat WHERE name=?', (name,)).fetchone()[0]
+
+    def test_estimate_covers_the_largest_table_and_is_below_the_file(self):
+        estimate = update_apply.largest_table_bytes(self.database)
+        size = self.database.stat().st_size
+        try:
+            events = self.btree_bytes('orchestration_events')
+        except sqlite3.OperationalError:
+            self.skipTest('SQLite without dbstat')
+        self.assertGreaterEqual(estimate, events)
+        self.assertLess(estimate, size)  # The index, the other tables: not counted.
+        # Every leaf read (under OVERFLOW_SAMPLE): leaf overflow is exact. Only the overflow of the
+        # WITHOUT ROWID table's interior keys (a few pages) is unexplained, counted to the largest.
+        self.assertLessEqual(estimate, events + 8 * 4096)
+
+    def test_unreadable_tree_counts_the_whole_file(self):
+        with patch.object(update_apply._Pages, 'tree', side_effect=ValueError('not-a-tree-page')):
+            self.assertEqual(update_apply.largest_table_bytes(self.database), self.database.stat().st_size)
+
+    def test_peak_scratch_of_the_real_spill_stays_within_the_estimate(self):
+        """The full read's real runs for the largest table, spilled run by run: the most scratch
+        they hold at once stays at or below FULL_READ_LINE_FACTOR times the estimate, for JSON
+        payloads like M4's events (20 GB of lines for an 11.5 GB b-tree). Not a bound for every
+        table (BLOBs are hex), which is why SortedRuns._check_room stays the hard guard."""
+        estimate = update_apply.largest_table_bytes(self.database)
+        scratch = self.folder / 'updates'
+        peak = [0]
+        check = continuity.SortedRuns._check_room
+        def measured(folder, size):
+            held = sum(path.stat().st_size for path in scratch.rglob('*') if path.is_file())
+            peak[0] = max(peak[0], held + size)
+            return check(folder, size)
+        with patch.object(continuity, 'SPILL_RUN_CHARS', 64 << 10), \
+             patch.object(continuity.SortedRuns, '_check_room', staticmethod(measured)):
+            continuity.spilled_table(self.db.execute('SELECT rowid, * FROM orchestration_events'), 3000, scratch)
+        self.assertGreater(peak[0], 0)
+        self.assertLessEqual(peak[0], update_apply.FULL_READ_LINE_FACTOR * estimate)
+
+    def room(self, free, reserve=0, freed=0, live=68):
+        with patch.object(kept_lines, 'available_disk', return_value=free):
+            return update_apply.fallback_room(self.database, live, reserve, freed)
+
+    def test_boundary_with_the_real_floor(self):
+        need = (int(update_apply.FULL_READ_LINE_FACTOR * update_apply.largest_table_bytes(self.database))
+                + kept_lines.DISK_FLOOR_MARGIN + 3 * 10 ** 9)
+        self.assertEqual(self.room(need, reserve=3 * 10 ** 9), [69])
+        with self.assertRaisesRegex(AssertionError, 'migration 069'):
+            self.room(need - 1, reserve=3 * 10 ** 9)
+        self.assertEqual(self.room(need - 10 ** 9, reserve=3 * 10 ** 9, freed=10 ** 9), [69])  # Kept lines let go first.
+        self.assertEqual(self.room(1, live=71), [])  # 072 pending: a declared rebuild, no full read.
+        with self.assertRaisesRegex(AssertionError, 'GB free'):
+            self.room(None)  # Cannot tell: refused.
+
+    def test_m4_sized_database_is_judged_by_its_largest_table(self):
+        """M4, 1.0.184: a 22.4 GB file whose largest table is 11.5 GB. The whole-file floor (2 x 22.4
+        GB + 4 GiB, 49 GB) refused anything below it; the table's runs and the margin need about
+        30 GB, 34 GB with the backup's reserve: still more than M4's 18 GB, so it refuses there. (That
+        was 072; it is now a declared rebuild, and the room is asked only for a FULL_READ migration.)"""
+        reserve = 4 * 10 ** 9
+        with patch.object(update_apply, 'largest_table_bytes', return_value=11_500_000_000):
+            need = int(update_apply.FULL_READ_LINE_FACTOR * 11_500_000_000) + kept_lines.DISK_FLOOR_MARGIN + reserve
+            self.assertLess(need, kept_lines.disk_floor(22_400_000_000))
+            self.assertEqual(self.room(need, reserve=reserve), [69])
+            self.assertEqual(self.room(40 * 10 ** 9, reserve=reserve), [69])
+            with self.assertRaisesRegex(AssertionError, 'needs 34.2 GB, 18.0 GB free'):
+                self.room(18 * 10 ** 9, reserve=reserve)
+
+    def test_runs_held_in_memory_check_memory_before_the_stop(self):
+        with patch.object(kept_lines, 'spill_folder', return_value=None), \
+             patch.object(kept_lines, 'memory_room', return_value=False) as room, \
+             self.assertRaisesRegex(AssertionError, 'Not enough memory .*migration 069'):
+            update_apply.fallback_room(self.database, 68)
+        room.assert_called_once_with(int(update_apply.FULL_READ_LINE_FACTOR * update_apply.largest_table_bytes(self.database)))
+        with patch.object(kept_lines, 'spill_folder', return_value=None), patch.object(kept_lines, 'memory_room', return_value=True):
+            self.assertEqual(update_apply.fallback_room(self.database, 68), [69])
+
+    def test_live_migration_reads_the_newest_row_or_none(self):
+        self.assertEqual(update_apply.live_migration(self.database), 71)
+        self.assertIsNone(update_apply.live_migration(self.folder / 'missing.sqlite'))
 
 
 if __name__ == '__main__': unittest.main()

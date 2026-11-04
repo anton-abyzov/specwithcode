@@ -9,6 +9,8 @@ export interface LifecycleRequest {
   /** Changes when acceptance is reopened, even if the original request is retained. */
   readonly acceptanceRevision: string;
   readonly requestedAt: string;
+  /** Derived from the app's delegation record, never from a reporter's receipt. */
+  readonly allowsDeploymentExemption?: true;
 }
 
 export type LifecycleWaitKind =
@@ -121,7 +123,7 @@ export function pendingLifecycleGoalObligations(
   });
 }
 
-export interface LifecycleReceipt extends LifecycleRequest {
+export interface LifecycleReceipt extends Omit<LifecycleRequest, "allowsDeploymentExemption"> {
   readonly kind: "code" | "no_code";
   readonly scope: string;
   readonly scopeRevision: string;
@@ -200,9 +202,14 @@ export function evaluateLifecycleEvidence(
   };
   const notApplicable = (gate: LifecycleGate): boolean =>
     gate.status === "not_applicable" && nonempty(gate.rationale);
-  const codeGates = [receipt.push, receipt.merge, receipt.deployment];
-  if (!codeGates.every(receipt.kind === "code" ? verified : notApplicable))
-    return "incomplete_evidence";
+  const deploymentVerified =
+    verified(receipt.deployment) ||
+    (request.allowsDeploymentExemption === true && notApplicable(receipt.deployment));
+  const codeGatesSatisfied =
+    receipt.kind === "code"
+      ? verified(receipt.push) && verified(receipt.merge) && deploymentVerified
+      : [receipt.push, receipt.merge, receipt.deployment].every(notApplicable);
+  if (!codeGatesSatisfied) return "incomplete_evidence";
   return verified(receipt.deliverable) && verified(receipt.verification)
     ? "accepted"
     : "incomplete_evidence";
@@ -255,11 +262,18 @@ export function currentLifecycleRequest(
     )
   )
     return null;
+  const { thread } = projection;
+  const appOwnedDelegation =
+    thread.creationSource === "mcp" &&
+    thread.lineage.parentThreadId !== null &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    thread.forkedFrom?.type === "node";
   return {
     requestId: run.userMessageId,
     runId: run.id,
-    acceptanceRevision: projection.thread.lifecycleRevision ?? run.id,
+    acceptanceRevision: thread.lifecycleRevision ?? run.id,
     requestedAt: DateTime.formatIso(run.requestedAt),
+    ...(appOwnedDelegation ? { allowsDeploymentExemption: true as const } : {}),
   };
 }
 

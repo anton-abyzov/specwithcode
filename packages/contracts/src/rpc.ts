@@ -39,6 +39,7 @@ import {
   projectWorkspaceRpcs,
 } from "./projectWorkspaceRpc.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
+import { AdversarialReviewError } from "./adversarialReview.ts";
 import {
   ChatGptReconnectProfileInput,
   ChatGptReconnectProfile,
@@ -1863,6 +1864,15 @@ const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.la
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2StartAdversarialReviewRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.startAdversarialReview,
+  {
+    payload: OrchestrationV2RpcSchemas.startAdversarialReview.input,
+    success: OrchestrationV2RpcSchemas.startAdversarialReview.output,
+    error: Schema.Union([AdversarialReviewError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2SubscribeArchivedShellRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   {
@@ -2232,6 +2242,7 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2StartAdversarialReviewRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,

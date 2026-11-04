@@ -7,6 +7,7 @@ import {
   criterionState,
   formatAcceptanceDate,
   ThreadPlanCriteria,
+  verifiedCriteriaCount,
 } from "./ThreadPlanCriteria";
 
 const CRITERIA: ThreadIncrementCriterion[] = [
@@ -32,6 +33,20 @@ describe("ThreadPlanCriteria", () => {
     expect(visibleText(html)).toContain("US-001");
     expect(visibleText(html)).toContain("No story");
     expect(visibleText(html)).toContain("AC-04Countsno task");
+  });
+
+  it("counts only verified criteria for the card's AC count", () => {
+    expect(verifiedCriteriaCount(CRITERIA)).toEqual({ verified: 1, total: 4 });
+    expect(verifiedCriteriaCount([])).toEqual({ verified: 0, total: 0 });
+    // A declared tick, evidence without verify and a waiver never count as proof.
+    expect(
+      verifiedCriteriaCount([
+        { id: "AC-01", text: "x", met: true },
+        { id: "AC-02", text: "y", met: true, state: "evidenced" },
+        { id: "AC-03", text: "z", met: true, state: "verified", acceptance: "mixed" },
+        { id: "AC-04", text: "w", met: true, state: "verified" },
+      ]),
+    ).toEqual({ verified: 1, total: 4 });
   });
 
   it("reads an older server's bare met flag as declared, never verified", () => {

@@ -915,6 +915,19 @@ class ApplyRecovery(unittest.TestCase):
    self.rows=copy.deepcopy(self.rows)
    self.rows['hashes'].update(auth_sessions=auth_heartbeat.rows_hash(rows),projection_projects='rebuilt-projection')
   self.on_restart=restart
+ def test_a_full_read_migration_without_room_refuses_before_the_stop_outside_page_mode(self):
+  # Without held page mode the full read after the restart is just as certain (M4, 1.0.184, then 072).
+  apply=update.update_apply
+  with patch.object(apply,'live_migration',return_value=68),patch.object(apply,'largest_table_bytes',return_value=10**12),\
+       self.assertRaisesRegex(AssertionError,'migration 069 needs after the restart'):self.execute()
+  self.assertEqual(self.stops,[])
+ def test_a_full_read_migration_with_room_is_named_outside_page_mode(self):
+  apply=update.update_apply
+  with patch.object(apply,'live_migration',return_value=68),patch.object(apply,'largest_table_bytes',return_value=1),\
+       patch.object(apply.kept_lines,'memory_room',return_value=True),patch.object(apply.kept_lines,'available_disk',return_value=1<<50):
+   self.execute()
+  receipt=json.loads(self.output.read_text())
+  self.assertEqual(receipt['fullReadMigrations'],[69])
 class StateSafety(unittest.TestCase):
  def rows(self,**extra):
   base={'nativeWorkIdle':True,'projectIds':['p'],'threadIds':['t'],'counts':{'projection_projects':1,'orchestration_v2_events':2,'auth_sessions':1,'scheduled_tasks':0},

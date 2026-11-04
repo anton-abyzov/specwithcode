@@ -59,6 +59,21 @@ export function outputKeptTailNotice(keptChars: number): string {
   return `SpecWithCode kept only the last ${COUNT_FORMAT.format(keptChars)} characters of this output`;
 }
 
+const sizeLabel = (bytes: number) =>
+  bytes >= 1024 * 1024
+    ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+/** The notice for a tool body SpecWithCode cut when it saved it (`bodyCut`). */
+export function bodyCutNotice(cut: {
+  readonly originalBytes: number;
+  readonly keptBytes: number;
+  readonly reason: string;
+}): string {
+  const when = cut.reason === "write-cap" ? "when saved" : "to save space";
+  return `Cut to ${sizeLabel(cut.keptBytes)} of ${sizeLabel(cut.originalBytes)} ${when}: the start and the end are kept`;
+}
+
 let scriptParser: Promise<typeof import("../../lib/embeddedScripts")> | undefined;
 function HighlightedToolCode({
   code,

@@ -793,6 +793,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     macProviderSettingsOnly: true,
   },
   {
+    id: "adversarial-review",
+    title: "Adversarial review",
+    to: "/settings/providers",
+    searchTerms: [
+      "review finished features automatically second opinion critique other model family reviewer order depth frontier",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
+    id: "provider-model-tiers",
+    title: "Regular and frontier models",
+    to: "/settings/providers",
+    searchTerms: ["model tiers everyday strongest best model per provider review depth"],
+    providerSettingsOnly: true,
+  },
+  {
     id: "provider-health-check-interval",
     title: "Health check interval",
     to: "/settings/providers",

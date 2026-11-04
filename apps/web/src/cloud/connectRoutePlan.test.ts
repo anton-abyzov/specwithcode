@@ -13,7 +13,9 @@ import {
   endConnectRouteRemoval,
   isConnectRouteRemoving,
   machinesMissingConnectRoute,
+  onConnectRouteRequest,
   readDeclinedConnectRoutes,
+  requestConnectRoutes,
   setConnectRouteDeclined,
   unreachableMachines,
 } from "./connectRoutePlan";
@@ -137,6 +139,22 @@ describe("declined Connect routes", () => {
     expect(missing.map((entry) => entry.environmentId)).toEqual(["m3"]);
     setConnectRouteDeclined("m1", false);
     expect(readDeclinedConnectRoutes().size).toBe(0);
+  });
+
+  it("lifts a removal and wakes the reconciler when the user asks for Connect", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+    });
+    setConnectRouteDeclined("m3", true);
+    const heard: Array<ReadonlyArray<string>> = [];
+    const stop = onConnectRouteRequest((ids) => heard.push(ids));
+    requestConnectRoutes(["m3"]);
+    stop();
+    requestConnectRoutes(["m1"]);
+    expect(readDeclinedConnectRoutes().has("m3")).toBe(false);
+    expect(heard).toEqual([["m3"]]);
   });
 
   it("keeps a removal for the session when storage is blocked", () => {

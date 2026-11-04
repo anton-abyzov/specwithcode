@@ -367,6 +367,11 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=N
         # Only when a table widened, so an unchanged database captures exactly as without.
         widened = widened_tables(db, structure, widen_from)
         if widened: capture['widened'] = widened
+        # A declared rebuild this database records (its migration row and the table's SQL after it),
+        # for the migration schema check; only when there is one, as for `widened`.
+        import additive_migrations
+        rebuilt = additive_migrations.recorded_rebuilds(db, structure)
+        if rebuilt: capture['rebuilt'] = rebuilt
     return capture
 
 

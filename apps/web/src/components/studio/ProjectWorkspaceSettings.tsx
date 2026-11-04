@@ -54,6 +54,7 @@ import { useProjectIconEditor } from "./ProjectIconEditor";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { CharacterCount } from "../ui/character-count";
 import { ProviderLimitSettings } from "../settings/ProviderLimitSettings";
+import { AdversarialReviewSettings } from "../settings/AdversarialReviewSettings";
 import { RecommendedModelProviders } from "../settings/RecommendedModelProviders";
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { SettingsSection } from "../settings/settingsLayout";
@@ -503,6 +504,13 @@ export function ProjectWorkspaceSettings({
                     >
                       <RecommendedModelProviders model={worker} />
                       <ProviderLimitSettings />
+                    </SettingsSection>
+                    <SettingsSection
+                      id="project-adversarial-review"
+                      title="Adversarial review"
+                      className="pt-3"
+                    >
+                      <AdversarialReviewSettings />
                     </SettingsSection>
                   </SettingsScopeProvider>
                   <label className="project-checkbox">

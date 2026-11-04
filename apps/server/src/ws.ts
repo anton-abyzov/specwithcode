@@ -15,7 +15,10 @@ import * as MachineHandoff from "./fleet/MachineHandoff.ts";
 import * as HandoffMode from "./handoff/HandoffMode.ts";
 import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
 import * as PullRequestCheckFailureLogRpc from "./pullRequest/PullRequestCheckFailureLogRpc.ts";
-import { OrchestrationDispatchCommandError } from "@specweave-studio/contracts";
+import {
+  AdversarialReviewError,
+  OrchestrationDispatchCommandError,
+} from "@specweave-studio/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 
@@ -142,6 +145,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as AdversarialReviewService from "./review/AdversarialReviewService.ts";
 import * as ThreadMoveService from "./orchestration-v2/ThreadMoveService.ts";
 import * as ThreadWorkspaceRestore from "./orchestration-v2/ThreadWorkspaceRestore.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
@@ -1232,7 +1236,13 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       }
 
       const highWater = yield* applicationEvents.latestApplicationSequence;
-      if (!(yield* canReplayPersistedRange(input.afterSequence, highWater, SHELL_RESUME_MAX_GAP))) {
+      if (
+        !(yield* canReplayPersistedRange(input.afterSequence, highWater, SHELL_RESUME_MAX_GAP)) ||
+        // Retention removed thread history after the cursor (ThreadHistoryRetention): snapshot.
+        (yield* applicationEvents
+          .historyCompactedAfter(input.afterSequence)
+          .pipe(Effect.orElseSucceed(() => true)))
+      ) {
         const loaded = yield* loadSnapshot();
         return composeShellStreamWithEnrichment({
           initial: initialSnapshotItems(loaded),
@@ -1386,6 +1396,7 @@ const layerWsRpc = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const projectRuntimeAccess = yield* ProjectRuntimeAccess.ProjectRuntimeAccess;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
+      const adversarialReview = yield* AdversarialReviewService.AdversarialReviewService;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -2184,6 +2195,34 @@ const layerWsRpc = (
                   }),
                 ),
             ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.startAdversarialReview]: (input) =>
+          Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              startup.enqueueCommand(
+                adversarialReview.start({
+                  threadId: input.threadId,
+                  commandId: input.commandId,
+                  reviewer: input.reviewer,
+                  tier: input.tier,
+                  trigger: "manual",
+                }),
+              ),
+            ),
+            Effect.catchTags({
+              AdversarialReviewStartError: (cause) =>
+                new AdversarialReviewError({
+                  threadId: input.threadId,
+                  message: cause.message,
+                  cause,
+                }),
+              ServerRuntimeStartupError: (cause) =>
+                new AdversarialReviewError({
+                  threadId: input.threadId,
+                  message: "Could not start the review thread.",
+                  cause,
+                }),
+            }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>
           Stream.unwrap(subscribeOrchestrationV2ArchivedShell()),

@@ -8,12 +8,15 @@
  *
  * @module modelTiers
  */
-import type {
-  ModelLane,
-  ModelLanes,
-  ModelSelection,
-  ProviderInstanceId,
-  ServerProvider,
+import {
+  DEFAULT_PROVIDER_MODEL_TIERS,
+  type ModelLane,
+  type ModelLanes,
+  type ModelSelection,
+  type ProviderInstanceId,
+  type ProviderModelTier,
+  type ProviderModelTiers,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
 
@@ -140,3 +143,40 @@ export function effectiveFallbackOrder(
   if (explicit.length > 0) return { order: explicit, fromTiers: false };
   return { order: tierFallbackOrder(rule, currentModel, providers), fromTiers: true };
 }
+
+/**
+ * The model `provider` runs for `tier`: the person's choice for that
+ * instance, else for its driver, else the built-in default
+ * (`DEFAULT_PROVIDER_MODEL_TIERS`). A provider with no entry of its own
+ * (GitHub Copilot, OpenCode) uses the first tier model another driver names
+ * that it serves. Only a model the provider lists is returned; frontier
+ * falls back to regular, and undefined means neither is served.
+ */
+export function tierModelFor(
+  provider: Pick<ServerProvider, "instanceId" | "driver" | "models">,
+  tier: ProviderModelTier,
+  tiers: ProviderModelTiers | undefined = undefined,
+): string | undefined {
+  const order: ReadonlyArray<ProviderModelTier> =
+    tier === "frontier" ? ["frontier", "regular"] : ["regular"];
+  for (const wanted of order) {
+    const own =
+      tiers?.[provider.instanceId]?.[wanted] ??
+      tiers?.[provider.driver]?.[wanted] ??
+      DEFAULT_PROVIDER_MODEL_TIERS[provider.driver]?.[wanted];
+    if (own !== undefined) {
+      const slug = sameModelOn(provider, { slug: own });
+      if (slug !== undefined) return slug;
+      continue;
+    }
+    for (const driver of TIER_DRIVER_ORDER) {
+      const named = tiers?.[driver]?.[wanted] ?? DEFAULT_PROVIDER_MODEL_TIERS[driver]?.[wanted];
+      const slug = named === undefined ? undefined : sameModelOn(provider, { slug: named });
+      if (slug !== undefined) return slug;
+    }
+  }
+  return undefined;
+}
+
+/** Drivers whose tier models a provider without its own entry borrows, in order. */
+const TIER_DRIVER_ORDER = ["codex", "claudeAgent", "muse"] as const;

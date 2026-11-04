@@ -36,6 +36,7 @@ export type ThreadActionMenuId =
   | "handoff-mode"
   | "hand-off"
   | "switch-model"
+  | "adversarial-review"
   | "archive"
   | "delete";
 
@@ -200,6 +201,11 @@ export interface ThreadActionMenuState {
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
 }
+
+/** The thread action that asks a different model family to review the thread's work. */
+export const ADVERSARIAL_REVIEW_LABEL = "Adversarial review";
+export const ADVERSARIAL_REVIEW_DESCRIPTION =
+  "Have a different model family review this thread's work";
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
@@ -404,6 +410,18 @@ export function buildThreadActionMenuItems(
                 checked: state.handoff.mode === "off",
               },
             ],
+          },
+        ]
+      : []),
+    // A chat has no feature work to review. The server picks the reviewer and
+    // refuses the author's model family.
+    ...(!state.isChat
+      ? [
+          {
+            id: "adversarial-review" as const,
+            label: ADVERSARIAL_REVIEW_LABEL,
+            icon: "shield-check",
+            ...(state.handoff ? {} : { separatorBefore: true }),
           },
         ]
       : []),

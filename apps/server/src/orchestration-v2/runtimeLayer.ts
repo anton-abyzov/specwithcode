@@ -29,6 +29,7 @@ import * as ProjectStarterSuggestions from "../project/ProjectStarterSuggestions
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
 import * as ThreadReportService from "../project/ThreadReportService.ts";
 import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgressService.ts";
+import * as AdversarialReviewService from "../review/AdversarialReviewService.ts";
 import * as UsageLimitAvailability from "./UsageLimitAvailability.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderFallbackWorker from "./ProviderFallbackWorker.ts";
@@ -358,6 +359,17 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
     ),
   ),
 );
+// Starts a review of a thread's work on another model family, on the same checkout.
+const layerAdversarialReviewProvided = AdversarialReviewService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerProjectService,
+      layerThreadLaunchProvided,
+      layerThreadManagementProvided,
+      layerThreadIncrementProgressProvided,
+    ),
+  ),
+);
 const layerThreadMoveProvided = ThreadMoveService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -575,6 +587,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectService,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerAdversarialReviewProvided,
   layerThreadMoveProvided,
   ThreadWorkspaceRestore.layer.pipe(
     Layer.provide(Layer.merge(ProjectionStore.layer, layerProjectService)),

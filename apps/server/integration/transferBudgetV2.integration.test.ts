@@ -302,12 +302,14 @@ it.live(
               secondBefore,
             );
             const measuredTurnSqlStatements = counter.count() - sqlBefore;
-            // Verify large output is retained durably even though the transport omits it.
+            // The large output is saved capped (TurnItemBodyCap), with a record of the cut.
             const durable = yield* projection.getThreadProjection(THREAD_ID);
             assert.isTrue(
               durable.turnItems.some(
                 (item) =>
-                  item.type === "dynamic_tool" && JSON.stringify(item.output).length > 1_000_000,
+                  item.type === "dynamic_tool" &&
+                  (item.bodyCut?.originalBytes ?? 0) > 1_000_000 &&
+                  JSON.stringify(item.output).length < 100_000,
               ),
             );
             yield* second.close;
@@ -320,7 +322,7 @@ it.live(
             const shellMode = yield* synchronized(rsq);
             const reconnectThread = { ...resumedThread.recorder.totals(), mode: threadMode };
             const reconnectShell = { ...resumedShell.recorder.totals(), mode: shellMode };
-            assert.equal(threadMode, "snapshot"); // retained MCP payload exceeds raw replay budget
+            assert.equal(threadMode, "replay"); // the saved MCP payload is capped, so replay fits the budget
             return {
               provider,
               threadSnapshot,

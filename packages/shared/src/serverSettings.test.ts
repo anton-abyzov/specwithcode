@@ -24,6 +24,26 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("changes one adversarial review field and replaces the reviewer list whole", () => {
+    const codex = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+    const muse = { instanceId: ProviderInstanceId.make("muse"), model: "muse-wonder-1.0" };
+    const listed = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      adversarialReview: { reviewers: [codex, muse] },
+    });
+    const automatic = applyServerSettingsPatch(listed, {
+      adversarialReview: { autoOnFeatureComplete: true },
+    });
+    expect(automatic.adversarialReview).toEqual({
+      autoOnFeatureComplete: true,
+      reviewers: [codex, muse],
+      tier: "regular",
+    });
+    expect(
+      applyServerSettingsPatch(automatic, { adversarialReview: { reviewers: [muse] } })
+        .adversarialReview.reviewers,
+    ).toEqual([muse]);
+  });
+
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
@@ -41,8 +61,9 @@ describe("serverSettings helpers", () => {
       logsAfterDays: 30,
       scratchAfterDays: null,
       homeSizeWarningGb: 50,
-      deletedThreadHistoryAfterDays: null,
-      archivedThreadHistoryAfterDays: null,
+      deletedThreadHistoryAfterDays: 7,
+      archivedThreadHistoryAfterDays: 2,
+      threadHistoryDays: 7,
     });
   });
   it("replaces GitHub host choices so a cleared account pin does not survive", () => {

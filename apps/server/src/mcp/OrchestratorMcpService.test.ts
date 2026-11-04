@@ -1464,6 +1464,75 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("starts a provider named without a model on its tier model", () =>
+    Effect.gen(function* () {
+      const delegateTo = (input: {
+        readonly tier?: "regular" | "frontier";
+        readonly taskLane?: "complex" | "routine";
+        readonly model?: string;
+      }) =>
+        Effect.gen(function* () {
+          const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const codex = {
+            ...providerSnapshot({
+              instanceId: codexInstanceId,
+              driver: ProviderDriverKind.make("codex"),
+            }),
+            models: ["gpt-5.4", "gpt-6.1-sol", "gpt-6-astra"].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+            })),
+          };
+          const layerDependencies = Layer.mergeAll(
+            NodeServices.layer,
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadRecords: () => Effect.succeed(parentProjection([])),
+              dispatch: (command) =>
+                Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                  Effect.as({ sequence: 1, storedEvents: [] } as never),
+                ),
+            }),
+            providerRegistryLayer([codex]),
+            adapterRegistryLayer([codexInstanceId]),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* service
+              .delegateTask(scope, {
+                task: "Summarize the diff.",
+                target: {
+                  providerInstanceId: codexInstanceId,
+                  ...(input.model === undefined ? {} : { model: input.model }),
+                  ...(input.tier === undefined ? {} : { tier: input.tier }),
+                },
+                ...(input.taskLane === undefined ? {} : { taskLane: input.taskLane }),
+                mode: "async",
+                clientRequestId: `delegate-tier-${input.tier}-${input.taskLane}-${input.model}`,
+              })
+              .pipe(Effect.ignore);
+          }).pipe(
+            Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))),
+          );
+          const [request] = (yield* Ref.get(dispatched)) as ReadonlyArray<{
+            modelSelection: { instanceId: string; model: string };
+          }>;
+          return request?.modelSelection.model;
+        });
+      assert.equal(yield* delegateTo({}), "gpt-6.1-sol");
+      assert.equal(yield* delegateTo({ tier: "frontier" }), "gpt-6-astra");
+      assert.equal(yield* delegateTo({ taskLane: "complex" }), "gpt-6-astra");
+      assert.equal(yield* delegateTo({ taskLane: "complex", tier: "regular" }), "gpt-6.1-sol");
+      assert.equal(yield* delegateTo({ tier: "frontier", model: "gpt-5.4" }), "gpt-5.4");
+    }),
+  );
+
   it.effect("rejects delegation to a provider without a registered adapter", () =>
     Effect.gen(function* () {
       const forkOnlyInstanceId = ProviderInstanceId.make("forkOnly");

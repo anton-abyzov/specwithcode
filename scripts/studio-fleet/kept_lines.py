@@ -408,6 +408,16 @@ class Kept:
             return sha256
         return keep
 
+    def disk_bytes(self):
+        """Bytes the kept lines take in the scratch folder: what clear() frees on disk."""
+        if self.folder is None:
+            return 0
+        total = 0
+        for path in pathlib.Path(self.folder).iterdir():
+            with contextlib.suppress(OSError):
+                total += path.stat().st_size
+        return total
+
     def clear(self):
         for entry in self.tables.values():
             _close(entry)

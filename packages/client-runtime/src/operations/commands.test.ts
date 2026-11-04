@@ -19,6 +19,7 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
+  type StartAdversarialReviewInput as StartAdversarialReviewRequest,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -50,6 +51,7 @@ import {
   reorderQueuedRun,
   revertThreadCheckpoint,
   settleThread,
+  startAdversarialReview,
   startThreadTurn,
   unsettleThread,
   updateProject,
@@ -75,6 +77,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
+  readonly reviews?: StartAdversarialReviewRequest[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
@@ -100,6 +103,13 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.startAdversarialReview]: (
+      reviewInput: StartAdversarialReviewRequest,
+    ) =>
+      Effect.sync(() => {
+        input.reviews?.push(reviewInput);
+        return { status: "no-reviewer" as const, skipped: [] };
       }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
@@ -148,6 +158,35 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("starts an adversarial review with a fresh command id and only the given fields", () =>
+    Effect.gen(function* () {
+      const reviews: StartAdversarialReviewRequest[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], reviews });
+      const threadId = ThreadId.make("thread-reviewed");
+
+      const result = yield* startAdversarialReview({ threadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      yield* startAdversarialReview({
+        commandId: CommandId.make("review-command"),
+        threadId,
+        reviewer: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+        tier: "frontier",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(result).toEqual({ status: "no-reviewer", skipped: [] });
+      expect(reviews).toEqual([
+        { commandId: "00000000-0000-4000-8000-000000000000", threadId },
+        {
+          commandId: "review-command",
+          threadId,
+          reviewer: { instanceId: "codex", model: "gpt-6.1-sol" },
+          tier: "frontier",
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];

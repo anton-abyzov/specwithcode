@@ -150,6 +150,7 @@ import {
 } from "../threadSelectionStore";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useStartAdversarialReview } from "../hooks/useStartAdversarialReview";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -2453,6 +2454,7 @@ export default function Sidebar() {
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const startAdversarialReview = useStartAdversarialReview();
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -4899,6 +4901,9 @@ export default function Sidebar() {
           case "switch-model":
             requestSwitchModel(threadRef);
             return;
+          case "adversarial-review":
+            await startAdversarialReview(threadRef);
+            return;
           case "move-to-project":
             await requestThreadMove(threadRef);
             return;
@@ -4984,6 +4989,7 @@ export default function Sidebar() {
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,
+      startAdversarialReview,
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,
