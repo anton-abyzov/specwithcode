@@ -364,7 +364,7 @@ export function SettingsRow({
   ...rowProps
 }: Omit<ComponentPropsWithoutRef<"div">, "title"> & {
   title: ReactNode;
-  /** Title and description are names or values, never translated. */
+  /** The title is a name or value, never translated. A string description is still looked up. */
   literal?: boolean;
   description?: ReactNode;
   status?: ReactNode;
@@ -380,8 +380,7 @@ export function SettingsRow({
 }) {
   const tx = useTx();
   const shownTitle = typeof title === "string" && !literal ? tx(title) : title;
-  const shownDescription =
-    typeof description === "string" && !literal ? tx(description) : description;
+  const shownDescription = typeof description === "string" ? tx(description) : description;
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const navigate = useNavigate();
   const primarySettingsAvailable = usePrimarySettingsAvailable();

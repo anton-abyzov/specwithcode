@@ -335,4 +335,308 @@ export const ko: PhraseCatalog = {
   "Settings search results": "설정 검색 결과",
   "Settings sections": "설정 섹션",
   "Settings section": "설정 섹션",
+  "A short checklist on Overview, ticked from what you have set up. It goes away once everything is done.":
+    "개요에 표시되는 짧은 체크리스트로, 설정을 마친 항목에 체크됩니다. 모두 끝나면 사라집니다.",
+  "A short note at each turn end: what's done, what's next, open questions. It helps the next machine pick up.":
+    "각 턴이 끝날 때 남기는 짧은 메모입니다. 완료한 일, 다음 할 일, 남은 질문을 적어 다음 컴퓨터가 이어받기 쉽게 합니다.",
+  "A specweave-studio.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.":
+    "이 체크아웃에 specweave-studio.json이 있지만 구문을 분석할 수 없어 여기에 선언된 모든 작업과 아이콘이 무시됩니다. JSON 구문과 아이콘 값을 확인하세요.",
+  "API keys, base URLs, and other per-instance CLI settings.":
+    "이 인스턴스의 API 키, 기본 URL 및 기타 CLI 설정입니다.",
+  "Add provider": "제공업체 추가",
+  "Add remote machines with simulator or emulator runtimes installed, and the selected environments will connect over SSH and set up device tools automatically.":
+    "시뮬레이터나 에뮬레이터가 설치된 원격 컴퓨터를 추가하면 선택한 환경이 SSH로 연결하고 기기 도구를 자동으로 설정합니다.",
+  "Adjust the contrast of colors and borders across the interface.":
+    "인터페이스 전체의 색상과 테두리 대비를 조정합니다.",
+  "Allow workers": "워커 허용",
+  "Also include skills in the / command menu. Skills always appear when you type $.":
+    "/ 명령 메뉴에도 스킬을 표시합니다. $를 입력하면 스킬이 항상 표시됩니다.",
+  "Animate captured windows into your draft.":
+    "캡처한 창을 초안으로 넣을 때 애니메이션을 보여 줍니다.",
+  "Appended to the naming prompt. The model returns the complete branch name; no prefix or suffix is added.":
+    "이름 짓기 프롬프트에 덧붙여집니다. 모델이 전체 브랜치 이름을 반환하며 접두사나 접미사는 추가되지 않습니다.",
+  "Archive completed chats after 30 days without activity. Running, stopped, pinned, scheduled chats and saved drafts stay protected. History stays available. Worktree cleanup is a separate policy and preserves dirty or unpushed work.":
+    "30일 동안 활동이 없는 완료된 채팅을 보관합니다. 실행 중, 중지됨, 고정됨, 예약된 채팅과 저장된 초안은 보호됩니다. 기록은 계속 볼 수 있습니다. 워크트리 정리는 별도 정책이며 커밋하지 않았거나 푸시하지 않은 작업은 보존합니다.",
+  "Ask before deleting a thread and its chat history.":
+    "스레드와 채팅 기록을 삭제하기 전에 확인합니다.",
+  "Ask before unpinning a thread from the pinned section.":
+    "고정 섹션에서 스레드 고정을 해제하기 전에 확인합니다.",
+  "Auto picks only among providers that are switched on here, signed in and below the usage threshold. A worker never moves to a provider you turn off.":
+    "자동 선택은 여기서 켜져 있고, 로그인되어 있으며, 사용량 임계값 아래인 제공업체 중에서만 고릅니다. 워커는 꺼 둔 제공업체로 옮겨 가지 않습니다.",
+  "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.":
+    "선택한 환경에서 업데이트, 충돌 또는 컴퓨터 재시작 후 중단된 스레드를 자동으로 재개합니다.",
+  "Balanced uses the tiers below. Save usage moves routine text work (translation, transcripts, summaries, research) to Economy models. Best model always keeps every task on its usual model.":
+    "균형은 아래 등급을 사용합니다. 사용량 절약은 일상적인 텍스트 작업(번역, 녹취록, 요약, 조사)을 Economy 모델로 보냅니다. 항상 최고 모델은 모든 작업을 평소 모델로 처리합니다.",
+  "CLIProxyAPI hubs report Codex account quotas and skip Claude accounts. Adding a hub does not connect its models to SpecWithCode chats.":
+    "CLIProxyAPI 허브는 Codex 계정의 할당량을 보고하고 Claude 계정은 건너뜁니다. 허브를 추가해도 그 모델이 SpecWithCode 채팅에 연결되지는 않습니다.",
+  "Check installed provider CLIs for newer available versions.":
+    "설치된 제공업체 CLI의 새 버전이 있는지 확인합니다.",
+  "Choose alerts for completions, failures and stalls. Input-needed alerts have their own switch below. Disconnect turns off all system alerts.":
+    "완료, 실패, 정체 알림을 선택하세요. 입력 필요 알림은 아래에 별도 스위치가 있습니다. 연결 해제를 누르면 모든 시스템 알림이 꺼집니다.",
+  "Choose colors for additions and deletions, including change counts.":
+    "추가와 삭제의 색상을 변경 수 표시까지 포함해 선택합니다.",
+  "Choose how Dev and Nightly environments are identified.":
+    "Dev 환경과 Nightly 환경을 구분하는 방법을 선택합니다.",
+  "Choose how new worktree branches are named from your first message.":
+    "첫 메시지를 바탕으로 새 워크트리 브랜치 이름을 짓는 방법을 선택합니다.",
+  "Choose one environment to edit its list. Adding an action here adds it on every selected environment.":
+    "목록을 편집할 환경을 하나 선택하세요. 여기서 추가한 작업은 선택한 모든 환경에 추가됩니다.",
+  "Choose the sound played when capture starts.": "캡처를 시작할 때 재생할 소리를 선택합니다.",
+  "Choose when Enter sends a prompt or inserts a new line":
+    "Enter 키로 프롬프트를 보낼지 줄을 바꿀지 선택합니다",
+  "Choose where new isolated checkouts are created. Project folder stays unchanged. Existing worktrees stay where they are.":
+    "새 격리 체크아웃을 만들 위치를 선택합니다. 프로젝트 폴더는 바뀌지 않습니다. 기존 워크트리는 그대로 남습니다.",
+  "Code blocks, diffs, file previews, and the terminal.": "코드 블록, diff, 파일 미리보기, 터미널.",
+  "Combine matching repositories across environments.":
+    "환경 간에 일치하는 저장소를 하나로 묶습니다.",
+  "Commands that run in this project's checkout or its worktree, with optional shortcuts.":
+    "이 프로젝트의 체크아웃이나 워크트리에서 실행하는 명령으로, 단축키를 지정할 수 있습니다.",
+  "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
+    "간결한 에이전트는 몇 개의 쉬운 문장으로 결과부터 알리고, 단계를 다시 늘어놓는 대신 결과와 그것을 증명하는 경로나 링크를 코디네이터에게 보냅니다. 자세한 에이전트는 단계를 설명합니다. 오류, 실패한 테스트, 보안 경고는 어느 쪽이든 모두 표시됩니다.",
+  "Connect an environment to view its settings and access.":
+    "환경을 연결하면 설정과 접근 권한을 볼 수 있습니다.",
+  "Couldn't load the WSL backend state.": "WSL 백엔드 상태를 불러오지 못했습니다.",
+  "Creates the worktree from the latest matching branch on origin instead of your local branch.":
+    "로컬 브랜치 대신 origin의 일치하는 최신 브랜치에서 워크트리를 만듭니다.",
+  "Creates this project's worktrees from the latest matching branch on origin instead of the local branch.":
+    "이 프로젝트의 워크트리를 로컬 브랜치 대신 origin의 일치하는 최신 브랜치에서 만듭니다.",
+  "Current version of the application.": "애플리케이션의 현재 버전입니다.",
+  "Delete folders in the scratch folder that nothing changed in for this many days. Folders a thread, project, agent session, terminal or running process uses are always kept. Deleted folders are not copied anywhere. Off unless you turn it on.":
+    "임시 폴더에서 이 일수 동안 아무것도 바뀌지 않은 폴더를 삭제합니다. 스레드, 프로젝트, 에이전트 세션, 터미널 또는 실행 중인 프로세스가 사용하는 폴더는 항상 유지됩니다. 삭제한 폴더는 어디에도 복사되지 않습니다. 켜기 전까지는 꺼져 있습니다.",
+  "Delete inactive rotated log files after this many days. Current logs are kept.":
+    "비활성 순환 로그 파일을 이 일수가 지나면 삭제합니다. 현재 로그는 유지됩니다.",
+  "Delete saved browser captures after this many days. Older capture links will no longer open.":
+    "저장된 브라우저 캡처를 이 일수가 지나면 삭제합니다. 오래된 캡처 링크는 더 이상 열리지 않습니다.",
+  "Device that runs this provider.": "이 제공업체를 실행하는 기기입니다.",
+  "Device unavailable": "기기를 사용할 수 없음",
+  "Disabled prevents native workflows and Ultracode. On request starts them when you ask. Automatic turns Ultracode on for threads that leave it unset. A model's own Ultracode toggle and its reasoning effort are set in the model picker.":
+    "사용 안 함은 네이티브 워크플로와 Ultracode를 막습니다. 요청 시는 요청할 때 시작합니다. 자동은 설정하지 않은 스레드에서 Ultracode를 켭니다. 모델별 Ultracode 스위치와 추론 강도는 모델 선택기에서 설정합니다.",
+  "Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. 2 days by default.":
+    "보관되었고 이 일수 동안 변경되지 않은 채팅의 원시 이벤트 로그를 삭제합니다. 메시지, 단계, 제목, 풀 리퀘스트 링크는 계속 읽을 수 있습니다. 기본값은 2일입니다.",
+  "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.":
+    "계정마다 별도의 Codex 인스턴스와 로그인이 있습니다. 로그인 페이지에서 다른 계정을 선택하세요.",
+  "Enable a provider to choose its regular and frontier models.":
+    "제공업체를 사용 설정하면 일반 모델과 최첨단 모델을 선택할 수 있습니다.",
+  Environment: "환경",
+  "Environment variables": "환경 변수",
+  "Every routine here belongs to an archived project.":
+    "여기 있는 루틴은 모두 보관된 프로젝트에 속합니다.",
+  "Everything outside code blocks and the terminal.": "코드 블록과 터미널을 제외한 모든 것.",
+  "Fetch and verify a new release as soon as it is found.":
+    "새 릴리스를 찾으면 바로 다운로드하고 확인합니다.",
+  "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you.":
+    "작업 중이거나 모니터링 중인 스레드를 진행 중 섹션으로 접습니다. 내가 필요해지면 받은편지함 맨 위로 돌아옵니다.",
+  "For example, specweave-studio or studio/ produces studio/add-search. Leave empty for no prefix.":
+    "예를 들어 specweave-studio나 studio/를 입력하면 studio/add-search가 됩니다. 접두사를 쓰지 않으려면 비워 두세요.",
+  Headers: "헤더",
+  "Higher values make menus, dialogs, and the composer more solid.":
+    "값이 클수록 메뉴, 대화상자, 입력창이 더 불투명해집니다.",
+  "Highlight mouse presses and held buttons in new recordings.":
+    "새 녹화에서 마우스 클릭과 누르고 있는 버튼을 강조 표시합니다.",
+  "Hold mode also quits on two quick presses.":
+    "누르고 있기 모드에서도 빠르게 두 번 누르면 종료됩니다.",
+  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
+    "세션이 작업하는 동안 유휴 잠자기를 막아 이 Mac의 턴이 계속 실행되게 합니다. 덮개를 닫으면 여전히 잠자기 상태가 됩니다.",
+  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "SpecWithCode 서비스 자동 업데이트가 실행 중인 작업을 기다리는 시간입니다. 그 후 실행 중인 턴이 일시 중지되고, 서비스가 업데이트된 다음 중단한 곳에서 이어집니다. 사이드바의 나중에는 한 시간을 더 기다립니다.",
+  "Include text and controls when the app makes them available.":
+    "앱이 제공하는 경우 텍스트와 컨트롤을 포함합니다.",
+  "Install and manage Antigravity.": "Antigravity를 설치하고 관리합니다.",
+  "Install or update the official registry agent on this environment. Your provider settings and sign-in are kept.":
+    "이 환경에 공식 레지스트리 에이전트를 설치하거나 업데이트합니다. 제공업체 설정과 로그인은 유지됩니다.",
+  "Keep branch and worktree controls below the composer after a thread starts.":
+    "스레드가 시작된 후에도 입력창 아래에 브랜치와 워크트리 컨트롤을 유지합니다.",
+  "Keep every chat's raw event log (replay detail) this many days. Older activity folds into the chat itself: messages, steps, titles and pull request links stay readable. Chats linked to another machine or still working are never folded. 7 days by default.":
+    "각 채팅의 원시 이벤트 로그(재생용 세부 정보)를 이 일수 동안 보관합니다. 그보다 오래된 활동은 채팅 자체로 합쳐지며, 메시지, 단계, 제목, 풀 리퀘스트 링크는 계속 읽을 수 있습니다. 다른 컴퓨터에 연결되었거나 아직 작업 중인 채팅은 합쳐지지 않습니다. 기본값은 7일입니다.",
+  "Link SpecWithCode Connect on the other machine":
+    "다른 컴퓨터에서 SpecWithCode Connect를 연결하세요",
+  "Make a join line there": "그곳에서 참여용 줄을 만드세요",
+  "Mark the app folder here when it passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours. A notice appears only when the disk itself runs low.":
+    "앱 폴더가 이 크기를 넘거나, 그중 일부가 확인 사이에 10GB 이상 커지면 여기에 표시합니다. 크기는 6시간마다 확인합니다. 알림은 디스크 자체의 공간이 부족할 때만 나타납니다.",
+  "Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother.":
+    "최대 녹화 속도입니다. 30fps는 CPU와 저장 공간을 아끼고, 60fps는 더 부드럽습니다.",
+  "Measured a few minutes after the app starts, then every six hours.":
+    "앱이 시작되고 몇 분 뒤에 측정하고, 이후 6시간마다 측정합니다.",
+  "Model for source control text and branch or bookmark names. Off uses the environment's text generation model.":
+    "소스 제어 텍스트와 브랜치 또는 북마크 이름에 사용할 모델입니다. 끄면 환경의 텍스트 생성 모델을 사용합니다.",
+  "Monospace font": "고정폭 글꼴",
+  "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
+    "각 기기 호스트에서 동시에 실행할 수 있는 시뮬레이터와 에뮬레이터의 최대 수입니다. 하나를 종료하기 전까지는 다른 것을 시작할 수 없습니다. 실제 기기는 세지 않습니다.",
+  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
+    "이동할 준비가 된 스레드를 옮깁니다. 가능한 범위에서 잠자기할 때만 동작합니다. 화면 잠금은 해당하지 않습니다.",
+  "No coding agent is installed and enabled there.":
+    "그곳에는 설치되어 사용 설정된 코딩 에이전트가 없습니다.",
+  "No routines match this machine and project selection.":
+    "이 컴퓨터와 프로젝트 선택에 맞는 루틴이 없습니다.",
+  "No task routes below this tier, whatever its class allows.":
+    "작업 유형이 무엇을 허용하든 이 등급 아래로는 보내지 않습니다.",
+  "Notices for dependencies, assets, and optional tools used by SpecWithCode.":
+    "SpecWithCode가 사용하는 종속성, 리소스, 선택적 도구에 대한 고지입니다.",
+  "Notify when a thread needs your answer or approval. Connect notifications above first. Disconnect overrides this switch on this device.":
+    "스레드에 내 답변이나 승인이 필요할 때 알립니다. 먼저 위에서 알림을 연결하세요. 이 기기에서는 연결 해제가 이 스위치보다 우선합니다.",
+  "Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment.":
+    "기본적으로 꺼져 있습니다. 서버는 환경에서 STUDIO_TELEMETRY_ENABLED가 true로 설정된 경우에만 제품 사용 이벤트를 보냅니다.",
+  "On this machine, restart a downloaded app update after five minutes without keyboard or mouse activity, once no work or questions are waiting. Never stops running work. Turn this off to install the app on quit or with Restart. Each machine keeps its own setting.":
+    "이 컴퓨터에서 키보드나 마우스 활동이 5분 동안 없고 기다리는 작업이나 질문이 없으면, 다운로드한 앱 업데이트를 적용하려고 다시 시작합니다. 실행 중인 작업은 절대 멈추지 않습니다. 끄면 종료할 때나 다시 시작을 눌렀을 때 설치합니다. 컴퓨터마다 설정이 따로 있습니다.",
+  "One literal argument per row, in launch order.":
+    "한 줄에 인수 하나씩, 실행 순서대로 입력합니다.",
+  "One moment.": "잠시만 기다려 주세요.",
+  "One per line, like .gitignore: settings.local.json or config/keys/. A copy offers them only when you include secrets. A ~/ entry, such as ~/.config/acme/token.json, is listed so you can copy it yourself; sign-in and start-up files are never listed.":
+    ".gitignore처럼 한 줄에 하나씩 입력합니다: settings.local.json 또는 config/keys/. 복사할 때 비밀을 포함하는 경우에만 제공됩니다. ~/.config/acme/token.json처럼 ~/로 시작하는 항목은 직접 복사할 수 있도록 목록에 표시되며, 로그인 및 시작 파일은 표시되지 않습니다.",
+  "Only the box you write prompts in. Mono works well here.":
+    "프롬프트를 작성하는 입력창에만 적용됩니다. 고정폭 글꼴이 잘 어울립니다.",
+  "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
+    "연결된 풀 리퀘스트를 먼저 엽니다. 없으면 파일 3개 이상 또는 50줄 이상을 수정했을 때 변경 사항을 엽니다.",
+  "Optional marker shown in the picker.": "선택 목록에 표시되는 선택적 표시입니다.",
+  "Or pair with a private QR code": "또는 비공개 QR 코드로 페어링",
+  "Order of projects in the sidebar project picker and command palette.":
+    "사이드바 프로젝트 선택기와 명령 팔레트에서의 프로젝트 순서입니다.",
+  "Page zoom applied to new browser tabs.": "새 브라우저 탭에 적용할 페이지 확대/축소입니다.",
+  "Paste the join line here": "참여용 줄을 여기에 붙여넣으세요",
+  "Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. 7 days by default; it cannot be undone.":
+    "이 일수 전에 삭제한 채팅의 메시지, 단계, 첨부 파일을 영구적으로 제거해 데이터베이스를 작게 유지합니다. 기본값은 7일이며 되돌릴 수 없습니다.",
+  "Preparing managed setup.": "관리형 설정을 준비하는 중입니다.",
+  "Preparing sign-in.": "로그인을 준비하는 중입니다.",
+  "Profiles separate cookies and logins. Incognito data is cleared when the app closes. Agents start every tab signed out unless you choose a profile for them.":
+    "프로필마다 쿠키와 로그인이 분리됩니다. 시크릿 데이터는 앱을 닫으면 지워집니다. 에이전트용 프로필을 선택하지 않으면 에이전트는 모든 탭을 로그아웃 상태로 엽니다.",
+  "Prompt sent to the agent": "에이전트에게 보내는 프롬프트",
+  "Provider setup is read-only.": "제공업체 설정은 읽기 전용입니다.",
+  "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
+    "각 동기화를 origin의 refs/specwithcode/handoff로 푸시하며, 커밋하지 않은 파일과 추적하지 않는 파일도 포함합니다. 이동에는 필요하지 않습니다. 내 브랜치는 절대 푸시되지 않습니다.",
+  Query: "쿼리",
+  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
+    "macOS 키체인에서 기존 Cursor CLI 로그인을 읽어 계정 기록과 요금제 한도를 표시합니다. macOS에서 접근을 허용할지 물을 수 있습니다.",
+  "Reconnect this device to set up its provider, or select another device.":
+    "이 기기를 다시 연결해 제공업체를 설정하거나 다른 기기를 선택하세요.",
+  "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
+    "제공업체 상태, 버전, 모델을 백그라운드에서 새로 고칩니다. 0으로 설정하면 꺼집니다.",
+  "Remove recognized agent credit lines from GitHub merge and squash messages, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.":
+    "GitHub 병합 및 스쿼시 메시지에서 인식된 에이전트 크레딧 줄을 제거하고 사람 공동 작성자는 유지합니다. 자동 병합도 포함됩니다. 병합 대기열, 스택 병합, 기존 커밋은 제외됩니다.",
+  "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
+    "활성 또는 보관된 스레드를 삭제할 때 사용하지 않는 워크트리를 제거합니다. 로컬 변경 사항이 있는 워크트리는 유지됩니다.",
+  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
+    "스레드가 이 일수 동안 비활성 상태이면 그 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다. 브랜치와 스레드 기록은 유지됩니다.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함된 워크트리를 제거합니다. 에이전트가 스레드 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
+  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
+    "기본 브랜치 이후 커밋이 없는 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
+  Rename: "이름 바꾸기",
+  "Require a second click on the inline archive action before a thread is archived.":
+    "스레드를 보관하기 전에 인라인 보관 작업을 한 번 더 클릭하도록 요구합니다.",
+  "Resolve only when every relevant pull request is merged and the latest turn has recorded delivery evidence: push, merge, deployment and verification. A merge alone or unknown evidence keeps the thread active.":
+    "관련된 모든 풀 리퀘스트가 병합되고 최근 턴에 전달 증거(푸시, 병합, 배포, 검증)가 기록된 경우에만 완료로 처리합니다. 병합만 있거나 증거가 불분명하면 스레드는 활성 상태로 남습니다.",
+  "Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again.":
+    "대화를 스크롤하면 기존 스레드의 입력창을 한 줄로 접습니다. 입력창에 포커스를 두거나 입력을 시작하면 다시 펼쳐집니다.",
+  "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode.":
+    "Build/Plan, /plan, /default, Shift+Tab을 되살립니다. 끄면 빌드 모드를 사용합니다.",
+  "Restore per-project thread trees instead of the default flat sidebar.":
+    "기본 평면 사이드바 대신 프로젝트별 스레드 트리를 되살립니다.",
+  "Restore the Projects and Recent tabs with pinning and snooze instead of projects and chats.":
+    "프로젝트와 채팅 대신 고정과 다시 알림이 있는 프로젝트 탭과 최근 탭을 되살립니다.",
+  "Resume agent-owned conversations as SpecWithCode threads.":
+    "에이전트가 소유한 대화를 SpecWithCode 스레드로 재개합니다.",
+  "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
+    "사용량 한도로 멈춘 스레드를 보고된 초기화 시간에 재개합니다. 각 스레드에서 예약된 계속을 취소할 수 있습니다.",
+  "Run only the WSL backend. SpecWithCode restarts when this changes.":
+    "WSL 백엔드만 실행합니다. 변경하면 SpecWithCode가 다시 시작됩니다.",
+  "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
+    "선택한 WSL 배포판을 Windows와 함께 실행합니다. 프로젝트는 현재 파일 시스템에 그대로 남습니다.",
+  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
+    "그 컴퓨터의 터미널에서 이 명령을 한 번 실행하세요. 브라우저에서 claude.ai가 열리면 그곳에서 다른 계정으로 로그인하세요.",
+  "Selected by SpecWithCode.": "SpecWithCode가 선택합니다.",
+  "Set how fast panels open and close.": "패널이 열리고 닫히는 속도를 설정합니다.",
+  "Set how wide messages and the composer can grow on large screens.":
+    "큰 화면에서 메시지와 입력창이 넓어질 수 있는 최대 폭을 설정합니다.",
+  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
+    "프로젝트별로 설정합니다. 프로젝트에서 워크트리 사용을 켜거나 specweave-studio.json에 기본 워크트리가 지정되어 있지 않으면, 새 스레드는 프로젝트의 현재 체크아웃에서 시작합니다. 워크트리 저장 위치는 저장 공간에서 따로 설정합니다.",
+  "Set whether the diff panel ignores whitespace-only edits by default.":
+    "diff 패널에서 공백만 바뀐 수정을 기본적으로 무시할지 설정합니다.",
+  "Shared Codex config, sessions, and state.": "공유되는 Codex 구성, 세션, 상태입니다.",
+  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "이 컴퓨터 전용 비서인 Aide를 사이드바와 명령 팔레트에 표시합니다. 끄면 채팅을 삭제하지 않고 숨깁니다.",
+  "Show a gentle cue on the captured window.": "캡처한 창에 은은한 신호를 표시합니다.",
+  "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
+    "이 앱에 포커스가 있을 때 다른 스레드가 끝나거나, 실패하거나, 입력이나 승인이 필요하면 토스트를 표시합니다.",
+  "Show diffs stacked or side by side. The toggle in the diff toolbar changes this too.":
+    "diff를 위아래로 쌓거나 나란히 표시합니다. diff 도구 모음의 전환 버튼으로도 바꿀 수 있습니다.",
+  "Show formatted Markdown as you type.": "입력하는 동안 서식이 적용된 Markdown을 표시합니다.",
+  "Show pressed keys and shortcuts in new recordings. Password fields are excluded.":
+    "새 녹화에서 누른 키와 단축키를 표시합니다. 비밀번호 필드는 제외됩니다.",
+  "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.":
+    "에이전트가 브라우저나 기기를 열면, 에이전트가 따로 지정하지 않는 한 플로팅 미리보기를 표시합니다.",
+  "Shown for this project group in the sidebar and thread lists.":
+    "사이드바와 스레드 목록에서 이 프로젝트 그룹에 표시됩니다.",
+  "Shown in the provider list and model picker.": "제공업체 목록과 모델 선택기에 표시됩니다.",
+  "Shown in the provider list, the model picker and Limits.":
+    "제공업체 목록, 모델 선택기, 한도에 표시됩니다.",
+  "Shows context window usage as a circular indicator in the composer, with where the conversation compacts.":
+    "입력창에 컨텍스트 창 사용량을 원형 표시기로 보여 주고, 대화가 압축되는 지점도 표시합니다.",
+  "Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake.":
+    "사용량 한도로 멈춘 스레드를 보고된 초기화 시간까지 다시 알림으로 미룹니다. 자동 재개와 함께 쓰면 깨어날 때 계속됩니다.",
+  "Source Control Providers": "소스 제어 제공업체",
+  "Start with files expanded or collapsed when opening diffs or a pull request's Code tab.":
+    "diff나 풀 리퀘스트의 코드 탭을 열 때 파일을 펼친 상태 또는 접은 상태로 시작합니다.",
+  "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
+    "자동 선택은 기본적으로 구독 사용량을 씁니다. 토큰당 과금되는 제공업체(API 크레딧)는 여기서 허용하지 않으면 사용하지 않으며, 허용해도 선택한 등급까지만 사용합니다. 자동 선택은 키를 추가하거나, 로그인하거나, 크레딧을 구매하지 않습니다.",
+  "Switches the hosted app release channel.": "호스팅 앱의 릴리스 채널을 전환합니다.",
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
+    "같은 프로젝트가 있는 다른 컴퓨터에 각 턴을 동기화해 어느 컴퓨터에서든 이어갈 수 있게 합니다. 이 Mac의 스레드에 적용되며 기존 스레드도 포함됩니다. 토큰을 조금 더 사용합니다.",
+  "System default follows your browser or OS clock preference.":
+    "시스템 기본값은 브라우저나 OS의 시계 설정을 따릅니다.",
+  "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
+    "나와 에이전트가 쓰는 탭 크기입니다. 맞춤은 패널에 맞추고, 다른 크기에서는 기기 도구 모음이 표시됩니다.",
+  "Terminal output, independent from code blocks and diffs.":
+    "코드 블록 및 diff와 별개인 터미널 출력입니다.",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "아래에서 켜 두면 앱은 유휴 상태일 때 업데이트되고, 그렇지 않으면 다음에 종료할 때 업데이트됩니다. 서비스는 작업 중인 세션이 없을 때 업데이트되며, 실행 중인 작업은 아래 대기 시간 후 일시 중지되었다가 업데이트 후 이어집니다. 끄면 여기에서 직접 설치합니다.",
+  "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
+    "작업 종류별로 사용할 수 있는 가장 저렴한 등급입니다. 코드, 리뷰, 디자인, 최종 애니메이션은 Standard 아래로 내려가지 않으며, 그 외 작업은 Frontier에 머뭅니다. 불분명한 작업은 평소 모델을 사용합니다.",
+  "The color scheme pages are told to prefer. System follows your OS setting.":
+    "페이지가 우선 사용하도록 알릴 색 구성표입니다. 시스템은 OS 설정을 따릅니다.",
+  "The regular model does everyday work; the frontier model runs when the strongest one is asked for, such as a review at frontier depth.":
+    "일반 모델은 일상 작업을 맡고, 최첨단 모델은 가장 강한 모델이 필요할 때(예: 최첨단 깊이의 리뷰) 실행됩니다.",
+  "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
+    "그다음 실행 중인 작업이 업데이트를 위해 멈추고, 앱이 다시 시작되며, 실행 중이거나 대기 중인 스레드는 그 후에 이어집니다.",
+  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
+    "그다음 사용하는 각 iPhone의 iPhone 앱에서 같은 계정으로 로그인하세요. Tailscale, VPN, 포트 개방이 필요 없습니다.",
+  "This routine no longer exists or is outside the selected project scope.":
+    "이 루틴은 더 이상 없거나 선택한 프로젝트 범위 밖에 있습니다.",
+  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
+    "인계 모드의 스레드는 이 시간이 지나면 선택한 Mac에서 이어집니다. 끄면 클릭할 때까지 기다립니다. 코디네이터 스레드는 이렇게 이동하지 않습니다.",
+  "Try again in a moment.": "잠시 후 다시 시도하세요.",
+  "Update this environment to manage Antigravity.":
+    "Antigravity를 관리하려면 이 환경을 업데이트하세요.",
+  "Use stable releases or nightly builds. Switch back anytime.":
+    "안정 릴리스나 나이틀리 빌드를 사용합니다. 언제든 되돌릴 수 있습니다.",
+  "Use the repository's template for change request descriptions when available.":
+    "저장소에 템플릿이 있으면 변경 요청 설명에 사용합니다.",
+  "Use thinner grayscale text smoothing instead of the macOS default.":
+    "macOS 기본값 대신 더 얇은 회색조 텍스트 다듬기를 사용합니다.",
+  "Used for thread titles and other generated text on connected devices with this provider. Source control can override it.":
+    "이 제공업체를 사용하는 연결된 기기에서 스레드 제목과 기타 생성 텍스트에 사용합니다. 소스 제어에서 재정의할 수 있습니다.",
+  "Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.":
+    "CURSOR_API_KEY를 사용하는 중입니다. 브라우저 로그인을 쓰려면 이 제공업체의 환경에서 제거하세요.",
+  "WSL is unavailable, so Windows is running instead. Turn WSL off to clear this preference.":
+    "WSL을 사용할 수 없어 대신 Windows에서 실행 중입니다. 이 설정을 지우려면 WSL을 끄세요.",
+  "When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports.":
+    "레인 뒤쪽 모델에 구독 할당량이 많이 남아 있고 그 할당량이 곧 초기화되면(5시간 창은 90분 안에, 주간 창은 하루 안에) 워커는 그 모델에서 시작해 첫 번째 모델이 자기 할당량을 아낄 수 있게 합니다. 이미 레인에 있는 모델만, 구독이 보고하는 할당량 창만 기준으로 고릅니다.",
+  "When a project has more chats than this, the oldest finished ones are archived. History stays available, and Unarchive brings a chat back. Running, waiting, pinned or recently active chats are never archived.":
+    "프로젝트의 채팅이 이 수를 넘으면 가장 오래된 완료 채팅부터 보관합니다. 기록은 계속 볼 수 있고, 보관 해제로 채팅을 되돌릴 수 있습니다. 실행 중, 대기 중, 고정되었거나 최근 활동한 채팅은 보관되지 않습니다.",
+  "When a thread Auto moved fails for a reason a stronger model may fix, it continues once, in the same thread, on the model it would have used without Auto. A delegated task reports its failure to the thread that started it, which may retry it once on that model. Usage limits are left to the fallback rules above.":
+    "자동 선택으로 옮긴 스레드가 더 강한 모델이라면 고칠 수 있는 이유로 실패하면, 같은 스레드에서 자동 선택이 없었다면 썼을 모델로 한 번 이어갑니다. 위임된 작업은 자신을 시작한 스레드에 실패를 알리고, 그 스레드는 해당 모델로 한 번 다시 시도할 수 있습니다. 사용량 한도는 위의 대체 규칙에 맡깁니다.",
+  "Where chat and terminal links open. ⌘/Ctrl-click skips the in-app browser.":
+    "채팅과 터미널의 링크를 여는 위치입니다. ⌘/Ctrl 클릭하면 앱 내 브라우저를 건너뜁니다.",
+  "Which of each provider's models reviews while the reviewer order is empty. A frontier model is slower and uses more of the plan; set the models under Regular and frontier models.":
+    "리뷰어 순서가 비어 있을 때 각 제공업체의 어떤 모델이 리뷰할지입니다. 최첨단 모델은 느리고 요금제를 더 많이 쓰며, 모델은 일반 및 최첨단 모델에서 설정합니다.",
+  "Which skills each agent loads in this folder, with vskill versions and drift.":
+    "각 에이전트가 이 폴더에서 불러오는 스킬과 vskill 버전 및 차이입니다.",
+  "Wrap long lines in code blocks, diffs, and file previews by default.":
+    "코드 블록, diff, 파일 미리보기에서 긴 줄을 기본적으로 줄바꿈합니다.",
+  "Save usage": "사용량 절약",
+  Balanced: "균형",
+  "Best model always": "항상 최고 모델",
+  Disabled: "사용 안 함",
+  "On request": "요청 시",
+  Automatic: "자동",
+  Mixed: "혼합",
 };

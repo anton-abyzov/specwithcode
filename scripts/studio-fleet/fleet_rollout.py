@@ -144,6 +144,11 @@ REQUEST_TIMEOUT = CALL_TIMEOUT + update_request.AGENT_PASS_WAIT
 FLEET_CONFIG = 'studio-fleet.json'  # M4's fleet (studioFleet.FLEET_CONFIG_FILE).
 STATUS_FAILURES = 5  # Consecutive unanswered status reads, at least, before a host counts as lost...
 STATUS_OUTAGE_SECONDS = 300  # ...and only once it has been silent this long: a restart is not a lost host.
+# A worker's SpecWithCode Connect relay comes back about two minutes after its service restarts
+# (1.0.192: M1's edge answered 530 from its 00:09:22Z restart until about 00:11:20Z), so a read
+# Connect left unanswered ('unreachable') is asked again for this long before the host fails.
+CONNECT_RETRY_SECONDS = 180
+CONNECT_RETRY_DELAYS = (5, 10, 20, 30)  # Seconds between attempts; the last one repeats.
 ACK_WINDOW = 60  # Seconds before a request the host did not acknowledge is sent again.
 ACK_RETRIES = 3  # Unacknowledged requests sent again before the host counts as not reached.
 REQUIRED_HOSTS = ('m4', 'm1', 'm3')  # A release is done only when these are verified (increment 1239, D-03).
@@ -373,6 +378,47 @@ def unanswered(error):
     if 'could not be reached' in text:
         return 'not reachable'
     return None
+
+
+def connect_retry_delay(attempt, waited, window=CONNECT_RETRY_SECONDS):
+    """Seconds to wait before attempt `attempt + 1` (0-based) after `waited` seconds of retries, or
+    None once `window` is spent."""
+    if waited >= window:
+        return None
+    return min(CONNECT_RETRY_DELAYS[min(attempt, len(CONNECT_RETRY_DELAYS) - 1)], window - waited)
+
+
+def retry_unreachable(attempt, unreachable, identity, what, clock, sleep, say, window=CONNECT_RETRY_SECONDS):
+    """`attempt()`, asked again with backoff for up to `window` seconds while `unreachable(outcome)`
+    says SpecWithCode Connect left the host unanswered (its relay reconnecting after a restart);
+    `outcome` is the answer or the RolloutError raised. Returns the last answer, or raises the last
+    error. Only for reads: a call that may have been delivered must not go through here."""
+    begin, tries = clock(), 0
+    while True:
+        try:
+            outcome, error = attempt(), None
+        except RolloutError as raised:
+            outcome, error = raised, raised
+        if unreachable(outcome):
+            waited = clock() - begin
+            delay = connect_retry_delay(tries, waited, window)
+            if delay is not None:
+                tries += 1
+                say('%s: SpecWithCode Connect unreachable (%s); asking again in %ds (%ds of %ds)'
+                    % (identity, what, delay, int(waited), window))
+                sleep(delay)
+                continue
+            say('%s: SpecWithCode Connect still unreachable after %ds of retries' % (identity, int(waited)))
+        if error is not None:
+            raise error
+        return outcome
+
+
+def connect_settled(call, argv, identity, clock, sleep, say, window=CONNECT_RETRY_SECONDS):
+    """`call(argv)` (a status read), asked again while Connect leaves the host unanswered. A refusal
+    or unauthorized answer, and any SSH route (whose errors carry no `unanswered`), raise at once."""
+    return retry_unreachable(lambda: call(argv), lambda outcome: getattr(outcome, 'unanswered', None) == 'unreachable',
+                             identity, argv[0], clock, sleep, say, window)
 
 
 # Over SpecWithCode Connect a forced request waits for the worker's drain and the request it writes
@@ -778,7 +824,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     `local_copies` (a worker's): M4's own folder copies, which keep each request back until they end.
     `ignore_copies` (--ignore-folder-copies): no wait for copies, and a forced request installs over them."""
     begin = clock()
-    status = call(['status', '--identity', identity])
+    status = connect_settled(call, ['status', '--identity', identity], identity, clock, sleep, say)
     current = status.get('version')
     if current == version and status.get('installFinalized') is True:
         say('%s: already on %s' % (identity, version))

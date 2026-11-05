@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from collections import namedtuple
 from unittest.mock import patch
@@ -340,6 +341,33 @@ class FleetPreflight(unittest.TestCase):
         self.assertEqual(timeout, preflight_fleet.REMOTE_TIMEOUT)
 
 
+class Answers(object):
+    """A worker's successive answers, one per ask."""
+
+    def __init__(self, answers):
+        self.answers = iter(answers)
+
+    def next(self):
+        return next(self.answers)
+
+
+class FakeClock(object):
+    """time.monotonic and time.sleep for retries: sleeping moves the clock, nothing waits. Shared by
+    the preflight's threads, so each thread's waits add up on one clock (an upper bound)."""
+
+    def __init__(self):
+        self.now, self.slept, self.lock = 1000.0, [], threading.Lock()
+
+    def __call__(self):
+        with self.lock:
+            return self.now
+
+    def sleep(self, seconds):
+        with self.lock:
+            self.slept.append(seconds)
+            self.now += seconds
+
+
 class ConnectPreflight(unittest.TestCase):
     """The workers' disk asked over SpecWithCode Connect through M4's `fleet room` CLI (mocked here),
     pinned SSH only with --ssh-fallback and only for the worker Connect could not ask."""
@@ -394,12 +422,16 @@ class ConnectPreflight(unittest.TestCase):
                 key = 'm4'
             asked.append((key, command))
             answer = answers[key]
+            if isinstance(answer, Answers):
+                answer = answer.next()
             if isinstance(answer, Exception):
                 raise answer
             return subprocess.CompletedProcess(command, answer[0], answer[1], '')
 
         plan = preflight_fleet.hosts(VERSION, home=self.home, ssh_fallback=ssh_fallback, connect=self.CLI)
-        ok = preflight_fleet.preflight(VERSION, plan, 0, run=run, say=lines.append)
+        clock = FakeClock()
+        ok = preflight_fleet.preflight(VERSION, plan, 0, run=run, say=lines.append, clock=clock, sleep=clock.sleep)
+        self.slept = clock.slept
         return ok, lines, asked
 
     def m4(self):
@@ -433,10 +465,35 @@ class ConnectPreflight(unittest.TestCase):
                 ok, lines, asked = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
                                                    'm3-id': (1, json.dumps({'error': error, 'reason': reason}))})
                 self.assertFalse(ok)
-                self.assertEqual(lines[2], 'm3: FAILED, could not be asked over SpecWithCode Connect (machine m3-id): '
-                                           '%s: %s' % (reason, error))
+                self.assertEqual(lines[-2], 'm3: FAILED, could not be asked over SpecWithCode Connect (machine m3-id): '
+                                            '%s: %s' % (reason, error))
+                self.assertEqual('m3: SpecWithCode Connect still unreachable after 180s of retries' in lines,
+                                 reason == 'unreachable')
                 self.assertIn('m3 is not ready for %s' % VERSION, lines[-1])
                 self.assertFalse(any(key.startswith('ssh-') for key, _ in asked))
+                # Only a worker Connect left unanswered is asked again; a refusal fails at once.
+                self.assertEqual([key for key, _ in asked].count('m3-id') > 1, reason == 'unreachable')
+
+    def test_an_unreachable_worker_is_asked_again_until_its_relay_is_back(self):
+        answers = iter([(1, json.dumps({'error': 'This machine is unavailable.', 'reason': 'unreachable'}))] * 3
+                       + [(0, json.dumps(self.report('m3', GB, 50 * GB)))])
+        ok, lines, asked = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+                                           'm3-id': Answers(answers)})
+        self.assertTrue(ok, lines)
+        self.assertEqual([key for key, _ in asked].count('m3-id'), 4)
+        self.assertEqual(self.slept, [5, 10, 20])
+        self.assertIn('m3: SpecWithCode Connect unreachable (fleet room); asking again in 5s (0s of 180s)', lines)
+        self.assertTrue(any(line.startswith('m3: ok') for line in lines), lines)
+
+    def test_unreachable_retries_stop_after_three_minutes(self):
+        ok, lines, asked = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),
+                                           'm3-id': (1, json.dumps({'error': 'offline', 'reason': 'unreachable'}))})
+        self.assertFalse(ok)
+        self.assertEqual(sum(self.slept), 180)
+        self.assertEqual(self.slept[:4], [5, 10, 20, 30])
+        self.assertIn('m3: SpecWithCode Connect still unreachable after 180s of retries', lines)
+        self.assertLess(lines.index('m3: SpecWithCode Connect still unreachable after 180s of retries'),
+                        lines.index(lines[-2]))  # Printed while it waited, before the host's line.
 
     def test_a_report_not_over_connect_is_a_failure(self):
         ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB, transport='tailnet'))),
@@ -499,6 +556,7 @@ class ConnectPreflight(unittest.TestCase):
             'm3-id': (1, json.dumps({'error': 'offline', 'reason': 'unreachable'})),
             'ssh-m3': (255, '')}, ssh_fallback=True)
         self.assertFalse(ok)
+        self.assertEqual(self.slept, [])  # With the opt-in, an unreachable worker goes to SSH at once.
         self.assertIn('m3: FAILED, could not be asked: gave no answer (exit 255', lines[-2])
         self.inventory.unlink()
         ok, lines, _ = self.preflight({'m4': self.m4(), 'm1-id': (0, json.dumps(self.report('m1', GB, 50 * GB))),

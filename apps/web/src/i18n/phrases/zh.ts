@@ -333,4 +333,291 @@ export const zh: PhraseCatalog = {
   "Settings search results": "设置搜索结果",
   "Settings sections": "设置分区",
   "Settings section": "设置分区",
+  "A short checklist on Overview, ticked from what you have set up. It goes away once everything is done.":
+    "概览页上的简短清单，会根据你已完成的设置自动勾选。全部完成后会消失。",
+  "A short note at each turn end: what's done, what's next, open questions. It helps the next machine pick up.":
+    "每轮结束时的简短说明：已完成什么、下一步做什么、还有哪些问题。帮助下一台电脑接手。",
+  "A specweave-studio.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.":
+    "此检出中有 specweave-studio.json，但无法解析，因此其中声明的所有操作和图标都会被忽略。请检查 JSON 语法和图标值。",
+  "API keys, base URLs, and other per-instance CLI settings.":
+    "API 密钥、基础 URL 以及此实例的其他 CLI 设置。",
+  "Add provider": "添加提供方",
+  "Add remote machines with simulator or emulator runtimes installed, and the selected environments will connect over SSH and set up device tools automatically.":
+    "添加安装了模拟器的远程电脑，所选环境会通过 SSH 连接并自动设置设备工具。",
+  "Adjust the contrast of colors and borders across the interface.":
+    "调整整个界面中颜色和边框的对比度。",
+  "Allow workers": "允许工作节点",
+  "Also include skills in the / command menu. Skills always appear when you type $.":
+    "同时在 / 命令菜单中显示技能。输入 $ 时总会显示技能。",
+  "Animate captured windows into your draft.": "将截取的窗口以动画方式放入草稿。",
+  "Appended to the naming prompt. The model returns the complete branch name; no prefix or suffix is added.":
+    "附加到命名提示词中。模型返回完整的分支名，不会添加前缀或后缀。",
+  "Archive completed chats after 30 days without activity. Running, stopped, pinned, scheduled chats and saved drafts stay protected. History stays available. Worktree cleanup is a separate policy and preserves dirty or unpushed work.":
+    "已完成的聊天在 30 天无活动后归档。运行中、已停止、已固定、已排期的聊天以及已保存的草稿受到保护。历史记录仍可查看。工作树清理是单独的策略，会保留未提交或未推送的工作。",
+  "Ask before deleting a thread and its chat history.": "删除会话及其聊天记录前先确认。",
+  "Ask before unpinning a thread from the pinned section.": "从固定区域取消固定会话前先确认。",
+  "Auto picks only among providers that are switched on here, signed in and below the usage threshold. A worker never moves to a provider you turn off.":
+    "自动模式只会在此处已开启、已登录且低于用量阈值的提供方中选择。工作节点不会转到你已关闭的提供方。",
+  "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.":
+    "在所选环境中，更新、崩溃或电脑重启后自动恢复中断的会话。",
+  "Balanced uses the tiers below. Save usage moves routine text work (translation, transcripts, summaries, research) to Economy models. Best model always keeps every task on its usual model.":
+    "“均衡”使用下方的档位。“节省用量”将日常文本工作（翻译、转录、摘要、调研）交给 Economy 模型。“始终用最佳模型”让每项任务使用其常用模型。",
+  "CLIProxyAPI hubs report Codex account quotas and skip Claude accounts. Adding a hub does not connect its models to SpecWithCode chats.":
+    "CLIProxyAPI 中心会报告 Codex 账户的配额并跳过 Claude 账户。添加中心不会把它的模型接入 SpecWithCode 聊天。",
+  "Check installed provider CLIs for newer available versions.":
+    "检查已安装的提供方 CLI 是否有新版本。",
+  "Choose alerts for completions, failures and stalls. Input-needed alerts have their own switch below. Disconnect turns off all system alerts.":
+    "选择完成、失败和停滞时的提醒。需要输入的提醒在下方有单独开关。“断开”会关闭所有系统提醒。",
+  "Choose colors for additions and deletions, including change counts.":
+    "选择新增和删除的颜色，包括更改计数。",
+  "Choose how Dev and Nightly environments are identified.": "选择如何标识 Dev 和 Nightly 环境。",
+  "Choose how new worktree branches are named from your first message.":
+    "选择如何根据你的第一条消息为新的工作树分支命名。",
+  "Choose one environment to edit its list. Adding an action here adds it on every selected environment.":
+    "选择一个环境来编辑其列表。在这里添加的操作会添加到所有所选环境中。",
+  "Choose the sound played when capture starts.": "选择开始截取时播放的声音。",
+  "Choose when Enter sends a prompt or inserts a new line": "选择 Enter 何时发送提示词、何时换行",
+  "Choose where new isolated checkouts are created. Project folder stays unchanged. Existing worktrees stay where they are.":
+    "选择新的隔离检出创建在哪里。项目文件夹保持不变。已有工作树保留在原处。",
+  "Code blocks, diffs, file previews, and the terminal.": "代码块、差异、文件预览和终端。",
+  "Combine matching repositories across environments.": "合并各环境中相同的仓库。",
+  "Commands that run in this project's checkout or its worktree, with optional shortcuts.":
+    "在此项目的检出或其工作树中运行的命令，可设置快捷键。",
+  "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
+    "简洁的智能体会用几句平实的话先给出结果，并向协调者发送结果以及能证明它的路径或链接，而不是复述步骤。详细的智能体会解释它们的步骤。无论哪种方式，错误、失败的测试和安全警告都会完整保留。",
+  "Connect an environment to view its settings and access.": "连接一个环境以查看其设置和访问权限。",
+  "Couldn't load the WSL backend state.": "无法加载 WSL 后端状态。",
+  "Creates the worktree from the latest matching branch on origin instead of your local branch.":
+    "从 origin 上最新的匹配分支创建工作树，而不是从你的本地分支创建。",
+  "Creates this project's worktrees from the latest matching branch on origin instead of the local branch.":
+    "从 origin 上最新的匹配分支创建此项目的工作树，而不是从本地分支创建。",
+  "Current version of the application.": "应用的当前版本。",
+  "Delete folders in the scratch folder that nothing changed in for this many days. Folders a thread, project, agent session, terminal or running process uses are always kept. Deleted folders are not copied anywhere. Off unless you turn it on.":
+    "删除临时文件夹中这么多天未变动的文件夹。会话、项目、智能体会话、终端或运行中的进程正在使用的文件夹始终保留。删除的文件夹不会被复制到任何地方。默认关闭。",
+  "Delete inactive rotated log files after this many days. Current logs are kept.":
+    "这么多天后删除不活跃的轮转日志文件。当前日志会保留。",
+  "Delete saved browser captures after this many days. Older capture links will no longer open.":
+    "这么多天后删除已保存的浏览器截图。较旧的截图链接将无法打开。",
+  "Device that runs this provider.": "运行此提供方的设备。",
+  "Device unavailable": "设备不可用",
+  "Disabled prevents native workflows and Ultracode. On request starts them when you ask. Automatic turns Ultracode on for threads that leave it unset. A model's own Ultracode toggle and its reasoning effort are set in the model picker.":
+    "“禁用”会阻止原生工作流和 Ultracode。“按需”在你要求时启动它们。“自动”会为未设置的会话开启 Ultracode。模型自身的 Ultracode 开关和推理强度在模型选择器中设置。",
+  "Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. 2 days by default.":
+    "删除已归档且这么多天未变动的聊天的原始事件日志。其消息、步骤、标题和拉取请求链接仍可阅读。默认 2 天。",
+  "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.":
+    "每个账户都有自己的 Codex 实例和登录。在登录页面选择另一个账户。",
+  "Enable a provider to choose its regular and frontier models.":
+    "启用一个提供方以选择其常规模型和前沿模型。",
+  Environment: "环境",
+  "Environment variables": "环境变量",
+  "Every routine here belongs to an archived project.": "这里的所有例行任务都属于已归档的项目。",
+  "Everything outside code blocks and the terminal.": "代码块和终端以外的所有内容。",
+  "Fetch and verify a new release as soon as it is found.": "一旦发现新版本，立即下载并验证。",
+  "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you.":
+    "将工作中和监控中的会话收进“进行中”分区。需要你处理时，它们会回到收件箱顶部。",
+  "For example, specweave-studio or studio/ produces studio/add-search. Leave empty for no prefix.":
+    "例如，specweave-studio 或 studio/ 会生成 studio/add-search。留空则不加前缀。",
+  Headers: "请求头",
+  "Higher values make menus, dialogs, and the composer more solid.":
+    "数值越高，菜单、对话框和输入框越不透明。",
+  "Highlight mouse presses and held buttons in new recordings.":
+    "在新录制中突出显示鼠标点击和按住的按钮。",
+  "Hold mode also quits on two quick presses.": "按住模式下，快速按两次也会退出。",
+  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
+    "会话运行时阻止空闲休眠，让这台 Mac 上的轮次继续运行。合上盖子仍会休眠。",
+  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "SpecWithCode 服务自动更新时等待运行中工作的时长。之后运行中的轮次会暂停，服务更新，然后从中断处继续。侧边栏中的“稍后”会再等一小时。",
+  "Include text and controls when the app makes them available.": "在应用提供时包含文本和控件。",
+  "Install and manage Antigravity.": "安装并管理 Antigravity。",
+  "Install or update the official registry agent on this environment. Your provider settings and sign-in are kept.":
+    "在此环境中安装或更新官方注册表中的智能体。你的提供方设置和登录会保留。",
+  "Keep branch and worktree controls below the composer after a thread starts.":
+    "会话开始后，仍在输入框下方保留分支和工作树控件。",
+  "Keep every chat's raw event log (replay detail) this many days. Older activity folds into the chat itself: messages, steps, titles and pull request links stay readable. Chats linked to another machine or still working are never folded. 7 days by default.":
+    "每个聊天的原始事件日志（回放细节）保留这么多天。更早的活动会并入聊天本身：消息、步骤、标题和拉取请求链接仍可阅读。关联到其他电脑或仍在运行的聊天不会被并入。默认 7 天。",
+  "Link SpecWithCode Connect on the other machine": "在另一台电脑上关联 SpecWithCode Connect",
+  "Make a join line there": "在那里生成加入代码",
+  "Mark the app folder here when it passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours. A notice appears only when the disk itself runs low.":
+    "当应用文件夹超过此大小，或其中某部分在两次检查之间增长 10 GB 以上时，在这里标记。每六小时检查一次大小。只有磁盘本身空间不足时才会显示通知。",
+  "Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother.":
+    "最高录制帧率。30 fps 节省 CPU 和存储空间；60 fps 更流畅。",
+  "Measured a few minutes after the app starts, then every six hours.":
+    "应用启动几分钟后测量一次，之后每六小时测量一次。",
+  "Model for source control text and branch or bookmark names. Off uses the environment's text generation model.":
+    "用于源代码管理文本以及分支或书签名称的模型。“关闭”使用环境的文本生成模型。",
+  "Monospace font": "等宽字体",
+  "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
+    "每个设备主机上可同时运行的模拟器数量上限。达到上限后，需关闭一个才能再启动。实体设备不计入。",
+  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
+    "迁移已准备好迁移的会话。尽力而为，仅在休眠时进行。锁屏不算。",
+  "No coding agent is installed and enabled there.": "那里没有安装并启用任何编程智能体。",
+  "No routines match this machine and project selection.": "没有符合此电脑和项目选择的例行任务。",
+  "No task routes below this tier, whatever its class allows.":
+    "无论任务类型允许什么，任何任务都不会低于此档位。",
+  "Notices for dependencies, assets, and optional tools used by SpecWithCode.":
+    "SpecWithCode 使用的依赖、资源和可选工具的声明。",
+  "Notify when a thread needs your answer or approval. Connect notifications above first. Disconnect overrides this switch on this device.":
+    "会话需要你回答或批准时通知你。请先在上方连接通知。在此设备上，“断开”优先于此开关。",
+  "Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment.":
+    "默认关闭。只有在服务器环境中将 STUDIO_TELEMETRY_ENABLED 设为 true 时，服务器才会发送产品使用事件。",
+  "On this machine, restart a downloaded app update after five minutes without keyboard or mouse activity, once no work or questions are waiting. Never stops running work. Turn this off to install the app on quit or with Restart. Each machine keeps its own setting.":
+    "在这台电脑上，若键盘和鼠标五分钟无活动且没有等待中的工作或问题，则重启以应用已下载的更新。不会中断运行中的工作。关闭后，将在退出时或点击“重启”时安装。每台电脑分别设置。",
+  "One literal argument per row, in launch order.": "每行一个字面参数，按启动顺序排列。",
+  "One moment.": "请稍候。",
+  "One per line, like .gitignore: settings.local.json or config/keys/. A copy offers them only when you include secrets. A ~/ entry, such as ~/.config/acme/token.json, is listed so you can copy it yourself; sign-in and start-up files are never listed.":
+    "每行一个，格式同 .gitignore：settings.local.json 或 config/keys/。只有在你选择包含机密时，副本才会提供它们。~/ 开头的条目（如 ~/.config/acme/token.json）会列出来供你自行复制；登录和启动文件永远不会列出。",
+  "Only the box you write prompts in. Mono works well here.":
+    "仅限你编写提示词的输入框。这里很适合用等宽字体。",
+  "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
+    "优先打开关联的拉取请求。否则在至少编辑 3 个文件或 50 行时打开“更改”。",
+  "Optional marker shown in the picker.": "在选择器中显示的可选标记。",
+  "Or pair with a private QR code": "或用私有二维码配对",
+  "Order of projects in the sidebar project picker and command palette.":
+    "项目在侧边栏项目选择器和命令面板中的顺序。",
+  "Page zoom applied to new browser tabs.": "新浏览器标签页使用的页面缩放。",
+  "Paste the join line here": "在此粘贴加入代码",
+  "Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. 7 days by default; it cannot be undone.":
+    "永久删除这么多天前删除的聊天中的消息、步骤和附件，以保持数据库小巧。默认 7 天；无法撤销。",
+  "Preparing managed setup.": "正在准备托管设置。",
+  "Preparing sign-in.": "正在准备登录。",
+  "Profiles separate cookies and logins. Incognito data is cleared when the app closes. Agents start every tab signed out unless you choose a profile for them.":
+    "配置会隔离 Cookie 和登录状态。无痕数据会在应用关闭时清除。除非你为智能体选择了配置，否则它们打开的每个标签页都处于未登录状态。",
+  "Prompt sent to the agent": "发送给智能体的提示词",
+  "Provider setup is read-only.": "提供方设置为只读。",
+  "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
+    "将每次同步推送到 origin 的 refs/specwithcode/handoff 下，包括未提交和未跟踪的文件。迁移不需要它。你的分支永远不会被推送。",
+  Query: "查询",
+  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
+    "从 macOS 钥匙串读取你现有的 Cursor CLI 登录，以显示账户历史和套餐限制。macOS 可能会请求你允许访问。",
+  "Reconnect this device to set up its provider, or select another device.":
+    "重新连接此设备以设置其提供方，或选择其他设备。",
+  "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
+    "在后台刷新提供方状态、版本和模型。设为 0 则禁用。",
+  "Remove recognized agent credit lines from GitHub merge and squash messages, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.":
+    "从 GitHub 的合并和压缩提交信息中移除可识别的智能体署名行，保留人类共同作者。包括自动合并。不包括合并队列、堆叠合并和已有提交。",
+  "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
+    "删除活跃或已归档的会话时，移除未使用的工作树。有本地更改的工作树会保留。",
+  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
+    "会话不活跃达这么多天后移除其工作树。打开中会话的文件夹始终保留。分支和会话历史会保留。",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "移除拉取请求已合并且提交已包含在默认分支中的工作树。也会移除智能体在没有会话的情况下创建的、干净且已推送的工作树，前提是其拉取请求已合并或关闭且已闲置一天。打开中会话的文件夹始终保留。",
+  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
+    "移除相对默认分支没有新提交的工作树。打开中会话的文件夹始终保留。",
+  Rename: "重命名",
+  "Require a second click on the inline archive action before a thread is archived.":
+    "在归档会话前，需要再次点击行内归档按钮确认。",
+  "Resolve only when every relevant pull request is merged and the latest turn has recorded delivery evidence: push, merge, deployment and verification. A merge alone or unknown evidence keeps the thread active.":
+    "仅当所有相关拉取请求都已合并，且最近一轮记录了交付证据（推送、合并、部署和验证）时才标记完成。仅有合并或证据未知时，会话保持活跃。",
+  "Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again.":
+    "滚动对话时，将已有会话的输入框收起为一行。聚焦输入框或开始输入即可重新展开。",
+  "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode.":
+    "恢复 Build/Plan、/plan、/default 和 Shift+Tab。“关闭”使用构建模式。",
+  "Restore per-project thread trees instead of the default flat sidebar.":
+    "恢复按项目划分的会话树，而不是默认的扁平侧边栏。",
+  "Restore the Projects and Recent tabs with pinning and snooze instead of projects and chats.":
+    "恢复带固定和延后功能的“项目”和“最近”标签页，而不是项目和聊天。",
+  "Resume agent-owned conversations as SpecWithCode threads.":
+    "将智能体拥有的对话作为 SpecWithCode 会话继续。",
+  "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
+    "在报告的重置时间恢复因用量上限停止的会话。每个会话都可以取消其计划的继续。",
+  "Run only the WSL backend. SpecWithCode restarts when this changes.":
+    "仅运行 WSL 后端。更改后 SpecWithCode 会重启。",
+  "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
+    "与 Windows 一起运行所选的 WSL 发行版。项目保留在当前的文件系统中。",
+  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
+    "在那台电脑的终端中运行一次。它会在浏览器中打开 claude.ai：在那里用另一个账户登录。",
+  "Selected by SpecWithCode.": "由 SpecWithCode 选择。",
+  "Set how fast panels open and close.": "设置面板打开和关闭的速度。",
+  "Set how wide messages and the composer can grow on large screens.":
+    "设置在大屏幕上消息和输入框最多能有多宽。",
+  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
+    "按项目设置。新会话从项目当前的检出开始，除非该项目开启了“使用工作树”，或其 specweave-studio.json 指定了默认工作树。工作树存储在“存储”中单独配置。",
+  "Set whether the diff panel ignores whitespace-only edits by default.":
+    "设置差异面板是否默认忽略仅空白的修改。",
+  "Shared Codex config, sessions, and state.": "共享的 Codex 配置、会话和状态。",
+  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "在侧边栏和命令面板中显示 Aide（这台电脑的私人助手）。“关闭”会隐藏它，但不删除其聊天。",
+  "Show a gentle cue on the captured window.": "在截取的窗口上显示轻微提示。",
+  "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
+    "当此应用处于焦点时，若其他会话完成、失败或需要输入或批准，显示一条提示。",
+  "Show diffs stacked or side by side. The toggle in the diff toolbar changes this too.":
+    "以上下堆叠或左右并排的方式显示差异。差异工具栏中的开关也可以更改此设置。",
+  "Show formatted Markdown as you type.": "输入时显示格式化后的 Markdown。",
+  "Show pressed keys and shortcuts in new recordings. Password fields are excluded.":
+    "在新录制中显示按下的按键和快捷键。密码字段除外。",
+  "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.":
+    "智能体打开浏览器或设备时显示浮动预览，除非智能体另有说明。",
+  "Shown for this project group in the sidebar and thread lists.":
+    "在侧边栏和会话列表中为此项目组显示。",
+  "Shown in the provider list and model picker.": "显示在提供方列表和模型选择器中。",
+  "Shown in the provider list, the model picker and Limits.":
+    "显示在提供方列表、模型选择器和用量上限中。",
+  "Shows context window usage as a circular indicator in the composer, with where the conversation compacts.":
+    "在输入框中以圆形指示器显示上下文窗口用量，并标出对话将被压缩的位置。",
+  "Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake.":
+    "将因用量上限停止的会话延后到报告的重置时间。与自动恢复一起使用，可在唤醒时继续。",
+  "Source Control Providers": "源代码管理提供方",
+  "Start with files expanded or collapsed when opening diffs or a pull request's Code tab.":
+    "打开差异或拉取请求的“代码”标签页时，文件默认展开或折叠。",
+  "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
+    "自动模式默认消耗订阅用量。按 token 计费的提供方（API 额度）不会使用，除非在此允许，并且只到你选择的档位为止。自动模式绝不会添加密钥、登录或购买额度。",
+  "Switches the hosted app release channel.": "切换托管应用的发布通道。",
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
+    "将每一轮同步到拥有同一项目的其他电脑，使任意一台都能继续。适用于这台 Mac 的会话，包括已有会话。会多用一些 token。",
+  "System default follows your browser or OS clock preference.":
+    "“系统默认”跟随浏览器或操作系统的时钟偏好。",
+  "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
+    "你和智能体使用的标签页尺寸。“填充”适应面板；其他尺寸会显示设备工具栏。",
+  "Terminal output, independent from code blocks and diffs.": "终端输出，独立于代码块和差异。",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "如果下方已启用，应用会在空闲时更新，否则在下次退出时更新。服务在没有会话运行时更新；运行中的工作会在下方的等待时间后为其暂停，并在更新后继续。“关闭”表示你从这里安装。",
+  "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
+    "每类任务可使用的最便宜档位。代码、审查、设计和最终动画绝不低于 Standard；其他工作保持在 Frontier。不明确的任务使用其常用模型。",
+  "The color scheme pages are told to prefer. System follows your OS setting.":
+    "页面被告知优先使用的配色方案。“系统”跟随操作系统设置。",
+  "The regular model does everyday work; the frontier model runs when the strongest one is asked for, such as a review at frontier depth.":
+    "常规模型负责日常工作；需要最强模型时（例如前沿深度的审查）使用前沿模型。",
+  "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
+    "之后，运行中的工作会为更新而停止，应用重启，运行中和排队的会话会在更新后继续。",
+  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
+    "然后在你使用的每台 iPhone 上，用同一账户登录 iPhone 应用。无需 Tailscale、VPN 或开放端口。",
+  "This routine no longer exists or is outside the selected project scope.":
+    "此例行任务已不存在，或不在所选项目范围内。",
+  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
+    "处于交接模式的会话会在这段时间后在你选择的 Mac 上继续。“关闭”表示它们会等待你点击。协调者会话不会以这种方式迁移。",
+  "Try again in a moment.": "请稍后再试。",
+  "Update this environment to manage Antigravity.": "更新此环境以管理 Antigravity。",
+  "Use stable releases or nightly builds. Switch back anytime.":
+    "使用稳定版或每夜构建版。可随时切换回来。",
+  "Use the repository's template for change request descriptions when available.":
+    "有可用模板时，使用仓库的模板撰写变更请求描述。",
+  "Use thinner grayscale text smoothing instead of the macOS default.":
+    "使用更细的灰度文本平滑，而不是 macOS 默认设置。",
+  "Used for thread titles and other generated text on connected devices with this provider. Source control can override it.":
+    "用于在使用此提供方的已连接设备上生成会话标题和其他文本。源代码管理可以覆盖它。",
+  "Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.":
+    "正在使用 CURSOR_API_KEY。从此提供方的环境中移除它即可使用浏览器登录。",
+  "WSL is unavailable, so Windows is running instead. Turn WSL off to clear this preference.":
+    "WSL 不可用，因此改为运行 Windows。关闭 WSL 以清除此偏好。",
+  "When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports.":
+    "当某条通道中靠后的模型还有大量订阅配额且该配额即将重置（5 小时窗口在 90 分钟内、每周窗口在一天内）时，工作节点会从它开始，让第一个模型保留自己的配额。只会选择已在通道中的模型，并且只依据订阅报告的配额窗口。",
+  "When a project has more chats than this, the oldest finished ones are archived. History stays available, and Unarchive brings a chat back. Running, waiting, pinned or recently active chats are never archived.":
+    "当项目中的聊天超过此数量时，最早完成的聊天会被归档。历史记录仍可查看，“取消归档”可恢复聊天。运行中、等待中、已固定或最近活跃的聊天永远不会被归档。",
+  "When a thread Auto moved fails for a reason a stronger model may fix, it continues once, in the same thread, on the model it would have used without Auto. A delegated task reports its failure to the thread that started it, which may retry it once on that model. Usage limits are left to the fallback rules above.":
+    "当自动模式迁移的会话因更强模型可能修复的原因失败时，它会在同一会话中、用不使用自动模式时会用的模型继续一次。委派的任务会向启动它的会话报告失败，该会话可以用那个模型重试一次。用量上限交由上方的备用规则处理。",
+  "Where chat and terminal links open. ⌘/Ctrl-click skips the in-app browser.":
+    "聊天和终端中的链接在哪里打开。⌘/Ctrl 点击可跳过应用内浏览器。",
+  "Which of each provider's models reviews while the reviewer order is empty. A frontier model is slower and uses more of the plan; set the models under Regular and frontier models.":
+    "审查者顺序为空时，由每个提供方的哪个模型进行审查。前沿模型更慢，也会消耗更多套餐额度；在“常规与前沿模型”中设置模型。",
+  "Which skills each agent loads in this folder, with vskill versions and drift.":
+    "每个智能体在此文件夹中加载哪些技能，以及 vskill 版本和偏差。",
+  "Wrap long lines in code blocks, diffs, and file previews by default.":
+    "默认在代码块、差异和文件预览中自动换行。",
+  "Save usage": "节省用量",
+  Balanced: "均衡",
+  "Best model always": "始终用最佳模型",
+  Disabled: "禁用",
+  "On request": "按需",
+  Automatic: "自动",
+  Mixed: "混合",
 };

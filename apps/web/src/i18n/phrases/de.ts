@@ -338,4 +338,314 @@ export const de: PhraseCatalog = {
   "Settings search results": "Suchergebnisse in den Einstellungen",
   "Settings sections": "Einstellungsbereiche",
   "Settings section": "Einstellungsbereich",
+  "A short checklist on Overview, ticked from what you have set up. It goes away once everything is done.":
+    "Eine kurze Checkliste in der Übersicht, abgehakt nach dem, was du schon eingerichtet hast. Sie verschwindet, sobald alles erledigt ist.",
+  "A short note at each turn end: what's done, what's next, open questions. It helps the next machine pick up.":
+    "Eine kurze Notiz am Ende jedes Turns: was erledigt ist, was als Nächstes kommt, offene Fragen. So kann der nächste Rechner nahtlos weitermachen.",
+  "A specweave-studio.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.":
+    "In diesem Checkout gibt es eine specweave-studio.json, die sich nicht parsen lässt, daher werden alle darin deklarierten Aktionen und Symbole ignoriert. Prüfe die JSON-Syntax und die Symbolwerte.",
+  "API keys, base URLs, and other per-instance CLI settings.":
+    "API-Schlüssel, Basis-URLs und weitere CLI-Einstellungen dieser Instanz.",
+  "Add provider": "Anbieter hinzufügen",
+  "Add remote machines with simulator or emulator runtimes installed, and the selected environments will connect over SSH and set up device tools automatically.":
+    "Füge entfernte Rechner mit installierten Simulatoren oder Emulatoren hinzu; die ausgewählten Umgebungen verbinden sich per SSH und richten die Gerätewerkzeuge automatisch ein.",
+  "Adjust the contrast of colors and borders across the interface.":
+    "Passe den Kontrast von Farben und Rahmen in der ganzen Oberfläche an.",
+  "Allow workers": "Worker erlauben",
+  "Also include skills in the / command menu. Skills always appear when you type $.":
+    "Skills auch im /-Befehlsmenü anzeigen. Bei Eingabe von $ erscheinen Skills immer.",
+  "Animate captured windows into your draft.":
+    "Aufgenommene Fenster animiert in deinen Entwurf übernehmen.",
+  "Appended to the naming prompt. The model returns the complete branch name; no prefix or suffix is added.":
+    "Wird an den Prompt für die Benennung angehängt. Das Modell liefert den vollständigen Branch-Namen; es wird kein Präfix oder Suffix ergänzt.",
+  "Archive completed chats after 30 days without activity. Running, stopped, pinned, scheduled chats and saved drafts stay protected. History stays available. Worktree cleanup is a separate policy and preserves dirty or unpushed work.":
+    "Abgeschlossene Chats nach 30 Tagen ohne Aktivität archivieren. Laufende, gestoppte, angeheftete und geplante Chats sowie gespeicherte Entwürfe bleiben geschützt. Der Verlauf bleibt verfügbar. Die Worktree-Bereinigung ist eine eigene Richtlinie und bewahrt nicht committete oder nicht gepushte Arbeit.",
+  "Ask before deleting a thread and its chat history.":
+    "Vor dem Löschen eines Threads und seines Chatverlaufs nachfragen.",
+  "Ask before unpinning a thread from the pinned section.":
+    "Vor dem Lösen eines Threads aus dem angehefteten Bereich nachfragen.",
+  "Auto picks only among providers that are switched on here, signed in and below the usage threshold. A worker never moves to a provider you turn off.":
+    "Die automatische Wahl wählt nur unter Anbietern, die hier eingeschaltet, angemeldet und unter dem Nutzungsschwellenwert sind. Ein Worker wechselt nie zu einem Anbieter, den du ausschaltest.",
+  "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.":
+    "Unterbrochene Threads nach einem Update, Absturz oder Neustart des Rechners in den ausgewählten Umgebungen automatisch fortsetzen.",
+  "Balanced uses the tiers below. Save usage moves routine text work (translation, transcripts, summaries, research) to Economy models. Best model always keeps every task on its usual model.":
+    "Ausgewogen nutzt die Stufen unten. Nutzung sparen verlagert Routinearbeit mit Text (Übersetzungen, Transkripte, Zusammenfassungen, Recherche) auf Economy-Modelle. Immer bestes Modell lässt jede Aufgabe auf ihrem üblichen Modell.",
+  "CLIProxyAPI hubs report Codex account quotas and skip Claude accounts. Adding a hub does not connect its models to SpecWithCode chats.":
+    "CLIProxyAPI-Hubs melden die Kontingente von Codex-Konten und überspringen Claude-Konten. Ein hinzugefügter Hub verbindet seine Modelle nicht mit SpecWithCode-Chats.",
+  "Check installed provider CLIs for newer available versions.":
+    "Installierte Anbieter-CLIs auf neuere Versionen prüfen.",
+  "Choose alerts for completions, failures and stalls. Input-needed alerts have their own switch below. Disconnect turns off all system alerts.":
+    "Wähle Hinweise für Abschlüsse, Fehler und Stillstände. Für benötigte Eingaben gibt es unten einen eigenen Schalter. Trennen schaltet alle Systemhinweise aus.",
+  "Choose colors for additions and deletions, including change counts.":
+    "Wähle Farben für Hinzufügungen und Löschungen, einschließlich der Änderungszähler.",
+  "Choose how Dev and Nightly environments are identified.":
+    "Wähle, wie Dev- und Nightly-Umgebungen gekennzeichnet werden.",
+  "Choose how new worktree branches are named from your first message.":
+    "Wähle, wie neue Worktree-Branches anhand deiner ersten Nachricht benannt werden.",
+  "Choose one environment to edit its list. Adding an action here adds it on every selected environment.":
+    "Wähle eine Umgebung, um ihre Liste zu bearbeiten. Eine hier hinzugefügte Aktion wird in allen ausgewählten Umgebungen hinzugefügt.",
+  "Choose the sound played when capture starts.":
+    "Wähle den Ton, der beim Start einer Aufnahme abgespielt wird.",
+  "Choose when Enter sends a prompt or inserts a new line":
+    "Wähle, wann Enter einen Prompt sendet oder eine neue Zeile einfügt",
+  "Choose where new isolated checkouts are created. Project folder stays unchanged. Existing worktrees stay where they are.":
+    "Wähle, wo neue isolierte Checkouts angelegt werden. Der Projektordner bleibt unverändert. Bestehende Worktrees bleiben, wo sie sind.",
+  "Code blocks, diffs, file previews, and the terminal.":
+    "Codeblöcke, Diffs, Dateivorschauen und das Terminal.",
+  "Combine matching repositories across environments.":
+    "Gleiche Repositorys über Umgebungen hinweg zusammenfassen.",
+  "Commands that run in this project's checkout or its worktree, with optional shortcuts.":
+    "Befehle, die im Checkout dieses Projekts oder in seinem Worktree laufen, mit optionalen Tastenkürzeln.",
+  "Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way.":
+    "Knappe Agenten beginnen mit dem Ergebnis in wenigen einfachen Sätzen und schicken Koordinatoren das Ergebnis samt Pfad oder Link als Beleg statt einer Wiederholung ihrer Schritte. Ausführliche Agenten erklären ihre Schritte. Fehler, fehlschlagende Tests und Sicherheitswarnungen bleiben in beiden Fällen vollständig.",
+  "Connect an environment to view its settings and access.":
+    "Verbinde eine Umgebung, um ihre Einstellungen und Zugriffe zu sehen.",
+  "Couldn't load the WSL backend state.":
+    "Der Zustand des WSL-Backends konnte nicht geladen werden.",
+  "Creates the worktree from the latest matching branch on origin instead of your local branch.":
+    "Erstellt den Worktree vom neuesten passenden Branch auf origin statt von deinem lokalen Branch.",
+  "Creates this project's worktrees from the latest matching branch on origin instead of the local branch.":
+    "Erstellt die Worktrees dieses Projekts vom neuesten passenden Branch auf origin statt vom lokalen Branch.",
+  "Current version of the application.": "Aktuelle Version der Anwendung.",
+  "Delete folders in the scratch folder that nothing changed in for this many days. Folders a thread, project, agent session, terminal or running process uses are always kept. Deleted folders are not copied anywhere. Off unless you turn it on.":
+    "Ordner im Arbeitsordner löschen, in denen sich so viele Tage nichts geändert hat. Ordner, die ein Thread, Projekt, eine Agentensitzung, ein Terminal oder ein laufender Prozess nutzt, bleiben immer erhalten. Gelöschte Ordner werden nirgendwohin kopiert. Aus, bis du es einschaltest.",
+  "Delete inactive rotated log files after this many days. Current logs are kept.":
+    "Inaktive rotierte Logdateien nach so vielen Tagen löschen. Aktuelle Logs bleiben erhalten.",
+  "Delete saved browser captures after this many days. Older capture links will no longer open.":
+    "Gespeicherte Browser-Aufnahmen nach so vielen Tagen löschen. Ältere Aufnahme-Links öffnen sich dann nicht mehr.",
+  "Device that runs this provider.": "Gerät, auf dem dieser Anbieter läuft.",
+  "Device unavailable": "Gerät nicht verfügbar",
+  "Disabled prevents native workflows and Ultracode. On request starts them when you ask. Automatic turns Ultracode on for threads that leave it unset. A model's own Ultracode toggle and its reasoning effort are set in the model picker.":
+    "Deaktiviert verhindert native Workflows und Ultracode. Auf Anfrage startet sie, wenn du darum bittest. Automatisch schaltet Ultracode für Threads ein, die es nicht festlegen. Den eigenen Ultracode-Schalter eines Modells und seinen Denkaufwand legst du in der Modellauswahl fest.",
+  "Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. 2 days by default.":
+    "Das rohe Ereignisprotokoll von Chats verwerfen, die archiviert und so viele Tage unberührt sind. Ihre Nachrichten, Schritte, Titel und Pull-Request-Links bleiben lesbar. Standardmäßig 2 Tage.",
+  "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.":
+    "Jedes Konto hat eine eigene Codex-Instanz und Anmeldung. Wähle das andere Konto auf der Anmeldeseite.",
+  "Enable a provider to choose its regular and frontier models.":
+    "Aktiviere einen Anbieter, um seine regulären und Frontier-Modelle zu wählen.",
+  Environment: "Umgebung",
+  "Environment variables": "Umgebungsvariablen",
+  "Every routine here belongs to an archived project.":
+    "Alle Routinen hier gehören zu einem archivierten Projekt.",
+  "Everything outside code blocks and the terminal.": "Alles außer Codeblöcken und dem Terminal.",
+  "Fetch and verify a new release as soon as it is found.":
+    "Eine neue Version herunterladen und prüfen, sobald sie gefunden wird.",
+  "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you.":
+    "Arbeitende und beobachtende Threads in einen Bereich „In Arbeit“ einklappen. Sie kommen wieder oben in den Eingang, wenn sie dich brauchen.",
+  "For example, specweave-studio or studio/ produces studio/add-search. Leave empty for no prefix.":
+    "Zum Beispiel ergibt specweave-studio oder studio/ den Branch studio/add-search. Leer lassen für kein Präfix.",
+  Headers: "Header",
+  "Higher values make menus, dialogs, and the composer more solid.":
+    "Höhere Werte machen Menüs, Dialoge und das Eingabefeld deckender.",
+  "Highlight mouse presses and held buttons in new recordings.":
+    "Mausklicks und gehaltene Tasten in neuen Aufnahmen hervorheben.",
+  "Hold mode also quits on two quick presses.":
+    "Im Haltemodus beendet auch zweimaliges schnelles Drücken.",
+  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
+    "Ruhezustand im Leerlauf verhindern, solange eine Sitzung arbeitet, damit Turns auf diesem Mac weiterlaufen. Beim Zuklappen geht er trotzdem in den Ruhezustand.",
+  "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
+    "Wie lange ein automatisches Update des SpecWithCode-Dienstes auf laufende Arbeit wartet. Danach pausieren die laufenden Turns, der Dienst wird aktualisiert, und sie machen dort weiter, wo sie aufgehört haben. „Später“ in der Seitenleiste wartet eine weitere Stunde.",
+  "Include text and controls when the app makes them available.":
+    "Text und Bedienelemente einbeziehen, wenn die App sie bereitstellt.",
+  "Install and manage Antigravity.": "Antigravity installieren und verwalten.",
+  "Install or update the official registry agent on this environment. Your provider settings and sign-in are kept.":
+    "Den offiziellen Registry-Agenten in dieser Umgebung installieren oder aktualisieren. Deine Anbietereinstellungen und Anmeldung bleiben erhalten.",
+  "Keep branch and worktree controls below the composer after a thread starts.":
+    "Branch- und Worktree-Steuerung nach dem Start eines Threads unter dem Eingabefeld behalten.",
+  "Keep every chat's raw event log (replay detail) this many days. Older activity folds into the chat itself: messages, steps, titles and pull request links stay readable. Chats linked to another machine or still working are never folded. 7 days by default.":
+    "Das rohe Ereignisprotokoll jedes Chats (Details zum Abspielen) so viele Tage aufbewahren. Ältere Aktivität wird in den Chat selbst übernommen: Nachrichten, Schritte, Titel und Pull-Request-Links bleiben lesbar. Chats, die mit einem anderen Rechner verknüpft sind oder noch arbeiten, werden nie zusammengefasst. Standardmäßig 7 Tage.",
+  "Link SpecWithCode Connect on the other machine":
+    "Verknüpfe SpecWithCode Connect auf dem anderen Rechner",
+  "Make a join line there": "Erstelle dort eine Beitrittszeile",
+  "Mark the app folder here when it passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours. A notice appears only when the disk itself runs low.":
+    "Den App-Ordner hier markieren, wenn er diese Größe überschreitet oder ein Teil davon zwischen zwei Prüfungen um 10 GB oder mehr wächst. Die Größe wird alle sechs Stunden geprüft. Ein Hinweis erscheint nur, wenn auf der Festplatte selbst der Platz knapp wird.",
+  "Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother.":
+    "Maximale Aufnahmerate. 30 fps spart CPU und Speicher; 60 fps ist flüssiger.",
+  "Measured a few minutes after the app starts, then every six hours.":
+    "Wird einige Minuten nach dem App-Start gemessen, danach alle sechs Stunden.",
+  "Model for source control text and branch or bookmark names. Off uses the environment's text generation model.":
+    "Modell für Texte der Versionskontrolle und Namen von Branches oder Lesezeichen. Aus nutzt das Textgenerierungsmodell der Umgebung.",
+  "Monospace font": "Nichtproportionale Schrift",
+  "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
+    "Höchstzahl an Simulatoren und Emulatoren, die auf jedem Geräte-Host gleichzeitig laufen dürfen. Ein weiterer Start schlägt fehl, bis einer beendet wird. Physische Geräte zählen nicht.",
+  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
+    "Verschiebt die Threads, die umzugsbereit sind. Nach Möglichkeit und nur beim Ruhezustand. Bildschirmsperre zählt nicht.",
+  "No coding agent is installed and enabled there.":
+    "Dort ist kein Coding-Agent installiert und aktiviert.",
+  "No routines match this machine and project selection.":
+    "Keine Routinen passen zu diesem Rechner und dieser Projektauswahl.",
+  "No task routes below this tier, whatever its class allows.":
+    "Keine Aufgabe geht unter diese Stufe, egal was ihre Klasse erlaubt.",
+  "Notices for dependencies, assets, and optional tools used by SpecWithCode.":
+    "Hinweise zu Abhängigkeiten, Ressourcen und optionalen Werkzeugen, die SpecWithCode nutzt.",
+  "Notify when a thread needs your answer or approval. Connect notifications above first. Disconnect overrides this switch on this device.":
+    "Benachrichtigen, wenn ein Thread deine Antwort oder Freigabe braucht. Verbinde zuerst die Benachrichtigungen oben. Trennen hat auf diesem Gerät Vorrang vor diesem Schalter.",
+  "Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment.":
+    "Standardmäßig aus. Der Server sendet Produktnutzungsereignisse nur, wenn STUDIO_TELEMETRY_ENABLED in seiner Umgebung auf true gesetzt ist.",
+  "On this machine, restart a downloaded app update after five minutes without keyboard or mouse activity, once no work or questions are waiting. Never stops running work. Turn this off to install the app on quit or with Restart. Each machine keeps its own setting.":
+    "Auf diesem Rechner ein heruntergeladenes App-Update nach fünf Minuten ohne Tastatur- oder Mausaktivität neu starten, sobald keine Arbeit und keine Fragen warten. Unterbricht nie laufende Arbeit. Schalte es aus, um beim Beenden oder mit Neu starten zu installieren. Jeder Rechner hat seine eigene Einstellung.",
+  "One literal argument per row, in launch order.":
+    "Ein wörtliches Argument pro Zeile, in Startreihenfolge.",
+  "One moment.": "Einen Moment.",
+  "One per line, like .gitignore: settings.local.json or config/keys/. A copy offers them only when you include secrets. A ~/ entry, such as ~/.config/acme/token.json, is listed so you can copy it yourself; sign-in and start-up files are never listed.":
+    "Eins pro Zeile, wie bei .gitignore: settings.local.json oder config/keys/. Eine Kopie bietet sie nur an, wenn du Geheimnisse einbeziehst. Ein ~/-Eintrag wie ~/.config/acme/token.json wird aufgeführt, damit du ihn selbst kopieren kannst; Anmelde- und Startdateien werden nie aufgeführt.",
+  "Only the box you write prompts in. Mono works well here.":
+    "Nur das Feld, in das du Prompts schreibst. Eine nichtproportionale Schrift passt hier gut.",
+  "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.":
+    "Zuerst verknüpfte Pull Requests öffnen. Sonst Änderungen öffnen, wenn mindestens 3 Dateien oder 50 Zeilen bearbeitet wurden.",
+  "Optional marker shown in the picker.": "Optionale Markierung in der Auswahl.",
+  "Or pair with a private QR code": "Oder mit einem privaten QR-Code koppeln",
+  "Order of projects in the sidebar project picker and command palette.":
+    "Reihenfolge der Projekte in der Projektauswahl der Seitenleiste und in der Befehlspalette.",
+  "Page zoom applied to new browser tabs.": "Seitenzoom für neue Browser-Tabs.",
+  "Paste the join line here": "Beitrittszeile hier einfügen",
+  "Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. 7 days by default; it cannot be undone.":
+    "Nachrichten, Schritte und Anhänge von Chats, die vor so vielen Tagen gelöscht wurden, endgültig entfernen, damit die Datenbank klein bleibt. Standardmäßig 7 Tage; lässt sich nicht rückgängig machen.",
+  "Preparing managed setup.": "Verwaltete Einrichtung wird vorbereitet.",
+  "Preparing sign-in.": "Anmeldung wird vorbereitet.",
+  "Profiles separate cookies and logins. Incognito data is cleared when the app closes. Agents start every tab signed out unless you choose a profile for them.":
+    "Profile trennen Cookies und Anmeldungen. Inkognito-Daten werden beim Schließen der App gelöscht. Agenten öffnen jeden Tab abgemeldet, es sei denn, du wählst ein Profil für sie.",
+  "Prompt sent to the agent": "An den Agenten gesendeter Prompt",
+  "Provider setup is read-only.": "Die Anbietereinrichtung ist schreibgeschützt.",
+  "Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed.":
+    "Pusht jede Synchronisierung nach origin unter refs/specwithcode/handoff, einschließlich nicht committeter und nicht verfolgter Dateien. Umzüge brauchen das nicht. Deine Branches werden nie gepusht.",
+  Query: "Abfrage",
+  "Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access.":
+    "Deine bestehende Cursor-CLI-Anmeldung aus dem macOS-Schlüsselbund lesen, um Kontoverlauf und Tariflimits anzuzeigen. macOS fragt eventuell, ob du den Zugriff erlaubst.",
+  "Reconnect this device to set up its provider, or select another device.":
+    "Verbinde dieses Gerät neu, um seinen Anbieter einzurichten, oder wähle ein anderes Gerät.",
+  "Refresh provider status, versions, and models in the background. Set to 0 to disable.":
+    "Status, Versionen und Modelle der Anbieter im Hintergrund aktualisieren. 0 schaltet es aus.",
+  "Remove recognized agent credit lines from GitHub merge and squash messages, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.":
+    "Erkannte Agenten-Credit-Zeilen aus GitHub-Merge- und Squash-Nachrichten entfernen, menschliche Co-Autoren bleiben erhalten. Gilt auch für Auto-Merge. Ausgenommen sind Merge-Queues, Stack-Merges und bestehende Commits.",
+  "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.":
+    "Ungenutzte Worktrees entfernen, wenn aktive oder archivierte Threads gelöscht werden. Worktrees mit lokalen Änderungen bleiben erhalten.",
+  "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
+    "Worktrees entfernen, nachdem ihre Threads so viele Tage inaktiv waren. Ordner offener Threads bleiben immer erhalten. Branches und Thread-Verlauf bleiben erhalten.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "Worktrees entfernen, deren Pull Request gemergt ist und deren Commits im Standard-Branch enthalten sind. Entfernt auch saubere, gepushte Worktrees, die Agenten ohne Thread angelegt haben, sobald ihr Pull Request gemergt oder geschlossen ist und sie einen Tag ruhen. Ordner offener Threads bleiben immer erhalten.",
+  "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
+    "Worktrees ohne Commits über den Standard-Branch hinaus entfernen. Ordner offener Threads bleiben immer erhalten.",
+  Rename: "Umbenennen",
+  "Require a second click on the inline archive action before a thread is archived.":
+    "Einen zweiten Klick auf die Archivieren-Aktion in der Zeile verlangen, bevor ein Thread archiviert wird.",
+  "Resolve only when every relevant pull request is merged and the latest turn has recorded delivery evidence: push, merge, deployment and verification. A merge alone or unknown evidence keeps the thread active.":
+    "Nur abschließen, wenn alle relevanten Pull Requests gemergt sind und der letzte Turn Belege für die Auslieferung festgehalten hat: Push, Merge, Deployment und Prüfung. Ein Merge allein oder unbekannte Belege halten den Thread aktiv.",
+  "Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again.":
+    "Das Eingabefeld eines bestehenden Threads beim Scrollen auf eine Zeile verkleinern. Fokussiere das Feld oder beginne zu tippen, um es wieder zu vergrößern.",
+  "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode.":
+    "Build/Plan, /plan, /default und Umschalt+Tab wiederherstellen. Aus nutzt den Build-Modus.",
+  "Restore per-project thread trees instead of the default flat sidebar.":
+    "Thread-Bäume pro Projekt statt der standardmäßigen flachen Seitenleiste wiederherstellen.",
+  "Restore the Projects and Recent tabs with pinning and snooze instead of projects and chats.":
+    "Die Tabs Projekte und Zuletzt mit Anheften und Schlummern statt Projekten und Chats wiederherstellen.",
+  "Resume agent-owned conversations as SpecWithCode threads.":
+    "Unterhaltungen von Agenten als SpecWithCode-Threads fortsetzen.",
+  "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
+    "Stopps wegen Nutzungslimit zum gemeldeten Zeitpunkt des Zurücksetzens fortsetzen. Jeder Thread kann seine geplante Fortsetzung abbrechen.",
+  "Run only the WSL backend. SpecWithCode restarts when this changes.":
+    "Nur das WSL-Backend ausführen. SpecWithCode startet neu, wenn sich das ändert.",
+  "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
+    "Die ausgewählte WSL-Distribution neben Windows ausführen. Projekte bleiben in ihrem aktuellen Dateisystem.",
+  "Run this once in Terminal on that machine. It opens claude.ai in the browser: sign in with the other account there.":
+    "Führe das einmal im Terminal auf dem anderen Rechner aus. Es öffnet claude.ai im Browser: Melde dich dort mit dem anderen Konto an.",
+  "Selected by SpecWithCode.": "Von SpecWithCode ausgewählt.",
+  "Set how fast panels open and close.": "Lege fest, wie schnell Panels sich öffnen und schließen.",
+  "Set how wide messages and the composer can grow on large screens.":
+    "Lege fest, wie breit Nachrichten und das Eingabefeld auf großen Bildschirmen werden dürfen.",
+  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
+    "Pro Projekt festgelegt. Neue Threads starten im aktuellen Checkout des Projekts, es sei denn, das Projekt schaltet Worktrees verwenden ein oder seine specweave-studio.json nennt einen Standard-Worktree. Der Worktree-Speicher wird separat unter Speicher eingestellt.",
+  "Set whether the diff panel ignores whitespace-only edits by default.":
+    "Lege fest, ob das Diff-Panel reine Leerzeichenänderungen standardmäßig ignoriert.",
+  "Shared Codex config, sessions, and state.":
+    "Gemeinsame Codex-Konfiguration, Sitzungen und Zustand.",
+  "Show Aide, a private assistant for this machine, in the sidebar and command palette. Off hides it without deleting its chats.":
+    "Aide, einen privaten Assistenten für diesen Rechner, in der Seitenleiste und Befehlspalette anzeigen. Aus blendet ihn aus, ohne seine Chats zu löschen.",
+  "Show a gentle cue on the captured window.":
+    "Einen dezenten Hinweis auf dem aufgenommenen Fenster zeigen.",
+  "Show a toast when another thread finishes, fails, or needs input or approval while this app has focus.":
+    "Eine Meldung zeigen, wenn ein anderer Thread fertig wird, fehlschlägt oder eine Eingabe oder Freigabe braucht, während diese App im Fokus ist.",
+  "Show diffs stacked or side by side. The toggle in the diff toolbar changes this too.":
+    "Diffs untereinander oder nebeneinander anzeigen. Der Schalter in der Diff-Leiste ändert das ebenfalls.",
+  "Show formatted Markdown as you type.": "Formatiertes Markdown schon beim Tippen anzeigen.",
+  "Show pressed keys and shortcuts in new recordings. Password fields are excluded.":
+    "Gedrückte Tasten und Tastenkürzel in neuen Aufnahmen anzeigen. Passwortfelder sind ausgenommen.",
+  "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.":
+    "Die schwebende Vorschau zeigen, wenn ein Agent einen Browser oder ein Gerät öffnet, sofern der Agent nichts anderes angibt.",
+  "Shown for this project group in the sidebar and thread lists.":
+    "Wird für diese Projektgruppe in der Seitenleiste und in Thread-Listen angezeigt.",
+  "Shown in the provider list and model picker.":
+    "Wird in der Anbieterliste und in der Modellauswahl angezeigt.",
+  "Shown in the provider list, the model picker and Limits.":
+    "Wird in der Anbieterliste, in der Modellauswahl und unter Limits angezeigt.",
+  "Shows context window usage as a circular indicator in the composer, with where the conversation compacts.":
+    "Zeigt die Auslastung des Kontextfensters als Kreisanzeige im Eingabefeld, mit der Stelle, an der die Unterhaltung verdichtet wird.",
+  "Snooze usage-limit stops until the reported reset time. Combine with auto-resume to continue when they wake.":
+    "Stopps wegen Nutzungslimit bis zum gemeldeten Zeitpunkt des Zurücksetzens schlummern lassen. Zusammen mit automatischem Fortsetzen machen sie beim Aufwachen weiter.",
+  "Source Control Providers": "Anbieter für Versionskontrolle",
+  "Start with files expanded or collapsed when opening diffs or a pull request's Code tab.":
+    "Dateien beim Öffnen von Diffs oder dem Code-Tab eines Pull Requests auf- oder zugeklappt anzeigen.",
+  "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
+    "Die automatische Wahl verbraucht standardmäßig Abo-Nutzung. Anbieter mit Abrechnung pro Token (API-Guthaben) bleiben außen vor, sofern sie hier nicht erlaubt sind, und dann nur bis zur gewählten Stufe. Sie fügt nie einen Schlüssel hinzu, meldet sich nie an und kauft nie Guthaben.",
+  "Switches the hosted app release channel.": "Wechselt den Release-Kanal der gehosteten App.",
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
+    "Synchronisiert jeden Turn mit den anderen Rechnern, die dasselbe Projekt haben, damit jeder von ihnen weitermachen kann. Gilt für die Threads dieses Mac, auch bestehende. Verbraucht etwas mehr Tokens.",
+  "System default follows your browser or OS clock preference.":
+    "Systemstandard folgt der Uhrzeiteinstellung von Browser oder Betriebssystem.",
+  "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
+    "Tabgröße für dich und Agenten. Füllen passt sich dem Panel an; andere Größen zeigen die Geräteleiste.",
+  "Terminal output, independent from code blocks and diffs.":
+    "Terminalausgabe, unabhängig von Codeblöcken und Diffs.",
+  "The app updates when idle if enabled below, or the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here.":
+    "Die App aktualisiert sich im Leerlauf, wenn das unten aktiviert ist, sonst beim nächsten Beenden. Der Dienst aktualisiert sich, sobald keine Sitzung arbeitet; laufende Arbeit pausiert dafür nach der Wartezeit unten und läuft nach dem Update weiter. Aus bedeutet, dass du hier installierst.",
+  "The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model.":
+    "Die günstigste Stufe, die jede Art von Aufgabe nutzen darf. Code, Review, Design und finale Animation gehen nie unter Standard; andere Arbeit bleibt auf Frontier. Unklare Aufgaben behalten ihr übliches Modell.",
+  "The color scheme pages are told to prefer. System follows your OS setting.":
+    "Das Farbschema, das Seiten bevorzugen sollen. System folgt der Einstellung des Betriebssystems.",
+  "The regular model does everyday work; the frontier model runs when the strongest one is asked for, such as a review at frontier depth.":
+    "Das reguläre Modell erledigt die alltägliche Arbeit; das Frontier-Modell läuft, wenn das stärkste verlangt wird, etwa für ein Review in Frontier-Tiefe.",
+  "Then running work is stopped for the update, the app restarts, and running and queued threads continue after it.":
+    "Dann wird laufende Arbeit für das Update gestoppt, die App startet neu, und laufende und wartende Threads machen danach weiter.",
+  "Then sign in with the same account in the iPhone app, on each iPhone you use. No Tailscale, VPN or open ports.":
+    "Melde dich dann in der iPhone-App auf jedem iPhone, das du nutzt, mit demselben Konto an. Kein Tailscale, kein VPN, keine offenen Ports.",
+  "This routine no longer exists or is outside the selected project scope.":
+    "Diese Routine existiert nicht mehr oder liegt außerhalb der ausgewählten Projekte.",
+  "Threads in handoff mode continue on your chosen Mac after this long. Off means they wait for your click. Coordinator threads never move this way.":
+    "Threads im Übergabemodus machen nach dieser Zeit auf dem gewählten Mac weiter. Aus bedeutet, dass sie auf deinen Klick warten. Koordinator-Threads werden nie so verschoben.",
+  "Try again in a moment.": "Versuche es gleich noch einmal.",
+  "Update this environment to manage Antigravity.":
+    "Aktualisiere diese Umgebung, um Antigravity zu verwalten.",
+  "Use stable releases or nightly builds. Switch back anytime.":
+    "Nutze stabile Versionen oder Nightly-Builds. Du kannst jederzeit zurückwechseln.",
+  "Use the repository's template for change request descriptions when available.":
+    "Die Vorlage des Repositorys für Beschreibungen von Änderungsanfragen nutzen, wenn vorhanden.",
+  "Use thinner grayscale text smoothing instead of the macOS default.":
+    "Dünnere Graustufen-Textglättung statt der macOS-Standardeinstellung verwenden.",
+  "Used for thread titles and other generated text on connected devices with this provider. Source control can override it.":
+    "Wird für Thread-Titel und anderen generierten Text auf verbundenen Geräten mit diesem Anbieter verwendet. Die Versionskontrolle kann das überschreiben.",
+  "Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.":
+    "CURSOR_API_KEY wird verwendet. Entferne ihn aus der Umgebung dieses Anbieters, um die Anmeldung im Browser zu nutzen.",
+  "WSL is unavailable, so Windows is running instead. Turn WSL off to clear this preference.":
+    "WSL ist nicht verfügbar, daher läuft stattdessen Windows. Schalte WSL aus, um diese Einstellung zu löschen.",
+  "When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports.":
+    "Wenn ein Modell weiter hinten in einer Spur noch viel Abo-Kontingent hat und dieses bald zurückgesetzt wird (das 5-Stunden-Fenster innerhalb von 90 Minuten, das Wochenfenster innerhalb eines Tages), startet der Worker dort, damit das erste Modell sein Kontingent behält. Er wählt nur Modelle, die schon in der Spur sind, und nur nach Kontingentfenstern, die ein Abo meldet.",
+  "When a project has more chats than this, the oldest finished ones are archived. History stays available, and Unarchive brings a chat back. Running, waiting, pinned or recently active chats are never archived.":
+    "Hat ein Projekt mehr Chats als diese Zahl, werden die ältesten abgeschlossenen archiviert. Der Verlauf bleibt verfügbar, und Wiederherstellen holt einen Chat zurück. Laufende, wartende, angeheftete oder kürzlich aktive Chats werden nie archiviert.",
+  "When a thread Auto moved fails for a reason a stronger model may fix, it continues once, in the same thread, on the model it would have used without Auto. A delegated task reports its failure to the thread that started it, which may retry it once on that model. Usage limits are left to the fallback rules above.":
+    "Scheitert ein von Auto verschobener Thread aus einem Grund, den ein stärkeres Modell beheben könnte, macht er einmal im selben Thread auf dem Modell weiter, das er ohne Auto genutzt hätte. Eine delegierte Aufgabe meldet ihren Fehler dem Thread, der sie gestartet hat; dieser kann sie einmal auf diesem Modell wiederholen. Nutzungslimits übernehmen die Fallback-Regeln oben.",
+  "Where chat and terminal links open. ⌘/Ctrl-click skips the in-app browser.":
+    "Wo Links aus Chat und Terminal geöffnet werden. ⌘/Strg-Klick umgeht den In-App-Browser.",
+  "Which of each provider's models reviews while the reviewer order is empty. A frontier model is slower and uses more of the plan; set the models under Regular and frontier models.":
+    "Welches Modell jedes Anbieters reviewt, solange die Reviewer-Reihenfolge leer ist. Ein Frontier-Modell ist langsamer und verbraucht mehr vom Tarif; die Modelle legst du unter Reguläre und Frontier-Modelle fest.",
+  "Which skills each agent loads in this folder, with vskill versions and drift.":
+    "Welche Skills jeder Agent in diesem Ordner lädt, mit vskill-Versionen und Abweichungen.",
+  "Wrap long lines in code blocks, diffs, and file previews by default.":
+    "Lange Zeilen in Codeblöcken, Diffs und Dateivorschauen standardmäßig umbrechen.",
+  "Save usage": "Nutzung sparen",
+  Balanced: "Ausgewogen",
+  "Best model always": "Immer bestes Modell",
+  Disabled: "Deaktiviert",
+  "On request": "Auf Anfrage",
+  Automatic: "Automatisch",
+  Mixed: "Gemischt",
 };

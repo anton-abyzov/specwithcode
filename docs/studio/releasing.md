@@ -243,6 +243,12 @@ installed CLI (the `cliWrapper` and `studioHome` of its `installation.json`), so
 A worker missing there, without a Connect address or a proof-bound management token, or one Connect
 cannot ask (unreachable, unauthorized, unsupported) fails with the machine and the reason, for example
 `m3: FAILED, could not be asked over SpecWithCode Connect (machine <id>): unsupported: <error>`.
+A worker Connect leaves unanswered (`unreachable`) is first asked again with backoff (5, 10, 20, then
+every 30 seconds) for up to three minutes, since its relay takes about two minutes to come back after
+its service restarts (M1 in 1.0.192, updated by a reconcile run just before the worker stage); the
+rollout does this for its first status read of each worker, the preflight for `fleet room` (both only
+read; a request or check, which may have been delivered, is never sent again this way). A refusal
+(unauthorized, identity mismatch, unsupported) still fails at once.
 
 `RELEASE_FLEET_SSH=1` makes release.sh pass `--ssh-fallback` to both: a worker Connect could not
 ask is then asked over the pinned fleet SSH from `hosts.json` (the preflight says

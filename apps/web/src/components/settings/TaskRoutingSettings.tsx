@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   TASK_CLASSES,
   type ModelTier,
@@ -96,6 +97,7 @@ export function tierOptionsFor(taskClass: TaskClass): ReadonlyArray<ModelTier> {
  * the thread would use anyway, never up.
  */
 export function TaskRoutingSettings() {
+  const tx = useTx();
   const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -197,14 +199,14 @@ export function TaskRoutingSettings() {
                 <SelectTrigger size="sm" aria-label="Quality preference">
                   <SelectValue>
                     {(value: TaskRoutingQuality | null) =>
-                      value === null ? "Mixed" : QUALITY_LABELS[value]
+                      value === null ? tx("Mixed") : tx(QUALITY_LABELS[value])
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {(Object.keys(QUALITY_LABELS) as TaskRoutingQuality[]).map((quality) => (
                     <SelectItem key={quality} value={quality}>
-                      {QUALITY_LABELS[quality]}
+                      {tx(QUALITY_LABELS[quality])}
                     </SelectItem>
                   ))}
                 </SelectPopup>

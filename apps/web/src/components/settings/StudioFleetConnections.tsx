@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { hasRelayRoute } from "@specweave-studio/client-runtime/connection";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
@@ -562,9 +563,10 @@ function AddMachineStep({
   readonly title: string;
   readonly children: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <li className="min-w-0 text-xs text-muted-foreground">
-      <span className="text-foreground/80">{title}</span>
+      <span className="text-foreground/80">{tx(title)}</span>
       <div className="mt-0.5 space-y-1">{children}</div>
     </li>
   );

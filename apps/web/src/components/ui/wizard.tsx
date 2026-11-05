@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { CheckIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
@@ -38,11 +39,18 @@ export function WizardHeader({
   readonly identity?: ReactNode;
   readonly children?: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <DialogHeader>
-      <DialogTitle className={identity ? "sr-only" : undefined}>{title}</DialogTitle>
+      <DialogTitle className={identity ? "sr-only" : undefined}>
+        {typeof title === "string" ? tx(title) : title}
+      </DialogTitle>
       {identity}
-      {description ? <DialogDescription>{description}</DialogDescription> : null}
+      {description ? (
+        <DialogDescription>
+          {typeof description === "string" ? tx(description) : description}
+        </DialogDescription>
+      ) : null}
       {children}
     </DialogHeader>
   );

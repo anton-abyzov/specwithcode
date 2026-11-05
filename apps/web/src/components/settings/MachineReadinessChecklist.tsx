@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckIcon, CircleAlertIcon } from "lucide-react";
@@ -46,6 +47,8 @@ function Row({
   readonly detail?: string | null;
   readonly children?: React.ReactNode;
 }) {
+  const tx = useTx();
+  const shownTitle = tx(title);
   return (
     <li className="flex min-w-0 items-start gap-2" data-slot="readiness-row" data-ok={ok ?? "info"}>
       {ok === false ? (
@@ -63,12 +66,12 @@ function Row({
         {/* A short detail, such as the signed-in account, shares the title's line. */}
         {detail && detail.length <= 60 ? (
           <p className="wrap-anywhere">
-            {title}
+            {shownTitle}
             <span className="text-xs text-muted-foreground"> · {detail}</span>
           </p>
         ) : (
           <>
-            <p className="wrap-anywhere">{title}</p>
+            <p className="wrap-anywhere">{shownTitle}</p>
             {detail ? (
               <p className="wrap-anywhere text-xs text-muted-foreground">{detail}</p>
             ) : null}

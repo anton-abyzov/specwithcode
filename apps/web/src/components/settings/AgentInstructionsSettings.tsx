@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useId, useRef, useState } from "react";
 import {
   AGENT_INSTRUCTIONS_MAX_LENGTH,
@@ -91,6 +92,7 @@ function ResponseStyleSettings() {
 }
 
 function ClaudeWorkflowSettings() {
+  const tx = useTx();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["claudeWorkflowMode"]);
@@ -122,14 +124,14 @@ function ClaudeWorkflowSettings() {
             <SelectTrigger size="sm" aria-label="Claude workflow mode">
               <SelectValue>
                 {(value: ClaudeWorkflowMode | null) =>
-                  value === null ? "Mixed" : WORKFLOW_MODES[value]
+                  value === null ? tx("Mixed") : tx(WORKFLOW_MODES[value])
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {ClaudeWorkflowMode.literals.map((mode) => (
                 <SelectItem key={mode} value={mode}>
-                  {WORKFLOW_MODES[mode]}
+                  {tx(WORKFLOW_MODES[mode])}
                 </SelectItem>
               ))}
             </SelectPopup>

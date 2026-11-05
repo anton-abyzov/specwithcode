@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SettingsGroup } from "./SettingsGroup";
 import { DecisionModelSettings } from "./DecisionModelSettings";
@@ -288,6 +289,7 @@ function ProviderSettingsPlaceholder({
   readonly description: string;
   readonly children?: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <SettingsSection {...searchableSetting("providers")} variant="plain">
       {deviceTabs ? (
@@ -300,8 +302,8 @@ function ProviderSettingsPlaceholder({
         <Empty>
           <EmptyMedia variant="icon">{icon}</EmptyMedia>
           <EmptyHeader>
-            <EmptyTitle>{title}</EmptyTitle>
-            <EmptyDescription>{description}</EmptyDescription>
+            <EmptyTitle>{tx(title)}</EmptyTitle>
+            <EmptyDescription>{tx(description)}</EmptyDescription>
           </EmptyHeader>
           {children ? <EmptyContent className="max-w-xl">{children}</EmptyContent> : null}
         </Empty>

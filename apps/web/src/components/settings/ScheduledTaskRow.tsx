@@ -1,4 +1,5 @@
 /** One routine in Settings > Routines: state, when it runs next, where it lands, its actions. */
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import {
@@ -419,9 +420,10 @@ function WebhookDeliveriesDialog({
 }
 
 function DeliveryBlock({ title, children }: { title: string; children: ReactNode }) {
+  const tx = useTx();
   return (
     <div className="space-y-1">
-      <Label>{title}</Label>
+      <Label>{tx(title)}</Label>
       <pre className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap break-all">
         {children}
       </pre>

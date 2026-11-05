@@ -20,7 +20,10 @@ staged release (docs there).
     inventory (hosts.json) is not read. A worker missing there, without a Connect address or a
     proof-bound management token, with no usable CLI on M4, or one Connect could not ask
     (unreachable, unauthorized, unsupported ...) is a failure naming the machine and the reason,
-    never skipped.
+    never skipped. Without --ssh-fallback, a worker Connect leaves unanswered (`unreachable`: its
+    relay reconnecting after a restart) is asked again with backoff for up to
+    fleet_rollout.CONNECT_RETRY_SECONDS (3 minutes); any other reason, a refusal among them, fails
+    at once.
   - `--ssh-fallback` (release.sh passes it when RELEASE_FLEET_SSH=1): for a worker Connect could
     not ask, disk_room.py and the six stdlib-only modules it imports are streamed to the host's
     /usr/bin/python3 over the pinned fleet SSH key from hosts.json, as fleet_rollout.py streams
@@ -45,6 +48,8 @@ import pathlib
 import re
 import subprocess
 import sys
+import threading
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 FLEET = HERE.parent / 'studio-fleet'
@@ -192,13 +197,27 @@ SSH_FALLBACK_REASONS = frozenset(('no-route', 'no-cli', 'no-answer', 'timeout', 
                                   'connect-unbound', 'connect-key-missing'))
 
 
-def ask(identity, command, stdin, timeout, via, run=subprocess.run, say=print):
+def settled_connect_probe(identity, command, machine, timeout, run, say, clock=time.monotonic, sleep=time.sleep):
+    """connect_probe, asked again with fleet_rollout's backoff while Connect leaves the worker
+    unanswered (`unreachable`), for up to fleet_rollout.CONNECT_RETRY_SECONDS. `fleet room` only
+    reads the worker's disk, so asking again is safe."""
+    return fleet_rollout.retry_unreachable(
+        lambda: connect_probe(identity, command, machine, timeout, run),
+        lambda report: report.get('connectReason') == 'unreachable', identity, 'fleet room', clock, sleep, say)
+
+
+def ask(identity, command, stdin, timeout, via, run=subprocess.run, say=print, clock=time.monotonic, sleep=time.sleep,
+        progress=None):
     """One host's report: a plain probe, or over Connect then (with a fallback, and only when
-    Connect left it unasked) pinned SSH."""
+    Connect left it unasked) pinned SSH. Connect-only, an unreachable worker is asked again first,
+    each retry told to `progress` (default `say`) as it happens."""
     if via is None:
         return probe(identity, command, None, stdin, timeout, run)
     if command is None:
         report = _connect_failure(identity, via.get('machine'), 'no-route', via.get('reason'))
+    elif via.get('fallback') is None:
+        report = settled_connect_probe(identity, command, via.get('machine'), timeout, run, progress or say,
+                                       clock, sleep)
     else:
         report = connect_probe(identity, command, via.get('machine'), timeout, run)
     if 'error' not in report or via.get('fallback') is None or report.get('connectReason') not in SSH_FALLBACK_REASONS:
@@ -245,12 +264,19 @@ def judge(report, headroom=0):
     return ok, line
 
 
-def preflight(version, plan, headroom, run=subprocess.run, say=print):
+def preflight(version, plan, headroom, run=subprocess.run, say=print, clock=time.monotonic, sleep=time.sleep):
     """Every host asked at once, each reported in plan order; True when all have room."""
+    lock = threading.Lock()
+
+    def live(line):  # Retries print as they happen: a silent three-minute wait reads as a hang.
+        with lock:
+            say(line)
+
     def one(entry):
         identity, command, stdin, timeout = entry[:4]
         notes = []
-        report = ask(identity, command, stdin, timeout, entry[4] if len(entry) > 4 else None, run, notes.append)
+        report = ask(identity, command, stdin, timeout, entry[4] if len(entry) > 4 else None, run, notes.append,
+                     clock, sleep, live)
         return identity, notes, judge(report, headroom if identity == LOCAL else 0)
 
     # Hosts are asked together (a worker's walk or an SSH fallback takes minutes), then reported in plan order.
