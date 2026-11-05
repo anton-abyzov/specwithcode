@@ -121,6 +121,17 @@ class MachineConnectionTest {
     }
 
     @Test
+    fun pairingDaysSkipConnectTokensAndRoundUp() {
+        val credentials = InMemoryCredentialStore().apply {
+            save(MachineCredential("connect", clock.get().plusSeconds(600), listOf("orchestration:read")), "env-1", ConnectAuthorizer.ISSUER)
+        }
+        assertEquals(null, connection(credentials).tokenDaysLeft())
+        // Hours left is a day left, not an expired pairing.
+        assertEquals(1, connection(store(clock.get().plusSeconds(20 * 3_600))).tokenDaysLeft())
+        assertEquals(0, MachineCredential("t", clock.get().minusSeconds(1), emptyList()).daysLeft(clock.get()))
+    }
+
+    @Test
     fun socketUrlEncodesTheTicket() {
         assertEquals(
             "wss://m4.example.com/ws?wsTicket=a%2Bb%2Fc.d&orchestrationProtocol=2&clientOs=Android",

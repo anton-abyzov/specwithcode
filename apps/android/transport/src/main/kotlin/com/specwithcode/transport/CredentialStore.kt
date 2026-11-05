@@ -19,8 +19,9 @@ data class MachineCredential(
     fun isExpired(now: Instant = Instant.now()): Boolean = !expiresAt.isAfter(now)
 
     /** Whole days until expiry, never negative. */
+    /** Whole days left, rounded up: 0 only once it has expired, so a token with hours left is not shown as expired. */
     fun daysLeft(now: Instant = Instant.now()): Int =
-        maxOf(0L, Duration.between(now, expiresAt).seconds / 86_400).toInt()
+        maxOf(0L, Math.floorDiv(Duration.between(now, expiresAt).seconds + 86_399, 86_400L)).toInt()
 
     fun allows(permission: String): Boolean = permission in permissions
 

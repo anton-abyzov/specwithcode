@@ -1,0 +1,6 @@
+SpecWithCode for Android is now a native app, rebuilt from the ground up.
+- Sign in with SpecWithCode Connect, or pair directly by QR code, link or typed code.
+- Answer approvals and follow live progress on your machines.
+- Start threads, stop runs, and pin, rename, resolve or archive threads.
+- The Machines screen says why a machine could not connect.
+- Computers reached through Connect no longer show an expired pairing.

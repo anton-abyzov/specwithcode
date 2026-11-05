@@ -412,6 +412,7 @@ class LiveEngine(
 
     internal fun summary(entry: MachineEntry): MachineSummary {
         val status = entry.status
+        val overConnect = status.state == MachineConnection.State.CONNECTED && status.route?.issuer == ConnectAuthorizer.ISSUER
         val descriptor = status.descriptor ?: entry.config?.environment
         val signedOut = entry.viaConnect && connect?.isSignedIn() == false
         return MachineSummary(
@@ -428,9 +429,15 @@ class LiveEngine(
             platform = descriptor?.platform?.let(::platformLabel),
             serverVersion = descriptor?.serverVersion,
             address = (status.route ?: entry.record.rankedRoutes.firstOrNull())?.address,
-            tokenDaysLeft = if (entry.viaConnect) null else status.tokenDaysLeft,
+            tokenDaysLeft = when {
+                entry.viaConnect -> null
+                // The live Connect token is not a pairing; show the direct pairing's own expiry, if any.
+                overConnect -> entry.connection.tokenDaysLeft()
+                else -> status.tokenDaysLeft
+            },
             isStale = entry.online && !entry.shell.isSynchronized,
             viaConnect = entry.viaConnect,
+            connectedViaConnect = overConnect,
             needsSignIn = signedOut,
             hasDirectPairing = entry.record.routes.isNotEmpty(),
             isDisconnected = !entry.record.enabled,

@@ -1178,13 +1178,27 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    // Not named *Url: the stored server password belongs to `serverUrl` only,
+    // so moving the local server must not drop it.
+    localModelServer: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Local model server",
+        description:
+          "OpenAI-compatible server on this machine (Ollama, LM Studio, llama.cpp, MLX). Its models appear under Local model; no API key needed. Ignored when Server URL is set.",
+        providerSettingsForm: {
+          placeholder: "http://localhost:11434/v1",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "serverUrl", "serverPassword"],
+    order: ["binaryPath", "serverUrl", "serverPassword", "localModelServer"],
   },
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
@@ -2268,6 +2282,7 @@ const OpenCodeSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(TrimmedString),
   serverUrl: Schema.optionalKey(TrimmedString),
   serverPassword: Schema.optionalKey(TrimmedString),
+  localModelServer: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(CustomModelSetting)),
 });
 

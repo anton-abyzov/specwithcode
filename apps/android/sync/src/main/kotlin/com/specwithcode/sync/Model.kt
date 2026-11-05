@@ -60,6 +60,8 @@ data class MachineSummary(
     val isStale: Boolean = false,
     /** Reached through SpecWithCode Connect, the signed-in account. */
     val viaConnect: Boolean = false,
+    /** The live connection goes through SpecWithCode Connect, even if the computer also has a direct pairing. */
+    val connectedViaConnect: Boolean = false,
     /** The account signed out; signing in again reconnects it. */
     val needsSignIn: Boolean = false,
     /** When SpecWithCode Connect last checked an offline computer. */

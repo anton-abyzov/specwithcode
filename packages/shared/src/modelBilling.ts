@@ -84,7 +84,7 @@ const API_PROVIDER_IDS: ReadonlySet<string> = new Set([
 ]);
 
 /** Local runtime ids already used by provider inventories. */
-const LOCAL_RUNTIME_IDS: ReadonlySet<string> = new Set(["ollama", "lmstudio"]);
+const LOCAL_RUNTIME_IDS: ReadonlySet<string> = new Set(["ollama", "lmstudio", "local"]);
 
 /** Hosts (and their subdomains) of the same keyed cloud APIs. */
 const API_HOST_DOMAINS: ReadonlyArray<string> = [

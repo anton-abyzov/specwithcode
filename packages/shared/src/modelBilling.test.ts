@@ -109,6 +109,11 @@ describe("classifyBaseUrlBilling", () => {
     expect(classifyBaseUrlBilling("https://api.z.ai/api/paas/v4", "zai")).toBe("api");
   });
 
+  it("treats the built-in local model provider as free only on loopback", () => {
+    expect(classifyBaseUrlBilling("http://localhost:11434/v1", "local")).toBe("local");
+    expect(classifyBaseUrlBilling("http://192.168.1.20:11434/v1", "local")).toBe("unknown");
+  });
+
   it("requires a known local runtime before treating loopback as free", () => {
     const ids = [
       "anthropic",

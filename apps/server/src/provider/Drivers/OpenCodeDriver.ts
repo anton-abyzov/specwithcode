@@ -65,6 +65,7 @@ import {
 } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import { withLocalModelServerEnvironment } from "../localModelServer.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -203,8 +204,25 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
   },
   configSchema: OpenCodeSettings,
   defaultConfig: (): OpenCodeSettings => decodeOpenCodeSettings({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({
+    instanceId,
+    displayName,
+    accentColor,
+    environment: instanceEnvironment,
+    enabled,
+    config,
+  }) =>
     Effect.gen(function* () {
+      // A local model server becomes the `local` OpenCode provider for every
+      // path below: probe, adapters and text generation.
+      const environment = yield* withLocalModelServerEnvironment({
+        enabled,
+        // The app's own environment, which OpenCode would otherwise read.
+        inheritedConfigContent: mergeProviderInstanceEnvironment(undefined).OPENCODE_CONFIG_CONTENT,
+        localModelServer: config.localModelServer,
+        serverUrl: config.serverUrl,
+        environment: instanceEnvironment,
+      });
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;

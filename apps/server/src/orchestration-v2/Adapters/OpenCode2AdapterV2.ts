@@ -79,10 +79,14 @@ import {
 } from "../../provider/opencodeRuntime.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { isLocalModelSlug } from "../../provider/localModelServer.ts";
 import { studioOrchestrationSystemPrompt } from "../../provider/StudioOrchestrationInstructions.ts";
 import { SKILL_MENTION_PATTERN } from "@specweave-studio/shared/composerInlineTokens";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@specweave-studio/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  modelSelectionsEqual,
+} from "@specweave-studio/shared/model";
 import { causeErrorTag } from "@specweave-studio/shared/observability";
 
 import { providerMessageTextWithAttachmentPaths } from "../AttachmentPrompt.ts";
@@ -3247,8 +3251,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const directory = turnInput.runtimePolicy.cwd ?? serverConfig.cwd;
       const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach Studio's MCP endpoint, as with 1.x.
+      // A local model's context cannot hold Studio's tool schemas.
       const wanted =
-        mcpSession === undefined || connection.external
+        mcpSession === undefined ||
+        connection.external ||
+        isLocalModelSlug(turnInput.modelSelection.model)
           ? undefined
           : { name, directory, credential: mcpSession.authorizationHeader };
       if (

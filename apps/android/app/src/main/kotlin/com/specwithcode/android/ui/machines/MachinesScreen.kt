@@ -58,10 +58,11 @@ import kotlinx.coroutines.launch
 internal fun MachineSummary.detailLine(): String = buildList {
     platform?.let(::add)
     serverVersion?.let { add("v$it") }
+    if (viaConnect || connectedViaConnect) add("SpecWithCode Connect")
     when {
-        viaConnect -> add("SpecWithCode Connect")
+        viaConnect -> Unit
         tokenDaysLeft != null && tokenDaysLeft!! <= 0 -> add("Pairing expired")
-        tokenDaysLeft == 1 -> add("Pairing ends tomorrow")
+        tokenDaysLeft == 1 -> add("Pairing ends within a day")
         tokenDaysLeft != null -> add("Pairing ends in $tokenDaysLeft days")
     }
 }.joinToString(" · ")

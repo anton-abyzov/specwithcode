@@ -66,6 +66,7 @@ import {
 } from "../../provider/NativeProtocolLogging.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { studioOrchestrationSystemPrompt } from "../../provider/StudioOrchestrationInstructions.ts";
+import { isLocalModelSlug } from "../../provider/localModelServer.ts";
 import {
   buildRuntimeInstructions,
   withSpecweaveAgentEnvironment,
@@ -988,7 +989,10 @@ export function makeOpenCodeAdapterV2(
         });
 
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
-        const hasStudioMcp = mcpSession !== undefined && !connection.external;
+        const hasStudioMcp =
+          mcpSession !== undefined &&
+          !connection.external &&
+          !isLocalModelSlug(input.modelSelection.model);
         const orchestrationSystemPrompt = studioOrchestrationSystemPrompt(hasStudioMcp);
         if (hasStudioMcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>

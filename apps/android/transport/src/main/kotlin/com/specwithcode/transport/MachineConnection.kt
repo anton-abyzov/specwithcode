@@ -206,9 +206,12 @@ class MachineConnection(
         scope.cancel()
     }
 
-    /** Days until the token of the route in use (else of the best route holding one) expires. */
+    /**
+     * Days until the direct pairing in use (else the best one held) expires. Connect tokens are short-lived
+     * and renewed by the account, so they are not pairings and are skipped.
+     */
     fun tokenDaysLeft(): Int? {
-        val routes = listOfNotNull(_status.value.route) + record.rankedRoutes
+        val routes = (listOfNotNull(_status.value.route) + record.rankedRoutes).filter { it.issuer != ConnectAuthorizer.ISSUER }
         return routes.firstNotNullOfOrNull { runCatching { credentials.credential(it, environmentId) }.getOrNull() }
             ?.daysLeft(configuration.now())
     }
