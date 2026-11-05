@@ -68,7 +68,7 @@ from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REF
                             INSTALL_GATE_ACK_FILE)
 from release_stage import scratch_directory
 import release_stage
-from state_backup import (_clonefile, clone_file, BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_space_needed, backup_state,
+from state_backup import (_clonefile, clone_file, BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, refuse_short_backup, backup_space, backup_space_needed, backup_state,
                           clone_state, discard_unused_backup, write_private as _write_private)
 from service_handles import (LSOF_ATTEMPTS, LSOF_TIMEOUT_SECONDS, DATABASE_FILES, DETACHED_DATABASE, LOCKS_LOST, listeners,
                              open_inodes, assert_database_attached, assert_database_locked)
@@ -745,41 +745,23 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     assert allow_project_migrations or not allow_existing_browser_heartbeat or original_auth is not None, \
         'Restart heartbeat proof requires the auth sessions table'
     lap('beforeRead')
-    # Old clones grow toward the database's size. A verified update prunes them after it exits
+    # One pre-update copy per Mac. A verified update prunes the older ones after it exits
     # (state_backup_prune), not while the service is held; copies a failed or hand-run update left
-    # go here, which removes nothing after a verified update.
-    agent_run = state_backup_prune.agent_receipt(home, identity, output)
+    # go here, all but the newest and the newest whole one (an update killed mid-copy leaves a
+    # partial newest), which removes nothing after a verified update.
     try:
         pruned_state_backups, prune_error = prune_state_backups(
-            home, keep=held_state_backups(own), keep_newest=state_backup_prune.KEPT_AFTER_INSTALL if agent_run else 1), None
+            home, keep=held_state_backups(own) + [state_backup_prune.newest_complete_copy(home)],
+            keep_newest=state_backup_prune.KEPT_BEFORE_COPY), None
     except Exception as error:  # Pruning never fails an update.
         pruned_state_backups, prune_error = [], type(error).__name__
-    # A disk too full for the copy refuses here, before staging, a pointer or a stop. The previous
-    # update's copy goes too before refusing when its files could cover the shortfall: this update
-    # never restores it, unless a held rollback still names it as the only pre-migration database.
+    # A disk too full for the copy refuses here, before staging, a pointer or a stop. The prune
+    # above already removed every older copy but the newest; that one stays (it is the last valid
+    # rollback copy until this update writes its own, and as a clone of the live database it frees
+    # almost nothing: 20 MB of 13 GB on one Mac).
     clonefile = _clonefile()
     needed, free = backup_space(own, home, clonefile)
-    if free < needed:
-        # The newest older copy goes only when the others cannot cover what is short.
-        dropped = []
-        for keep_newest in (1, 0):
-            try:
-                removed = prune_state_backups(home, keep=held_state_backups(own), keep_newest=keep_newest, only_if_frees=needed - free)
-            except Exception as error:
-                removed, prune_error = [], prune_error or type(error).__name__
-            dropped += removed
-            if removed:
-                needed, free = backup_space(own, home, clonefile)
-                if free >= needed:
-                    break
-        pruned_state_backups = pruned_state_backups + dropped
-        try:
-            assert_backup_space(own, home, clonefile)
-        except AssertionError as error:
-            if not dropped:
-                raise
-            raise AssertionError('%s (after removing %d older update cop%s)' % (
-                error, len(dropped), 'y' if len(dropped) == 1 else 'ies')) from None
+    refuse_short_backup(needed, free)
     # The full read a pending FULL_READ migration forces after the restart, beside the backup's
     # reserve: refused here, before staging, the pointers, the install gate or the server browser
     # stop, so a host short of it keeps its old service untouched (M4, 1.0.184). Asked again below.

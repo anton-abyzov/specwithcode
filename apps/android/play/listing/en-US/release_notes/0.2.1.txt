@@ -1,0 +1,2 @@
+Fixes machines staying offline after signing in with SpecWithCode Connect.
+- The Machines screen now says why a machine could not connect.

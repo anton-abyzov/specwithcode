@@ -57,9 +57,10 @@ RECEIPTS_KEPT = 10
 MAX_AGE_SECONDS = 7 * 86400
 AGENT_FILES = ('state.json', 'run.json', 'install-in-progress.json')
 RECEIPT_READ_LIMIT = 64 << 20
-# A held or failed update's copy stays for a person until a later update of the same identity is
-# verified and this long has passed: the service then runs a database that moved past the copy.
-SUPERSEDED_GRACE_SECONDS = 86400
+# A held or failed update's copy stays only until a later update of the same identity is verified:
+# the service then runs a database that moved past the copy, and no rollback reads it again. One
+# copy per Mac is the rule (owner, 2026-11-05), so there is no grace period.
+SUPERSEDED_GRACE_SECONDS = 0
 VERIFIED_PROOFS = ('preservedRowsAuthAndIdentity', 'originalServicesPreserved', 'onlyKnownOwnedServiceRestarted')
 RECEIPT_STAMP = re.compile(r'update-.+-(\d{8})T(\d{6,12})Z\.json')
 
@@ -166,8 +167,8 @@ def state_backup_references(home):
 
     An unreadable/symlinked receipt makes the reference set uncertain: prune nothing. A receipt
     in an unfinished phase or with a failed rollback retains its copy until a later update of the
-    same identity has been verified for a day (superseded_receipts): two held 21 GB copies from
-    failed 1.0.180 and 1.0.184 updates otherwise stayed on one Mac for good. Finished
+    same identity is verified (superseded_receipts): two held 21 GB copies from failed 1.0.180
+    and 1.0.184 updates otherwise stayed on one Mac for good. Finished
     receipts remain useful evidence, but do not turn obsolete copies into permanent backups.
     """
     held, finished = set(), set()
@@ -229,7 +230,7 @@ def state_backup_references(home):
 
 
 def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None, recent_seconds=RECENT_SECONDS,
-                        only_if_frees=None, verified_install=False):
+                        verified_install=False):
     """Deletes old pre-update state database copies; returns the folder names removed.
 
     Keeps the `keep_newest` newest copies, any folder in `keep`, anything written in the
@@ -238,13 +239,11 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
     pre-<commit>-<stamp>[-<uuid>] folders directly in the backups root are candidates; symlinks
     are never followed. Never raises.
 
-    With `verified_install`, only explicitly completed copies are eligible, without an hour wait:
-    unknown copies stay for review. The caller holds the
-    installation lock after a verified update. Every identity's unfinished recovery reference
+    With `verified_install`, every copy older than the kept newest goes without an hour wait, also
+    one no receipt names (a receipt pruned after a week, a hand-run update): the caller holds the
+    installation lock after a verified update, so no update on this Mac is writing a copy, and
+    only that update's copy is a rollback target. Every identity's unfinished recovery reference
     still wins. Unknown or unreadable references prevent pruning.
-
-    With `only_if_frees`, removes nothing unless the candidates' files add up to at least that many
-    bytes. Their sizes are an upper bound: a clone frees only the blocks it no longer shares.
     """
     try:
         root = _plain_directory(studio_paths.backups_root(home), home)
@@ -280,18 +279,8 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
     backups.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
     removed = []
     candidates = [(child, entries) for stamp, mtime, child, entries in backups[max(0, keep_newest):]
-                  if child.name not in protected and (not verified_install or child.name in finished)
+                  if child.name not in protected
                   and (moment - mtime >= recent_seconds or verified_install)]
-    if only_if_frees is not None:
-        total = 0
-        for child, entries in candidates:
-            for entry in entries:
-                try:
-                    total += os.lstat(str(entry)).st_size
-                except OSError:
-                    pass
-        if total < only_if_frees:
-            return []
     for child, entries in candidates:
         try:
             for entry in entries:

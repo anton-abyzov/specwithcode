@@ -126,6 +126,20 @@ class MachineConnectionTest {
             "wss://m4.example.com/ws?wsTicket=a%2Bb%2Fc.d&orchestrationProtocol=2&clientOs=Android",
             MachineConnection.socketUrl("wss://m4.example.com/", "a+b/c.d", listOf("clientOs" to "Android")),
         )
+        // Connect endpoints already carry the `/ws` path: it is replaced, never doubled.
+        assertEquals(
+            "wss://prod-1.spec-weave.com/ws?wsTicket=t&orchestrationProtocol=2",
+            MachineConnection.socketUrl("wss://prod-1.spec-weave.com/ws", "t", emptyList()),
+        )
+        assertEquals(
+            "ws://192.168.1.5:8319/ws?wsTicket=t&orchestrationProtocol=2",
+            MachineConnection.socketUrl("ws://192.168.1.5:8319", "t", emptyList()),
+        )
+        assertEquals(
+            "wss://host.example.com/studio/ws?wsTicket=t&orchestrationProtocol=2",
+            MachineConnection.socketUrl("wss://host.example.com/studio/?x=1", "t", emptyList()),
+        )
+        assertEquals("The computer refused the live connection (HTTP 502).", TransportException.UpgradeFailed(502).message)
         assertEquals(
             listOf("clientSurface" to "mobile", "connectionMethod" to "relay"),
             MachineConnection.relayParameters(listOf("clientSurface" to "mobile", "connectionMethod" to "direct")),

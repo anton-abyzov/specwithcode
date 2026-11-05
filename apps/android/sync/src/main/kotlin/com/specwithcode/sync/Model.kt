@@ -76,6 +76,8 @@ data class MachineSummary(
     val teamRulesRefusal: String? = null,
     /** Set when the computer asked for this device to be approved again, in the computer's words. */
     val reapprovalNotice: String? = null,
+    /** Why the last connection attempt failed, while the machine is not connected. */
+    val lastErrorMessage: String? = null,
 )
 
 // MARK: - Projects

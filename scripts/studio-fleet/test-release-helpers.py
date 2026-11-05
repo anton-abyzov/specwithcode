@@ -248,6 +248,31 @@ class RemoteUpdate(unittest.TestCase):
         copy.close()
         self.assertTrue(any('apply exit 0' in line for line in lines))
 
+    def test_a_verified_apply_with_its_own_whole_copy_drops_this_copy_but_keeps_the_evidence(self):
+        own = self.home / '.specwithcode' / 'backups' / ('pre-%s-20261105T000000Z-%s' % ('a' * 12, 'b' * 32))
+        own.mkdir(parents=True)
+        sqlite3.connect(str(own / 'statev2.sqlite')).execute('CREATE TABLE t(x)').connection.commit()
+        writer = FAKE_UPDATE.replace("print('applied')", "out = sys.argv[sys.argv.index('--output') + 1]\n"
+                                     "pathlib.Path(out).write_text(json.dumps(dict(json.loads(pathlib.Path(__file__).with_name('receipt').read_text()), "
+                                     "stateBackup=%r)))\nprint('applied')" % str(own / 'statev2.sqlite'))
+        proved = {'phase': 'verified', 'verifiedAt': '2026-11-05T00:00:00+00:00', 'preservedRowsAuthAndIdentity': True,
+                  'originalServicesPreserved': True, 'onlyKnownOwnedServiceRestarted': True}
+        for phase, receipt, kept in (('restart-requested', {'phase': 'restart-requested'}, True),
+                                     ('unproved', dict(proved, originalServicesPreserved=False), True),
+                                     ('verified', proved, False)):
+            self.pack({'scripts/studio-fleet/update.py': writer, 'scripts/studio-fleet/apply-exit': '0',
+                       'scripts/studio-fleet/receipt': json.dumps(receipt)})
+            code, _calls, lines = self.run_update()
+            self.assertEqual(code, 0)
+            newest = sorted((self.home / '.specwithcode' / 'backups').glob('pre-1.2.3-*'))[-1]
+            self.assertEqual((newest / 'statev2.sqlite').exists(), kept, phase)
+            self.assertTrue((newest / 'prestate.json').is_file() and (newest / 'receipt-1.2.3.json').is_file())
+            self.assertEqual(any('database copy removed' in line for line in lines), not kept)
+            for path in newest.iterdir():
+                path.unlink()
+            newest.rmdir()
+        self.assertTrue((own / 'statev2.sqlite').is_file())
+
     def test_apply_exit_code_is_returned(self):
         self.pack({'scripts/studio-fleet/update.py': FAKE_UPDATE, 'scripts/studio-fleet/apply-exit': '3'})
         code, calls, _lines = self.run_update()

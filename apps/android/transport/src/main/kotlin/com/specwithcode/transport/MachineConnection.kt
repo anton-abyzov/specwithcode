@@ -92,9 +92,12 @@ class MachineConnection(
             "connectionMethod" to "direct",
         )
 
-        /** `ws(s)://host/ws?wsTicket=…&orchestrationProtocol=2&…` */
+        /**
+         * `ws(s)://host[/prefix]/ws?wsTicket=…&orchestrationProtocol=2&…`. Connect endpoints already end in `/ws`,
+         * so a trailing `/ws` is not doubled; any other path prefix is kept.
+         */
         fun socketUrl(wsBase: String, ticket: String, parameters: List<Pair<String, String>> = DEFAULT_CLIENT_PARAMETERS): String {
-            val origin = wsBase.substringBefore('?').substringBefore('#').trimEnd('/')
+            val origin = wsBase.substringBefore('?').substringBefore('#').trimEnd('/').removeSuffix("/ws")
             val query = listOf("wsTicket" to ticket, OrchestrationProtocol.QUERY_PARAMETER to OrchestrationProtocol.VERSION.toString()) + parameters
             return "$origin/ws?${FormQuery.encode(query)}"
         }

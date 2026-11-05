@@ -1,6 +1,6 @@
 # SpecWithCode for Android
 
-Native Android app, written in Kotlin with Jetpack Compose (Material 3). It replaces the Expo app in `apps/mobile` on Android: package `com.specwithcode.android`, versionCode 2, versionName 0.2.0, minSdk 26, target and compile SDK 36.
+Native Android app, written in Kotlin with Jetpack Compose (Material 3). It replaces the Expo app in `apps/mobile` on Android: package `com.specwithcode.android`, versionCode 3, versionName 0.2.1, minSdk 26, target and compile SDK 36.
 
 The protocol is described in [docs/PROTOCOL.md](docs/PROTOCOL.md). The module layout follows the iOS app in `apps/ios/SWCKit`.
 
@@ -56,7 +56,7 @@ Nothing in the build starts or stops a server. To try the live engine end to end
 
 ```sh
 ./gradlew :app:bundleRelease                         # app/build/outputs/bundle/release/app-release.aab
-./gradlew :app:bundleRelease -PswcVersionCode=3      # override versionCode (default 2)
+./gradlew :app:bundleRelease -PswcVersionCode=4      # override versionCode (default 3)
 ```
 
 Release builds are minified with R8 and shrink resources; the keep rules are in `app/proguard-rules.pro` and the mapping file lands in `app/build/outputs/mapping/release/mapping.txt`.

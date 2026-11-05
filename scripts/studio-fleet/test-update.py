@@ -125,15 +125,16 @@ class StateBackupRetention(unittest.TestCase):
    root.unlink();root.mkdir();(root/target.name).symlink_to(target)
    self.assertEqual(release_retention.prune_state_backups(home,keep_newest=0),[])
    self.assertTrue((target/'statev2.sqlite').is_file())
- def test_an_update_prunes_state_backups_only_on_a_shortfall_before_copying_the_database(self):
+ def test_an_update_keeps_only_the_newest_copy_before_copying_the_database(self):
   # The usual prune runs after a verified update (test-state-backup-prune.py).
   source=pathlib.Path(update.__file__).read_text();copy_at=source.index("state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])")
-  self.assertEqual(source.count('prune_state_backups('),2)
-  # Before the copy: the bound that removes nothing after verified updates, then the shortfall's.
-  self.assertLess(source.index('keep_newest=state_backup_prune.KEPT_AFTER_INSTALL if agent_run else 1'),source.index('for keep_newest in (1, 0):'))
-  self.assertIn('for keep_newest in (1, 0):',source)
-  self.assertIn('prune_state_backups(home, keep=held_state_backups(own), keep_newest=keep_newest, only_if_frees=needed - free)',source)
-  self.assertLess(source.index('only_if_frees=needed - free'),copy_at)
+  self.assertEqual(source.count('prune_state_backups('),1)
+  # Before the copy: every older copy but the newest goes; a shortfall never removes that one.
+  self.assertLess(source.index('keep_newest=state_backup_prune.KEPT_BEFORE_COPY'),copy_at)
+  self.assertNotIn('keep_newest=0',source);self.assertNotIn('for keep_newest in',source)
+  self.assertEqual(update.state_backup_prune.KEPT_BEFORE_COPY,1)
+  self.assertLess(source.index('keep=held_state_backups(own) + [state_backup_prune.newest_complete_copy(home)]'),copy_at)  # A partial newest never displaces the whole one.
+  self.assertLess(source.index('refuse_short_backup(needed, free)'),copy_at)
   self.assertGreater(source.index('state_backup_prune.spawn(identity, home, output'),copy_at)
  def test_a_copy_cut_short_is_removed(self):
   with tempfile.TemporaryDirectory() as tmp:

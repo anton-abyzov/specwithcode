@@ -437,6 +437,7 @@ class LiveEngine(
             isRefusingSignIns = (status.lastError as? TransportException.Http)?.status == 429,
             teamRulesRefusal = (status.lastError as? TransportException.TeamRules)?.message,
             reapprovalNotice = (status.lastError as? TransportException.NeedsRepair)?.takeIf { it.reapprovalRequired }?.message,
+            lastErrorMessage = connectionErrorText(status.lastError, status.state, entry.viaConnect),
         )
     }
 
@@ -525,5 +526,19 @@ class LiveEngine(
                 provider.models.map { ModelChoice(provider.instanceId, it.slug, "${it.name} · $name") }
             }
         }
+    }
+}
+
+/**
+ * Why an offline machine could not connect, or null. Errors the card already shows on its own
+ * (team rules, re-pairing) and stale errors from a retry that is still running are left out.
+ */
+internal fun connectionErrorText(error: TransportException?, state: MachineConnection.State, viaConnect: Boolean): String? {
+    if (error == null || state != MachineConnection.State.OFFLINE) return null
+    return when (error) {
+        is TransportException.TeamRules, is TransportException.NeedsRepair -> null
+        is TransportException.Unreachable ->
+            if (viaConnect) "The computer could not be reached through SpecWithCode Connect. Check that it is awake and online." else error.message
+        else -> error.message
     }
 }

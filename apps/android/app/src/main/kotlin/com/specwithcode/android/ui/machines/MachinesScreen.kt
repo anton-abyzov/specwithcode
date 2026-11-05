@@ -158,7 +158,7 @@ private fun MachineCard(
         Row(Modifier.fillMaxWidth().padding(WeaveSpacing.s4), verticalAlignment = Alignment.Top) {
             Column(
                 Modifier.weight(1f).semantics(mergeDescendants = true) {
-                    contentDescription = "${machine.displayName}, ${machine.statusText()}. ${machine.detailLine()}"
+                    contentDescription = listOfNotNull("${machine.displayName}, ${machine.statusText()}. ${machine.detailLine()}", machine.lastErrorMessage).joinToString(" ")
                 },
                 verticalArrangement = Arrangement.spacedBy(WeaveSpacing.s1),
             ) {
@@ -170,6 +170,7 @@ private fun MachineCard(
                 if (detail.isNotEmpty()) Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.muted)
                 machine.address?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = colors.muted) }
                 machine.teamRulesRefusal?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = colors.warn) }
+                machine.lastErrorMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = colors.muted) }
             }
             IconButton(onClick = { menu = true }, modifier = Modifier.testTag("machine.menu.${machine.id}")) {
                 Icon(Icons.Filled.MoreVert, contentDescription = "Actions for ${machine.displayName}")

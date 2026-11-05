@@ -217,8 +217,8 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   # A volume that cannot clone needs a full copy of the database and its log.
   with patch.object(update,'_clonefile',return_value=None),patch.object(update.shutil,'disk_usage',side_effect=usage),patch.object(update.live_database,'connect',side_effect=never_opened),patch.object(update.sqlite3,'connect',side_effect=never_opened):
    with self.assertRaisesRegex(AssertionError,r'^Not enough free disk space for the pre-update backup: needs 2\.1 GB, 2\.1 GB free$') as caught:self.execute()
-  # backups/ is made by the first copy; measured again after older copies are dropped.
-  self.assertEqual(measured,[str(self.home/'.specwithcode')]*2)
+  # backups/ is made by the first copy; measured once; the newest older copy is never dropped for room.
+  self.assertEqual(measured,[str(self.home/'.specwithcode')])
   self.assertEqual((self.stage_timeouts,self.restart_calls,self.backups,self.quiescence_checks,self.launchd,self.stops),([],[],[],[],[],[]))
   self.assertEqual({p:p.read_bytes() for p in self.original},self.original)
   self.assertFalse(self.output.exists());self.assertFalse((self.own/'owned-updates').exists());self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
@@ -251,25 +251,19 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
    with open(folder/'statev2.sqlite','wb') as handle:handle.truncate(size)  # Sparse: its size, not its blocks.
    os.utime(folder,(time.time()-86400,)*2);old.append(folder)
   return root,old
- def test_a_short_disk_drops_the_previous_update_copy_before_refusing(self):
+ def test_a_short_disk_keeps_the_newest_copy_and_refuses(self):
+  # The newest copy is the last valid rollback until this update writes its own: never dropped for room.
   root,old=self.old_copies(2,3<<30)
-  def usage(path):
-   return DISK(1<<40,0,(1<<40) if not list(root.iterdir()) else 1<<20)  # Full until every old copy is gone.
-  with patch.object(update.shutil,'disk_usage',side_effect=usage):self.execute()
-  result=json.loads(self.output.read_text())
-  self.assertEqual(result['phase'],'verified')
-  self.assertEqual(sorted(result['prunedStateBackups']),sorted(folder.name for folder in old))
- def test_copies_too_small_to_cover_the_shortfall_or_held_by_a_rollback_stay(self):
-  root,old=self.old_copies(2,1<<20)
   with patch.object(update.shutil,'disk_usage',return_value=DISK(1<<40,0,1<<20)):
-   with self.assertRaisesRegex(AssertionError,r'free$'):self.execute()
-  self.assertEqual(list(root.iterdir()),[old[1]])  # Only the usual prune ran: 1 MiB cannot cover the shortfall.
-  shutil.rmtree(root);root,old=self.old_copies(2,3<<30)
+   with self.assertRaisesRegex(AssertionError,r'^Not enough free disk space for the pre-update backup: .* free$'):self.execute()
+  self.assertEqual(list(root.iterdir()),[old[1]])
+ def test_a_copy_held_by_a_rollback_stays_beside_the_newest(self):
+  root,old=self.old_copies(3,1<<20)
   receipts=self.own/'updates'/'receipts';receipts.mkdir(parents=True,exist_ok=True)
   (receipts/'update-1.0.1-20261001T000000Z.json').write_text(json.dumps({'rollback':'held-new-release-state-restore-failed','stateBackup':str(old[0]/'statev2.sqlite')}))
   with patch.object(update.shutil,'disk_usage',return_value=DISK(1<<40,0,1<<20)):
-   with self.assertRaisesRegex(AssertionError,r'free \(after removing 1 older update copy\)$'):self.execute()
-  self.assertEqual(list(root.iterdir()),[old[0]])
+   with self.assertRaisesRegex(AssertionError,r' free$'):self.execute()
+  self.assertEqual(sorted(root.iterdir()),[old[0],old[2]])
  def test_old_state_copies_are_pruned_before_free_space_is_measured(self):
   # A helper writing outside the agent's receipts (this harness, a hand run) starts no prune after
   # the install, so it prunes before the copy as before (test-state-backup-prune.py covers the agent's).

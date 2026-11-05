@@ -62,7 +62,7 @@ sealed class TransportException(message: String, cause: Throwable? = null) : Exc
         TransportException("That address belongs to a different computer.")
 
     /** The WebSocket upgrade did not return 101. */
-    class UpgradeFailed(val status: Int?) : TransportException("The computer refused the live connection.")
+    class UpgradeFailed(val status: Int?) : TransportException("The computer refused the live connection" + (status?.let { " (HTTP $it)." } ?: "."))
 
     /**
      * Any other non-2xx answer. [code] is the server's reason or code when it sent one.

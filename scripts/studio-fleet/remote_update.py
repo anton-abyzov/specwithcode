@@ -15,17 +15,17 @@ supported way while the service runs), then runs that release's own update.py: f
 apply's. The staging folder defaults to <studio root>/release-staging/<version>; the backup,
 snapshot and receipt go to <studio root>/backups/pre-<version>-<time>/.
 
-Those folders are not pruned. release_retention.prune_state_backups removes only the
-pre-<commit>-<stamp> folders update.py writes, holding nothing but the database copy and
-settings.json; a pre-<version>-<time> folder here also keeps the prestate, the helper output
-and the apply receipt, which are the evidence of this manual update. The apply itself still
-prunes update.py's own copies and refuses when the disk is too full for its backup; this script
-refuses first, before its own copy, when the disk cannot hold both. Remove a folder here by
-hand once its update is verified: each holds a full database copy.
+Those folders are not pruned: a pre-<version>-<time> folder here also keeps the prestate, the
+helper output and the apply receipt, which are the evidence of this manual update. Its database
+copy goes once the apply verified and its own pre-update copy (update.py, pruned by
+release_retention) is a whole database: one copy per Mac, and never none. Until then, and after a
+failed apply, the copy stays. This script refuses first, before its own copy, when the disk
+cannot hold both.
 """
 import argparse
 import datetime
 import hashlib
+import json
 import os
 import pathlib
 import re
@@ -38,6 +38,8 @@ import tarfile
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import live_database  # noqa: E402  Shipped beside this file.
+import release_retention  # noqa: E402
+import state_backup_prune  # noqa: E402
 import studio_paths  # noqa: E402
 
 SYSTEM_PYTHON = '/usr/bin/python3'
@@ -213,7 +215,27 @@ def update(home, identity, version, runtime, helpers_asset, staging=None, extra_
     for line in tail(backup / 'apply.out'):
         say('apply: ' + line)
     say('apply exit %d, backup %s' % (code, backup))
+    if code == 0 and drop_verified_copy(backup, backup / ('receipt-%s.json' % version)):
+        say('backup: database copy removed; the verified update keeps its own')
     return code
+
+
+def drop_verified_copy(backup, receipt):
+    """Removes this script's database copy when `receipt` is a verified apply whose own
+    pre-update copy is a whole database; returns whether it did. Evidence files stay."""
+    try:
+        value = json.loads(receipt.read_text())
+        if release_retention._verified_at(value) is None:  # Verified, no failed result, the three proofs.
+            return False
+        own_copy = value.get('stateBackup')
+        if not isinstance(own_copy, str) \
+                or pathlib.Path(own_copy).parent == backup or not state_backup_prune.complete_copy(own_copy):
+            return False
+        for name in ('statev2.sqlite', 'statev2.sqlite-wal', 'statev2.sqlite-shm'):
+            (backup / name).unlink(missing_ok=True)
+        return True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def main(argv=None):

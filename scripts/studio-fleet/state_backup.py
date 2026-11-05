@@ -112,7 +112,9 @@ def clone_state(own, commit, clonefile):
         if clonefile is None:
             raise CloneUnavailable()
         state = own / 'userdata'
-        for name in DATABASE_FILES:
+        # The log first, the database last: a copy killed part way has no database yet, or a log
+        # beside it, and complete_copy never takes it for a whole one.
+        for name in DATABASE_FILES[1:] + DATABASE_FILES[:1]:
             source = state / name
             if name != 'statev2.sqlite' and not source.exists():
                 continue
@@ -233,7 +235,11 @@ def assert_backup_space(own, home, clonefile=None):
     clone_headroom; a copy needs about the database and its write-ahead log. The margin covers
     the release staged beside it and leaves the Mac room to run. The live database is never
     opened here."""
-    needed, free = backup_space(own, home, clonefile)
+    refuse_short_backup(*backup_space(own, home, clonefile))
+
+
+def refuse_short_backup(needed, free):
+    """The preflight's refusal (update_agent.DISK_REFUSAL matches its wording) from one reading."""
     assert free >= needed, 'Not enough free disk space for the pre-update backup: needs %.1f GB, %.1f GB free' % (
         needed / 1e9, free / 1e9)
 

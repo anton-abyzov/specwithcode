@@ -16,22 +16,80 @@ import json
 import os
 import pathlib
 import select
+import stat
 import subprocess
 import sys
 import tempfile
 import time
 
 from installation_descriptor import installation_lock
-from release_retention import held_state_backups, prune_state_backups
+from release_retention import STATE_BACKUP_NAME, held_state_backups, prune_state_backups
 import studio_paths
 
 LOCK_BUSY = 'Another installation operation is in progress for this home'
 LOCK_WAIT_SECONDS = 300
 READY_WAIT_SECONDS = 10
 READY = b'ready\n'
-# The new copy and the newest older one: what keep_newest=1 kept before the copy was made.
-KEPT_AFTER_INSTALL = 2  # Before the next copy: do not delete on the update's critical path.
-KEPT_AFTER_VERIFIED = 1
+# One pre-update copy per Mac (owner, 2026-11-05). Before the next copy only the newest older one
+# stays, the previous update's rollback copy; after a verified update only that update's own copy.
+KEPT_BEFORE_COPY = 1
+KEPT_AFTER_VERIFIED = 0
+SQLITE_HEADER = b'SQLite format 3\x00'
+
+
+def complete_copy(path):
+    """True when `path` is the finished copy backup_state or clone_state wrote: a plain file
+    holding a whole SQLite database (its header, its page size times its page count) and no log
+    beside it. Only then may the older copies go: there is never a moment without a valid one."""
+    try:
+        path = pathlib.Path(path)
+        info = os.lstat(str(path))
+        if not stat.S_ISREG(info.st_mode) or info.st_size < 100:
+            return False
+        if any(os.path.lexists(str(path) + suffix) for suffix in ('-wal', '-journal')):
+            return False  # A log beside it: the copy stopped before its last write.
+        with open(str(path), 'rb') as handle:
+            header = handle.read(100)
+        if not header.startswith(SQLITE_HEADER):
+            return False
+        page_size = int.from_bytes(header[16:18], 'big')
+        page_size = 65536 if page_size == 1 else page_size
+        if page_size < 512 or page_size & (page_size - 1) or info.st_size % page_size:
+            return False
+        pages = int.from_bytes(header[28:32], 'big')
+        # Its page count holds only while version-valid-for matches the change counter (every copy
+        # backup_state and clone_state write); a file may run longer than it. Otherwise: not whole.
+        return header[92:96] == header[24:28] and pages > 0 and info.st_size >= page_size * pages
+    except OSError:
+        return False
+
+
+def copies_by_stamp(home):
+    """The pre-update copy folders in the backups root, newest stamp first (symlinks skipped)."""
+    try:
+        root = studio_paths.backups_root(home)
+        folders = [child for child in root.iterdir()
+                   if STATE_BACKUP_NAME.fullmatch(child.name) and not child.is_symlink() and child.is_dir()]
+    except OSError:
+        return []
+    return sorted(folders, key=lambda child: child.name.split('-')[2], reverse=True)
+
+
+def newest_complete_copy(home):
+    """The newest folder whose database is a whole copy, or None: the one the pre-copy prune
+    keeps, so an update killed mid-copy (its folder newest) never leaves only a partial."""
+    for folder in copies_by_stamp(home):
+        if complete_copy(folder / 'statev2.sqlite'):
+            return folder
+    return None
+
+
+def newer_copies(home, current):
+    """Copy folders stamped after `current`'s folder: a later update's, which an earlier update's
+    late prune must never remove."""
+    stamp = pathlib.Path(current).parent.name.split('-')
+    stamp = stamp[2] if len(stamp) > 2 else ''
+    return [folder for folder in copies_by_stamp(home) if folder.name.split('-')[2] > stamp]
 
 
 def agent_receipt(home, identity, receipt):
@@ -120,8 +178,11 @@ def after_install(identity, home, receipt, wait=LOCK_WAIT_SECONDS, sleep=time.sl
                         and value.get('phase') == 'verified' and isinstance(value.get('stateBackup'), str)):
                     return None
                 try:
-                    removed, error = prune_state_backups(home, keep=held_state_backups(own) + [value['stateBackup']],
-                                                         keep_newest=KEPT_AFTER_VERIFIED, verified_install=True), None
+                    if not complete_copy(value['stateBackup']):
+                        removed, error = [], 'CurrentCopyIncomplete'  # Keep every older copy.
+                    else:
+                        removed, error = prune_state_backups(home, keep=held_state_backups(own) + [value['stateBackup']] + newer_copies(home, value['stateBackup']),
+                                                             keep_newest=KEPT_AFTER_VERIFIED, verified_install=True), None
                 except Exception as failure:  # prune_state_backups never raises; recorded if it does.
                     removed, error = [], type(failure).__name__
                 value['prunedStateBackups'] = list(value.get('prunedStateBackups') or []) + removed

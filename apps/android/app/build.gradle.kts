@@ -37,7 +37,7 @@ val releaseSigning: Properties? = run {
 }
 
 /** -PswcVersionCode=N overrides the version code, for example from a CI run number. */
-val swcVersionCode: Int = providers.gradleProperty("swcVersionCode").orNull?.toIntOrNull() ?: 2
+val swcVersionCode: Int = providers.gradleProperty("swcVersionCode").orNull?.toIntOrNull() ?: 3
 
 android {
     namespace = "com.specwithcode.android"
@@ -49,7 +49,7 @@ android {
         targetSdk = 36
         // The Expo app shipped as versionCode 1; this native app replaces it.
         versionCode = swcVersionCode
-        versionName = "0.2.0"
+        versionName = "0.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         testInstrumentationRunnerArguments["clearPackageData"] = "true"
 
