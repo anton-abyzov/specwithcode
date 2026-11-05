@@ -179,11 +179,11 @@ export const ja: Messages = {
   "limit.project.hint": "すでに上限で待機しているこのプロジェクトのスレッドも続行します。",
   "limit.project.label": "上限のリセット時にこのプロジェクトのスレッドを自動で続行",
   "limit.noReset.withHandoffs":
-    "プロバイダーがこの上限のリセット時刻を示していないため、スレッドは自動で続行できません。今すぐ別の場所で続行するか、リセット後にメッセージを送ってください。",
+    "プロバイダーがこの上限のリセット時刻を示していないため、スレッドは自動で続行できません。今すぐ別のモデルかマシンに切り替えるか、リセット後にメッセージを送ってください。",
   "limit.noReset":
     "プロバイダーがこの上限のリセット時刻を示していないため、スレッドは自動で続行できません。リセット後にメッセージを送ってください。",
-  "limit.orElsewhere": "または今すぐ別の場所で続行：",
-  "limit.insteadOfWaiting": "待たずに別の場所で続行：",
+  "limit.orElsewhere": "または今すぐ別のモデルかマシンに切り替え：",
+  "limit.insteadOfWaiting": "待たずに別のモデルかマシンに切り替え：",
   "limit.fallback.hint":
     "このスレッドを {label}（{model}）に切り替え、会話を引き継いで止まったターンを続行します",
   "limit.fallback.continueWith": "{label} · {model} で続行",
@@ -354,4 +354,7 @@ export const ja: Messages = {
   "limitSettings.api.confirmGlobal":
     "これを上書きしていないすべてのプロジェクトで、確認された Claude サブスクリプションの上限で止まったターンは、確認なしで Claude API キーのインスタンスで続行します。クレジットがなくなった場合は次の API アカウントに移り、スレッドは上限がリセットされるまでそこに留まります。そこで実行するすべてのターンと、そこから始めるスレッドは、キーの API 組織に API 料金で課金されます。SpecWithCode はその残高を読み取ったり上限を設けたりできません。Claude Console で支出上限を設定してください。",
   "limitSettings.api.confirm": "API クレジットを使う",
+  "providerModels.count": { other: "{count} 個のモデル" },
+  "providerModels.favorites": { other: "お気に入り {count} 個" },
+  "providerModels.hidden": { other: "非表示 {count} 個" },
 };

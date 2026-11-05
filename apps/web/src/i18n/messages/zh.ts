@@ -169,10 +169,10 @@ export const zh: Messages = {
   "limit.project.hint": "同时继续此项目中已在等待限制重置的会话。",
   "limit.project.label": "限制重置时自动继续此项目的会话",
   "limit.noReset.withHandoffs":
-    "提供方没有说明此限制何时重置，因此会话无法自动继续。你可以现在换到别处继续，或在重置后发送消息。",
+    "提供方没有说明此限制何时重置，因此会话无法自动继续。你可以现在切换到其他模型或电脑，或在重置后发送消息。",
   "limit.noReset": "提供方没有说明此限制何时重置，因此会话无法自动继续。请在重置后发送消息。",
-  "limit.orElsewhere": "或者现在换到别处继续：",
-  "limit.insteadOfWaiting": "不等待，换到别处继续：",
+  "limit.orElsewhere": "或者现在切换到其他模型或电脑：",
+  "limit.insteadOfWaiting": "不等待，切换到其他模型或电脑：",
   "limit.fallback.hint": "将此会话切换到 {label}（{model}），并带着对话继续已停止的回合",
   "limit.fallback.continueWith": "使用 {label} · {model} 继续",
   "limit.otherModelsAria": "其他备用模型",
@@ -333,4 +333,7 @@ export const zh: Messages = {
   "limitSettings.api.confirmGlobal":
     "在所有未覆盖此设置的项目中，因确认的 Claude 订阅上限而停止的回合，将无需询问地在你的 Claude API 密钥实例上继续；如果某个 API 账号额度用完，会转到下一个，会话会一直留在那里直到限制重置。在那里运行的每个回合，以及从那里开启的任何会话，都会按 API 价格计费到该密钥的 API 组织。SpecWithCode 无法读取或限制该余额；请在 Claude Console 中设置支出上限。",
   "limitSettings.api.confirm": "使用 API 额度",
+  "providerModels.count": { other: "{count} 个模型" },
+  "providerModels.favorites": { other: "{count} 个收藏" },
+  "providerModels.hidden": { other: "{count} 个已隐藏" },
 };

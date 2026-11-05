@@ -1043,13 +1043,13 @@ stage_publish_private() {
 # release-canary.sh): asking a host for a version that feed does not show leaves it waiting.
 stage_fleet_m4() {
   fleet_feed_ready
-  x fleet-m4 -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only m4 --hold-minutes 15 ${CHANNEL_ARGS[@]+"${CHANNEL_ARGS[@]}"}
+  x fleet-m4 -C "$BUILD" -- env STUDIO_RELEASE_RUN_RECORD="$RUN_RECORD" python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only m4 --hold-minutes 15 ${CHANNEL_ARGS[@]+"${CHANNEL_ARGS[@]}"}
 }
 
 stage_fleet_workers() {
   fleet_feed_ready
   # shellcheck disable=SC2086 # FLEET_SSH is one flag or nothing.
-  x fleet-workers -C "$BUILD" -- python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers $FLEET_SSH \
+  x fleet-workers -C "$BUILD" -- env STUDIO_RELEASE_RUN_RECORD="$RUN_RECORD" python3 -B scripts/studio-fleet/fleet_rollout.py --version "$VERSION" --only workers $FLEET_SSH \
     ${CHANNEL_ARGS[@]+"${CHANNEL_ARGS[@]}"}
 }
 

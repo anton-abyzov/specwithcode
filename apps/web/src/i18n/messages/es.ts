@@ -191,11 +191,11 @@ export const es: Messages = {
   "limit.project.label":
     "Continuar automáticamente los hilos de este proyecto cuando se reinicien los límites",
   "limit.noReset.withHandoffs":
-    "El proveedor no indicó cuándo se reinicia este límite, así que el hilo no puede continuar por sí solo. Continúa en otro lugar ahora o envía un mensaje después del reinicio.",
+    "El proveedor no indicó cuándo se reinicia este límite, así que el hilo no puede continuar por sí solo. Cambia ahora a otro modelo o equipo, o envía un mensaje después del reinicio.",
   "limit.noReset":
     "El proveedor no indicó cuándo se reinicia este límite, así que el hilo no puede continuar por sí solo. Envía un mensaje después del reinicio.",
-  "limit.orElsewhere": "O continúa en otro lugar ahora:",
-  "limit.insteadOfWaiting": "Continuar en otro lugar en vez de esperar:",
+  "limit.orElsewhere": "O cambia ahora a otro modelo o equipo:",
+  "limit.insteadOfWaiting": "Cambia a otro modelo o equipo en vez de esperar:",
   "limit.fallback.hint":
     "Cambiar este hilo a {label} ({model}) y continuar el turno detenido con su conversación",
   "limit.fallback.continueWith": "Continuar con {label} · {model}",
@@ -371,4 +371,7 @@ export const es: Messages = {
   "limitSettings.api.confirmGlobal":
     "Los turnos que se detengan en un límite confirmado de la suscripción de Claude continuarán en tu instancia de Claude con clave de API sin preguntar, pasando a tu siguiente cuenta de API si una se queda sin créditos, en todos los proyectos que no lo cambien, y el hilo se queda allí hasta que se reinicie el límite. Cada turno que se ejecute allí, y cualquier hilo que se inicie desde allí, se factura a la organización de API de la clave con tarifas de API. SpecWithCode no puede leer ni limitar ese saldo; fija un límite de gasto en Claude Console.",
   "limitSettings.api.confirm": "Usar créditos de API",
+  "providerModels.count": { one: "{count} modelo", other: "{count} modelos" },
+  "providerModels.favorites": { one: "{count} favorito", other: "{count} favoritos" },
+  "providerModels.hidden": { one: "{count} oculto", other: "{count} ocultos" },
 };

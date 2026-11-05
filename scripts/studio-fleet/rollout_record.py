@@ -33,13 +33,17 @@ def path(environ=None):
     return (environ if environ is not None else os.environ).get(ENV) or None
 
 
-def asked(identity, current, acked, required=REQUIRED, environ=None, stderr=None):
-    """One request sent to `identity` (on `current`): asked, then acked when it answered."""
+def asked(identity, current, acked, required=REQUIRED, environ=None, stderr=None, version=None):
+    """One request sent to `identity` (on `current`, the version it runs before the request) for
+    `version`: asked, then acked when it answered. A request for another version than the record's
+    release is not this run's (a test's fake fleet, a stray rollout) and is not recorded."""
     record = path(environ)
     if not record:
         return False
     try:
         run_record = _run_record()
+        if version is not None and run_record.read(record).get('version') != version:
+            return False
         role = 'canary' if identity == CANARY else 'fleet'
         run_record.host(record, identity, 'asked', role=role, required=identity in required,
                         source=current or None)

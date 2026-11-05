@@ -197,11 +197,11 @@ export const en = {
   "limit.project.hint": "Also continues this project's threads already waiting on a limit.",
   "limit.project.label": "Auto-continue this project's threads when limits reset",
   "limit.noReset.withHandoffs":
-    "The provider did not say when this limit resets, so the thread cannot continue by itself. Continue elsewhere now, or send a message after the reset.",
+    "The provider did not say when this limit resets, so the thread cannot continue by itself. Switch to another model or machine now, or send a message after the reset.",
   "limit.noReset":
     "The provider did not say when this limit resets, so the thread cannot continue by itself. Send a message after the reset.",
-  "limit.orElsewhere": "Or continue elsewhere now:",
-  "limit.insteadOfWaiting": "Continue elsewhere instead of waiting:",
+  "limit.orElsewhere": "Or switch to another model or machine now:",
+  "limit.insteadOfWaiting": "Switch to another model or machine instead of waiting:",
   "limit.fallback.hint":
     "Switch this thread to {label} ({model}) and continue the stopped turn with its conversation",
   "limit.fallback.continueWith": "Continue with {label} · {model}",
@@ -373,6 +373,9 @@ export const en = {
   "limitSettings.api.confirmGlobal":
     "Turns that stop on a confirmed Claude subscription limit will continue on your Claude API-key instance without asking, moving on to your next API account if one runs out of credits, in every project that does not override this, and the thread stays there until the limit resets. Every turn it runs there, and any thread it starts from there, is billed to the key's API organization at API rates. SpecWithCode cannot read or cap that balance; set a spend limit in the Claude Console.",
   "limitSettings.api.confirm": "Use API credits",
+  "providerModels.count": { one: "{count} model", other: "{count} models" },
+  "providerModels.favorites": { one: "{count} favorite", other: "{count} favorites" },
+  "providerModels.hidden": { one: "{count} hidden", other: "{count} hidden" },
 } as const satisfies Readonly<Record<string, Message>>;
 
 export type MessageKey = keyof typeof en;

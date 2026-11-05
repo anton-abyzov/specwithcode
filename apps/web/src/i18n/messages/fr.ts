@@ -197,11 +197,11 @@ export const fr: Messages = {
   "limit.project.label":
     "Reprendre automatiquement les fils de ce projet quand les limites se réinitialisent",
   "limit.noReset.withHandoffs":
-    "Le fournisseur n’a pas indiqué quand cette limite se réinitialise, donc le fil ne peut pas reprendre tout seul. Continuez ailleurs maintenant, ou envoyez un message après la réinitialisation.",
+    "Le fournisseur n’a pas indiqué quand cette limite se réinitialise, donc le fil ne peut pas reprendre tout seul. Passez maintenant à un autre modèle ou une autre machine, ou envoyez un message après la réinitialisation.",
   "limit.noReset":
     "Le fournisseur n’a pas indiqué quand cette limite se réinitialise, donc le fil ne peut pas reprendre tout seul. Envoyez un message après la réinitialisation.",
-  "limit.orElsewhere": "Ou continuez ailleurs maintenant :",
-  "limit.insteadOfWaiting": "Continuer ailleurs au lieu d’attendre :",
+  "limit.orElsewhere": "Ou passez maintenant à un autre modèle ou une autre machine :",
+  "limit.insteadOfWaiting": "Passer à un autre modèle ou une autre machine au lieu d’attendre :",
   "limit.fallback.hint":
     "Basculer ce fil sur {label} ({model}) et reprendre le tour interrompu avec sa conversation",
   "limit.fallback.continueWith": "Continuer avec {label} · {model}",
@@ -378,4 +378,7 @@ export const fr: Messages = {
   "limitSettings.api.confirmGlobal":
     "Les tours qui s’arrêtent sur une limite d’abonnement Claude confirmée continueront sans demander sur votre instance Claude avec clé API, en passant au compte API suivant si l’un n’a plus de crédits, dans chaque projet qui ne remplace pas ce réglage, et le fil y reste jusqu’à la réinitialisation de la limite. Chaque tour exécuté là, et tout fil démarré depuis là, est facturé à l’organisation API de la clé aux tarifs API. SpecWithCode ne peut ni lire ni plafonner ce solde ; définissez une limite de dépenses dans la Claude Console.",
   "limitSettings.api.confirm": "Utiliser les crédits API",
+  "providerModels.count": { one: "{count} modèle", other: "{count} modèles" },
+  "providerModels.favorites": { one: "{count} favori", other: "{count} favoris" },
+  "providerModels.hidden": { one: "{count} masqué", other: "{count} masqués" },
 };

@@ -8,9 +8,10 @@ import AppKit
 /// An agent asks to use apps, devices, machines or folders.
 ///
 /// The `.composer` style is the quiet card that sits above the composer while
-/// the request waits: a blue shield tile, "Claude wants to use Notes", the
-/// agent's reason, one chip per subject, one note line, Deny and Allow for this
-/// session, and a small "Always allow on this machine" link. The reason and
+/// the request waits: a small blue shield and "Claude wants to use Notes" on
+/// one left-aligned line, the agent's reason in muted text, one compact chip per
+/// subject, one note line, then Deny, Allow for this session and a small
+/// "Always allow on this machine" link on one row. The reason and
 /// chips scroll when the card would pass `maxHeight`; the title and buttons
 /// stay in view. The `.transcript` style is the one-line row the conversation
 /// keeps, pending or answered. A request inherited from a forked thread shows
@@ -110,8 +111,9 @@ public struct AccessRequestCard: View {
 
   @State private var pendingAnswer: Answer?
   @Environment(\.colorScheme) private var colorScheme
-  @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 22
-  @ScaledMetric(relativeTo: .body) private var tileSize: CGFloat = 44
+  @ScaledMetric(relativeTo: .body) private var iconSize: CGFloat = 20
+  @ScaledMetric(relativeTo: .body) private var buttonHeight: CGFloat = 34
+  @ScaledMetric(relativeTo: .caption) private var badgeReserve: CGFloat = 56
 
   /// - Parameters:
   ///   - title: What is asked, e.g. "Use Notes"; the transcript row shows it.
@@ -164,12 +166,12 @@ public struct AccessRequestCard: View {
     waitingCount > 1 ? "1 of \(waitingCount)" : nil
   }
 
-  private static let topPadding = WeaveSpacing.s6 - 4
-  private static let bottomPadding = WeaveSpacing.s1
+  private static let topPadding = WeaveSpacing.s3
+  private static let bottomPadding = WeaveSpacing.s3
 
   private var pendingCard: some View {
     CappedMiddleStack(
-      spacing: WeaveSpacing.s3,
+      spacing: WeaveSpacing.s2,
       maxHeight: maxHeight.map { $0 - Self.topPadding - Self.bottomPadding },
       minMiddle: 72
     ) {
@@ -185,18 +187,18 @@ public struct AccessRequestCard: View {
       }
       footer
     }
-    .padding(.horizontal, WeaveSpacing.s4)
+    .padding(.horizontal, WeaveSpacing.s3 + 2)
     .padding(.top, Self.topPadding)
     .padding(.bottom, Self.bottomPadding)
     .frame(maxWidth: .infinity, alignment: .leading)
     // The shadow sits on the card's shape only, so the text inside stays crisp.
     .background {
-      RoundedRectangle(cornerRadius: WeaveRadius.card, style: .continuous)
+      RoundedRectangle(cornerRadius: WeaveRadius.lg + 2, style: .continuous)
         .fill(Color.weave.panel)
-        .shadow(color: .black.opacity(0.06), radius: 14, y: 4)
+        .shadow(color: .black.opacity(0.05), radius: 10, y: 3)
     }
     .overlay(
-      RoundedRectangle(cornerRadius: WeaveRadius.card, style: .continuous)
+      RoundedRectangle(cornerRadius: WeaveRadius.lg + 2, style: .continuous)
         .strokeBorder(Color.weave.line, lineWidth: 1)
     )
     .overlay(alignment: .topTrailing) { queueBadge }
@@ -211,10 +213,10 @@ public struct AccessRequestCard: View {
         .font(.weave(.caption, weight: .semibold))
         .foregroundStyle(Color.weave.muted)
         .monospacedDigit()
-        .padding(.horizontal, WeaveSpacing.s2 + 2)
-        .padding(.vertical, 3)
+        .padding(.horizontal, WeaveSpacing.s2)
+        .padding(.vertical, 2)
         .background(Color.weave.sunken, in: Capsule())
-        .padding(WeaveSpacing.s3)
+        .padding(WeaveSpacing.s2 + 2)
         .accessibilityLabel("1 of \(waitingCount) access requests")
         .accessibilityHint("The next one shows after you answer this one")
         .accessibilityIdentifier("access.queue")
@@ -222,86 +224,104 @@ public struct AccessRequestCard: View {
   }
 
   private var header: some View {
-    VStack(spacing: WeaveSpacing.s3) {
+    HStack(alignment: .firstTextBaseline, spacing: WeaveSpacing.s2) {
       Image(systemName: "shield.fill")
-        .font(.system(size: tileSize * 0.42, weight: .semibold))
-        .foregroundStyle(.white)
-        .frame(width: tileSize, height: tileSize)
-        .background(tileColor, in: RoundedRectangle(cornerRadius: tileSize * 0.27, style: .continuous))
-        .shadow(color: tileColor.opacity(0.35), radius: 6, y: 2)
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(tileColor)
         .accessibilityHidden(true)
       Text(headline)
-        .font(.weave(.headline, weight: .semibold))
+        .font(.weave(.callout, weight: .medium))
         .foregroundStyle(Color.weave.ink)
-        .multilineTextAlignment(.center)
+        .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)
         .accessibilityAddTraits(.isHeader)
     }
-    .frame(maxWidth: .infinity)
-    .padding(.bottom, WeaveSpacing.s1)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    // Room for the "1 of N" badge at the top right.
+    .padding(.trailing, waitingCount > 1 ? badgeReserve : 0)
   }
 
   /// The reason and the subject chips: the part that scrolls on a short screen.
   private var middle: some View {
-    VStack(alignment: .leading, spacing: WeaveSpacing.s3) {
+    VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
       if !reason.isEmpty {
         Text(reason)
-          .weaveFont(.callout)
-          .foregroundStyle(Color.weave.ink.opacity(0.82))
+          .weaveFont(.caption)
+          .foregroundStyle(Color.weave.muted)
           .textSelection(.enabled)
           .fixedSize(horizontal: false, vertical: true)
           .frame(maxWidth: .infinity, alignment: .leading)
       }
-      VStack(spacing: WeaveSpacing.s2) {
+      VStack(spacing: WeaveSpacing.s1) {
         ForEach(subjects) { subjectChip($0) }
       }
     }
   }
 
   private var footer: some View {
-    VStack(alignment: .leading, spacing: WeaveSpacing.s3) {
+    VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
       if !note.isEmpty {
         Text(note)
           .weaveFont(.footnote)
           .foregroundStyle(Color.weave.muted)
           .fixedSize(horizontal: false, vertical: true)
       }
-      VStack(spacing: 0) {
-        EqualWidthRow(spacing: WeaveSpacing.s3, compression: 0.86) {
+      // One left-aligned row; the link drops under the buttons when it does not fit.
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: WeaveSpacing.s2) {
           denyButton
           allowButton
+          alwaysButton
+          Spacer(minLength: 0)
         }
-        .padding(.top, WeaveSpacing.s2)
-        Button {
-          send(.allow(.machine))
-        } label: {
-          HStack(spacing: WeaveSpacing.s1) {
-            if isBusy, pendingAnswer == .allow(.machine) { ProgressView().controlSize(.mini) }
-            Text(Self.alwaysTitle)
+        VStack(alignment: .leading, spacing: 0) {
+          HStack(spacing: WeaveSpacing.s2) {
+            denyButton
+            allowButton
+            Spacer(minLength: 0)
           }
-          .font(.weave(.footnote, weight: .medium))
-          .foregroundStyle(Color.weave.muted)
-          .frame(minHeight: WeaveSize.minTap)
-          .padding(.horizontal, WeaveSpacing.s2)
-          .contentShape(Rectangle())
+          alwaysButton
         }
-        .buttonStyle(.plain)
-        .accessibilityHint("Allows it in every thread on this machine")
-        .accessibilityIdentifier("access.allowMachine")
+        // Large type: one button per line.
+        VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
+          allowButton
+          denyButton
+          alwaysButton
+        }
       }
       .disabled(isBusy)
-      .frame(maxWidth: .infinity)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.top, 2)
     }
   }
 
+  private var alwaysButton: some View {
+    Button {
+      send(.allow(.machine))
+    } label: {
+      HStack(spacing: WeaveSpacing.s1) {
+        if isBusy, pendingAnswer == .allow(.machine) { ProgressView().controlSize(.mini) }
+        Text(Self.alwaysTitle).lineLimit(2).minimumScaleFactor(0.85)
+      }
+      .font(.weave(.footnote, weight: .medium))
+      .foregroundStyle(Color.weave.muted)
+      .frame(minHeight: WeaveSize.minTap)
+      .padding(.horizontal, WeaveSpacing.s1)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityHint("Allows it in every thread on this machine")
+    .accessibilityIdentifier("access.allowMachine")
+  }
+
   private func subjectChip(_ subject: Subject) -> some View {
-    HStack(spacing: WeaveSpacing.s3) {
+    HStack(spacing: WeaveSpacing.s2 + 2) {
       subjectIcon(subject)
         .frame(width: iconSize, height: iconSize)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 1) {
         Text(subject.label)
-          .font(.weave(.callout, weight: .semibold))
+          .font(.weave(.callout, weight: .medium))
           .foregroundStyle(Color.weave.ink)
           .lineLimit(2)
         if let host = subject.hostLabel {
@@ -313,17 +333,16 @@ public struct AccessRequestCard: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       Text(subject.tag)
-        .font(.weave(.caption, weight: .semibold))
+        .font(.weave(.footnote, weight: .semibold))
         .foregroundStyle(Color.weave.warn)
-        .padding(.horizontal, WeaveSpacing.s2 + 2)
-        .padding(.vertical, 3)
+        .padding(.horizontal, WeaveSpacing.s1 + 2)
+        .padding(.vertical, 1)
         .background(Color.weave.warnTint, in: Capsule())
         .fixedSize()
     }
-    .padding(.horizontal, WeaveSpacing.s3 + 2)
-    .padding(.vertical, WeaveSpacing.s2 + 2)
-    .frame(minHeight: WeaveSize.minTap)
-    .background(Color.weave.sunken, in: RoundedRectangle(cornerRadius: WeaveRadius.lg + 4, style: .continuous))
+    .padding(.horizontal, WeaveSpacing.s2 + 2)
+    .padding(.vertical, WeaveSpacing.s1 + 2)
+    .background(Color.weave.sunken, in: RoundedRectangle(cornerRadius: WeaveRadius.md + 2, style: .continuous))
     .accessibilityElement(children: .combine)
     .accessibilityHint(subject.detail)
   }
@@ -337,7 +356,7 @@ public struct AccessRequestCard: View {
         .clipShape(RoundedRectangle(cornerRadius: iconSize * 0.22, style: .continuous))
     } else {
       Image(systemName: subject.symbol)
-        .font(.system(size: iconSize * 0.72, weight: .regular))
+        .font(.system(size: iconSize * 0.7, weight: .regular))
         .foregroundStyle(Color.weave.ink)
     }
   }
@@ -347,6 +366,7 @@ public struct AccessRequestCard: View {
       pillLabel("Deny", loading: isBusy && pendingAnswer == .deny, foreground: Color.weave.ink)
         .background(Capsule().fill(Color.weave.panel))
         .overlay(Capsule().strokeBorder(Color.weave.control, lineWidth: 1))
+        .modifier(TapArea(height: WeaveSize.minTap))
     }
     .buttonStyle(WeavePressStyle())
     .accessibilityIdentifier("access.deny")
@@ -356,6 +376,7 @@ public struct AccessRequestCard: View {
     Button { send(.allow(.thread)) } label: {
       pillLabel(Self.allowTitle, loading: isBusy && pendingAnswer == .allow(.thread), foreground: Color.weave.canvas)
         .background(Capsule().fill(Color.weave.ink))
+        .modifier(TapArea(height: WeaveSize.minTap))
     }
     .buttonStyle(WeavePressStyle())
     .accessibilityHint("Allows it for this session")
@@ -365,14 +386,13 @@ public struct AccessRequestCard: View {
   private func pillLabel(_ title: String, loading: Bool, foreground: Color) -> some View {
     HStack(spacing: WeaveSpacing.s2) {
       if loading { ProgressView().controlSize(.small).tint(foreground) }
-      // Shrinks a little before the row gives up and stacks the two buttons.
-      Text(title).lineLimit(1).minimumScaleFactor(0.8)
+      // Shrinks, then wraps, before large type overflows the card.
+      Text(title).lineLimit(2).minimumScaleFactor(0.85).multilineTextAlignment(.center)
     }
-    .font(.weave(.callout, weight: .semibold))
+    .font(.weave(.callout, weight: .medium))
     .foregroundStyle(foreground)
-    .padding(.horizontal, WeaveSpacing.s3)
-    .frame(maxWidth: .infinity, minHeight: 46)
-    .contentShape(Capsule())
+    .padding(.horizontal, WeaveSpacing.s3 + 2)
+    .frame(minHeight: buttonHeight)
   }
 
   private func send(_ answer: Answer) {
@@ -509,46 +529,13 @@ struct CappedMiddleStack: Layout {
   }
 }
 
-/// Two views side by side at equal widths, or stacked (last first) when the
-/// wider one cannot fit in its half of the row. `compression` is how far a
-/// view may shrink below its ideal width (its text scales down) and still fit.
-struct EqualWidthRow: Layout {
-  var spacing: CGFloat
-  var compression: CGFloat = 1
-
-  private func fitsSideBySide(_ subviews: Subviews, width: CGFloat?) -> Bool {
-    guard let width else { return true }
-    let widest = (subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0) * compression
-    return widest * CGFloat(subviews.count) + spacing * CGFloat(max(subviews.count - 1, 0)) <= width
-  }
-
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    let width = proposal.width ?? subviews.map { $0.sizeThatFits(.unspecified).width }.reduce(0, +)
-    if fitsSideBySide(subviews, width: proposal.width) {
-      let each = (width - spacing * CGFloat(max(subviews.count - 1, 0))) / CGFloat(max(subviews.count, 1))
-      let height = subviews.map { $0.sizeThatFits(.init(width: each, height: nil)).height }.max() ?? 0
-      return CGSize(width: width, height: height)
-    }
-    let heights = subviews.map { $0.sizeThatFits(.init(width: width, height: nil)).height }
-    return CGSize(width: width, height: heights.reduce(0, +) + spacing * CGFloat(max(subviews.count - 1, 0)))
-  }
-
-  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-    guard !subviews.isEmpty else { return }
-    if fitsSideBySide(subviews, width: bounds.width) {
-      let each = (bounds.width - spacing * CGFloat(subviews.count - 1)) / CGFloat(subviews.count)
-      for (index, subview) in subviews.enumerated() {
-        subview.place(at: CGPoint(x: bounds.minX + CGFloat(index) * (each + spacing), y: bounds.minY), proposal: .init(width: each, height: bounds.height))
-      }
-    } else {
-      // The primary choice (last) goes on top.
-      var y = bounds.minY
-      for subview in subviews.reversed() {
-        let height = subview.sizeThatFits(.init(width: bounds.width, height: nil)).height
-        subview.place(at: CGPoint(x: bounds.minX, y: y), proposal: .init(width: bounds.width, height: height))
-        y += height + spacing
-      }
-    }
+/// Keeps a compact pill's look and extends its hit area to `height`.
+private struct TapArea: ViewModifier {
+  let height: CGFloat
+  func body(content: Content) -> some View {
+    content
+      .frame(minHeight: height)
+      .contentShape(Rectangle())
   }
 }
 

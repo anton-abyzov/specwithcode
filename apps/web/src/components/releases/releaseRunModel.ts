@@ -31,7 +31,18 @@ const PHASE_LABELS: Record<string, string> = {
   "verify.release": "Released",
 };
 
-function phaseOf(stageId: string): string {
+/**
+ * On the github channel release.sh publishes v<version> before any machine
+ * installs it, so the "candidate" stage is the publish and the "canary" stage
+ * is M4's rollout. The stage ids stay the graph's.
+ */
+const GITHUB_CHANNEL_LABELS: Record<string, string> = {
+  "publish.candidate": "Publish",
+  canary: "M4 rollout",
+};
+
+function phaseOf(stageId: string, channel?: string): string {
+  if (channel === "github" && stageId === "canary") return GITHUB_CHANNEL_LABELS.canary!;
   if (PHASE_LABELS[stageId]) return PHASE_LABELS[stageId];
   const head = stageId.split(".")[0] ?? stageId;
   return PHASE_LABELS[head] ?? head;
@@ -44,6 +55,7 @@ function phaseOf(stageId: string): string {
  */
 export function releaseGraphColumns(
   stages: ReadonlyArray<ReleaseRunStage>,
+  channel?: string,
 ): ReadonlyArray<ReleaseGraphColumn> {
   const byId = new Map(stages.map((stage) => [stage.id, stage]));
   const depth = new Map<string, number>();
@@ -70,18 +82,40 @@ export function releaseGraphColumns(
   return columns
     .filter((column) => column !== undefined && column.length > 0)
     .map((column) => ({
-      label: [...new Set(column.map((stage) => phaseOf(stage.id)))].join(" · "),
+      label: [...new Set(column.map((stage) => phaseOf(stage.id, channel)))].join(" · "),
       stages: column,
     }));
 }
 
-export const STAGE_STATE_LABELS: Record<ReleaseRunStageState, string> = {
+/** A stage as the view shows it: its recorded state, or `absent` for one this run never runs. */
+export type ReleaseStageViewState = ReleaseRunStageState | "absent";
+
+export const STAGE_STATE_LABELS: Record<ReleaseStageViewState, string> = {
   pending: "Waiting",
   running: "Running",
   passed: "Passed",
   failed: "Failed",
   skipped: "Skipped",
+  absent: "Not in this run",
 };
+
+/**
+ * A pending stage with no steps is one this run has nothing for: release.sh
+ * records every step it will run when the run starts (so on its runs such a
+ * stage never runs: Windows and Linux builds, the web and fleet suites run in
+ * their own workflows), and a finished run will run nothing more. Release
+ * verification runs after release.sh, so it waits while the run is not done.
+ * A release.yml run records a stage once its job starts, so there it waits.
+ */
+export function stageViewState(
+  stage: ReleaseRunStage,
+  run: Pick<ReleaseRun, "state" | "createdBy">,
+): ReleaseStageViewState {
+  if (stage.state !== "pending" || stage.steps.length > 0) return stage.state;
+  if (run.state === "done") return "absent";
+  if (stage.id === "verify.release") return "pending";
+  return run.createdBy === "release.sh" ? "absent" : "pending";
+}
 
 export const RUN_STATE_LABELS: Record<ReleaseRunState, string> = {
   running: "Running",
@@ -137,7 +171,7 @@ export const TONE_STYLES: Record<
   },
 };
 
-export function stageTone(state: ReleaseRunStageState): ReleaseTone {
+export function stageTone(state: ReleaseStageViewState): ReleaseTone {
   switch (state) {
     case "passed":
       return "success";
@@ -227,8 +261,50 @@ export function formatSeconds(totalSeconds: number): string {
   return `${rest}s`;
 }
 
-/** How long a stage took, or has run so far while running; null before it started. */
+/**
+ * How long a stage took, or has run so far while running; null before it
+ * started. With step times it is the time its steps ran, overlaps counted
+ * once: a stage's first and last step can be far apart (a resume reruns
+ * `trees` half an hour after the rest of Resolve; Canary's steps sit around
+ * the publish), and that gap is no time the stage took.
+ */
 export function stageDuration(stage: ReleaseRunStage, nowMs: number): string | null {
+  const intervals: Array<[number, number]> = [];
+  for (const step of stage.steps) {
+    const started = parseMs(step.startedAt);
+    if (started === null) continue;
+    // A step that started but never recorded its end (killed, failed mid-way) ran until the
+    // stage ended, or until now while the stage still runs. A finished stage never counts on.
+    const ended =
+      parseMs(step.endedAt) ??
+      (stage.state === "running"
+        ? nowMs
+        : (parseMs(stage.endedAt) ?? (step.state === "running" ? nowMs : null)));
+    if (ended !== null && ended >= started) intervals.push([started, ended]);
+  }
+  // A running stage between two steps (one passed, the next not started) keeps counting.
+  if (
+    stage.state === "running" &&
+    intervals.length > 0 &&
+    !stage.steps.some((step) => step.state === "running")
+  ) {
+    const last = Math.max(...intervals.map(([, end]) => end));
+    if (nowMs > last) intervals.push([last, nowMs]);
+  }
+  if (intervals.length > 0) {
+    intervals.sort((left, right) => left[0] - right[0]);
+    let total = 0;
+    let [from, to] = intervals[0]!;
+    for (const [start, end] of intervals.slice(1)) {
+      if (start > to) {
+        total += to - from;
+        [from, to] = [start, end];
+      } else {
+        to = Math.max(to, end);
+      }
+    }
+    return formatSeconds((total + (to - from)) / 1000);
+  }
   const started = parseMs(stage.startedAt);
   if (started === null) return null;
   const ended = parseMs(stage.endedAt) ?? (stage.state === "running" ? nowMs : null);
@@ -278,7 +354,8 @@ const STAGE_NAMES: Record<string, string> = {
   "verify.release": "Verify release",
 };
 
-export function stageName(stageId: string): string {
+export function stageName(stageId: string, channel?: string): string {
+  if (channel === "github" && GITHUB_CHANNEL_LABELS[stageId]) return GITHUB_CHANNEL_LABELS[stageId];
   return STAGE_NAMES[stageId] ?? stageId;
 }
 
@@ -290,9 +367,9 @@ export function selectedRun(
   return runs.find((run) => run.runId === runId) ?? runs[0] ?? null;
 }
 
-/** Stage counts for the run's one-line summary. */
-export function stageCounts(stages: ReadonlyArray<ReleaseRunStage>) {
-  const counts = { passed: 0, running: 0, failed: 0, pending: 0, skipped: 0 };
-  for (const stage of stages) counts[stage.state] += 1;
+/** Stage counts for the run's one-line summary; stages not in this run are no waiting ones. */
+export function stageCounts(run: Pick<ReleaseRun, "stages" | "state" | "createdBy">) {
+  const counts = { passed: 0, running: 0, failed: 0, pending: 0, skipped: 0, absent: 0 };
+  for (const stage of run.stages) counts[stageViewState(stage, run)] += 1;
   return counts;
 }

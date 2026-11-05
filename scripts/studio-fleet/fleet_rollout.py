@@ -929,7 +929,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         # already on the version. A reply with no request answer at all reached no agent.
         acked[0] = ((reply.get('request') or {}).get('installRequestedAt')
                     or ('acknowledged' if 'request' in reply or reply.get('method') == 'boot-service' else None))
-        rollout_record.asked(identity, current, acked[0])  # The release run record, under release.sh.
+        rollout_record.asked(identity, current, acked[0], version=version)  # The release's run record.
         if acked[0]:
             unacked[0] = 0
         else:

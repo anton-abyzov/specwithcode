@@ -9,9 +9,9 @@
 # the staging folder, so --resume, and every --stage job of .github/workflows/release.yml on the same
 # runner, writes the same record and keeps its rows. Each step is recorded as it starts and ends;
 # the canary and fleet steps record each machine: fleet_rollout.py as it asks one
-# (STUDIO_RELEASE_RUN_RECORD), and its summary once it ends. A record that cannot be written is a
-# warning, never a failed release. RELEASE_RUNS_DIR overrides the folder; stub runs default to
-# <staging root>/runs, dry runs write nothing.
+# (STUDIO_RELEASE_RUN_RECORD, passed to those two steps only), and its summary once it ends. A
+# record that cannot be written is a warning, never a failed release. RELEASE_RUNS_DIR overrides the
+# folder; stub runs default to <staging root>/runs, dry runs write nothing.
 #
 # --stage ID runs only the steps of one stage of the release graph (run_record.py STEP_STAGE maps
 # release.sh's steps to the graph's ids), in their usual order, against this machine's staging
@@ -25,7 +25,11 @@
 # release state and take no lock, so they can run side by side.
 
 RUN_RECORD_TOOL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run_record.py"
-RUN_RECORD="${STUDIO_RELEASE_RUN_RECORD:-}"  # The --internal-server child inherits its parent's.
+RUN_RECORD="${RELEASE_RUN_RECORD_PATH:-}"  # The --internal-server child inherits its parent's.
+# fleet_rollout.py records machines into STUDIO_RELEASE_RUN_RECORD. Only the fleet-m4 and fleet-workers
+# steps pass it; exported to every step, the fleet test suites in stage1 wrote their fake machines
+# (1.0.40, asked at the start of the run) into the real record.
+unset STUDIO_RELEASE_RUN_RECORD
 STAGE_ONLY="" STAGE_STEPS="" SERVER_SHARD="" STAGE_EMPTY=0 STAGE_NEEDS_CHECKED=0
 GRAPH_SHARDS="${RELEASE_GRAPH_SHARDS:-8}"
 RECORD_STEPS="${STAGE_NAMES:-} server rehearsal"
@@ -169,8 +173,8 @@ record_init() {
     return 0
   fi
   RUN_RECORD="$out"
-  STUDIO_RELEASE_RUN_RECORD="$RUN_RECORD"
-  export STUDIO_RELEASE_RUN_RECORD
+  RELEASE_RUN_RECORD_PATH="$RUN_RECORD"
+  export RELEASE_RUN_RECORD_PATH
   # --ci leaves the fleet and the rehearsal to the machines' own update checks.
   if [ "${CI_MODE:-0}" -eq 1 ]; then record_skipped quit-desktop fleet-m4 desktop fleet-workers fleet-linux rehearsal; fi
 }

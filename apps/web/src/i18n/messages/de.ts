@@ -201,11 +201,11 @@ export const de: Messages = {
   "limit.project.label":
     "Threads dieses Projekts automatisch fortsetzen, wenn Limits zurückgesetzt werden",
   "limit.noReset.withHandoffs":
-    "Der Anbieter hat nicht angegeben, wann dieses Limit zurückgesetzt wird, daher kann der Thread nicht von selbst weitermachen. Mach jetzt woanders weiter oder sende nach dem Zurücksetzen eine Nachricht.",
+    "Der Anbieter hat nicht angegeben, wann dieses Limit zurückgesetzt wird, daher kann der Thread nicht von selbst weitermachen. Wechsle jetzt zu einem anderen Modell oder Rechner oder sende nach dem Zurücksetzen eine Nachricht.",
   "limit.noReset":
     "Der Anbieter hat nicht angegeben, wann dieses Limit zurückgesetzt wird, daher kann der Thread nicht von selbst weitermachen. Sende nach dem Zurücksetzen eine Nachricht.",
-  "limit.orElsewhere": "Oder jetzt woanders weitermachen:",
-  "limit.insteadOfWaiting": "Woanders weitermachen statt zu warten:",
+  "limit.orElsewhere": "Oder jetzt zu einem anderen Modell oder Rechner wechseln:",
+  "limit.insteadOfWaiting": "Statt zu warten zu einem anderen Modell oder Rechner wechseln:",
   "limit.fallback.hint":
     "Diesen Thread auf {label} ({model}) umstellen und den gestoppten Turn mit seiner Unterhaltung fortsetzen",
   "limit.fallback.continueWith": "Weiter mit {label} · {model}",
@@ -382,4 +382,7 @@ export const de: Messages = {
   "limitSettings.api.confirmGlobal":
     "Turns, die an einem bestätigten Claude-Abo-Limit stoppen, machen ohne Nachfrage auf deiner Claude-Instanz mit API-Schlüssel weiter, wechseln zum nächsten API-Konto, wenn eines kein Guthaben mehr hat, in jedem Projekt, das das nicht überschreibt, und der Thread bleibt dort, bis das Limit zurückgesetzt wird. Jeder Turn dort und jeder Thread, der von dort startet, wird der API-Organisation des Schlüssels zu API-Preisen berechnet. SpecWithCode kann dieses Guthaben weder lesen noch begrenzen; lege in der Claude Console ein Ausgabenlimit fest.",
   "limitSettings.api.confirm": "API-Guthaben verwenden",
+  "providerModels.count": { one: "{count} Modell", other: "{count} Modelle" },
+  "providerModels.favorites": { one: "{count} Favorit", other: "{count} Favoriten" },
+  "providerModels.hidden": { one: "{count} ausgeblendet", other: "{count} ausgeblendet" },
 };

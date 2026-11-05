@@ -162,9 +162,9 @@
 .sws-access-wait {
   display: flex;
   align-items: center;
-  gap: 10px 12px;
+  gap: 8px 10px;
   max-width: 560px;
-  padding: 12px 12px 12px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--card);
@@ -180,15 +180,15 @@
   display: inline-grid;
   place-items: center;
   flex: none;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--shell-waiting) 14%, transparent);
   color: var(--shell-waiting);
 }
 .sws-access-wait-tile svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
 }
 .sws-access-wait-text {
   display: grid;
@@ -202,19 +202,19 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 .sws-access-wait-subtitle {
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.4;
   color: var(--muted-foreground);
 }
 .sws-access-wait-open {
   flex: none;
-  height: 30px;
-  padding: 0 14px;
+  height: 28px;
+  padding: 0 12px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;

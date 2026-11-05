@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { AuthProvidersManageScope } from "@specweave-studio/contracts";
 import { useEnvironmentScope } from "../../state/session";
 import {
@@ -58,12 +59,13 @@ interface CodexSetupSectionProps {
 
 /** Welcome and provider settings run the same environment-owned setup flow. */
 export function CodexSetupSection(props: CodexSetupSectionProps) {
+  const tx = useTx();
   const [requested, setRequested] = useState(false);
   const existingState = getOnboardingProviderState(props.provider);
   const existingReady = props.enabled && existingState === "ready";
   const existingAuthenticated = props.provider?.auth.status === "authenticated";
   const existingChecking = existingState === "checking";
-  const existingSummary = getProviderSummary(props.provider);
+  const existingSummary = getProviderSummary(props.provider, tx);
   const content =
     props.mode === "existing" && props.presentation === "onboarding" ? (
       <CodexWelcomeCard

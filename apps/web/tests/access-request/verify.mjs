@@ -65,7 +65,11 @@ async function checkPendingCard(card, label) {
   }
   const deny = await card.locator('[data-access-decision="deny"]').boundingBox();
   const allow = await card.locator('[data-access-decision="allow"]').boundingBox();
-  NodeAssert.ok(Math.abs(deny.width - allow.width) < 1, `${label}: equal-width buttons`);
+  // Compact buttons: regular height, sized to their text, left-aligned.
+  NodeAssert.ok(deny.height <= 34 && allow.height <= 34, `${label}: regular button height`);
+  const cardBox = await card.boundingBox();
+  NodeAssert.ok(deny.x - cardBox.x < 24, `${label}: buttons start at the left`);
+  NodeAssert.ok(allow.width < cardBox.width / 2, `${label}: not full-width halves`);
   return { deny, allow };
 }
 

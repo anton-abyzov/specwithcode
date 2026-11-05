@@ -3,10 +3,11 @@ import {
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
+  CircleMinusIcon,
   CircleSlashIcon,
   LoaderCircleIcon,
 } from "lucide-react";
-import { useId, type CSSProperties, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
@@ -29,6 +30,8 @@ import {
   stageDuration,
   stageName,
   stageTone,
+  stageViewState,
+  type ReleaseStageViewState,
   type ReleaseTone,
 } from "./releaseRunModel";
 
@@ -59,9 +62,9 @@ function Chip({ tone, children }: { tone: ReleaseTone; children: ReactNode }) {
   );
 }
 
-function StageIcon({ stage }: { stage: ReleaseRunStage }) {
-  const className = cn("size-4 shrink-0", TONE_STYLES[stageTone(stage.state)].text);
-  switch (stage.state) {
+function StageIcon({ state }: { state: ReleaseStageViewState }) {
+  const className = cn("size-4 shrink-0", TONE_STYLES[stageTone(state)].text);
+  switch (state) {
     case "passed":
       return <CircleCheckIcon aria-hidden className={className} />;
     case "failed":
@@ -70,14 +73,25 @@ function StageIcon({ stage }: { stage: ReleaseRunStage }) {
       return <LoaderCircleIcon aria-hidden className={cn(className, "motion-safe:animate-spin")} />;
     case "skipped":
       return <CircleSlashIcon aria-hidden className={className} />;
+    case "absent":
+      return <CircleMinusIcon aria-hidden className={className} />;
     default:
       return <CircleDashedIcon aria-hidden className={className} />;
   }
 }
 
-function StageCard({ stage, nowMs }: { stage: ReleaseRunStage; nowMs: number }) {
+function StageCard({
+  stage,
+  run,
+  nowMs,
+}: {
+  stage: ReleaseRunStage;
+  run: ReleaseRun;
+  nowMs: number;
+}) {
+  const state = stageViewState(stage, run);
   const duration = stageDuration(stage, nowMs);
-  const tone = stageTone(stage.state);
+  const tone = stageTone(state);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -86,23 +100,24 @@ function StageCard({ stage, nowMs }: { stage: ReleaseRunStage; nowMs: number }) 
           <li
             tabIndex={0}
             data-stage={stage.id}
-            data-state={stage.state}
+            data-state={state}
             className={cn(
               "flex min-w-0 flex-col gap-1 rounded-lg border bg-card px-2.5 py-2 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring",
               TONE_STYLES[tone].border,
-              stage.state === "pending" && "border-dashed",
+              (state === "pending" || state === "absent") && "border-dashed",
+              state === "absent" && "bg-transparent opacity-70",
             )}
           />
         }
       >
         <div className="flex min-w-0 items-start gap-1.5">
-          <StageIcon stage={stage} />
+          <StageIcon state={state} />
           <span className="line-clamp-2 min-w-0 font-medium text-xs leading-4">
-            {stageName(stage.id)}
+            {stageName(stage.id, run.channel)}
           </span>
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 text-muted-foreground text-xs">
-          <span className={TONE_STYLES[tone].text}>{STAGE_STATE_LABELS[stage.state]}</span>
+          <span className={TONE_STYLES[tone].text}>{STAGE_STATE_LABELS[state]}</span>
           {duration ? <span className="tabular-nums">{duration}</span> : null}
         </div>
         {stage.shards && stage.shards.length > 0 ? (
@@ -131,26 +146,25 @@ function StageCard({ stage, nowMs }: { stage: ReleaseRunStage; nowMs: number }) 
 }
 
 /**
- * The stage graph, one column per depth of `needs`, read left to right. Narrow
- * windows stack the columns; wide ones lay them side by side.
+ * The stage graph, one column per depth of `needs`, read left to right. It
+ * sizes to its own width, not the window's: a narrow graph stacks the columns,
+ * a wider one lays as many side by side as fit and wraps the rest onto the
+ * next row, so no column is ever cut off at the page's edge.
  */
 export function ReleaseStageGraph({ run, nowMs }: { run: ReleaseRun; nowMs: number }) {
-  const columns = releaseGraphColumns(run.stages);
+  const columns = releaseGraphColumns(run.stages, run.channel);
   return (
-    <div className="-mx-1 overflow-x-auto px-1 pb-1" data-release-graph>
-      <ol
-        className="flex flex-col gap-3 lg:grid lg:grid-cols-[repeat(var(--release-columns),minmax(6.75rem,1fr))] lg:gap-2"
-        style={{ "--release-columns": columns.length } as CSSProperties}
-      >
+    <div className="@container -mx-1 min-w-0 overflow-x-auto px-1 pb-1" data-release-graph>
+      <ol className="flex flex-col gap-3 @min-[36rem]:grid @min-[36rem]:grid-cols-[repeat(auto-fit,minmax(6rem,1fr))] @min-[36rem]:gap-2">
         {columns.map((column) => (
           <li key={column.stages[0]?.id ?? column.label} className="min-w-0">
             <section className="flex min-w-0 flex-col gap-1.5">
               <h4 className="truncate px-0.5 font-medium text-2xs text-muted-foreground uppercase tracking-wide">
                 {column.label}
               </h4>
-              <ul className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-1">
+              <ul className="grid min-w-0 grid-cols-2 gap-1.5 @min-[24rem]:grid-cols-3 @min-[36rem]:grid-cols-1">
                 {column.stages.map((stage) => (
-                  <StageCard key={stage.id} stage={stage} nowMs={nowMs} />
+                  <StageCard key={stage.id} stage={stage} run={run} nowMs={nowMs} />
                 ))}
               </ul>
             </section>
@@ -176,7 +190,7 @@ function HostRow({ host }: { host: ReleaseRunHost }) {
         </span>
       </th>
       <td className="py-2 pr-3 whitespace-nowrap tabular-nums text-muted-foreground">
-        {host.from ?? "?"} → {host.to ?? "?"}
+        {host.from && host.from !== host.to ? `${host.from} → ${host.to ?? "?"}` : (host.to ?? "?")}
       </td>
       <td className="py-2 pr-3 whitespace-nowrap tabular-nums">{formatClock(host.askedAt)}</td>
       <td className="py-2 pr-3 whitespace-nowrap tabular-nums">{formatClock(host.ackedAt)}</td>
@@ -252,7 +266,7 @@ export function ReleaseHostTables({ hosts }: { hosts: ReadonlyArray<ReleaseRunHo
 }
 
 function RunHeader({ run }: { run: ReleaseRun }) {
-  const counts = stageCounts(run.stages);
+  const counts = stageCounts(run);
   const summary = hostSummary(run.hosts);
   return (
     <header className="flex flex-col gap-1.5">
@@ -276,6 +290,7 @@ function RunHeader({ run }: { run: ReleaseRun }) {
         {counts.passed} passed, {counts.running} running, {counts.failed} failed, {counts.pending}{" "}
         waiting
         {counts.skipped ? `, ${counts.skipped} skipped` : ""}
+        {counts.absent ? `, ${counts.absent} not in this run` : ""}
         {summary ? `. ${summary}.` : "."}
       </p>
     </header>

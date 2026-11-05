@@ -100,7 +100,7 @@ import { DialogCloseButton } from "../ui/dialog-close-button";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
-import { useT } from "../../i18n";
+import { useT, useTx } from "../../i18n";
 import { renderRich } from "../../i18n/rich";
 
 /**
@@ -1067,10 +1067,11 @@ function AgentCard({
   readonly onOpenTerminal: () => void;
 }) {
   const t = useT();
+  const tx = useTx();
   const meta = getDriverOption(ProviderDriverKind.make(driver));
   const displayName =
     provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
-  const summary = getProviderSummary(provider);
+  const summary = getProviderSummary(provider, tx);
   const providerState = getOnboardingProviderState(provider);
 
   return (

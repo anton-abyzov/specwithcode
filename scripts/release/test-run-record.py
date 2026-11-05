@@ -168,6 +168,46 @@ class RunRecord(unittest.TestCase):
                                               stderr=stream))
         self.assertIn('run record not written for m1', ''.join(errors))
 
+    def test_a_rollout_of_another_version_writes_no_machine_rows(self):
+        # 1.0.192: stage1's fleet suites ran their fake fleet (1.0.40 to 1.0.41) with the record in
+        # their environment, and m4, m1 and m3 read "1.0.40 -> 1.0.192", asked at the run's start.
+        sys.path.insert(0, str(FLEET))
+        self.addCleanup(sys.path.remove, str(FLEET))
+        lock = pathlib.Path(tempfile.mkdtemp(prefix='fleet-rollout-lock-')) / 'fleet-rollout.lock'
+        with mock.patch.dict(os.environ, {'STUDIO_FLEET_ROLLOUT_LOCK': str(lock)}):
+            import fleet_rollout
+            import rollout_record
+            from rollout_test_fakes import NEW, Clock, Fleet, quiet
+        path = rr.init(self.runs, '1.0.192', run_id='real', previous='1.0.191')
+        clock = Clock()
+        with mock.patch.dict(os.environ, {rollout_record.ENV: str(path)}):
+            fleet_rollout.rollout(NEW, Fleet(clock).hosts(), clock=clock, sleep=clock.sleep, say=quiet, poll=15)
+        self.assertEqual(rr.read(path)['hosts'], [])
+        self.assertFalse(rollout_record.asked('m1', '1.0.40', True, version='1.0.41',
+                                              environ={rollout_record.ENV: str(path)}))
+        self.assertTrue(rollout_record.asked('m1', '1.0.191', True, version='1.0.192',
+                                             environ={rollout_record.ENV: str(path)}))
+        row = rr.read(path)['hosts'][0]
+        self.assertEqual((row['identity'], row['from'], row['state']), ('m1', '1.0.191', 'acked'))
+
+    def test_release_sh_passes_the_record_to_the_fleet_steps_only(self):
+        # Exported to every step, the record reached the test suites stage1 and the server suite run.
+        script = HERE / 'release-record.sh'
+        probe = ('say() { :; }; MODE=stub STAGING_ROOT="$1" STAGE="$1" VERSION=1.0.192 PREV=1.0.191 '
+                 'RECORD_STEPS="preflight stage1 fleet-workers"; . "$2"; record_init; '
+                 'printf "%s\\n" "$RUN_RECORD"; env | grep -c "^STUDIO_RELEASE_RUN_RECORD=" || true; '
+                 'printf "%s\\n" "$RELEASE_RUN_RECORD_PATH"')
+        result = subprocess.run(['bash', '-c', probe, 'probe', str(self.root), str(script)], capture_output=True,
+                                text=True, timeout=60, env=dict(os.environ, STUDIO_RELEASE_RUN_RECORD='/inherited'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        record, exported, internal = result.stdout.split()
+        self.assertTrue(record.endswith('.json') and pathlib.Path(record).is_file(), result.stdout)
+        self.assertEqual((exported, internal), ('0', record))
+        release = (HERE / 'release.sh').read_text()
+        for step in ('fleet-m4', 'fleet-workers'):
+            self.assertIn('x %s -C "$BUILD" -- env STUDIO_RELEASE_RUN_RECORD="$RUN_RECORD" python3 -B '
+                          'scripts/studio-fleet/fleet_rollout.py' % step, release)
+
     def test_host_rows_move_forward_and_not_updated_needs_a_reason(self):
         path = self.init()
         rr.host(path, 'm4', 'asked', role='canary', required=True, source='1.0.189', at='2026-11-04T11:00:00Z')

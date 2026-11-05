@@ -238,7 +238,7 @@ export function AccessRequestPrompt(props: {
         ))}
       </ul>
 
-      <p className="text-sm/relaxed text-muted-foreground">{accessRequestNote(item.subjects)}</p>
+      <p className="text-xs/5 text-muted-foreground">{accessRequestNote(item.subjects)}</p>
 
       <div className={ACCESS_BUTTON_ROW_CLASS}>
         <button
@@ -262,8 +262,6 @@ export function AccessRequestPrompt(props: {
         >
           Allow for this session
         </button>
-      </div>
-      <div className="flex min-w-0 flex-col items-center gap-1">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -283,12 +281,12 @@ export function AccessRequestPrompt(props: {
           </TooltipTrigger>
           <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
         </Tooltip>
-        {error !== null ? (
-          <p id={errorId} role="alert" className="text-center text-xs text-destructive-foreground">
-            {error}
-          </p>
-        ) : null}
       </div>
+      {error !== null ? (
+        <p id={errorId} role="alert" className="text-xs text-destructive-foreground">
+          {error}
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -305,10 +303,10 @@ function AccessSubjectChip({ subject }: { readonly subject: AccessRequestSubject
       title={subject.kind === "app" ? detail || undefined : undefined}
       icon={
         iconUrl !== null ? (
-          <img src={iconUrl} alt="" className="size-7 rounded-md object-contain" />
+          <img src={iconUrl} alt="" className="size-5 rounded-[0.3125rem] object-contain" />
         ) : (
-          <span className="flex size-7 items-center justify-center rounded-lg bg-card text-muted-foreground shadow-xs ring-1 ring-border/70 dark:bg-white/[0.08] dark:ring-white/10">
-            <Glyph className="size-4" />
+          <span className="flex size-5 items-center justify-center rounded-[0.3125rem] bg-card text-muted-foreground shadow-xs ring-1 ring-border/70 dark:bg-white/[0.08] dark:ring-white/10">
+            <Glyph className="size-3" />
           </span>
         )
       }

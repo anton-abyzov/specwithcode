@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vite-plus/test";
 
+import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
 import { matchLocale, resolveLocale, resolveSystemLocale, SUPPORTED_LOCALES, translate } from ".";
 import { de } from "./messages/de";
 import { en, type MessageKey } from "./messages/en";
@@ -200,5 +201,22 @@ describe("language preference", () => {
     expect(t("wizard.title")).toBe("Настройка SpecWithCode");
     setLocalePreference("system");
     expect(t("wizard.title")).toBe(translate(getLocale(), "wizard.title"));
+  });
+});
+
+// Driver copy is looked up by its exact English text, so an edit there would
+// silently fall back to English in every language.
+const DRIVER_PHRASES = DRIVER_OPTIONS.flatMap((option) => [
+  ...(option.setupDescription === undefined ? [] : [option.setupDescription]),
+  ...(option.environmentFields ?? []).flatMap((field) => [
+    field.label,
+    ...(field.description === undefined ? [] : [field.description]),
+    ...(field.placeholder === undefined ? [] : [field.placeholder]),
+  ]),
+]);
+
+describe.each(Object.entries(PHRASE_CATALOGS))("%s provider driver copy", (_locale, catalog) => {
+  it.each(DRIVER_PHRASES)("translates %s", (english) => {
+    expect(Object.hasOwn(catalog, english)).toBe(true);
   });
 });

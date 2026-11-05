@@ -59,7 +59,7 @@ app they like. The first time an agent in a thread opens an app or clicks,
 types, scrolls or drags in the app in front, a card appears just above the
 composer: "Claude wants to use Notes", the agent's one-sentence reason, and
 each app with its own icon. **Allow for this session** lets the agent use those
-apps in this thread; **Always allow on this machine**, under the buttons, lets
+apps in this thread; **Always allow on this machine**, beside the buttons, lets
 every thread on this Mac use them. **Deny** stops the action, and the agent is
 told not to ask again in that turn. The agent's action waits for your answer
 for up to five minutes. While it waits, the thread shows as waiting for you,

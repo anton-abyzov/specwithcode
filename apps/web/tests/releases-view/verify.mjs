@@ -43,6 +43,10 @@ try {
     ["released", "&run=f00dfeed0189", 1280, "light"],
     ["held", "", 390, "light"],
     ["held", "", 390, "dark"],
+    ["real", "&real=1", 1440, "light"],
+    ["real", "&real=1", 1280, "light"],
+    ["real", "&real=1", 1024, "light"],
+    ["real", "&real=1", 390, "light"],
   ]) {
     const page = await browser.newPage({
       viewport: { width, height: 900 },
@@ -66,12 +70,31 @@ try {
         node.getAttribute("data-host-group"),
       ),
       title: document.querySelector("[data-releases-view] h3")?.textContent ?? "",
+      summary: document.querySelector("[data-run-summary]")?.textContent ?? "",
+      text: document.querySelector("[data-releases-view]")?.textContent ?? "",
+      // A stage card cut off by the graph's own box, or a graph wider than its box.
+      clipped: (() => {
+        const graph = document.querySelector("[data-release-graph]");
+        if (!graph) return ["no graph"];
+        const box = graph.getBoundingClientRect();
+        const cut = [...graph.querySelectorAll("[data-stage]")]
+          .filter((node) => {
+            const rect = node.getBoundingClientRect();
+            return rect.right > box.right + 0.5 || rect.left < box.left - 0.5;
+          })
+          .map((node) => node.getAttribute("data-stage"));
+        if (graph.scrollWidth > graph.clientWidth)
+          cut.push(`graph scrolls ${graph.scrollWidth - graph.clientWidth}px`);
+        return cut;
+      })(),
     }));
     const label = `${name} ${width}px ${theme}`;
     if (errors.length > 0) failures.push(`${label}: page errors: ${errors.join("; ")}`);
     if (facts.overflow > 0) failures.push(`${label}: page overflows by ${facts.overflow}px`);
     if (facts.stages.length !== 19)
       failures.push(`${label}: ${facts.stages.length} stages, want 19`);
+    if (facts.clipped.length > 0)
+      failures.push(`${label}: stages cut off: ${facts.clipped.join(", ")}`);
     if (facts.groups.join(",") !== "canary,fleet")
       failures.push(`${label}: groups ${facts.groups}`);
     const state = Object.fromEntries(facts.stages);
@@ -85,6 +108,17 @@ try {
       failures.push(`${label}: fleet ${state.fleet}, m3 ${hosts.m3}`);
     if (name === "released" && (!facts.title.includes("1.0.189") || state.finalize !== "passed"))
       failures.push(`${label}: ${facts.title}, finalize ${state.finalize}`);
+    if (
+      name === "real" &&
+      (state["test.web"] !== "absent" ||
+        state["verify.release"] !== "absent" ||
+        state.resolve !== "passed" ||
+        !facts.summary.includes("0 waiting, 8 not in this run") ||
+        !facts.text.includes("M4 rollout") ||
+        facts.text.includes("Publish candidate") ||
+        facts.text.includes("27m 44s"))
+    )
+      failures.push(`${label}: ${facts.summary} test.web ${state["test.web"]}`);
     const file = NodePath.join(out, `releases-${name}-${width}-${theme}.png`);
     await page.screenshot({ path: file, fullPage: true, animations: "disabled" });
     console.log(`${label}: ${facts.stages.length} stages, ${facts.hosts.length} hosts -> ${file}`);

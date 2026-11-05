@@ -1,5 +1,7 @@
 "use client";
 
+import { useTx } from "../../i18n";
+import { renderRich } from "../../i18n/rich";
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -266,15 +268,19 @@ function ProviderEnvironmentFieldRow(props: {
   readonly onCommit: (field: ProviderEnvironmentFieldDefinition, value: string) => void;
   readonly onRemove: (field: ProviderEnvironmentFieldDefinition) => void;
 }) {
+  const tx = useTx();
+  const label = tx(props.field.label);
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
   const placeholder = props.variable?.valueRedacted
-    ? "Stored secret - enter a new value to replace"
-    : props.field.placeholder;
+    ? tx("Stored secret - enter a new value to replace")
+    : props.field.placeholder === undefined
+      ? undefined
+      : tx(props.field.placeholder);
 
   return (
     <SettingsRow
-      title={<label htmlFor={inputId}>{props.field.label}</label>}
+      title={<label htmlFor={inputId}>{label}</label>}
       description={props.field.description}
       control={
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
@@ -295,7 +301,7 @@ function ProviderEnvironmentFieldRow(props: {
               size="icon-sm"
               variant="ghost-destructive"
               onClick={() => props.onRemove(props.field)}
-              aria-label={`Clear ${props.field.label}`}
+              aria-label={tx("Clear {name}", { name: label })}
             >
               <XIcon className="size-3.5" />
             </Button>
@@ -310,6 +316,7 @@ export function ProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
 }) {
+  const tx = useTx();
   const [rows, setRows] = useState<ReadonlyArray<EnvironmentDraftRow>>(() =>
     props.environment.map(makeEnvironmentDraftRow),
   );
@@ -394,7 +401,7 @@ export function ProviderEnvironmentSection(props: {
       control={
         <Button type="button" size="sm" variant="outline" onClick={addVariable}>
           <PlusIcon className="size-3" />
-          Add variable
+          {tx("Add variable")}
         </Button>
       }
     >
@@ -584,6 +591,7 @@ export function ProviderInstanceCard({
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
 }: ProviderInstanceCardProps) {
+  const tx = useTx();
   const machineReach: SettingsReach = {
     kind: "machine",
     ...(environmentLabel ? { name: environmentLabel } : {}),
@@ -597,8 +605,8 @@ export function ProviderInstanceCard({
     : "disabled";
   const statusStyle = PROVIDER_STATUS_STYLES[statusKey];
   const summary = enabled
-    ? getProviderSummary(liveProvider)
-    : { headline: "Disabled", detail: null };
+    ? getProviderSummary(liveProvider, tx)
+    : { headline: tx("Disabled"), detail: null };
   const authEmail = liveProvider?.auth.email?.trim();
   const authLogin = liveProvider?.auth.login?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
@@ -966,7 +974,7 @@ export function ProviderInstanceCard({
             type="button"
             className="pointer-events-auto absolute inset-0 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onClick={onSelect}
-            aria-label={`Select ${displayName}`}
+            aria-label={tx("Select {name}", { name: displayName })}
             aria-pressed={selected}
           />
           {titleIconNode}
@@ -1002,7 +1010,7 @@ export function ProviderInstanceCard({
             checked={enabled}
             disabled={readOnly || (!providerAllowed && !enabled)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
-            aria-label={`Enable ${displayName}`}
+            aria-label={tx("Enable {name}", { name: displayName })}
           />
         </span>
       </div>
@@ -1142,11 +1150,12 @@ export function ProviderInstanceCard({
         <SettingsSection title="Setup" reach={machineReach}>
           {driverOption?.setupDescription ? (
             <div className="px-4 py-3 text-xs leading-relaxed text-muted-foreground">
-              <p>{driverOption.setupDescription}</p>
+              <p>{tx(driverOption.setupDescription)}</p>
               {instance.driver === "cursor" && !enabled ? (
                 <p className="mt-2">
-                  Cursor is turned off on this machine, so account model discovery is not running.
-                  Enable it and complete setup to check available models.
+                  {tx(
+                    "Cursor is turned off on this machine, so account model discovery is not running. Enable it and complete setup to check available models.",
+                  )}
                 </p>
               ) : null}
               {driverOption.setupDocsUrl ? (
@@ -1156,7 +1165,7 @@ export function ProviderInstanceCard({
                   target="_blank"
                   rel="noopener noreferrer"
                 >
-                  SDK access and billing
+                  {tx("SDK access and billing")}
                 </a>
               ) : null}
             </div>
@@ -1239,11 +1248,16 @@ export function ProviderInstanceCard({
         <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
-              <SettingsReachLabel reach={{ kind: "device" }} />: favorites, visibility and order.
-              These preferences follow the provider instance ID, including matching default slots on
-              other machines.
+              {renderRich(
+                tx(
+                  "{reach}: favorites, visibility and order. These preferences follow the provider instance ID, including matching default slots on other machines.",
+                ),
+                { reach: <SettingsReachLabel reach={{ kind: "device" }} /> },
+              )}
               <br />
-              Custom models: <SettingsReachLabel reach={machineReach} />.
+              {renderRich(tx("Custom models: {reach}."), {
+                reach: <SettingsReachLabel reach={machineReach} />,
+              })}
             </p>
             <ProviderModelsSection
               canManageCustomModels={!readOnly}

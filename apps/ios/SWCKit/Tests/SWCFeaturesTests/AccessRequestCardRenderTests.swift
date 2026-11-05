@@ -105,6 +105,7 @@ struct AccessRequestCardRenderTests {
       // ImageRenderer leaves a scroll view blank, so the scrolling card is drawn in a hosting view.
       try writeHosted(Self.long.card(agent: "Claude", style: .composer, isBusy: false, maxHeight: 420 * 0.45, waitingCount: 3) { _ in }, width: 390, scheme: scheme, to: dir.appendingPathComponent("ios-composer-card-long-capped-\(name).png"))
       try write(Self.mixed.card(agent: "Codex", style: .composer, isBusy: false, waitingCount: 2) { _ in }, width: 390, scheme: scheme, to: dir.appendingPathComponent("ios-composer-card-queue-\(name).png"))
+      try write(card(Self.request, agent: "Claude").environment(\.dynamicTypeSize, .accessibility2), width: 390, scheme: scheme, to: dir.appendingPathComponent("ios-composer-card-large-type-\(name).png"))
     }
   }
 

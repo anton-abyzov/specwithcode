@@ -171,7 +171,7 @@ it("explains a disabled auto-continue when the provider gave no reset time", asy
   });
   expect(autoContinue().props.disabled).toBe(true);
   expect(rendered()).toContain("did not say when this limit resets");
-  expect(rendered()).not.toContain("Continue elsewhere");
+  expect(rendered()).not.toContain("another model or machine");
 });
 it("auto-continues a Claude thread at its reset when the box is ticked", async () => {
   const change = vi.fn().mockResolvedValue(undefined);
@@ -207,8 +207,10 @@ it("offers to continue the stopped turn with another ready provider", async () =
   });
   // No reset time and no check: the provider switch is the only way forward.
   expect(autoContinue().props.disabled).toBe(true);
-  expect(rendered()).toContain("Continue elsewhere instead of waiting:");
-  expect(rendered()).toContain("Continue elsewhere now, or send a message after the reset.");
+  expect(rendered()).toContain("Switch to another model or machine instead of waiting:");
+  expect(rendered()).toContain(
+    "Switch to another model or machine now, or send a message after the reset.",
+  );
   await act(async () => button("Continue with Codex · GPT-6").props.onClick());
   expect(onContinue).toHaveBeenCalledOnce();
   expect(change).not.toHaveBeenCalled();

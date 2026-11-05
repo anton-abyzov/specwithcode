@@ -178,11 +178,11 @@ export const ko: Messages = {
   "limit.project.hint": "이미 한도로 대기 중인 이 프로젝트의 스레드도 계속합니다.",
   "limit.project.label": "한도가 초기화되면 이 프로젝트의 스레드를 자동으로 계속",
   "limit.noReset.withHandoffs":
-    "제공업체가 이 한도의 초기화 시간을 알려 주지 않아 스레드가 자동으로 계속될 수 없습니다. 지금 다른 곳에서 계속하거나 초기화 후에 메시지를 보내세요.",
+    "제공업체가 이 한도의 초기화 시간을 알려 주지 않아 스레드가 자동으로 계속될 수 없습니다. 지금 다른 모델이나 컴퓨터로 전환하거나 초기화 후에 메시지를 보내세요.",
   "limit.noReset":
     "제공업체가 이 한도의 초기화 시간을 알려 주지 않아 스레드가 자동으로 계속될 수 없습니다. 초기화 후에 메시지를 보내세요.",
-  "limit.orElsewhere": "또는 지금 다른 곳에서 계속:",
-  "limit.insteadOfWaiting": "기다리지 않고 다른 곳에서 계속:",
+  "limit.orElsewhere": "또는 지금 다른 모델이나 컴퓨터로 전환:",
+  "limit.insteadOfWaiting": "기다리지 않고 다른 모델이나 컴퓨터로 전환:",
   "limit.fallback.hint":
     "이 스레드를 {label}({model})(으)로 전환하고 대화를 이어 중단된 턴을 계속합니다",
   "limit.fallback.continueWith": "{label} · {model}(으)로 계속",
@@ -351,4 +351,7 @@ export const ko: Messages = {
   "limitSettings.api.confirmGlobal":
     "이 설정을 재정의하지 않은 모든 프로젝트에서, 확인된 Claude 구독 한도로 중단된 턴은 묻지 않고 Claude API 키 인스턴스에서 계속합니다. 크레딧이 떨어지면 다음 API 계정으로 넘어가며, 스레드는 한도가 초기화될 때까지 그곳에 머뭅니다. 그곳에서 실행하는 모든 턴과 그곳에서 시작하는 모든 스레드는 키의 API 조직에 API 요금으로 청구됩니다. SpecWithCode는 그 잔액을 읽거나 제한할 수 없으니 Claude Console에서 지출 한도를 설정하세요.",
   "limitSettings.api.confirm": "API 크레딧 사용",
+  "providerModels.count": { other: "모델 {count}개" },
+  "providerModels.favorites": { other: "즐겨찾기 {count}개" },
+  "providerModels.hidden": { other: "숨김 {count}개" },
 };

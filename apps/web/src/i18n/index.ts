@@ -103,11 +103,19 @@ export function useT(): Translate {
 /**
  * Translate an English UI phrase by its own text, for the many settings rows
  * and labels that are not worth a named key. Unknown phrases stay English.
+ * A phrase with `{name}` slots is looked up as written, then filled from `values`.
  */
+export type TranslatePhrase = (english: string, values?: MessageValues) => string;
 
-export type TranslatePhrase = (english: string) => string;
+/** A `TranslatePhrase` that keeps English and only fills `{name}` slots. */
+export const englishPhrase: TranslatePhrase = (english, values) =>
+  interpolate(english, values, DEFAULT_LOCALE);
 
 export function useTx(): TranslatePhrase {
   const locale = useLocale();
-  return useCallback((english: string) => translatePhrase(locale, english), [locale]);
+  return useCallback(
+    (english: string, values?: MessageValues) =>
+      interpolate(translatePhrase(locale, english), values, locale),
+    [locale],
+  );
 }

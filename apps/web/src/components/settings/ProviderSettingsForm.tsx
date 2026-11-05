@@ -1,5 +1,6 @@
 "use client";
 
+import { useTx } from "../../i18n";
 import { TEAM_RULES_LAUNCH_CONFIG_KEYS } from "@specweave-studio/shared/teamRules";
 import { TeamRulesLabel } from "./settingsLayout";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -422,6 +423,7 @@ function ProviderSettingsFieldRow({
   variant,
   onChange,
 }: ProviderSettingsFieldRowProps) {
+  const tx = useTx();
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
     variant === "dialog"
@@ -438,7 +440,9 @@ function ProviderSettingsFieldRow({
     value,
   );
   const clearedNote = clearedByAddressChange
-    ? `${field.label} cleared because the server address changed. Enter it again to use it there.`
+    ? tx("{name} cleared because the server address changed. Enter it again to use it there.", {
+        name: field.label,
+      })
     : undefined;
   const descriptionText =
     field.description || clearedNote ? (
@@ -456,7 +460,7 @@ function ProviderSettingsFieldRow({
   ) : null;
   const textValue = hasStoredSecret ? "" : rawText;
   const textPlaceholder = hasStoredSecret
-    ? "Stored secret - enter a new value to replace"
+    ? tx("Stored secret - enter a new value to replace")
     : field.placeholder;
   const clearStoredSecret = hasStoredSecret ? (
     <Button
@@ -467,7 +471,7 @@ function ProviderSettingsFieldRow({
         forgetStoredSecret();
         onChange(nextProviderConfigWithFieldValue(value, field, ""));
       }}
-      aria-label={`Clear ${field.label}`}
+      aria-label={tx("Clear {name}", { name: field.label })}
     >
       <XIcon className="size-3.5" />
     </Button>
@@ -681,9 +685,19 @@ export function ProviderSettingsForm({
   variant,
   onChange,
 }: ProviderSettingsFormProps) {
+  const tx = useTx();
   const fields = useMemo(
-    () => deriveProviderSettingsFields(definition, value),
-    [definition, value],
+    () =>
+      deriveProviderSettingsFields(definition, value).map((field) => ({
+        ...field,
+        label: tx(field.label),
+        ...(field.description === undefined ? {} : { description: tx(field.description) }),
+        ...(field.placeholder === undefined ? {} : { placeholder: tx(field.placeholder) }),
+        ...(field.options === undefined
+          ? {}
+          : { options: field.options.map((option) => ({ ...option, label: tx(option.label) })) }),
+      })),
+    [definition, value, tx],
   );
   const isLocalAcp =
     definition.value === "acpRegistry" && readProviderConfigString(value, "source") === "local";

@@ -196,11 +196,11 @@ export const pt: Messages = {
   "limit.project.label":
     "Continuar automaticamente as threads deste projeto quando os limites reiniciarem",
   "limit.noReset.withHandoffs":
-    "O provedor não informou quando este limite reinicia, então a thread não pode continuar sozinha. Continue em outro lugar agora ou envie uma mensagem depois do reinício.",
+    "O provedor não informou quando este limite reinicia, então a thread não pode continuar sozinha. Mude agora para outro modelo ou máquina ou envie uma mensagem depois do reinício.",
   "limit.noReset":
     "O provedor não informou quando este limite reinicia, então a thread não pode continuar sozinha. Envie uma mensagem depois do reinício.",
-  "limit.orElsewhere": "Ou continue em outro lugar agora:",
-  "limit.insteadOfWaiting": "Continue em outro lugar em vez de esperar:",
+  "limit.orElsewhere": "Ou mude agora para outro modelo ou máquina:",
+  "limit.insteadOfWaiting": "Mude para outro modelo ou máquina em vez de esperar:",
   "limit.fallback.hint":
     "Trocar esta thread para {label} ({model}) e continuar o turno interrompido com a conversa dela",
   "limit.fallback.continueWith": "Continuar com {label} · {model}",
@@ -375,4 +375,7 @@ export const pt: Messages = {
   "limitSettings.api.confirmGlobal":
     "Turnos que pararem em um limite confirmado da assinatura do Claude vão continuar na sua instância do Claude com chave de API sem perguntar, passando para a próxima conta de API se uma ficar sem créditos, em todo projeto que não substituir isso, e a thread fica lá até o limite reiniciar. Todo turno executado lá, e toda thread iniciada de lá, é cobrado da organização de API da chave pelo preço da API. O SpecWithCode não consegue ler nem limitar esse saldo; defina um limite de gastos no Claude Console.",
   "limitSettings.api.confirm": "Usar créditos de API",
+  "providerModels.count": { one: "{count} modelo", other: "{count} modelos" },
+  "providerModels.favorites": { one: "{count} favorito", other: "{count} favoritos" },
+  "providerModels.hidden": { one: "{count} oculto", other: "{count} ocultos" },
 };

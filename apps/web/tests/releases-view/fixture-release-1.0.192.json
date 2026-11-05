@@ -1,0 +1,477 @@
+{
+  "schemaVersion": 1,
+  "kind": "release",
+  "runId": "965266119acb",
+  "rev": 371,
+  "version": "1.0.192",
+  "previous": "1.0.191",
+  "channel": "github",
+  "sha": null,
+  "createdAt": "2026-11-04T23:42:54Z",
+  "createdBy": "release.sh",
+  "startedAt": "2026-11-04T23:42:54Z",
+  "updatedAt": "2026-11-05T00:11:16Z",
+  "endedAt": "2026-11-05T00:11:16Z",
+  "state": "done",
+  "resumes": 1,
+  "stages": [
+    {
+      "id": "resolve",
+      "needs": [],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:42:56Z",
+      "endedAt": "2026-11-05T00:10:40Z",
+      "log": "1.0.192/logs/candidate.log",
+      "steps": [
+        {
+          "name": "trees",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:10:39Z",
+          "endedAt": "2026-11-05T00:10:40Z",
+          "log": "1.0.192/logs/trees.log",
+          "attempt": 2
+        },
+        {
+          "name": "prev",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:42:56Z",
+          "endedAt": "2026-11-04T23:42:58Z",
+          "log": "1.0.192/logs/prev.log",
+          "attempt": 1
+        },
+        {
+          "name": "bump",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:42:58Z",
+          "endedAt": "2026-11-04T23:43:07Z",
+          "log": "1.0.192/logs/bump.log",
+          "attempt": 1
+        },
+        {
+          "name": "candidate",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:43:10Z",
+          "endedAt": "2026-11-04T23:43:15Z",
+          "log": "1.0.192/logs/candidate.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "preflight",
+      "needs": ["resolve"],
+      "state": "passed",
+      "startedAt": "2026-11-05T00:10:37Z",
+      "endedAt": "2026-11-05T00:10:39Z",
+      "log": "1.0.192/logs/preflight.log",
+      "steps": [
+        {
+          "name": "preflight",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:10:37Z",
+          "endedAt": "2026-11-05T00:10:39Z",
+          "log": "1.0.192/logs/preflight.log",
+          "attempt": 2
+        }
+      ]
+    },
+    {
+      "id": "test.unit",
+      "needs": ["resolve"],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:43:15Z",
+      "endedAt": "2026-11-04T23:49:49Z",
+      "log": "1.0.192/logs/stage1.log",
+      "steps": [
+        {
+          "name": "stage1",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:43:15Z",
+          "endedAt": "2026-11-04T23:49:49Z",
+          "log": "1.0.192/logs/stage1.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "test.server",
+      "needs": ["resolve"],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:43:15Z",
+      "endedAt": "2026-11-04T23:58:39Z",
+      "log": "1.0.192/logs/server.log",
+      "steps": [
+        {
+          "name": "server-wait",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:58:11Z",
+          "endedAt": "2026-11-04T23:58:39Z",
+          "log": "1.0.192/logs/server-wait.log",
+          "attempt": 1
+        },
+        {
+          "name": "server",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:43:15Z",
+          "endedAt": "2026-11-04T23:58:38Z",
+          "log": "1.0.192/logs/server.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "test.web",
+      "needs": ["resolve"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "test.fleet",
+      "needs": ["resolve"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "test.desktop-e2e",
+      "needs": ["resolve"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "test.migration",
+      "needs": ["preflight"],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:49:49Z",
+      "endedAt": "2026-11-04T23:56:55Z",
+      "log": "1.0.192/logs/rehearsal.log",
+      "steps": [
+        {
+          "name": "rehearsal",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:49:49Z",
+          "endedAt": "2026-11-04T23:56:55Z",
+          "log": "1.0.192/logs/rehearsal.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "build.mac",
+      "needs": ["preflight"],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:49:49Z",
+      "endedAt": "2026-11-04T23:55:33Z",
+      "log": "1.0.192/logs/sign.log",
+      "steps": [
+        {
+          "name": "build",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:49:49Z",
+          "endedAt": "2026-11-04T23:51:12Z",
+          "log": "1.0.192/logs/build.log",
+          "attempt": 1
+        },
+        {
+          "name": "bundle",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:51:12Z",
+          "endedAt": "2026-11-04T23:52:42Z",
+          "log": "1.0.192/logs/bundle.log",
+          "attempt": 1
+        },
+        {
+          "name": "sign",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:52:42Z",
+          "endedAt": "2026-11-04T23:55:33Z",
+          "log": "1.0.192/logs/sign.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "build.windows",
+      "needs": ["preflight"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "build.linux",
+      "needs": ["preflight"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "verify.mac",
+      "needs": ["build.mac"],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:55:34Z",
+      "endedAt": "2026-11-04T23:56:50Z",
+      "log": "1.0.192/logs/verify.log",
+      "steps": [
+        {
+          "name": "verify",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:55:34Z",
+          "endedAt": "2026-11-04T23:56:50Z",
+          "log": "1.0.192/logs/verify.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "verify.windows",
+      "needs": ["build.windows"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "verify.linux",
+      "needs": ["build.linux"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    },
+    {
+      "id": "publish.candidate",
+      "needs": [
+        "test.unit",
+        "test.server",
+        "test.web",
+        "test.fleet",
+        "test.desktop-e2e",
+        "test.migration",
+        "verify.mac",
+        "verify.windows",
+        "verify.linux"
+      ],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:56:50Z",
+      "endedAt": "2026-11-05T00:06:37Z",
+      "log": "1.0.192/logs/publish-public.log",
+      "steps": [
+        {
+          "name": "helpers",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:56:50Z",
+          "endedAt": "2026-11-04T23:56:54Z",
+          "log": "1.0.192/logs/helpers.log",
+          "attempt": 1
+        },
+        {
+          "name": "plan",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:56:54Z",
+          "endedAt": "2026-11-04T23:56:55Z",
+          "log": "1.0.192/logs/plan.log",
+          "attempt": 1
+        },
+        {
+          "name": "drafts",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:56:55Z",
+          "endedAt": "2026-11-04T23:58:11Z",
+          "log": "1.0.192/logs/drafts.log",
+          "attempt": 1
+        },
+        {
+          "name": "publish-private",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:58:40Z",
+          "endedAt": "2026-11-04T23:58:45Z",
+          "log": "1.0.192/logs/publish-private.log",
+          "attempt": 1
+        },
+        {
+          "name": "publish-public",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:58:45Z",
+          "endedAt": "2026-11-05T00:06:37Z",
+          "log": "1.0.192/logs/publish-public.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "canary",
+      "needs": ["publish.candidate"],
+      "state": "passed",
+      "startedAt": "2026-11-04T23:58:39Z",
+      "endedAt": "2026-11-05T00:07:43Z",
+      "log": "1.0.192/logs/desktop.log",
+      "steps": [
+        {
+          "name": "quit-desktop",
+          "state": "passed",
+          "startedAt": "2026-11-04T23:58:39Z",
+          "endedAt": "2026-11-04T23:58:40Z",
+          "log": "1.0.192/logs/quit-desktop.log",
+          "attempt": 1
+        },
+        {
+          "name": "fleet-m4",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:06:37Z",
+          "endedAt": "2026-11-05T00:07:37Z",
+          "log": "1.0.192/logs/fleet-m4.log",
+          "attempt": 1
+        },
+        {
+          "name": "desktop",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:07:37Z",
+          "endedAt": "2026-11-05T00:07:43Z",
+          "log": "1.0.192/logs/desktop.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "fleet",
+      "needs": ["canary"],
+      "state": "passed",
+      "startedAt": "2026-11-05T00:10:40Z",
+      "endedAt": "2026-11-05T00:11:16Z",
+      "log": "1.0.192/logs/fleet-linux.log",
+      "steps": [
+        {
+          "name": "fleet-workers",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:10:40Z",
+          "endedAt": "2026-11-05T00:10:46Z",
+          "log": "1.0.192/logs/fleet-workers.log",
+          "attempt": 2
+        },
+        {
+          "name": "fleet-linux",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:11:15Z",
+          "endedAt": "2026-11-05T00:11:16Z",
+          "log": "1.0.192/logs/fleet-linux.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "finalize",
+      "needs": ["fleet"],
+      "state": "passed",
+      "startedAt": "2026-11-05T00:10:46Z",
+      "endedAt": "2026-11-05T00:11:15Z",
+      "log": "1.0.192/logs/merge.log",
+      "steps": [
+        {
+          "name": "merge",
+          "state": "passed",
+          "startedAt": "2026-11-05T00:10:46Z",
+          "endedAt": "2026-11-05T00:11:15Z",
+          "log": "1.0.192/logs/merge.log",
+          "attempt": 1
+        }
+      ]
+    },
+    {
+      "id": "verify.release",
+      "needs": ["finalize"],
+      "state": "pending",
+      "startedAt": null,
+      "endedAt": null,
+      "log": null,
+      "steps": []
+    }
+  ],
+  "hosts": [
+    {
+      "identity": "m4",
+      "role": "canary",
+      "required": true,
+      "from": "1.0.191",
+      "to": "1.0.192",
+      "state": "verified",
+      "askedAt": "2026-11-04T23:43:23Z",
+      "ackedAt": "2026-11-04T23:43:23Z",
+      "installedAt": "2026-11-05T00:07:37Z",
+      "verifiedAt": "2026-11-05T00:07:37Z",
+      "reason": null
+    },
+    {
+      "identity": "m1",
+      "role": "fleet",
+      "required": true,
+      "from": "1.0.40",
+      "to": "1.0.192",
+      "state": "verified",
+      "askedAt": "2026-11-04T23:43:23Z",
+      "ackedAt": "2026-11-04T23:43:23Z",
+      "installedAt": "2026-11-05T00:10:46Z",
+      "verifiedAt": "2026-11-05T00:10:46Z",
+      "reason": null,
+      "notUpdatedAt": "2026-11-05T00:10:05Z",
+      "desktop": "already-current"
+    },
+    {
+      "identity": "m3",
+      "role": "fleet",
+      "required": true,
+      "from": "1.0.40",
+      "to": "1.0.192",
+      "state": "verified",
+      "askedAt": "2026-11-04T23:43:23Z",
+      "ackedAt": "2026-11-04T23:43:23Z",
+      "installedAt": "2026-11-05T00:10:05Z",
+      "verifiedAt": "2026-11-05T00:10:05Z",
+      "reason": null,
+      "desktop": "already-current"
+    },
+    {
+      "identity": "annas-macbook-air",
+      "role": "fleet",
+      "required": false,
+      "from": null,
+      "to": "1.0.192",
+      "state": "not-updated",
+      "askedAt": null,
+      "ackedAt": null,
+      "installedAt": null,
+      "verifiedAt": null,
+      "reason": "skipped: no SSH, and it has no SpecWithCode Connect address",
+      "notUpdatedAt": "2026-11-05T00:10:46Z"
+    },
+    {
+      "identity": "ministorm",
+      "role": "fleet",
+      "required": false,
+      "from": "1.0.40",
+      "to": "1.0.192",
+      "state": "verified",
+      "askedAt": "2026-11-04T23:49:30Z",
+      "ackedAt": "2026-11-04T23:49:30Z",
+      "installedAt": "2026-11-05T00:10:05Z",
+      "verifiedAt": "2026-11-05T00:10:05Z",
+      "reason": null,
+      "desktop": "skipped"
+    }
+  ],
+  "resumedAt": "2026-11-05T00:10:37Z",
+  "created_by": "release.sh"
+}

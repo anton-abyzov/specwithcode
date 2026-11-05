@@ -200,15 +200,16 @@ export type SettingsReach =
   | { readonly kind: "project" };
 
 export function SettingsReachLabel({ reach }: { readonly reach: SettingsReach }) {
+  const tx = useTx();
   if (reach.kind === "machine" && !reach.name?.trim()) return null;
   const label =
     reach.kind === "device"
-      ? "This device"
+      ? tx("This device")
       : reach.kind === "all"
-        ? "All connected machines"
+        ? tx("All connected machines")
         : reach.kind === "project"
-          ? "This project"
-          : `This machine: ${reach.name}`;
+          ? tx("This project")
+          : tx("This machine: {name}", { name: reach.name ?? "" });
   return (
     <span
       data-slot="settings-reach"

@@ -228,7 +228,7 @@ export function ComputerUsePermissionChecklist({
             <AccessChip
               key={permission}
               data-computer-use-permission={permission}
-              icon={<Icon className="size-7 drop-shadow-sm" aria-hidden="true" />}
+              icon={<Icon className="size-5 drop-shadow-sm" aria-hidden="true" />}
               label={
                 <>
                   <span>{copy.title}</span>
@@ -243,7 +243,7 @@ export function ComputerUsePermissionChecklist({
                 granted ? (
                   <span
                     role="status"
-                    className="flex items-center gap-1 rounded-full bg-access-allowed px-2.5 py-0.5 text-xs font-medium text-access-allowed-foreground"
+                    className="flex items-center gap-1 rounded-full bg-access-allowed px-1.5 py-px text-[0.6875rem]/4 font-medium text-access-allowed-foreground"
                   >
                     <CircleCheckIcon className="size-3.5" aria-hidden="true" />
                     Allowed
@@ -251,7 +251,7 @@ export function ComputerUsePermissionChecklist({
                 ) : (
                   <button
                     type="button"
-                    className={cn(ACCESS_PRIMARY_BUTTON_CLASS, "h-8 px-4 text-xs")}
+                    className={cn(ACCESS_PRIMARY_BUTTON_CLASS, "h-7 px-3 text-xs")}
                     onClick={() => state.request(permission)}
                   >
                     Allow
