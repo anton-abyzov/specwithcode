@@ -86,6 +86,43 @@ function fakeSocket() {
 }
 
 describe("RelayConnection", () => {
+  it("creates a normal window when tab creation has no current window", async () => {
+    const chrome = fakeChrome();
+    chrome.tabs.create = async () => {
+      throw new Error("No current window");
+    };
+    chrome.windows = {
+      create: async (options) => {
+        expect(options).toEqual({ url: "about:blank", type: "normal", focused: true });
+        return { tabs: [{ id: 42, windowId: 7 }] };
+      },
+    };
+    const ws = fakeSocket();
+    new RelayConnection(ws, { chrome });
+    await ws.emit({
+      id: 1,
+      method: "chrome.tabs.create",
+      params: [{ url: "about:blank", active: true }],
+    });
+    expect(ws.sent).toEqual([{ id: 1, result: { id: 42, windowId: 7 } }]);
+  });
+
+  it("preserves unrelated creation errors and explicit window failures", async () => {
+    for (const [message, properties] of [
+      ["Permission denied", {}],
+      ["No current window", { windowId: 9 }],
+    ]) {
+      const chrome = fakeChrome();
+      chrome.tabs.create = async () => {
+        throw new Error(message);
+      };
+      const ws = fakeSocket();
+      new RelayConnection(ws, { chrome });
+      await ws.emit({ id: 1, method: "chrome.tabs.create", params: [properties] });
+      expect(ws.sent).toEqual([{ id: 1, error: message }]);
+    }
+  });
+
   it("answers allow-listed calls and refuses the rest", async () => {
     const chrome = fakeChrome();
     chrome.debugger.parent = chrome;

@@ -153,7 +153,26 @@ export class RelayConnection {
       if (isNonDebuggableUrl(tab?.url))
         throw new Error("Chrome does not let extensions control this page.");
     }
-    const result = await invokeChromeMethod(this._chrome, message.method, args);
+    let result;
+    try {
+      result = await invokeChromeMethod(this._chrome, message.method, args);
+    } catch (error) {
+      const properties = args[0];
+      if (
+        message.method !== "chrome.tabs.create" ||
+        error?.message !== "No current window" ||
+        properties?.windowId !== undefined
+      )
+        throw error;
+      const window = await this._chrome.windows.create({
+        url: properties?.url ?? "about:blank",
+        type: "normal",
+        focused: properties?.active !== false,
+      });
+      result = window?.tabs?.[0];
+      if (typeof result?.id !== "number")
+        throw new Error("Chrome created a window without returning its tab.");
+    }
     if (message.method === "chrome.debugger.attach") {
       const tabId = args[0]?.tabId;
       if (tabId !== undefined) {
