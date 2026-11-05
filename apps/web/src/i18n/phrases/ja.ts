@@ -516,8 +516,8 @@ export const ja: PhraseCatalog = {
     "アクティブまたはアーカイブ済みのスレッドを削除したとき、使われていないワークツリーを削除します。ローカルの変更があるワークツリーは残ります。",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "スレッドがこの日数のあいだ非アクティブなら、そのワークツリーを削除します。開いているスレッドのフォルダーは常に残ります。ブランチとスレッドの履歴も残ります。",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "プルリクエストがマージされ、コミットが既定のブランチに含まれているワークツリーを削除します。エージェントがスレッドなしで作った、変更がなくプッシュ済みのワークツリーも、プルリクエストがマージまたはクローズされ 1 日アイドルなら削除します。開いているスレッドのフォルダーは常に残ります。",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "プルリクエストがマージされ、コミットが既定のブランチに含まれているか、マージせずにクローズされすべてのコミットがプッシュ済みのワークツリーを削除します。エージェントがスレッドなしで作った、変更がなくプッシュ済みのワークツリーも、プルリクエストがマージまたはクローズされ 1 日アイドルなら削除します。開いているスレッドのフォルダーは常に残ります。",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "既定のブランチより先のコミットがないワークツリーを削除します。開いているスレッドのフォルダーは常に残ります。",
   Rename: "名前を変更",

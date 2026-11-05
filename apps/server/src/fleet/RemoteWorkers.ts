@@ -147,7 +147,7 @@ export interface RemoteLaunchInput extends LauncherKey {
   readonly requestedRuntimeMode: RuntimeMode | undefined;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
-  /** The user asked for a separate worktree; the other machine's Use worktrees switch decides otherwise. */
+  /** Always false from this build: the other machine's Use worktrees switch alone decides. */
   readonly userAskedForWorktree?: boolean | undefined;
   readonly message: string | undefined;
   /** The SpecWeave increment ref, passed on unresolved. */

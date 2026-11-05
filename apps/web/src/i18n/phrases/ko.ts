@@ -516,8 +516,8 @@ export const ko: PhraseCatalog = {
     "활성 또는 보관된 스레드를 삭제할 때 사용하지 않는 워크트리를 제거합니다. 로컬 변경 사항이 있는 워크트리는 유지됩니다.",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "스레드가 이 일수 동안 비활성 상태이면 그 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다. 브랜치와 스레드 기록은 유지됩니다.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함된 워크트리를 제거합니다. 에이전트가 스레드 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "풀 리퀘스트가 병합되고 커밋이 기본 브랜치에 포함되었거나, 병합 없이 닫히고 모든 커밋이 푸시된 워크트리를 제거합니다. 에이전트가 스레드 없이 만든 깨끗하고 푸시된 워크트리도 풀 리퀘스트가 병합되거나 닫히고 하루 동안 유휴 상태이면 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "기본 브랜치 이후 커밋이 없는 워크트리를 제거합니다. 열려 있는 스레드의 폴더는 항상 유지됩니다.",
   Rename: "이름 바꾸기",

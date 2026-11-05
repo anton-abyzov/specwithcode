@@ -111,6 +111,7 @@ interface HarnessOptions {
   readonly removeWorktreeFails?: boolean;
   readonly deleteLocalBranchFails?: boolean;
   readonly createWorktreeGate?: Effect.Effect<void>;
+  readonly useWorktrees?: boolean;
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -317,6 +318,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
         } satisfies Partial<ProjectService.ProjectService["Service"]>),
         ServerSettings.layerTest({
           newWorktreesStartFromOrigin: options.newWorktreesStartFromOrigin ?? false,
+          projectSettingsOverrides:
+            options.useWorktrees === false
+              ? {}
+              : { [projectId]: { defaultThreadEnvMode: "worktree" } },
         }),
         Layer.mock(GitWorkflowService.GitWorkflowService)({
           listRefs,
@@ -606,6 +611,21 @@ describe("studio_worktree_handoff", () => {
       const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/project-error" }));
       expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
       expect(harness.createWorktree).not.toHaveBeenCalled();
+    });
+  });
+
+  it.effect("refuses when the project's Use worktrees switch is off", () => {
+    const harness = makeHarness({ useWorktrees: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/switch-off" }));
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "invalid_request",
+        message: expect.stringContaining("Use worktrees is off"),
+      });
+      expect(harness.localStatus).not.toHaveBeenCalled();
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(harness.dispatch).not.toHaveBeenCalled();
     });
   });
 

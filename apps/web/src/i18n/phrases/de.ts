@@ -522,8 +522,8 @@ export const de: PhraseCatalog = {
     "Ungenutzte Worktrees entfernen, wenn aktive oder archivierte Threads gelöscht werden. Worktrees mit lokalen Änderungen bleiben erhalten.",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "Worktrees entfernen, nachdem ihre Threads so viele Tage inaktiv waren. Ordner offener Threads bleiben immer erhalten. Branches und Thread-Verlauf bleiben erhalten.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Worktrees entfernen, deren Pull Request gemergt ist und deren Commits im Standard-Branch enthalten sind. Entfernt auch saubere, gepushte Worktrees, die Agenten ohne Thread angelegt haben, sobald ihr Pull Request gemergt oder geschlossen ist und sie einen Tag ruhen. Ordner offener Threads bleiben immer erhalten.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "Worktrees entfernen, deren Pull Request gemergt ist und deren Commits im Standard-Branch enthalten sind, oder deren Pull Request ungemergt geschlossen ist und deren Commits alle gepusht sind. Entfernt auch saubere, gepushte Worktrees, die Agenten ohne Thread angelegt haben, sobald ihr Pull Request gemergt oder geschlossen ist und sie einen Tag ruhen. Ordner offener Threads bleiben immer erhalten.",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "Worktrees ohne Commits über den Standard-Branch hinaus entfernen. Ordner offener Threads bleiben immer erhalten.",
   Rename: "Umbenennen",

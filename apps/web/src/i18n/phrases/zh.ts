@@ -499,8 +499,8 @@ export const zh: PhraseCatalog = {
     "删除活跃或已归档的会话时，移除未使用的工作树。有本地更改的工作树会保留。",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "会话不活跃达这么多天后移除其工作树。打开中会话的文件夹始终保留。分支和会话历史会保留。",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "移除拉取请求已合并且提交已包含在默认分支中的工作树。也会移除智能体在没有会话的情况下创建的、干净且已推送的工作树，前提是其拉取请求已合并或关闭且已闲置一天。打开中会话的文件夹始终保留。",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "移除拉取请求已合并且提交已包含在默认分支中，或未合并即关闭且所有提交均已推送的工作树。也会移除智能体在没有会话的情况下创建的、干净且已推送的工作树，前提是其拉取请求已合并或关闭且已闲置一天。打开中会话的文件夹始终保留。",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "移除相对默认分支没有新提交的工作树。打开中会话的文件夹始终保留。",
   Rename: "重命名",

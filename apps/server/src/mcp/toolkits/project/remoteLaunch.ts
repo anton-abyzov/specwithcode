@@ -269,7 +269,8 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
       requestedRuntimeMode: params.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy: params.workspaceStrategy,
-      userAskedForWorktree: params.userAskedForWorktree === true,
+      // Never forwarded: an older worker would let it override its own Use worktrees switch.
+      userAskedForWorktree: false,
       message: params.message,
       // Resolved by the machine that runs the thread, against its own checkout.
       increment: params.increment,

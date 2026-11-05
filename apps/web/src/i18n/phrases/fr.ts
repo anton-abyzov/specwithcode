@@ -521,8 +521,8 @@ export const fr: PhraseCatalog = {
     "Supprimer les worktrees inutilisés quand des fils actifs ou archivés sont supprimés. Les worktrees avec des modifications locales sont conservés.",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "Supprimer les worktrees dont les fils sont inactifs depuis ce nombre de jours. Les dossiers des fils ouverts sont toujours conservés. Les branches et l’historique des fils sont conservés.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Supprimer les worktrees dont la pull request est fusionnée et dont les commits sont dans la branche par défaut. Supprime aussi les worktrees propres et poussés que des agents ont créés sans fil, une fois leur pull request fusionnée ou fermée et après un jour d’inactivité. Les dossiers des fils ouverts sont toujours conservés.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "Supprimer les worktrees dont la pull request est fusionnée et dont les commits sont dans la branche par défaut, ou fermée sans fusion avec tous ses commits poussés. Supprime aussi les worktrees propres et poussés que des agents ont créés sans fil, une fois leur pull request fusionnée ou fermée et après un jour d’inactivité. Les dossiers des fils ouverts sont toujours conservés.",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "Supprimer les worktrees sans commit au-delà de la branche par défaut. Les dossiers des fils ouverts sont toujours conservés.",
   Rename: "Renommer",

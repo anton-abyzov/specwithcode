@@ -517,8 +517,8 @@ export const ru: PhraseCatalog = {
     "Удалять неиспользуемые worktree при удалении активных или архивных тредов. Worktree с локальными изменениями сохраняются.",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "Удалять worktree, если их треды неактивны столько дней. Папки открытых тредов всегда сохраняются. Ветки и история тредов сохраняются.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Удалять worktree, пул-реквест которых смержен, а коммиты вошли в основную ветку. Также удаляет чистые отправленные worktree, которые агенты создали без треда, когда их пул-реквест смержен или закрыт и они простаивают сутки. Папки открытых тредов всегда сохраняются.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "Удалять worktree, пул-реквест которых смержен, а коммиты вошли в основную ветку, или закрыт без слияния, а все коммиты отправлены. Также удаляет чистые отправленные worktree, которые агенты создали без треда, когда их пул-реквест смержен или закрыт и они простаивают сутки. Папки открытых тредов всегда сохраняются.",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "Удалять worktree без коммитов сверх основной ветки. Папки открытых тредов всегда сохраняются.",
   Rename: "Переименовать",

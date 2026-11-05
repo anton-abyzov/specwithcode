@@ -218,7 +218,10 @@ const cleanupFixture = Effect.gen(function* () {
       })}, NULL, ${state === "archived" ? "2026-06-09T12:00:00.000Z" : null})`;
     });
   const removed: Array<string> = [];
-  const hooks = { onPullRequest: Effect.void as Effect.Effect<unknown, SqlError> };
+  const hooks = {
+    onPullRequest: Effect.void as Effect.Effect<unknown, SqlError>,
+    pullRequestState: (_branch: string): "open" | "closed" | "merged" => "merged",
+  };
   const provideCleanup = <A, E>(
     effect: Effect.Effect<
       A,
@@ -269,10 +272,10 @@ const cleanupFixture = Effect.gen(function* () {
               }),
           }),
           Layer.mock(GitManager.GitManager)({
-            branchPullRequest: () =>
+            branchPullRequest: (input) =>
               Effect.suspend(() => hooks.onPullRequest).pipe(
                 Effect.orDie,
-                Effect.as({ state: "merged" } as never),
+                Effect.map(() => ({ state: hooks.pullRequestState(input.branch) }) as never),
               ),
             invalidateStatus: () => Effect.void,
           }),
@@ -416,6 +419,44 @@ describe("storage cleanup keeps folders of open threads", () => {
       expect(yield* f.fs.exists(settled)).toBe(true);
       expect(f.removed).toEqual([]);
     }).pipe(Effect.provide(cleanupLayer)),
+  );
+});
+
+describe("storage cleanup removes worktrees of PRs closed without merging", () => {
+  EffectVitest.it.effect(
+    "removes a closed PR's worktree only when nothing on it is unpushed and the PR is not open",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* cleanupFixture;
+        const states: Record<string, "open" | "closed" | "merged"> = {
+          "closed-clean": "closed",
+          "closed-pushed": "closed",
+          "closed-unpushed": "closed",
+          "open-clean": "open",
+        };
+        f.hooks.pullRequestState = (branch) => states[branch] ?? "merged";
+        const commit = (worktree: string, file: string) =>
+          Effect.gen(function* () {
+            yield* f.fs.writeFileString(f.path.join(worktree, file), "work\n");
+            yield* f.run(worktree, ["add", file]);
+            yield* f.run(worktree, ["commit", "-m", file]);
+          });
+        const clean = yield* f.addWorktree("closed-clean");
+        const pushed = yield* f.addWorktree("closed-pushed");
+        yield* commit(pushed, "pushed.txt");
+        yield* f.run(pushed, ["push", "origin", "closed-pushed"]);
+        const unpushed = yield* f.addWorktree("closed-unpushed");
+        yield* commit(unpushed, "unpushed.txt");
+        const open = yield* f.addWorktree("open-clean");
+        yield* f.addThread("closed-clean", "closed-clean", clean, "settled");
+        yield* f.addThread("closed-pushed", "closed-pushed", pushed, "settled");
+        yield* f.addThread("closed-unpushed", "closed-unpushed", unpushed, "settled");
+        yield* f.addThread("open-clean", "open-clean", open, "settled");
+        yield* f.sweep;
+        expect(f.removed.toSorted()).toEqual([clean, pushed].toSorted());
+        expect(yield* f.fs.exists(unpushed)).toBe(true);
+        expect(yield* f.fs.exists(open)).toBe(true);
+      }).pipe(Effect.provide(cleanupLayer)),
   );
 });
 

@@ -523,8 +523,8 @@ export const es: PhraseCatalog = {
     "Eliminar los worktrees sin uso al eliminar hilos activos o archivados. Los worktrees con cambios locales se conservan.",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "Eliminar los worktrees cuyos hilos lleven inactivos esta cantidad de días. Las carpetas de los hilos abiertos se conservan siempre. Las ramas y el historial de hilos se conservan.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Eliminar los worktrees cuyo pull request está fusionado y cuyos commits están en la rama predeterminada. También elimina worktrees limpios y enviados que los agentes crearon sin hilo cuando su pull request se fusiona o se cierra y llevan un día inactivos. Las carpetas de los hilos abiertos se conservan siempre.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "Eliminar los worktrees cuyo pull request está fusionado y cuyos commits están en la rama predeterminada, o cerrado sin fusionar con todos sus commits enviados. También elimina worktrees limpios y enviados que los agentes crearon sin hilo cuando su pull request se fusiona o se cierra y llevan un día inactivos. Las carpetas de los hilos abiertos se conservan siempre.",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "Eliminar los worktrees sin commits más allá de la rama predeterminada. Las carpetas de los hilos abiertos se conservan siempre.",
   Rename: "Renombrar",

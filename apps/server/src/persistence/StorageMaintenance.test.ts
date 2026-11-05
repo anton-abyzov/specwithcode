@@ -5,9 +5,12 @@ import {
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemJson,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnItemId,
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -17,6 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- the helper's file must appear between the gate check and the delete, with no yield.
@@ -69,6 +73,8 @@ const thread = (threadId: ThreadId, now: DateTime.Utc): OrchestrationV2AppThread
   lastVisitedAt: null,
   deletedAt: null,
 });
+
+const encodeTurnItem = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2TurnItemJson));
 
 let serial = 0;
 /** A thread visited `visits` times: every visit but the newest is superseded. */
@@ -465,6 +471,115 @@ it.layer(layerTest)("storage maintenance", (it) => {
         assert.equal(second.mode, "incremental");
         assert.equal(second.compaction?.scannedStreamCount, 1);
         assert.equal(second.compaction?.deletedEventCount, 3);
+      }),
+    ),
+  );
+
+  it.effect("caps old tool bodies after retention, never while held, and records the cycle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // The item was last updated at the epoch, a week and a day before the pass.
+        yield* TestClock.adjust(Duration.days(8));
+        const { fs, path, updates, hold, snapshotMarkerPath } = yield* setup;
+        const sql = yield* SqlClient.SqlClient;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("thread:storage-maintenance:body-recap");
+        yield* writeVisitedThread(threadId, 1);
+        const now = yield* DateTime.now;
+        const item: OrchestrationV2TurnItem = {
+          id: TurnItemId.make("turn-item:storage-maintenance:body-recap"),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "cat big.log",
+          output: "small",
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:storage-maintenance:${(serial += 1)}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: item,
+            },
+          ],
+        });
+        // As an old build saved it: the whole output, in the event and the row.
+        const uncapped = yield* encodeTurnItem({
+          ...item,
+          output: "o".repeat(300_000),
+        });
+        yield* sql`
+            UPDATE orchestration_v2_projection_turn_items
+            SET payload_json = ${uncapped}, updated_at = ${DateTime.formatIso(DateTime.makeUnsafe(0))}
+            WHERE turn_item_id = ${item.id}
+          `;
+        yield* sql`
+            UPDATE orchestration_events SET payload_json = ${uncapped}
+            WHERE event_type = 'turn-item.updated' AND stream_id = ${threadId}
+          `;
+        const rowBytes = Effect.map(
+          sql<{ readonly bytes: number }>`
+              SELECT octet_length(payload_json) AS bytes
+              FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${item.id}
+            `,
+          (rows) => rows[0]?.bytes ?? 0,
+        );
+        const eventPayload = Effect.map(
+          sql<{ readonly payload_json: string }>`
+              SELECT payload_json FROM orchestration_events
+              WHERE event_type = 'turn-item.updated' AND stream_id = ${threadId}
+            `,
+          (rows) => rows.map((row) => row.payload_json),
+        );
+        const statePath = path.join(updates, "body-recap", StorageMaintenance.STATE_FILE);
+        const service = yield* StorageMaintenance.make({
+          statePath,
+          snapshotMarkerPath,
+          pagePause: Duration.zero,
+          retentionPolicy: Effect.succeed({
+            deletedAfterDays: null,
+            archivedAfterDays: null,
+            historyDays: 7,
+          }),
+        }).pipe(Effect.provideService(ServiceUpdateHold.ServiceUpdateHold, hold));
+        const before = yield* rowBytes;
+
+        yield* hold.acquire({ reason: "install" });
+        const held = yield* service.runNow();
+        assert.equal(held.status, "skipped");
+        assert.isNull(held.bodyRecap);
+        assert.equal(yield* rowBytes, before);
+        yield* hold.release("test");
+
+        const run = yield* service.runNow();
+        assert.equal(run.status, "completed");
+        assert.equal(run.bodyRecap?.cappedItemCount, 1);
+        assert.isTrue(run.bodyRecap?.reachedEnd);
+        assert.isBelow(yield* rowBytes, 70 * 1024);
+        // The log keeps the row as it was saved.
+        assert.deepStrictEqual(yield* eventPayload, [uncapped]);
+        const recorded = JSON.parse(yield* fs.readFileString(statePath));
+        assert.equal(recorded.bodyRecap.cappedItemCount, 1);
+        assert.equal(recorded.bodyRecap.afterRowid, 0);
+        assert.isString(recorded.bodyRecap.cycleCompletedAt);
+
+        // A completed cycle starts over only a day later.
+        const next = yield* service.runNow();
+        assert.isNull(next.bodyRecap);
+        assert.equal(JSON.parse(yield* fs.readFileString(statePath)).bodyRecap.cappedItemCount, 1);
       }),
     ),
   );

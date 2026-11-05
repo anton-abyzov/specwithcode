@@ -712,6 +712,21 @@ it.effect("passes the increment ref on for the other machine to resolve", () => 
   });
 });
 
+it.effect("never forwards a worktree ask that would override the other machine's switch", () => {
+  const { launch, remoteLaunches } = setup();
+  return Effect.gen(function* () {
+    yield* launch({
+      title: "Fix CI",
+      message: "Fix it",
+      machine: "M1",
+      workspaceStrategy: { type: "worktree", branchName: "fix/ci", baseRef: "main" },
+      userAskedForWorktree: true,
+    });
+    expect(remoteLaunches).toHaveLength(1);
+    expect(remoteLaunches[0]?.userAskedForWorktree).toBe(false);
+  });
+});
+
 it.effect("refuses to send work back to the machine it came from, before sending it", () => {
   // M1 started the calling thread here; it may not start work on M1 in turn.
   const { launch, remoteLaunches } = setup({

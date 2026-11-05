@@ -182,6 +182,7 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
     } as unknown as OrchestrationV2ThreadShell;
     const launched: ThreadLaunch.ThreadLaunchInput[] = [];
     let callerWorktree: string | null = null;
+    let useWorktrees = false;
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -220,6 +221,16 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
           ),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Effect.sync(() =>
+          useWorktrees
+            ? {
+                ...DEFAULT_SERVER_SETTINGS,
+                projectSettingsOverrides: { [projectId]: { defaultThreadEnvMode: "worktree" } },
+              }
+            : DEFAULT_SERVER_SETTINGS,
+        ),
+      }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeServices.layer,
@@ -291,7 +302,7 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
     expect(launched).toHaveLength(3);
 
     // Use worktrees is off here, so an agent's worktree starts in the project
-    // folder unless the user asked for a worktree.
+    // folder, even when it says the user asked for one.
     expect(launched[2]?.workspaceStrategy).toEqual({ type: "root" });
     expect(fromBranch.at(-1)?.result).toMatchObject({
       workspaceNotice: expect.stringContaining("Use worktrees is off"),
@@ -304,8 +315,15 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
       workspaceStrategy: named,
       userAskedForWorktree: true,
     });
-    expect(launched[4]?.workspaceStrategy).toEqual(named);
-    expect(asked.at(-1)?.result).not.toHaveProperty("workspaceNotice");
+    expect(launched[4]?.workspaceStrategy).toEqual({ type: "root" });
+    expect(asked.at(-1)?.result).toMatchObject({
+      workspaceNotice: expect.stringContaining("turn on Use worktrees in the project's settings"),
+    });
+    // With the switch on, the same request gets its worktree.
+    useWorktrees = true;
+    const allowed = yield* handle({ ...onBranch, workspaceStrategy: named });
+    expect(launched[5]?.workspaceStrategy).toEqual(named);
+    expect(allowed.at(-1)?.result).not.toHaveProperty("workspaceNotice");
   }).pipe(Effect.scoped),
 );
 

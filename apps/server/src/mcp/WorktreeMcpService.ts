@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -24,6 +25,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
+import { projectUsesWorktrees } from "./toolkits/project/launchWorkspace.ts";
 
 export class WorktreeMcpService extends Context.Service<
   WorktreeMcpService,
@@ -167,6 +169,18 @@ const make = Effect.gen(function* () {
 
     const project = yield* loadProject(scope, projection.thread.projectId);
     const projectCwd = project.workspaceRoot;
+
+    // The project's Use worktrees switch is the user's say on new checkouts;
+    // an agent cannot move itself into one while it is off.
+    const settings = yield* serverSettings.getSettings.pipe(
+      asOperationFailed("Unable to read server settings"),
+    );
+    if (!projectUsesWorktrees(resolveProjectSettings(settings, project.id, project))) {
+      return yield* failure(
+        "invalid_request",
+        "Use worktrees is off for this project, so this thread cannot move into a new worktree. Keep working in the project folder and create or switch to your branch there; for a separate worktree the user must first turn on Use worktrees in the project's settings.",
+      );
+    }
 
     if (input.path !== undefined && !path.isAbsolute(input.path)) {
       return yield* failure(

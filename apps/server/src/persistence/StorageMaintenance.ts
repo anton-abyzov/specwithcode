@@ -47,6 +47,13 @@
  * removes a finished turn's running snapshots soon, so the file's high-water
  * mark stays low.
  *
+ * With history retention on, the pass then caps tool bodies saved before the
+ * write-time cap existed (TurnItemBodyRecap.ts): old command and tool items'
+ * projection rows only, never the event log, behind the same checks before
+ * every update and within what retention left of RETENTION_PASS_BUDGET_MS. Its cursor is kept in
+ * `storage-maintenance.json`, so each pass resumes where the last stopped; a
+ * cycle that reached the table's end starts over after RECAP_CYCLE_INTERVAL_MS.
+ *
  * Active runs do not stop a pass. Every statement shares the server's one
  * connection, so a delete never interleaves with an event write, and a
  * deleted event always has a newer retained one for the same entity: a
@@ -75,6 +82,7 @@ import * as ServerConfig from "../config.ts";
 import * as AuthRowPruning from "./AuthRowPruning.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as ThreadHistoryRetention from "../orchestration-v2/ThreadHistoryRetention.ts";
+import * as TurnItemBodyRecap from "../orchestration-v2/TurnItemBodyRecap.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
@@ -96,6 +104,8 @@ export const RECLAIM_MAX_PAGES_PER_PASS = 16_384;
 /** How long a gate reading is reused inside one pass. */
 export const GATE_CACHE_MS = 1_000;
 export const STATE_FILE = "storage-maintenance.json";
+/** After a body-recap cycle reached the end, the next one starts this much later. */
+export const RECAP_CYCLE_INTERVAL_MS = 24 * 60 * 60_000;
 
 /** Why database maintenance must wait, or null when it may run. */
 export type MaintenanceBlocker =
@@ -227,6 +237,17 @@ const PersistedState = Schema.Struct({
   fullPassAt: Schema.String,
   /** The log's last sequence when the last pass began. */
   throughSequence: Schema.Number,
+  /** Where the old tool-body cap stands (TurnItemBodyRecap). */
+  bodyRecap: Schema.optionalKey(
+    Schema.Struct({
+      /** Rowid the last pass stopped after; 0 once a cycle completed. */
+      afterRowid: Schema.Number,
+      /** When the last cycle reached the end; null while the first runs. */
+      cycleCompletedAt: Schema.NullOr(Schema.String),
+      /** Rows capped since the first cycle began. */
+      cappedItemCount: Schema.Number,
+    }),
+  ),
 });
 type PersistedState = typeof PersistedState.Type;
 const decodeState = Schema.decodeUnknownOption(Schema.fromJsonString(PersistedState));
@@ -241,6 +262,8 @@ export interface StorageMaintenanceRun {
   readonly authPruning: AuthRowPruning.PruneAuthRowsResult | null;
   /** Thread history retention after the pass; null when off or not reached. */
   readonly retention: ThreadHistoryRetention.ThreadHistoryRetentionResult | null;
+  /** Old tool bodies capped after retention; null when off, not due or not reached. */
+  readonly bodyRecap: TurnItemBodyRecap.TurnItemBodyRecapResult | null;
   readonly reclaimedPages: number;
 }
 
@@ -459,6 +482,76 @@ export const make = (options: StorageMaintenanceOptions) =>
         ),
       );
 
+    /**
+     * Caps old tool bodies with the write path's cap, behind the pass's gate;
+     * null when retention is off or the next cycle is not due yet.
+     */
+    const runBodyRecap = (
+      gate: {
+        readonly check: Effect.Effect<boolean>;
+        readonly mayDelete: () => boolean;
+        readonly reason: () => MaintenanceBlocker | null;
+      },
+      budgetMs: number,
+    ) =>
+      Effect.gen(function* () {
+        if (budgetMs <= 0) return null;
+        const policy =
+          options.retentionPolicy === undefined
+            ? ThreadHistoryRetention.RETENTION_OFF
+            : yield* options.retentionPolicy;
+        if (!ThreadHistoryRetention.retentionEnabled(policy)) return null;
+        if (!(yield* gate.check)) return null;
+        const state = yield* readState;
+        if (Option.isNone(state)) return null;
+        const startedAt = yield* Clock.currentTimeMillis;
+        const previous = state.value.bodyRecap;
+        if (
+          previous !== undefined &&
+          previous.afterRowid === 0 &&
+          previous.cycleCompletedAt !== null &&
+          startedAt - epochOf(previous.cycleCompletedAt) < RECAP_CYCLE_INTERVAL_MS
+        ) {
+          return null;
+        }
+        const result = yield* TurnItemBodyRecap.runTurnItemBodyRecap({
+          historyDays: policy.historyDays,
+          nowMs: startedAt,
+          afterRowid: previous?.afterRowid ?? 0,
+          shouldContinue: gate.check,
+          mayDelete: gate.mayDelete,
+          betweenBatches: Effect.andThen(Effect.sleep(pagePause), yield* makeCompactionPacer),
+          timeBudgetMs: budgetMs,
+        });
+        const completedAt = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
+        yield* writeState({
+          ...state.value,
+          bodyRecap: {
+            afterRowid: result.reachedEnd ? 0 : result.throughRowid,
+            cycleCompletedAt: result.reachedEnd
+              ? completedAt
+              : (previous?.cycleCompletedAt ?? null),
+            cappedItemCount: (previous?.cappedItemCount ?? 0) + result.cappedItemCount,
+          },
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("storage-maintenance.state.write-failed", { cause }),
+          ),
+        );
+        yield* Effect.logInfo("storage-maintenance.body-recap.completed", {
+          ...result,
+          blocker: gate.reason(),
+          elapsedMs: (yield* Clock.currentTimeMillis) - startedAt,
+        });
+        return result;
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("storage-maintenance.body-recap.failed", { cause }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+
     /** One pass now, whether due or not; still never while an update blocks it. */
     const runNow = (input?: { readonly forceFull?: boolean }) =>
       permit.withPermit(
@@ -472,6 +565,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               compaction: null,
               authPruning: null,
               retention: null,
+              bodyRecap: null,
               reclaimedPages: 0,
             } satisfies StorageMaintenanceRun;
           }
@@ -505,6 +599,7 @@ export const make = (options: StorageMaintenanceOptions) =>
               compaction,
               authPruning: null,
               retention: null,
+              bodyRecap: null,
               reclaimedPages: 0,
             } satisfies StorageMaintenanceRun;
           }
@@ -516,13 +611,23 @@ export const make = (options: StorageMaintenanceOptions) =>
             completedAt,
             fullPassAt: full || Option.isNone(state) ? completedAt : state.value.fullPassAt,
             throughSequence: compaction.throughSequence,
+            ...(Option.isSome(state) && state.value.bodyRecap !== undefined
+              ? { bodyRecap: state.value.bodyRecap }
+              : {}),
           }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("storage-maintenance.state.write-failed", { cause }),
             ),
           );
           const authPruning = yield* pruneAuthWith(gate);
+          const retentionStartedAt = yield* Clock.currentTimeMillis;
           const retention = yield* runRetention(gate);
+          // Retention and the recap share one budget, so a pass holds the permit no longer than before.
+          const bodyRecap = yield* runBodyRecap(
+            gate,
+            (options.retentionBudgetMs ?? ThreadHistoryRetention.RETENTION_PASS_BUDGET_MS) -
+              ((yield* Clock.currentTimeMillis) - retentionStartedAt),
+          );
           const reclaimedPages = yield* reclaimWith(gate);
           yield* Effect.logInfo("storage-maintenance.compaction.completed", {
             mode: full ? "full" : "incremental",
@@ -543,6 +648,7 @@ export const make = (options: StorageMaintenanceOptions) =>
             compaction,
             authPruning,
             retention,
+            bodyRecap,
             reclaimedPages,
           } satisfies StorageMaintenanceRun;
         }),
@@ -567,6 +673,7 @@ export const make = (options: StorageMaintenanceOptions) =>
           compaction: null,
           authPruning,
           retention: null,
+          bodyRecap: null,
           reclaimedPages,
         } satisfies StorageMaintenanceRun;
       }

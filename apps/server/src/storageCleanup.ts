@@ -285,6 +285,22 @@ export const make = Effect.gen(function* () {
     return false;
   });
 
+  /** Commits on HEAD that no remote-tracking ref has; null when git's answer is not a count. */
+  const unpushedCommitCount = (cwd: string, operation: string) =>
+    git
+      .execute({
+        operation,
+        cwd,
+        args: ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+        maxOutputBytes: 1024,
+      })
+      .pipe(
+        Effect.map((result) => {
+          const count = Number.parseInt(result.stdout.trim(), 10);
+          return Number.isFinite(count) ? count : null;
+        }),
+      );
+
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
@@ -442,6 +458,12 @@ export const make = Effect.gen(function* () {
                   head.commitSha,
                   base.commitSha,
                 )));
+            // A PR closed unmerged goes too, under the orphan rule: only when
+            // every commit on the branch is on a remote-tracking ref.
+            if (!eligible && pullRequest?.state === "closed") {
+              eligible =
+                (yield* unpushedCommitCount(worktreePath, "StorageCleanup.closedUnpushed")) === 0;
+            }
           }
         }
         if (!eligible) return;
@@ -863,14 +885,11 @@ export const make = Effect.gen(function* () {
             : projectIds.every((id) => resolveWorktreeCleanup(settings, id).worktreeOnMerge);
         if (!allowed(serverSettings)) return;
         const head = yield* git.resolveCommit({ cwd: worktreePath, revision: "HEAD" });
-        const unpushed = yield* git.execute({
-          operation: "StorageCleanup.orphanUnpushed",
-          cwd: worktreePath,
-          args: ["rev-list", "--count", "HEAD", "--not", "--remotes"],
-          maxOutputBytes: 1024,
-        });
-        const unpushedCommits = Number.parseInt(unpushed.stdout.trim(), 10);
-        if (!Number.isFinite(unpushedCommits)) return;
+        const unpushedCommits = yield* unpushedCommitCount(
+          worktreePath,
+          "StorageCleanup.orphanUnpushed",
+        );
+        if (unpushedCommits === null) return;
         const pullRequest =
           status.branch === null
             ? null

@@ -652,12 +652,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           standsInFor !== null && sameRunModel(routedModel, modelSelection) ? standsInFor : null;
         // The header badge names the outside client or machine that started it.
         const origin = launchOriginOf(context, work, input.originHint, input.delegation?.carried);
-        // An explicit workspaceStrategy wins; otherwise the project's "Use worktrees" switch decides.
-        // A new worktree in a project with the switch off needs the user's own ask:
-        // agents otherwise fill the disk with checkouts the user turned off.
+        // An explicit root or existing-worktree strategy wins; a new worktree needs the project's
+        // "Use worktrees" switch on, and with no strategy the switch decides.
+        // A project with the switch off never gets a new worktree from an agent,
+        // whatever it claims the user asked: the switch itself is the user's ask,
+        // and agents otherwise fill the disk with checkouts the user turned off.
         const declinedWorktree =
           input.workspaceStrategy?.type === "worktree" &&
-          input.userAskedForWorktree !== true &&
           project !== undefined &&
           scratchProjectId === undefined &&
           !(yield* projectWantsWorktrees(project));

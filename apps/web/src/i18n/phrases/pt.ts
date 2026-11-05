@@ -521,8 +521,8 @@ export const pt: PhraseCatalog = {
     "Remover worktrees sem uso quando threads ativas ou arquivadas forem excluídas. Worktrees com mudanças locais são mantidas.",
   "Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept.":
     "Remover worktrees depois que as threads delas ficarem inativas por esta quantidade de dias. As pastas de threads abertas são sempre mantidas. As branches e o histórico das threads são mantidos.",
-  "Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
-    "Remover worktrees cujo pull request foi mesclado e cujos commits estão na branch padrão. Também remove worktrees limpas e enviadas que agentes criaram sem uma thread, quando o pull request delas é mesclado ou fechado e elas ficam um dia ociosas. As pastas de threads abertas são sempre mantidas.",
+  "Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept.":
+    "Remover worktrees cujo pull request foi mesclado e cujos commits estão na branch padrão, ou fechado sem mesclar com todos os commits enviados. Também remove worktrees limpas e enviadas que agentes criaram sem uma thread, quando o pull request delas é mesclado ou fechado e elas ficam um dia ociosas. As pastas de threads abertas são sempre mantidas.",
   "Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept.":
     "Remover worktrees sem commits além da branch padrão. As pastas de threads abertas são sempre mantidas.",
   Rename: "Renomear",

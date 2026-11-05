@@ -474,7 +474,7 @@ export function StorageSettingsPanel() {
               title={tx("Delete merged worktrees")}
               status={ruleStatus("worktreeOnMerge")}
               mixed={ruleMixed("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept."
+              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch, or closed without merging with every commit pushed. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
