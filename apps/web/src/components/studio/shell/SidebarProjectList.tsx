@@ -1,3 +1,4 @@
+import { useTx } from "../../../i18n";
 import { needsYouLabel } from "@specweave-studio/client-runtime/state/projectAttention";
 import { useProjectReturnSearch } from "../../../studio/projectReturnNavigation";
 /**
@@ -196,6 +197,7 @@ export function SidebarProjectList(props: {
     | ((group: SidebarProjectSnapshot, level: ProjectNotificationLevel) => void)
     | undefined;
 }) {
+  const tx = useTx();
   // A move's destination joins the project only when the move finishes; until then it is
   // the same project mid-move, shown once on its source row.
   const copyActivities = useCopyActivities();
@@ -399,7 +401,7 @@ export function SidebarProjectList(props: {
               data-project-divider
               data-empty={visible.pinned.length === 0 || undefined}
             >
-              {visible.pinned.length === 0 ? <span>Drop here to pin</span> : null}
+              {visible.pinned.length === 0 ? <span>{tx("Drop here to pin")}</span> : null}
             </li>
           ) : null}
           {visible.unpinned.map((group) => renderRow(group, false))}
@@ -531,6 +533,7 @@ export function ProjectRow(props: {
   designsProjectId?: ProjectId | undefined;
 }) {
   const { group, archived, pinned, designsProjectId } = props;
+  const tx = useTx();
   const navigate = useNavigate();
   // An archived project never asks for attention from the sidebar, nor does one
   // whose notifications the person turned off.
@@ -607,7 +610,7 @@ export function ProjectRow(props: {
       {renaming !== null && props.rename ? (
         <SidebarNameEditor
           icon={<ProjectFavicon project={project} className="size-[18px] shrink-0" />}
-          label="Project name"
+          label={tx("Project name")}
           rename={props.rename}
           state={renaming}
           onChange={setRenaming}
@@ -688,10 +691,14 @@ export function ProjectRow(props: {
             ) : null}
             {/* Automated rows start without alerts; a bell on each would say nothing. */}
             {muted && !archived && !props.automated ? (
-              <BellOffIcon className="sws-side-row-pin" aria-label="Notifications off" role="img" />
+              <BellOffIcon
+                className="sws-side-row-pin"
+                aria-label={tx("Notifications off")}
+                role="img"
+              />
             ) : null}
             {pinned ? (
-              <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" />
+              <PinIcon className="sws-side-row-pin" aria-label={tx("Pinned")} role="img" />
             ) : null}
             {/* Count and availability stay visible while the adjacent menu opens. */}
             {copying?.waiting && keyedCopy ? (
@@ -714,7 +721,7 @@ export function ProjectRow(props: {
                   requestCopyReview(keyedCopy.key);
                 }}
               >
-                Review
+                {tx("Review")}
               </span>
             ) : null}
             <span className="sws-side-row-end">
@@ -746,7 +753,7 @@ export function ProjectRow(props: {
             <button
               type="button"
               className="sws-icon-button sws-chat-menu"
-              aria-label={`Actions for ${displayName}`}
+              aria-label={tx("Actions for {name}", { name: displayName })}
             />
           }
         >
@@ -770,7 +777,7 @@ export function ProjectRow(props: {
                 }}
               >
                 <PaletteIcon aria-hidden />
-                Designs
+                {tx("Designs")}
               </MenuItem>
               <MenuSeparator />
             </>
@@ -784,7 +791,7 @@ export function ProjectRow(props: {
                 }}
               >
                 <PencilIcon aria-hidden />
-                Rename project
+                {tx("Rename project")}
               </MenuItem>
               <MenuSeparator />
             </>
@@ -792,19 +799,19 @@ export function ProjectRow(props: {
           {props.onPin ? (
             <MenuItem onClick={props.onPin}>
               {pinned ? <PinOffIcon aria-hidden /> : <PinIcon aria-hidden />}
-              {pinned ? "Unpin project" : "Pin project"}
+              {pinned ? tx("Unpin project") : tx("Pin project")}
             </MenuItem>
           ) : null}
           {props.onStep ? (
             <>
               <MenuItem disabled={!props.canStep?.("up")} onClick={() => props.onStep?.("up")}>
                 <ArrowUpIcon aria-hidden />
-                Move up
+                {tx("Move up")}
                 <MenuShortcut>{MOVE_SHORTCUT.up}</MenuShortcut>
               </MenuItem>
               <MenuItem disabled={!props.canStep?.("down")} onClick={() => props.onStep?.("down")}>
                 <ArrowDownIcon aria-hidden />
-                Move down
+                {tx("Move down")}
                 <MenuShortcut>{MOVE_SHORTCUT.down}</MenuShortcut>
               </MenuItem>
               <MenuSeparator />
@@ -827,7 +834,7 @@ export function ProjectRow(props: {
               </MenuItem>
               <MenuItem onClick={props.linkSuggestion.onDismiss}>
                 <Link2OffIcon aria-hidden />
-                Not the same project
+                {tx("Not the same project")}
               </MenuItem>
               <MenuSeparator />
             </>
@@ -842,7 +849,7 @@ export function ProjectRow(props: {
           ) : null}
           <MenuItem onClick={() => props.onArchive(!archived)}>
             <ArchiveIcon aria-hidden />
-            {archived ? "Restore project" : "Archive project"}
+            {archived ? tx("Restore project") : tx("Archive project")}
           </MenuItem>
         </MenuPopup>
       </Menu>
@@ -858,11 +865,12 @@ function ProjectNotificationsMenu(props: {
   level: ProjectNotificationLevel;
   onChange: (level: ProjectNotificationLevel) => void;
 }) {
+  const tx = useTx();
   return (
     <MenuSub>
       <MenuSubTrigger>
         {props.level === "none" ? <BellOffIcon aria-hidden /> : <BellIcon aria-hidden />}
-        <span className="flex-1">Notifications</span>
+        <span className="flex-1">{tx("Notifications")}</span>
         <span className="text-muted-foreground text-xs">
           {PROJECT_NOTIFICATION_LEVEL_COPY[props.level].short}
         </span>

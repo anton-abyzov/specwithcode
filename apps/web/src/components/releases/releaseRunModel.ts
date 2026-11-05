@@ -197,6 +197,15 @@ export function runTone(state: ReleaseRunState): ReleaseTone {
   }
 }
 
+/**
+ * The Version cell: where a machine went. A machine the release did not update stays on
+ * the version it had (or unknown), never the release's target.
+ */
+export function hostVersion(host: ReleaseRunHost): string {
+  if (host.state === "not-updated") return host.from ?? "—";
+  return host.from && host.from !== host.to ? `${host.from} → ${host.to ?? "?"}` : (host.to ?? "?");
+}
+
 export function hostTone(host: ReleaseRunHost): ReleaseTone {
   if (host.state === "verified") return "success";
   if (host.state === "not-updated") return host.required ? "danger" : "warning";

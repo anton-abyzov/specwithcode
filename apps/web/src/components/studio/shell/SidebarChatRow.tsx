@@ -3,6 +3,7 @@
  * renames it in place, the way a project row does. Chats a coordinator named
  * keep their title, so they open but do not rename.
  */
+import { useTx } from "../../../i18n";
 import { MoreHorizontalIcon, PencilIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -42,7 +43,8 @@ export function SidebarChatRow(props: {
   }, [renaming]);
   // An empty title shows as "Untitled chat" but edits as empty.
   const startRename = () => setRenaming({ draft: props.title, error: null });
-  const label = props.title || "Untitled chat";
+  const tx = useTx();
+  const label = props.title || tx("Untitled chat");
   return (
     <li
       className="sws-chat-row"
@@ -52,7 +54,7 @@ export function SidebarChatRow(props: {
       {renaming !== null && props.rename ? (
         <SidebarNameEditor
           icon={props.icon}
-          label="Chat name"
+          label={tx("Chat name")}
           rename={props.rename}
           state={renaming}
           onChange={setRenaming}
@@ -98,7 +100,7 @@ export function SidebarChatRow(props: {
             <button
               type="button"
               className="sws-icon-button sws-chat-menu"
-              aria-label={`Actions for ${label}`}
+              aria-label={tx("Actions for {name}", { name: label })}
             />
           }
         >
@@ -113,7 +115,7 @@ export function SidebarChatRow(props: {
             return keep;
           }}
         >
-          <MenuItem onClick={props.onOpen}>Open</MenuItem>
+          <MenuItem onClick={props.onOpen}>{tx("Open")}</MenuItem>
           {props.rename ? (
             <MenuItem
               onClick={() => {
@@ -122,7 +124,7 @@ export function SidebarChatRow(props: {
               }}
             >
               <PencilIcon aria-hidden />
-              Rename
+              {tx("Rename")}
             </MenuItem>
           ) : null}
           {props.menuItems}

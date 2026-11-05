@@ -354,4 +354,7 @@ export const ko: Messages = {
   "providerModels.count": { other: "모델 {count}개" },
   "providerModels.favorites": { other: "즐겨찾기 {count}개" },
   "providerModels.hidden": { other: "숨김 {count}개" },
+  "sidebar.needYou": { other: "개 확인 필요" },
+  "sidebar.chatCount": { other: "채팅 {count}개" },
+  "sidebar.openChatCount": { other: "열린 채팅 {count}개" },
 };

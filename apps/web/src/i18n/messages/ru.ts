@@ -414,4 +414,22 @@ export const ru: Messages = {
     many: "{count} скрыто",
     other: "{count} скрыто",
   },
+  "sidebar.needYou": {
+    one: "ждёт вас",
+    few: "ждут вас",
+    many: "ждут вас",
+    other: "ждут вас",
+  },
+  "sidebar.chatCount": {
+    one: "{count} чат",
+    few: "{count} чата",
+    many: "{count} чатов",
+    other: "{count} чата",
+  },
+  "sidebar.openChatCount": {
+    one: "{count} открытый чат",
+    few: "{count} открытых чата",
+    many: "{count} открытых чатов",
+    other: "{count} открытого чата",
+  },
 };

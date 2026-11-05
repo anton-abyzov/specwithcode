@@ -10,6 +10,7 @@ import realFixture from "../../../tests/releases-view/fixture-release-1.0.192.js
 import {
   formatSeconds,
   hostSummary,
+  hostVersion,
   releaseGraphColumns,
   releaseHostGroups,
   selectedRun,
@@ -227,6 +228,11 @@ describe("ReleasesView", () => {
     expect(html).toContain('data-host="m4" data-state="verified"');
     expect(html).toContain("1.0.189 → 1.0.190");
     expect(html).toContain("2 of 3 required machines verified, 2 not updated");
+    // A machine left behind shows the version it stayed on, not the release's target.
+    expect(html).not.toContain("1.0.187 → 1.0.190");
+    const anna = held.hosts.find((host) => host.identity === "annas-macbook-air")!;
+    expect(hostVersion(anna)).toBe("1.0.187");
+    expect(hostVersion({ ...anna, from: null })).toBe("—");
   });
 
   it("shows the run picked in the list", () => {

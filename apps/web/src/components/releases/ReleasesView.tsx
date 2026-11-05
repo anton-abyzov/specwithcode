@@ -22,6 +22,7 @@ import {
   formatWhen,
   hostSummary,
   hostTone,
+  hostVersion,
   releaseGraphColumns,
   releaseHostGroups,
   runTone,
@@ -190,7 +191,7 @@ function HostRow({ host }: { host: ReleaseRunHost }) {
         </span>
       </th>
       <td className="py-2 pr-3 whitespace-nowrap tabular-nums text-muted-foreground">
-        {host.from && host.from !== host.to ? `${host.from} → ${host.to ?? "?"}` : (host.to ?? "?")}
+        {hostVersion(host)}
       </td>
       <td className="py-2 pr-3 whitespace-nowrap tabular-nums">{formatClock(host.askedAt)}</td>
       <td className="py-2 pr-3 whitespace-nowrap tabular-nums">{formatClock(host.ackedAt)}</td>

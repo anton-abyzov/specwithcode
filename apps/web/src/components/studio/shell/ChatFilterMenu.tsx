@@ -2,6 +2,7 @@
  * The Chats list's filter and sort menu. What it lists and how it is arranged live in
  * ChatListOptions; the machine is stored apart, since it is an id and not a fixed choice.
  */
+import { useT, useTx } from "../../../i18n";
 import { ArchiveIcon, SlidersVerticalIcon } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { Fragment } from "react";
@@ -64,6 +65,7 @@ export function ChatFilterMenu(props: {
   machine: string | null;
   onMachineChange: (machineId: string | null) => void;
 }) {
+  const tx = useTx();
   const changed = !chatListOptionsAreDefault(props.options) || props.machine !== null;
   return (
     <Menu>
@@ -76,7 +78,9 @@ export function ChatFilterMenu(props: {
                   type="button"
                   className={cn("sws-icon-button", changed && "sws-icon-button-on")}
                   aria-label={
-                    changed ? "Filter and sort chats, filter active" : "Filter and sort chats"
+                    changed
+                      ? tx("Filter and sort chats, filter active")
+                      : tx("Filter and sort chats")
                   }
                 />
               }
@@ -86,7 +90,7 @@ export function ChatFilterMenu(props: {
           <SlidersVerticalIcon aria-hidden />
           {changed ? <span className="sws-filter-flag" aria-hidden /> : null}
         </TooltipTrigger>
-        <TooltipPopup side="bottom">Filter and sort chats</TooltipPopup>
+        <TooltipPopup side="bottom">{tx("Filter and sort chats")}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" side="bottom" className="min-w-60">
         {FILTER_SECTIONS.map((section, index) => {
@@ -102,14 +106,14 @@ export function ChatFilterMenu(props: {
               ) : null}
               <MenuSub>
                 <MenuSubTrigger>
-                  <span className="flex-1">{section.title}</span>
+                  <span className="flex-1">{tx(section.title)}</span>
                   <span className="text-muted-foreground">
-                    {labels[props.options[section.key]]}
+                    {tx(labels[props.options[section.key]]!)}
                   </span>
                 </MenuSubTrigger>
                 <MenuSubPopup className="min-w-44">
                   <MenuGroup>
-                    <MenuGroupLabel>{section.title}</MenuGroupLabel>
+                    <MenuGroupLabel>{tx(section.title)}</MenuGroupLabel>
                     <MenuRadioGroup
                       value={props.options[section.key]}
                       onValueChange={(value) =>
@@ -122,7 +126,7 @@ export function ChatFilterMenu(props: {
                       {chatFilterValues(section, props.options).map((value) => (
                         <MenuRadioItem key={value} value={value} closeOnClick={false}>
                           <span className="flex items-center justify-between gap-6">
-                            {labels[value]}
+                            {tx(labels[value]!)}
                             <MenuRadioItemIndicator />
                           </span>
                         </MenuRadioItem>
@@ -142,13 +146,13 @@ export function ChatFilterMenu(props: {
               props.onMachineChange(null);
             }}
           >
-            Reset to defaults
+            {tx("Reset to defaults")}
           </MenuItem>
         ) : null}
         {/* Rarely needed, so it waits here rather than taking a row in the list. */}
         <MenuItem render={<Link to="/settings/archived" />}>
           <ArchiveIcon aria-hidden />
-          Archived chats
+          {tx("Archived chats")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -161,21 +165,23 @@ function ChatMachineMenu(props: {
   machine: string | null;
   onMachineChange: (machineId: string | null) => void;
 }) {
+  const t = useT();
+  const tx = useTx();
   const current = props.machines.find((option) => option.machineId === props.machine);
   return (
     <MenuSub>
       <MenuSubTrigger>
-        <span className="flex-1">Machine</span>
-        <span className="text-muted-foreground">{current?.label ?? "All"}</span>
+        <span className="flex-1">{tx("Machine")}</span>
+        <span className="text-muted-foreground">{current?.label ?? tx("All machines")}</span>
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-44">
         <MenuGroup>
-          <MenuGroupLabel>Machine</MenuGroupLabel>
+          <MenuGroupLabel>{tx("Machine")}</MenuGroupLabel>
           <MenuRadioGroup
             value={props.machine ?? ""}
             onValueChange={(value) => props.onMachineChange(value === "" ? null : value)}
           >
-            {[{ machineId: "", label: "All machines", count: null }, ...props.machines].map(
+            {[{ machineId: "", label: tx("All machines"), count: null }, ...props.machines].map(
               (option) => (
                 <MenuRadioItem
                   key={option.machineId}
@@ -184,7 +190,7 @@ function ChatMachineMenu(props: {
                   aria-label={
                     option.count === null
                       ? option.label
-                      : `${option.label}, ${option.count} open ${option.count === 1 ? "chat" : "chats"}`
+                      : `${option.label}, ${t("sidebar.openChatCount", { count: option.count })}`
                   }
                 >
                   <span className="flex items-center justify-between gap-6">

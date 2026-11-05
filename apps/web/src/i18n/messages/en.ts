@@ -376,6 +376,9 @@ export const en = {
   "providerModels.count": { one: "{count} model", other: "{count} models" },
   "providerModels.favorites": { one: "{count} favorite", other: "{count} favorites" },
   "providerModels.hidden": { one: "{count} hidden", other: "{count} hidden" },
+  "sidebar.needYou": { one: "needs you", other: "need you" },
+  "sidebar.chatCount": { one: "{count} chat", other: "{count} chats" },
+  "sidebar.openChatCount": { one: "{count} open chat", other: "{count} open chats" },
 } as const satisfies Readonly<Record<string, Message>>;
 
 export type MessageKey = keyof typeof en;

@@ -378,4 +378,7 @@ export const pt: Messages = {
   "providerModels.count": { one: "{count} modelo", other: "{count} modelos" },
   "providerModels.favorites": { one: "{count} favorito", other: "{count} favoritos" },
   "providerModels.hidden": { one: "{count} oculto", other: "{count} ocultos" },
+  "sidebar.needYou": { one: "precisa de você", other: "precisam de você" },
+  "sidebar.chatCount": { one: "{count} chat", other: "{count} chats" },
+  "sidebar.openChatCount": { one: "{count} chat aberto", other: "{count} chats abertos" },
 };

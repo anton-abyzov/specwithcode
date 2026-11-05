@@ -357,4 +357,7 @@ export const ja: Messages = {
   "providerModels.count": { other: "{count} 個のモデル" },
   "providerModels.favorites": { other: "お気に入り {count} 個" },
   "providerModels.hidden": { other: "非表示 {count} 個" },
+  "sidebar.needYou": { other: "件が対応待ち" },
+  "sidebar.chatCount": { other: "チャット {count} 件" },
+  "sidebar.openChatCount": { other: "開いているチャット {count} 件" },
 };

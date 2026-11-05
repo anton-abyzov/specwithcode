@@ -1,3 +1,4 @@
+import { useT, useTx } from "../../../i18n";
 import { aggregateProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 import {
   useAttentionMembers,
@@ -186,6 +187,8 @@ const PROJECT_PAGE = 7;
 const CHAT_PAGE = 30;
 
 export default function StudioSidebar() {
+  const t = useT();
+  const tx = useTx();
   const allProjectGroups = useSettingsProjectGroups();
   const allThreads = useThreadShells();
   // While the personal assistant is off (Settings → General), it and its chats are
@@ -563,7 +566,7 @@ export default function StudioSidebar() {
   );
   // A menu closes on click, so a refused action has to say so somewhere else.
   const reportFailure = async (
-    verb: string,
+    failureTitle: string,
     pending: Promise<AtomCommandResult<unknown, unknown>>,
   ): Promise<void> => {
     const result = await pending;
@@ -572,8 +575,8 @@ export default function StudioSidebar() {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: `Could not ${verb} this chat`,
-        description: cause instanceof Error ? cause.message : "Try again in a moment.",
+        title: failureTitle,
+        description: cause instanceof Error ? cause.message : tx("Try again in a moment."),
       }),
     );
   };
@@ -661,8 +664,8 @@ export default function StudioSidebar() {
     if (activeProjectKey && !selectedProject) {
       toastManager.add({
         type: "error",
-        title: "Project machine unavailable",
-        description: "Choose an available machine before starting a new chat.",
+        title: tx("Project machine unavailable"),
+        description: tx("Choose an available machine before starting a new chat."),
       });
       return;
     }
@@ -698,8 +701,10 @@ export default function StudioSidebar() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not ${archived ? "archive" : "restore"} ${displayedCheckouts.get(group.projectKey)?.title ?? group.displayName}`,
-            description: cause instanceof Error ? cause.message : "Try again in a moment.",
+            title: tx(archived ? "Could not archive {name}" : "Could not restore {name}", {
+              name: displayedCheckouts.get(group.projectKey)?.title ?? group.displayName,
+            }),
+            description: cause instanceof Error ? cause.message : tx("Try again in a moment."),
           }),
         );
         return;
@@ -718,8 +723,10 @@ export default function StudioSidebar() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not move ${displayedCheckouts.get(group.projectKey)?.title ?? group.displayName}`,
-            description: cause instanceof Error ? cause.message : "Try again in a moment.",
+            title: tx("Could not move {name}", {
+              name: displayedCheckouts.get(group.projectKey)?.title ?? group.displayName,
+            }),
+            description: cause instanceof Error ? cause.message : tx("Try again in a moment."),
           }),
         );
         return;
@@ -744,8 +751,10 @@ export default function StudioSidebar() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `Could not change notifications for ${displayedCheckouts.get(group.projectKey)?.title ?? group.displayName}`,
-            description: cause instanceof Error ? cause.message : "Try again in a moment.",
+            title: tx("Could not change notifications for {name}", {
+              name: displayedCheckouts.get(group.projectKey)?.title ?? group.displayName,
+            }),
+            description: cause instanceof Error ? cause.message : tx("Try again in a moment."),
           }),
         );
         return;
@@ -778,7 +787,7 @@ export default function StudioSidebar() {
       if (result._tag === "Success" || isAtomCommandInterrupted(result)) continue;
       const cause = squashAtomCommandFailure(result);
       const reason =
-        cause instanceof Error ? cause.message : "Could not rename the project. Try again.";
+        cause instanceof Error ? cause.message : tx("Could not rename the project. Try again.");
       return index > 0 && member.environmentLabel
         ? `${member.environmentLabel}: ${reason}`
         : reason;
@@ -831,7 +840,7 @@ export default function StudioSidebar() {
             const cause = squashAtomCommandFailure(result);
             return cause instanceof Error
               ? cause.message
-              : "Could not rename this chat. Try again.";
+              : tx("Could not rename this chat. Try again.");
           },
         };
   // A personal assistant is not a code project: it sits under Overview, ahead of every
@@ -917,7 +926,7 @@ export default function StudioSidebar() {
           <div className="sws-side-actions">
             <button type="button" className="sws-side-row" onClick={newChat}>
               <SquarePenIcon aria-hidden />
-              <span className="sws-side-row-label">New chat</span>
+              <span className="sws-side-row-label">{tx("New chat")}</span>
               {newChatShortcut ? <kbd className="sws-kbd">{newChatShortcut}</kbd> : null}
             </button>
             <button
@@ -929,7 +938,7 @@ export default function StudioSidebar() {
               }}
             >
               <SearchIcon aria-hidden />
-              <span className="sws-side-row-label">Search</span>
+              <span className="sws-side-row-label">{tx("Search")}</span>
               {searchShortcut ? <kbd className="sws-kbd">{searchShortcut}</kbd> : null}
             </button>
             <Link
@@ -939,10 +948,10 @@ export default function StudioSidebar() {
               onClick={closeMobile}
             >
               <LayoutGridIcon aria-hidden />
-              <span className="sws-side-row-label">Overview</span>
+              <span className="sws-side-row-label">{tx("Overview")}</span>
             </Link>
             {assistants.length > 0 ? (
-              <ul className="sws-side-list" aria-label={PERSONAL_ASSISTANT_LABEL}>
+              <ul className="sws-side-list" aria-label={tx(PERSONAL_ASSISTANT_LABEL)}>
                 {assistants.map((group) => (
                   <ProjectRow
                     key={group.projectKey}
@@ -974,8 +983,8 @@ export default function StudioSidebar() {
                   }}
                 >
                   <ConciergeBellIcon aria-hidden />
-                  <span className="sws-side-row-label">{PERSONAL_ASSISTANT_LABEL}</span>
-                  <span className="sws-side-row-hint">Set up</span>
+                  <span className="sws-side-row-label">{tx(PERSONAL_ASSISTANT_LABEL)}</span>
+                  <span className="sws-side-row-hint">{tx("Set up")}</span>
                 </button>
               </Tip>
             )}
@@ -986,18 +995,18 @@ export default function StudioSidebar() {
               onClick={closeMobile}
             >
               <PaletteIcon aria-hidden />
-              <span className="sws-side-row-label">Design</span>
+              <span className="sws-side-row-label">{tx("Design")}</span>
             </Link>
           </div>
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
             <div className="sws-side-heading">
-              <h2 id="sws-side-projects">Projects</h2>
-              <Tip label="New project">
+              <h2 id="sws-side-projects">{tx("Projects")}</h2>
+              <Tip label={tx("New project")}>
                 <button
                   type="button"
                   className="sws-icon-button"
-                  aria-label="Add project"
+                  aria-label={tx("Add project")}
                   onClick={() => {
                     closeMobile();
                     openCommandPalette({ open: "add-project" });
@@ -1055,14 +1064,18 @@ export default function StudioSidebar() {
                 aria-expanded={showAllProjects}
                 onClick={() => setShowAllProjects((value) => !value)}
               >
-                {showAllProjects ? "Show fewer" : `Show ${hiddenProjects} more`}
+                {showAllProjects
+                  ? tx("Show fewer")
+                  : tx("Show {count} more", { count: hiddenProjects })}
               </button>
             ) : null}
             {automatedProjects.length > 0 ? (
               <>
                 <Tip
                   side="right"
-                  label="Projects that checks and agents made for themselves. Move one to your projects from its menu."
+                  label={tx(
+                    "Projects that checks and agents made for themselves. Move one to your projects from its menu.",
+                  )}
                 >
                   <button
                     type="button"
@@ -1072,12 +1085,15 @@ export default function StudioSidebar() {
                     onClick={() => setShowAutomated(!automatedOpen)}
                   >
                     <BotIcon aria-hidden className="sws-side-more-icon" />
-                    {automatedOpen ? "Hide automated" : `Automated (${automatedProjects.length})`}
+                    {automatedOpen
+                      ? tx("Hide automated")
+                      : tx("Automated ({count})", { count: automatedProjects.length })}
                     {!automatedOpen && automatedWaiting > 0 ? (
                       <span className="sws-count sws-count-waiting">
                         {automatedWaiting}
                         <span className="sr-only">
-                          {automatedWaiting === 1 ? " needs you" : " need you"}
+                          {" "}
+                          {t("sidebar.needYou", { count: automatedWaiting })}
                         </span>
                       </span>
                     ) : null}
@@ -1087,7 +1103,7 @@ export default function StudioSidebar() {
                   <ul
                     id="sws-side-automated"
                     className="sws-side-list"
-                    aria-label="Automated projects"
+                    aria-label={tx("Automated projects")}
                   >
                     {automatedProjects.map((group) => (
                       <ProjectRow
@@ -1123,13 +1139,15 @@ export default function StudioSidebar() {
                   onClick={() => setShowArchived(!archivedOpen)}
                 >
                   <ArchiveIcon aria-hidden className="sws-side-more-icon" />
-                  {archivedOpen ? "Hide archived" : `Archived (${archivedProjects.length})`}
+                  {archivedOpen
+                    ? tx("Hide archived")
+                    : tx("Archived ({count})", { count: archivedProjects.length })}
                 </button>
                 {archivedOpen ? (
                   <ul
                     id="sws-side-archived"
                     className="sws-side-list"
-                    aria-label="Archived projects"
+                    aria-label={tx("Archived projects")}
                   >
                     {archivedProjects.map((group) => (
                       <ProjectRow
@@ -1161,14 +1179,14 @@ export default function StudioSidebar() {
                 not take the open menu and the keyboard with it. */}
             {chatPlanLoaders}
             <div className="sws-side-heading">
-              <h2 id="sws-side-chats">Chats</h2>
+              <h2 id="sws-side-chats">{tx("Chats")}</h2>
               <div className="sws-side-heading-tools">
                 {chatTools}
-                <Tip label="New chat">
+                <Tip label={tx("New chat")}>
                   <button
                     type="button"
                     className="sws-icon-button"
-                    aria-label="New chat"
+                    aria-label={tx("New chat")}
                     onClick={newChat}
                   >
                     <PlusIcon aria-hidden />
@@ -1182,22 +1200,27 @@ export default function StudioSidebar() {
                   type="button"
                   className="sws-unplanned-filter"
                   aria-pressed
-                  aria-label={`Showing chats on ${machineFilterLabel}. Show all machines`}
+                  aria-label={tx("Showing chats on {machine}. Show all machines", {
+                    machine: machineFilterLabel,
+                  })}
                   onClick={() => setStoredMachine(null)}
                 >
                   <LaptopIcon aria-hidden />
-                  On {machineFilterLabel}
-                  <span className="sws-unplanned-clear">Show all</span>
+                  {tx("On {machine}", { machine: machineFilterLabel })}
+                  <span className="sws-unplanned-clear">{tx("Show all")}</span>
                 </button>
               </span>
             ) : null}
             {chatTotal === 0 ? (
               <p className="sws-side-empty" role="status">
-                {chatListEmptyMessage(options, hiddenProjectThreads, machineFilterLabel)}
+                {machineFilterLabel !== null
+                  ? tx("No chats on {machine} match this filter.", { machine: machineFilterLabel })
+                  : tx(chatListEmptyMessage(options, hiddenProjectThreads))}
               </p>
             ) : (
-              visibleChatGroups.map(({ group, isCollapsed, rows }) => {
-                const headingId = `sws-chats-${group.key.replace(/[^a-z0-9]+/gi, "-")}`;
+              visibleChatGroups.map(({ group, isCollapsed, rows }, groupIndex) => {
+                // By position: a translated or non-Latin group key would reduce to the same id.
+                const headingId = `sws-chats-${groupIndex}`;
                 const titled = options.groupBy !== "none";
                 return (
                   <div
@@ -1218,10 +1241,12 @@ export default function StudioSidebar() {
                               }))
                             }
                           >
-                            {group.label}
+                            {options.groupBy === "machine" ||
+                            (options.groupBy === "project" && group.label !== "No project")
+                              ? group.label
+                              : tx(group.label)}
                             <span className="sr-only">
-                              , {group.threads.length}{" "}
-                              {group.threads.length === 1 ? "chat" : "chats"}
+                              , {t("sidebar.chatCount", { count: group.threads.length })}
                             </span>
                             <ChevronRightIcon aria-hidden data-open={!isCollapsed} />
                           </button>
@@ -1254,8 +1279,11 @@ export default function StudioSidebar() {
                           : null;
                         const stateDescription = preferredLabel
                           ? thread.modelIdentity?.kind === "fallback"
-                            ? `, fallback for ${preferredLabel} (${fallbackReason(thread.modelIdentity)})`
-                            : `, saved model ${preferredLabel}`
+                            ? `, ${tx("fallback for {model} ({reason})", {
+                                model: preferredLabel,
+                                reason: fallbackReason(thread.modelIdentity),
+                              })}`
+                            : `, ${tx("saved model {model}", { model: preferredLabel })}`
                           : "";
                         // This machine is never offline (see isEnvironmentUnreachable);
                         // the check here keeps its chats from ever showing it.
@@ -1283,15 +1311,18 @@ export default function StudioSidebar() {
                         const executionOffline =
                           location.executionMachineId !== primaryEnvironmentId &&
                           unreachable.has(location.executionMachineId);
-                        const machineNote = chatMachineNote({
-                          location,
-                          offlineHost: hostOffline ? (machine ?? "Its machine") : null,
-                          runsElsewhere: location.executionMachineId !== thread.environmentId,
-                          executionName,
-                          executionOffline,
-                          namedMachine,
-                        });
-                        const title = thread.title || "Untitled chat";
+                        const machineNote = chatMachineNote(
+                          {
+                            location,
+                            offlineHost: hostOffline ? (machine ?? tx("Its machine")) : null,
+                            runsElsewhere: location.executionMachineId !== thread.environmentId,
+                            executionName,
+                            executionOffline,
+                            namedMachine,
+                          },
+                          tx,
+                        );
+                        const title = thread.title || tx("Untitled chat");
                         const project = projectByMember.get(
                           `${thread.environmentId}:${thread.projectId}`,
                         );
@@ -1323,34 +1354,43 @@ export default function StudioSidebar() {
                                       disabled={threadMoveBlockedReason(thread, undefined) !== null}
                                       onClick={() => void requestThreadMove(ref)}
                                     >
-                                      Move to project…
+                                      {tx("Move to project…")}
                                     </MenuItem>
                                   ) : null
                                 ) : thread.settledOverride === "settled" ? (
                                   <MenuItem
                                     onClick={() =>
-                                      void reportFailure("reopen", actions.unsettleThread(ref))
+                                      void reportFailure(
+                                        tx("Could not reopen this chat"),
+                                        actions.unsettleThread(ref),
+                                      )
                                     }
                                   >
-                                    Reopen
+                                    {tx("Reopen")}
                                   </MenuItem>
                                 ) : (
                                   <MenuItem
                                     onClick={() =>
-                                      void reportFailure("resolve", actions.settleThread(ref))
+                                      void reportFailure(
+                                        tx("Could not resolve this chat"),
+                                        actions.settleThread(ref),
+                                      )
                                     }
                                   >
-                                    Resolve
+                                    {tx("Resolve")}
                                   </MenuItem>
                                 )}
                                 <MenuSeparator />
                                 <MenuItem
                                   disabled={!threadRuntimeCanArchive(thread.runtime)}
                                   onClick={() =>
-                                    void reportFailure("archive", actions.archiveThread(ref))
+                                    void reportFailure(
+                                      tx("Could not archive this chat"),
+                                      actions.archiveThread(ref),
+                                    )
                                   }
                                 >
-                                  Archive
+                                  {tx("Archive")}
                                 </MenuItem>
                               </>
                             }
@@ -1358,7 +1398,7 @@ export default function StudioSidebar() {
                             {plan ? <PlanProgressChip plan={plan} tip={false} /> : null}
                             <span className="sr-only">
                               , {label.full}
-                              {stateDescription}, {THREAD_TONE_LABELS[tone]}
+                              {stateDescription}, {tx(THREAD_TONE_LABELS[tone])}
                               {machineNote ? `, ${machineNote}` : ""}
                             </span>
                             {threadToneShowsDot(tone) ? (
@@ -1394,7 +1434,7 @@ export default function StudioSidebar() {
                 className="sws-side-more"
                 onClick={() => setChatLimit((value) => value + CHAT_PAGE)}
               >
-                Show more
+                {tx("Show more")}
               </button>
             ) : null}
           </div>

@@ -385,4 +385,7 @@ export const de: Messages = {
   "providerModels.count": { one: "{count} Modell", other: "{count} Modelle" },
   "providerModels.favorites": { one: "{count} Favorit", other: "{count} Favoriten" },
   "providerModels.hidden": { one: "{count} ausgeblendet", other: "{count} ausgeblendet" },
+  "sidebar.needYou": { one: "braucht dich", other: "brauchen dich" },
+  "sidebar.chatCount": { one: "{count} Chat", other: "{count} Chats" },
+  "sidebar.openChatCount": { one: "{count} offener Chat", other: "{count} offene Chats" },
 };

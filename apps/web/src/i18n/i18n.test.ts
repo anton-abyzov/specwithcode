@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
+import { CHAT_OPTION_LABELS, DATE_BUCKETS, THREAD_TONE_LABELS } from "../studio/shellModel";
 import { matchLocale, resolveLocale, resolveSystemLocale, SUPPORTED_LOCALES, translate } from ".";
 import { de } from "./messages/de";
 import { en, type MessageKey } from "./messages/en";
@@ -217,6 +218,19 @@ const DRIVER_PHRASES = DRIVER_OPTIONS.flatMap((option) => [
 
 describe.each(Object.entries(PHRASE_CATALOGS))("%s provider driver copy", (_locale, catalog) => {
   it.each(DRIVER_PHRASES)("translates %s", (english) => {
+    expect(Object.hasOwn(catalog, english)).toBe(true);
+  });
+});
+
+// The sidebar translates these model labels by their English text.
+const SIDEBAR_LABEL_PHRASES = [
+  ...DATE_BUCKETS,
+  ...Object.values(THREAD_TONE_LABELS),
+  ...Object.values(CHAT_OPTION_LABELS).flatMap((labels) => Object.values(labels)),
+];
+
+describe.each(Object.entries(PHRASE_CATALOGS))("%s sidebar labels", (_locale, catalog) => {
+  it.each(SIDEBAR_LABEL_PHRASES)("translates %s", (english) => {
     expect(Object.hasOwn(catalog, english)).toBe(true);
   });
 });

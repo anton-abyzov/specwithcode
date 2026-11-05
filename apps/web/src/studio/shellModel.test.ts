@@ -996,10 +996,4 @@ describe("chat list by machine", () => {
     expect(new Set(groups.map((group) => group.key)).size).toBe(3);
     expect(groups.every((group) => group.key.startsWith("machine:"))).toBe(true);
   });
-
-  it("says which machine a filtered empty list is on", () => {
-    expect(chatListEmptyMessage(DEFAULT_CHAT_LIST_OPTIONS, 3, "m1")).toBe(
-      "No chats on m1 match this filter.",
-    );
-  });
 });

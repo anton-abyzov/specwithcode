@@ -4,6 +4,8 @@
  * column is so rows line up. Pure rules only; those lists render them.
  */
 
+import { englishPhrase, type TranslatePhrase } from "../i18n";
+
 export interface MachineFilterThread {
   readonly archivedAt: string | null;
   readonly settledOverride?: string | null;
@@ -76,26 +78,33 @@ export function chatsShowMachineColumn(input: {
 }
 
 /** What a chat row's tooltip and screen reader text say about its machines, or nothing. */
-export function chatMachineNote(input: {
-  readonly location: {
-    readonly moved: boolean;
-    readonly state: string;
-    readonly description: string;
-  };
-  /** The machine the shell came from, when it can't be reached; null while it answers. */
-  readonly offlineHost: string | null;
-  /** It serves the chat but another machine runs it. */
-  readonly runsElsewhere: boolean;
-  readonly executionName: string;
-  readonly executionOffline: boolean;
-  /** The machine to name on a plain row, when any. */
-  readonly namedMachine: string | null;
-}): string | null {
-  const runnerOffline = `${input.executionName} can't be reached`;
+export function chatMachineNote(
+  input: {
+    readonly location: {
+      readonly moved: boolean;
+      readonly state: string;
+      readonly description: string;
+    };
+    /** The machine the shell came from, when it can't be reached; null while it answers. */
+    readonly offlineHost: string | null;
+    /** It serves the chat but another machine runs it. */
+    readonly runsElsewhere: boolean;
+    readonly executionName: string;
+    readonly executionOffline: boolean;
+    /** The machine to name on a plain row, when any. */
+    readonly namedMachine: string | null;
+  },
+  tx: TranslatePhrase = englishPhrase,
+): string | null {
+  const runnerOffline = tx("{machine} can't be reached", { machine: input.executionName });
   if (input.offlineHost !== null) {
-    const host = `${input.offlineHost} can't be reached`;
+    const host = tx("{machine} can't be reached", { machine: input.offlineHost });
     if (!input.runsElsewhere) return host;
-    return `${host} · ${input.executionOffline ? runnerOffline : `runs on ${input.executionName}`}`;
+    return `${host} · ${
+      input.executionOffline
+        ? runnerOffline
+        : tx("runs on {machine}", { machine: input.executionName })
+    }`;
   }
   if (input.location.moved || input.location.state !== "running") {
     // An unknown runner's description already says it stopped answering.
@@ -103,5 +112,5 @@ export function chatMachineNote(input: {
       ? `${input.location.description} · ${runnerOffline}`
       : input.location.description;
   }
-  return input.namedMachine ? `On ${input.namedMachine}` : null;
+  return input.namedMachine ? tx("On {machine}", { machine: input.namedMachine }) : null;
 }

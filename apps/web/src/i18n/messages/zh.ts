@@ -336,4 +336,7 @@ export const zh: Messages = {
   "providerModels.count": { other: "{count} 个模型" },
   "providerModels.favorites": { other: "{count} 个收藏" },
   "providerModels.hidden": { other: "{count} 个已隐藏" },
+  "sidebar.needYou": { other: "个需要你处理" },
+  "sidebar.chatCount": { other: "{count} 个对话" },
+  "sidebar.openChatCount": { other: "{count} 个打开的对话" },
 };

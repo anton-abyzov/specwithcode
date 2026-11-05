@@ -252,9 +252,7 @@ export function chatListOptionsAreDefault(options: ChatListOptions): boolean {
 export function chatListEmptyMessage(
   options: ChatListOptions,
   hiddenProjectThreads: number,
-  machineLabel: string | null = null,
 ): string {
-  if (machineLabel !== null) return `No chats on ${machineLabel} match this filter.`;
   if (options.projectThreads === "hide" && hiddenProjectThreads > 0)
     return "No chats yet. Threads agents started are on their project page.";
   return chatListOptionsAreDefault(options) ? "No chats yet." : "No chats match this filter.";
