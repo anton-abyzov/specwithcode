@@ -166,6 +166,85 @@ class Retention(unittest.TestCase):
         self.assertEqual(len(observed), 1)
         self.assertFalse(list(self.root.iterdir()))
 
+    def test_a_retired_husk_a_failed_removal_left_is_removed_and_a_locked_one_stays(self):
+        husk = self.root / ('.retired-1.0.189-' + 'b' * 32)
+        (husk / ('assets-' + SHA[:12])).mkdir(parents=True)
+        (husk / ('assets-' + SHA[:12]) / 'bytes').write_bytes(b'rebuildable')
+        busy = self.root / ('.retired-1.0.190-' + 'c' * 32)
+        (busy / 'lock').mkdir(parents=True)
+        foreign = self.root / '.retired-notes'
+        foreign.mkdir()
+        current = self.stage('1.2.0')
+        plan = retention.prune(self.root, '1.2.0', '1.1.0')
+        self.assertEqual([item['path'] for item in plan['planned']], [str(husk)])
+        self.assertTrue(husk.is_dir())
+        result = retention.prune(self.root, '1.2.0', '1.1.0', apply=True)
+        self.assertEqual(result['removed'], plan['planned'])
+        self.assertFalse(husk.exists())
+        self.assertTrue(busy.is_dir() and foreign.is_dir() and current.is_dir())
+        finished = retention.prune(self.root, finished=True, apply=True)
+        self.assertNotIn(str(busy), [item['path'] for item in finished['removed']])
+
+    def test_removal_retries_when_finder_refills_a_folder(self):
+        old = self.stage('1.0.0')
+        original = retention.shutil.rmtree
+        calls = []
+        def remove(path):
+            calls.append(path)
+            if len(calls) == 1:
+                raise OSError(retention.errno.ENOTEMPTY, 'Directory not empty')
+            original(path)
+        with patch.object(retention.shutil, 'rmtree', side_effect=remove), patch.object(retention, 'RETRY_PAUSE_SECONDS', 0):
+            result = retention.prune(self.root, '1.2.0', '1.1.0', apply=True)
+        self.assertEqual(len(result['removed']), 1)
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(old.exists())
+        self.assertFalse(list(self.root.iterdir()))
+
+    def test_a_husk_that_cannot_be_removed_releases_its_lock_for_the_next_run(self):
+        husk = self.root / ('.retired-1.0.189-' + 'b' * 32)
+        husk.mkdir()
+        with patch.object(retention.shutil, 'rmtree', side_effect=OSError(retention.errno.ENOTEMPTY, 'Directory not empty')), \
+                patch.object(retention, 'RETRY_PAUSE_SECONDS', 0):
+            result = retention.prune(self.root, finished=True, apply=True)
+        self.assertEqual(result['refused'], [{'path': str(husk), 'error': 'OSError'}])
+        self.assertFalse((husk / 'lock').exists())
+        self.assertEqual(retention.prune(self.root, finished=True, apply=True)['removed'][0]['path'], str(husk))
+
+    def test_permission_errors_are_not_retried_and_partial_removal_is_not_success(self):
+        husk = self.root / ('.retired-1.0.189-' + 'b' * 32)
+        husk.mkdir()
+        calls = []
+        def denied(path):
+            calls.append(path)
+            raise PermissionError(13, 'denied')
+        with patch.object(retention.shutil, 'rmtree', side_effect=denied):
+            result = retention.prune(self.root, finished=True, apply=True)
+        self.assertEqual((len(calls), result['removed']), (1, []))
+        def vanished(path):
+            raise FileNotFoundError(2, 'gone', str(pathlib.Path(path) / 'child'))
+        with patch.object(retention.shutil, 'rmtree', side_effect=vanished), patch.object(retention, 'RETRY_PAUSE_SECONDS', 0):
+            result = retention.prune(self.root, finished=True, apply=True)
+        self.assertEqual(result['removed'], [])
+        self.assertTrue(husk.is_dir() and not (husk / 'lock').exists())
+
+    def test_a_husk_with_a_stale_lock_is_swept_but_a_live_one_stays(self):
+        dead = self.root / ('.retired-1.0.188-' + 'd' * 32)
+        (dead / 'lock').mkdir(parents=True)
+        (dead / 'lock' / 'pid').write_text('999999\n')
+        nopid = self.root / ('.retired-1.0.187-' + 'e' * 32)
+        (nopid / 'lock').mkdir(parents=True)
+        old = __import__('time').time() - 2 * 3600
+        __import__('os').utime(nopid / 'lock', (old, old))
+        live = self.root / ('.retired-1.0.186-' + 'f' * 32)
+        (live / 'lock').mkdir(parents=True)
+        (live / 'lock' / 'pid').write_text('%d\n' % __import__('os').getpid())
+        fresh = self.root / ('.retired-1.0.185-' + '0' * 32)
+        (fresh / 'lock').mkdir(parents=True)
+        result = retention.prune(self.root, finished=True, apply=True)
+        self.assertEqual(sorted(item['path'] for item in result['removed']), sorted([str(dead), str(nopid)]))
+        self.assertTrue(live.is_dir() and fresh.is_dir())
+
     def test_real_exit_hook_compacts_only_after_success_and_releases_its_lock(self):
         stage = self.stage('1.2.0')
         (stage / 'lock').mkdir()

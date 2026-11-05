@@ -27,6 +27,7 @@ prune_orphaned_owned_updates and prune_verification age out the rest after 7 day
 folders no receipt or agent file names any more (82 on one Mac) and install/verification entries
 (2.1 GB). Symlinks are never followed.
 """
+import datetime
 import json
 import os
 import pathlib
@@ -56,6 +57,11 @@ RECEIPTS_KEPT = 10
 MAX_AGE_SECONDS = 7 * 86400
 AGENT_FILES = ('state.json', 'run.json', 'install-in-progress.json')
 RECEIPT_READ_LIMIT = 64 << 20
+# A held or failed update's copy stays for a person until a later update of the same identity is
+# verified and this long has passed: the service then runs a database that moved past the copy.
+SUPERSEDED_GRACE_SECONDS = 86400
+VERIFIED_PROOFS = ('preservedRowsAuthAndIdentity', 'originalServicesPreserved', 'onlyKnownOwnedServiceRestarted')
+RECEIPT_STAMP = re.compile(r'update-.+-(\d{8})T(\d{6,12})Z\.json')
 
 
 def _plain_directory(root, home):
@@ -159,7 +165,9 @@ def state_backup_references(home):
     """Recovery and completed copies named by every identity, without opening any database.
 
     An unreadable/symlinked receipt makes the reference set uncertain: prune nothing. A receipt
-    in an unfinished phase or with a failed rollback retains its copy regardless of age. Finished
+    in an unfinished phase or with a failed rollback retains its copy until a later update of the
+    same identity has been verified for a day (superseded_receipts): two held 21 GB copies from
+    failed 1.0.180 and 1.0.184 updates otherwise stayed on one Mac for good. Finished
     receipts remain useful evidence, but do not turn obsolete copies into permanent backups.
     """
     held, finished = set(), set()
@@ -185,12 +193,16 @@ def state_backup_references(home):
                     continue
                 if _plain_directory(receipts, home) is None:
                     return None
+                parsed = []
                 for path in receipts.glob('update-*.json'):
                     if path.is_symlink() or not path.is_file() or path.stat().st_size > RECEIPT_READ_LIMIT:
                         return None
                     value = json.loads(path.read_text())
                     if not isinstance(value, dict):
                         return None
+                    parsed.append((path, value))
+                superseded = superseded_receipts(parsed)
+                for path, value in parsed:
                     backup = value.get('stateBackup')
                     if isinstance(backup, str) and backup:
                         target = pathlib.Path(backup)
@@ -210,7 +222,7 @@ def state_backup_references(home):
                         if (_plain_directory(target.parent, home) is None or target.is_symlink()
                                 or not target.is_file()):
                             return None
-                        (finished if _finished(value) else held).add(target.parent.name)
+                        (finished if _finished(value) or path in superseded else held).add(target.parent.name)
         except (OSError, ValueError):
             return None
     return held, finished
@@ -293,22 +305,64 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
 
 def held_state_backups(own):
     """The pre-update copies a held rollback's receipt still names: after a failed state restore that
-    copy is the only database from before the migration, so space pruning keeps it. Moved from
-    update.py (file-size cap)."""
+    copy is the only database from before the migration, so space pruning keeps it, until a later
+    verified update supersedes it (superseded_receipts). Moved from update.py (file-size cap)."""
     held = []
     try:
         receipts = sorted((own / 'updates' / 'receipts').glob('update-*.json'))
     except OSError:
         return held
+    parsed = []
     for path in receipts:
         try:
-            value = json.loads(path.read_text())
+            parsed.append((path, json.loads(path.read_text())))
         except (OSError, ValueError):
             continue
+    superseded = superseded_receipts(parsed)
+    for path, value in parsed:
         if (isinstance(value, dict) and str(value.get('rollback') or '').startswith('held')
-                and isinstance(value.get('stateBackup'), str)):
+                and isinstance(value.get('stateBackup'), str) and path not in superseded):
             held.append(value['stateBackup'])
     return held
+
+
+def _receipt_stamp(path):
+    """The start time in an update-<version>-<stamp>.json name, comparable as a string; or None."""
+    match = RECEIPT_STAMP.fullmatch(path.name)
+    return match and match.group(1) + match.group(2).ljust(12, '0')
+
+
+def _verified_at(value):
+    """When a receipt proves a completed update, as update.py and update_request check it: phase
+    verified, no failed result, the three preservation proofs, and its verifiedAt time. Else None."""
+    if not (isinstance(value, dict) and value.get('phase') == 'verified' and value.get('result') in (None, 'updated')
+            and all(value.get(flag) is True for flag in VERIFIED_PROOFS)):
+        return None
+    try:
+        moment = datetime.datetime.fromisoformat(str(value.get('verifiedAt')))
+    except ValueError:
+        return None
+    return moment.timestamp() if moment.tzinfo is not None else None
+
+
+def superseded_receipts(parsed, now=None, grace=SUPERSEDED_GRACE_SECONDS):
+    """The receipts among one identity's (path, parsed receipt) pairs that a later update of that
+    identity replaced: one that started after them (the stamp in its name) proved a completed update
+    (_verified_at) at least `grace` ago. A held or failed update's copy is the database from before its
+    migration; once a later release verified on top of it, restoring that copy would discard
+    everything since, and no rollback reads it again. Receipts without a stamp never count."""
+    moment = time.time() if now is None else now
+    stamps, verified = {}, []
+    for path, value in parsed:
+        stamp = _receipt_stamp(path)
+        if stamp is None:
+            continue
+        stamps[path] = stamp
+        at = _verified_at(value)
+        if at is not None and moment - at >= grace:
+            verified.append(stamp)
+    newest = max(verified, default=None)
+    return {path for path, stamp in stamps.items() if newest is not None and stamp < newest}
 
 
 def prune_incoming(home, installed, now=None, recent_seconds=RECENT_SECONDS):

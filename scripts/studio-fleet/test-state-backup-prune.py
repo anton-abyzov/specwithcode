@@ -6,7 +6,7 @@ under test-update.py's ApplyRecovery harness in temporary homes, never productio
 
 Run: cd scripts/studio-fleet && python3 -B test-state-backup-prune.py
 """
-import contextlib,importlib.util,json,os,pathlib,re,subprocess,sys,tempfile,time,unittest,warnings
+import contextlib,datetime,importlib.util,json,os,pathlib,re,subprocess,sys,tempfile,time,unittest,warnings
 from unittest.mock import patch
 import state_backup_prune
 import release_retention
@@ -17,6 +17,10 @@ spec=importlib.util.spec_from_file_location('prune_update_base',HERE/'test-updat
 updater_base=importlib.util.module_from_spec(spec);spec.loader.exec_module(updater_base)
 update,DISK=updater_base.update,updater_base.DISK
 DAY=86400
+def proven(hours,**extra):  # A receipt update.py writes after a verified update, verified `hours` ago.
+ at=datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(hours=hours)
+ return {'phase':'verified','preservedRowsAuthAndIdentity':True,'originalServicesPreserved':True,
+         'onlyKnownOwnedServiceRestarted':True,'verifiedAt':at.isoformat(),**extra}
 class StateBackupPrune(updater_base.ApplyRecovery):
  def setUp(self):
   super().setUp()
@@ -129,6 +133,43 @@ class StateBackupPrune(updater_base.ApplyRecovery):
   (self.output.parent/'update-0.0.9-20261001T000000Z.json').write_text(json.dumps({'rollback':'held-new-release-state-restore-failed','stateBackup':str(old[0]/'statev2.sqlite')}))
   self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name,old[2].name])
   self.assertEqual(sorted(p.name for p in self.root.iterdir()),sorted([old[0].name,new.name]))
+ def test_a_held_copy_a_later_verified_update_superseded_a_day_ago_is_released(self):
+  old=self.old_copies(3);new=self.verified_receipt(old)
+  receipts=self.output.parent
+  failed=receipts/'update-1.0.180-20261004T065947957939Z.json'
+  failed.write_text(json.dumps({'phase':'restart-requested','rollback':'held-for-safe-review','rollbackError':'kept','stateBackup':str(old[0]/'statev2.sqlite')}))
+  later=receipts/'update-1.0.186-20261004T154001941726Z.json'
+  later.write_text(json.dumps(proven(hours=2,stateBackup=str(old[1]/'statev2.sqlite'))))
+  os.utime(later,(time.time()-3*DAY,)*2)  # Only verifiedAt counts, never the file's mtime.
+  self.assertEqual(release_retention.held_state_backups(self.own),[str(old[0]/'statev2.sqlite')])
+  self.assertIn(old[0].name,release_retention.state_backup_references(self.home)[0])
+  later.write_text(json.dumps(proven(hours=25,stateBackup=str(old[1]/'statev2.sqlite'))))
+  self.assertEqual(release_retention.held_state_backups(self.own),[])
+  held,finished=release_retention.state_backup_references(self.home)
+  self.assertNotIn(old[0].name,held);self.assertIn(old[0].name,finished)
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[p.name for p in old])
+  self.assertEqual(sorted(p.name for p in self.root.iterdir()),[new.name])
+ def test_a_held_copy_stays_unless_a_later_update_of_its_identity_proved_completion(self):
+  old=self.old_copies(2);new=self.verified_receipt(old)
+  receipts=self.output.parent
+  (receipts/'update-1.0.179-20261003T000000Z.json').write_text(json.dumps(proven(hours=72)))
+  (receipts/'update-1.0.180-20261004T000000Z.json').write_text(json.dumps({'phase':'restart-requested','rollback':'held-for-safe-review','stateBackup':str(old[0]/'statev2.sqlite')}))
+  remote=studio_paths.identity_home(self.home,'m3')/'updates'/'receipts';remote.mkdir(parents=True)
+  (remote/'update-1.0.190-20261005T000000Z.json').write_text(json.dumps(proven(hours=72)))
+  (receipts/'update-later.json').write_text(json.dumps(proven(hours=72)))
+  for name,value in (('1.0.181-20261005T000000Z',dict(proven(hours=72),result='update-failed')),
+                     ('1.0.182-20261006T000000Z',dict(proven(hours=72),onlyKnownOwnedServiceRestarted=False)),
+                     ('1.0.183-20261007T000000Z',dict(proven(hours=72),verifiedAt='2026-10-07T00:00:00')),
+                     ('1.0.184-20261008T000000Z',dict(proven(hours=72),verifiedAt='soon'))):
+   (receipts/('update-%s.json'%name)).write_text(json.dumps(value))
+  self.assertEqual(release_retention.held_state_backups(self.own),[str(old[0]/'statev2.sqlite')])
+  self.assertEqual(state_backup_prune.after_install('m4',self.home,self.output),[old[1].name])
+  self.assertTrue(old[0].is_dir() and new.is_dir())
+ def test_superseded_receipts_needs_a_stamped_later_proof(self):
+  held=pathlib.Path('update-1.0.1-20261001T000000Z.json');later=pathlib.Path('update-1.0.4-20261004T000000Z.json')
+  self.assertEqual(release_retention.superseded_receipts([(held,{}),(later,proven(hours=2))]),set())
+  self.assertEqual(release_retention.superseded_receipts([(held,{}),(later,proven(hours=2))],now=time.time()+DAY),{held})
+  self.assertEqual(release_retention.superseded_receipts([(held,{}),(pathlib.Path('update-x.json'),proven(hours=48))]),set())
  def test_finder_view_files_do_not_keep_a_copy_but_other_extras_and_links_do(self):
   old=self.old_copies(4);new=self.verified_receipt(old)
   (old[0]/'.DS_Store').write_bytes(b'Bud1');(old[1]/'notes.txt').write_text('added')

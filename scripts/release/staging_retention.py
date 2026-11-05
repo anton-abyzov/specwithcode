@@ -8,16 +8,27 @@ without deleting their receipts.
 A compacted release retains release.json, published/candidate SHAs, stage markers, logs, timing
 and stage-1 history. They are what later releases read; shipped binaries live in the release
 stores. Incomplete releases and every lock (including a stale lock) require their owner.
+
+A superseded stage is renamed to .retired-<version>-<hex> under its lock and then removed. When
+that removal failed part way (Finder rewrites .DS_Store while a folder empties, ENOTEMPTY), the
+husk had no lock and no sweep, so 857 MB of 1.0.189 stayed. Removal now retries, and every run
+removes unlocked .retired-* folders a failed run left.
 """
 import argparse
+import errno
 import json
 import os
 import pathlib
 import re
 import shutil
+import time
 import uuid
 
 VERSION = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)')
+RETIRED = re.compile(r'\.retired-((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))-[a-f0-9]{32}')
+REMOVE_ATTEMPTS = 3
+RETRY_PAUSE_SECONDS = 0.5
+STALE_LOCK_SECONDS = 3600
 PAYLOAD = re.compile(r'(?:assets|runtime|runtime-linux-(?:arm64|x64)|google-verify|verify-runtime|verify-runtime-linux-(?:arm64|x64))-([a-f0-9]{12})')
 
 
@@ -68,6 +79,82 @@ def completed(stage):
     return published(stage) and all(marker(stage, name) for name in ('fleet-m4', 'desktop', 'fleet-workers', 'merge', 'fleet-linux'))
 
 
+def remove_tree(target):
+    """shutil.rmtree; again, after a short pause, when a folder refilled while it emptied (Finder
+    rewrites .DS_Store: ENOTEMPTY). Done only when nothing is left at `target`."""
+    for attempt in range(REMOVE_ATTEMPTS):
+        try:
+            shutil.rmtree(target)  # Descendant symlinks are unlinked, never traversed.
+        except FileNotFoundError:
+            pass  # Another remover took part of it; done only if nothing is left.
+        except OSError as error:
+            if error.errno != errno.ENOTEMPTY or attempt == REMOVE_ATTEMPTS - 1:
+                raise
+        if not os.path.lexists(target):
+            return
+        time.sleep(RETRY_PAUSE_SECONDS)
+    raise OSError(errno.ENOTEMPTY, 'still not empty', str(target))
+
+
+def stale_lock(lock, now=None):
+    """True for a husk's lock no remover holds: its pid is gone, or it has no readable pid and is
+    older than an hour. No release resumes a .retired-* folder, so nothing else would clear it."""
+    moment = time.time() if now is None else now
+    try:
+        info = os.lstat(lock)
+    except OSError:
+        return False
+    try:
+        pid = int((lock / 'pid').read_text().strip())
+    except (OSError, ValueError):
+        return moment - info.st_mtime >= STALE_LOCK_SECONDS
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def retired_actions(child):
+    """A .retired-<version>-<hex> folder a failed removal left: only plain ones, unlocked or with a
+    stale lock."""
+    if RETIRED.fullmatch(child.name) is None or not plain(child) or not child.is_dir():
+        return []
+    if os.path.lexists(child / 'lock') and not stale_lock(child / 'lock'):
+        return []
+    return [{'path': str(child), 'action': 'remove-retired', 'reason': 'superseded stage a failed removal left'}]
+
+
+def sweep_retired(husk, actions, result):
+    """Removes one husk under the stage mkdir lock, with the same pid and identity check as prune."""
+    lock = husk / 'lock'
+    acquired, identity = False, None
+    try:
+        if os.path.lexists(lock):
+            # Only one sweeper can move a stale lock aside; the loser's mkdir below then fails.
+            os.rename(lock, husk / ('lock.stale-' + uuid.uuid4().hex))
+        lock.mkdir()
+        acquired = True
+        info = lock.stat()
+        identity = (info.st_dev, info.st_ino)
+        (lock / 'pid').write_text(str(os.getpid()) + '\n')
+        remove_tree(husk)  # The lock goes with it.
+        result['removed'].extend(actions)
+    except OSError as error:
+        result['refused'].append({'path': str(husk), 'error': type(error).__name__})
+    finally:
+        if acquired and lock.is_dir():
+            try:
+                info = lock.stat()
+                if (info.st_dev, info.st_ino) == identity:
+                    (lock / 'pid').unlink(missing_ok=True)
+                    lock.rmdir()
+            except OSError:
+                pass
+
+
 def stage_actions(stage, current=None, previous=None, finished=False, locked=False):
     if not owned(stage) or (os.path.lexists(stage / 'lock') and not locked):
         return []
@@ -104,6 +191,12 @@ def prune(root, current=None, previous=None, *, finished=False, apply=False):
     current, previous = version(current), version(previous)
     result = {'planned': [], 'removed': [], 'refused': []}
     for stage in sorted(root.iterdir()):
+        if RETIRED.fullmatch(stage.name):
+            actions = retired_actions(stage)
+            result['planned'].extend(actions)
+            if apply and actions:
+                sweep_retired(stage, actions, result)
+            continue
         actions = stage_actions(stage, current, previous, finished)
         result['planned'].extend(actions)
         if not apply or not actions:
@@ -128,7 +221,7 @@ def prune(root, current=None, previous=None, *, finished=False, apply=False):
                     os.rename(stage, retired)
                     lock = retired / 'lock'
                     target = retired
-                shutil.rmtree(target)  # Descendant symlinks are unlinked, never traversed.
+                remove_tree(target)
                 result['removed'].append(action)
         except OSError as error:
             result['refused'].append({'path': str(stage), 'error': type(error).__name__})
@@ -138,7 +231,7 @@ def prune(root, current=None, previous=None, *, finished=False, apply=False):
                     info = lock.stat()
                     if (info.st_dev, info.st_ino) != lock_identity:
                         continue
-                    (lock / 'pid').unlink()
+                    (lock / 'pid').unlink(missing_ok=True)
                     lock.rmdir()
                 except OSError:
                     pass
