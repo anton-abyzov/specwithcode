@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { OrchestrationV2TurnItem } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import { CheckIcon, ChevronDownIcon, CircleCheckIcon, PencilLineIcon } from "lucide-react";
@@ -39,6 +41,7 @@ export function DecisionCard(props: {
   /** Who asked: the coordinator, or the thread's title. */
   readonly askedBy?: string | undefined;
 }) {
+  const tx = useTx();
   const { item } = props;
   const decision = useMemo(
     () => deriveDecision(item.questions, item.questionAnswer),
@@ -56,7 +59,7 @@ export function DecisionCard(props: {
     <Collapsible defaultOpen={props.defaultExpanded ?? false}>
       <section
         data-decision-card={item.requestId}
-        aria-label={props.askedBy ? `Decision on a question from ${props.askedBy}` : "Decision"}
+        aria-label={props.askedBy ? `Decision on a question from ${props.askedBy}` : tx("Decision")}
         className="rounded-xl border border-border/80 bg-card/40"
       >
         <CollapsibleTrigger
@@ -68,10 +71,14 @@ export function DecisionCard(props: {
           <span className="@container min-w-0 flex-1">
             <span className="flex min-w-0 items-baseline gap-x-2 gap-y-0.5 @max-[26rem]:flex-wrap">
               <span className="shrink-0 text-xs font-medium text-muted-foreground">
-                Decision
-                {decision.length > 1 ? (
-                  <span className="@max-[26rem]:hidden">{` · ${decision.length} answered`}</span>
-                ) : null}
+                {renderRich(tx("Decision{value}"), {
+                  value:
+                    decision.length > 1 ? (
+                      <span className="@max-[26rem]:hidden">
+                        {tx(" · {count} answered", { count: decision.length })}
+                      </span>
+                    ) : null,
+                })}
               </span>
               <span
                 data-decision-summary
@@ -81,10 +88,10 @@ export function DecisionCard(props: {
               </span>
               <span className="ms-auto shrink-0 text-xs text-muted-foreground">
                 {byAgent
-                  ? "Answered by an agent"
+                  ? tx("Answered by an agent")
                   : item.questionAnswer.answeredInChat
-                    ? "Answered in chat"
-                    : "Sent to the agent"}{" "}
+                    ? tx("Answered in chat")
+                    : tx("Sent to the agent")}{" "}
                 · <time dateTime={answeredDate.toISOString()}>{when}</time>
               </span>
             </span>
@@ -144,8 +151,8 @@ export function DecisionCard(props: {
                     {chooser}{" "}
                     {question.choices.length > 0 &&
                     question.choices.every((choice) => choice.letter === null)
-                      ? "replied"
-                      : "chose"}
+                      ? tx("replied")
+                      : tx("chose")}
                   </span>
                 </div>
               </div>

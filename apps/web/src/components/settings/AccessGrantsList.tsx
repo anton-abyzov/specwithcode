@@ -97,13 +97,13 @@ export function AccessGrantsList({
 
   return (
     <div className="mt-3 mb-2 space-y-2" data-testid={`access-grants-${kind}`}>
-      <p className="text-xs font-medium text-foreground">{copy.title}</p>
+      <p className="text-xs font-medium text-foreground">{tx(copy.title)}</p>
       {shown === null ? (
         error === null ? (
           <p className="text-xs text-muted-foreground">{tx("Loading…")}</p>
         ) : null
       ) : shown.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{copy.empty}</p>
+        <p className="text-xs text-muted-foreground">{tx(copy.empty)}</p>
       ) : (
         <ul className="divide-y divide-border/50 rounded-md border border-border/60">
           {shown.map((grant) => (
@@ -127,7 +127,7 @@ export function AccessGrantsList({
       )}
       {error !== null ? (
         <p role="alert" className="text-xs text-destructive-foreground">
-          {error}
+          {tx(error)}
         </p>
       ) : null}
     </div>

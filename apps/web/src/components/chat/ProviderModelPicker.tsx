@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -114,6 +115,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   };
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
+  const tx = useTx();
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
@@ -519,7 +521,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 !selectedEntries &&
                 props.triggerLabel === undefined ? (
                   <Badge variant="outline" size="sm">
-                    Unavailable
+                    {tx("Unavailable")}
                   </Badge>
                 ) : null}
               </span>

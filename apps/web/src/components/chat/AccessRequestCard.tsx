@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   ACCESS_REQUEST_FOOTNOTE,
   accessRequestAnswerInput,
@@ -184,6 +186,7 @@ export function AccessRequestPrompt(props: {
   readonly onAnswer: AccessRequestAnswerHandler;
   readonly disabled?: boolean;
 }) {
+  const tx = useTx();
   const { item } = props;
   const titleId = useId();
   const headline = accessRequestHeadline(props.agentLabel, item.subjects);
@@ -232,7 +235,7 @@ export function AccessRequestPrompt(props: {
         reason={item.reason.trim() ? item.reason : undefined}
       />
 
-      <ul aria-label="Asked for" className={ACCESS_SUBJECT_LIST_CLASS}>
+      <ul aria-label={tx("Asked for")} className={ACCESS_SUBJECT_LIST_CLASS}>
         {item.subjects.map((subject) => (
           <AccessSubjectChip key={subject.key} subject={subject} />
         ))}
@@ -249,7 +252,7 @@ export function AccessRequestPrompt(props: {
           aria-describedby={describedBy}
           onClick={() => void send({ type: "deny" })}
         >
-          Deny
+          {tx("Deny")}
         </button>
         <button
           type="button"
@@ -260,7 +263,7 @@ export function AccessRequestPrompt(props: {
           aria-describedby={describedBy}
           onClick={() => void send({ type: "allow", scope: "thread" })}
         >
-          Allow for this session
+          {tx("Allow for this session")}
         </button>
         <Tooltip>
           <TooltipTrigger
@@ -277,7 +280,7 @@ export function AccessRequestPrompt(props: {
               />
             }
           >
-            Always allow on this machine
+            {tx("Always allow on this machine")}
           </TooltipTrigger>
           <TooltipPopup>{ACCESS_REQUEST_FOOTNOTE}</TooltipPopup>
         </Tooltip>
@@ -292,6 +295,7 @@ export function AccessRequestPrompt(props: {
 }
 
 function AccessSubjectChip({ subject }: { readonly subject: AccessRequestSubject }) {
+  const tx = useTx();
   const iconUrl = accessSubjectIconUrl(subject);
   const Glyph = SUBJECT_GLYPHS[accessSubjectGlyph(subject)];
   const detail = subject.detail.trim();
@@ -314,7 +318,10 @@ function AccessSubjectChip({ subject }: { readonly subject: AccessRequestSubject
         <span className="min-w-0">
           {subject.label}
           {subject.hostLabel ? (
-            <span className="font-normal text-muted-foreground"> on {subject.hostLabel}</span>
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              {renderRich(tx("on {hostLabel}"), { hostLabel: subject.hostLabel })}
+            </span>
           ) : null}
           {showDetail ? (
             <span

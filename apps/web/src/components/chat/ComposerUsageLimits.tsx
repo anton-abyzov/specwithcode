@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId, UsageLimitsReport } from "@specweave-studio/contracts";
 import { limitsNotice } from "@specweave-studio/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
@@ -79,6 +80,7 @@ function UsageLimitsBannerBody({
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
 }) {
+  const tx = useTx();
   const now = Date.parse(report.createdAt);
   return (
     <ComposerBanner.Scroll>
@@ -120,7 +122,7 @@ function UsageLimitsBannerBody({
                   className="self-start"
                   onClick={() => void ensureLocalApi().shell.openExternal(externalUsage.url)}
                 >
-                  Manage usage
+                  {tx("Manage usage")}
                 </Button>
               ) : null}
               {resetCreditInput && account.limits.resetCredits ? (

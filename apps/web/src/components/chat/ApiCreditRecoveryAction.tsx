@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useState } from "react";
 
@@ -28,6 +29,7 @@ export type ApiCreditRecoveryProps = {
  * when they run out.
  */
 export function ApiCreditRecoveryAction({ targets, automatic, setup }: ApiCreditRecoveryProps) {
+  const tx = useTx();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -48,10 +50,14 @@ export function ApiCreditRecoveryAction({ targets, automatic, setup }: ApiCredit
     <div className="basis-full space-y-2">
       <p className="text-xs text-muted-foreground">
         {targets.length === 0
-          ? "Have API credits? Add an API key and this turn can continue on them, billed per token to that account."
+          ? tx(
+              "Have API credits? Add an API key and this turn can continue on them, billed per token to that account.",
+            )
           : automatic
             ? `The project rule continues on ${targets[0]!.label} by itself. Turns there are billed per token to that API account, not to your subscription.`
-            : "Continue on API credits: the same model, billed per token to that API account at API prices, not to your subscription. Nothing is bought, and the thread stays there until you switch its model back."}
+            : tx(
+                "Continue on API credits: the same model, billed per token to that API account at API prices, not to your subscription. Nothing is bought, and the thread stays there until you switch its model back.",
+              )}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {targets.map((target) => (
@@ -65,15 +71,15 @@ export function ApiCreditRecoveryAction({ targets, automatic, setup }: ApiCredit
             onClick={() => void continueOn(target)}
           >
             {pending
-              ? "Continuing…"
+              ? tx("Continuing…")
               : targets.length === 1
-                ? "Continue on API credits"
+                ? tx("Continue on API credits")
                 : `Continue on ${target.label}`}
           </Button>
         ))}
         {setup !== null ? (
           <Button type="button" size="xs" variant="ghost" onClick={() => setAdding(true)}>
-            {targets.length === 0 ? "Add an API key" : "Add another API key"}
+            {targets.length === 0 ? tx("Add an API key") : tx("Add another API key")}
           </Button>
         ) : null}
       </div>

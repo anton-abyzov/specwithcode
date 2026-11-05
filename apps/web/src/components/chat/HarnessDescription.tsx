@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { ServerProviderModel } from "@specweave-studio/contracts";
 
@@ -54,6 +56,7 @@ export function describeHarness(entry: ProviderInstanceEntry) {
 
 /** Runtime identity is independent of the vendor names in the model list. */
 export function HarnessDescription({ entry }: { entry: ProviderInstanceEntry }) {
+  const tx = useTx();
   const description = describeHarness(entry);
   return (
     <details
@@ -61,23 +64,28 @@ export function HarnessDescription({ entry }: { entry: ProviderInstanceEntry }) 
       data-harness-description={entry.instanceId}
     >
       <summary className="cursor-pointer text-foreground">
-        Harness: {description.name}{" "}
-        <span className="text-muted-foreground">· {description.protocol}</span>
+        {renderRich(tx("Harness: {name} {span}"), {
+          name: description.name,
+          span: <span className="text-muted-foreground">· {description.protocol}</span>,
+        })}
       </summary>
       <div className="space-y-1 pt-2">
         <p>{description.readiness}</p>
         <p>
-          The harness runs tools and keeps the native session. The model below supplies the
-          responses; its vendor can differ from the harness.
+          {tx(
+            "The harness runs tools and keeps the native session. The model below supplies the responses; its vendor can differ from the harness.",
+          )}
         </p>
         <p>
-          Billing comes from the configured account or model endpoint. A model name or catalog entry
-          does not prove subscription access or a free turn.
+          {tx(
+            "Billing comes from the configured account or model endpoint. A model name or catalog entry does not prove subscription access or a free turn.",
+          )}
         </p>
         {entry.driverKind === "opencode" || entry.driverKind === "pi" ? (
           <p>
-            Models and capabilities come from this runtime. Local, subscription and API models can
-            have different tool, image and billing support.
+            {tx(
+              "Models and capabilities come from this runtime. Local, subscription and API models can have different tool, image and billing support.",
+            )}
           </p>
         ) : null}
       </div>

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
@@ -59,6 +60,7 @@ export function CollapsibleToggle(props: {
   readonly onClick: () => void;
   readonly className?: string;
 }) {
+  const tx = useTx();
   return (
     <Button
       type="button"
@@ -76,7 +78,7 @@ export function CollapsibleToggle(props: {
       )}
     >
       {props.open ? <ChevronUpIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-      {props.open ? "Show less" : props.expandLabel}
+      {props.open ? tx("Show less") : props.expandLabel}
     </Button>
   );
 }

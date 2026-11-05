@@ -157,7 +157,7 @@ export function PrivacySettingsPanel() {
           <div className="space-y-3 p-4 text-sm sm:p-5">
             <p className="font-medium">{tx("Product usage collection")}</p>
             <p className="rounded-md bg-muted/40 px-3 py-2" role="status">
-              {productUsageStatusLabel(observability)}
+              {tx(productUsageStatusLabel(observability))}
             </p>
             <p className="text-muted-foreground">
               {tx(
@@ -171,7 +171,15 @@ export function PrivacySettingsPanel() {
             </p>
             <p className="rounded-md bg-muted/40 px-3 py-2" role="status">
               {observability
-                ? `Selected environment: local tracing ${observability.localTracingEnabled ? "on" : "off"}; external diagnostic export ${externalConfigured ? "configured" : "off"}.`
+                ? tx(
+                    observability.localTracingEnabled
+                      ? externalConfigured
+                        ? "Selected environment: local tracing on; external diagnostic export configured."
+                        : "Selected environment: local tracing on; external diagnostic export off."
+                      : externalConfigured
+                        ? "Selected environment: local tracing off; external diagnostic export configured."
+                        : "Selected environment: local tracing off; external diagnostic export off.",
+                  )
                 : tx("Connect an environment to inspect its diagnostic export settings.")}
             </p>
             <Collapsible>

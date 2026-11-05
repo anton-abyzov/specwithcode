@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { type ProviderInstanceId, type ServerProvider } from "@specweave-studio/contracts";
 import { memo } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
@@ -97,6 +98,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
+  const tx = useTx();
   if (!status || getProviderStatusBannerKey(status) === null) {
     return null;
   }
@@ -132,7 +134,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
           </Tooltip>
           {onOpenProviderSetup && hasProviderSetup(status) ? (
             <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-              Open provider setup
+              {tx("Open provider setup")}
             </InlineButton>
           ) : null}
         </AlertDescription>

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   markdownDocument,
   type ReportDocument,
@@ -104,6 +105,7 @@ export function ReportDocumentView(props: {
   readonly save: ReportSaveState | null;
   readonly renderMarkdown: (markdown: string) => ReactNode;
 }) {
+  const tx = useTx();
   const { document, save } = props;
   const hasProperties =
     document.properties.length > 0 || Boolean(save?.increment) || Boolean(save?.savedPath);
@@ -118,13 +120,13 @@ export function ReportDocumentView(props: {
       {hasProperties ? (
         <dl className="report-document-properties" data-report-properties="true">
           {save?.increment ? (
-            <PropertyRow label="Increment">
+            <PropertyRow label={tx("Increment")}>
               <Chip>{save.increment}</Chip>
             </PropertyRow>
           ) : null}
           <PropertyRows properties={document.properties} renderMarkdown={props.renderMarkdown} />
           {save?.savedPath ? (
-            <PropertyRow label="Saved">
+            <PropertyRow label={tx("Saved")}>
               <Chip>{save.savedPath}</Chip>
             </PropertyRow>
           ) : null}
@@ -150,9 +152,14 @@ function OutlineRail(props: {
   readonly activeId: string | null;
   readonly onSelect: (id: string) => void;
 }) {
+  const tx = useTx();
   if (props.headings.length < 2) return <div className="report-outline" aria-hidden />;
   return (
-    <nav className="report-outline group/outline" aria-label="Outline" data-report-outline="true">
+    <nav
+      className="report-outline group/outline"
+      aria-label={tx("Outline")}
+      data-report-outline="true"
+    >
       <ol className="report-outline-dashes">
         {props.headings.map((heading) => (
           <li key={heading.id}>
@@ -195,6 +202,7 @@ function FindBar(props: {
   readonly onStep: (by: 1 | -1) => void;
   readonly onClose: () => void;
 }) {
+  const tx = useTx();
   return (
     // The find field answers Escape itself (it closes find, not the report).
     <div className="report-find" role="search" data-viewer-escape="own">
@@ -203,8 +211,8 @@ function FindBar(props: {
         autoFocus
         className="report-find-input"
         value={props.query}
-        placeholder="Find in report"
-        aria-label="Find in report"
+        placeholder={tx("Find in report")}
+        aria-label={tx("Find in report")}
         onChange={(event) => props.onQuery(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
@@ -224,7 +232,7 @@ function FindBar(props: {
         type="button"
         size="icon-xs"
         variant="ghost"
-        aria-label="Previous match"
+        aria-label={tx("Previous match")}
         onClick={() => props.onStep(-1)}
       >
         <ChevronUpIcon aria-hidden />
@@ -233,7 +241,7 @@ function FindBar(props: {
         type="button"
         size="icon-xs"
         variant="ghost"
-        aria-label="Next match"
+        aria-label={tx("Next match")}
         onClick={() => props.onStep(1)}
       >
         <ChevronDownIcon aria-hidden />
@@ -242,7 +250,7 @@ function FindBar(props: {
         type="button"
         size="icon-xs"
         variant="ghost"
-        aria-label="Close find"
+        aria-label={tx("Close find")}
         onClick={props.onClose}
       >
         <XIcon aria-hidden />
@@ -286,6 +294,7 @@ export function ReportReader(props: {
   /** The rendered report, shown when it has no labeled parts. */
   readonly children: ReactNode;
 }) {
+  const tx = useTx();
   const { save } = props;
   const [finding, setFinding] = useState(false);
   const [query, setQuery] = useState("");
@@ -344,7 +353,7 @@ export function ReportReader(props: {
           type="button"
           size="icon-sm"
           variant="ghost"
-          aria-label="Find in report"
+          aria-label={tx("Find in report")}
           onClick={() => setFinding(true)}
         >
           <SearchIcon aria-hidden />
@@ -354,7 +363,7 @@ export function ReportReader(props: {
         type="button"
         size="icon-sm"
         variant="ghost"
-        aria-label="Download as markdown"
+        aria-label={tx("Download as markdown")}
         onClick={() => downloadReport(props.text, props.title)}
       >
         <DownloadIcon aria-hidden />
@@ -363,7 +372,7 @@ export function ReportReader(props: {
         type="button"
         size="icon-sm"
         variant="ghost"
-        aria-label={copied ? "Copied" : "Copy report"}
+        aria-label={copied ? tx("Copied") : tx("Copy report")}
         onClick={() => {
           void navigator.clipboard?.writeText(props.text).then(() => {
             setCopied(true);
@@ -375,7 +384,9 @@ export function ReportReader(props: {
       </Button>
       {props.onShowInline || canSave || save?.savedPath ? (
         <Menu>
-          <MenuTrigger render={<Button aria-label="More actions" size="icon-sm" variant="ghost" />}>
+          <MenuTrigger
+            render={<Button aria-label={tx("More actions")} size="icon-sm" variant="ghost" />}
+          >
             <EllipsisIcon aria-hidden />
           </MenuTrigger>
           <MenuPopup align="end">
@@ -387,21 +398,21 @@ export function ReportReader(props: {
                 }}
               >
                 <ListCollapseIcon aria-hidden />
-                Show in chat
+                {tx("Show in chat")}
               </MenuItem>
             ) : null}
             {canSave ? (
               <MenuItem disabled={save.saving} onClick={save.onSave}>
                 <SaveIcon aria-hidden />
                 {save.saving
-                  ? "Saving…"
-                  : `${save.increment ? "Save to increment" : "Save to reports"} (${save.folder}/)`}
+                  ? tx("Saving…")
+                  : `${tx(save.increment ? "Save to increment" : "Save to reports")} (${save.folder}/)`}
               </MenuItem>
             ) : null}
             {save?.savedPath ? (
               <MenuItem onClick={() => void navigator.clipboard?.writeText(save.savedPath ?? "")}>
                 <CopyIcon aria-hidden />
-                Copy saved path
+                {tx("Copy saved path")}
               </MenuItem>
             ) : null}
           </MenuPopup>

@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * The thread's plan card: done, current and next at a glance, from the
  * SpecWeave increment the thread works on ("Increment 0996") or the agent's
@@ -121,6 +123,7 @@ function StepRow({
   step: ThreadPlanStep;
   openPath?: PathOpener | null;
 }) {
+  const tx = useTx();
   const finished = step.state === "done" || step.state === "skipped";
   return (
     <li
@@ -156,12 +159,12 @@ function StepRow({
               className="ms-1.5 rounded-full border border-border/70 px-1.5 text-2xs font-normal text-muted-foreground"
               data-plan-step-unverified
             >
-              unverified
+              {tx("unverified")}
             </span>
           ) : null}
           {step.mine ? (
             <span className="ms-1.5 rounded-full border border-border/70 px-1.5 text-2xs font-normal text-muted-foreground">
-              this thread
+              {tx("this thread")}
             </span>
           ) : null}
           {step.note ? (
@@ -210,6 +213,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   status?: string | null;
   defaultExpanded?: boolean;
 }) {
+  const tx = useTx();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const { increment } = plan;
   const fromIncrement = plan.source === "increment" && increment !== null;
@@ -257,8 +261,8 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
         bound
           ? `Increment ${increment.incrementId} progress`
           : plan.source === "todo"
-            ? "Agent checklist progress"
-            : "Plan progress"
+            ? tx("Agent checklist progress")
+            : tx("Plan progress")
       }
       data-thread-plan-card={plan.source}
       data-plan-empty={empty || undefined}
@@ -282,7 +286,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
               ? `Increment ${incrementNumber(increment.incrementId)}`
               : plan.source === "todo"
                 ? CHECKLIST_LABEL
-                : "Plan"}
+                : tx("Plan")}
           </span>
         )}
         <span
@@ -292,17 +296,17 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           )}
           data-plan-current
         >
-          {plan.current ? <span className="sr-only">Now: </span> : null}
+          {plan.current ? <span className="sr-only">{tx("Now:")} </span> : null}
           {headline}
         </span>
         {unplanned && plan.source !== "none" ? (
           <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground">
-            No increment
+            {tx("No increment")}
           </span>
         ) : null}
         {plan.next && !expanded ? (
           <span className="hidden max-w-[35%] shrink truncate text-muted-foreground sm:inline">
-            Next: {plan.next}
+            {renderRich(tx("Next: {next}"), { next: plan.next })}
           </span>
         ) : null}
         {plan.total > 0 ? (
@@ -330,7 +334,10 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
               AC {acCount.verified}/{acCount.total}
             </span>
             <span className="sr-only">
-              {acCount.verified} of {acCount.total} acceptance criteria verified
+              {renderRich(tx("{verified} of {total} acceptance criteria verified"), {
+                verified: acCount.verified,
+                total: acCount.total,
+              })}
             </span>
           </span>
         ) : null}
@@ -357,16 +364,19 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
               {increment.verify ? (
                 <>
                   {" "}
-                  · verify{" "}
-                  <span
-                    className={
-                      increment.verify.ok
-                        ? "text-success-foreground"
-                        : "text-destructive-foreground"
-                    }
-                  >
-                    {increment.verify.ok ? "passed" : "failed"}
-                  </span>
+                  {renderRich(tx("· verify {span}"), {
+                    span: (
+                      <span
+                        className={
+                          increment.verify.ok
+                            ? "text-success-foreground"
+                            : "text-destructive-foreground"
+                        }
+                      >
+                        {increment.verify.ok ? tx("passed") : tx("failed")}
+                      </span>
+                    ),
+                  })}
                 </>
               ) : null}
             </p>
@@ -375,17 +385,20 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
             <p className="mb-1.5 text-xs text-muted-foreground" data-plan-checklist-note>
               {bound
                 ? `Steps from the agent's checklist: the increment's tasks ${increment.readable ? "are not written yet" : "could not be read"}.`
-                : "The agent's own checklist from its provider. It is not a SpecWeave increment."}
+                : tx(
+                    "The agent's own checklist from its provider. It is not a SpecWeave increment.",
+                  )}
             </p>
           ) : null}
           {unplanned ? (
             <p className="mb-1.5 text-xs text-muted-foreground" data-plan-unplanned-note>
-              This thread changed code without a SpecWeave increment. Increments are recommended,
-              not required: link the one it works on, or mark it as not needing one.
+              {tx(
+                "This thread changed code without a SpecWeave increment. Increments are recommended, not required: link the one it works on, or mark it as not needing one.",
+              )}
             </p>
           ) : null}
           {plan.steps.length > 0 ? (
-            <ul role="list" aria-label="Steps" className="space-y-0.5">
+            <ul role="list" aria-label={tx("Steps")} className="space-y-0.5">
               {plan.steps.map((step) => (
                 <StepRow key={step.key} step={step} openPath={openPath} />
               ))}
@@ -393,10 +406,12 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           ) : unplanned ? null : (
             <p className="text-xs text-muted-foreground">
               {plan.source === "none"
-                ? "No SpecWeave increment and no checklist from the agent yet. Link the increment this thread works on, or the steps appear when the agent writes its checklist."
+                ? tx(
+                    "No SpecWeave increment and no checklist from the agent yet. Link the increment this thread works on, or the steps appear when the agent writes its checklist.",
+                  )
                 : increment && !increment.readable
-                  ? "The increment's tasks or ledger could not be read."
-                  : "No steps yet."}
+                  ? tx("The increment's tasks or ledger could not be read.")
+                  : tx("No steps yet.")}
             </p>
           )}
           {criteria.length > 0 ? (
@@ -411,10 +426,13 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                   aria-hidden
                   className={cn("size-3.5 transition-transform", !criteriaOpen && "-rotate-90")}
                 />
-                Acceptance criteria
-                <span className="text-2xs" data-plan-criteria-summary>
-                  {criteriaSummary(criteria)}
-                </span>
+                {renderRich(tx("Acceptance criteria{span}"), {
+                  span: (
+                    <span className="text-2xs" data-plan-criteria-summary>
+                      {criteriaSummary(criteria)}
+                    </span>
+                  ),
+                })}
               </button>
               {criteriaOpen ? <ThreadPlanCriteria criteria={criteria} /> : null}
             </div>
@@ -434,17 +452,17 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                     data-plan-open-spec
                   >
                     <FileTextIcon aria-hidden className="size-3.5" />
-                    Open spec
+                    {tx("Open spec")}
                   </button>
                   {editSpec ? (
                     <button
                       type="button"
                       className="inline-flex items-center gap-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                      aria-label="Open spec in editor"
+                      aria-label={tx("Open spec in editor")}
                       onClick={editSpec}
                     >
                       <CodeIcon aria-hidden className="size-3" />
-                      editor
+                      {tx("editor")}
                     </button>
                   ) : null}
                 </span>
@@ -456,25 +474,25 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                   onClick={() => onOpenPath(increment.incrementPath)}
                 >
                   <FolderOpenIcon aria-hidden className="size-3.5" />
-                  Open increment
+                  {tx("Open increment")}
                 </button>
               ) : null}
               {onLinkIncrement ? (
                 <button type="button" className={LINK_BUTTON} onClick={onLinkIncrement}>
                   <Link2Icon aria-hidden className="size-3.5" />
-                  {increment ? "Change increment" : "Link increment"}
+                  {increment ? tx("Change increment") : tx("Link increment")}
                 </button>
               ) : null}
               {increment && onUnlinkIncrement ? (
                 <button type="button" className={LINK_BUTTON} onClick={onUnlinkIncrement}>
                   <Link2OffIcon aria-hidden className="size-3.5" />
-                  Unlink
+                  {tx("Unlink")}
                 </button>
               ) : null}
               {markNoIncrement ? (
                 <button type="button" className={LINK_BUTTON} onClick={markNoIncrement}>
                   <CircleSlashIcon aria-hidden className="size-3.5" />
-                  No increment needed
+                  {tx("No increment needed")}
                 </button>
               ) : null}
             </div>

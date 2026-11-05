@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { aggregateProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 import { projectAttentionRoots, useAttentionMembers } from "../../studio/useProjectAttention";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -46,7 +48,6 @@ import { WhatYouCanDo } from "./WhatYouCanDo";
 import {
   sessionAttentionLabel,
   deriveSessions,
-  relativeTime,
   sessionStateSince,
   resolveNativeModel,
   type SessionView,
@@ -98,6 +99,21 @@ function matchesFilter(session: SessionView, filter: SessionFilter): boolean {
   }
 }
 
+/** relativeTime from the overview model, with its words translated. */
+function relativeTimeLabel(
+  tx: ReturnType<typeof useTx>,
+  value: string | null | undefined,
+  now: number,
+): string {
+  const timestamp = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(timestamp) || timestamp === 0) return tx("Time unknown");
+  const minutes = Math.max(0, Math.floor((now - timestamp) / 60_000));
+  if (minutes < 1) return tx("Just now");
+  if (minutes < 60) return tx("{count}m ago", { count: minutes });
+  if (minutes < 1_440) return tx("{count}h ago", { count: Math.floor(minutes / 60) });
+  return tx("{count}d ago", { count: Math.floor(minutes / 1_440) });
+}
+
 function providerLabel(providers: readonly ServerProvider[], instanceId: string | null): string {
   if (!instanceId) return "Provider unknown";
   const provider = providers.find((candidate) => candidate.instanceId === instanceId);
@@ -114,6 +130,7 @@ function attentionTone(session: SessionView): "amber" | "red" {
 }
 
 export function StudioOverview() {
+  const tx = useTx();
   // While the personal assistant is off (Settings → General), Overview shows neither
   // its card, its chats nor offers it as a new chat's project.
   const aideEnabled = useAideEnabled();
@@ -327,8 +344,12 @@ export function StudioOverview() {
     } catch {
       setStartError(
         request?.validate
-          ? "This capacity choice is no longer available. Refresh observations or check the host connection and permissions, then choose again."
-          : "The draft could not be opened. Reconnect the host or check the project, then try again.",
+          ? tx(
+              "This capacity choice is no longer available. Refresh observations or check the host connection and permissions, then choose again.",
+            )
+          : tx(
+              "The draft could not be opened. Reconnect the host or check the project, then try again.",
+            ),
       );
     } finally {
       setStarting(false);
@@ -336,24 +357,37 @@ export function StudioOverview() {
   };
 
   const summary = !bootstrapped
-    ? "Reading session state from connected hosts…"
+    ? tx("Reading session state from connected hosts…")
     : !attentionComplete
-      ? `${attention.length} sessions with known actions. Partial observations; some hosts are not current.`
+      ? tx(
+          "{count} sessions with known actions. Partial observations; some hosts are not current.",
+          { count: attention.length },
+        )
       : attention.length > 0
-        ? `${attention.length} ${attention.length === 1 ? "session needs" : "sessions need"} your decision. ${working} working across ${listedGroups.length} projects.`
+        ? tx(
+            attention.length === 1
+              ? "{count} session needs your decision. {working} working across {projects} projects."
+              : "{count} sessions need your decision. {working} working across {projects} projects.",
+            { count: attention.length, working, projects: listedGroups.length },
+          )
         : working > 0
-          ? `Nothing needs you. ${working} ${working === 1 ? "session is" : "sessions are"} working.`
-          : "Nothing needs you right now. Start a session or pick up where you left off.";
+          ? tx(
+              working === 1
+                ? "Nothing needs you. {working} session is working."
+                : "Nothing needs you. {working} sessions are working.",
+              { working },
+            )
+          : tx("Nothing needs you right now. Start a session or pick up where you left off.");
 
   return (
     <SidebarInset className="studio-desk h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader electron={isElectron} className="studio-topbar">
-        <span className="studio-topbar-title">Overview</span>
+        <span className="studio-topbar-title">{tx("Overview")}</span>
         <span className="studio-private-label">
-          <CircleIcon aria-hidden="true" /> Private workspace
+          <CircleIcon aria-hidden="true" /> {tx("Private workspace")}
         </span>
         <Link to="/settings/connections" className="studio-text-link no-drag">
-          Connections <ArrowRightIcon aria-hidden="true" />
+          {tx("Connections")} <ArrowRightIcon aria-hidden="true" />
         </Link>
       </WorkspacePageHeader>
       <main className="studio-scroll" aria-labelledby="studio-heading">
@@ -361,25 +395,26 @@ export function StudioOverview() {
           <header className="studio-masthead">
             <div className="studio-masthead-copy">
               <p className="studio-eyebrow">{APP_DISPLAY_NAME}</p>
-              <h1 id="studio-heading">Control desk</h1>
+              <h1 id="studio-heading">{tx("Control desk")}</h1>
               <p className="studio-intro" aria-live="polite">
                 {summary}
               </p>
             </div>
             <div className="studio-masthead-actions">
               <Link to="/settings/projects" className="studio-secondary">
-                Manage projects
+                {tx("Manage projects")}
               </Link>
               <button className="studio-primary" onClick={() => openDraftChooser()}>
-                <PlusIcon aria-hidden="true" /> New session
+                <PlusIcon aria-hidden="true" /> {tx("New session")}
               </button>
             </div>
           </header>
 
           {networkStatus === "offline" && (
             <p className="studio-notice" role="status">
-              This device is offline. Saved session state may be incomplete; reconnect before
-              starting work.
+              {tx(
+                "This device is offline. Saved session state may be incomplete; reconnect before starting work.",
+              )}
             </p>
           )}
           <WhatYouCanDo
@@ -391,39 +426,41 @@ export function StudioOverview() {
             hasOtherMachine={environments.length > 1}
             onNewSession={() => openDraftChooser()}
           />
-          <div className="studio-stat-strip" aria-label="Observed workspace status">
+          <div className="studio-stat-strip" aria-label={tx("Observed workspace status")}>
             <Stat
               value={bootstrapped ? String(attention.length) : "—"}
-              label="Sessions needing action"
+              label={tx("Sessions needing action")}
               hint={
                 !attentionComplete
-                  ? "Partial observations"
+                  ? tx("Partial observations")
                   : attention.length > 0
-                    ? "Review now"
-                    : "All clear"
+                    ? tx("Review now")
+                    : tx("All clear")
               }
               tone={attention.length > 0 ? "amber" : "plain"}
               onClick={() => showSessions("attention")}
             />
             <Stat
               value={bootstrapped ? String(working) : "—"}
-              label="Sessions working"
-              hint={`${sessions.length} sessions in total`}
+              label={tx("Sessions working")}
+              hint={tx("{count} sessions in total", { count: sessions.length })}
               tone={working > 0 ? "moss" : "plain"}
               onClick={() => showSessions("working")}
             />
             <Stat
               value={bootstrapped ? String(listedGroups.length) : "—"}
-              label="Registered projects"
-              hint="Browse projects"
+              label={tx("Registered projects")}
+              hint={tx("Browse projects")}
               onClick={() =>
                 document.getElementById("studio-projects-title")?.scrollIntoView({ block: "start" })
               }
             />
             <Stat
               value={isReady ? `${connected}/${environments.length}` : "—"}
-              label="Hosts connected"
-              hint={connected < environments.length ? "Some hosts are offline" : "Manage hosts"}
+              label={tx("Hosts connected")}
+              hint={
+                connected < environments.length ? tx("Some hosts are offline") : tx("Manage hosts")
+              }
               tone={isReady && connected < environments.length ? "amber" : "plain"}
               href="/settings/connections"
             />
@@ -432,23 +469,32 @@ export function StudioOverview() {
           {request !== null && (
             <section className="studio-draft-chooser" aria-labelledby="studio-draft-title">
               <div>
-                <p className="studio-eyebrow">Start deliberately</p>
-                <h2 id="studio-draft-title">Choose a project</h2>
+                <p className="studio-eyebrow">{tx("Start deliberately")}</p>
+                <h2 id="studio-draft-title">{tx("Choose a project")}</h2>
                 <p className="studio-small">
                   {request.model
-                    ? `Native instance: ${request.model.instanceId} · ${request.model.model}`
-                    : "The project’s native provider and permission settings apply."}
+                    ? tx("Native instance: {instance} · {model}", {
+                        instance: request.model.instanceId,
+                        model: request.model.model,
+                      })
+                    : tx("The project’s native provider and permission settings apply.")}
                 </p>
               </div>
               {draftProjects.length === 0 ? (
                 <p className="studio-notice">
-                  No connected project is available with this connection’s operating permission.{" "}
-                  <Link to="/settings/projects">Open Projects</Link> or{" "}
-                  <Link to="/settings/connections">Connections</Link>.
+                  {renderRich(
+                    tx(
+                      "No connected project is available with this connection’s operating permission. {link} or {link2}.",
+                    ),
+                    {
+                      link: <Link to="/settings/projects">{tx("Open Projects")}</Link>,
+                      link2: <Link to="/settings/connections">{tx("Connections")}</Link>,
+                    },
+                  )}
                 </p>
               ) : (
                 <div className="studio-draft-fields">
-                  <label htmlFor="studio-project">Project and host</label>
+                  <label htmlFor="studio-project">{tx("Project and host")}</label>
                   <Select
                     value={chosenProject ? selectedProject : ""}
                     onValueChange={(value) => setSelectedProject(value ?? "")}
@@ -463,7 +509,7 @@ export function StudioOverview() {
                             />
                           ) : (
                             <span className="studio-project-none">
-                              Choose a registered project…
+                              {tx("Choose a registered project…")}
                             </span>
                           )
                         }
@@ -494,7 +540,7 @@ export function StudioOverview() {
                     disabled={!chosenProject || starting}
                     onClick={() => void startDraft()}
                   >
-                    {starting ? "Opening…" : "Open native draft"}
+                    {starting ? tx("Opening…") : tx("Open native draft")}
                     <ArrowRightIcon aria-hidden="true" />
                   </button>
                 </div>
@@ -509,7 +555,7 @@ export function StudioOverview() {
                 onClick={() => setRequest(null)}
                 disabled={starting}
               >
-                Cancel
+                {tx("Cancel")}
               </button>
             </section>
           )}
@@ -520,26 +566,28 @@ export function StudioOverview() {
               aria-labelledby="studio-attention-title"
             >
               <SectionHeading
-                title="Needs you"
+                title={tx("Needs you")}
                 id="studio-attention-title"
                 count={bootstrapped ? attention.length : undefined}
                 tone={attention.length > 0 ? "amber" : "plain"}
               />
               {!bootstrapped ? (
                 <EmptyState
-                  title="Reading session state…"
-                  detail="Each connected host reports its native sessions."
+                  title={tx("Reading session state…")}
+                  detail={tx("Each connected host reports its native sessions.")}
                 />
               ) : attention.length === 0 ? (
                 <div className="studio-clear">
                   <CheckIcon aria-hidden="true" />
                   <div>
-                    <h3>A clear desk.</h3>
+                    <h3>{tx("A clear desk.")}</h3>
                     <p>
-                      No approvals, questions or plans reported by connected hosts need a decision.
+                      {tx(
+                        "No approvals, questions or plans reported by connected hosts need a decision.",
+                      )}
                     </p>
                     {connected < environments.length && (
-                      <p>Disconnected hosts have not reported current attention.</p>
+                      <p>{tx("Disconnected hosts have not reported current attention.")}</p>
                     )}
                   </div>
                 </div>
@@ -562,7 +610,7 @@ export function StudioOverview() {
                       ))}
                   </div>
                   <Pager
-                    label="Attention pages"
+                    label={tx("Attention pages")}
                     page={currentAttentionPage}
                     pageSize={ATTENTION_PAGE}
                     total={attention.length}
@@ -573,8 +621,12 @@ export function StudioOverview() {
             </section>
 
             <section className="studio-panel" aria-labelledby="studio-sessions-title">
-              <SectionHeading title="Sessions" id="studio-sessions-title" count={sessions.length} />
-              <div className="studio-filter-row" role="tablist" aria-label="Filter sessions">
+              <SectionHeading
+                title={tx("Sessions")}
+                id="studio-sessions-title"
+                count={sessions.length}
+              />
+              <div className="studio-filter-row" role="tablist" aria-label={tx("Filter sessions")}>
                 {SESSION_FILTERS.map((option) => (
                   <button
                     key={option.value}
@@ -586,7 +638,7 @@ export function StudioOverview() {
                       setSessionPage(0);
                     }}
                   >
-                    {option.label}
+                    {tx(option.label)}
                     <span>{filterCounts[option.value]}</span>
                   </button>
                 ))}
@@ -595,17 +647,19 @@ export function StudioOverview() {
                 <EmptyState
                   title={
                     !bootstrapped
-                      ? "Reading sessions…"
+                      ? tx("Reading sessions…")
                       : sessions.length === 0
-                        ? "The next session starts here."
-                        : "No sessions match this filter."
+                        ? tx("The next session starts here.")
+                        : tx("No sessions match this filter.")
                   }
                   detail={
                     !bootstrapped
-                      ? "Saved hosts and session shells are synchronizing."
+                      ? tx("Saved hosts and session shells are synchronizing.")
                       : sessions.length === 0
-                        ? "Choose New session above. Native plans, approvals and checkpoints stay with the conversation."
-                        : "Choose another filter to see the rest."
+                        ? tx(
+                            "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.",
+                          )
+                        : tx("Choose another filter to see the rest.")
                   }
                 />
               ) : (
@@ -632,7 +686,7 @@ export function StudioOverview() {
                 </div>
               )}
               <Pager
-                label="Session pages"
+                label={tx("Session pages")}
                 page={currentSessionPage}
                 pageSize={SESSION_PAGE}
                 total={filteredSessions.length}
@@ -643,7 +697,7 @@ export function StudioOverview() {
 
           <section className="studio-project-section" aria-labelledby="studio-projects-title">
             <SectionHeading
-              title="Projects"
+              title={tx("Projects")}
               id="studio-projects-title"
               count={projectCards.length}
               action={
@@ -652,8 +706,8 @@ export function StudioOverview() {
                     <SearchIcon aria-hidden="true" />
                     <input
                       type="search"
-                      placeholder="Filter projects"
-                      aria-label="Filter projects"
+                      placeholder={tx("Filter projects")}
+                      aria-label={tx("Filter projects")}
                       value={projectQuery}
                       onChange={(event) => {
                         setProjectQuery(event.target.value);
@@ -663,18 +717,18 @@ export function StudioOverview() {
                   </label>
                 ) : (
                   <Link to="/settings/projects" className="studio-text-link">
-                    Add project <ArrowRightIcon aria-hidden="true" />
+                    {tx("Add project")} <ArrowRightIcon aria-hidden="true" />
                   </Link>
                 )
               }
             />
             {projectCards.length === 0 ? (
               <EmptyState
-                title="Add your first project."
-                detail="Register a folder on a connected host to start sessions in it."
+                title={tx("Add your first project.")}
+                detail={tx("Register a folder on a connected host to start sessions in it.")}
               />
             ) : filteredProjects.length === 0 ? (
-              <EmptyState title="No projects match." detail="Try a shorter name." />
+              <EmptyState title={tx("No projects match.")} detail={tx("Try a shorter name.")} />
             ) : (
               <div className="studio-project-grid">
                 {filteredProjects
@@ -708,7 +762,7 @@ export function StudioOverview() {
               </div>
             )}
             <Pager
-              label="Project pages"
+              label={tx("Project pages")}
               page={currentProjectPage}
               pageSize={PROJECT_PAGE}
               total={filteredProjects.length}
@@ -724,38 +778,39 @@ export function StudioOverview() {
             }
           />
 
-          <nav className="studio-controls" aria-label="Workspace settings">
+          <nav className="studio-controls" aria-label={tx("Workspace settings")}>
             <Link to="/settings/projects" className="studio-control-link">
               <PlusIcon aria-hidden="true" />
               <div>
-                <h3>{projects.length ? "All projects" : "Add your first project"}</h3>
-                <p>Register a workspace on a connected host.</p>
+                <h3>{projects.length ? tx("All projects") : tx("Add your first project")}</h3>
+                <p>{tx("Register a workspace on a connected host.")}</p>
               </div>
               <ArrowRightIcon aria-hidden="true" />
             </Link>
             <Link to="/settings/providers" className="studio-control-link">
               <LayersIcon aria-hidden="true" />
               <div>
-                <h3>Providers</h3>
-                <p>Native instances, sign-in and model settings.</p>
+                <h3>{tx("Providers")}</h3>
+                <p>{tx("Native instances, sign-in and model settings.")}</p>
               </div>
               <ArrowRightIcon aria-hidden="true" />
             </Link>
             <Link to="/settings/connections" className="studio-control-link">
               <LinkIcon aria-hidden="true" />
               <div>
-                <h3>Connections</h3>
+                <h3>{tx("Connections")}</h3>
                 <p>
-                  Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or
-                  Tailscale.
+                  {tx(
+                    "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.",
+                  )}
                 </p>
               </div>
               <ArrowRightIcon aria-hidden="true" />
             </Link>
           </nav>
           <footer className="studio-footer">
-            <span>SpecWeave keeps intent and ownership portable.</span>
-            <span>SpecWithCode keeps native conversations on their host.</span>
+            <span>{tx("SpecWeave keeps intent and ownership portable.")}</span>
+            <span>{tx("SpecWithCode keeps native conversations on their host.")}</span>
           </footer>
         </div>
       </main>
@@ -902,16 +957,21 @@ function Pager({
   total: number;
   onChange: (page: number) => void;
 }) {
+  const tx = useTx();
   if (total <= pageSize) return null;
   const pages = Math.ceil(total / pageSize);
   return (
     <nav className="studio-pager" aria-label={label}>
       <span>
-        {page * pageSize + 1}–{Math.min(total, (page + 1) * pageSize)} of {total}
+        {tx("{value}–{value2} of {total}", {
+          value: page * pageSize + 1,
+          value2: Math.min(total, (page + 1) * pageSize),
+          total,
+        })}
       </span>
       <button
         type="button"
-        aria-label="Previous page"
+        aria-label={tx("Previous page")}
         disabled={page === 0}
         onClick={() => onChange(page - 1)}
       >
@@ -922,7 +982,7 @@ function Pager({
       </span>
       <button
         type="button"
-        aria-label="Next page"
+        aria-label={tx("Next page")}
         disabled={page >= pages - 1}
         onClick={() => onChange(page + 1)}
       >
@@ -990,6 +1050,7 @@ function AttentionItem({
   host: string;
   now: number;
 }) {
+  const tx = useTx();
   return (
     <ChatLink target={target} className={`studio-attention-item ${attentionTone(s)}`}>
       <div className="studio-attention-top">
@@ -997,16 +1058,16 @@ function AttentionItem({
           {s.attentionLabel ?? sessionAttentionLabel(s.attention!, s.thread)}
         </span>
         <time dateTime={sessionStateSince(s.thread)}>
-          {relativeTime(sessionStateSince(s.thread), now)}
+          {relativeTimeLabel(tx, sessionStateSince(s.thread), now)}
         </time>
       </div>
-      <h3>{s.thread.title || "Untitled session"}</h3>
+      <h3>{s.thread.title || tx("Untitled session")}</h3>
       <div className="studio-row-meta">
         <span>
-          {s.project?.title ?? "Project unavailable"} · {host}
+          {s.project?.title ?? tx("Project unavailable")} · {host}
         </span>
         <span>
-          Open <ArrowRightIcon aria-hidden="true" />
+          {tx("Open")} <ArrowRightIcon aria-hidden="true" />
         </span>
       </div>
     </ChatLink>
@@ -1028,6 +1089,7 @@ function SessionItem({
   entries: ReadonlyMap<string, ProviderInstanceEntry>;
   now: number;
 }) {
+  const tx = useTx();
   // A cached row from an older host can arrive without its model.
   const selection = s.thread.modelSelection as typeof s.thread.modelSelection | undefined;
   const tone = s.attention ? attentionTone(s) : s.working ? "moss" : s.settled ? "muted" : "plain";
@@ -1045,10 +1107,10 @@ function SessionItem({
         aria-hidden="true"
       />
       <div className="studio-session-main">
-        <h3>{s.thread.title || "Untitled session"}</h3>
+        <h3>{s.thread.title || tx("Untitled session")}</h3>
         <p style={{ container: "sessmeta / inline-size" }}>
           <span className="studio-session-project">
-            {s.project?.title ?? "Project unavailable"}
+            {s.project?.title ?? tx("Project unavailable")}
           </span>
           <span aria-hidden="true">·</span> {host} <span aria-hidden="true">·</span>{" "}
           {selection ? <ThreadModelBadge thread={s.thread} entries={entries} /> : provider}
@@ -1063,7 +1125,7 @@ function SessionItem({
       <div className="studio-session-state">
         <span className={`studio-pill ${tone}`}>{s.state}</span>
         <time dateTime={sessionStateSince(s.thread)}>
-          {relativeTime(sessionStateSince(s.thread), now)}
+          {relativeTimeLabel(tx, sessionStateSince(s.thread), now)}
         </time>
       </div>
       <ArrowRightIcon aria-hidden="true" />
@@ -1084,6 +1146,7 @@ function ProjectCard({
   canStart: boolean;
   onNewSession: () => void;
 }) {
+  const tx = useTx();
   return (
     <article className={`studio-project${card.attention > 0 ? " needs-you" : ""}`}>
       <div className="studio-project-head">
@@ -1095,29 +1158,31 @@ function ProjectCard({
       </div>
       <dl className="studio-project-stats">
         <div className={card.attention > 0 ? "amber" : ""}>
-          <dt>Sessions needing action</dt>
+          <dt>{tx("Sessions needing action")}</dt>
           <dd>
             {card.complete === false
               ? card.attention > 0
                 ? `${card.attention}+`
-                : "Unknown"
+                : tx("Unknown")
               : card.attention}
           </dd>
         </div>
         <div className={card.working > 0 ? "moss" : ""}>
-          <dt>Working sessions</dt>
+          <dt>{tx("Working sessions")}</dt>
           <dd>{card.complete === false ? `${card.working}+` : card.working}</dd>
         </div>
         <div>
-          <dt>Sessions</dt>
+          <dt>{tx("Sessions")}</dt>
           <dd>{card.sessions}</dd>
         </div>
       </dl>
       <div className="studio-project-foot">
         <span className="studio-small">
           {card.lastActivity
-            ? `Active ${relativeTime(card.lastActivity, now).toLowerCase()}`
-            : "No sessions yet"}
+            ? tx("Active {when}", {
+                when: relativeTimeLabel(tx, card.lastActivity, now).toLowerCase(),
+              })
+            : tx("No sessions yet")}
         </span>
         <div>
           <button
@@ -1126,14 +1191,14 @@ function ProjectCard({
             disabled={!canStart}
             onClick={onNewSession}
           >
-            New session
+            {tx("New session")}
           </button>
           <Link
             to="/projects/$projectKey"
             params={{ projectKey: card.group.projectKey }}
             className="studio-text-link"
           >
-            Open <ArrowRightIcon aria-hidden="true" />
+            {tx("Open")} <ArrowRightIcon aria-hidden="true" />
           </Link>
         </div>
       </div>

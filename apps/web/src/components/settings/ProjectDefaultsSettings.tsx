@@ -196,8 +196,8 @@ export function ProjectDefaultsSettings({
       title="Model"
       description={
         isProjectScope
-          ? "Model for new threads in this project."
-          : "Default model for new threads. Projects can override it."
+          ? tx("Model for new threads in this project.")
+          : tx("Default model for new threads. Projects can override it.")
       }
       status={
         unavailable || mixedModel || modelSource === "project"
@@ -412,8 +412,10 @@ export function ProjectDefaultsSettings({
             {...searchableSetting("default-permissions")}
             description={
               isProjectScope
-                ? "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate."
-                : "Default permissions for new threads. Projects can override them."
+                ? tx(
+                    "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate.",
+                  )
+                : tx("Default permissions for new threads. Projects can override them.")
             }
             status={
               teamRules.summary?.ceiling !== undefined ? (
@@ -479,8 +481,10 @@ export function ProjectDefaultsSettings({
             {...searchableSetting("worktree-submodules")}
             description={
               isProjectScope
-                ? "How new worktrees in this project populate git submodules."
-                : "How new worktrees populate git submodules. Projects and their specweave-studio.json can override it."
+                ? tx("How new worktrees in this project populate git submodules.")
+                : tx(
+                    "How new worktrees populate git submodules. Projects and their specweave-studio.json can override it.",
+                  )
             }
             resetAction={
               !isProjectScope && settings.worktreeSubmodules !== null ? (
@@ -533,8 +537,12 @@ export function ProjectDefaultsSettings({
             title={tx("Refresh upstreams at startup")}
             description={
               isProjectScope
-                ? "Fetches this project's upstream refs when SpecWithCode starts. Use Pull to update the checkout."
-                : "Fetches upstream refs when SpecWithCode starts. Use Pull to update checkouts. Projects can override it."
+                ? tx(
+                    "Fetches this project's upstream refs when SpecWithCode starts. Use Pull to update the checkout.",
+                  )
+                : tx(
+                    "Fetches upstream refs when SpecWithCode starts. Use Pull to update checkouts. Projects can override it.",
+                  )
             }
             resetAction={
               settings.defaultAutoPull ? (
@@ -587,8 +595,12 @@ export function ProjectDefaultsSettings({
             {...searchableSetting("thread-finish-action")}
             description={
               isProjectScope
-                ? "When a thread in its own worktree finishes, with nothing queued, its branch targets this repository's default branch. Merging waits for required checks and branch protection; nothing is force-pushed."
-                : "When a thread in its own worktree finishes, with nothing queued, its branch targets the repository's default branch. Merging waits for required checks and branch protection; nothing is force-pushed. New projects start on Open PR and auto-merge."
+                ? tx(
+                    "When a thread in its own worktree finishes, with nothing queued, its branch targets this repository's default branch. Merging waits for required checks and branch protection; nothing is force-pushed.",
+                  )
+                : tx(
+                    "When a thread in its own worktree finishes, with nothing queued, its branch targets the repository's default branch. Merging waits for required checks and branch protection; nothing is force-pushed. New projects start on Open PR and auto-merge.",
+                  )
             }
             control={
               <Select
@@ -626,8 +638,10 @@ export function ProjectDefaultsSettings({
             {...searchableSetting("pull-request-merge-method")}
             description={
               isProjectScope
-                ? "Pull requests in this project start with this method."
-                : "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device."
+                ? tx("Pull requests in this project start with this method.")
+                : tx(
+                    "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device.",
+                  )
             }
             resetAction={
               settings.pullRequestMergeMethod !== null ? (
@@ -678,8 +692,10 @@ export function ProjectDefaultsSettings({
             title={tx("Agent browser access")}
             description={
               isProjectScope
-                ? "Allow agents in this project to use the shared browser. Applies when the agent session next starts."
-                : "Allow agents to use the shared browser. Projects can override it."
+                ? tx(
+                    "Allow agents in this project to use the shared browser. Applies when the agent session next starts.",
+                  )
+                : tx("Allow agents to use the shared browser. Projects can override it.")
             }
             resetAction={
               settings.enableAgentBrowserAccess !==
@@ -713,7 +729,9 @@ export function ProjectDefaultsSettings({
               title={tx("Agent computer access")}
               description={
                 computerUseLock?.message ??
-                "Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. Available on macOS only for now; Windows and Linux are not supported yet. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
+                tx(
+                  "Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. Available on macOS only for now; Windows and Linux are not supported yet. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts.",
+                )
               }
               status={
                 computerUseLock ? (
@@ -765,8 +783,12 @@ export function ProjectDefaultsSettings({
               title={tx("Browser profile for agents")}
               description={
                 isProjectScope
-                  ? "The SpecWithCode browser profile this project's agents open pages in, with its saved logins. Isolated tabs keep no logins."
-                  : "The SpecWithCode browser profile agents open pages in, with its saved logins. Projects can choose their own."
+                  ? tx(
+                      "The SpecWithCode browser profile this project's agents open pages in, with its saved logins. Isolated tabs keep no logins.",
+                    )
+                  : tx(
+                      "The SpecWithCode browser profile agents open pages in, with its saved logins. Projects can choose their own.",
+                    )
               }
               resetAction={
                 isProjectScope && browserProfileSource === "project" ? (

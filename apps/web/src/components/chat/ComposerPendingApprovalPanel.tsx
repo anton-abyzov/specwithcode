@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { memo } from "react";
 import { type PendingApproval } from "../../session-logic";
 import { cn } from "~/lib/utils";
@@ -14,6 +16,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
   pendingCount,
   className,
 }: ComposerPendingApprovalPanelProps) {
+  const tx = useTx();
   const Detail = approval.requestKind === "mcp-elicitation" ? "span" : "code";
   const fallbackLabel =
     approval.requestKind === "mcp-elicitation"
@@ -45,7 +48,7 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
     fileChange?.fileName || fileChange?.diffStr || fileChange?.changes?.length,
   );
   const previewUnavailable = (
-    <span className="text-xs text-muted-foreground">Preview unavailable</span>
+    <span className="text-xs text-muted-foreground">{tx("Preview unavailable")}</span>
   );
 
   return (
@@ -58,12 +61,14 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         <span className="shrink-0 font-medium text-warning-foreground">{fallbackLabel}</span>
         {approval.appName ? <span className="min-w-0 truncate">{approval.appName}</span> : null}
         {pendingCount > 1 ? (
-          <span className="ml-auto shrink-0 tabular-nums">1 of {pendingCount}</span>
+          <span className="ml-auto shrink-0 tabular-nums">
+            {renderRich(tx("1 of {pendingCount}"), { pendingCount: pendingCount })}
+          </span>
         ) : null}
       </span>
       {notResumable ? (
         <span className="text-xs text-muted-foreground" role="status">
-          Provider process is gone — interrupt or restart the run to respond.
+          {tx("Provider process is gone — interrupt or restart the run to respond.")}
         </span>
       ) : (
         <Detail
@@ -84,26 +89,26 @@ export const ComposerPendingApprovalPanel = memo(function ComposerPendingApprova
         // One bounded list for every file, so a many-file change never pushes the composer away.
         <ComposerBanner.Scroll className="max-h-[min(20rem,36dvh)]">
           <span className="flex w-full min-w-0 flex-col gap-1.5">
-            <code aria-label="File path" className={codeWell} tabIndex={0}>
+            <code aria-label={tx("File path")} className={codeWell} tabIndex={0}>
               {fileChange.fileName}
             </code>
             {fileChange.diffStr ? (
-              <code aria-label="Supplied patch" className={codeWell} tabIndex={0}>
+              <code aria-label={tx("Supplied patch")} className={codeWell} tabIndex={0}>
                 {fileChange.diffStr}
               </code>
             ) : null}
             {fileChange.changes?.map((change, index) => (
               <span className="flex w-full min-w-0 flex-col gap-1" key={index}>
                 {change.oldPath ? (
-                  <code aria-label="Previous file path" className={codeWell} tabIndex={0}>
+                  <code aria-label={tx("Previous file path")} className={codeWell} tabIndex={0}>
                     {change.oldPath}
                   </code>
                 ) : null}
-                <code aria-label="File path" className={codeWell} tabIndex={0}>
+                <code aria-label={tx("File path")} className={codeWell} tabIndex={0}>
                   {change.path}
                 </code>
                 {change.diffStr ? (
-                  <code aria-label="Supplied patch" className={codeWell} tabIndex={0}>
+                  <code aria-label={tx("Supplied patch")} className={codeWell} tabIndex={0}>
                     {change.diffStr}
                   </code>
                 ) : (

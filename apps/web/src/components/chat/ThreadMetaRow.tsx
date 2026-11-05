@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * One compact line above the plan card: the machine the thread runs on, where
  * the thread came from when that is not the default, the worktree it works in, how long its current turn has
@@ -132,6 +134,7 @@ function MetaChip(props: {
 
 /** Elapsed is recorded wall clock, never an estimate of active work. */
 function RunDurationChip(props: Omit<ThreadTimingInput, "nowMs">) {
+  const tx = useTx();
   useNowMinute(); // One shared minute tick; read the precise current clock on each render.
   const timing = deriveThreadTiming({ ...props, nowMs: Date.now() });
   if (timing === null) return null;
@@ -166,32 +169,35 @@ function RunDurationChip(props: Omit<ThreadTimingInput, "nowMs">) {
           </span>
           <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
         </PopoverTrigger>
-        <PopoverPopup width="md" align="start" padding="compact" aria-label="Turn timing">
+        <PopoverPopup width="md" align="start" padding="compact" aria-label={tx("Turn timing")}>
           <div className="space-y-3 text-sm" data-thread-timing-details>
-            <h3 className="font-medium">Turn timing</h3>
+            <h3 className="font-medium">{tx("Turn timing")}</h3>
             {timing.statusDetail ? (
               <p className="text-muted-foreground">{timing.statusDetail}</p>
             ) : null}
             <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1.5">
-              <dt>{timing.live ? "Current turn elapsed" : "Last turn elapsed"}</dt>
+              <dt>{timing.live ? tx("Current turn elapsed") : tx("Last turn elapsed")}</dt>
               <dd className="tabular-nums">
-                {timing.notStarted ? "Not started" : shown(timing.elapsedMs)}
+                {timing.notStarted ? tx("Not started") : shown(timing.elapsedMs)}
               </dd>
-              <dt>Recorded turn elapsed</dt>
+              <dt>{tx("Recorded turn elapsed")}</dt>
               <dd className="tabular-nums">{shown(timing.recordedMs)}</dd>
-              <dt>Turns with timing</dt>
+              <dt>{tx("Turns with timing")}</dt>
               <dd>
-                {timing.timedCount} of {timing.recordedCount} recorded
+                {renderRich(tx("{timedCount} of {recordedCount} recorded"), {
+                  timedCount: timing.timedCount,
+                  recordedCount: timing.recordedCount,
+                })}
               </dd>
             </dl>
             <p className="text-xs text-muted-foreground">
-              Start-to-finish elapsed time includes tool, provider and answer waits. It is not
-              measured active work. Gaps between turns and background watch time outside a turn are
-              excluded; overlapping spans count once.
+              {tx(
+                "Start-to-finish elapsed time includes tool, provider and answer waits. It is not measured active work. Gaps between turns and background watch time outside a turn are excluded; overlapping spans count once.",
+              )}
             </p>
             {timing.partial ? (
               <p className="text-xs text-muted-foreground">
-                Only the available history is included. This is not a lifetime total.
+                {tx("Only the available history is included. This is not a lifetime total.")}
               </p>
             ) : null}
           </div>
@@ -232,6 +238,7 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest: (url: string) => void;
 }) {
+  const tx = useTx();
   const [showAll, setShowAll] = useState(false);
   const { copyToClipboard } = useCopyToClipboard<{ path: string }>({
     target: "path",
@@ -254,7 +261,7 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
   return (
     <div
       role="list"
-      aria-label="Thread details"
+      aria-label={tx("Thread details")}
       className="pointer-events-auto flex min-w-0 flex-wrap items-center gap-1.5"
       data-thread-meta-row
     >
@@ -280,7 +287,7 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
           tip={`Subagent of ${origin.parentTitle}. Open the parent thread.`}
           onClick={origin.onOpen}
         >
-          <span className="shrink-0">Subagent of</span>
+          <span className="shrink-0">{tx("Subagent of")}</span>
           <span className="min-w-0 max-w-48 truncate text-foreground/80">{origin.parentTitle}</span>
         </MetaChip>
       ) : null}
@@ -333,10 +340,12 @@ export const ThreadMetaRow = memo(function ThreadMetaRow({
         <button
           type="button"
           className="h-6 rounded-md px-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          aria-label={showAll ? "Show fewer pull requests" : `Show ${hidden} more pull requests`}
+          aria-label={
+            showAll ? tx("Show fewer pull requests") : `Show ${hidden} more pull requests`
+          }
           onClick={() => setShowAll((all) => !all)}
         >
-          {showAll ? "Fewer" : `+${hidden}`}
+          {showAll ? tx("Fewer") : `+${hidden}`}
         </button>
       ) : null}
     </div>

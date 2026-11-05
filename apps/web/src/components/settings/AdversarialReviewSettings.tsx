@@ -154,11 +154,11 @@ export function AdversarialReviewSettings() {
         mixed={mixed}
         id="adversarial-review-auto"
         title={tx("Review finished features automatically")}
-        description={`When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. ${
+        description={tx(
           isProjectScope
-            ? "Turn it on for the projects where a second opinion is worth the usage."
-            : "Off by default; projects can turn it on."
-        }`}
+            ? "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Turn it on for the projects where a second opinion is worth the usage."
+            : "When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. Off by default; projects can turn it on.",
+        )}
         resetAction={
           review.autoOnFeatureComplete ? (
             <SettingResetButton

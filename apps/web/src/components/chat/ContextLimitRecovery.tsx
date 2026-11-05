@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { Button } from "../ui/button";
 
 export interface ContextLimitRecoveryActions {
@@ -15,13 +16,14 @@ export function ContextLimitRecovery({
 }: {
   recovery?: ContextLimitRecoveryActions | undefined;
 }) {
+  const tx = useTx();
   if (!recovery) return null;
   return (
     <div className="space-y-2" data-context-limit-recovery>
       <p className="text-sm text-muted-foreground">
         {recovery.onCompactContext
-          ? "Compact the conversation or start a new thread with a shorter prompt to continue."
-          : "Start a new thread with a shorter prompt to continue."}
+          ? tx("Compact the conversation or start a new thread with a shorter prompt to continue.")
+          : tx("Start a new thread with a shorter prompt to continue.")}
       </p>
       <div className="flex flex-wrap gap-2">
         {recovery.onCompactContext ? (
@@ -31,11 +33,11 @@ export function ContextLimitRecovery({
             disabled={Boolean(recovery.compactDisabledReason)}
             onClick={recovery.onCompactContext}
           >
-            Compact context
+            {tx("Compact context")}
           </Button>
         ) : null}
         <Button size="xs" variant="outline" onClick={recovery.onNewThread}>
-          New thread
+          {tx("New thread")}
         </Button>
       </div>
       {recovery.onCompactContext && recovery.compactDisabledReason ? (

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useState } from "react";
 
 /**
@@ -23,15 +24,16 @@ export function useUnreadSince(
 
 /** A thin rule marking where the messages the person has not read begin. */
 export function NewMessagesDivider() {
+  const tx = useTx();
   return (
     <div
       className="flex items-center gap-3 pb-3 text-xs font-medium text-info-foreground select-none"
       role="separator"
-      aria-label="New messages"
+      aria-label={tx("New messages")}
       data-new-messages-divider=""
     >
       <span aria-hidden className="h-px flex-1 bg-info-foreground/35" />
-      <span aria-hidden>New</span>
+      <span aria-hidden>{tx("New")}</span>
       <span aria-hidden className="h-px flex-1 bg-info-foreground/35" />
     </div>
   );

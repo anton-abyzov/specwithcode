@@ -55,6 +55,7 @@ import {
   type MachineSeen,
   type MachineWorkerGrant,
   type MachineWorkHere,
+  ACCOUNT_NOT_REPORTED,
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
@@ -756,7 +757,9 @@ export function MachineRow({
               >
                 <span className="min-w-0 truncate">
                   <span className="text-foreground/80">{account.provider}</span> ·{" "}
-                  {account.identity}
+                  {account.identity === ACCOUNT_NOT_REPORTED
+                    ? tx(ACCOUNT_NOT_REPORTED)
+                    : account.identity}
                 </span>
                 {account.alsoOn.length > 0 ? <AccountAlsoOn names={account.alsoOn} /> : null}
               </li>

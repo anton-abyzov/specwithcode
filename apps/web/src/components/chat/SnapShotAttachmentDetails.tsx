@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { SnapShotSource } from "@specweave-studio/contracts";
 import { ImageIcon, TextIcon } from "lucide-react";
 import { Suspense } from "react";
@@ -80,6 +81,7 @@ export function SnapShotContentsButton({
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
 }) {
+  const tx = useTx();
   const includesAccessibility = snapShotIncludesAccessibility(source);
   const ContentsIcon = includesAccessibility ? TextIcon : ImageIcon;
   const accessibilityDetails = snapShotAccessibilityDetails(source);
@@ -94,7 +96,9 @@ export function SnapShotContentsButton({
               render={
                 <Button
                   aria-label={
-                    includesAccessibility ? "View accessibility data" : "No accessibility data"
+                    includesAccessibility
+                      ? tx("View accessibility data")
+                      : tx("No accessibility data")
                   }
                   className={className}
                   onClick={(event) => event.stopPropagation()}
@@ -111,7 +115,7 @@ export function SnapShotContentsButton({
       </Tooltip>
       <PopoverPopup side={side} align="center" width="md">
         <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
-          <PopoverTitle>Accessibility data</PopoverTitle>
+          <PopoverTitle>{tx("Accessibility data")}</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}
@@ -119,12 +123,13 @@ export function SnapShotContentsButton({
             />
           ) : includesAccessibility ? (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
-              Structured accessibility elements were included, but they have no readable names or
-              values.
+              {tx(
+                "Structured accessibility elements were included, but they have no readable names or values.",
+              )}
             </div>
           ) : (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
-              The app or capture backend did not provide verified accessibility data.
+              {tx("The app or capture backend did not provide verified accessibility data.")}
             </div>
           )}
         </div>
@@ -140,6 +145,7 @@ export function SnapShotAttachmentDetails({
   source: SnapShotSource;
   className?: string;
 }) {
+  const tx = useTx();
   return (
     <div
       className={cn(
@@ -160,7 +166,7 @@ export function SnapShotAttachmentDetails({
           <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
         <div className="truncate text-3xs leading-3.5 text-white/70">
-          {source.windowTitle || "Captured window"}
+          {source.windowTitle || tx("Captured window")}
         </div>
       </div>
     </div>

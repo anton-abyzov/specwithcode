@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
@@ -94,6 +95,7 @@ export function HtmlRenderFrame(props: HtmlRenderFrameProps) {
  * reopening it keeps the visual's state.
  */
 function HtmlVisualFrame(props: HtmlRenderFrameProps) {
+  const tx = useTx();
   const { attachmentId, title } = props.htmlRender;
   const { canReadFiles } = useFilesystemReadAccess(props.environmentId);
   const { threadRef, cwd } = props;
@@ -130,7 +132,7 @@ function HtmlVisualFrame(props: HtmlRenderFrameProps) {
         title={label}
         onClick={() => setOpen((value) => !value)}
       >
-        <span>Made a visual</span>
+        <span>{tx("Made a visual")}</span>
         <svg
           aria-hidden
           viewBox="0 0 10 10"
@@ -151,7 +153,7 @@ function HtmlVisualFrame(props: HtmlRenderFrameProps) {
             />
           ) : (
             <p className="html-visual-placeholder" role="status">
-              {failed ? `Unable to load ${label}` : "Loading visual…"}
+              {failed ? `Unable to load ${label}` : tx("Loading visual…")}
             </p>
           )}
         </div>
@@ -162,6 +164,7 @@ function HtmlVisualFrame(props: HtmlRenderFrameProps) {
 
 /** A bounded preview that moves the same live document into the focused reader. */
 function HtmlReportFrame(props: HtmlRenderFrameProps) {
+  const tx = useTx();
   const { attachmentId, title } = props.htmlRender;
   // Evidence links open in this reply's own thread and folder, whatever the page claims.
   const { canReadFiles } = useFilesystemReadAccess(props.environmentId);
@@ -244,26 +247,26 @@ function HtmlReportFrame(props: HtmlRenderFrameProps) {
         <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
           <h3 className="html-report-card-title">{title}</h3>
-          <p className="html-report-card-kind">Interactive report</p>
+          <p className="html-report-card-kind">{tx("Interactive report")}</p>
         </div>
         <Button ref={triggerRef} variant="ghost" size="sm" onClick={open} disabled={src === null}>
-          Open report <ArrowUpRightIcon aria-hidden className="size-4" />
+          {tx("Open report")} <ArrowUpRightIcon aria-hidden className="size-4" />
         </Button>
       </header>
       <div className="html-report-preview" style={{ height: previewHeight }}>
         <div ref={inlineRef} />
-        {expanded ? <p className="html-report-placeholder">Open in reader</p> : null}
+        {expanded ? <p className="html-report-placeholder">{tx("Open in reader")}</p> : null}
         {!expanded && src !== null ? (
           <div className="html-report-preview-fade" aria-hidden />
         ) : null}
         {src === null ? (
           <p className="html-report-placeholder" role="status">
-            {failed ? `Unable to load ${title}` : "Loading report…"}
+            {failed ? `Unable to load ${title}` : tx("Loading report…")}
           </p>
         ) : null}
       </div>
       <p className="html-report-card-foot">
-        Open the report to explore its diagrams, details and evidence.
+        {tx("Open the report to explore its diagrams, details and evidence.")}
       </p>
       {createPortal(
         <div

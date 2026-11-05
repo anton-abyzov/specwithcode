@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ArtifactCards } from "./ThreadArtifacts";
 import { UsageWarningLabel } from "./UsageWarningLabel";
 import { RoutedMessageNoteLine } from "../studio/ProjectRoutedReplies";
@@ -855,6 +857,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const tx = useTx();
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const rememberedPosition = useMemo(
     () => readTimelinePosition(listIdentityKey),
@@ -1766,7 +1769,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground">Send a message to start the conversation.</p>
+        <p className="text-sm text-muted-foreground">
+          {tx("Send a message to start the conversation.")}
+        </p>
       </div>
     );
   }
@@ -1861,6 +1866,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 });
 
 function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
+  const tx = useTx();
   if (!props.hasMoreHistory && props.error === null) {
     return null;
   }
@@ -1871,11 +1877,11 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
           <button
             type="button"
             disabled={props.loading}
-            aria-label="Load earlier turns"
+            aria-label={tx("Load earlier turns")}
             onClick={props.onLoadEarlier}
             className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
           >
-            {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
+            {props.loading ? tx("Loading earlier turns…") : tx("Load earlier turns")}
           </button>
         ) : null}
         {props.error !== null ? (
@@ -1947,6 +1953,7 @@ function TimelineMinimap({
   stripMap: Map<string, HTMLSpanElement>;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
+  const tx = useTx();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const resolvedActiveIndex =
@@ -2144,7 +2151,7 @@ function TimelineMinimap({
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
                   <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? "User message"}
+                    {activeItem.userText ?? tx("User message")}
                   </span>
                   {activeItem.assistantText ? (
                     <span
@@ -2451,6 +2458,7 @@ function ModelChangeDivider({ messageId }: { readonly messageId: MessageId }) {
 }
 
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const tx = useTx();
   const projectRouting = useProjectMessageRouting();
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
@@ -2772,7 +2780,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     >
                       <DownloadIcon />
                     </TooltipTrigger>
-                    <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                    <TooltipPopup side="top">
+                      {renderRich(tx("Download {name}"), { name: file.name })}
+                    </TooltipPopup>
                   </Tooltip>
                 </div>
               );
@@ -2809,12 +2819,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <RelayedMessage
           label={
             fromCoordinator
-              ? "Message from coordinator"
+              ? tx("Message from coordinator")
               : senderShell?.title.trim()
                 ? `Message from ${senderShell.title.trim()}`
                 : relayFrom === "thread"
-                  ? "Message from another thread"
-                  : "Message from another agent"
+                  ? tx("Message from another thread")
+                  : tx("Message from another agent")
           }
           source={relayFrom}
           view={
@@ -2900,9 +2910,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           <MessageAuthorHeading>
             {row.message.createdBy === "agent"
               ? senderThreadId === projectRouting?.coordinatorThreadId
-                ? "Coordinator"
-                : "Agent"
-              : "You"}
+                ? tx("Coordinator")
+                : tx("Agent")
+              : tx("You")}
           </MessageAuthorHeading>
           {attachmentBlocks}
           <div onCopyCapture={onBodyCopyCapture}>
@@ -2976,6 +2986,7 @@ function UserMessageIntentMarker({
 }: {
   readonly intent: NonNullable<ChatMessage["inputIntent"]>;
 }) {
+  const tx = useTx();
   const presentation =
     intent === "queued_turn"
       ? {
@@ -3007,10 +3018,10 @@ function UserMessageIntentMarker({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {intent === "queued_turn"
-          ? "Queued behind the active turn"
+          ? tx("Queued behind the active turn")
           : intent === "promoted_queued_to_steer"
-            ? "Originally queued, then promoted to steer the active turn"
-            : "Steered the active turn"}
+            ? tx("Originally queued, then promoted to steer the active turn")
+            : tx("Steered the active turn")}
       </TooltipPopup>
     </Tooltip>
   );
@@ -3045,6 +3056,7 @@ function RevertUserMessageButton({
   turnCount: number;
   messageId: MessageId;
 }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
 
@@ -3058,13 +3070,13 @@ function RevertUserMessageButton({
             variant="ghost"
             disabled={activity.isRevertingCheckpoint || activity.isWorking}
             onClick={() => ctx.onRevertToTurnCount(turnCount, messageId)}
-            aria-label="Edit from here"
+            aria-label={tx("Edit from here")}
           />
         }
       >
         <Undo2Icon className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="top">Edit from here</TooltipPopup>
+      <TooltipPopup side="top">{tx("Edit from here")}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -3111,6 +3123,7 @@ function TimelineRowTimestamp({
 
 /** Earlier steps of a turn the thread opened inside, still on the server. */
 function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "history-gap" }> }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
 
   return (
@@ -3118,7 +3131,7 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
       <button
         type="button"
         disabled={row.loading}
-        aria-label="Load earlier steps"
+        aria-label={tx("Load earlier steps")}
         data-scroll-anchor-ignore
         onClick={() => {
           // Steps load into the turn's fold; open it so they show.
@@ -3127,7 +3140,7 @@ function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "his
         }}
         className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
       >
-        {row.loading ? "Loading earlier steps…" : "Load earlier steps"}
+        {row.loading ? tx("Loading earlier steps…") : tx("Load earlier steps")}
       </button>
       {row.error !== null ? (
         <p role="status" className="text-center text-muted-foreground text-xs">
@@ -3171,6 +3184,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 
 /** The closing edge of an open turn: where its work ends, and a way to fold it from there. */
 function TurnFoldEndTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold-end" }> }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
 
   return (
@@ -3186,13 +3200,14 @@ function TurnFoldEndTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "tu
         className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-muted-foreground text-xs leading-relaxed tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <ChevronUpIcon aria-hidden className="size-3.5" />
-        <span>Collapse · {row.label}</span>
+        <span>{renderRich(tx("Collapse · {label}"), { label: row.label })}</span>
       </button>
     </div>
   );
 }
 
 function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "attempt-fold" }> }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
 
   return (
@@ -3209,7 +3224,7 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         icon={row.expanded ? ChevronDown : ChevronRight}
       />
       <span className="text-xs font-medium text-foreground/80">{row.label}</span>
-      <span className="text-2xs text-muted-foreground">Partial output retained</span>
+      <span className="text-2xs text-muted-foreground">{tx("Partial output retained")}</span>
     </button>
   );
 }
@@ -3351,6 +3366,7 @@ function AssistantForkButton({
 }: {
   readonly projectedItem: NonNullable<Extract<TimelineRow, { kind: "message" }>["projectedItem"]>;
 }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const [busy, setBusy] = useState(false);
   const support = useV2ItemSupport({
@@ -3381,13 +3397,13 @@ function AssistantForkButton({
                 .onForkFromRun({ sourceThreadId: projectedItem.sourceThreadId, runId })
                 .finally(() => setBusy(false));
             }}
-            aria-label="Fork from this response"
+            aria-label={tx("Fork from this response")}
           />
         }
       >
         <GitForkIcon className={cn("size-3", busy && "animate-pulse")} />
       </TooltipTrigger>
-      <TooltipPopup side="top">Fork from this response</TooltipPopup>
+      <TooltipPopup side="top">{tx("Fork from this response")}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -3608,6 +3624,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 }
 
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
   const diffLink = useItemDiffLink(row.projectedItem);
@@ -3714,7 +3731,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
           ) : null}
           {visibility !== "local" ? (
             <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground">
-              {visibility === "inherited" ? "Inherited" : "Synthetic"}
+              {visibility === "inherited" ? tx("Inherited") : tx("Synthetic")}
             </span>
           ) : null}
           <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
@@ -3733,7 +3750,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             </div>
           ) : null}
           {visibility === "inherited" ? (
-            <p className="mt-1 font-mono text-3xs text-muted-foreground">From {sourceThreadId}</p>
+            <p className="mt-1 font-mono text-3xs text-muted-foreground">
+              {renderRich(tx("From {sourceThreadId}"), { sourceThreadId: sourceThreadId })}
+            </p>
           ) : null}
           <div className={presentation.detail ? "mt-2" : undefined}>
             <V2ItemInspector
@@ -3795,7 +3814,7 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             ) : null}
             {visibility !== "local" ? (
               <span className="rounded-full bg-muted px-1.5 py-0.5 text-3xs text-muted-foreground">
-                {visibility === "inherited" ? "Inherited" : "Synthetic"}
+                {visibility === "inherited" ? tx("Inherited") : tx("Synthetic")}
               </span>
             ) : null}
           </div>
@@ -3812,7 +3831,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
             </div>
           ) : null}
           {visibility === "inherited" ? (
-            <p className="mt-1 font-mono text-3xs text-muted-foreground">From {sourceThreadId}</p>
+            <p className="mt-1 font-mono text-3xs text-muted-foreground">
+              {renderRich(tx("From {sourceThreadId}"), { sourceThreadId: sourceThreadId })}
+            </p>
           ) : null}
           <div className="mt-2">
             <V2ItemInspector
@@ -4016,6 +4037,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
+  const tx = useTx();
   const { workspaceRoot, routeThreadKey, onToggleWorkEntry } = use(TimelineRowCtx);
   const onToggleStandaloneEntry = useCallback(
     (collapsed: boolean) => onToggleWorkEntry(disclosureAnchorKey, collapsed),
@@ -4043,7 +4065,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
   }
 
   return (
-    <section aria-label="Activity">
+    <section aria-label={tx("Activity")}>
       {nonEmptyEntries.map((workEntry) => (
         <SimpleWorkEntryRow
           key={workEntry.id}
@@ -4118,6 +4140,7 @@ function ExpandedWorkGroupEntries({
   entries: TimelineWorkEntry[];
   workspaceRoot: string | undefined;
 }) {
+  const tx = useTx();
   const { workGroupViewState: viewState, onToggleWorkEntry, timelineDetail } = use(TimelineRowCtx);
   const [initialScrollIndex] = useState(() =>
     resolveWorkGroupScrollIndex(entries, viewState.scrollPositions.get(anchorKey)),
@@ -4255,7 +4278,7 @@ function ExpandedWorkGroupEntries({
           onItemSizeChanged={updateExpandedContentHeight}
           tabIndex={0}
           role="region"
-          aria-label="Tool calls"
+          aria-label={tx("Tool calls")}
           data-tool-group-scroll
           style={{ maxHeight: `calc(min(18rem, 50dvh) + ${expandedContentHeight}px)` }}
           className={cn(
@@ -4385,6 +4408,7 @@ function ToolGroupDisclosure({ count, expanded }: { count: number; expanded: boo
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const tx = useTx();
   const {
     isCompacting,
     isPreparingWorktree,
@@ -4415,7 +4439,9 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     <CompactingLabel />
   ) : row.createdAt ? (
     <>
-      Working for <WorkingTimer createdAt={row.createdAt} frozen={liveState === "offline"} />
+      {renderRich(tx("Working for {workingTimer}"), {
+        workingTimer: <WorkingTimer createdAt={row.createdAt} frozen={liveState === "offline"} />,
+      })}
     </>
   ) : (
     "Working..."
@@ -4439,7 +4465,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
         {activeHost !== null && !shimmer ? (
           <span className="min-w-0 shrink truncate" data-working-host>
             · {activeHost.label}
-            {activeHost.connected ? null : " offline, status may be stale"}
+            {activeHost.connected ? null : tx(" offline, status may be stale")}
           </span>
         ) : null}
         {backgroundWorktreeSetup ? (
@@ -4472,6 +4498,7 @@ function RunHealthNote(props: {
   onStop: (() => void) | undefined;
   onContinue: (() => void) | undefined;
 }) {
+  const tx = useTx();
   const { health } = props;
   const ctx = use(TimelineRowCtx);
   if (health === null || health.state === "working") return null;
@@ -4483,7 +4510,7 @@ function RunHealthNote(props: {
         className="inline-flex min-w-0 items-center gap-1 self-center rounded-full border border-border/70 px-2 text-xs leading-5 text-muted-foreground"
         data-run-health="waiting"
       >
-        <span className="shrink-0">Waiting on</span>
+        <span className="shrink-0">{tx("Waiting on")}</span>
         {waitThreadId ? (
           <button
             type="button"
@@ -4509,13 +4536,13 @@ function RunHealthNote(props: {
         className="min-w-0 truncate"
         title={health.label === null ? undefined : `Last in flight: ${health.label}`}
       >
-        No activity {formatQuietDuration(health.idleMs)}
+        {renderRich(tx("No activity {value}"), { value: formatQuietDuration(health.idleMs) })}
       </span>
       {hasActions ? (
         <Menu>
           <MenuTrigger
             className="-me-1 inline-flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-accent hover:text-foreground"
-            aria-label="Quiet run actions"
+            aria-label={tx("Quiet run actions")}
             render={<button type="button" />}
           >
             <MoreHorizontalIcon aria-hidden className="size-3.5" />
@@ -4524,13 +4551,13 @@ function RunHealthNote(props: {
             {props.onContinue ? (
               <MenuItem onClick={props.onContinue}>
                 <RotateCcwIcon aria-hidden className="size-3.5" />
-                Continue
+                {tx("Continue")}
               </MenuItem>
             ) : null}
             {props.onStop ? (
               <MenuItem onClick={props.onStop}>
                 <SquareIcon aria-hidden className="size-3.5" />
-                Stop
+                {tx("Stop")}
               </MenuItem>
             ) : null}
           </MenuPopup>
@@ -4583,15 +4610,17 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
 }
 
 function CompactingLabel() {
+  const tx = useTx();
   return (
     <span className="inline-flex items-center gap-1.5">
       <Minimize2Icon aria-hidden="true" className="size-3" />
-      Compacting…
+      {tx("Compacting…")}
     </span>
   );
 }
 
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, runHealth } = use(TimelineRowActivityCtx);
   const { lastActivityMs, phaseStartedMs, hostOffline } = use(LiveSignalCtx);
@@ -4607,7 +4636,11 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
     <LiveActivityRow
       thinking={LIVE_THINKING_SCOPE}
       label={
-        awaitingPerson ? `Waiting for ${runHealth.label}` : quiet ? "No new events" : "Thinking"
+        awaitingPerson
+          ? `Waiting for ${runHealth.label}`
+          : quiet
+            ? tx("No new events")
+            : tx("Thinking")
       }
       iconName={awaitingPerson ? "message-circle" : quiet ? "clock" : "thinking"}
       active={!quiet && !awaitingPerson}
@@ -4721,6 +4754,7 @@ function LiveActivityContent({
   active?: boolean;
   highlighted?: boolean;
 }) {
+  const tx = useTx();
   const showTrailingFailureMark =
     failed && iconName !== undefined && !toolIconAcceptsTint(iconName, toolIcon);
 
@@ -4738,7 +4772,7 @@ function LiveActivityContent({
                   : "text-icon-muted",
             )}
             role={announceFailure ? "img" : undefined}
-            aria-label={announceFailure ? "Tool call failed" : undefined}
+            aria-label={announceFailure ? tx("Tool call failed") : undefined}
           >
             <ToolActivityIconView
               icon={toolIcon}
@@ -4770,6 +4804,7 @@ function LiveActivityContent({
 }
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const questionHeading = row.entry.questionAnswer
     ? getQuestionTextPreview(row.entry.questionAnswer)
@@ -4824,7 +4859,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
                 `No new events for ${formatActivityDuration(quietMs)}`
               ) : (
                 <>
-                  Thinking <LiveDuration sinceMs={phaseStartedMs ?? lastActivityMs ?? 0} />
+                  {renderRich(tx("Thinking {liveDuration}"), {
+                    liveDuration: <LiveDuration sinceMs={phaseStartedMs ?? lastActivityMs ?? 0} />,
+                  })}
                 </>
               )}
             </span>
@@ -4938,6 +4975,7 @@ function ToolActivityTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "tool-activity" }>;
 }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const title = `Used ${row.toolCount} ${row.toolCount === 1 ? "tool" : "tools"}`;
   const details = [
@@ -4976,7 +5014,7 @@ function ToolActivityTimelineRow({
             ))}
             {row.noteCount > 0 ? (
               <span className="shrink-0 text-muted-foreground">
-                {row.noteCount} {row.noteCount === 1 ? "note" : "notes"}
+                {row.noteCount} {row.noteCount === 1 ? tx("note") : tx("notes")}
               </span>
             ) : null}
           </span>
@@ -5325,6 +5363,7 @@ function UserMessagePreviewAnnotationDetails(props: {
   record: Extract<KnownComposerContextRecord, { kind: "preview-annotation" }>;
   image: ChatImageAttachment | null;
 }) {
+  const tx = useTx();
   const ctx = use(TimelineRowCtx);
   const visibleElements = props.record.elements ?? [];
   return (
@@ -5342,18 +5381,18 @@ function UserMessagePreviewAnnotationDetails(props: {
         >
           <img
             src={props.image.previewUrl}
-            alt="Annotated preview crop"
+            alt={tx("Annotated preview crop")}
             className="max-h-64 w-full object-contain"
           />
         </button>
       ) : (
         <div className="border-b border-border/70 bg-muted/40 px-3 py-2 text-secondary-label text-xs">
-          Screenshot unavailable
+          {tx("Screenshot unavailable")}
         </div>
       )}
       <div className="min-w-0 px-3 py-2.5">
         <div className="text-message-foreground text-xs font-medium">
-          {props.record.pageTitle?.trim() || props.record.pageUrl || "Preview annotation"}
+          {props.record.pageTitle?.trim() || props.record.pageUrl || tx("Preview annotation")}
         </div>
         {props.record.comment ? (
           <div className="mt-1 whitespace-pre-wrap wrap-break-word text-sm">
@@ -5401,8 +5440,9 @@ function UserMessagePreviewAnnotationDetails(props: {
             })}
             {(props.record.elements?.length ?? 0) > visibleElements.length ? (
               <div className="text-secondary-label text-3xs">
-                {(props.record.elements?.length ?? 0) - visibleElements.length} more selected
-                elements
+                {renderRich(tx("{value} more selected elements"), {
+                  value: (props.record.elements?.length ?? 0) - visibleElements.length,
+                })}
               </div>
             ) : null}
           </div>
@@ -5464,11 +5504,12 @@ interface UserMessageContextRenderContext {
 }
 
 function UnavailableUserMessageContextChip(props: UserMessageContextRenderContext) {
+  const tx = useTx();
   return (
     <UnresolvedChip
       label={props.reference.label}
       copyMarkdown={props.copyMarkdown}
-      tooltip="This context is no longer available."
+      tooltip={tx("This context is no longer available.")}
     />
   );
 }
@@ -6638,6 +6679,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
 });
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
+  const tx = useTx();
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
@@ -6725,7 +6767,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           label={
             <span className="text-sm text-muted-foreground">
               {workEntry.label}
-              <span className="text-muted-foreground"> · earlier turn</span>
+              <span className="text-muted-foreground"> {tx("· earlier turn")}</span>
             </span>
           }
           trailing={
@@ -6829,7 +6871,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               onClick={() => onRetryWorkspacePreparation(retryRunId)}
             >
               <RotateCcwIcon aria-hidden />
-              Retry
+              {tx("Retry")}
             </Button>
           </div>
         ) : null}
@@ -6998,7 +7040,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <span
           className={iconWrapperClass}
           role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          aria-label={showFailedIndicator ? tx("Tool call failed") : undefined}
         >
           <ThinkingMarkScopeCtx
             value={{
@@ -7042,7 +7084,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                     data-row-path
                   />
                   {pathLabel.moreCount > 0 ? (
-                    <span className="shrink-0">+{pathLabel.moreCount} more</span>
+                    <span className="shrink-0">
+                      {renderRich(tx("+{moreCount} more"), { moreCount: pathLabel.moreCount })}
+                    </span>
                   ) : null}
                   {pathLabel.additions !== undefined && pathLabel.deletions !== undefined ? (
                     <DiffStatLabel
@@ -7101,19 +7145,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               }}
               onKeyDown={stopRowToggle}
             >
-              Open chat
+              {tx("Open chat")}
             </button>
           ) : null}
           {notifiedSubagentThreadId ? (
             <InlineButton
-              aria-label="Open subagent thread"
+              aria-label={tx("Open subagent thread")}
               onClick={(event) => {
                 event.stopPropagation();
                 ctx.onOpenThread(notifiedSubagentThreadId);
               }}
               onKeyDown={stopRowToggle}
             >
-              Open subagent
+              {tx("Open subagent")}
             </InlineButton>
           ) : null}
           {failureKind === "possible" &&
@@ -7130,11 +7174,11 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               aria-label={
                 pathLabel
                   ? pathLabel.fullPaths.length > 1
-                    ? "Copy paths"
-                    : "Copy path"
+                    ? tx("Copy paths")
+                    : tx("Copy path")
                   : execution?.label === "Script"
-                    ? "Copy script"
-                    : "Copy command"
+                    ? tx("Copy script")
+                    : tx("Copy command")
               }
               onClick={(event) => {
                 event.stopPropagation();
@@ -7157,7 +7201,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 disabled={diffLink.diffUnavailableReason !== null}
                 aria-label={
                   diffLink.diffUnavailableReason === null
-                    ? "Open diff"
+                    ? tx("Open diff")
                     : `Open diff. ${diffLink.diffUnavailableReason}`
                 }
                 onClick={(event) => {
@@ -7167,7 +7211,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 }}
                 onKeyDown={stopRowToggle}
               >
-                Open diff
+                {tx("Open diff")}
               </InlineButton>
             </span>
           ) : null}

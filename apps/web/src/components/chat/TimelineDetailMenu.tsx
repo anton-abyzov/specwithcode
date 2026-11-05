@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type {
   EnvironmentId,
   ProjectId,
@@ -154,6 +156,7 @@ function DetailMenu({
   threadKey = null,
   replies,
 }: MenuProps & { replies: ProjectReplies | null }) {
+  const tx = useTx();
   const defaultDetail = useClientSettings((settings) => settings.timelineDetail);
   const detail = useClientSettings((settings) => resolveTimelineDetail(settings, threadKey));
   const ownLevel = useClientSettings((settings) => threadHasOwnTimelineDetail(settings, threadKey));
@@ -237,7 +240,7 @@ function DetailMenu({
         {replies ? (
           <>
             <MenuGroup>
-              <MenuGroupLabel>Agent replies in this project</MenuGroupLabel>
+              <MenuGroupLabel>{tx("Agent replies in this project")}</MenuGroupLabel>
               <MenuRadioGroup
                 value={replies.style ?? ""}
                 onValueChange={(value) => {
@@ -267,7 +270,7 @@ function DetailMenu({
               </MenuRadioGroup>
               {replies.writable ? null : (
                 <p className="px-2 pb-1 text-muted-foreground text-xs">
-                  This connection cannot change project settings.
+                  {tx("This connection cannot change project settings.")}
                 </p>
               )}
             </MenuGroup>
@@ -276,7 +279,7 @@ function DetailMenu({
         ) : null}
         {threadKey ? (
           <MenuGroup>
-            <MenuGroupLabel>Show in this thread</MenuGroupLabel>
+            <MenuGroupLabel>{tx("Show in this thread")}</MenuGroupLabel>
             <MenuRadioGroup
               value={ownLevel ? detail : FOLLOW_DEFAULT}
               onValueChange={(value) => {
@@ -289,7 +292,11 @@ function DetailMenu({
                   <span className="flex size-4 shrink-0 items-center justify-center pt-0.5">
                     <MenuRadioItemIndicator />
                   </span>
-                  <span>Use default ({TIMELINE_DETAIL_LABELS[defaultDetail]})</span>
+                  <span>
+                    {renderRich(tx("Use default ({value})"), {
+                      value: TIMELINE_DETAIL_LABELS[defaultDetail],
+                    })}
+                  </span>
                 </span>
               </MenuRadioItem>
               {TIMELINE_DETAIL_LEVELS.map(levelItem(true))}
@@ -297,7 +304,7 @@ function DetailMenu({
           </MenuGroup>
         ) : null}
         <MenuGroup>
-          <MenuGroupLabel>{threadKey ? "Show in every thread" : "Show"}</MenuGroupLabel>
+          <MenuGroupLabel>{threadKey ? tx("Show in every thread") : tx("Show")}</MenuGroupLabel>
           <MenuRadioGroup
             value={defaultDetail}
             onValueChange={(value) => {
@@ -309,7 +316,7 @@ function DetailMenu({
         </MenuGroup>
         {shortcutLabel ? (
           <div className="flex items-center gap-2 px-2 pt-1.5 pb-1 text-muted-foreground text-xs">
-            <span>Cycle what every thread shows</span>
+            <span>{tx("Cycle what every thread shows")}</span>
             <MenuShortcut>{shortcutLabel}</MenuShortcut>
           </div>
         ) : null}

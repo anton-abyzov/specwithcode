@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { OrchestrationV2ProviderFailureClass } from "@specweave-studio/contracts";
 import {
   isContextLimitError,
@@ -82,6 +83,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
    */
   workspaceMissingRecovery?: WorkspaceMissingRecoveryActions | undefined;
 }) {
+  const tx = useTx();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   if (!error) return null;
   const failure = {
@@ -122,8 +124,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         <AlertDescription>
           {chatGptUsageLimit ? (
             <div className="space-y-1">
-              <p className="font-medium">ChatGPT usage limit reached</p>
-              <p>Review your usage settings in ChatGPT to continue.</p>
+              <p className="font-medium">{tx("ChatGPT usage limit reached")}</p>
+              <p>{tx("Review your usage settings in ChatGPT to continue.")}</p>
             </div>
           ) : (
             <Tooltip>
@@ -157,16 +159,21 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
             {showContinue ? (
               <Button variant="outline" size="xs" disabled={continueBusy} onClick={onContinue}>
-                Continue
+                {tx("Continue")}
               </Button>
             ) : null}
             {showSwitchModel ? (
               <Button variant="outline" size="xs" onClick={onSwitchModel}>
-                Switch model
+                {tx("Switch model")}
               </Button>
             ) : null}
             {onDismiss ? (
-              <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={tx("Dismiss error")}
+                onClick={onDismiss}
+              >
                 <XIcon />
               </Button>
             ) : null}

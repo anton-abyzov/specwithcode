@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -52,6 +54,7 @@ export function ArtifactShelfList(props: {
   /** Said above the sections, such as the machine being offline. */
   readonly notice?: string | null | undefined;
 }) {
+  const tx = useTx();
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<ReadonlySet<ShelfSectionId>>(new Set());
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -87,7 +90,7 @@ export function ArtifactShelfList(props: {
             autoFocus
             value={query}
             placeholder={`Search ${shelf.totalCount} artifacts`}
-            aria-label="Search artifacts"
+            aria-label={tx("Search artifacts")}
             onChange={(event) => setQuery(event.currentTarget.value)}
           />
         </div>
@@ -107,7 +110,7 @@ export function ArtifactShelfList(props: {
       >
         {shelf.sections.length === 0 || (query && shelf.sections[0]?.total === 0) ? (
           <p className="px-3 py-4 text-center text-muted-foreground text-xs">
-            No artifacts match “{query}”.
+            {renderRich(tx("No artifacts match “{query}”."), { query: query })}
           </p>
         ) : null}
         {shelf.sections.map((section) => {
@@ -167,7 +170,7 @@ export function ArtifactShelfList(props: {
                   data-artifact-section-more={section.id}
                   onClick={() => toggle(section.id)}
                 >
-                  {more > 0 ? `Show all ${section.total}` : "Show fewer"}
+                  {more > 0 ? `Show all ${section.total}` : tx("Show fewer")}
                 </button>
               ) : null}
             </section>
@@ -220,6 +223,7 @@ function ShelfRow(props: {
   readonly onPin: () => void;
   readonly onHide: () => void;
 }) {
+  const tx = useTx();
   const { entry, Icon } = props;
   const kind = entry.artifact.kind;
   const native = entry.artifact.kind === "native" ? entry.artifact.native : null;
@@ -388,7 +392,7 @@ function ShelfRow(props: {
           <RowAction
             label={
               isCopied
-                ? "Copied"
+                ? tx("Copied")
                 : kind === "link"
                   ? `Copy the link to ${entry.label}`
                   : `Copy the path of ${entry.label}`

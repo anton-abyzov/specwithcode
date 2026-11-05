@@ -183,14 +183,25 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   };
 
   const description = !canPair
-    ? "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer."
+    ? tx(
+        "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer.",
+      )
     : address === null
       ? hasAccessControls
-        ? "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead."
-        : "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`."
+        ? tx(
+            "To pair with a private QR code, your phone needs an address for this computer. Turn on Network access or Tailscale HTTPS first. To reach it from anywhere, sign in to SpecWithCode Connect instead.",
+          )
+        : tx(
+            "To reach this computer from your phone, open these settings in the SpecWithCode desktop app and sign in to SpecWithCode Connect. To pair with a private QR code instead, set up Tailscale Serve with `specweave-studio pair --tailscale`.",
+          )
       : folded
-        ? "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code."
-        : `Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
+        ? tx(
+            "Only if you can't use SpecWithCode Connect: your iPhone reaches this computer directly, on the same network or over Tailscale, and scans a one-time code.",
+          )
+        : tx(
+            "Scan a private pairing code with the SpecWithCode app on your iPhone. It connects to {url}.",
+            { url: address.httpBaseUrl.replace(/\/$/u, "") },
+          );
 
   const content = (
     <>

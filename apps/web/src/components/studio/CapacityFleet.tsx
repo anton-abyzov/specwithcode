@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -51,6 +53,7 @@ type Props = {
 };
 
 export function CapacityFleet({ environments, configs, onNewDraft }: Props) {
+  const tx = useTx();
   const [now, setNow] = useState(Date.now);
   // Age display only; this clock never refreshes a native provider or sends a request.
   useEffect(() => {
@@ -75,19 +78,27 @@ export function CapacityFleet({ environments, configs, onNewDraft }: Props) {
   return (
     <section className="studio-fleet" aria-labelledby="studio-fleet-title">
       <div className="studio-section-heading">
-        <h2 id="studio-fleet-title">Hosts & capacity</h2>
+        <h2 id="studio-fleet-title">{tx("Hosts & capacity")}</h2>
         <Link className="studio-text-link" to="/settings/connections">
-          Manage connections <ArrowRightIcon aria-hidden="true" />
+          {tx("Manage connections")} <ArrowRightIcon aria-hidden="true" />
         </Link>
       </div>
       <p className="studio-capacity-note">
         <strong>
           {summary.verifiedPools === null
-            ? "Independent capacity unknown"
-            : `${summary.verifiedPools} verified quota ${summary.verifiedPools === 1 ? "pool" : "pools"}`}
+            ? tx("Independent capacity unknown")
+            : tx(
+                summary.verifiedPools === 1
+                  ? "{count} verified quota pool"
+                  : "{count} verified quota pools",
+                { count: summary.verifiedPools },
+              )}
         </strong>
         <span>
-          {summary.eligible} eligible · {summary.unknownPools} unverified
+          {tx("{eligible} eligible · {unknownPools} unverified", {
+            eligible: summary.eligible,
+            unknownPools: summary.unknownPools,
+          })}
         </span>
         <Tooltip>
           <TooltipTrigger
@@ -95,24 +106,29 @@ export function CapacityFleet({ environments, configs, onNewDraft }: Props) {
               <button
                 type="button"
                 className="studio-capacity-info"
-                aria-label="Hosts and prepared slots do not create additional subscriptions."
+                aria-label={tx("Hosts and prepared slots do not create additional subscriptions.")}
               />
             }
           >
             <InfoIcon aria-hidden="true" />
           </TooltipTrigger>
           <TooltipPopup>
-            Eligible profiles map to a verified quota pool. Hosts and prepared slots do not create
-            additional subscriptions.
+            {tx(
+              "Eligible profiles map to a verified quota pool. Hosts and prepared slots do not create additional subscriptions.",
+            )}
           </TooltipPopup>
         </Tooltip>
       </p>
       {environments.length === 0 ? (
         <div className="studio-empty">
-          <h3>Connect a host.</h3>
-          <p>Add a private pairing connection to see its native sessions and observed capacity.</p>
+          <h3>{tx("Connect a host.")}</h3>
+          <p>
+            {tx(
+              "Add a private pairing connection to see its native sessions and observed capacity.",
+            )}
+          </p>
           <Link className="studio-text-link" to="/settings/connections">
-            Open Connections <ArrowRightIcon aria-hidden="true" />
+            {tx("Open Connections")} <ArrowRightIcon aria-hidden="true" />
           </Link>
         </div>
       ) : (
@@ -146,6 +162,7 @@ function HostCard({
   onNewDraft: Props["onNewDraft"];
   now: number;
 }) {
+  const tx = useTx();
   const { snapshot, loading, failed } = useStudioCapacity(e.environmentId);
   const connected = e.connection.phase === "connected";
   const canWrite = useEnvironmentScope(e.environmentId, AuthOrchestrationOperateScope);
@@ -201,7 +218,7 @@ function HostCard({
       await mutateStudioCapacity(e.environmentId, operation);
     } catch {
       setActionError(
-        "This action could not be completed. Check the connection or its permissions.",
+        tx("This action could not be completed. Check the connection or its permissions."),
       );
     } finally {
       setBusy(false);
@@ -212,17 +229,17 @@ function HostCard({
     ? accounts
     : accounts.filter((a) => a.id === "codex-1" || a.id === "claude-1" || a.authenticated === true);
   const problem = !connected
-    ? "Reconnect this host to observe current capacity."
+    ? tx("Reconnect this host to observe current capacity.")
     : failed
-      ? "Capacity read failed or was denied. No available capacity is assumed."
+      ? tx("Capacity read failed or was denied. No available capacity is assumed.")
       : snapshot?.error === "switch-timeout"
-        ? "The local Switch service timed out."
+        ? tx("The local Switch service timed out.")
         : snapshot?.error === "switch-invalid-response"
-          ? "The local Switch response could not be verified."
+          ? tx("The local Switch response could not be verified.")
           : snapshot?.error === "switch-unavailable"
-            ? "The local Switch service is unavailable."
+            ? tx("The local Switch service is unavailable.")
             : !snapshot && !loading
-              ? "Capacity is unavailable with this connection’s session read permission."
+              ? tx("Capacity is unavailable with this connection’s session read permission.")
               : null;
   return (
     <article className="studio-host">
@@ -234,14 +251,14 @@ function HostCard({
         </Tooltip>
         <span className={`studio-host-state${connected ? " connected" : ""}`}>
           {connected
-            ? "Connected"
+            ? tx("Connected")
             : e.connection.phase === "error"
-              ? "Connection failed"
+              ? tx("Connection failed")
               : e.connection.phase === "unsupported"
-                ? "Client not supported"
+                ? tx("Client not supported")
                 : e.connection.phase === "connecting" || e.connection.phase === "reconnecting"
-                  ? "Connecting…"
-                  : "Offline"}
+                  ? tx("Connecting…")
+                  : tx("Offline")}
         </span>
       </header>
       <div className="studio-host-body">
@@ -257,11 +274,11 @@ function HostCard({
         )}
         {loading && !snapshot && (
           <p className="studio-small" role="status">
-            Reading host-local observations…
+            {tx("Reading host-local observations…")}
           </p>
         )}
         {accounts.length === 0 && snapshot?.available && !problem && (
-          <p className="studio-small">No native profiles were reported.</p>
+          <p className="studio-small">{tx("No native profiles were reported.")}</p>
         )}
         {displayed.map((account) => (
           <AccountRow
@@ -281,17 +298,19 @@ function HostCard({
         ))}
         {accounts.length > displayed.length && (
           <button className="studio-text-link studio-slot-toggle" onClick={() => setShowAll(true)}>
-            Show {accounts.length - displayed.length} more prepared profiles
+            {tx("Show {value} more prepared profiles", {
+              value: accounts.length - displayed.length,
+            })}
           </button>
         )}
         {showAll && accounts.length > 2 && (
           <button className="studio-text-link studio-slot-toggle" onClick={() => setShowAll(false)}>
-            Show primary profiles
+            {tx("Show primary profiles")}
           </button>
         )}
         {snapshot?.available && snapshot.policy && connected && !failed && (
           <div className="studio-policy">
-            <label id={`studio-policy-${e.environmentId}`}>Capacity policy</label>
+            <label id={`studio-policy-${e.environmentId}`}>{tx("Capacity policy")}</label>
             <Select
               items={POLICIES}
               value={snapshot.policy.mode}
@@ -316,27 +335,41 @@ function HostCard({
             </Select>
             <span className="studio-small">
               {snapshot.policy.selectedAccount
-                ? `Pinned: ${snapshot.policy.selectedAccount} · `
+                ? tx("Pinned: {account} · ", { account: snapshot.policy.selectedAccount })
                 : ""}
               {recommended
-                ? `Recommended: ${recommended.label} · ${Number.isFinite(nextReset) ? `next reset ${absoluteTime(nextReset)}` : "next reset unknown"}`
-                : "No eligible native instance for this policy."}
+                ? Number.isFinite(nextReset)
+                  ? tx("Recommended: {label} · next reset {time}", {
+                      label: recommended.label,
+                      time: absoluteTime(nextReset),
+                    })
+                  : tx("Recommended: {label} · next reset unknown", { label: recommended.label })
+                : tx("No eligible native instance for this policy.")}
             </span>
             <details className="studio-disclosure">
               <summary>
-                <span>How selection works</span>
+                <span>{tx("How selection works")}</span>
               </summary>
               <p>
-                {snapshot.policy.mode === "reset-first"
-                  ? "Use eligible quota that resets soonest; equal resets prefer the one with less left."
-                  : snapshot.policy.mode === "spend-first"
-                    ? "Use the eligible quota with the least left first."
-                    : "Use the eligible quota with the most left first."}{" "}
-                {snapshot.policy.selectedAccount
-                  ? "A pinned account waits if it is unavailable."
-                  : "Selection is automatic."}{" "}
-                Applies to new sessions. Existing sessions keep their account and provider to
-                preserve cache affinity.
+                {renderRich(
+                  tx(
+                    "{value} {value2} Applies to new sessions. Existing sessions keep their account and provider to preserve cache affinity.",
+                  ),
+                  {
+                    value: tx(
+                      snapshot.policy.mode === "reset-first"
+                        ? "Use eligible quota that resets soonest; equal resets prefer the one with less left."
+                        : snapshot.policy.mode === "spend-first"
+                          ? "Use the eligible quota with the least left first."
+                          : "Use the eligible quota with the most left first.",
+                    ),
+                    value2: tx(
+                      snapshot.policy.selectedAccount
+                        ? "A pinned account waits if it is unavailable."
+                        : "Selection is automatic.",
+                    ),
+                  },
+                )}
               </p>
             </details>
             <button
@@ -344,7 +377,7 @@ function HostCard({
               disabled={!canWrite || busy || !recommended}
               onClick={openPolicyDraft}
             >
-              Draft using capacity policy <ArrowRightIcon aria-hidden="true" />
+              {tx("Draft using capacity policy")} <ArrowRightIcon aria-hidden="true" />
             </button>
             {snapshot.policy.selectedAccount && (
               <button
@@ -352,7 +385,7 @@ function HostCard({
                 disabled={!canWrite || busy}
                 onClick={() => void perform({ kind: "select", input: { id: null } })}
               >
-                Return to Automatic <ArrowRightIcon aria-hidden="true" />
+                {tx("Return to Automatic")} <ArrowRightIcon aria-hidden="true" />
               </button>
             )}
           </div>
@@ -369,7 +402,7 @@ function HostCard({
           search={{ environmentId: e.environmentId }}
           className="studio-text-link"
         >
-          Providers <ArrowRightIcon aria-hidden="true" />
+          {tx("Providers")} <ArrowRightIcon aria-hidden="true" />
         </Link>
         <button
           className="studio-text-link"
@@ -377,7 +410,7 @@ function HostCard({
           onClick={() => void perform({ kind: "refresh" })}
         >
           <RefreshCwIcon aria-hidden="true" />
-          {busy ? "Checking…" : "Refresh observations"}
+          {busy ? tx("Checking…") : tx("Refresh observations")}
         </button>
       </footer>
     </article>
@@ -403,6 +436,7 @@ function AccountRow({
   onNewDraft: Props["onNewDraft"];
   now: number;
 }) {
+  const tx = useTx();
   const fresh = quotaFresh(a, now);
   const available = canSelectCapacity(a, now);
   const model = resolveNativeModel(config?.providers ?? [], a.providerInstanceId);
@@ -467,44 +501,64 @@ function AccountRow({
         <p className="studio-small studio-blocked-reason">{authReason(a.authError)}</p>
       )}
       {a.quota.spendControlReached === true && (
-        <p className="studio-small studio-blocked-reason">Provider spend control blocks new work</p>
+        <p className="studio-small studio-blocked-reason">
+          {tx("Provider spend control blocks new work")}
+        </p>
       )}
       <div className="studio-account-actions">
         <details className="studio-disclosure studio-account-details">
           <summary>
             <span>
-              {a.quota.observedAt ? relativeTime(a.quota.observedAt, now) : "Not observed"}
-              {pool ? " · pool verified" : " · pool unverified"}
+              {a.quota.observedAt ? relativeTime(a.quota.observedAt, now) : tx("Not observed")}
+              {pool ? tx(" · pool verified") : tx(" · pool unverified")}
             </span>
           </summary>
           <ul>
             <li>
               {a.quota.spendControlReached === true
-                ? "Spend limit reached"
+                ? tx("Spend limit reached")
                 : a.quota.ordinaryUsageAllowed === true
-                  ? "Provider allows new work"
+                  ? tx("Provider allows new work")
                   : a.quota.ordinaryUsageAllowed === false
-                    ? "Included usage unavailable"
-                    : "Provider allowance unknown"}
+                    ? tx("Included usage unavailable")
+                    : tx("Provider allowance unknown")}
               {a.quota.spendControlReached !== true && a.quota.rateLimitReachedType
-                ? " · provider reported a limit"
+                ? tx(" · provider reported a limit")
                 : ""}
             </li>
             <li>{creditLabel(a.quota.credits)}</li>
             <li>
               {a.quota.resetCredits
-                ? `${a.quota.resetCredits.availableCount} banked ${a.quota.resetCredits.availableCount === 1 ? "reset" : "resets"}${a.quota.resetCredits.nextExpiresAt ? ` · next expires ${absoluteTime(a.quota.resetCredits.nextExpiresAt)}` : ""}`
-                : "Banked resets unknown"}
+                ? `${tx(
+                    a.quota.resetCredits.availableCount === 1
+                      ? "{count} banked reset"
+                      : "{count} banked resets",
+                    { count: a.quota.resetCredits.availableCount },
+                  )}${
+                    a.quota.resetCredits.nextExpiresAt
+                      ? tx(" · next expires {time}", {
+                          time: absoluteTime(a.quota.resetCredits.nextExpiresAt),
+                        })
+                      : ""
+                  }`
+                : tx("Banked resets unknown")}
             </li>
             <li>
               {a.quota.observedAt
-                ? `${a.quota.source === "manual" ? "Manual" : "Native"} observation · ${absoluteTime(a.quota.observedAt)}${fresh ? "" : " · stale"}`
-                : "No supported quota observation"}
+                ? `${tx(
+                    a.quota.source === "manual"
+                      ? "Manual observation · {time}"
+                      : "Native observation · {time}",
+                    { time: absoluteTime(a.quota.observedAt) },
+                  )}${fresh ? "" : tx(" · stale")}`
+                : tx("No supported quota observation")}
             </li>
             <li>
               {pool
-                ? `Pool identity verified · ${absoluteTime(a.quotaPoolObservedAt)}`
-                : "Pool identity unknown"}
+                ? tx("Pool identity verified · {time}", {
+                    time: absoluteTime(a.quotaPoolObservedAt),
+                  })
+                : tx("Pool identity unknown")}
             </li>
           </ul>
         </details>
@@ -519,7 +573,7 @@ function AccountRow({
                 onNewDraft(environmentId, model);
             }}
           >
-            Open native draft
+            {tx("Open native draft")}
           </button>
         ) : (
           <Link
@@ -530,11 +584,11 @@ function AccountRow({
               ...(a.providerInstanceId ? { instanceId: a.providerInstanceId } : {}),
             }}
           >
-            Set up
+            {tx("Set up")}
           </Link>
         )}
         <button className="studio-prefer" disabled={!canWrite || !available} onClick={onSelect}>
-          {selected ? "Preferred" : "Prefer"}
+          {selected ? tx("Preferred") : tx("Prefer")}
         </button>
       </div>
     </div>
@@ -591,9 +645,13 @@ function QuotaWindow({
   value: StudioCapacityAccount["quota"]["window"];
   fresh: boolean;
 }) {
+  const tx = useTx();
   const percent = value === null ? null : Math.round(value.usedPercent);
   const left = percent === null ? null : 100 - Math.min(100, Math.max(0, percent));
-  const detail = `${title}${left === null ? "" : ` · ${left === 0 ? "limit reached" : `${left}% left`}`}${fresh ? "" : " · last observed"}`;
+  const leftText = left === null ? null : tx("{left}% left", { left });
+  const detail = `${title}${
+    left === null ? "" : ` · ${left === 0 ? tx("limit reached") : leftText}`
+  }${fresh ? "" : tx(" · last observed")}`;
   return (
     <div
       className={`studio-quota${fresh ? "" : " stale"}${left !== null && left <= 10 ? " low" : ""}`}
@@ -606,11 +664,13 @@ function QuotaWindow({
         <span style={{ width: `${left ?? 0}%` }} />
       </div>
       <strong>
-        {left === null ? "Unknown" : `${left}% left`}
+        {leftText ?? tx("Unknown")}
         <span className="sr-only"> · {detail}</span>
       </strong>
       {value?.resetsAt ? (
-        <span className="studio-reset">Resets {shortTime(value.resetsAt)}</span>
+        <span className="studio-reset">
+          {tx("Resets {value}", { value: shortTime(value.resetsAt) })}
+        </span>
       ) : null}
     </div>
   );

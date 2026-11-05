@@ -184,6 +184,9 @@ const ROLE_HELP: Readonly<Record<SharedProjectRole | "only-here", string>> = {
   "only-here": "No other machine has a copy of this project.",
 };
 
+/** Shown when a machine reports no account; translated where it is displayed. */
+export const ACCOUNT_NOT_REPORTED = "Account not reported";
+
 /** A copy coordinates unless it handed the coordinator on or is handing it on now. */
 export function sharedProjectRole(
   binding: Pick<ProjectCoordinatorBinding, "state"> | null | undefined,
@@ -384,7 +387,7 @@ function accountsOn(
   return (block?.providers ?? []).map((row) => ({
     key: row.key,
     provider: row.label,
-    identity: row.identity ?? "Account not reported",
+    identity: row.identity ?? ACCOUNT_NOT_REPORTED,
     alsoOn: row.sharedWith,
   }));
 }

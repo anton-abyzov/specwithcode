@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   AuthTerminalOperateScope,
   type EnvironmentId,
@@ -230,6 +231,7 @@ export function InlineShellRunScope({
 }
 
 export function InlineShellRunButton() {
+  const tx = useTx();
   const run = use(InlineShellRunContext);
   if (!run?.available) return null;
   const label = run.running ? "Stop" : run.hostLabel ? `Run on ${run.hostLabel}` : "Run";
@@ -242,7 +244,7 @@ export function InlineShellRunButton() {
             variant="ghost-muted"
             size="xs"
             onClick={run.running ? run.stop : run.requestRun}
-            aria-label={run.running ? "Stop command" : "Run command"}
+            aria-label={run.running ? tx("Stop command") : tx("Run command")}
             aria-description={run.hostLabel ? `Runs on ${run.hostLabel}` : undefined}
             data-shell-run-action={run.running ? "stop" : "run"}
           />
@@ -253,7 +255,7 @@ export function InlineShellRunButton() {
       </TooltipTrigger>
       <TooltipPopup side="top">
         {run.running
-          ? "Stop the command"
+          ? tx("Stop the command")
           : `Run on ${run.hostLabel ?? "this thread's machine"} and show the output below`}
       </TooltipPopup>
     </Tooltip>
@@ -273,13 +275,17 @@ function exitLabel(run: InlineShellRun): { text: string; failed: boolean } | nul
 }
 
 function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
-  const where = [run.hostLabel, run.cwd].filter(Boolean).join(" in ");
+  const tx = useTx();
+  const where =
+    run.hostLabel && run.cwd
+      ? tx("{host} in {cwd}", { host: run.hostLabel, cwd: run.cwd })
+      : run.hostLabel || run.cwd;
   return (
     <div
       className="flex flex-wrap items-center gap-2 border-t border-border/60 px-3 py-2 text-xs select-none"
       data-shell-run="confirm"
       role="group"
-      aria-label="Confirm command"
+      aria-label={tx("Confirm command")}
     >
       <span className="min-w-0 flex-1 text-muted-foreground">
         {run.warning ? (
@@ -287,19 +293,20 @@ function InlineShellRunConfirm({ run }: { run: InlineShellRun }) {
             {run.warning}
           </span>
         ) : null}
-        Run this command{where ? ` on ${where}` : ""}?
+        {where ? tx("Run this command on {where}?", { where }) : tx("Run this command?")}
       </span>
       <Button type="button" size="micro" onClick={run.confirmRun} data-shell-run-confirm="">
-        Run
+        {tx("Run")}
       </Button>
       <Button type="button" size="micro" variant="ghost-muted" onClick={run.cancelRun}>
-        Cancel
+        {tx("Cancel")}
       </Button>
     </div>
   );
 }
 
 export function InlineShellRunPanel() {
+  const tx = useTx();
   const run = use(InlineShellRunContext);
   const outputRef = useRef<HTMLPreElement | null>(null);
   const followRef = useRef(true);
@@ -325,7 +332,7 @@ export function InlineShellRunPanel() {
         <pre
           ref={outputRef}
           className="max-h-72 overflow-auto px-3 pt-2 font-mono text-xs whitespace-pre-wrap text-foreground/85"
-          aria-label="Command output"
+          aria-label={tx("Command output")}
           tabIndex={0}
           onScroll={(event) => {
             const element = event.currentTarget;
@@ -357,16 +364,16 @@ export function InlineShellRunPanel() {
           {run.running ? (
             <Button type="button" size="micro" variant="ghost-muted" onClick={run.stop}>
               <SquareIcon className="size-3" />
-              Stop
+              {tx("Stop")}
             </Button>
           ) : (
             <>
               <Button type="button" size="micro" variant="ghost-muted" onClick={run.requestRun}>
                 <PlayIcon className="size-3" />
-                Run again
+                {tx("Run again")}
               </Button>
               <Button type="button" size="micro" variant="ghost-muted" onClick={run.clear}>
-                Clear
+                {tx("Clear")}
               </Button>
             </>
           )}

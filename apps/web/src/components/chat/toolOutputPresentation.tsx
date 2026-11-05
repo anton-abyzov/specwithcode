@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { WorkLogPresentationEntry } from "@specweave-studio/client-runtime/work-log/presentation";
 import {
   commandDisplayText,
@@ -250,6 +252,7 @@ function PagingBar({
   readonly position: "top" | "bottom";
   readonly controlClass: string;
 }) {
+  const tx = useTx();
   const earlier = paging.offset > 0 && paging.onLoadEarlier ? onLoadEarlier : undefined;
   const more = paging.end < paging.totalLength ? paging.onLoadMore : undefined;
   return (
@@ -269,7 +272,7 @@ function PagingBar({
           disabled={paging.loading === true}
           onClick={earlier}
         >
-          Load earlier
+          {tx("Load earlier")}
         </button>
       ) : null}
       {more ? (
@@ -279,13 +282,13 @@ function PagingBar({
           disabled={paging.loading === true}
           onClick={more}
         >
-          Load more
+          {tx("Load more")}
         </button>
       ) : null}
-      {paging.loading ? <span role="status">Loading…</span> : null}
+      {paging.loading ? <span role="status">{tx("Loading…")}</span> : null}
       {paging.error ? (
         <span className="text-destructive-foreground" role="status">
-          Couldn&apos;t load: {paging.error}
+          {renderRich(tx("Couldn't load: {error}"), { error: paging.error })}
         </span>
       ) : null}
     </div>
@@ -315,6 +318,7 @@ export function ToolCodePanel({
   /** Opens scrolled to the end and keeps following it, as command output reads. */
   readonly scrollToEnd?: boolean | undefined;
 }) {
+  const tx = useTx();
   const { resolvedTheme } = useTheme();
   const [raw, setRaw] = useState(false);
   // Terminal output reads as the terminal drew it; Raw shows each control byte. A file's
@@ -407,7 +411,7 @@ export function ToolCodePanel({
       onKeyDown={(event) => event.stopPropagation()}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-2 border-b border-border/45 px-3 py-1.5">
-        <span className="font-sans text-xs font-medium text-foreground/85">{label}</span>
+        <span className="font-sans text-xs font-medium text-foreground/85">{tx(label)}</span>
         <div
           className="flex items-center gap-1"
           onClick={(event) => event.stopPropagation()}
@@ -421,7 +425,7 @@ export function ToolCodePanel({
               aria-label={`Show raw ${label.toLowerCase()}`}
               onClick={() => setRaw(!raw)}
             >
-              Raw
+              {tx("Raw")}
             </button>
           ) : null}
           <button
@@ -431,7 +435,7 @@ export function ToolCodePanel({
             aria-label={`Wrap ${label.toLowerCase()} lines`}
             onClick={() => setWrapped(!wrapped)}
           >
-            Wrap
+            {tx("Wrap")}
           </button>
           {long ? (
             <button
@@ -441,7 +445,7 @@ export function ToolCodePanel({
               aria-label={`${expanded ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
               onClick={() => setExpanded(!expanded)}
             >
-              {expanded ? "Collapse" : "Expand"}
+              {expanded ? tx("Collapse") : tx("Expand")}
             </button>
           ) : null}
           <button
@@ -457,12 +461,12 @@ export function ToolCodePanel({
               <CopyIcon className="size-3" aria-hidden />
             )}
             {copyState === "copied"
-              ? "Copied"
+              ? tx("Copied")
               : copyState === "pending"
-                ? "Copying…"
+                ? tx("Copying…")
                 : copyFull
-                  ? "Copy full"
-                  : "Copy"}
+                  ? tx("Copy full")
+                  : tx("Copy")}
           </button>
         </div>
       </div>
@@ -523,7 +527,7 @@ export function ToolCodePanel({
       ) : null}
       {copyState === "failed" ? (
         <p className="px-3 pb-2 font-sans text-xs text-destructive-foreground" role="status">
-          Couldn&apos;t copy. Select the text and copy it manually.
+          {tx("Couldn't copy. Select the text and copy it manually.")}
         </p>
       ) : null}
       <span className="sr-only" role="status">

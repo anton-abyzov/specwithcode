@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { CheckIcon, CircleDotIcon, CircleIcon, ListTodoIcon } from "lucide-react";
 import { memo, type ComponentProps } from "react";
 
@@ -71,13 +72,14 @@ function TaskSummary({
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
 }) {
+  const tx = useTx();
   return (
     <>
       <ComposerBanner.Icon>
         <ListTodoIcon />
       </ComposerBanner.Icon>
       <ComposerBanner.Content>
-        <span className="shrink-0 text-muted-foreground">Tasks</span>
+        <span className="shrink-0 text-muted-foreground">{tx("Tasks")}</span>
         <span
           className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
           data-composer-task-current="true"
@@ -148,6 +150,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
 }) {
+  const tx = useTx();
   return (
     <div
       data-chat-composer-collapsed-controls="true"
@@ -208,7 +211,7 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                     {step.durationMs !== undefined
                       ? formatDuration(step.durationMs)
                       : step.status === "inProgress"
-                        ? "now"
+                        ? tx("now")
                         : null}
                   </span>
                 </ComposerBanner.Actions>

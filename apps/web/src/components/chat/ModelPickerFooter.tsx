@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { ProviderInstanceId } from "@specweave-studio/contracts";
 import type { ReactNode } from "react";
 import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
@@ -28,6 +30,7 @@ export function ModelPickerSetupFooter(props: {
   /** The note over the list already says why nothing is listed. */
   readonly hideEmpty?: boolean;
 }) {
+  const tx = useTx();
   const { providerSetupEntries, quickSetup, turnedOnProviders, otherMachineProviders } = props;
   return (
     <>
@@ -50,7 +53,7 @@ export function ModelPickerSetupFooter(props: {
                     disabled={installing || !quickSetup.canManage}
                     onClick={() => quickSetup.install(entry.instanceId)}
                   >
-                    {installing ? "Installing…" : `Install ${entry.displayName}`}
+                    {installing ? tx("Installing…") : `Install ${entry.displayName}`}
                   </InlineButton>
                 ) : (
                   <InlineButton
@@ -62,7 +65,7 @@ export function ModelPickerSetupFooter(props: {
                   >
                     {providerSetupEntries.length > 1
                       ? `Set up ${entry.displayName}`
-                      : "Open provider setup"}
+                      : tx("Open provider setup")}
                   </InlineButton>
                 )}
                 {installError ? (
@@ -75,7 +78,7 @@ export function ModelPickerSetupFooter(props: {
           })}
         </div>
       ) : props.hideEmpty ? null : (
-        <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
+        <ComboboxEmpty className="empty:h-0">{tx("No models found")}</ComboboxEmpty>
       )}
       {quickSetup && (otherMachineProviders.length > 0 || turnedOnProviders.length > 0) ? (
         <div
@@ -85,7 +88,7 @@ export function ModelPickerSetupFooter(props: {
           {turnedOnProviders.length > 0 ? (
             <>
               <p className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
-                Turned on {machineLabelFor(quickSetup)}
+                {renderRich(tx("Turned on {value}"), { value: machineLabelFor(quickSetup) })}
               </p>
               {turnedOnProviders.map(({ provider, instanceId }) => (
                 <TurnedOnRow
@@ -111,7 +114,7 @@ export function ModelPickerSetupFooter(props: {
           ) : null}
           {otherMachineProviders.length > 0 ? (
             <p className="px-1 pb-1 text-2xs font-medium text-muted-foreground">
-              On your other machines
+              {tx("On your other machines")}
             </p>
           ) : null}
           {otherMachineProviders.map((provider) => {
@@ -135,7 +138,7 @@ export function ModelPickerSetupFooter(props: {
                     {provider.displayName}
                     <span className="text-muted-foreground">
                       {" "}
-                      · ready on {provider.machineLabels.join(", ")}
+                      {tx("· ready on {value}", { value: provider.machineLabels.join(", ") })}
                     </span>
                   </span>
                   <InlineButton
@@ -146,8 +149,8 @@ export function ModelPickerSetupFooter(props: {
                     {enabling
                       ? turnOnStepLabel(quickSetup.steps?.get(provider.identity))
                       : enableError
-                        ? "Retry"
-                        : "Turn on here"}
+                        ? tx("Retry")
+                        : tx("Turn on here")}
                   </InlineButton>
                 </div>
                 {enableError ? (
@@ -173,6 +176,7 @@ export function ModelPickerActions(props: {
   /** Key hints for the list; shown on wide pickers only. */
   readonly hints?: ReactNode;
 }) {
+  const tx = useTx();
   const { onManageProviders, secondaryAction, onEditFallbackOrder } = props;
   if (!onManageProviders && !secondaryAction && !onEditFallbackOrder) return null;
   return (
@@ -190,7 +194,7 @@ export function ModelPickerActions(props: {
             onManageProviders();
           }}
         >
-          Add or manage providers
+          {tx("Add or manage providers")}
         </Button>
       ) : null}
       {secondaryAction ? (
@@ -215,7 +219,7 @@ export function ModelPickerActions(props: {
             onEditFallbackOrder();
           }}
         >
-          Fallback order
+          {tx("Fallback order")}
         </Button>
       ) : null}
       {props.hints ? (

@@ -829,7 +829,10 @@ function KeybindingKeyControl({
         <button
           type="button"
           onClick={() => setDraft({ isRecording: true })}
-          aria-label={`Edit shortcut for ${commandLabel(row.command)}: ${formatShortcutLabel(row.binding.shortcut)}`}
+          aria-label={tx("Edit shortcut for {command}: {shortcut}", {
+            command: commandLabel(row.command),
+            shortcut: formatShortcutLabel(row.binding.shortcut),
+          })}
           className={cn(
             "inline-flex h-8 cursor-pointer items-center rounded-md border border-transparent px-1.5 sm:h-7 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/24",
             pillClassName,
@@ -841,7 +844,7 @@ function KeybindingKeyControl({
         <Input
           data-keybinding-capture=""
           autoFocus={isRecording}
-          aria-label={`Keybinding for ${commandLabel(row.command)}`}
+          aria-label={tx("Keybinding for {command}", { command: commandLabel(row.command) })}
           value={isRecording ? "" : keyDraft}
           placeholder={isRecording ? tx("Press shortcut") : tx("Unassigned")}
           size="sm"
@@ -884,7 +887,7 @@ function WhenClauseControl({
             className="min-w-0 shrink"
           />
         }
-        aria-label={`Edit when clause for ${label}`}
+        aria-label={tx("Edit when clause for {command}", { command: label })}
       >
         <span className="truncate font-mono">{expression || tx("Always")}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
@@ -926,7 +929,7 @@ function KeybindingRowMenu({
             variant="ghost-muted"
             size="icon-sm"
             disabled={isSaving}
-            aria-label={`Actions for ${commandLabel(row.command)}`}
+            aria-label={tx("Actions for {command}", { command: commandLabel(row.command) })}
           />
         }
       >
@@ -1157,7 +1160,7 @@ function NewKeybindingKeyInput({
     <Input
       data-keybinding-capture=""
       autoFocus={autoFocus}
-      aria-label={`Keybinding for ${draft.commandLabelText}`}
+      aria-label={tx("Keybinding for {command}", { command: draft.commandLabelText })}
       value={draft.isRecording ? "" : draft.keyDraft}
       placeholder={draft.isRecording ? tx("Press shortcut") : tx("Unassigned")}
       size="sm"

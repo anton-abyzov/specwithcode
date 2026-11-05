@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   memo,
   useCallback,
@@ -76,6 +78,7 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
 
 /** Where a local file lives on its host, so it can be found outside the app too. */
 function MediaFilePath({ path }: { readonly path: string }) {
+  const tx = useTx();
   const [copied, setCopied] = useState(false);
   return (
     <div className="mt-1 flex max-w-[var(--media-width)] items-center justify-center gap-1.5 text-xs text-white/60">
@@ -86,7 +89,7 @@ function MediaFilePath({ path }: { readonly path: string }) {
         <TooltipTrigger
           render={
             <Button
-              aria-label="Copy full path"
+              aria-label={tx("Copy full path")}
               size="icon-micro"
               variant="overlay"
               onClick={() => {
@@ -101,7 +104,7 @@ function MediaFilePath({ path }: { readonly path: string }) {
             <CopyIcon className="size-3" aria-hidden="true" />
           )}
         </TooltipTrigger>
-        <TooltipPopup side="top">{copied ? "Copied" : "Copy full path"}</TooltipPopup>
+        <TooltipPopup side="top">{copied ? tx("Copied") : tx("Copy full path")}</TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -182,6 +185,7 @@ function ExpandedMediaOverlay({
   readonly onClose: () => void;
   readonly threadRef: ScopedThreadRef;
 }) {
+  const tx = useTx();
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
@@ -263,13 +267,16 @@ function ExpandedMediaOverlay({
             className="px-1 text-muted-foreground text-xs tabular-nums"
             data-media-position="true"
           >
-            {index + 1} of {imageCount}
+            {renderRich(tx("{value} of {imageCount}"), {
+              value: index + 1,
+              imageCount: imageCount,
+            })}
           </span>
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label="Previous media"
+            aria-label={tx("Previous media")}
             onClick={() => step(-1)}
           >
             <ChevronLeftIcon aria-hidden />
@@ -278,7 +285,7 @@ function ExpandedMediaOverlay({
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label="Next media"
+            aria-label={tx("Next media")}
             onClick={() => step(1)}
           >
             <ChevronRightIcon aria-hidden />
@@ -326,7 +333,7 @@ function ExpandedMediaOverlay({
                 }
               >
                 <ClipboardCopyIcon aria-hidden />
-                Copy image
+                {tx("Copy image")}
               </MenuItem>
             ) : null}
             {openFile ? (
@@ -340,7 +347,7 @@ function ExpandedMediaOverlay({
                 }}
               >
                 <FileSearchIcon aria-hidden />
-                Open in file viewer
+                {tx("Open in file viewer")}
               </MenuItem>
             ) : null}
           </>
@@ -377,8 +384,8 @@ function ExpandedMediaOverlay({
             <ExpandedMediaFailure>
               <p>
                 {openOriginalLink
-                  ? "This image could not be loaded."
-                  : "Image unavailable. The file may have been moved or deleted."}
+                  ? tx("This image could not be loaded.")
+                  : tx("Image unavailable. The file may have been moved or deleted.")}
               </p>
               {openOriginalLink}
             </ExpandedMediaFailure>
@@ -404,6 +411,7 @@ function ExpandedMediaOverlay({
 
 /** Media in a lightbox over everything, for media no thread owns. */
 function ExpandedMediaLightbox({ preview, onClose }: ExpandedImageDialogProps) {
+  const tx = useTx();
   const [imageOffset, setImageOffset] = useState(0);
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
@@ -519,14 +527,16 @@ function ExpandedMediaLightbox({ preview, onClose }: ExpandedImageDialogProps) {
           if (event.target === event.currentTarget) onClose();
         }}
       >
-        <DialogTitle className="sr-only">Expanded {mediaLabel} preview</DialogTitle>
+        <DialogTitle className="sr-only">
+          {renderRich(tx("Expanded {mediaLabel} preview"), { mediaLabel: mediaLabel })}
+        </DialogTitle>
         {preview.images.length > 1 && (
           <Button
             type="button"
             size="icon"
             variant="media-navigation"
             className="left-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Previous media"
+            aria-label={tx("Previous media")}
             onClick={() => navigateImage(-1)}
           >
             <ChevronLeftIcon className="size-5" />
@@ -558,8 +568,8 @@ function ExpandedMediaLightbox({ preview, onClose }: ExpandedImageDialogProps) {
               <ExpandedMediaFailure>
                 <p>
                   {openOriginalLink
-                    ? "This image could not be loaded."
-                    : "Image unavailable. The file may have been moved or deleted."}
+                    ? tx("This image could not be loaded.")
+                    : tx("Image unavailable. The file may have been moved or deleted.")}
                 </p>
                 {openOriginalLink}
               </ExpandedMediaFailure>
@@ -615,7 +625,7 @@ function ExpandedMediaLightbox({ preview, onClose }: ExpandedImageDialogProps) {
             size="icon"
             variant="media-navigation"
             className="right-0 top-auto -bottom-12 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
-            aria-label="Next media"
+            aria-label={tx("Next media")}
             onClick={() => navigateImage(1)}
           >
             <ChevronRightIcon className="size-5" />

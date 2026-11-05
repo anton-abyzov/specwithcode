@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -67,6 +69,7 @@ function QueuedSenderChip(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const tx = useTx();
   const sender = useThreadShell(scopeThreadRef(props.environmentId, props.threadId));
   const title = sender?.title || "Another thread";
   return (
@@ -76,7 +79,7 @@ function QueuedSenderChip(props: {
       title={`From ${title}`}
     >
       <BotIcon aria-hidden className="size-3 shrink-0" />
-      <span className="sr-only">From </span>
+      <span className="sr-only">{tx("From")} </span>
       <span className="truncate">{title}</span>
     </span>
   );
@@ -84,15 +87,16 @@ function QueuedSenderChip(props: {
 
 /** A message typed on this thread: queued by the person, not by another thread. */
 function QueuedOwnChip() {
+  const tx = useTx();
   return (
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground"
       data-queued-sender="you"
-      title="Queued by you"
+      title={tx("Queued by you")}
     >
       <UserIcon aria-hidden className="size-3 shrink-0" />
-      <span className="sr-only">Queued by </span>
-      <span>You</span>
+      <span className="sr-only">{tx("Queued by")} </span>
+      <span>{tx("You")}</span>
     </span>
   );
 }
@@ -179,6 +183,7 @@ export function QueuedRunsControl({
   /** Names a row's picked model; its slug shows without them. */
   readonly providers?: ReadonlyArray<ServerProvider> | undefined;
 }) {
+  const tx = useTx();
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
   )?.projection;
@@ -526,7 +531,7 @@ export function QueuedRunsControl({
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Dismiss queue error"
+                aria-label={tx("Dismiss queue error")}
                 onClick={() => setCommandError(null)}
               >
                 <XIcon />
@@ -563,7 +568,7 @@ export function QueuedRunsControl({
                   props.onResumeHeld?.();
                 }}
               >
-                Resume
+                {tx("Resume")}
               </Button>
               <Button
                 size="xs"
@@ -578,14 +583,14 @@ export function QueuedRunsControl({
                 onBlur={() => setDiscardArmed(false)}
                 onClick={() => void discardHeld()}
               >
-                {discardArmed ? `Discard ${heldCount}?` : "Discard"}
+                {discardArmed ? `Discard ${heldCount}?` : tx("Discard")}
               </Button>
             </ComposerBanner.Actions>
           </ComposerBanner.Row>
         ) : null}
         <ComposerBanner.Row
           render={<button type="button" />}
-          aria-label={expanded ? "Collapse queued messages" : "Expand queued messages"}
+          aria-label={expanded ? tx("Collapse queued messages") : tx("Expand queued messages")}
           aria-expanded={expanded}
           aria-controls={queueListId}
           onPointerDown={(event) => event.preventDefault()}
@@ -696,7 +701,7 @@ export function QueuedRunsControl({
                       <Button
                         size="icon-xs"
                         variant="ghost-muted"
-                        aria-label="Reorder queued message (drag, or press the arrow keys)"
+                        aria-label={tx("Reorder queued message (drag, or press the arrow keys)")}
                         className="cursor-grab active:cursor-grabbing disabled:cursor-default"
                         disabled={busyRunId !== null}
                         onPointerDown={() => {
@@ -724,10 +729,12 @@ export function QueuedRunsControl({
                     ) : null}
                   </ComposerBanner.Icon>
                   <ComposerBanner.Content className="overflow-hidden text-foreground/80">
-                    {isEditing ? <span className="sr-only">Editing queued message: </span> : null}
+                    {isEditing ? (
+                      <span className="sr-only">{tx("Editing queued message:")} </span>
+                    ) : null}
                     {item.pending ? (
                       <Clock3Icon
-                        aria-label="Saving queued message"
+                        aria-label={tx("Saving queued message")}
                         className="size-3 shrink-0 text-muted-foreground"
                       />
                     ) : null}
@@ -763,10 +770,10 @@ export function QueuedRunsControl({
                       <span
                         className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground"
                         data-queued-sender="automatic"
-                        title="Delivered by the server"
+                        title={tx("Delivered by the server")}
                       >
                         <BotIcon aria-hidden className="size-3 shrink-0" />
-                        <span>Automatic</span>
+                        <span>{tx("Automatic")}</span>
                       </span>
                     ) : item.queuedByYou ? (
                       <QueuedOwnChip />
@@ -797,7 +804,7 @@ export function QueuedRunsControl({
                         className="shrink-0 text-2xs text-muted-foreground"
                         data-queued-picked-model
                       >
-                        on {item.pickedModel}
+                        {renderRich(tx("on {pickedModel}"), { pickedModel: item.pickedModel })}
                       </span>
                     ) : null}
                   </ComposerBanner.Content>
@@ -806,9 +813,11 @@ export function QueuedRunsControl({
                       <span
                         className="shrink-0 text-2xs text-muted-foreground"
                         data-queued-automatic
-                        title="An automatic delivery cannot be edited, steered, removed or moved."
+                        title={tx(
+                          "An automatic delivery cannot be edited, steered, removed or moved.",
+                        )}
                       >
-                        Delivers after this turn
+                        {tx("Delivers after this turn")}
                       </span>
                     ) : item.steering ? (
                       <>
@@ -816,12 +825,12 @@ export function QueuedRunsControl({
                           className="shrink-0 text-2xs text-muted-foreground"
                           data-queued-steering
                         >
-                          Steering…
+                          {tx("Steering…")}
                         </span>
                         <Tooltip>
                           <TooltipTrigger render={<span className="flex shrink-0" />}>
                             <ComposerBanner.Dismiss
-                              aria-label="Remove queued message"
+                              aria-label={tx("Remove queued message")}
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
@@ -832,17 +841,19 @@ export function QueuedRunsControl({
                               }}
                             />
                           </TooltipTrigger>
-                          <TooltipPopup>{actionsUnavailable ?? "Remove from queue"}</TooltipPopup>
+                          <TooltipPopup>
+                            {actionsUnavailable ?? tx("Remove from queue")}
+                          </TooltipPopup>
                         </Tooltip>
                       </>
                     ) : isEditing ? (
                       <Button
                         size="xs"
                         variant="ghost"
-                        aria-label="Cancel editing queued message"
+                        aria-label={tx("Cancel editing queued message")}
                         onClick={props.onCancelEdit}
                       >
-                        Cancel
+                        {tx("Cancel")}
                       </Button>
                     ) : (
                       <>
@@ -852,7 +863,7 @@ export function QueuedRunsControl({
                               <Button
                                 size="icon-xs"
                                 variant="ghost-muted"
-                                aria-label="Edit queued message"
+                                aria-label={tx("Edit queued message")}
                                 disabled={
                                   item.runId === null ||
                                   busyRunId !== null ||
@@ -894,7 +905,7 @@ export function QueuedRunsControl({
                               }}
                             >
                               <CornerUpRightIcon />
-                              {item.pickedModel === null ? "Steer now" : "Run now"}
+                              {item.pickedModel === null ? tx("Steer now") : tx("Run now")}
                             </Button>
                           </TooltipTrigger>
                           <TooltipPopup>
@@ -908,7 +919,7 @@ export function QueuedRunsControl({
                         <Tooltip>
                           <TooltipTrigger render={<span className="flex shrink-0" />}>
                             <ComposerBanner.Dismiss
-                              aria-label="Remove queued message"
+                              aria-label={tx("Remove queued message")}
                               disabled={
                                 item.runId === null ||
                                 busyRunId !== null ||
@@ -919,7 +930,9 @@ export function QueuedRunsControl({
                               }}
                             />
                           </TooltipTrigger>
-                          <TooltipPopup>{actionsUnavailable ?? "Remove from queue"}</TooltipPopup>
+                          <TooltipPopup>
+                            {actionsUnavailable ?? tx("Remove from queue")}
+                          </TooltipPopup>
                         </Tooltip>
                       </>
                     )}

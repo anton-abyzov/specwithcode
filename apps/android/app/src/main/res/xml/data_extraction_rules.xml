@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 and newer. Pairing credentials, the Connect session and the machine list stay on this device;
+     the Keystore keys that decrypt them are never backed up either. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="credentials.xml" />
+        <exclude domain="sharedpref" path="connect.xml" />
+        <exclude domain="file" path="credentials" />
+        <exclude domain="file" path="datastore/credentials.preferences_pb" />
+        <exclude domain="file" path="machines.json" />
+        <exclude domain="database" path="credentials.db" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="credentials.xml" />
+        <exclude domain="sharedpref" path="connect.xml" />
+        <exclude domain="file" path="credentials" />
+        <exclude domain="file" path="datastore/credentials.preferences_pb" />
+        <exclude domain="file" path="machines.json" />
+        <exclude domain="database" path="credentials.db" />
+    </device-transfer>
+</data-extraction-rules>

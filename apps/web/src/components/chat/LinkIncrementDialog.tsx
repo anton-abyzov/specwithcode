@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * "Link increment": bind a thread to a SpecWeave increment by hand, mark it as
  * having none, or go back to automatic binding (ledger writes, checkpoint,
@@ -116,6 +118,7 @@ export function LinkIncrementDialog({
   projectId: ProjectId;
   onClose: () => void;
 }) {
+  const tx = useTx();
   const [filter, setFilter] = useState("");
   const [searched, setSearched] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -209,16 +212,17 @@ export function LinkIncrementDialog({
     <Dialog open onOpenChange={(next) => (pending || next ? undefined : onClose())}>
       <DialogPopup className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>Link increment</DialogTitle>
+          <DialogTitle>{tx("Link increment")}</DialogTitle>
           <DialogDescription>
-            Choose the SpecWeave increment this thread's plan card follows. SpecWithCode reads its
-            spec and ledger and never writes to them.
+            {tx(
+              "Choose the SpecWeave increment this thread's plan card follows. SpecWithCode reads its spec and ledger and never writes to them.",
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <Input
             ref={inputRef}
-            placeholder="Search increments by number or title"
+            placeholder={tx("Search increments by number or title")}
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             onKeyDown={(event) => {
@@ -233,7 +237,7 @@ export function LinkIncrementDialog({
             <div
               className="mt-2 flex flex-wrap gap-1"
               role="group"
-              aria-label="Status"
+              aria-label={tx("Status")}
               data-link-increment-status
             >
               {[["all", null] as const, ...chips.map(([name]) => [name, name] as const)].map(
@@ -264,7 +268,7 @@ export function LinkIncrementDialog({
           ) : null}
           <ul
             role="radiogroup"
-            aria-label="Increments"
+            aria-label={tx("Increments")}
             className="mt-2 max-h-[45vh] space-y-0.5 overflow-y-auto"
             data-link-increment-options
           >
@@ -289,36 +293,40 @@ export function LinkIncrementDialog({
               className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
               data-link-increment-more
             >
-              Showing {increments.length} of {total}.
-              {increments.length < MOST_LISTED ? (
-                <button
-                  type="button"
-                  className="underline underline-offset-2 hover:text-foreground"
-                  onClick={() => setPages((count) => count + 1)}
-                >
-                  Load more
-                </button>
-              ) : (
-                <span>Search to narrow the list.</span>
-              )}
+              {renderRich(tx("Showing {length} of {total}.{value}"), {
+                length: increments.length,
+                total: total,
+                value:
+                  increments.length < MOST_LISTED ? (
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:text-foreground"
+                      onClick={() => setPages((count) => count + 1)}
+                    >
+                      {tx("Load more")}
+                    </button>
+                  ) : (
+                    <span>{tx("Search to narrow the list.")}</span>
+                  ),
+              })}
             </p>
           ) : null}
           {data && total === 0 ? (
             <p className="mt-2 text-xs text-muted-foreground">
               {searched.trim() !== "" || status !== null
-                ? "No increment matches."
-                : "No increments in this thread's checkout (.specweave/increments)."}
+                ? tx("No increment matches.")
+                : tx("No increments in this thread's checkout (.specweave/increments).")}
             </p>
           ) : null}
           {(error ?? query.error) ? (
             <p className="mt-2 text-xs text-destructive-foreground">
-              {error ?? "Could not list the increments."}
+              {error ?? tx("Could not list the increments.")}
             </p>
           ) : null}
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="outline" size="sm" onClick={onClose} disabled={pending}>
-            Cancel
+            {tx("Cancel")}
           </Button>
           <Button
             type="button"
@@ -326,7 +334,7 @@ export function LinkIncrementDialog({
             onClick={() => void submit()}
             disabled={pending || !selected || !current || sameTarget(selected, current)}
           >
-            {pending ? "Saving..." : "Save"}
+            {pending ? tx("Saving...") : tx("Save")}
           </Button>
         </DialogFooter>
       </DialogPopup>

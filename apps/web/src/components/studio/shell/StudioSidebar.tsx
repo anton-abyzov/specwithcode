@@ -1019,7 +1019,9 @@ export default function StudioSidebar() {
             {codeProjects.length === 0 &&
             automatedProjects.length === 0 &&
             archivedProjects.length === 0 ? (
-              <p className="sws-side-empty">No projects yet. Create one or open a folder.</p>
+              <p className="sws-side-empty">
+                {tx("No projects yet. Create one or open a folder.")}
+              </p>
             ) : (
               <SidebarProjectList
                 visible={{

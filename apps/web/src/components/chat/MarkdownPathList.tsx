@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { Check, Copy } from "lucide";
 import { GripVerticalIcon } from "lucide-react";
 import { type DragEvent, type ReactNode, useCallback } from "react";
@@ -104,6 +105,7 @@ export function MarkdownPathList(props: {
   entries: ReadonlyArray<MarkdownPathListEntry>;
   startFileDrag?: ((path: string) => Promise<boolean>) | undefined;
 }) {
+  const tx = useTx();
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "paths", timeout: 1200 });
   const count = props.entries.length;
   const allPaths = exactPathListText(
@@ -117,7 +119,7 @@ export function MarkdownPathList(props: {
     >
       <div className="flex items-center justify-between gap-2 select-none">
         <span className="font-mono text-2xs text-muted-foreground">
-          {count === 1 ? "1 file" : `${count} files`}
+          {count === 1 ? tx("1 file") : `${count} files`}
         </span>
         <Button
           type="button"

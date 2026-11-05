@@ -22,6 +22,7 @@ import {
   AccessChip,
 } from "../chat/AccessCardChrome";
 import { cn } from "~/lib/utils";
+import { useTx } from "~/i18n";
 
 /** Sends a message to the agent in the open thread; absent where the user cannot send. */
 export const ComputerUseRetryContext = createContext<((text: string) => void) | null>(null);
@@ -417,6 +418,7 @@ export function ComputerUsePermissionSetup({
 }: {
   environmentId: EnvironmentId | null;
 }) {
+  const tx = useTx();
   const unsupported = useComputerUseUnsupportedPlatform(environmentId);
   const local = useComputerUsePermissionsAreLocal(environmentId);
   const state = useComputerUsePermissions(local && unsupported === null);
@@ -424,8 +426,8 @@ export function ComputerUsePermissionSetup({
   if (unsupported !== null) {
     return (
       <p className="text-xs text-muted-foreground" data-testid="computer-use-unsupported">
-        {computerUseUnsupportedPlatformReason(unsupported)} Agents on this machine cannot see or
-        control its desktop.
+        {computerUseUnsupportedPlatformReason(unsupported)}{" "}
+        {tx("Agents on this machine cannot see or control its desktop.")}
       </p>
     );
   }

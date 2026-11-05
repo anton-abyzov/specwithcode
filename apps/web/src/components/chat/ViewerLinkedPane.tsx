@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ExternalLinkIcon, FolderOpenIcon, PanelRightOpenIcon, SquarePenIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
@@ -97,6 +99,7 @@ function LinkedFile(props: {
   readonly target: ViewerFileTarget;
   readonly actionsSlot: HTMLElement | null;
 }) {
+  const tx = useTx();
   const { target } = props;
   // One full path is read anyway: a listing leaves out symlinks, and the read
   // says plainly whether the file is there.
@@ -135,13 +138,13 @@ function LinkedFile(props: {
       {target.openInEditor ? (
         <Button type="button" size="xs" variant="ghost" onClick={target.openInEditor}>
           <SquarePenIcon aria-hidden />
-          Open in editor
+          {tx("Open in editor")}
         </Button>
       ) : null}
       {target.reveal ? (
         <Button type="button" size="xs" variant="ghost" onClick={target.reveal}>
           <FolderOpenIcon aria-hidden />
-          {target.revealLabel ?? "Reveal"}
+          {target.revealLabel ?? tx("Reveal")}
         </Button>
       ) : null}
     </>
@@ -166,7 +169,7 @@ function LinkedFile(props: {
             }}
           >
             <PanelRightOpenIcon aria-hidden />
-            Open in panel
+            {tx("Open in panel")}
           </Button>
         ) : null}
       </>
@@ -198,8 +201,12 @@ function LinkedFile(props: {
             data-report-file-unresolved="true"
           >
             <p>
-              {name} was not found. The link names it without saying where it lives, and it is in
-              none of these places:
+              {renderRich(
+                tx(
+                  "{name} was not found. The link names it without saying where it lives, and it is in none of these places:",
+                ),
+                { name: name },
+              )}
             </p>
             <ul className="flex flex-col gap-1 font-mono text-muted-foreground text-xs">
               {target.tried!.map((path) => (
@@ -209,7 +216,7 @@ function LinkedFile(props: {
               ))}
             </ul>
             <p className="text-muted-foreground">
-              Ask the worker for its full path, or look in its worktree.
+              {tx("Ask the worker for its full path, or look in its worktree.")}
             </p>
             {target.openInEditor || target.reveal ? (
               <div className="flex gap-1">{actions}</div>
@@ -218,8 +225,8 @@ function LinkedFile(props: {
         ) : file.isNotFile ? (
           <p className="p-4 text-muted-foreground text-sm">
             {threadRef
-              ? "This is a folder. Open it in the panel to browse it."
-              : "This is a folder, so there is nothing to read here."}
+              ? tx("This is a folder. Open it in the panel to browse it.")
+              : tx("This is a folder, so there is nothing to read here.")}
           </p>
         ) : file.error !== null && contents === null ? (
           <div className="flex flex-col items-start gap-2 p-4 text-sm" role="alert">
@@ -227,7 +234,7 @@ function LinkedFile(props: {
             <div className="flex gap-1">{actions}</div>
           </div>
         ) : contents === null ? (
-          <p className="p-4 text-muted-foreground text-sm">Loading…</p>
+          <p className="p-4 text-muted-foreground text-sm">{tx("Loading…")}</p>
         ) : MARKDOWN_FILE.test(name) ? (
           <article className="report-document report-document-page">
             <MarkdownDocumentView text={contents} renderMarkdown={renderMarkdown} />
@@ -253,6 +260,7 @@ function LinkedPullRequest(props: {
   readonly target: ViewerPullRequestTarget;
   readonly actionsSlot: HTMLElement | null;
 }) {
+  const tx = useTx();
   const { target } = props;
   const { panel } = target;
   const headerActions = (
@@ -265,7 +273,7 @@ function LinkedPullRequest(props: {
           onClick={() => openPullRequestInPanel(panel)}
         >
           <PanelRightOpenIcon aria-hidden />
-          Open in panel
+          {tx("Open in panel")}
         </Button>
       ) : null}
       <Button
@@ -275,7 +283,7 @@ function LinkedPullRequest(props: {
         onClick={() => void openLinkOutsideApp(target.url)}
       >
         <ExternalLinkIcon aria-hidden />
-        Open in browser
+        {tx("Open in browser")}
       </Button>
     </>
   );

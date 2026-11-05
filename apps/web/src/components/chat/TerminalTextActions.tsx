@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { CheckIcon, CopyIcon, ExternalLinkIcon } from "lucide-react";
 import { type KeyboardEvent, type MouseEvent, useEffect, useMemo, useState } from "react";
 
@@ -96,6 +98,7 @@ export function TerminalLinkedText({ text }: { readonly text: string }) {
 }
 
 function CodeButton({ code, className }: { readonly code: string; readonly className: string }) {
+  const tx = useTx();
   const { copied, copy } = useCopied(code);
   return (
     <button
@@ -110,7 +113,7 @@ function CodeButton({ code, className }: { readonly code: string; readonly class
         <CopyIcon className="size-3" aria-hidden />
       )}
       <span className="font-mono font-semibold">{code}</span>
-      <span className="text-muted-foreground">{copied ? "Copied" : "Copy"}</span>
+      <span className="text-muted-foreground">{copied ? tx("Copied") : tx("Copy")}</span>
     </button>
   );
 }
@@ -132,6 +135,7 @@ export function TerminalActionBar({
   readonly text: string;
   readonly className?: string | undefined;
 }) {
+  const tx = useTx();
   const { links, codes } = useMemo(() => terminalActions(text), [text]);
   if (links.length === 0 && codes.length === 0) return null;
   const buttonClass =
@@ -159,7 +163,9 @@ export function TerminalActionBar({
           onClick={openOnClick(url)}
         >
           <ExternalLinkIcon className="size-3 shrink-0" aria-hidden />
-          <span className="truncate">Open {linkLabel(url)}</span>
+          <span className="truncate">
+            {renderRich(tx("Open {value}"), { value: linkLabel(url) })}
+          </span>
         </a>
       ))}
     </div>

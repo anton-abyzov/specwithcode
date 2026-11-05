@@ -95,6 +95,7 @@ export function SnapShotSettings() {
   const unavailableMessage = snapShotUnavailableMessage(Boolean(bridge));
   const captureAvailable = Boolean(bridge) && state !== null && state.mode !== "unavailable";
   const feedbackUnavailable = snapShotFeedbackUnavailableMessage(state);
+  const accessibilityUnavailable = snapShotAccessibilityUnavailableMessage(state);
   const savedShortcut = settings.snapShotShortcut;
   const managedShortcut = state?.linuxBackend === "niri" || state?.linuxBackend === "hyprland";
   const shortcutChanged = !managedShortcut && !sameSnapShotShortcut(candidate, savedShortcut);
@@ -372,7 +373,7 @@ export function SnapShotSettings() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="snap-shot" title="SnapShots">
-        <SettingsUnavailableGroup message={unavailableMessage}>
+        <SettingsUnavailableGroup message={unavailableMessage && tx(unavailableMessage)}>
           <SettingsRow
             {...searchableSetting("snap-shot-enabled")}
             description={snapShotDescription(state)}
@@ -414,16 +415,11 @@ export function SnapShotSettings() {
               <SettingsRow
                 {...searchableSetting("snap-shot-accessibility")}
                 description="Include text and controls when the app makes them available."
-                status={snapShotAccessibilityUnavailableMessage(state)}
+                status={accessibilityUnavailable ? tx(accessibilityUnavailable) : undefined}
                 control={
                   <Switch
-                    checked={
-                      !snapShotAccessibilityUnavailableMessage(state) &&
-                      settings.snapShotIncludeAccessibility
-                    }
-                    disabled={
-                      !captureAvailable || Boolean(snapShotAccessibilityUnavailableMessage(state))
-                    }
+                    checked={!accessibilityUnavailable && settings.snapShotIncludeAccessibility}
+                    disabled={!captureAvailable || Boolean(accessibilityUnavailable)}
                     aria-label={tx("Include app text in snapshots")}
                     onCheckedChange={(checked) => void saveIncludeAccessibility(checked)}
                   />

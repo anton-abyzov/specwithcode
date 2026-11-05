@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ArrowDownIcon } from "lucide-react";
 import type { PointerEvent } from "react";
 import { Button } from "../ui/button";
@@ -17,28 +19,30 @@ export function JumpToLatestButton({
   onJump: () => void;
   onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void;
 }) {
+  const tx = useTx();
   return (
     <Button
       type="button"
       size="sm"
       variant="default"
       className="pointer-events-auto rounded-full shadow-lg before:rounded-full"
-      aria-label={unseen ? "Jump to latest, new messages below" : "Jump to latest"}
+      aria-label={unseen ? tx("Jump to latest, new messages below") : tx("Jump to latest")}
       data-jump-to-latest=""
       data-unseen={unseen ? "" : undefined}
       onPointerDown={onPointerDown}
       onClick={onJump}
     >
       <ArrowDownIcon aria-hidden />
-      Jump to latest
-      {unseen ? (
-        <span
-          className="ms-0.5 rounded-full bg-background px-1.5 text-[11px] font-semibold leading-4 text-foreground"
-          aria-hidden
-        >
-          New
-        </span>
-      ) : null}
+      {renderRich(tx("Jump to latest{value}"), {
+        value: unseen ? (
+          <span
+            className="ms-0.5 rounded-full bg-background px-1.5 text-[11px] font-semibold leading-4 text-foreground"
+            aria-hidden
+          >
+            {tx("New")}
+          </span>
+        ) : null,
+      })}
     </Button>
   );
 }

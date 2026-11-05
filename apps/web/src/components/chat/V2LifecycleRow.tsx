@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { AgentElapsed } from "./AgentElapsed";
 import { projectedSubagentsToRuntime } from "@specweave-studio/client-runtime/state/subagentRuntime";
@@ -78,6 +80,7 @@ export function V2LifecycleRow(props: {
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const tx = useTx();
   const { item } = props;
   if (item.type === "run_interrupt_request") {
     return (
@@ -86,7 +89,7 @@ export function V2LifecycleRow(props: {
           <span aria-hidden="true" className="font-mono">
             ■
           </span>
-          <span className="font-medium">Interrupt requested</span>
+          <span className="font-medium">{tx("Interrupt requested")}</span>
           <span aria-hidden="true" className="opacity-50">
             ·
           </span>
@@ -101,7 +104,7 @@ export function V2LifecycleRow(props: {
   if (item.type === "run_interrupt_result") {
     return (
       <TimelineSystemDivider
-        label="Run interrupted"
+        label={tx("Run interrupted")}
         detail={runInterruptResultDetail(item)}
         tone="danger"
         icon={XIcon}
@@ -129,7 +132,7 @@ export function V2LifecycleRow(props: {
     const { from: fromEndpoints, to } = resolveHandoffEndpoints(item, props.runs);
     return (
       <TimelineSystemDivider
-        label="Switched model"
+        label={tx("Switched model")}
         icon={ArrowRightLeftIcon}
         showDetailSeparator={false}
         tone={item.status === "failed" ? "danger" : "neutral"}
@@ -166,9 +169,11 @@ export function V2LifecycleRow(props: {
     const relatedThreadId = item.source.type === "run" ? item.source.threadId : item.targetThreadId;
     return (
       <TimelineSystemDivider
-        label={item.source.type === "run" ? "Forked from conversation" : "Conversation fork"}
+        label={
+          item.source.type === "run" ? tx("Forked from conversation") : tx("Conversation fork")
+        }
         icon={GitForkIcon}
-        actionLabel={item.source.type === "run" ? "Open source conversation" : "Open fork"}
+        actionLabel={item.source.type === "run" ? tx("Open source conversation") : tx("Open fork")}
         onAction={() => props.onOpenThread(relatedThreadId)}
       />
     );
@@ -184,7 +189,7 @@ export function V2LifecycleRow(props: {
             <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
           </span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
-            {item.title ?? "Created thread"}
+            {item.title ?? tx("Created thread")}
           </span>
           <Button
             size="xs"
@@ -192,7 +197,7 @@ export function V2LifecycleRow(props: {
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
-            Open chat
+            {tx("Open chat")}
           </Button>
         </div>
       );
@@ -201,13 +206,19 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<StudioWordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <>
+            {renderRich(tx("Created thread{value}"), {
+              value: item.title ? ` · ${item.title}` : "",
+            })}
+          </>
+        }
         trailing={
           <InlineButton
             aria-label={`Open ${item.title ?? "created thread"}`}
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
-            Open chat
+            {tx("Open chat")}
           </InlineButton>
         }
       />
@@ -574,10 +585,11 @@ export function SameProviderSwitchRow(props: {
   readonly change: SameProviderModelChange;
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
 }) {
+  const tx = useTx();
   const { change } = props;
   return (
     <TimelineSystemDivider
-      label="Switched model"
+      label={tx("Switched model")}
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       detail={

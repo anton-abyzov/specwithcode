@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import {
@@ -83,6 +85,7 @@ interface Props {
 
 /** A draft's machine is explicit even when its project is local-only or is not a Git repo. */
 export function DraftMachinePicker(props: Props) {
+  const tx = useTx();
   const { draftId, disabled, sendInFlightRef, onPendingChange } = props;
   const draft = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const composer = useComposerDraftStore((store) => store.getComposerDraft(draftId));
@@ -407,15 +410,15 @@ export function DraftMachinePicker(props: Props) {
           )}
         </span>
         {options.selectable !== false && environment.environmentId === draft?.environmentId && (
-          <CheckIcon aria-label="Selected machine" />
+          <CheckIcon aria-label={tx("Selected machine")} />
         )}
         {retryRow && !isRetrying && (
           <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
             <RotateCwIcon aria-hidden className="size-3" />
-            Retry
+            {tx("Retry")}
           </span>
         )}
-        {fixRow && <span className="shrink-0 text-xs text-muted-foreground">Fix</span>}
+        {fixRow && <span className="shrink-0 text-xs text-muted-foreground">{tx("Fix")}</span>}
         {!reason && !isRetrying && options.usableAction && (
           <span className="shrink-0 text-xs text-muted-foreground">{options.usableAction}</span>
         )}
@@ -456,7 +459,7 @@ export function DraftMachinePicker(props: Props) {
         setView("machines");
       }}
     >
-      <ArrowLeftIcon aria-hidden /> Machines
+      <ArrowLeftIcon aria-hidden /> {tx("Machines")}
     </MenuItem>
   );
   const environmentById = new Map(environments.map((item) => [item.environmentId, item]));
@@ -476,7 +479,7 @@ export function DraftMachinePicker(props: Props) {
       <>
         <MenuGroup>
           <MenuGroupLabel>
-            {runOnProject ? `Machines with ${runOnProject.title}` : "Run this draft on"}
+            {runOnProject ? `Machines with ${runOnProject.title}` : tx("Run this draft on")}
           </MenuGroupLabel>
           {rows}
           {props.onAutoEnvironment && (
@@ -500,7 +503,7 @@ export function DraftMachinePicker(props: Props) {
                 latest.current.props.onAutoEnvironment?.();
               }}
             >
-              {props.autoEnvironmentLabel ?? "Auto balance matching projects"}
+              {props.autoEnvironmentLabel ?? tx("Auto balance matching projects")}
             </MenuItem>
           )}
         </MenuGroup>
@@ -508,20 +511,20 @@ export function DraftMachinePicker(props: Props) {
         {groups && groups.addable.length > 0 && (
           <MenuItem closeOnClick={false} disabled={locked} onClick={() => setView("add")}>
             <PlusIcon aria-hidden />
-            Prepare project on machine…
+            {tx("Prepare project on machine…")}
             <ChevronRightIcon aria-hidden className="ms-auto" />
           </MenuItem>
         )}
         {groups && (
           <MenuItem closeOnClick={false} disabled={locked} onClick={() => setView("other")}>
             <FolderIcon aria-hidden />
-            Another project or no project
+            {tx("Another project or no project")}
             <ChevronRightIcon aria-hidden className="ms-auto" />
           </MenuItem>
         )}
         <MenuItem closeOnClick={false} onClick={() => setView("rename")}>
           <PencilIcon aria-hidden />
-          Rename a machine
+          {tx("Rename a machine")}
           <ChevronRightIcon aria-hidden className="ms-auto" />
         </MenuItem>
       </>
@@ -532,7 +535,9 @@ export function DraftMachinePicker(props: Props) {
     return (
       <MenuGroup>
         {backRow}
-        <MenuGroupLabel>Add {project.title} to</MenuGroupLabel>
+        <MenuGroupLabel>
+          {renderRich(tx("Add {title} to"), { title: project.title })}
+        </MenuGroupLabel>
         {addable.flatMap(({ environmentId, copy }) => {
           const environment = environmentById.get(environmentId);
           if (!environment) return [];
@@ -562,7 +567,7 @@ export function DraftMachinePicker(props: Props) {
     return (
       <MenuGroup>
         {backRow}
-        <MenuGroupLabel>Choose a project on</MenuGroupLabel>
+        <MenuGroupLabel>{tx("Choose a project on")}</MenuGroupLabel>
         {environments.map((environment) =>
           machineRow(environment, {
             selectable: false,
@@ -577,7 +582,7 @@ export function DraftMachinePicker(props: Props) {
     return (
       <MenuGroup>
         {backRow}
-        <MenuGroupLabel>Rename a machine</MenuGroupLabel>
+        <MenuGroupLabel>{tx("Rename a machine")}</MenuGroupLabel>
         {environments.map((environment) => {
           const name = nameOf(environment.environmentId, environment.label);
           return (
@@ -625,9 +630,9 @@ export function DraftMachinePicker(props: Props) {
             setView("machines");
           }}
         >
-          <ArrowLeftIcon aria-hidden /> Machines
+          <ArrowLeftIcon aria-hidden /> {tx("Machines")}
         </MenuItem>
-        <MenuGroupLabel>Project on {name}</MenuGroupLabel>
+        <MenuGroupLabel>{renderRich(tx("Project on {name}"), { name: name })}</MenuGroupLabel>
         {!destinationReason &&
           runOnProject &&
           !destinationProjects.some(
@@ -636,8 +641,12 @@ export function DraftMachinePicker(props: Props) {
               deriveLogicalProjectKeyFromSettings(runOnProject, grouping),
           ) && (
             <p role="status" className="px-2 py-2 text-sm text-muted-foreground">
-              No active checkout of {runOnProject.title} is saved on {name}. Choose another project
-              or No project. Your draft stays here until you choose.
+              {renderRich(
+                tx(
+                  "No active checkout of {title} is saved on {name}. Choose another project or No project. Your draft stays here until you choose.",
+                ),
+                { title: runOnProject.title, name: name },
+              )}
             </p>
           )}
         {destinationReason && (
@@ -670,13 +679,13 @@ export function DraftMachinePicker(props: Props) {
               void select({ environmentId: environment.environmentId, projectId: null })
             }
           >
-            No project
+            {tx("No project")}
           </MenuItem>
         )}
         {!destinationProjects.length &&
           scratchWorkspaceRootFor(environment.environmentId) === null && (
             <p className="px-2 py-2 text-sm text-muted-foreground">
-              No project is available on this machine.
+              {tx("No project is available on this machine.")}
             </p>
           )}
       </MenuGroup>
@@ -709,7 +718,7 @@ export function DraftMachinePicker(props: Props) {
             : {})}
         >
           <EnvironmentMachineIcon aria-hidden kind={activeKind} className="size-4 shrink-0" />
-          <span className="shrink-0">Run on</span>
+          <span className="shrink-0">{tx("Run on")}</span>
           <span className="min-w-0 truncate">{activeLabel}</span>
           {activeUnreachable && (
             <span
@@ -720,12 +729,12 @@ export function DraftMachinePicker(props: Props) {
               {activeIsThisMachine
                 ? activeStatus?.text
                 : activeStatus?.retryable
-                  ? "Can't reach"
-                  : (activeStatus?.text ?? "Not saved")}
+                  ? tx("Can't reach")
+                  : (activeStatus?.text ?? tx("Not saved"))}
             </span>
           )}
           {props.autoEnvironmentLabel && (
-            <span className="shrink-0 text-xs text-muted-foreground">Auto</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{tx("Auto")}</span>
           )}
           <ChevronDownIcon aria-hidden className="size-3 shrink-0" />
         </MenuTrigger>
@@ -745,7 +754,7 @@ export function DraftMachinePicker(props: Props) {
                   : machinesView()}
           {pending && (
             <p role="status" className="px-2 py-2 text-sm text-muted-foreground">
-              Preparing machine…
+              {tx("Preparing machine…")}
             </p>
           )}
           {error && (
@@ -756,7 +765,7 @@ export function DraftMachinePicker(props: Props) {
           <MenuSeparator />
           <MenuItem render={<Link to="/settings/connections" />}>
             <Link2Icon aria-hidden />
-            Connect machines…
+            {tx("Connect machines…")}
           </MenuItem>
         </MenuPopup>
       </Menu>

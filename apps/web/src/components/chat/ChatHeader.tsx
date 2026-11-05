@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ThreadArtifactsMenu } from "./ThreadArtifacts";
 import { ThreadOriginBadge } from "./ThreadOriginBadge";
 import {
@@ -90,6 +92,7 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenProjectSettings,
   artifactsCwd,
 }: ChatHeaderProps) {
+  const tx = useTx();
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadRef = useMemo(
@@ -304,7 +307,11 @@ export const ChatHeader = memo(function ChatHeader({
                     {activeProjectName}
                   </WorkspaceBreadcrumbText>
                 </TooltipTrigger>
-                <TooltipPopup side="top">New thread in {activeProjectName}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {renderRich(tx("New thread in {activeProjectName}"), {
+                    activeProjectName: activeProjectName,
+                  })}
+                </TooltipPopup>
               </Tooltip>
             </WorkspaceBreadcrumbItem>
             <WorkspaceBreadcrumbSeparator>
@@ -316,7 +323,7 @@ export const ChatHeader = memo(function ChatHeader({
           {renamingTitle !== null ? (
             <input
               autoFocus
-              aria-label="Thread title"
+              aria-label={tx("Thread title")}
               className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-ring/50 focus:ring-ring"
               defaultValue={renamingTitle}
               onBlur={(event) => {

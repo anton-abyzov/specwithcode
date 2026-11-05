@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 /**
  * The picker row for a provider turned on from "On your other machines": the
  * step it is on, then what it still needs on this machine.
@@ -31,6 +32,7 @@ export function TurnedOnRow(props: {
   outcome: TurnOnOutcome;
   onOpenSetup: (() => void) | undefined;
 }) {
+  const tx = useTx();
   const { provider, quickSetup, outcome } = props;
   const running = quickSetup.pending.has(provider.identity);
   const error = quickSetup.errors.get(provider.identity);
@@ -72,7 +74,7 @@ export function TurnedOnRow(props: {
         <span className="min-w-0 flex-1 truncate">{provider.displayName}</span>
         {action === "sign-in" && props.onOpenSetup ? (
           <InlineButton data-model-picker-sign-in={provider.identity} onClick={props.onOpenSetup}>
-            {outcome.kind === "sign-in" ? outcome.action : "Sign in"}
+            {outcome.kind === "sign-in" ? outcome.action : tx("Sign in")}
           </InlineButton>
         ) : null}
         {action === "retry" || action === "check-again" ? (
@@ -81,7 +83,7 @@ export function TurnedOnRow(props: {
             disabled={!quickSetup.canManage}
             onClick={() => quickSetup.enableHere(provider)}
           >
-            {action === "retry" ? "Retry" : "Check again"}
+            {action === "retry" ? tx("Retry") : tx("Check again")}
           </InlineButton>
         ) : null}
       </div>

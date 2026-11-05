@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * The plan card's acceptance criteria: each AC with how far it is proven,
  * the tasks that cover it and its user story. A tick in the spec or a task
@@ -111,6 +113,7 @@ export function formatAcceptanceDate(value: string): string {
 }
 
 function CriterionRow({ criterion }: { criterion: ThreadIncrementCriterion }) {
+  const tx = useTx();
   const state = criterionState(criterion);
   const tasks = criterion.tasks ?? [];
   return (
@@ -147,9 +150,15 @@ function CriterionRow({ criterion }: { criterion: ThreadIncrementCriterion }) {
       {(criterion.waivers?.length ?? 0) > 0 ? (
         <details className="ms-6 mt-1 text-xs text-muted-foreground" data-accepted-skips>
           <summary className="cursor-pointer">
-            {criterion.waivers!.length} accepted{" "}
-            {criterion.waivers!.length === 1 ? "skip" : "skips"}
-            {state === "open" ? "; other requirements remain open" : ""}
+            {tx(
+              criterion.waivers!.length === 1
+                ? "{length} accepted skip{value2}"
+                : "{length} accepted skips{value2}",
+              {
+                length: criterion.waivers!.length,
+                value2: state === "open" ? tx("; other requirements remain open") : "",
+              },
+            )}
           </summary>
           <ul className="mt-1 space-y-2">
             {criterion.waivers!.map((waiver) => (
@@ -157,16 +166,22 @@ function CriterionRow({ criterion }: { criterion: ThreadIncrementCriterion }) {
                 <strong className="font-medium text-foreground">{waiver.check}</strong>
                 <p>{waiver.reason}</p>
                 <p>
-                  Accepted by {waiver.acceptedBy} ·{" "}
-                  <time dateTime={waiver.acceptedAt}>
-                    {formatAcceptanceDate(waiver.acceptedAt)}
-                  </time>
+                  {renderRich(tx("Accepted by {acceptedBy} · {time}"), {
+                    acceptedBy: waiver.acceptedBy,
+                    time: (
+                      <time dateTime={waiver.acceptedAt}>
+                        {formatAcceptanceDate(waiver.acceptedAt)}
+                      </time>
+                    ),
+                  })}
                 </p>
                 <p className="whitespace-pre-wrap wrap-anywhere">
-                  Authorization: {waiver.authorization}
+                  {renderRich(tx("Authorization: {authorization}"), {
+                    authorization: waiver.authorization,
+                  })}
                 </p>
                 <p className="wrap-anywhere">
-                  Recorded by {waiver.by} · {waiver.at}
+                  {renderRich(tx("Recorded by {by} · {at}"), { by: waiver.by, at: waiver.at })}
                 </p>
               </li>
             ))}
@@ -183,6 +198,7 @@ export function ThreadPlanCriteria({
 }: {
   criteria: ReadonlyArray<ThreadIncrementCriterion>;
 }) {
+  const tx = useTx();
   const groups = new Map<string, ThreadIncrementCriterion[]>();
   for (const criterion of criteria) {
     const story = criterion.story ?? "";
@@ -195,12 +211,12 @@ export function ThreadPlanCriteria({
         <ul
           key={story || "none"}
           role="list"
-          aria-label={story ? `Acceptance criteria for ${story}` : "Acceptance criteria"}
+          aria-label={story ? `Acceptance criteria for ${story}` : tx("Acceptance criteria")}
           className="space-y-0.5"
         >
           {storied ? (
             <li className="text-2xs font-medium text-muted-foreground" aria-hidden>
-              {story || "No story"}
+              {story || tx("No story")}
             </li>
           ) : null}
           {members.map((criterion) => (

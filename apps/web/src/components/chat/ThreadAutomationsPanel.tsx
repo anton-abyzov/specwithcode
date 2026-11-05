@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -50,6 +52,7 @@ export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const tx = useTx();
   const canOperate = useAtomValue(
     serverEnvironment.runScheduledTaskNow.permissionAtom(props.environmentId),
   );
@@ -124,7 +127,7 @@ export function ThreadAutomationsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-automations-heading"
-      title="Routines"
+      title={tx("Routines")}
       data-thread-automations-panel
       actions={
         <Tooltip>
@@ -134,7 +137,7 @@ export function ThreadAutomationsPanel(props: {
                 size="icon-xs"
                 variant="ghost"
                 part="icon"
-                aria-label="Manage routines"
+                aria-label={tx("Manage routines")}
                 onClick={() =>
                   void navigate({
                     to: "/settings/scheduled-tasks",
@@ -146,13 +149,13 @@ export function ThreadAutomationsPanel(props: {
               </ThreadDetailsControl>
             }
           />
-          <TooltipPopup>Manage routines</TooltipPopup>
+          <TooltipPopup>{tx("Manage routines")}</TooltipPopup>
         </Tooltip>
       }
     >
       {tasksQuery.error !== null ? (
         <p className="px-2.5 py-1.5 text-2xs text-destructive-foreground">
-          Could not load routines: {tasksQuery.error}
+          {renderRich(tx("Could not load routines: {error}"), { error: tasksQuery.error })}
         </p>
       ) : null}
 
@@ -185,7 +188,7 @@ export function ThreadAutomationsPanel(props: {
                   ? ` · next ${relativeLabel(task.nextRunAt)}`
                   : task.enabled
                     ? ""
-                    : " · paused"}
+                    : tx(" · paused")}
               </p>
             </div>
             <Tooltip>
@@ -207,7 +210,7 @@ export function ThreadAutomationsPanel(props: {
                   </ThreadDetailsControl>
                 }
               />
-              <TooltipPopup>Edit routine</TooltipPopup>
+              <TooltipPopup>{tx("Edit routine")}</TooltipPopup>
             </Tooltip>
             {/* A webhook task runs from its URL; there is no request to run it with. */}
             {task.schedule.type === "webhook" ? (
@@ -232,7 +235,7 @@ export function ThreadAutomationsPanel(props: {
                     </ThreadDetailsControl>
                   }
                 />
-                <TooltipPopup>Run now</TooltipPopup>
+                <TooltipPopup>{tx("Run now")}</TooltipPopup>
               </Tooltip>
             )}
             <Switch

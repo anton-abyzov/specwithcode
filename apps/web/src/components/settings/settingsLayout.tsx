@@ -421,8 +421,8 @@ export function SettingsRow({
     source === "environment" && context?.scope.environmentIds.length === 1
       ? (context.environments.find(
           (environment) => environment.environmentId === context.scope.environmentIds[0],
-        )?.label ?? "environment")
-      : "environment";
+        )?.label ?? tx("the environment"))
+      : tx("the environment");
   const environmentSettingsById = useMemo(
     () =>
       new Map(
@@ -526,16 +526,22 @@ export function SettingsRow({
       }),
     );
   const inheritance: { state: SettingInheritanceState; summary: string } = mixed
-    ? { state: "mixed", summary: "Mixed across selected environments" }
+    ? { state: "mixed", summary: tx("Mixed across selected environments") }
     : source === "project"
-      ? { state: "overridden", summary: "Overridden for this project" }
+      ? { state: "overridden", summary: tx("Overridden for this project") }
       : source === "specweave-studio.json"
-        ? { state: "inherited", summary: "Inherited from the repository's specweave-studio.json" }
+        ? {
+            state: "inherited",
+            summary: tx("Inherited from the repository's specweave-studio.json"),
+          }
         : source === "environment" && scopedKeys.length > 0
-          ? { state: "inherited", summary: `Inherited from ${inheritedFrom}` }
+          ? {
+              state: "inherited",
+              summary: tx("Inherited from {source}", { source: inheritedFrom }),
+            }
           : customized
-            ? { state: "environment", summary: "Set on the environment" }
-            : { state: "default", summary: "Built-in default" };
+            ? { state: "environment", summary: tx("Set on the environment") }
+            : { state: "default", summary: tx("Built-in default") };
   const renderedInheritance =
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance

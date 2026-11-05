@@ -219,24 +219,32 @@ export function ProviderReadinessSummary({
   const tx = useTx();
   const auth = provider?.auth.status;
   const nextStep = !enabled
-    ? "Enable this agent below to use it in chat."
+    ? tx("Enable this agent below to use it in chat.")
     : !provider
-      ? "Refresh provider status to check installation, sign-in and models."
+      ? tx("Refresh provider status to check installation, sign-in and models.")
       : provider.availability === "unavailable"
-        ? (provider.unavailableReason ?? "This agent is unavailable on this machine.")
+        ? (provider.unavailableReason ?? tx("This agent is unavailable on this machine."))
         : !provider.installed
-          ? `Complete installation on ${environmentLabel} or configure its executable below, then refresh provider status.`
+          ? tx(
+              "Complete installation on {machine} or configure its executable below, then refresh provider status.",
+              { machine: environmentLabel },
+            )
           : auth === "unauthenticated"
             ? provider.setup?.canAuthenticate
-              ? "Complete sign-in in Setup below, then refresh provider status to load models."
-              : `Complete sign-in using this agent on ${environmentLabel}, then refresh provider status.`
+              ? tx("Complete sign-in in Setup below, then refresh provider status to load models.")
+              : tx(
+                  "Complete sign-in using this agent on {machine}, then refresh provider status.",
+                  { machine: environmentLabel },
+                )
             : auth !== "authenticated"
-              ? "Sign-in status is not reported. Review the agent settings below or refresh provider status."
+              ? tx(
+                  "Sign-in status is not reported. Review the agent settings below or refresh provider status.",
+                )
               : provider.status === "error" || provider.status === "warning"
-                ? "Review the provider status below before starting a chat."
+                ? tx("Review the provider status below before starting a chat.")
                 : provider.models.length === 0
-                  ? "No models reported yet. Refresh provider status after completing setup."
-                  : "Choose this agent and a model in the chat model picker.";
+                  ? tx("No models reported yet. Refresh provider status after completing setup.")
+                  : tx("Choose this agent and a model in the chat model picker.");
   const stages = [
     [
       provider?.driver === "cursor" ? "Integration" : "Installation",
@@ -256,7 +264,12 @@ export function ProviderReadinessSummary({
           ? "Required"
           : "Not reported",
     ],
-    ["Models", provider?.models.length ? `${provider.models.length} reported` : "None reported"],
+    [
+      "Models",
+      provider?.models.length
+        ? tx("{count} reported", { count: provider.models.length })
+        : "None reported",
+    ],
   ] as const;
   return (
     <section
@@ -271,8 +284,8 @@ export function ProviderReadinessSummary({
       <dl className="grid grid-cols-3 gap-3">
         {stages.map(([label, value]) => (
           <div key={label} className="min-w-0">
-            <dt className="text-xs text-muted-foreground">{label}</dt>
-            <dd className="mt-1 text-sm font-medium">{value}</dd>
+            <dt className="text-xs text-muted-foreground">{tx(label)}</dt>
+            <dd className="mt-1 text-sm font-medium">{tx(value)}</dd>
           </div>
         ))}
       </dl>

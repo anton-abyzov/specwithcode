@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ZapIcon } from "lucide-react";
 import { memo } from "react";
 import { cn } from "~/lib/utils";
@@ -42,6 +43,7 @@ export const ModelPickerEffortStrip = memo(function ModelPickerEffortStrip(props
   /** The model the effort belongs to, for the accessible name. */
   readonly modelLabel: string;
 }) {
+  const tx = useTx();
   const { effort } = props;
   if (effort.options.length === 0 && !effort.fast) return null;
   return (
@@ -51,7 +53,9 @@ export const ModelPickerEffortStrip = memo(function ModelPickerEffortStrip(props
     >
       {effort.options.length > 0 ? (
         <>
-          <span className="shrink-0 text-2xs font-medium text-muted-foreground">Effort</span>
+          <span className="shrink-0 text-2xs font-medium text-muted-foreground">
+            {tx("Effort")}
+          </span>
           <div
             role="radiogroup"
             aria-label={`Effort for ${props.modelLabel}`}
@@ -102,7 +106,7 @@ export const ModelPickerEffortStrip = memo(function ModelPickerEffortStrip(props
           className="sws-picker-segment inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2 text-xs"
         >
           <ZapIcon className={cn("size-3.5", effort.fast.on && "fill-current")} aria-hidden />
-          Fast
+          {tx("Fast")}
         </button>
       ) : null}
     </div>

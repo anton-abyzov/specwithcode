@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
 import { ScrollArea } from "../ui/scroll-area";
@@ -28,6 +29,7 @@ export function ThreadDetailsCard({
   onPresentationChange: (presentation: ThreadPanelPresentation) => void;
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
+  const tx = useTx();
   const canvas = useChatCanvas();
   const preferredPlacement = canvas
     ? resolveThreadDetailsCardLayout({
@@ -155,7 +157,7 @@ export function ThreadDetailsCard({
       {placement ? (
         inlineOpen ? (
           <aside
-            aria-label="Thread details"
+            aria-label={tx("Thread details")}
             className="absolute z-20"
             style={{
               left: placement.x,

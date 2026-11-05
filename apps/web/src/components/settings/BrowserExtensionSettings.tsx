@@ -329,10 +329,10 @@ export function BrowserExtensionCard({
         )}
         <Steps
           items={[
-            "Click the SpecWithCode icon in Chrome's toolbar.",
-            "Paste the pairing code.",
-            "Name the profile, for example Work or Marketing.",
-            "Click Pair.",
+            tx("Click the SpecWithCode icon in Chrome's toolbar."),
+            tx("Paste the pairing code."),
+            tx("Name the profile, for example Work or Marketing."),
+            tx("Click Pair."),
           ]}
         />
         <p className="text-xs text-muted-foreground">

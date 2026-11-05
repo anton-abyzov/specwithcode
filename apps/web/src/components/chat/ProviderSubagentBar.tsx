@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   formatProviderSubagentStatus,
   type ProviderSubagentStatus,
@@ -106,6 +107,7 @@ export function ProviderSubagentBar(props: {
   readonly step?: string | null;
   readonly onOpenParent: (() => void) | null;
 }) {
+  const tx = useTx();
   const statusRef = useRef<HTMLSpanElement>(null);
   const { status } = props;
   const tone = providerSubagentStatusTone(status);
@@ -189,7 +191,7 @@ export function ProviderSubagentBar(props: {
         <span className="ms-auto" />
       ) : (
         <span className="ms-auto hidden shrink-0 text-muted-foreground @[30rem]/subagent-bar:inline">
-          Runs on its own
+          {tx("Runs on its own")}
         </span>
       )}
       {props.onOpenParent ? (
@@ -200,7 +202,7 @@ export function ProviderSubagentBar(props: {
                 type="button"
                 size="icon-sm"
                 variant="ghost"
-                aria-label="Open parent thread"
+                aria-label={tx("Open parent thread")}
                 className="shrink-0"
                 onClick={props.onOpenParent}
               />
@@ -208,7 +210,7 @@ export function ProviderSubagentBar(props: {
           >
             <ArrowUpLeftIcon aria-hidden />
           </TooltipTrigger>
-          <TooltipPopup side="top">Open parent thread</TooltipPopup>
+          <TooltipPopup side="top">{tx("Open parent thread")}</TooltipPopup>
         </Tooltip>
       ) : null}
     </div>

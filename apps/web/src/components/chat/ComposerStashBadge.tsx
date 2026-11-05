@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { BookmarkIcon } from "lucide-react";
 import { memo } from "react";
 
@@ -19,6 +20,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   pulsing: boolean;
   onToggleMenu: () => void;
 }) {
+  const tx = useTx();
   if (props.count === 0) return null;
   const count = (
     <ComposerBanner.Count
@@ -58,7 +60,7 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         <ComposerBanner.Icon>
           <BookmarkIcon />
         </ComposerBanner.Icon>
-        <ComposerBanner.Content>Stash</ComposerBanner.Content>
+        <ComposerBanner.Content>{tx("Stash")}</ComposerBanner.Content>
         <ComposerBanner.Actions>{count}</ComposerBanner.Actions>
       </ComposerBanner.Row>
     </ComposerBanner.Root>

@@ -810,7 +810,7 @@ export function ConnectionMatrix({
   const toolWidth = detailed ? 164 : 104;
   return (
     <div className="space-y-3" data-testid="connection-matrix">
-      <p className="text-sm text-muted-foreground">{PER_TOOL_NOTE}</p>
+      <p className="text-sm text-muted-foreground">{tx(PER_TOOL_NOTE)}</p>
       {(issues.length > 0 || otherIssues.length > 0) && (
         <div role="status" className="text-sm text-warning-foreground">
           {renderRich(tx("Some sources could not be inspected: {value}. Results are incomplete."), {
@@ -987,7 +987,7 @@ export function ConnectionMatrix({
                                 </button>
                                 {group.id === "project" ? (
                                   <span data-testid="folder-only-note">
-                                    <Hint inline={false} text={FOLDER_ONLY_NOTE} />
+                                    <Hint inline={false} text={tx(FOLDER_ONLY_NOTE)} />
                                   </span>
                                 ) : null}
                               </span>
@@ -1093,16 +1093,18 @@ export function ConnectionMatrix({
               "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.",
             ),
             {
-              value: project
-                ? "Project configuration includes user declarations and project overrides."
-                : "User configurations, plugins and folder-only Claude Code entries on this machine.",
+              value: tx(
+                project
+                  ? "Project configuration includes user declarations and project overrides."
+                  : "User configurations, plugins and folder-only Claude Code entries on this machine.",
+              ),
             },
           )}
         </p>
         <ul className="mt-2 space-y-1">
           {snapshot.sources.map((s) => (
             <li key={s.id}>
-              {sourceName(s.id)} · {s.status.replaceAll("_", " ")}
+              {tx(sourceName(s.id))} · {s.status.replaceAll("_", " ")}
             </li>
           ))}
           {(snapshot.otherTools ?? []).map((t) => (
@@ -1117,9 +1119,11 @@ export function ConnectionMatrix({
               "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.",
             ),
             {
-              value: project
-                ? "Only the registered project root is inspected. "
-                : "Select a project to inspect its project files and overrides. ",
+              value: tx(
+                project
+                  ? "Only the registered project root is inspected. "
+                  : "Select a project to inspect its project files and overrides. ",
+              ),
             },
           )}
         </p>

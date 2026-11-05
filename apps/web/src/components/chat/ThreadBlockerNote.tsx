@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { HandIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -12,13 +13,14 @@ const CLAMP_AFTER_CHARS = 200;
  * through and overlap its text.
  */
 export function ThreadBlockerNote({ blocker }: { blocker: string }) {
+  const tx = useTx();
   const long = blocker.length > CLAMP_AFTER_CHARS;
   const [expanded, setExpanded] = useState(false);
   const clamped = long && !expanded;
   return (
     <section
       className="pointer-events-auto flex items-start gap-2 rounded-xl border border-warning/40 lane-surface px-3 py-2 text-sm shadow-xs [--lane-tint:color-mix(in_srgb,var(--warning)_8%,transparent)] dark:[--lane-tint:color-mix(in_srgb,var(--warning)_16%,transparent)]"
-      aria-label="Blocked"
+      aria-label={tx("Blocked")}
       data-thread-blocker
     >
       <HandIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
@@ -27,7 +29,7 @@ export function ThreadBlockerNote({ blocker }: { blocker: string }) {
           className={`break-words text-foreground/90 ${clamped ? "line-clamp-3" : "max-h-[40vh] overflow-y-auto"}`}
           data-thread-blocker-text
         >
-          <span className="font-medium text-warning-foreground">Blocked: </span>
+          <span className="font-medium text-warning-foreground">{tx("Blocked:")} </span>
           {blocker}
         </p>
         {long ? (
@@ -37,7 +39,7 @@ export function ThreadBlockerNote({ blocker }: { blocker: string }) {
             aria-expanded={expanded}
             onClick={() => setExpanded((value) => !value)}
           >
-            {expanded ? "Show less" : "Show more"}
+            {expanded ? tx("Show less") : tx("Show more")}
           </button>
         ) : null}
       </div>

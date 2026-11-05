@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { threadModelIdentity } from "@specweave-studio/shared/threadModelIdentity";
 import {
   consumeExplicitCreditSendOffer,
@@ -1301,6 +1302,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const tx = useTx();
   const size = props.size ?? "sm";
   const composerFloatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(props.hidden);
@@ -1343,7 +1345,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             />
           )}
           <span data-composer-control-label className="sr-only sm:not-sr-only">
-            {props.interactionMode === "plan" ? "Plan" : "Build"}
+            {props.interactionMode === "plan" ? tx("Plan") : tx("Build")}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{interactionModeTooltip}</TooltipPopup>
@@ -1790,6 +1792,7 @@ export interface ChatComposerProps {
 // --------------------------------------------------------------------------
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
+  const tx = useTx();
   const {
     composerDraftTarget,
     environmentId,
@@ -5781,7 +5784,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       className="shrink-0"
     >
       <CircleAlertIcon className="size-4" />
-      {providerSetupInstanceId ? "Open provider settings" : "No provider available"}
+      {providerSetupInstanceId ? tx("Open provider settings") : tx("No provider available")}
     </ComposerControl>
   ) : (
     <>
@@ -7238,9 +7241,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             )}
                             onPointerDown={(event) => event.preventDefault()}
                             onClick={expandMobileComposer}
-                            aria-label="Write custom answer"
+                            aria-label={tx("Write custom answer")}
                           >
-                            {activePendingProgress?.customAnswer || "Write custom answer"}
+                            {activePendingProgress?.customAnswer || tx("Write custom answer")}
                           </button>
                         </div>
                       </ComposerBanner.Body>
@@ -7264,7 +7267,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   {props.onDismissAnswerProblem ? (
                     <ComposerBanner.Actions>
                       <ComposerBanner.Dismiss
-                        aria-label="Dismiss this error"
+                        aria-label={tx("Dismiss this error")}
                         onClick={() => {
                           props.onDismissAnswerProblem?.();
                           // The button goes with the banner: keep focus on the kept draft.
@@ -7344,19 +7347,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={isChoiceOnlyPendingQuestion ? undefined : expandMobileComposer}
                   disabled={isChoiceOnlyPendingQuestion}
-                  aria-label="Expand composer"
+                  aria-label={tx("Expand composer")}
                 >
                   {activePendingProgress
                     ? isChoiceOnlyPendingQuestion
-                      ? "Choose an option above"
+                      ? tx("Choose an option above")
                       : activePendingProgress.customAnswer ||
-                        "Type your own answer, or leave this blank to use the selected option"
+                        tx("Type your own answer, or leave this blank to use the selected option")
                     : prompt.trim() ||
                       (routesProjectMessage
-                        ? "Message the project coordinator…"
+                        ? tx("Message the project coordinator…")
                         : showProviderUnavailable
-                          ? "Enable a provider in Settings"
-                          : "Ask anything...")}
+                          ? tx("Enable a provider in Settings")
+                          : tx("Ask anything..."))}
                 </button>
                 {collapsedComposerImagePreviews}
                 <button
@@ -7388,7 +7391,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </svg>
                   )}
-                  {explicitCreditOffer !== null ? <span>Send with credits</span> : null}
+                  {explicitCreditOffer !== null ? <span>{tx("Send with credits")}</span> : null}
                 </button>
               </div>
             ) : null}
@@ -7426,8 +7429,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {composerSuggestionsVisible && composerMenuItems.length === 0
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
-                      ? "Finding pull request..."
-                      : "Searching workspace files..."
+                      ? tx("Finding pull request...")
+                      : tx("Searching workspace files...")
                     : composerMenuEmptyState
                   : ""}
               </div>
@@ -7574,7 +7577,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   render={
                                     <span
                                       role="img"
-                                      aria-label="Draft attachment may not persist"
+                                      aria-label={tx("Draft attachment may not persist")}
                                       className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
                                     >
                                       <CircleAlertIcon className="size-3" />
@@ -7582,8 +7585,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   }
                                 />
                                 <TooltipPopup side="top">
-                                  Draft attachment could not be saved locally and may be lost on
-                                  navigation.
+                                  {tx(
+                                    "Draft attachment could not be saved locally and may be lost on navigation.",
+                                  )}
                                 </TooltipPopup>
                               </Tooltip>
                             )}
@@ -7766,8 +7770,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           <span className="shrink-0 text-xs text-secondary-label">
                             {needsReattach
                               ? canReattachFile
-                                ? "Attach again"
-                                : "Remove to send"
+                                ? tx("Attach again")
+                                : tx("Remove to send")
                               : upload?.status === "uploading"
                                 ? formatAttachmentUploadProgress(upload.progress)
                                 : formatAttachmentSize(file.sizeBytes)}
@@ -7902,24 +7906,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ghostSuggestion={visibleGhostSuggestion?.text ?? null}
                     placeholder={
                       isComposerApprovalState
-                        ? "Resolve this approval request to continue"
+                        ? tx("Resolve this approval request to continue")
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Reply in chat, or pick an option above"
+                            ? tx("Choose an option above")
+                            : tx("Reply in chat, or pick an option above")
                           : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
+                            ? tx(
+                                "Add feedback to refine the plan, or leave this blank to implement it",
+                              )
                             : environmentUnavailable !== null
                               ? `Waiting for ${environmentUnavailable.label}. What you type stays here until it is back`
                               : projectSelectionRequired
-                                ? "Choose a project above to start a thread"
+                                ? tx("Choose a project above to start a thread")
                                 : routesProjectMessage
-                                  ? "Message the project coordinator…"
+                                  ? tx("Message the project coordinator…")
                                   : showProviderUnavailable
-                                    ? "Enable a provider in Settings to send a message"
+                                    ? tx("Enable a provider in Settings to send a message")
                                     : phase === "disconnected"
                                       ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                      : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                      : tx(
+                                          "Ask anything, @tag files/folders, $use skills, or / for commands",
+                                        )
                     }
                     disabled={
                       isConnecting ||
@@ -8033,13 +8041,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               size="icon-sm"
                               onPointerDown={(event) => event.preventDefault()}
                               onClick={() => attachmentInputRef.current?.click()}
-                              aria-label="Attach files"
+                              aria-label={tx("Attach files")}
                             />
                           }
                         >
                           <PaperclipIcon />
                         </TooltipTrigger>
-                        <TooltipPopup>Attach files</TooltipPopup>
+                        <TooltipPopup>{tx("Attach files")}</TooltipPopup>
                       </Tooltip>
                     </>
                   ) : null}

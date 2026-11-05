@@ -2008,13 +2008,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
         title={searchableSetting("publish-agent-activity").title}
         description={
           connectLock?.message ??
-          "Send activity to mobile notifications and Live Activities without SpecWithCode Connect."
+          tx(
+            "Send activity to mobile notifications and Live Activities without SpecWithCode Connect.",
+          )
         }
         status={connectLockLabel ?? undefined}
         control={
           <TeamRulesInert lock={connectLock}>
             <CloudLinkSwitch
-              ariaLabel="Publish agent activity to mobile clients"
+              ariaLabel={tx("Publish agent activity to mobile clients")}
               checked={publishAgentActivity}
               disabled={
                 !canManageRelay ||

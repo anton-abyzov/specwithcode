@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- compileSdk and targetSdk are fixed at 36 for the 0.2.0 Play release; move to 37 deliberately. -->
+    <issue id="OldTargetApi" severity="ignore" />
+    <issue id="GradleDependency">
+        <ignore path="build.gradle.kts" />
+    </issue>
+    <!-- Manual pairing talks to computers on the local network over plain http (http://192.168.x.y:3773);
+         the app warns before pairing that way. Connect and hosted traffic use https. -->
+    <issue id="InsecureBaseConfiguration">
+        <ignore path="src/main/res/xml/network_security_config.xml" />
+    </issue>
+    <!-- Adaptive icons stay in mipmap-anydpi-v26: aapt2 versions <adaptive-icon> to v26 anyway, and with
+         no other density folder a plain mipmap-anydpi leaves ic_launcher unresolved at link time. -->
+    <issue id="ObsoleteSdkInt">
+        <ignore path="src/main/res/mipmap-anydpi-v26" />
+    </issue>
+</lint>

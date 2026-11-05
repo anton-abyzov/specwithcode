@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { WorkspaceMissingRecoveryActions } from "./WorkspaceMissingRecovery";
@@ -34,6 +35,7 @@ export function FailureRecovery({
   /** False for failures whose own recovery says Continue would fail again. */
   allowContinue?: boolean;
 }) {
+  const tx = useTx();
   if (!recovery || recovery.failureItemId !== itemId) return null;
   const showContinue =
     allowContinue &&
@@ -53,12 +55,12 @@ export function FailureRecovery({
           onClick={recovery.onContinue}
         >
           <RotateCcwIcon aria-hidden />
-          Continue
+          {tx("Continue")}
         </Button>
       ) : null}
       {showSwitch ? (
         <Button type="button" size="xs" variant="outline" onClick={recovery.onSwitchModel}>
-          Switch model
+          {tx("Switch model")}
         </Button>
       ) : null}
     </div>

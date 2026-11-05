@@ -701,7 +701,7 @@ describe("actual callback integration", () => {
     expect(evaluate(false, null)).toBe("Send message");
     expect(evaluate(true, null)).toBe("Resume thread");
     expect(collapsedPrimaryButton().getText(composerSource)).toContain(
-      "<span>Send with credits</span>",
+      '<span>{tx("Send with credits")}</span>',
     );
   });
   it.each([

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { AssistantCitation } from "@specweave-studio/contracts";
 import { serializeAssistantCitation } from "@specweave-studio/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -44,6 +45,7 @@ export function AssistantCitationChip({
     onRestoreFocus?: () => void;
   };
 }) {
+  const tx = useTx();
   const navigate = useNavigate();
   const { openInProject } = useOpenThread();
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
@@ -153,7 +155,7 @@ export function AssistantCitationChip({
       ) : (
         <Tooltip>
           <TooltipTrigger render={chatSourceLink} />
-          <TooltipPopup side="top">View source</TooltipPopup>
+          <TooltipPopup side="top">{tx("View source")}</TooltipPopup>
         </Tooltip>
       )}
       {commentEditor ? (
@@ -168,7 +170,9 @@ export function AssistantCitationChip({
           }}
         >
           <PopoverTrigger
-            aria-label={citation.comment ? "Edit citation comment" : "Add comment to citation"}
+            aria-label={
+              citation.comment ? tx("Edit citation comment") : tx("Add comment to citation")
+            }
             data-citation-comment-trigger="true"
             render={<ContextChipAction />}
           >
@@ -200,7 +204,7 @@ export function AssistantCitationChip({
                   : undefined
               }
               ref={commentPopupRef}
-              aria-label="Edit citation comment"
+              aria-label={tx("Edit citation comment")}
               width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}

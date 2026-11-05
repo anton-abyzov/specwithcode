@@ -1,3 +1,4 @@
+import { renderRich } from "../i18n/rich";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { modelLabel as threadIdentityLabel } from "../studio/shellModel";
 import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
@@ -288,7 +289,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useLocale, useT } from "../i18n";
+import { useLocale, useT, useTx } from "../i18n";
 import { createPortal, flushSync } from "react-dom";
 import { InViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -9734,6 +9735,7 @@ function useChatViewActions(
 }
 
 export default function ChatView(props: ChatViewProps) {
+  const tx = useTx();
   const renderNowMs = useRenderTime();
   const translateUi = useT();
   const chatViewState = useChatViewState(props);
@@ -11141,7 +11143,9 @@ export default function ChatView(props: ChatViewProps) {
         icon: <GitBranchIcon />,
         title: (
           <span className="flex min-w-0 items-baseline gap-1.5">
-            <span className="shrink-0 font-normal text-muted-foreground">Branch changed — was</span>
+            <span className="shrink-0 font-normal text-muted-foreground">
+              {tx("Branch changed — was")}
+            </span>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -11151,8 +11155,15 @@ export default function ChatView(props: ChatViewProps) {
                 }
               />
               <TooltipPopup side="top">
-                This thread last ran on {localCheckoutBranchMismatch.threadBranch}. Sending will
-                continue on {localCheckoutBranchMismatch.currentBranch}.
+                {renderRich(
+                  tx(
+                    "This thread last ran on {threadBranch}. Sending will continue on {currentBranch}.",
+                  ),
+                  {
+                    threadBranch: localCheckoutBranchMismatch.threadBranch,
+                    currentBranch: localCheckoutBranchMismatch.currentBranch,
+                  },
+                )}
               </TooltipPopup>
             </Tooltip>
           </span>
@@ -11164,7 +11175,7 @@ export default function ChatView(props: ChatViewProps) {
             disabled={!canWriteSourceControl || isRestoringThreadBranch}
             onClick={handleRestoreThreadBranch}
           >
-            {isRestoringThreadBranch ? "Restoring..." : "Restore branch"}
+            {isRestoringThreadBranch ? tx("Restoring...") : tx("Restore branch")}
           </Button>
         ),
         dismissLabel: "Dismiss branch change notice",
@@ -14980,7 +14991,7 @@ export default function ChatView(props: ChatViewProps) {
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
       <PullRequestsUnavailableState
-        title="Pull requests unavailable"
+        title={tx("Pull requests unavailable")}
         error="Update this environment's SpecWithCode server to browse pull requests."
       />
     ) : renderedRightPanelSurface?.kind === "pull-request" ? (
@@ -15483,7 +15494,7 @@ export default function ChatView(props: ChatViewProps) {
                   className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
                 >
                   <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
-                  Drop files to attach
+                  {tx("Drop files to attach")}
                 </div>
               </div>
             ) : null}
@@ -16150,19 +16161,24 @@ export default function ChatView(props: ChatViewProps) {
               <AlertDialogPopup>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Switch to{" "}
-                    <code className="font-medium">
-                      {localCheckoutBranchMismatch?.threadBranch ?? ""}
-                    </code>
-                    ?
+                    {renderRich(tx("Switch to {code}?"), {
+                      code: (
+                        <code className="font-medium">
+                          {localCheckoutBranchMismatch?.threadBranch ?? ""}
+                        </code>
+                      ),
+                    })}
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    You have uncommitted changes. They'll carry over to the other branch, or block
-                    the switch if they conflict.
+                    {tx(
+                      "You have uncommitted changes. They'll carry over to the other branch, or block the switch if they conflict.",
+                    )}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+                  <AlertDialogClose render={<Button variant="outline" />}>
+                    {tx("Cancel")}
+                  </AlertDialogClose>
                   <Button
                     variant="default"
                     disabled={!canWriteSourceControl}
@@ -16171,7 +16187,7 @@ export default function ChatView(props: ChatViewProps) {
                       void handleSwitchCheckoutToThread();
                     }}
                   >
-                    Switch branch
+                    {tx("Switch branch")}
                   </Button>
                 </AlertDialogFooter>
               </AlertDialogPopup>
@@ -16333,14 +16349,17 @@ export default function ChatView(props: ChatViewProps) {
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Edit from here?</AlertDialogTitle>
+            <AlertDialogTitle>{tx("Edit from here?")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Rewind chat to before this message. Your prompt and attachments return to the
-              composer.
+              {tx(
+                "Rewind chat to before this message. Your prompt and attachments return to the composer.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {tx("Cancel")}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -16349,7 +16368,7 @@ export default function ChatView(props: ChatViewProps) {
                 void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, true);
               }}
             >
-              Revert files too
+              {tx("Revert files too")}
             </Button>
             <Button
               onClick={() => {
@@ -16358,7 +16377,7 @@ export default function ChatView(props: ChatViewProps) {
                 void onRevertToTurnCount(pendingRevert.turnCount, pendingRevert.messageId, false);
               }}
             >
-              Revert and keep changes
+              {tx("Revert and keep changes")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

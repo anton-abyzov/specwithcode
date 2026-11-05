@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { type RuntimeRequestId } from "@specweave-studio/contracts";
 import {
   memo,
@@ -122,6 +124,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   askedBy: string | undefined;
   renderText: QuestionTextRenderer;
 }) {
+  const tx = useTx();
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
@@ -329,7 +332,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsibleTrigger
         render={<ComposerBanner.Row render={<button type="button" />} />}
         title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          isCollapsed
+            ? tx("Show the question and its options")
+            : tx("Hide the question and its options")
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
       >
@@ -368,7 +373,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               data-pending-user-input-waiting={waitingCount}
               className="rounded px-1.5 py-px text-3xs font-medium whitespace-nowrap bg-muted text-muted-foreground tabular-nums"
             >
-              <span aria-hidden>+{waitingCount} more</span>
+              <span aria-hidden>
+                {renderRich(tx("+{waitingCount} more"), { waitingCount: waitingCount })}
+              </span>
               <span className="sr-only">
                 {`${waitingCount} more ${waitingCount === 1 ? "request is" : "requests are"} waiting; each opens after you answer this one`}
               </span>
@@ -385,8 +392,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             // the disclosure. Dismiss closes the question without a reply.
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
+              aria-label={tx("Dismiss question without answering")}
+              title={tx("Dismiss question without answering")}
               disabled={isResponding}
               data-pending-user-input-dismiss
               onClick={(event) => {
@@ -423,7 +430,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               </div>
             ) : null}
             {activeQuestion.multiSelect ? (
-              <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
+              <p className="mt-1 text-secondary-label text-xs">
+                {tx("Select one or more options.")}
+              </p>
             ) : null}
             <div
               role={activeQuestion.multiSelect ? "group" : "radiogroup"}
@@ -500,7 +509,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             data-question-recommended
                             className="rounded px-1.5 py-px text-3xs font-medium bg-info/12 text-info-foreground"
                           >
-                            Recommended
+                            {tx("Recommended")}
                           </span>
                         ) : null}
                       </span>
@@ -524,16 +533,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             </div>
             {onReplyInChat && activeQuestion.allowCustomAnswer !== false && !showStepFooter ? (
               <p className="mt-1.5 px-1.5 text-xs text-muted-foreground">
-                Or just{" "}
-                <button
-                  type="button"
-                  data-question-reply-in-chat
-                  className="cursor-pointer underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground hover:decoration-foreground/60 focus-visible:text-foreground focus-visible:outline-none"
-                  onClick={onReplyInChat}
-                >
-                  reply in chat
-                </button>
-                .
+                {renderRich(tx("Or just {button}."), {
+                  button: (
+                    <button
+                      type="button"
+                      data-question-reply-in-chat
+                      className="cursor-pointer underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground hover:decoration-foreground/60 focus-visible:text-foreground focus-visible:outline-none"
+                      onClick={onReplyInChat}
+                    >
+                      {tx("reply in chat")}
+                    </button>
+                  ),
+                })}
               </p>
             ) : null}
           </div>
@@ -567,7 +578,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     className="cursor-pointer underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground hover:decoration-foreground/60 focus-visible:text-foreground focus-visible:outline-none"
                     onClick={onReplyInChat}
                   >
-                    or reply in chat
+                    {tx("or reply in chat")}
                   </button>
                 </span>
               ) : null}
@@ -581,7 +592,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
               >
                 <ChevronLeftIcon aria-hidden className="size-3.5" />
-                Back
+                {tx("Back")}
               </button>
             ) : null}
             <button

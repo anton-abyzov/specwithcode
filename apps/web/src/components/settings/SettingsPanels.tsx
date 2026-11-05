@@ -1549,7 +1549,10 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("timeline-detail")}
-          description={`Choose how much agent work threads and project coordinators show; agents write the same either way. ${TIMELINE_DETAIL_DESCRIPTIONS[settings.timelineDetail]}.`}
+          description={tx(
+            "Choose how much agent work threads and project coordinators show; agents write the same either way. {detail}.",
+            { detail: tx(TIMELINE_DETAIL_DESCRIPTIONS[settings.timelineDetail]) },
+          )}
           resetAction={
             settings.timelineDetail !== DEFAULT_UNIFIED_SETTINGS.timelineDetail ? (
               <SettingResetButton
@@ -2992,10 +2995,20 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
           description={
-            "Queue follow-ups while the agent runs or steer the current run. " +
-            (settings.sendShortcut === "mod-enter-multiline"
-              ? `Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Shift + Enter for multiline prompts to do the opposite for one message.`
-              : `Press ${modifierLabel}${settings.sendShortcut === "mod-enter" ? " + Shift" : ""} + Enter to do the opposite for one message.`)
+            settings.sendShortcut === "mod-enter-multiline"
+              ? tx(
+                  "Queue follow-ups while the agent runs or steer the current run. Press {modifier} + Enter for single-line prompts or {modifier} + Shift + Enter for multiline prompts to do the opposite for one message.",
+                  { modifier: modifierLabel },
+                )
+              : tx(
+                  "Queue follow-ups while the agent runs or steer the current run. Press {shortcut} + Enter to do the opposite for one message.",
+                  {
+                    shortcut:
+                      settings.sendShortcut === "mod-enter"
+                        ? `${modifierLabel} + Shift`
+                        : modifierLabel,
+                  },
+                )
           }
           resetAction={
             settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior ? (
@@ -3286,7 +3299,7 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}
           {...searchableSetting("add-project-starts-in")}
-          description='Leave empty to use "~/" when the Add Project browser opens.'
+          description={tx('Leave empty to use "~/" when the Add Project browser opens.')}
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
@@ -3571,8 +3584,8 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("diagnostics")}
           description={
             isEnvironmentScope
-              ? "Inspect processes, resource use, and logs on this environment."
-              : "Inspect processes, resource use, and logs on one environment at a time."
+              ? tx("Inspect processes, resource use, and logs on this environment.")
+              : tx("Inspect processes, resource use, and logs on one environment at a time.")
           }
           control={
             <Button

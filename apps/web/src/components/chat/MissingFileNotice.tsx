@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ProjectReadFileError } from "@specweave-studio/contracts";
 import { type ReactNode, useEffect, useState } from "react";
 
@@ -54,6 +56,7 @@ export function MissingFileNotice(props: {
   readonly onOpen?: ((path: string) => void) | undefined;
   readonly actions?: ReactNode;
 }) {
+  const tx = useTx();
   const { environmentId, path } = props;
   const slash = path.lastIndexOf("/");
   const folder = slash > 0 ? path.slice(0, slash) : "/";
@@ -85,7 +88,7 @@ export function MissingFileNotice(props: {
   }, [environmentId, folder, name, path]);
 
   if (check.kind === "checking") {
-    return <p className="p-4 text-muted-foreground text-sm">Checking where the file is…</p>;
+    return <p className="p-4 text-muted-foreground text-sm">{tx("Checking where the file is…")}</p>;
   }
   // A folder that cannot be listed still leaves the file not found, said with its path.
   if (check.kind === "present") {
@@ -106,7 +109,7 @@ export function MissingFileNotice(props: {
       <p className="break-all font-mono text-muted-foreground text-xs">{path}</p>
       {check.kind === "missing" && check.similar.length > 0 ? (
         <>
-          <p>Files with similar names in {folder}:</p>
+          <p>{renderRich(tx("Files with similar names in {folder}:"), { folder: folder })}</p>
           <ul className="flex flex-col gap-1" data-similar-files="true">
             {check.similar.map((similar) => (
               <li key={similar}>

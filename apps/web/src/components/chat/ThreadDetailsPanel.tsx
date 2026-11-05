@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type {
   EditorId,
   EnvironmentId,
@@ -74,6 +75,7 @@ export interface ThreadDetailsPanelProps extends Pick<
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  const tx = useTx();
   const fileScripts = useStudioProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -121,7 +123,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         <>
           <ThreadDetailsSection
             headingId="thread-details-workspace-heading"
-            title="Workspace"
+            title={tx("Workspace")}
             separated={false}
             showHeading={false}
           >
@@ -173,7 +175,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           {props.chatFolder?.path ? (
             <ThreadDetailsSection
               headingId="thread-details-chat-folder-heading"
-              title="Chat folder"
+              title={tx("Chat folder")}
               showHeading={false}
               separated={density === "full"}
             >
@@ -188,7 +190,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           {props.gitCwd && !props.chatFolder ? (
             <ThreadDetailsSection
               headingId="thread-details-version-control-heading"
-              title="Version Control"
+              title={tx("Version Control")}
               showHeading={false}
               separated={density === "full"}
             >

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { ProjectId, type EnvironmentId } from "@specweave-studio/contracts";
 import { FolderPlusIcon } from "lucide-react";
@@ -26,6 +27,7 @@ export function TurnChatIntoProject(props: {
   readonly folder: string;
   readonly chatTitle: string | null | undefined;
 }) {
+  const tx = useTx();
   const create = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const [state, setState] = useState<"idle" | "saving" | "done">("idle");
   async function turnIntoProject() {
@@ -74,10 +76,10 @@ export function TurnChatIntoProject(props: {
       <FolderPlusIcon className="size-3.5" aria-hidden />
       <span className="ml-0.5">
         {state === "saving"
-          ? "Turning into project..."
+          ? tx("Turning into project...")
           : state === "done"
-            ? "Now a project"
-            : "Turn into project"}
+            ? tx("Now a project")
+            : tx("Turn into project")}
       </span>
     </ThreadDetailsControl>
   );

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import {
   CopyIcon,
@@ -28,6 +29,7 @@ export function ViewerFileActions(props: {
   /** Copied when there is no path. */
   readonly name: string;
 }) {
+  const tx = useTx();
   const files = useFileContextMenu(props.environmentId);
   const [editor] = usePreferredEditor(files.capabilities.editorIds);
   const target = props.path
@@ -66,7 +68,9 @@ export function ViewerFileActions(props: {
         </Button>
       ) : null}
       <Menu>
-        <MenuTrigger render={<Button aria-label="More actions" size="icon-sm" variant="ghost" />}>
+        <MenuTrigger
+          render={<Button aria-label={tx("More actions")} size="icon-sm" variant="ghost" />}
+        >
           <EllipsisIcon aria-hidden />
         </MenuTrigger>
         <MenuPopup align="end">
@@ -74,7 +78,7 @@ export function ViewerFileActions(props: {
           {target && files.capabilities.canOpenDefault ? (
             <MenuItem onClick={() => void files.activate("open", target)}>
               <ExternalLinkIcon aria-hidden />
-              Open with default app
+              {tx("Open with default app")}
             </MenuItem>
           ) : null}
           {otherEditors.map((id) => (
@@ -90,7 +94,7 @@ export function ViewerFileActions(props: {
           ) : null}
           <MenuItem onClick={() => void navigator.clipboard?.writeText(path ?? props.name)}>
             <CopyIcon aria-hidden />
-            {path ? "Copy path" : "Copy name"}
+            {path ? tx("Copy path") : tx("Copy name")}
           </MenuItem>
         </MenuPopup>
       </Menu>

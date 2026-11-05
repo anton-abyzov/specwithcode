@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ChevronUpIcon, InfoIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
@@ -65,6 +66,7 @@ interface ComposerBannerStackProps {
  * entries, such as the activity row) stay attached to it below the queue.
  */
 export function ComposerBannerStack({ className, items, attachedAbove }: ComposerBannerStackProps) {
+  const tx = useTx();
   const [expandedState, setExpanded] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const listId = useId();
@@ -146,11 +148,16 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
                 )}
               />
               {expanded
-                ? "Show fewer notices"
+                ? tx("Show fewer notices")
                 : `${hiddenCount} more ${hiddenCount === 1 ? "notice" : "notices"}`}
             </button>
           ) : null}
-          <div id={listId} role="group" aria-label="Notices" className="flex flex-col gap-1.5">
+          <div
+            id={listId}
+            role="group"
+            aria-label={tx("Notices")}
+            className="flex flex-col gap-1.5"
+          >
             {shown.map((item) => (
               <div
                 key={item.id}
@@ -203,6 +210,7 @@ function NoticeDescription({
   /** Wrap onto further lines instead of truncating, so the whole text stays visible. */
   wrap?: boolean;
 }) {
+  const tx = useTx();
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -264,7 +272,7 @@ function NoticeDescription({
                 ref={detailsRef}
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Show notice details"
+                aria-label={tx("Show notice details")}
                 className="flex-none"
               />
             }
@@ -272,7 +280,7 @@ function NoticeDescription({
             <InfoIcon />
           </PopoverTrigger>
           <PopoverPopup
-            aria-label="Notice details"
+            aria-label={tx("Notice details")}
             tooltipStyle
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
@@ -298,6 +306,7 @@ function ComposerBannerStackAlert({
   readonly exiting: boolean;
   readonly onDismissRequest: () => void;
 }) {
+  const tx = useTx();
   if ("content" in item) {
     return (
       <ComposerBanner.Root
@@ -326,7 +335,7 @@ function ComposerBannerStackAlert({
   );
   const dismiss = item.onDismiss ? (
     <ComposerBanner.Dismiss
-      aria-label={item.dismissLabel ?? "Dismiss notice"}
+      aria-label={item.dismissLabel ?? tx("Dismiss notice")}
       disabled={exiting}
       onClick={onDismissRequest}
     />

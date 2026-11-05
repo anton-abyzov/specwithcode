@@ -1113,15 +1113,17 @@ export function StudioFleetRoster({
           <ol className="list-decimal space-y-2.5 ps-4 marker:text-xs marker:text-muted-foreground">
             <AddMachineStep title={tx("Link SpecWithCode Connect on the other machine")}>
               <p>
-                Open Settings &gt; Machines &gt; SpecWithCode Connect there, or run this command.
-                Any Connect account works. This machine does not need to be signed in.
+                {tx(
+                  "Open Settings > Machines > SpecWithCode Connect there, or run this command. Any Connect account works. This machine does not need to be signed in.",
+                )}
               </p>
               <CopyableCode value="specwithcode connect link" label={tx("Connect command")} />
             </AddMachineStep>
             <AddMachineStep title={tx("Make a join line there")}>
               <p>
-                There, choose Join a main machine under Settings &gt; Machines and enter this
-                machine&rsquo;s ID:
+                {tx(
+                  "There, choose Join a main machine under Settings > Machines and enter this machine’s ID:",
+                )}
               </p>
               <CopyableCode value={environmentId} label={tx("this machine's ID")} />
               <p>{tx("Without its window, run this command on that machine instead:")}</p>

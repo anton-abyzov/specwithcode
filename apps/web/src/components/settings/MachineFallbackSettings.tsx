@@ -166,7 +166,9 @@ export function MachineFallbackSettings() {
         title="Other machines"
         description={
           teamRulesLock?.message ??
-          "Paired machines a limited thread can move to, best first. The thread resumes there from its last checkpoint. A machine counts only when its account differs from the one that ran out, its usage is below the switch threshold, it is online, signed in to the provider, and its work grant covers this project."
+          tx(
+            "Paired machines a limited thread can move to, best first. The thread resumes there from its last checkpoint. A machine counts only when its account differs from the one that ran out, its usage is below the switch threshold, it is online, signed in to the provider, and its work grant covers this project.",
+          )
         }
         status={
           teamRulesStatus ??
@@ -276,7 +278,9 @@ export function MachineFallbackSettings() {
         title={tx("Try first")}
         description={
           teamRulesLock?.message ??
-          "Which list a limited thread tries first: other machines, or this machine's fallback order. When nothing qualifies, the thread waits and the limit banner names the reason for each machine."
+          tx(
+            "Which list a limited thread tries first: other machines, or this machine's fallback order. When nothing qualifies, the thread waits and the limit banner names the reason for each machine.",
+          )
         }
         status={teamRulesStatus}
         resetAction={
@@ -324,7 +328,9 @@ export function MachineFallbackSettings() {
         title={tx("Use machines with unknown usage")}
         description={
           teamRulesLock?.message ??
-          "Count a machine whose provider reports no usage as having room. Off by default: a machine that may be on the same account, or near its limit, is skipped."
+          tx(
+            "Count a machine whose provider reports no usage as having room. Off by default: a machine that may be on the same account, or near its limit, is skipped.",
+          )
         }
         status={teamRulesStatus}
         resetAction={

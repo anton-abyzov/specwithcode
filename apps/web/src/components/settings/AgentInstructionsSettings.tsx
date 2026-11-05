@@ -175,8 +175,12 @@ function InstructionEditor({
         title={label}
         description={
           project
-            ? "Additional rules for this project. Global instructions are always included before these additions."
-            : "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default."
+            ? tx(
+                "Additional rules for this project. Global instructions are always included before these additions.",
+              )
+            : tx(
+                "Your own rules, sent with every coordinator and worker request, on every provider, in every project on each selected environment. Empty by default.",
+              )
         }
         mixed={mixed}
         resetAction={
@@ -247,7 +251,7 @@ function InstructionEditor({
                   </p>
                   <pre
                     className="whitespace-pre-wrap break-words rounded bg-muted/40 p-3 text-xs"
-                    aria-label={`Effective instructions for ${preview.label}`}
+                    aria-label={tx("Effective instructions for {label}", { label: preview.label })}
                   >
                     {previewAgentInstructions(preview, hasDraft ? draft : undefined) ||
                       "No additional agent instructions."}

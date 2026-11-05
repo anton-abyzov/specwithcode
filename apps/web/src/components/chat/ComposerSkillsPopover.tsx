@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type {
   EnvironmentId,
   ProjectId,
@@ -68,6 +69,7 @@ export interface ComposerSkillsPopoverProps {
 export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
   props: ComposerSkillsPopoverProps,
 ) {
+  const tx = useTx();
   const [open, setOpen] = useState(false);
   const context = `${props.environmentId}:${props.projectId}:${props.cwd}:${props.provider?.instanceId}`;
   const [resolved, setResolved] = useState<{
@@ -97,7 +99,7 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
             aria-label={`Skills: ${count} total`}
           >
             <SparklesIcon aria-hidden="true" />
-            <span className="hidden sm:inline">Skills</span>
+            <span className="hidden sm:inline">{tx("Skills")}</span>
             <span className="tabular-nums">{count}</span>
           </Button>
         }
@@ -125,6 +127,7 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
 function ComposerSkillsPanel(
   props: ComposerSkillsPopoverProps & { onSnapshot: (snapshot: ProjectSkillsSnapshot) => void },
 ) {
+  const tx = useTx();
   const [rescan, setRescan] = useState(false);
   const [search, setSearch] = useState("");
   const query = useEnvironmentQuery(
@@ -266,8 +269,8 @@ function ComposerSkillsPanel(
             size="sm"
             value={search}
             onChange={(event) => setSearch(event.currentTarget.value)}
-            placeholder="Search skills"
-            aria-label="Search skills"
+            placeholder={tx("Search skills")}
+            aria-label={tx("Search skills")}
             className="w-full"
             style={{ paddingLeft: "1.75rem" }}
           />
@@ -289,7 +292,7 @@ function ComposerSkillsPanel(
       <div className="min-h-0 flex-1 overflow-y-auto py-1">
         {empty && !(discoveryError && props.skills.length === 0) ? (
           <p className="px-3 py-3 text-xs text-muted-foreground">
-            {search.trim() ? "No skills match." : `${agent} lists no skills in this folder.`}
+            {search.trim() ? tx("No skills match.") : `${agent} lists no skills in this folder.`}
           </p>
         ) : null}
         {groups.map((group) => (
@@ -300,7 +303,7 @@ function ComposerSkillsPanel(
             </h3>
             {group.id === "system" ? (
               <p className="px-3 pb-1 text-2xs text-muted-foreground">
-                Built into the agent, such as Codex skills in ~/.codex/skills/.system.
+                {tx("Built into the agent, such as Codex skills in ~/.codex/skills/.system.")}
               </p>
             ) : null}
             <ul>
@@ -329,14 +332,14 @@ function ComposerSkillsPanel(
           onClick={onRescan}
         >
           {busy ? <Spinner className="size-3.5" /> : <RefreshCwIcon aria-hidden="true" />}
-          Rescan
+          {tx("Rescan")}
         </Button>
         <Link
           to="/settings/skills"
           search={settingsSearch}
           className="rounded-sm px-1.5 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
         >
-          Open Skills settings
+          {tx("Open Skills settings")}
         </Link>
       </div>
     </div>
@@ -350,6 +353,7 @@ function ComposerSkillRow({
   item: ComposerSkillItem;
   settingsSearch: Record<string, string>;
 }) {
+  const tx = useTx();
   const versionText = item.version
     ? item.version.value
       ? `v${item.version.value.replace(/^v/i, "")}`
@@ -384,7 +388,7 @@ function ComposerSkillRow({
       </span>
       {!item.enabled ? (
         <>
-          <span className="shrink-0 text-2xs text-muted-foreground">off</span>
+          <span className="shrink-0 text-2xs text-muted-foreground">{tx("off")}</span>
           <Link
             to="/settings/skills"
             search={{ ...settingsSearch, skill: item.name }}
@@ -392,7 +396,7 @@ function ComposerSkillRow({
             aria-label={`Manage ${item.displayName} in Skills settings`}
             data-testid="composer-skill-manage"
           >
-            Manage
+            {tx("Manage")}
           </Link>
         </>
       ) : null}

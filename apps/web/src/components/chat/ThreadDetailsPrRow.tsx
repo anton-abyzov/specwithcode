@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 /**
@@ -118,6 +120,7 @@ export function ThreadDetailsPrRow({
   /** Sends the thread itself the request to resolve its pull request's conflicts. */
   onResolveInThread?: ((target: ResolveConflictsTarget) => Promise<boolean>) | undefined;
 }) {
+  const tx = useTx();
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
     serverConfigs.get(environmentId)?.environment.capabilities.pullRequests === true;
@@ -312,7 +315,9 @@ export function ThreadDetailsPrRow({
               <div className="flex min-w-0 items-start gap-2 text-destructive-foreground">
                 <TriangleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
                 <div className="min-w-0 flex-1 wrap-break-word leading-5">
-                  Merge conflicts with {detail.baseBranch}
+                  {renderRich(tx("Merge conflicts with {baseBranch}"), {
+                    baseBranch: detail.baseBranch,
+                  })}
                 </div>
               </div>
             ) : null}
@@ -320,7 +325,7 @@ export function ThreadDetailsPrRow({
               <FileDiffIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 flex items-baseline gap-1 truncate text-foreground/75">
                 {detail.changedFiles.toLocaleString()}{" "}
-                {detail.changedFiles === 1 ? "file" : "files"}
+                {detail.changedFiles === 1 ? tx("file") : tx("files")}
                 <PullRequestDiffStat additions={detail.additions} deletions={detail.deletions} />
               </div>
             </div>
@@ -416,8 +421,9 @@ export function ThreadDetailsPrRow({
             <EyeOffIcon aria-hidden className="hidden size-4 group-hover/watch:block" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            Watching: the agent wakes when checks finish, someone comments, or the branch conflicts.
-            Click to stop.
+            {tx(
+              "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop.",
+            )}
           </TooltipPopup>
         </Tooltip>
       </>
@@ -525,14 +531,17 @@ export function ThreadDetailsPrRow({
         <AlertDialog open={confirmingMerge} onOpenChange={(open) => setConfirmingMerge(open)}>
           <AlertDialogPopup>
             <AlertDialogHeader>
-              <AlertDialogTitle>Merge pull request?</AlertDialogTitle>
+              <AlertDialogTitle>{tx("Merge pull request?")}</AlertDialogTitle>
               <AlertDialogDescription>
-                This merges #{number} using {selectedMergeMethod}.
+                {renderRich(tx("This merges #{number} using {selectedMergeMethod}."), {
+                  number: number,
+                  selectedMergeMethod: selectedMergeMethod,
+                })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogClose render={<Button variant="outline" size="sm" />}>
-                Cancel
+                {tx("Cancel")}
               </AlertDialogClose>
               <Button
                 size="sm"
@@ -542,7 +551,7 @@ export function ThreadDetailsPrRow({
                   void perform("merge", selectedMergeMethod);
                 }}
               >
-                Merge
+                {tx("Merge")}
               </Button>
             </AlertDialogFooter>
           </AlertDialogPopup>

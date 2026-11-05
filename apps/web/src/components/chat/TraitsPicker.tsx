@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { isProviderAllowAllOption } from "@specweave-studio/shared/providerPermissions";
 import {
   type ModelSelection,
@@ -101,17 +102,19 @@ type TraitsPersistence =
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
 function DefaultBadge() {
+  const tx = useTx();
   return (
     <Badge variant="outline" size="sm" className="min-w-0">
-      Default
+      {tx("Default")}
     </Badge>
   );
 }
 
 function RecommendedBadge() {
+  const tx = useTx();
   return (
     <Badge variant="info" size="sm" className="min-w-0">
-      Recommended
+      {tx("Recommended")}
     </Badge>
   );
 }
@@ -468,6 +471,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   recommendedOptionValues,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
+  const tx = useTx();
   const modelSelection =
     instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null;
   const updateModelOptions = useUpdateTraitsModelOptions({
@@ -562,8 +566,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               </div>
               {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
                 <div className="px-2 pb-1.5 text-muted-foreground text-xs">
-                  Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
-                  option.
+                  {tx(
+                    'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                  )}
                 </div>
               ) : null}
               <MenuRadioGroup
@@ -673,7 +678,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   <div className="font-normal">{descriptor.description}</div>
                 ) : null}
                 {selectedValue === "" ? (
-                  <div className="font-normal">Not set: follows the Claude workflow mode</div>
+                  <div className="font-normal">
+                    {tx("Not set: follows the Claude workflow mode")}
+                  </div>
                 ) : null}
               </div>
               <MenuRadioGroup
@@ -702,7 +709,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                           <span aria-hidden className="w-3 shrink-0" />
                         )
                       ) : null}
-                      <span>{value === "on" ? "On" : "Off"}</span>
+                      <span>{value === "on" ? tx("On") : tx("Off")}</span>
                     </span>
                   </MenuRadioItem>
                 ))}
@@ -953,6 +960,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     /** Names what the value belongs to where the surroundings do not. */
     triggerAriaLabelPrefix?: string;
   }) {
+  const tx = useTx();
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
@@ -1010,7 +1018,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   const ultracodeMark =
     triggerEffort && triggerUltracode ? (
       <span data-composer-control-ultracode className="shrink-0 font-normal text-primary">
-        · Ultracode
+        {tx("· Ultracode")}
       </span>
     ) : null;
   const isCodexStyle = provider === "codex";

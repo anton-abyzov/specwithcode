@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { MaximizeIcon, MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import {
   type ReactNode,
@@ -69,6 +70,7 @@ export function ViewerImageStage(props: {
   readonly onError: () => void;
   readonly ref?: Ref<ZoomableImageHandle>;
 }) {
+  const tx = useTx();
   const stageRef = useRef<HTMLDivElement>(null);
   const imageRef = useRef<ZoomableImageHandle>(null);
   const [bounds, setBounds] = useState<ZoomableImageBounds | null>(null);
@@ -112,9 +114,9 @@ export function ViewerImageStage(props: {
           />
         ) : null}
       </div>
-      <div className="viewer-image-toolbar" role="toolbar" aria-label="Image controls">
+      <div className="viewer-image-toolbar" role="toolbar" aria-label={tx("Image controls")}>
         <ToolbarButton
-          label="Zoom out"
+          label={tx("Zoom out")}
           disabled={zoom <= 1}
           onClick={() => imageRef.current?.zoomOut()}
         >
@@ -124,21 +126,21 @@ export function ViewerImageStage(props: {
           {Math.round(zoom * 100)}%
         </span>
         <ToolbarButton
-          label="Zoom in"
+          label={tx("Zoom in")}
           disabled={zoom >= MAX_ZOOM}
           onClick={() => imageRef.current?.zoomIn()}
         >
           <PlusIcon aria-hidden />
         </ToolbarButton>
         <ToolbarButton
-          label="Fit to view"
+          label={tx("Fit to view")}
           disabled={zoom <= 1}
           onClick={() => imageRef.current?.fit()}
         >
           <MaximizeIcon aria-hidden />
         </ToolbarButton>
         <span className="viewer-image-toolbar-rule" aria-hidden />
-        <ToolbarButton label="Close" onClick={closeViewer} close>
+        <ToolbarButton label={tx("Close")} onClick={closeViewer} close>
           <XIcon aria-hidden />
         </ToolbarButton>
       </div>

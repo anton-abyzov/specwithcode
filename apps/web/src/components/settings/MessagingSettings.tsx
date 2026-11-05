@@ -277,11 +277,15 @@ export function MessagingSettingsPanel() {
                 <span className="text-muted-foreground text-xs">
                   {renderRich(tx("{value}Messages go to this project's coordinator. {value2}"), {
                     value: unavailableProject
-                      ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
+                      ? tx("{reason}. Choose another project to save, or turn the channel off. ", {
+                          reason: tx(ineligibleProjectLabel(unavailableProject.reason)),
+                        })
                       : null,
-                    value2: aideEnabled
-                      ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
-                      : "A code project works for checking on builds from your phone.",
+                    value2: tx(
+                      aideEnabled
+                        ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
+                        : "A code project works for checking on builds from your phone.",
+                    ),
                   })}
                 </span>
               </div>

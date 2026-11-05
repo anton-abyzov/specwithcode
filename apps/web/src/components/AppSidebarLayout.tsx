@@ -1,3 +1,4 @@
+import { useTx } from "../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { useSettingsOriginTracker } from "./settings/useSettingsOriginTracker";
 import * as Schema from "effect/Schema";
@@ -90,6 +91,7 @@ function readInitialThreadSidebarWidth(): number {
 }
 
 function SidebarControl() {
+  const tx = useTx();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
@@ -155,12 +157,14 @@ function SidebarControl() {
                 "pointer-events-auto",
                 isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
               )}
-              aria-label="Toggle main sidebar"
+              aria-label={tx("Toggle main sidebar")}
             />
           }
         />
         <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+          {shortcutLabel
+            ? tx("Toggle main sidebar ({shortcut})", { shortcut: shortcutLabel })
+            : tx("Toggle main sidebar")}
         </TooltipPopup>
       </Tooltip>
     </div>
@@ -226,6 +230,7 @@ function ProjectProjectionRetention() {
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
+  const tx = useTx();
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const inboxSidebarEnabled = useInboxSidebarEnabled();
@@ -323,7 +328,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             collapsible="offcanvas"
             data-app-sidebar=""
             role="navigation"
-            aria-label="Projects and chats"
+            aria-label={tx("Projects and chats")}
             resizable={{
               maxWidth: sidebarMaximumWidth,
               minWidth: sidebarMinimumWidth,

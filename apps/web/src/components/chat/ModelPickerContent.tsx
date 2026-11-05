@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -191,6 +193,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   secondaryAction?: { readonly label: string; readonly onOpen: () => void };
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
+  const tx = useTx();
   const {
     keybindings: providedKeybindings,
     modelOptionsByInstance,
@@ -1178,7 +1181,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               <div className="sws-picker-search shrink-0 px-2 pt-2 pb-1.5">
                 <ComboboxSearchInput
                   ref={searchInputRef}
-                  placeholder="Search models or providers"
+                  placeholder={tx("Search models or providers")}
                   value={searchQuery}
                   onChange={(e) => {
                     if (!isSearching) setSearchHeight(pickerContentRef.current?.offsetHeight ?? 0);
@@ -1373,9 +1376,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                                   className="group w-full cursor-pointer"
                                 >
                                   <div className="min-w-0 flex-1 text-left">
-                                    <div className="text-sm leading-snug">Legacy models</div>
+                                    <div className="text-sm leading-snug">
+                                      {tx("Legacy models")}
+                                    </div>
                                     <div className="mt-0.5 text-xs font-normal leading-snug text-muted-foreground">
-                                      {legacySection.count} models
+                                      {renderRich(tx("{count} models"), {
+                                        count: legacySection.count,
+                                      })}
                                     </div>
                                   </div>
                                   <ChevronRightIcon

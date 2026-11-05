@@ -1,0 +1,24 @@
+SpecWithCode for Android is a companion to SpecWithCode on your computers. Connect your phone once, then follow and steer the coding agents running on your own machines from wherever you are.
+
+Two ways to connect
+Sign in with SpecWithCode Connect, using the same account as on your computer, and reach your machines from anywhere. Or pair directly: on your computer, open SpecWithCode, go to Settings > Connections and choose Pair a phone, then scan the QR code, paste the pairing link or type the address and code. Direct pairing needs no account.
+
+Answer approvals
+When an agent wants to run a command or change files, the request shows up on your phone. Approve it once, approve it for the session, or deny it.
+
+Watch live progress
+See which threads need you, which are working and which are idle, grouped by project and machine. Open a thread to read its progress as it happens, including the commands it runs and how far its plan has come.
+
+Stay in control
+Send a message, stop a run, or start a new thread on the machine and project you choose. Talk to each project's coordinator, or ask Aide what needs you today. Pin, rename, resolve and archive threads.
+
+Private by design
+The app has no ads and no tracking. It talks only to your own machines, directly or through Connect, and your machines pass your messages to the coding tools you set up there. Pairing credentials are sealed with the Android Keystore on this phone and are left out of backups.
+
+Try it before you connect
+Tap Explore with sample data on the welcome screen to look around with made-up machines and projects.
+
+Requirements
+SpecWithCode running on at least one computer your phone can reach. Push notifications and sending pictures are not in this version yet.
+
+Learn more at spec-weave.com.

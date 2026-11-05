@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * The state a model chip is in when the chip alone would mislead: a usage-limit
  * fallback runs instead of the model that was picked, the thread's saved model
@@ -296,6 +298,7 @@ export function ModelStateTip(props: {
   account?: string | null;
   state: ModelState;
 }) {
+  const tx = useTx();
   const text = modelStateText(props.state);
   const kind = props.state.kind;
   return (
@@ -305,7 +308,9 @@ export function ModelStateTip(props: {
         {props.currentNote ?? ""}
       </strong>
       {props.connection ? (
-        <span className="sws-model-state-tip-detail">Connection: {props.connection}</span>
+        <span className="sws-model-state-tip-detail">
+          {renderRich(tx("Connection: {connection}"), { connection: props.connection })}
+        </span>
       ) : null}
       {props.account ? (
         <span className="sws-model-state-tip-detail" data-model-chip-account="">

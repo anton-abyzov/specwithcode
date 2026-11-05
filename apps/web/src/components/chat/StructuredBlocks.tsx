@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   CircleAlertIcon,
   CircleCheckIcon,
@@ -92,12 +94,13 @@ function BreakableText({ text }: { text: string }) {
 }
 
 function ScalarValue({ value, name }: { value: unknown; name?: string | undefined }) {
+  const tx = useTx();
   if (value === null || value === undefined) {
     return <span className="text-muted-foreground">—</span>;
   }
   if (typeof value === "boolean") {
     return value ? (
-      <span className="text-success-foreground">Yes</span>
+      <span className="text-success-foreground">{tx("Yes")}</span>
     ) : (
       <span className="text-muted-foreground">No</span>
     );
@@ -115,7 +118,7 @@ function ScalarValue({ value, name }: { value: unknown; name?: string | undefine
   }
   const text = String(value);
   return text.length === 0 ? (
-    <span className="text-muted-foreground">empty</span>
+    <span className="text-muted-foreground">{tx("empty")}</span>
   ) : (
     <span className="break-words whitespace-pre-wrap" data-path-wrap="">
       <BreakableText text={text} />
@@ -124,9 +127,10 @@ function ScalarValue({ value, name }: { value: unknown; name?: string | undefine
 }
 
 function CompactValue({ value, name }: { value: unknown; name?: string | undefined }) {
+  const tx = useTx();
   if (isScalar(value)) return <ScalarValue value={value} name={name} />;
   if (Array.isArray(value) && value.every(isScalar)) {
-    if (value.length === 0) return <span className="text-muted-foreground">none</span>;
+    if (value.length === 0) return <span className="text-muted-foreground">{tx("none")}</span>;
     return (
       <span className="flex flex-wrap gap-1">
         {value.map((entry, index) => (
@@ -147,6 +151,7 @@ function DataTable({
   rows: ReadonlyArray<unknown>;
   columns: ReadonlyArray<string>;
 }) {
+  const tx = useTx();
   const shown = rows.slice(0, MAX_TABLE_ROWS) as ReadonlyArray<Record<string, unknown>>;
   return (
     <div className="overflow-x-auto">
@@ -174,7 +179,9 @@ function DataTable({
       </table>
       {rows.length > shown.length ? (
         <p className="px-2 pt-1 text-2xs text-muted-foreground">
-          {rows.length - shown.length} more rows in the raw view
+          {renderRich(tx("{value} more rows in the raw view"), {
+            value: rows.length - shown.length,
+          })}
         </p>
       ) : null}
     </div>
@@ -224,6 +231,7 @@ function ObjectGrid({ value, depth }: { value: Record<string, unknown>; depth: n
 
 /** JSON data as a grid of fields, or a table for a list of records. */
 export function JsonDataView({ data }: { data: JsonData }) {
+  const tx = useTx();
   if (Array.isArray(data)) {
     const columns = tableColumns(data);
     if (columns !== null) return <DataTable rows={data} columns={columns} />;
@@ -241,7 +249,9 @@ export function JsonDataView({ data }: { data: JsonData }) {
         ))}
         {data.length > MAX_TABLE_ROWS ? (
           <p className="text-2xs text-muted-foreground">
-            {data.length - MAX_TABLE_ROWS} more entries in the raw view
+            {renderRich(tx("{value} more entries in the raw view"), {
+              value: data.length - MAX_TABLE_ROWS,
+            })}
           </p>
         ) : null}
       </div>

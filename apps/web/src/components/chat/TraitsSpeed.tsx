@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { ProviderDriverKind, ProviderOptionDescriptor } from "@specweave-studio/contracts";
 import { getProviderOptionCurrentValue } from "@specweave-studio/shared/model";
 import { ZapIcon } from "lucide-react";
@@ -53,6 +54,7 @@ export function TraitsSpeedIcon({
   /** Off where the surrounding control or row already names the speed. */
   announce?: boolean;
 }) {
+  const tx = useTx();
   return (
     <>
       <ComposerControlIcon
@@ -70,7 +72,7 @@ export function TraitsSpeedIcon({
       />
       {announce ? (
         <span className="sr-only">
-          {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
+          {speedIcon === "ultrafast" ? tx("Ultrafast mode on") : tx("Fast mode on")}
         </span>
       ) : null}
     </>

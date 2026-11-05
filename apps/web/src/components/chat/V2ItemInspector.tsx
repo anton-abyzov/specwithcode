@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { parseDiffFromFile } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
@@ -167,6 +169,7 @@ function StructuredValue({
 
 /** A notice's full text with a copy action, so its diagnostics can be shared. */
 function NoticeDetail({ message }: { readonly message: string }) {
+  const tx = useTx();
   const { copyToClipboard, isCopied } = useCopyToClipboard();
   if (!message) return null;
   return (
@@ -174,7 +177,7 @@ function NoticeDetail({ message }: { readonly message: string }) {
       <StructuredValue value={message} />
       <Button size="xs" variant="outline" onClick={() => copyToClipboard(message, undefined)}>
         {isCopied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-        {isCopied ? "Copied" : "Copy details"}
+        {isCopied ? tx("Copied") : tx("Copy details")}
       </Button>
     </div>
   );
@@ -634,12 +637,13 @@ interface ToolOutputState {
 }
 
 function ToolOutput(props: ToolOutputState) {
+  const tx = useTx();
   const images = props.images.map((resource) => (
     <ChatMarkdownAssetImage
       key={resource.index}
       environmentId={props.environmentId}
       resource={resource}
-      alt="Tool output image"
+      alt={tx("Tool output image")}
       maxHeightRem={16}
       onImageExpand={props.onImageExpand}
     />
@@ -656,13 +660,15 @@ function ToolOutput(props: ToolOutputState) {
       terminal
     />
   ) : props.pending ? (
-    <div className="text-muted-foreground italic">Loading output…</div>
+    <div className="text-muted-foreground italic">{tx("Loading output…")}</div>
   ) : props.error ? (
-    <div className="text-destructive-foreground">Couldn&apos;t load output: {props.error}</div>
+    <div className="text-destructive-foreground">
+      {renderRich(tx("Couldn't load output: {error}"), { error: props.error })}
+    </div>
   ) : props.waiting ? (
     <div className="text-muted-foreground italic">{props.waiting}</div>
   ) : props.empty && images.length === 0 ? (
-    <div className="text-muted-foreground italic">No output.</div>
+    <div className="text-muted-foreground italic">{tx("No output.")}</div>
   ) : null;
   return (
     <>
@@ -701,6 +707,7 @@ function ToolCallBody(
     readonly read?: DetailRead | null | undefined;
   },
 ) {
+  const tx = useTx();
   const execution = props.command
     ? null
     : toolExecutionInput({
@@ -768,7 +775,9 @@ function ToolCallBody(
       ) : null}
       <ToolOutput {...props} />
       {props.exitCode !== undefined && props.exitCode !== 0 ? (
-        <div className="text-destructive-foreground">exit {props.exitCode}</div>
+        <div className="text-destructive-foreground">
+          {renderRich(tx("exit {exitCode}"), { exitCode: props.exitCode })}
+        </div>
       ) : null}
     </div>
   );
@@ -1045,6 +1054,7 @@ function DiffButton({
   readonly action: DiffAction | null;
   readonly filePath: string;
 }) {
+  const tx = useTx();
   if (action === null) return null;
   if (action.kind === "disabled") {
     return (
@@ -1056,13 +1066,13 @@ function DiffButton({
   if (action.kind === "parent") {
     return (
       <Button size="xs" variant="outline" onClick={action.open}>
-        Open parent thread
+        {tx("Open parent thread")}
       </Button>
     );
   }
   return (
     <Button size="xs" variant="outline" onClick={() => action.open(filePath)}>
-      Open diff
+      {tx("Open diff")}
     </Button>
   );
 }
@@ -1074,6 +1084,7 @@ function CopyFullButton({
   readonly read: () => string | Promise<string>;
   readonly label: string;
 }) {
+  const tx = useTx();
   const [state, setState] = useState<"idle" | "pending" | "copied" | "failed">("idle");
   const copy = async () => {
     if (state === "pending") return;
@@ -1095,12 +1106,12 @@ function CopyFullButton({
     >
       {state === "copied" ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
       {state === "copied"
-        ? "Copied"
+        ? tx("Copied")
         : state === "pending"
-          ? "Copying…"
+          ? tx("Copying…")
           : state === "failed"
-            ? "Couldn't copy"
-            : "Copy full"}
+            ? tx("Couldn't copy")
+            : tx("Copy full")}
     </Button>
   );
 }
@@ -1159,6 +1170,7 @@ function PatchCaption({
   readonly labels: ReadonlyArray<string>;
   readonly copy?: (() => string | Promise<string>) | undefined;
 }) {
+  const tx = useTx();
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-sans text-xs text-muted-foreground">
       <span>{caption}</span>
@@ -1183,12 +1195,13 @@ function TooLargePlaceholder({
   readonly action: DiffAction | null;
   readonly path: string;
 }) {
+  const tx = useTx();
   return (
     <div
       className="flex flex-wrap items-center gap-2 rounded-md border border-dashed border-border/70 px-3 py-2 font-sans text-xs text-muted-foreground"
       data-inline-patch-placeholder
     >
-      <span>Too large to show here</span>
+      <span>{tx("Too large to show here")}</span>
       <DiffButton action={action} filePath={path} />
     </div>
   );
@@ -1203,6 +1216,7 @@ function PatchBody({
   readonly source: PagedSource;
   readonly context: EditContext;
 }) {
+  const tx = useTx();
   const { view, whole, paging, copyFull } = usePagedWindow(source, context.reader);
   const large = tooLargeInline(
     view.text,
@@ -1249,11 +1263,13 @@ function PatchBody({
               disabled={paging.loading === true}
               onClick={paging.onLoadMore}
             >
-              Load more
+              {tx("Load more")}
             </Button>
           ) : null}
           {paging.error ? (
-            <span className="text-destructive-foreground">Couldn&apos;t load: {paging.error}</span>
+            <span className="text-destructive-foreground">
+              {renderRich(tx("Couldn't load: {error}"), { error: paging.error })}
+            </span>
           ) : null}
         </div>
       ) : null}
@@ -1272,6 +1288,7 @@ function StringsBody({
   readonly newStr: string;
   readonly context: EditContext;
 }) {
+  const tx = useTx();
   // A cut body cannot be paged (no field names it), so a diff of it would be wrong.
   const cut =
     oldStr.endsWith(TRANSPORT_TRUNCATION_MARKER) || newStr.endsWith(TRANSPORT_TRUNCATION_MARKER);
@@ -1297,7 +1314,7 @@ function StringsBody({
         <InlineFiles files={[fileDiff]} />
       ) : (
         <p className="font-sans text-xs text-muted-foreground">
-          The provider&apos;s old and new text could not be compared.
+          {tx("The provider's old and new text could not be compared.")}
         </p>
       )}
     </div>
@@ -1311,6 +1328,7 @@ function SectionBody({
   readonly section: EditSection;
   readonly context: EditContext;
 }) {
+  const tx = useTx();
   if (section.body.kind === "patch") {
     return <PatchBody section={section} source={section.body.source} context={context} />;
   }
@@ -1326,7 +1344,7 @@ function SectionBody({
   }
   return (
     <p className="font-sans text-xs text-muted-foreground">
-      {section.note ? DIFF_NOTE_LABELS[section.note] : "No inline patch for this edit."}
+      {section.note ? DIFF_NOTE_LABELS[section.note] : tx("No inline patch for this edit.")}
     </p>
   );
 }
@@ -1407,6 +1425,7 @@ function EditBody({
   readonly workspaceRoot: string | undefined;
   readonly defaultOpenFileSections: number;
 }) {
+  const tx = useTx();
   const sections = editSections(item, read);
   const [showAll, setShowAll] = useState(false);
   if (sections.length === 1) return <SectionBody section={sections[0]!} context={context} />;
@@ -1427,7 +1446,7 @@ function EditBody({
       </ul>
       {shown.length < sections.length ? (
         <Button size="xs" variant="outline" onClick={() => setShowAll(true)}>
-          Show all {sections.length} files
+          {renderRich(tx("Show all {length} files"), { length: sections.length })}
         </Button>
       ) : null}
     </div>
@@ -1463,6 +1482,7 @@ function diffActionFor(props: V2ItemInspectorProps, runId: RunId | null): DiffAc
 }
 
 export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
+  const tx = useTx();
   const fetched = useFetchedTurnItem(
     props.projectedItem,
     props.environmentId,
@@ -1532,10 +1552,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             />
           ) : null}
           {outputState.pending ? (
-            <div className="text-muted-foreground italic">Loading patch…</div>
+            <div className="text-muted-foreground italic">{tx("Loading patch…")}</div>
           ) : outputState.error ? (
             <div className="text-destructive-foreground">
-              Couldn&apos;t load the patch: {outputState.error}
+              {renderRich(tx("Couldn't load the patch: {error}"), { error: outputState.error })}
             </div>
           ) : item.status === "failed" && !item.changes?.some((change) => change.diffStr) ? null : (
             <EditBody
@@ -1592,7 +1612,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                   </a>
                 ) : (
                   <p className="font-medium text-foreground">
-                    {result.title ?? result.url ?? "Search result"}
+                    {result.title ?? result.url ?? tx("Search result")}
                   </p>
                 )}
                 {result.snippet ? <p className="text-muted-foreground">{result.snippet}</p> : null}
@@ -1633,7 +1653,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "checkpoint" ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-muted-foreground">
-            {support.checkpoint?.status ?? item.status} · {item.files.length} files
+            {renderRich(tx("{value} · {length} files"), {
+              value: support.checkpoint?.status ?? item.status,
+              length: item.files.length,
+            })}
           </span>
           {props.onRollbackCheckpoint && support.checkpoint?.status === "ready" ? (
             <Button
@@ -1647,7 +1670,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
               }
             >
               <RotateCcwIcon className="size-3" />
-              Roll back
+              {tx("Roll back")}
             </Button>
           ) : null}
         </div>
@@ -1656,13 +1679,13 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       {item.type === "fork" ? (
         <Button size="xs" variant="outline" onClick={() => props.onOpenThread(item.targetThreadId)}>
           <GitBranchIcon className="size-3" />
-          Open fork
+          {tx("Open fork")}
         </Button>
       ) : null}
 
       {item.type === "subagent" && item.childThreadId !== null ? (
         <Button size="xs" variant="outline" onClick={() => props.onOpenThread(item.childThreadId!)}>
-          Open subagent thread
+          {tx("Open subagent thread")}
         </Button>
       ) : null}
 
@@ -1676,8 +1699,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           </p>
           {support.contextTransfer ? (
             <p>
-              Transfer {support.contextTransfer.type.replaceAll("_", " ")} ·{" "}
-              {support.contextTransfer.status}
+              {renderRich(tx("Transfer {value} · {status}"), {
+                value: support.contextTransfer.type.replaceAll("_", " "),
+                status: support.contextTransfer.status,
+              })}
             </p>
           ) : null}
         </div>

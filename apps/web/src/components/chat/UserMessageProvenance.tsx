@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@specweave-studio/contracts";
 import type { HandoffTimelineRun } from "@specweave-studio/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
@@ -66,6 +68,7 @@ function useUserMessageProvenance({
  * under the bubble beside the timestamp, so it costs no line of its own.
  */
 export function UserMessageExecutionOrigin(props: UserMessageProvenanceProps) {
+  const tx = useTx();
   const { execution, layout } = useUserMessageProvenance(props);
   if (layout !== "standard") return null;
   return (
@@ -80,7 +83,11 @@ export function UserMessageExecutionOrigin(props: UserMessageProvenanceProps) {
       >
         {execution}
       </TooltipTrigger>
-      <TooltipPopup>Execution environment: {props.environmentId}</TooltipPopup>
+      <TooltipPopup>
+        {renderRich(tx("Execution environment: {environmentId}"), {
+          environmentId: props.environmentId,
+        })}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -91,6 +98,7 @@ export function UserMessageExecutionOrigin(props: UserMessageProvenanceProps) {
  * none for the user's own messages.
  */
 export function UserMessageProvenance(props: UserMessageProvenanceProps) {
+  const tx = useTx();
   const { message, environmentId, onOpenThread } = props;
   const { routing, presentation, senderThreadId, execution, fromCoordinator, layout } =
     useUserMessageProvenance(props);
@@ -107,16 +115,18 @@ export function UserMessageProvenance(props: UserMessageProvenanceProps) {
             fromCoordinator ? routing!.openCoordinator() : onOpenThread(senderThreadId)
           }
           tone="muted"
-          aria-label={message.createdBy === "user" ? "Open routing thread" : "Open sending thread"}
+          aria-label={
+            message.createdBy === "user" ? tx("Open routing thread") : tx("Open sending thread")
+          }
           title={`${message.createdBy === "user" ? "Your message, routed by" : "Sent by"} ${
             fromCoordinator ? "the coordinator" : "another thread"
           } · ${execution}`}
         >
           {message.createdBy === "user"
-            ? "via another thread"
+            ? tx("via another thread")
             : fromCoordinator
-              ? "from coordinator"
-              : "from another agent"}
+              ? tx("from coordinator")
+              : tx("from another agent")}
         </InlineButton>
       </p>
     );
@@ -128,10 +138,10 @@ export function UserMessageProvenance(props: UserMessageProvenanceProps) {
           taskId={presentation.scheduledTaskId}
           className="rounded-sm hover:text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
         >
-          Sent by routine
+          {tx("Sent by routine")}
         </ScheduledTaskLink>
       ) : (
-        "Sent by routine"
+        tx("Sent by routine")
       )}
     </p>
   ) : message.createdBy === "agent" ? (
@@ -144,14 +154,14 @@ export function UserMessageProvenance(props: UserMessageProvenanceProps) {
               : onOpenThread(senderThreadId)
           }
           tone="muted"
-          aria-label="Open sending thread"
+          aria-label={tx("Open sending thread")}
         >
           {senderThreadId === routing?.coordinatorThreadId
-            ? "Message received from coordinator · View coordinator"
-            : "Sent by another agent"}
+            ? tx("Message received from coordinator · View coordinator")
+            : tx("Sent by another agent")}
         </InlineButton>
       ) : (
-        "Sent by another agent"
+        tx("Sent by another agent")
       )}
     </p>
   ) : null;

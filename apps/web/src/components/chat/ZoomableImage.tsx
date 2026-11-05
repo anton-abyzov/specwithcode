@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   useCallback,
   useEffect,
@@ -41,6 +43,7 @@ export function ZoomableImage({
   onZoomChange?: ((zoom: number) => void) | undefined;
   ref?: Ref<ZoomableImageHandle>;
 }) {
+  const tx = useTx();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
   const [windowSize, setWindowSize] = useState(() => ({
@@ -286,7 +289,7 @@ export function ZoomableImage({
         />
       </div>
       <span className="sr-only" aria-live="polite">
-        {Math.round(zoom * 100)}% zoom
+        {renderRich(tx("{value}% zoom"), { value: Math.round(zoom * 100) })}
       </span>
     </div>
   );

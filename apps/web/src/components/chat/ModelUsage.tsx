@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * Usage beside the model choice: a small meter on the composer's model
  * trigger, a status line on each model row, and the selected provider's
@@ -351,6 +353,7 @@ export function ModelPickerAccountLine({
   /** The provider the marker names ("this thread", "coordinator"); null leaves it out. */
   readonly markedInstanceId: ProviderInstanceId | null;
 }) {
+  const tx = useTx();
   const marker = usage.surface === "coordinator" ? "coordinator" : "this thread";
   const items = entries.flatMap((entry) => {
     const state = usage.availability(entry.instanceId, null);
@@ -380,7 +383,7 @@ export function ModelPickerAccountLine({
       className="shrink-0 border-b border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
       data-model-picker-account-line=""
     >
-      <span className="text-foreground">Account limits:</span>{" "}
+      <span className="text-foreground">{tx("Account limits:")}</span>{" "}
       {items.map((item, index) => (
         <span key={item.id}>
           {index > 0 ? " · " : null}
@@ -716,6 +719,7 @@ function BandWindow({
 
 /** A window whose reset passed since the read: its room is unknown until the next read. */
 function ResetWindow({ window }: { readonly window: ServerProviderUsageWindow }) {
+  const tx = useTx();
   return (
     <li
       className="grid grid-cols-[minmax(0,5.5rem)_minmax(1.5rem,1fr)_auto] items-center gap-2"
@@ -728,7 +732,9 @@ function ResetWindow({ window }: { readonly window: ServerProviderUsageWindow })
         className="h-1.5 rounded-full border border-dashed border-muted-foreground/50"
         aria-hidden
       />
-      <span className="truncate text-right text-muted-foreground">Reset, not read since</span>
+      <span className="truncate text-right text-muted-foreground">
+        {tx("Reset, not read since")}
+      </span>
     </li>
   );
 }
@@ -753,6 +759,7 @@ export function ModelPickerUsageBand({
   readonly entry: ProviderInstanceEntry;
   readonly usage: ModelPickerUsage;
 }) {
+  const tx = useTx();
   const state = usage.availability(entry.instanceId, null);
   const limits = entry.snapshot.usageLimits;
   const all = limits?.windows ?? [];
@@ -805,7 +812,7 @@ export function ModelPickerUsageBand({
       ) : null}
       {showBars ? (
         <>
-          <ul className="mt-1.5 flex flex-col gap-1" aria-label="Shared by every model">
+          <ul className="mt-1.5 flex flex-col gap-1" aria-label={tx("Shared by every model")}>
             {accountWide.map((window) => (
               <BandWindow
                 key={window.id}
@@ -820,7 +827,7 @@ export function ModelPickerUsageBand({
             ))}
           </ul>
           {scoped.length > 0 || scopedReset.length > 0 ? (
-            <ul className="mt-1 flex flex-col gap-1" aria-label="Limits for one model family">
+            <ul className="mt-1 flex flex-col gap-1" aria-label={tx("Limits for one model family")}>
               {scoped.map((window) => (
                 <BandWindow
                   key={window.id}
@@ -857,6 +864,7 @@ export function ModelPickerRunningNote({
   /** The pick when it differs from the running model; null when they match. */
   readonly pickLabel: string | null;
 }) {
+  const tx = useTx();
   return (
     <p
       className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
@@ -864,11 +872,19 @@ export function ModelPickerRunningNote({
     >
       {pickLabel ? (
         <>
-          <span className="text-foreground">This turn stays on {runningLabel}.</span> Your pick,{" "}
-          {pickLabel}, starts with your next message.
+          {renderRich(tx("{span} Your pick, {pickLabel}, starts with your next message."), {
+            span: (
+              <span className="text-foreground">
+                {renderRich(tx("This turn stays on {runningLabel}."), {
+                  runningLabel: runningLabel,
+                })}
+              </span>
+            ),
+            pickLabel: pickLabel,
+          })}
         </>
       ) : (
-        "Picks apply from your next message."
+        tx("Picks apply from your next message.")
       )}
     </p>
   );

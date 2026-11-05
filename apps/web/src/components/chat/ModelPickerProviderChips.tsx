@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId } from "@specweave-studio/contracts";
 import { memo, useLayoutEffect, useRef } from "react";
@@ -73,6 +74,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
   /** While searching: matches per view ("all", "favorites", instance id). Empty ones dim. */
   counts?: ReadonlyMap<string, number>;
 }) {
+  const tx = useTx();
   const rowRef = useRef<HTMLDivElement>(null);
   const column = props.layout === "column";
   const counts = props.counts;
@@ -132,7 +134,7 @@ export const ModelPickerProviderChips = memo(function ModelPickerProviderChips(p
       data-model-picker-sidebar="true"
       data-model-picker-chips="true"
       data-model-picker-providers-layout={props.layout}
-      aria-label="Providers"
+      aria-label={tx("Providers")}
       orientation={column ? "vertical" : "horizontal"}
       onKeyDown={(event) => {
         if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;

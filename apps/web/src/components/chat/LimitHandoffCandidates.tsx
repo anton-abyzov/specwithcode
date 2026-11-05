@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type {
   EnvironmentId,
   LimitHandoffCandidate,
@@ -48,20 +49,21 @@ export function LimitHandoffCandidateList({
   result: LimitHandoffCandidatesResult;
   onMove: (candidate: LimitHandoffCandidate) => void;
 }) {
+  const tx = useTx();
   if (result.candidates.length === 0) return null;
   if (!result.available) {
     return (
       <p className="basis-full text-xs text-muted-foreground">
-        This server can't move threads to another machine yet.
+        {tx("This server can't move threads to another machine yet.")}
       </p>
     );
   }
   const best = result.candidates.find((candidate) => candidate.eligible) ?? null;
   if (!best) {
     return (
-      <div className="flex basis-full flex-col gap-1 text-xs" aria-label="Other machines">
+      <div className="flex basis-full flex-col gap-1 text-xs" aria-label={tx("Other machines")}>
         <p role="status" className="text-muted-foreground">
-          {result.waiting ?? "No other machine can take this thread now."}
+          {result.waiting ?? tx("No other machine can take this thread now.")}
         </p>
         <ul
           className="flex flex-col gap-0.5 text-muted-foreground"
@@ -77,7 +79,7 @@ export function LimitHandoffCandidateList({
   return (
     <div
       className="flex basis-full flex-wrap items-center gap-2 text-xs"
-      aria-label="Other machines"
+      aria-label={tx("Other machines")}
     >
       <Tooltip>
         <TooltipTrigger

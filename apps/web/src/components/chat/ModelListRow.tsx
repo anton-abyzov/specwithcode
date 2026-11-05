@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { type ProviderDriverKind, type ProviderInstanceId } from "@specweave-studio/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
@@ -65,6 +66,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   fallbackRole?: { readonly label: string; readonly tone: "now" | "pick" | "order" } | null;
   onToggleFavorite: () => void;
 }) {
+  const tx = useTx();
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;
@@ -122,9 +124,9 @@ export const ModelListRow = memo(function ModelListRow(props: {
           {props.showNewBadge ? (
             <span
               className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-              aria-label="New model"
+              aria-label={tx("New model")}
             >
-              New
+              {tx("New")}
             </span>
           ) : null}
           {props.fallbackRole ? (
@@ -144,7 +146,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           ) : null}
           {props.unavailable ? (
             <Badge variant="outline" size="sm">
-              Unavailable
+              {tx("Unavailable")}
             </Badge>
           ) : null}
         </div>
@@ -243,7 +245,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 }}
                 // A usage limit is temporary; favorites stay editable through it.
                 disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={props.isFavorite ? tx("Remove from favorites") : tx("Add to favorites")}
               >
                 <StarIcon
                   className={cn(
@@ -255,7 +257,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            {props.isFavorite ? tx("Remove from favorites") : tx("Add to favorites")}
           </TooltipPopup>
         </Tooltip>
       </div>

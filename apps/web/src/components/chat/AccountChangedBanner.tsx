@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { RunId, ServerProvider } from "@specweave-studio/contracts";
 import { canTakeTurn, providerUsedPercent } from "@specweave-studio/shared/providerFallback";
 import { UserRoundCheckIcon } from "lucide-react";
@@ -111,6 +112,7 @@ export function accountChangedBannerItem(props: AccountChangedProps): ComposerBa
 }
 
 function ConfirmAndContinue({ onContinue }: { readonly onContinue: () => Promise<void> }) {
+  const tx = useTx();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -130,7 +132,7 @@ function ConfirmAndContinue({ onContinue }: { readonly onContinue: () => Promise
           setPending(false);
         }}
       >
-        {pending ? "Continuing..." : "Confirm and continue"}
+        {pending ? tx("Continuing...") : tx("Confirm and continue")}
       </Button>
       {error ? (
         <span role="alert" className="text-xs text-destructive-foreground">

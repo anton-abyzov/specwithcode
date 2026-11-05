@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { ThreadEnvMode } from "@specweave-studio/contracts";
 
 /** An explicit per-chat choice. Never rewrites a saved current-checkout choice. */
@@ -10,17 +11,18 @@ export function WorkspaceModeControl({
   onChange: (mode: ThreadEnvMode) => void;
   disabled?: boolean;
 }) {
+  const tx = useTx();
   return (
     <label className="inline-flex min-h-7 shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
       <input
         type="checkbox"
-        aria-label="Use worktree"
+        aria-label={tx("Use worktree")}
         checked={mode === "worktree"}
         disabled={disabled}
         onChange={(event) => onChange(event.target.checked ? "worktree" : "local")}
         className="size-3.5 accent-primary"
       />
-      <span>{mode === "worktree" ? "Use worktree" : "Current checkout"}</span>
+      <span>{mode === "worktree" ? tx("Use worktree") : tx("Current checkout")}</span>
     </label>
   );
 }

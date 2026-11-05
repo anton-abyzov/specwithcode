@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import { ArrowRightIcon, CheckIcon, XIcon } from "lucide-react";
@@ -80,6 +81,7 @@ export function WhatYouCanDoCard({
   readonly onDismiss: () => void;
   readonly onNewSession: () => void;
 }) {
+  const tx = useTx();
   const done = items.filter((item) => item.done).length;
   return (
     <section
@@ -88,10 +90,10 @@ export function WhatYouCanDoCard({
     >
       <header className="flex items-center gap-2 border-b border-border/60 px-4 py-2.5">
         <h2 id="what-you-can-do-title" className="text-sm font-medium">
-          What you can do
+          {tx("What you can do")}
         </h2>
         <span className="text-xs text-muted-foreground">
-          {done} of {items.length} done
+          {tx("{done} of {total} done", { done, total: items.length })}
         </span>
         <span className="ms-auto text-xs text-muted-foreground max-sm:hidden">
           Bring it back in Settings &gt; General
@@ -100,7 +102,7 @@ export function WhatYouCanDoCard({
           className="max-sm:ms-auto"
           size="icon-xs"
           variant="ghost-muted"
-          aria-label="Dismiss What you can do"
+          aria-label={tx("Dismiss What you can do")}
           onClick={onDismiss}
         >
           <XIcon className="size-3.5" />
@@ -121,11 +123,11 @@ export function WhatYouCanDoCard({
             </span>
             <span className="min-w-0 flex-1">
               <span className={`block text-sm ${item.done ? "text-muted-foreground" : ""}`}>
-                {item.title}
+                {tx(item.title)}
                 {item.done ? <span className="sr-only"> (done)</span> : null}
               </span>
               {item.done ? null : (
-                <span className="block text-xs text-muted-foreground">{item.detail}</span>
+                <span className="block text-xs text-muted-foreground">{tx(item.detail)}</span>
               )}
             </span>
             {item.done ? null : item.action.kind === "link" ? (
@@ -135,12 +137,12 @@ export function WhatYouCanDoCard({
                 variant="ghost-muted"
                 render={<Link to={item.action.to} />}
               >
-                {item.action.label}
+                {tx(item.action.label)}
                 <ArrowRightIcon aria-hidden className="size-3" />
               </Button>
             ) : (
               <Button className="shrink-0" size="xs" variant="outline" onClick={onNewSession}>
-                {item.action.label}
+                {tx(item.action.label)}
               </Button>
             )}
           </li>

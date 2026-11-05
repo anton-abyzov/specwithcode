@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
 import { ChromeIcon } from "lucide-react";
@@ -6,6 +8,7 @@ import { Button } from "../ui/button";
 
 /** Shown under a browser tool that failed because Chrome's extension was unreachable. */
 export function ChromeConnectCard({ environmentId }: { environmentId: EnvironmentId }) {
+  const tx = useTx();
   const machine = useEnvironment(environmentId)?.label ?? "this machine";
   return (
     <div
@@ -16,10 +19,13 @@ export function ChromeConnectCard({ environmentId }: { environmentId: Environmen
       <div className="flex min-w-0 items-center gap-2.5">
         <ChromeIcon className="size-4 shrink-0 text-warning-foreground" />
         <div className="min-w-0 text-sm">
-          <p className="font-medium">Chrome is not connected on {machine}</p>
+          <p className="font-medium">
+            {renderRich(tx("Chrome is not connected on {machine}"), { machine: machine })}
+          </p>
           <p className="text-muted-foreground">
-            Copy the pairing code from Settings › Chrome and paste it into the SpecWithCode Browser
-            popup in the Chrome profile agents should use, then ask the agent to try again.
+            {tx(
+              "Copy the pairing code from Settings › Chrome and paste it into the SpecWithCode Browser popup in the Chrome profile agents should use, then ask the agent to try again.",
+            )}
           </p>
         </div>
       </div>
@@ -28,7 +34,7 @@ export function ChromeConnectCard({ environmentId }: { environmentId: Environmen
         variant="outline"
         render={<Link to="/settings/chrome" search={{ machine: environmentId }} />}
       >
-        Connect Chrome on {machine}
+        {renderRich(tx("Connect Chrome on {machine}"), { machine: machine })}
       </Button>
     </div>
   );

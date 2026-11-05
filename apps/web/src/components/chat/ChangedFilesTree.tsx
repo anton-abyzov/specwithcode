@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { type ChangedFilesAttribution } from "@specweave-studio/client-runtime/work-log/presentation";
 import { type RunId, type ThreadId } from "@specweave-studio/contracts";
 import {
@@ -131,6 +133,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
   /** Failed entries of the turn, counted on the Concise line (D-09). */
   failedCount?: number | undefined;
 }) {
+  const tx = useTx();
   const {
     summaryOnly = false,
     runId,
@@ -185,7 +188,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           )}
         >
           <span className="shrink-0 whitespace-nowrap">
-            {files.length} changed file{files.length === 1 ? "" : "s"}
+            {tx(files.length === 1 ? "{length} changed file" : "{length} changed files", {
+              length: files.length,
+            })}
           </span>
           {hasNonZeroStat(summaryStat) && (
             <DiffStatLabel
@@ -198,7 +203,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
           {summaryOnly && failedCount > 0 ? (
             <span className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap text-tool-error-icon">
               <XIcon aria-hidden className="size-3" />
-              {failedCount} failed
+              {renderRich(tx("{failedCount} failed"), { failedCount: failedCount })}
             </span>
           ) : null}
           {/* A narrow card cuts these, so each tooltip starts with the text it cuts. */}
@@ -211,7 +216,9 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 ...(notReportedNote ? [notReportedNote] : []),
               ].join("\n")}
             >
-              +{sections.notReported.length} not from edit tools
+              {renderRich(tx("+{length} not from edit tools"), {
+                length: sections.notReported.length,
+              })}
             </span>
           ) : null}
           {subagentLine ? (
@@ -238,7 +245,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     aria-label={
-                      allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"
+                      allDirectoriesExpanded ? tx("Collapse all folders") : tx("Expand all folders")
                     }
                     data-scroll-anchor-ignore
                     onClick={onToggleAllDirectories}
@@ -251,7 +258,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                 />
               </TooltipTrigger>
               <TooltipPopup side="top">
-                {allDirectoriesExpanded ? "Collapse all folders" : "Expand all folders"}
+                {allDirectoriesExpanded ? tx("Collapse all folders") : tx("Expand all folders")}
               </TooltipPopup>
             </Tooltip>
           )}
@@ -262,17 +269,17 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
                   type="button"
                   size="xs"
                   variant="ghost-muted"
-                  aria-label="Open diff"
+                  aria-label={tx("Open diff")}
                   onClick={() => openTurnDiff(onOpenTurnDiff, runId, files[0]?.path, linkOptions)}
                 />
               }
             >
               <FileDiffIcon className="size-3" />
               <span className={summaryOnly ? undefined : "hidden @[24rem]/changed-files:inline"}>
-                Open diff
+                {tx("Open diff")}
               </span>
             </TooltipTrigger>
-            <TooltipPopup side="top">Open the full diff</TooltipPopup>
+            <TooltipPopup side="top">{tx("Open the full diff")}</TooltipPopup>
           </Tooltip>
         </div>
       </div>

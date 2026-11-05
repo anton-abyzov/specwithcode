@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
@@ -41,6 +42,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
   onRespondToApproval,
   onSwitchToFullAccess,
 }: ComposerPendingApprovalActionsProps) {
+  const tx = useTx();
   const { cancel, decisions } = orderApprovalOptions(options);
   // A request whose provider is gone takes no answer, from any button.
   const locked = disabled || isResponding || !canRespond;
@@ -104,13 +106,13 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               className={BUTTON_CLASS}
               data-approval-full-access=""
               disabled={locked}
-              title="Approves this and future requests in this chat"
+              title={tx("Approves this and future requests in this chat")}
               onClick={() => {
                 if (!locked) onSwitchToFullAccess();
               }}
             >
               <FullAccessGlyph className="size-3.5" />
-              <span className="min-w-0 truncate">Switch chat to Full access</span>
+              <span className="min-w-0 truncate">{tx("Switch chat to Full access")}</span>
             </Button>
           ) : null}
         </div>

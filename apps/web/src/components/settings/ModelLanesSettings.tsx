@@ -221,8 +221,12 @@ export function ModelLanesSettings() {
         title="Everyday work"
         description={
           isProjectScope
-            ? "Your models for regular, well-specified tasks in this project, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work."
-            : "Your models for regular, well-specified tasks, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work. Projects can override it."
+            ? tx(
+                "Your models for regular, well-specified tasks in this project, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work.",
+              )
+            : tx(
+                "Your models for regular, well-specified tasks, best first. A new task starts on the first available one. With no fallback order, a thread that runs out continues down this list, each model on any provider that serves it, then hardest work. Projects can override it.",
+              )
         }
         resetAction={
           routineList.length > 0 ? (
@@ -254,7 +258,7 @@ export function ModelLanesSettings() {
                 modelOptionsByInstance={modelOptions}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 triggerLabel={mixedLanes ? "Mixed" : "Add model"}
-                triggerAriaLabel="Add model to everyday work"
+                triggerAriaLabel={tx("Add model to everyday work")}
                 disabled={routineList.length >= MAX_LANE_MODELS}
                 onInstanceModelChange={(instanceId, model) =>
                   saveLane("routine", addLaneModel(routineList, instanceId, model))
@@ -280,8 +284,12 @@ export function ModelLanesSettings() {
         title="Hardest work"
         description={
           isProjectScope
-            ? "Your best models for architecture, design, deep debugging and open-ended work in this project, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work."
-            : "Your best models for architecture, design, deep debugging and open-ended work, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work. Projects can override it."
+            ? tx(
+                "Your best models for architecture, design, deep debugging and open-ended work in this project, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work.",
+              )
+            : tx(
+                "Your best models for architecture, design, deep debugging and open-ended work, best first. Hard tasks and the coordinator start on the first available one. With no fallback order, a thread that runs out continues down this list, then everyday work. Projects can override it.",
+              )
         }
         resetAction={
           complexList.length > 0 ? (
@@ -313,7 +321,7 @@ export function ModelLanesSettings() {
                 modelOptionsByInstance={modelOptions}
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 triggerLabel={mixedLanes ? "Mixed" : "Add model"}
-                triggerAriaLabel="Add model to hardest work"
+                triggerAriaLabel={tx("Add model to hardest work")}
                 disabled={complexList.length >= MAX_LANE_MODELS}
                 onInstanceModelChange={(instanceId, model) =>
                   saveLane("complex", addLaneModel(complexList, instanceId, model))
@@ -357,8 +365,12 @@ export function ModelLanesSettings() {
         title="Learned model preferences"
         description={
           isProjectScope
-            ? "Rules learned from your feedback in this project, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped."
-            : "Rules learned from your feedback, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped."
+            ? tx(
+                "Rules learned from your feedback in this project, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped.",
+              )
+            : tx(
+                "Rules learned from your feedback, or recorded by the coordinator. Matching prefer rules are tried first; avoid rules are skipped.",
+              )
         }
         resetAction={
           learnedList.length > 0 ? (

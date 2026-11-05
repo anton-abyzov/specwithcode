@@ -709,7 +709,9 @@ export function GoogleAccountSettingsPanel() {
                     <Checkbox
                       checked={wanted.has(service)}
                       disabled={!canWrite || busy}
-                      aria-label={`Ask Google for ${SERVICE_LABELS[service]}`}
+                      aria-label={tx("Ask Google for {service}", {
+                        service: tx(SERVICE_LABELS[service]),
+                      })}
                       onCheckedChange={(checked) =>
                         setChoices((current) => new Map(current).set(service, checked === true))
                       }

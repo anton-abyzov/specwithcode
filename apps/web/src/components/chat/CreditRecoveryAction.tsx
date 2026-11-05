@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useEffect, useState } from "react";
 import {
   MANUAL_CREDIT_OBSERVATION_MAX_AGE_MS,
@@ -31,6 +33,7 @@ export function formatCreditBalance(value: unknown): string | null {
 }
 
 export function CreditRecoveryAction({ provider, context, onContinue }: CreditRecoveryProps) {
+  const tx = useTx();
   const [, tick] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,11 +74,17 @@ export function CreditRecoveryAction({ provider, context, onContinue }: CreditRe
   return (
     <div className="basis-full space-y-2">
       <p className="text-xs text-muted-foreground">
-        {balance !== null
-          ? `${balance} credits reported available. `
-          : "Credit balance unavailable. "}
-        Your included allowance is separate. Continuing uses existing paid credits for this request;
-        it does not buy credits or enable automatic reload.
+        {renderRich(
+          tx(
+            "{value}Your included allowance is separate. Continuing uses existing paid credits for this request; it does not buy credits or enable automatic reload.",
+          ),
+          {
+            value:
+              balance !== null
+                ? tx("{balance} credits reported available. ", { balance })
+                : tx("Credit balance unavailable. "),
+          },
+        )}
       </p>
       <Button
         type="button"
@@ -84,11 +93,13 @@ export function CreditRecoveryAction({ provider, context, onContinue }: CreditRe
         disabled={pending || offer === null}
         onClick={() => void continueWithCredits()}
       >
-        {pending ? "Continuing…" : "Continue using credits"}
+        {pending ? tx("Continuing…") : tx("Continue using credits")}
       </Button>
       {offer === null ? (
         <p role="status" className="text-xs text-muted-foreground">
-          Refresh Providers to verify this account, model and credit balance before continuing.
+          {tx(
+            "Refresh Providers to verify this account, model and credit balance before continuing.",
+          )}
         </p>
       ) : null}
       {error ? (

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE } from "@specweave-studio/contracts";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { useState } from "react";
@@ -56,6 +57,7 @@ function WorkspaceMissingRecoveryButtons({
 }: {
   recovery: WorkspaceMissingRecoveryActions;
 }) {
+  const tx = useTx();
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<WorkspaceRecoveryOutcome | null>(null);
   const { branch, projectFolder } = recovery;
@@ -102,7 +104,7 @@ function WorkspaceMissingRecoveryButtons({
               title={`Run this thread in the project's main folder, ${folderName(projectFolder)} (${projectFolder}).`}
               onClick={() => run(recovery.onUseProjectFolder!)}
             >
-              Use the project folder
+              {tx("Use the project folder")}
             </Button>
           ) : null}
           {recovery.onResolve ? (

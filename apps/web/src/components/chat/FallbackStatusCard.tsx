@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { Fragment } from "react";
 import { cn } from "~/lib/utils";
 import { FallbackGlyph } from "./FallbackGlyph";
@@ -10,6 +11,7 @@ import type { ModelStateHeader } from "./fallbackStatus";
  * list keeps its room below.
  */
 export function FallbackStatusCard({ header }: { readonly header: ModelStateHeader }) {
+  const tx = useTx();
   const structured = header.now != null || header.pick != null;
   const back = header.back ? (
     <button
@@ -38,7 +40,7 @@ export function FallbackStatusCard({ header }: { readonly header: ModelStateHead
         <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-0.5">
           {header.now ? (
             <>
-              <dt className="text-muted-foreground">Now</dt>
+              <dt className="text-muted-foreground">{tx("Now")}</dt>
               <dd className="min-w-0 truncate font-medium text-foreground" data-fallback-now>
                 {header.now}
               </dd>
@@ -46,7 +48,7 @@ export function FallbackStatusCard({ header }: { readonly header: ModelStateHead
           ) : null}
           {header.pick ? (
             <>
-              <dt className="text-muted-foreground">Meant for</dt>
+              <dt className="text-muted-foreground">{tx("Meant for")}</dt>
               <dd className="min-w-0" data-fallback-pick>
                 <span className="text-foreground">{header.pick.label}</span>
                 <span className="text-muted-foreground"> · {header.pick.why}</span>
@@ -55,10 +57,10 @@ export function FallbackStatusCard({ header }: { readonly header: ModelStateHead
           ) : null}
           {header.returns ? (
             <>
-              <dt className="text-muted-foreground">Return</dt>
+              <dt className="text-muted-foreground">{tx("Return")}</dt>
               <dd className="min-w-0" data-fallback-return={header.returns.mode}>
                 <span className="mr-1 rounded border border-border px-1 py-px text-3xs font-semibold uppercase leading-none tracking-wide text-foreground">
-                  {header.returns.mode === "auto" ? "Automatic" : "By hand"}
+                  {header.returns.mode === "auto" ? tx("Automatic") : tx("By hand")}
                 </span>
                 <span className="text-muted-foreground">{header.returns.text}</span>
                 {back ? <div className="mt-1">{back}</div> : null}
@@ -67,11 +69,11 @@ export function FallbackStatusCard({ header }: { readonly header: ModelStateHead
           ) : null}
           {chain ? (
             <>
-              <dt className="text-muted-foreground">Order</dt>
+              <dt className="text-muted-foreground">{tx("Order")}</dt>
               <dd className="min-w-0">
                 <ol
                   className="flex flex-wrap items-center gap-x-1 gap-y-0.5"
-                  aria-label="Fallback order"
+                  aria-label={tx("Fallback order")}
                 >
                   {chain.map((entry, index) => (
                     <Fragment key={`${entry.instanceId}\u0000${entry.model}`}>

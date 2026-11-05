@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { ProviderInstanceId } from "@specweave-studio/contracts";
 
 import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
@@ -30,6 +32,7 @@ export function ModelPickerAlternativesNote(props: {
   readonly onRequestClose?: (() => void) | undefined;
   readonly onOpenProviderSetup?: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
+  const tx = useTx();
   const { entry, quickSetup } = props;
   const machine = quickSetup?.machineLabel ?? "this machine";
   const installable = quickSetup?.installable.has(entry.instanceId) === true;
@@ -53,7 +56,9 @@ export function ModelPickerAlternativesNote(props: {
       </p>
       {readyOn.length > 0 ? (
         <p className="mt-0.5 text-muted-foreground" data-model-picker-ready-on="">
-          Ready on {readyOn.join(", ")}. Accounts and sign-ins are per machine.
+          {renderRich(tx("Ready on {value}. Accounts and sign-ins are per machine."), {
+            value: readyOn.join(", "),
+          })}
         </p>
       ) : null}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -66,19 +71,21 @@ export function ModelPickerAlternativesNote(props: {
             {installing
               ? `Installing on ${machine}…`
               : error
-                ? "Retry install"
+                ? tx("Retry install")
                 : `Install ${entry.displayName} on ${machine}`}
           </InlineButton>
         ) : null}
         {openSetup ? (
           <InlineButton data-model-picker-open-setup={entry.instanceId} onClick={openSetup}>
-            {installable ? "Provider setup" : `Set up ${entry.displayName}`}
+            {installable ? tx("Provider setup") : `Set up ${entry.displayName}`}
           </InlineButton>
         ) : null}
       </div>
       {installable && quickSetup && !quickSetup.canManage ? (
         <p className="mt-1 text-muted-foreground">
-          Only the owner of {machine} can install providers there.
+          {renderRich(tx("Only the owner of {machine} can install providers there."), {
+            machine: machine,
+          })}
         </p>
       ) : null}
       {error ? (
@@ -91,8 +98,8 @@ export function ModelPickerAlternativesNote(props: {
         data-model-picker-ready-heading=""
       >
         {props.hasReady
-          ? "Ready now instead. Picking one switches this chat to that provider."
-          : "No other provider is ready here."}
+          ? tx("Ready now instead. Picking one switches this chat to that provider.")
+          : tx("No other provider is ready here.")}
       </p>
     </div>
   );

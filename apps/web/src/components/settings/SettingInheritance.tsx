@@ -204,7 +204,12 @@ export function SettingInheritance({
   if (!key || targets.length === 0) return null;
   const overrideSummary =
     overridingProjects.length > 0
-      ? `${summary} · ${overridingProjects.length} project ${overridingProjects.length === 1 ? "override" : "overrides"}`
+      ? tx(
+          overridingProjects.length === 1
+            ? "{summary} · {count} project override"
+            : "{summary} · {count} project overrides",
+          { summary, count: overridingProjects.length },
+        )
       : summary;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(
@@ -230,7 +235,9 @@ export function SettingInheritance({
                 <Button
                   size="icon-micro"
                   variant="ghost-muted"
-                  aria-label={`${overrideSummary}. Show where this value comes from`}
+                  aria-label={tx("{summary}. Show where this value comes from", {
+                    summary: overrideSummary,
+                  })}
                 />
               }
             />

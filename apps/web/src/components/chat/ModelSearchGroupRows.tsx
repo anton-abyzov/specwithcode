@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ChevronDownIcon, StarIcon } from "lucide-react";
 import { memo, type ReactNode, useCallback, useState } from "react";
 import { cn } from "~/lib/utils";
@@ -79,6 +80,7 @@ function ModelSearchHeading(props: {
   readonly header: ModelSearchHeader;
   readonly children?: ReactNode;
 }) {
+  const tx = useTx();
   const { header } = props;
   return (
     <>
@@ -91,7 +93,7 @@ function ModelSearchHeading(props: {
             className="shrink-0 rounded border border-primary/35 bg-primary/10 px-1 py-px text-3xs font-semibold leading-none text-foreground"
             data-model-search-latest=""
           >
-            Latest
+            {tx("Latest")}
           </span>
         ) : null}
       </span>
@@ -100,7 +102,7 @@ function ModelSearchHeading(props: {
           className="sws-picker-pill tabular-nums text-muted-foreground"
           data-model-search-provider-count={header.providerCount}
         >
-          {header.providerCount === 1 ? "1 provider" : `${header.providerCount} providers`}
+          {header.providerCount === 1 ? tx("1 provider") : `${header.providerCount} providers`}
         </span>
         {props.children}
       </span>
@@ -118,6 +120,7 @@ export function ModelSearchOlderRow(props: {
   readonly section: ModelSearchOlderSection;
   readonly familyStar?: ModelSearchFamilyStar;
 }) {
+  const tx = useTx();
   const { section } = props;
   const count = section.labels.length;
   return (
@@ -144,7 +147,7 @@ export function ModelSearchOlderRow(props: {
             data-model-search-older-toggle=""
             title={section.labels.join(" · ")}
           >
-            {section.isExpanded ? "Hide older" : `${count} older`}
+            {section.isExpanded ? tx("Hide older") : `${count} older`}
             <ChevronDownIcon
               className={cn("size-3 transition-transform", section.isExpanded && "rotate-180")}
             />

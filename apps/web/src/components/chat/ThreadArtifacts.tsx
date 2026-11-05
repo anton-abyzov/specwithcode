@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import { turnItemDetailRevision } from "@specweave-studio/client-runtime/work-log/item-detail";
 import type {
@@ -737,6 +739,7 @@ export interface ViewerFileState {
 }
 
 function CopyPathButton(props: { readonly path: string }) {
+  const tx = useTx();
   const { copyToClipboard, isCopied } = useCopyToClipboard({ preserveBytes: true });
   return (
     <Button
@@ -747,7 +750,7 @@ function CopyPathButton(props: { readonly path: string }) {
       onClick={() => copyToClipboard(props.path, undefined)}
     >
       {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-      {isCopied ? "Copied" : "Copy path"}
+      {isCopied ? tx("Copied") : tx("Copy path")}
     </Button>
   );
 }
@@ -758,6 +761,7 @@ function UnreachableFileNotice(props: {
   readonly path: string;
   readonly reason: string | null;
 }) {
+  const tx = useTx();
   return (
     <div
       className="flex flex-col gap-2 p-4 text-sm"
@@ -765,7 +769,10 @@ function UnreachableFileNotice(props: {
       data-unreachable-file={props.path}
     >
       <p>
-        {props.reason ?? "The machine is offline"}. {props.name} can be opened once it is back.
+        {renderRich(tx("{value}. {name} can be opened once it is back."), {
+          value: props.reason ?? tx("The machine is offline"),
+          name: props.name,
+        })}
       </p>
       <p className="break-all font-mono text-muted-foreground text-xs">{props.path}</p>
       <div className="flex gap-1">
@@ -794,6 +801,7 @@ export function ArtifactViewer(props: {
   /** What the Files list knows about an artifact's file: a missing one opens as an explained notice. */
   readonly fileStateOf?: ((artifact: ViewableArtifact) => ViewerFileState | null) | undefined;
 }) {
+  const tx = useTx();
   const artifact = props.artifacts[props.index]!;
   const fileState = props.fileStateOf?.(artifact) ?? null;
   const count = props.artifacts.length;
@@ -845,13 +853,13 @@ export function ArtifactViewer(props: {
             className="px-1 text-muted-foreground text-xs tabular-nums"
             data-artifact-position="true"
           >
-            {props.index + 1} of {count}
+            {renderRich(tx("{value} of {count}"), { value: props.index + 1, count: count })}
           </span>
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label="Previous artifact"
+            aria-label={tx("Previous artifact")}
             onClick={() => step(-1)}
           >
             <ChevronLeftIcon aria-hidden />
@@ -860,7 +868,7 @@ export function ArtifactViewer(props: {
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label="Next artifact"
+            aria-label={tx("Next artifact")}
             onClick={() => step(1)}
           >
             <ChevronRightIcon aria-hidden />
@@ -894,13 +902,13 @@ export function ArtifactViewer(props: {
                 }}
               >
                 <PanelRightOpenIcon aria-hidden />
-                Open in panel
+                {tx("Open in panel")}
               </MenuItem>
             ) : null}
             {url ? (
               <MenuItem onClick={() => openExternally(url)}>
                 <ExternalLinkIcon aria-hidden />
-                Open in browser
+                {tx("Open in browser")}
               </MenuItem>
             ) : null}
           </>
@@ -1095,11 +1103,12 @@ function ArtifactImage(props: {
   readonly name: string;
   readonly imageRef: Ref<ZoomableImageHandle>;
 }) {
+  const tx = useTx();
   const [failed, setFailed] = useState(false);
   if (failed) {
     return (
       <p className="m-auto p-6 text-center text-muted-foreground text-sm">
-        {props.name} could not be loaded from the host.
+        {renderRich(tx("{name} could not be loaded from the host."), { name: props.name })}
       </p>
     );
   }
@@ -1120,6 +1129,7 @@ function ArtifactText(props: {
   readonly cwd: string | undefined;
   readonly revealLine?: number | undefined;
 }) {
+  const tx = useTx();
   const { meta } = props.artifact;
   const file = useProjectFileQuery(props.environmentId, props.cwd ?? "", meta.filePath);
   const contents = file.data?.contents ?? null;
@@ -1146,7 +1156,7 @@ function ArtifactText(props: {
   if (contents === null) {
     return (
       <p className="m-auto p-6 text-center text-muted-foreground text-sm">
-        {file.error ?? "Loading…"}
+        {file.error ?? tx("Loading…")}
       </p>
     );
   }
@@ -1197,6 +1207,7 @@ export function ArtifactCards(props: {
   readonly cwd: string | undefined;
   readonly text: string;
 }) {
+  const tx = useTx();
   const authored = useMemo(
     () =>
       collectThreadArtifacts([{ id: "message", text: props.text }], props.cwd)
@@ -1212,7 +1223,7 @@ export function ArtifactCards(props: {
   const threadRef = props.threadRef;
   return (
     <>
-      <ul className="artifact-cards" aria-label="Attachments">
+      <ul className="artifact-cards" aria-label={tx("Attachments")}>
         {cards.map((card) => (
           <li key={card.key}>
             <button
@@ -1329,11 +1340,14 @@ export function ThreadArtifactStrip(props: {
   readonly currentKey: string | null;
   readonly onOpen: (key: string) => void;
 }) {
+  const tx = useTx();
   if (props.artifacts.length === 0) return null;
   return (
-    <section className="viewer-thread-artifacts" aria-label="Artifacts in this thread">
+    <section className="viewer-thread-artifacts" aria-label={tx("Artifacts in this thread")}>
       <h3 className="viewer-thread-artifacts-title">
-        Artifacts <span className="tabular-nums">{props.artifacts.length}</span>
+        {renderRich(tx("Artifacts {span}"), {
+          span: <span className="tabular-nums">{props.artifacts.length}</span>,
+        })}
       </h3>
       <ul className="viewer-thread-artifacts-list">
         {props.artifacts.toReversed().map((artifact) => (

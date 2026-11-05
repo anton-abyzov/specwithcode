@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type {
@@ -65,6 +67,7 @@ export function AddToMachineConsolidate(props: {
   readonly onCancelled: () => void;
   readonly onClose: () => void;
 }) {
+  const tx = useTx();
   const { source, destinationEnvironmentId: destination, destName, sourceName, commands } = props;
   const operationId = props.offer.operationId;
   const linkCommands = useLinkCommands();
@@ -210,10 +213,16 @@ export function AddToMachineConsolidate(props: {
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Link and consolidate on {destName}</DialogTitle>
+        <DialogTitle>
+          {renderRich(tx("Link and consolidate on {destName}"), { destName: destName })}
+        </DialogTitle>
         <DialogDescription>
-          {copy.targetFolder} on {destName} already has this repository. Review what comes over from{" "}
-          {sourceName}; nothing there is overwritten without your choice.
+          {renderRich(
+            tx(
+              "{targetFolder} on {destName} already has this repository. Review what comes over from {sourceName}; nothing there is overwritten without your choice.",
+            ),
+            { targetFolder: copy.targetFolder, destName: destName, sourceName: sourceName },
+          )}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -238,13 +247,16 @@ export function AddToMachineConsolidate(props: {
               />
               {copy.disk && (
                 <p role="alert" className="text-sm text-destructive-foreground">
-                  {destName} needs {formatBytes(copy.disk.needed)} free for this copy and has{" "}
-                  {formatBytes(copy.disk.free)}.
+                  {renderRich(tx("{destName} needs {value} free for this copy and has {value2}."), {
+                    destName: destName,
+                    value: formatBytes(copy.disk.needed),
+                    value2: formatBytes(copy.disk.free),
+                  })}
                 </p>
               )}
               {secrets.length > 0 && (
                 <p className="wrap-anywhere text-muted-foreground text-xs">
-                  Secret files to send: {secrets.join(", ")}
+                  {renderRich(tx("Secret files to send: {value}"), { value: secrets.join(", ") })}
                 </p>
               )}
             </>
@@ -256,7 +268,7 @@ export function AddToMachineConsolidate(props: {
 
           {failed && (
             <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
-              {copy.error?.message ?? "The copy stopped."}
+              {copy.error?.message ?? tx("The copy stopped.")}
               {copy.failedStep !== "applying" && copy.failedStep !== "applied"
                 ? ` Nothing in ${copy.targetFolder} changed.`
                 : ""}
@@ -290,15 +302,15 @@ export function AddToMachineConsolidate(props: {
                 </ul>
               )}
               {copy.secrets && copy.secrets.length > 0 && (
-                <ul className="space-y-1 text-xs" aria-label="Secret files sent">
+                <ul className="space-y-1 text-xs" aria-label={tx("Secret files sent")}>
                   {copy.secrets.map((secret) => (
                     <li key={secret.path} className="wrap-anywhere">
                       <span className="font-mono">{secret.writtenAs}</span>
                       {secret.state === "beside"
                         ? ` was written beside ${secret.path}, which differs on ${destName}.`
                         : secret.state === "unchanged"
-                          ? " was already the same."
-                          : " is in place, readable only by you."}
+                          ? tx(" was already the same.")
+                          : tx(" is in place, readable only by you.")}
                     </li>
                   ))}
                 </ul>
@@ -309,8 +321,18 @@ export function AddToMachineConsolidate(props: {
 
           {copy.state === "undone" && (
             <p role="status" className="text-sm">
-              {copy.targetFolder} on {destName} is back to how it was before the copy
-              {link?.status === "linked" ? "." : `, and not linked to ${sourceName}.`}
+              {renderRich(
+                tx(
+                  link?.status === "linked"
+                    ? "{targetFolder} on {destName} is back to how it was before the copy."
+                    : "{targetFolder} on {destName} is back to how it was before the copy, and not linked to {sourceName}.",
+                ),
+                {
+                  targetFolder: copy.targetFolder,
+                  destName: destName,
+                  sourceName: sourceName,
+                },
+              )}
             </p>
           )}
 
@@ -325,19 +347,19 @@ export function AddToMachineConsolidate(props: {
         {reviewing && (
           <>
             <Button variant="outline" disabled={busy} onClick={() => void stop()}>
-              Cancel copy
+              {tx("Cancel copy")}
             </Button>
             <Button
               disabled={busy || (copy.totals?.decisionsNeeded ?? 1) > 0}
               onClick={() => void apply()}
             >
-              Apply and link
+              {tx("Apply and link")}
             </Button>
           </>
         )}
         {failed && (
           <Button variant="outline" disabled={busy} onClick={() => void stop()}>
-            Back
+            {tx("Back")}
           </Button>
         )}
         {applied &&
@@ -348,21 +370,23 @@ export function AddToMachineConsolidate(props: {
               disabled={busy}
               onClick={() => void undoCopy(undoPreview.edited > 0, false)}
             >
-              {undoPreview.edited > 0 ? "Undo and keep edited files aside" : "Undo the copy"}
+              {undoPreview.edited > 0
+                ? tx("Undo and keep edited files aside")
+                : tx("Undo the copy")}
             </Button>
           ) : (
             <Button variant="outline" disabled={busy} onClick={() => void undoCopy(false, true)}>
-              Undo…
+              {tx("Undo…")}
             </Button>
           ))}
         {applied && link?.status === "review" && (
           <Button variant="outline" disabled={busy} onClick={() => setLinkDialog(true)}>
-            Link…
+            {tx("Link…")}
           </Button>
         )}
         {(applied || copy.state === "undone") && (
           <Button disabled={busy} onClick={props.onClose}>
-            Done
+            {tx("Done")}
           </Button>
         )}
       </DialogFooter>

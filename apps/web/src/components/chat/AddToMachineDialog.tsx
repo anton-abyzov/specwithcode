@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -149,6 +151,7 @@ function AddToMachineBody({
   readonly setGuard: (patch: Partial<CloseGuard>) => void;
   readonly close: () => void;
 }) {
+  const tx = useTx();
   const sourceEnvironment = useEnvironment(source.environmentId);
   const destinationEnvironment = useEnvironment(destination);
   const names = useMachineNicknames();
@@ -437,7 +440,7 @@ function AddToMachineBody({
         disabled={locked || !ready || !linkSupported || scan.state !== "ready" || !secretsReady}
         onClick={() => void consolidate()}
       >
-        Link and consolidate
+        {tx("Link and consolidate")}
       </Button>
     ) : (
       <Button
@@ -450,7 +453,7 @@ function AddToMachineBody({
         }
         onClick={() => void clone()}
       >
-        Clone to {destName}
+        {renderRich(tx("Clone to {destName}"), { destName: destName })}
       </Button>
     );
 
@@ -458,11 +461,15 @@ function AddToMachineBody({
     <>
       <DialogHeader>
         <DialogTitle>
-          Prepare {title} on {destName}
+          {renderRich(tx("Prepare {title} on {destName}"), { title: title, destName: destName })}
         </DialogTitle>
         <DialogDescription>
-          {destName} gets its own checkout. Preparing it does not start work or move this thread.
-          The coordinator stays on {sourceName}.
+          {renderRich(
+            tx(
+              "{destName} gets its own checkout. Preparing it does not start work or move this thread. The coordinator stays on {sourceName}.",
+            ),
+            { destName: destName, sourceName: sourceName },
+          )}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -474,7 +481,7 @@ function AddToMachineBody({
               path={source.workspaceRoot}
             />
             <ArrowRightIcon
-              aria-label="to"
+              aria-label={tx("to")}
               className="size-4 shrink-0 self-center text-muted-foreground"
             />
             <MachinePlace
@@ -524,12 +531,14 @@ function AddToMachineBody({
 
           {stage.kind === "started" && !error && (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
-              Cloning on {destName}…
+              {renderRich(tx("Cloning on {destName}…"), { destName: destName })}
             </p>
           )}
           {busy && stage.kind === "setup" && (
             <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
-              Checking that {destName} can read the repository…
+              {renderRich(tx("Checking that {destName} can read the repository…"), {
+                destName: destName,
+              })}
             </p>
           )}
           {error && (
@@ -542,7 +551,7 @@ function AddToMachineBody({
       {stage.kind === "setup" && (
         <DialogFooter variant="bare">
           <Button variant="outline" disabled={busy} onClick={close}>
-            Cancel
+            {tx("Cancel")}
           </Button>
           {primary}
         </DialogFooter>
@@ -600,6 +609,7 @@ function SetupFields(props: {
   readonly onCopyIgnoredChange: (on: boolean) => void;
   readonly scan: Scan;
 }) {
+  const tx = useTx();
   const folderId = useId();
   const { urls, plan, destName } = props;
   return (
@@ -607,14 +617,15 @@ function SetupFields(props: {
       <div className="space-y-1.5 text-sm" data-slot="add-url">
         {urls.ssh && urls.https ? (
           <RadioGroup
-            aria-label="Clone with"
+            aria-label={tx("Clone with")}
             value={props.protocol}
             onValueChange={(value) => props.onProtocolChange(value as CloneProtocol)}
             className="flex-row flex-wrap"
           >
             <label className="flex cursor-pointer items-center gap-2">
-              <Radio value="ssh" disabled={props.disabled} />
-              Clone over SSH
+              {renderRich(tx("{radio}Clone over SSH"), {
+                radio: <Radio value="ssh" disabled={props.disabled} />,
+              })}
             </label>
             <label className="flex cursor-pointer items-center gap-2">
               <Radio value="https" disabled={props.disabled} />
@@ -622,13 +633,15 @@ function SetupFields(props: {
             </label>
           </RadioGroup>
         ) : (
-          <p className="font-medium">Clone from</p>
+          <p className="font-medium">{tx("Clone from")}</p>
         )}
         <p className="wrap-anywhere font-mono text-muted-foreground text-xs">{props.remoteUrl}</p>
       </div>
 
       <div className="grid gap-1.5">
-        <Label htmlFor={folderId}>Folder on {destName}</Label>
+        <Label htmlFor={folderId}>
+          {renderRich(tx("Folder on {destName}"), { destName: destName })}
+        </Label>
         <Input
           id={folderId}
           value={props.folder}
@@ -653,7 +666,7 @@ function SetupFields(props: {
               disabled={props.disabled}
               onClick={() => props.onFolderChange(plan.suggestion)}
             >
-              Use {plan.suggestion}
+              {renderRich(tx("Use {suggestion}"), { suggestion: plan.suggestion })}
             </Button>
           </div>
         )}
@@ -668,24 +681,31 @@ function SetupFields(props: {
 
       <div className="space-y-1 text-sm">
         <label className="flex cursor-pointer items-center gap-2">
-          <Checkbox
-            checked={props.copyIgnored}
-            disabled={props.disabled || props.scan.state === "failed"}
-            onCheckedChange={(checked) => props.onCopyIgnoredChange(checked === true)}
-          />
-          Copy ignored files
+          {renderRich(tx("{checkbox}Copy ignored files"), {
+            checkbox: (
+              <Checkbox
+                checked={props.copyIgnored}
+                disabled={props.disabled || props.scan.state === "failed"}
+                onCheckedChange={(checked) => props.onCopyIgnoredChange(checked === true)}
+              />
+            ),
+          })}
         </label>
         <p className="ps-6 text-muted-foreground text-xs">{IGNORED_FILES_NOTE}</p>
       </div>
 
       {props.scan.state === "scanning" && (
         <p role="status" className="text-muted-foreground text-xs">
-          Looking for secret files on {props.sourceName}…
+          {renderRich(tx("Looking for secret files on {sourceName}…"), {
+            sourceName: props.sourceName,
+          })}
         </p>
       )}
       {props.scan.state === "failed" && (
         <p role="alert" className="wrap-anywhere text-destructive-foreground text-xs">
-          {props.scan.message} Cloning still works; only extra files can't be copied.
+          {renderRich(tx("{message} Cloning still works; only extra files can't be copied."), {
+            message: props.scan.message,
+          })}
         </p>
       )}
     </>

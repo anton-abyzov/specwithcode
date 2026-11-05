@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
 import { reportTitle, reportWordCount } from "@specweave-studio/shared/threadReport";
 import { ExternalLinkIcon } from "lucide-react";
@@ -40,6 +42,7 @@ export function MarkdownDocumentReader(props: {
   /** The thread whose message linked the file, shown beside it. */
   readonly threadRef?: ScopedThreadRef | undefined;
 }) {
+  const tx = useTx();
   const { target } = props;
   const name = target.path.split("/").filter(Boolean).at(-1) ?? target.path;
   const file = useProjectFileQuery(props.environmentId, props.cwd, target.path);
@@ -49,7 +52,7 @@ export function MarkdownDocumentReader(props: {
   const openExternally = props.onOpenExternally ? (
     <Button type="button" size="sm" variant="outline" onClick={props.onOpenExternally}>
       <ExternalLinkIcon aria-hidden />
-      Open with the default app
+      {tx("Open with the default app")}
     </Button>
   ) : null;
   return (
@@ -80,13 +83,18 @@ export function MarkdownDocumentReader(props: {
       ) : file.error !== null ? (
         <div className="flex flex-col items-start gap-3 font-sans text-sm" role="alert">
           <p className="text-muted-foreground">
-            {name} could not be read here: {file.error}
+            {renderRich(tx("{name} could not be read here: {error}"), {
+              name: name,
+              error: file.error,
+            })}
           </p>
           <p className="break-all font-mono text-muted-foreground text-xs">{target.path}</p>
           {openExternally}
         </div>
       ) : (
-        <p className="font-sans text-muted-foreground text-sm">Loading {name}…</p>
+        <p className="font-sans text-muted-foreground text-sm">
+          {renderRich(tx("Loading {name}…"), { name: name })}
+        </p>
       )}
     </ReportReader>
   );

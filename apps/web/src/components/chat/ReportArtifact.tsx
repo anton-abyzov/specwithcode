@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   AuthFilesystemWriteScope,
   type EnvironmentId,
@@ -51,9 +53,10 @@ export interface ReportSaveState {
 
 /** The line under the card's title: kind, size, and where the report lives. */
 function ReportMeta({ words, save }: { words: number; save: ReportSaveState | null }) {
+  const tx = useTx();
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-xs">
-      <span>Report · {words.toLocaleString()} words</span>
+      <span>{renderRich(tx("Report · {value} words"), { value: words.toLocaleString() })}</span>
       {save?.increment ? (
         <span
           className="inline-flex min-w-0 items-center gap-1 rounded-full border border-border/70 bg-muted/40 px-1.5 py-px font-medium text-foreground/80"
@@ -67,7 +70,7 @@ function ReportMeta({ words, save }: { words: number; save: ReportSaveState | nu
       {save?.savedPath ? (
         <span className="inline-flex items-center gap-1" title={save.savedPath}>
           <FolderCheckIcon aria-hidden className="size-3 shrink-0" />
-          Saved
+          {tx("Saved")}
         </span>
       ) : null}
     </div>
@@ -75,6 +78,7 @@ function ReportMeta({ words, save }: { words: number; save: ReportSaveState | nu
 }
 
 function SaveButton({ save, size }: { save: ReportSaveState; size: "xs" | "sm" }) {
+  const tx = useTx();
   if (save.savedPath || !save.canSave || save.folder === null) return null;
   return (
     <Button
@@ -86,7 +90,11 @@ function SaveButton({ save, size }: { save: ReportSaveState; size: "xs" | "sm" }
       title={`Save as markdown in ${save.folder}`}
     >
       <SaveIcon aria-hidden />
-      {save.saving ? "Saving…" : save.increment ? "Save to increment" : "Save to reports"}
+      {save.saving
+        ? tx("Saving…")
+        : save.increment
+          ? tx("Save to increment")
+          : tx("Save to reports")}
     </Button>
   );
 }
@@ -115,6 +123,7 @@ export function ReportArtifactCard(props: {
   /** When the report was written, as an ISO timestamp. */
   readonly createdAt?: string | undefined;
 }) {
+  const tx = useTx();
   const [open, setOpen] = useState(false);
   const title = reportTitle(props.text, props.fallbackTitle);
   const summary = reportSummary(props.text);
@@ -162,7 +171,7 @@ export function ReportArtifactCard(props: {
             data-scroll-anchor-ignore
           >
             <Maximize2Icon aria-hidden />
-            Open report
+            {tx("Open report")}
           </Button>
           {save ? <SaveButton save={save} size="xs" /> : null}
           {save?.error ? (

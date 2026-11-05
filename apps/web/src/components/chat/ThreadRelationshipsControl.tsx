@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -90,6 +92,7 @@ export function ThreadLineageRowList(props: {
   readonly onShowMore: () => void;
   readonly children: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <>
       {/*
@@ -101,7 +104,7 @@ export function ThreadLineageRowList(props: {
         themselves and the container needs no extra tab stop of its own.
       */}
       <ul
-        aria-label="Related threads"
+        aria-label={tx("Related threads")}
         className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0"
       >
         {props.children}
@@ -113,7 +116,9 @@ export function ThreadLineageRowList(props: {
           className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
         >
           <PlusIcon aria-hidden className="size-4 shrink-0" />
-          Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
+          {renderRich(tx("Show {value} more"), {
+            value: Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT),
+          })}
         </button>
       ) : null}
     </>
@@ -126,6 +131,7 @@ function ThreadLineageGroup(props: {
   readonly expanded: boolean;
   readonly children: (rows: ReadonlyArray<ThreadRelationshipWalkRow>) => ReactNode;
 }) {
+  const tx = useTx();
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
@@ -140,7 +146,11 @@ function ThreadLineageGroup(props: {
           expanded={expanded}
           onClick={() => setExpanded(!expanded)}
           accessory={
-            failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null
+            failedCount > 0 ? (
+              <SectionHeaderStatus>
+                {renderRich(tx("{failedCount} failed"), { failedCount: failedCount })}
+              </SectionHeaderStatus>
+            ) : null
           }
         >
           {props.label}
@@ -206,6 +216,7 @@ export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const tx = useTx();
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const projection = useThreadProjection(ref)?.projection ?? null;
   const providers = useServerConfigs().get(props.environmentId)?.providers;
@@ -348,7 +359,7 @@ export function ThreadRelationshipsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-lineage-heading"
-      title={runningCount > 0 ? `Lineage · ${runningCount} running` : "Lineage"}
+      title={runningCount > 0 ? `Lineage · ${runningCount} running` : tx("Lineage")}
       data-thread-relationships-panel
       actions={
         canDetach ? (
@@ -359,7 +370,7 @@ export function ThreadRelationshipsPanel(props: {
                   size="icon-xs"
                   variant="ghost"
                   part="icon"
-                  aria-label="More thread actions"
+                  aria-label={tx("More thread actions")}
                   disabled={busyAction !== null}
                 />
               }
@@ -369,7 +380,7 @@ export function ThreadRelationshipsPanel(props: {
             <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
               <MenuItem onClick={() => void detach()}>
                 <UnplugIcon className="size-3.5" />
-                Disconnect agent session
+                {tx("Disconnect agent session")}
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -506,7 +517,7 @@ export function ThreadRelationshipsPanel(props: {
                               aria-label={
                                 parentTitle
                                   ? `Merge back to ${parentTitle}`
-                                  : "Merge back to source conversation"
+                                  : tx("Merge back to source conversation")
                               }
                               disabled={!canMerge || busyAction !== null}
                               onClick={() => void merge()}
@@ -521,10 +532,10 @@ export function ThreadRelationshipsPanel(props: {
                         />
                         <TooltipPopup side="left">
                           {latestMergeBackRun === null
-                            ? "Complete a run in this fork before merging it back"
+                            ? tx("Complete a run in this fork before merging it back")
                             : parentTitle
                               ? `Merge this conversation back into ${parentTitle}`
-                              : "Merge this conversation back into its source"}
+                              : tx("Merge this conversation back into its source")}
                         </TooltipPopup>
                       </Tooltip>
                       <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
@@ -572,7 +583,9 @@ export function ThreadRelationshipsPanel(props: {
                             <SquareIcon aria-hidden className="size-3 fill-current" />
                           )}
                         </TooltipTrigger>
-                        <TooltipPopup side="left">Stop {childNoun}</TooltipPopup>
+                        <TooltipPopup side="left">
+                          {renderRich(tx("Stop {childNoun}"), { childNoun: childNoun })}
+                        </TooltipPopup>
                       </Tooltip>
                     </div>
                   ) : null}

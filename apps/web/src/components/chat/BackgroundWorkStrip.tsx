@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type {
   BackgroundWorkKind,
   PendingBackgroundWorkItem,
@@ -65,8 +66,9 @@ function BackgroundWorkList({
   readonly items: ReadonlyArray<PendingBackgroundWorkItem>;
   readonly onOpenRelatedThread: (threadId: ThreadId) => void;
 }) {
+  const tx = useTx();
   return (
-    <ul className="space-y-1" aria-label="Background work">
+    <ul className="space-y-1" aria-label={tx("Background work")}>
       {items.map((item) => {
         const childThreadId = item.childThreadId;
         return (
@@ -109,6 +111,7 @@ export function BackgroundWorkLabel({
   readonly presentation: PendingBackgroundWorkPresentation;
   readonly onOpenRelatedThread: (threadId: ThreadId) => void;
 }) {
+  const tx = useTx();
   const [only] = presentation.items;
   const single = presentation.items.length === 1 && only !== undefined ? only : null;
   const accessibleLabel =
@@ -145,7 +148,7 @@ export function BackgroundWorkLabel({
             {shortText}
           </PopoverTrigger>
           <PopoverPopup
-            aria-label="Background work"
+            aria-label={tx("Background work")}
             tooltipStyle
             side="top"
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
