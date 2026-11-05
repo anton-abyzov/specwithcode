@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ChevronLeftIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -33,6 +35,7 @@ export function SettingsScopeChoiceList<T extends ScopeChoice>({
   noun: string;
   onPick: (choice: T) => void;
 }) {
+  const tx = useTx();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const matches = filterScopeChoices(choices, query);
@@ -59,7 +62,7 @@ export function SettingsScopeChoiceList<T extends ScopeChoice>({
       ) : null}
       {view.items.length === 0 ? (
         <p role="status" className="px-1 py-3 text-sm text-muted-foreground">
-          No {noun} match “{query.trim()}”.
+          {renderRich(tx("No {noun} match “{value}”."), { noun: noun, value: query.trim() })}
         </p>
       ) : (
         <DiscoveryList>
@@ -102,25 +105,32 @@ export function SettingsScopeChoiceList<T extends ScopeChoice>({
           className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground"
         >
           <span aria-live="polite">
-            {view.first}–{view.last} of {view.total}
+            {renderRich(tx("{first}–{last} of {total}"), {
+              first: view.first,
+              last: view.last,
+              total: view.total,
+            })}
           </span>
           <span className="flex items-center gap-1">
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label="Previous page"
+              aria-label={tx("Previous page")}
               disabled={view.page === 0}
               onClick={() => setPage(view.page - 1)}
             >
               <ChevronLeftIcon aria-hidden />
             </Button>
             <span>
-              Page {view.page + 1} of {view.pageCount}
+              {renderRich(tx("Page {value} of {pageCount}"), {
+                value: view.page + 1,
+                pageCount: view.pageCount,
+              })}
             </span>
             <Button
               size="icon-sm"
               variant="ghost"
-              aria-label="Next page"
+              aria-label={tx("Next page")}
               disabled={view.page >= view.pageCount - 1}
               onClick={() => setPage(view.page + 1)}
             >

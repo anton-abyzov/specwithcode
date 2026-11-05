@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { ModelSelection, ProviderInstanceId } from "@specweave-studio/contracts";
 import { describeModel, sameModelOn } from "@specweave-studio/shared/modelIdentity";
 import { isPerTokenProvider } from "@specweave-studio/shared/providerFallback";
@@ -61,6 +62,7 @@ export function recommendedModelProviderOrder(
  * Copilot. Shown only when another provider serves the model.
  */
 export function RecommendedModelProviders({ model }: { readonly model: ModelSelection | null }) {
+  const tx = useTx();
   const { target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -93,13 +95,13 @@ export function RecommendedModelProviders({ model }: { readonly model: ModelSele
       resetAction={
         saved.length > 0 ? (
           <SettingResetButton
-            label="provider order"
+            label={tx("provider order")}
             onClick={() => updateSettings({ defaultModelProviders: [] })}
           />
         ) : null
       }
     >
-      <ol className="mb-2 space-y-1 text-sm" aria-label="Providers for the recommended model">
+      <ol className="mb-2 space-y-1 text-sm" aria-label={tx("Providers for the recommended model")}>
         {others.map((choice, index) => (
           <li key={choice.entry.instanceId} className="flex min-w-0 items-center gap-2">
             <span className="w-5 shrink-0 text-right text-xs text-muted-foreground">

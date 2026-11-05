@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { useMemo } from "react";
@@ -19,6 +20,7 @@ export function ProjectOverrides({
 }: {
   checkouts: readonly { readonly environmentId: EnvironmentId; readonly id: ProjectId }[];
 }) {
+  const tx = useTx();
   const { environments } = useEnvironments();
   const rows = useMemo(
     () => listProjectSettingOverrides(checkouts, environments),
@@ -60,7 +62,7 @@ export function ProjectOverrides({
                 )
               }
             >
-              Use app setting
+              {tx("Use app setting")}
             </Button>
           }
         />

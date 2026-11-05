@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 
@@ -21,6 +22,7 @@ export function ProviderWizardAuthenticationStep({
   readonly instanceId: ProviderInstanceId;
   readonly onFinish: () => void;
 }) {
+  const tx = useTx();
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const provider = providers.find((candidate) => candidate.instanceId === instanceId);
@@ -68,7 +70,7 @@ export function ProviderWizardAuthenticationStep({
               control={
                 isDiscovering ? (
                   <Button disabled size="sm" variant="outline">
-                    Sign in
+                    {tx("Sign in")}
                   </Button>
                 ) : provider?.setup?.documentationUrl ? (
                   <Button
@@ -78,7 +80,7 @@ export function ProviderWizardAuthenticationStep({
                       <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
                     }
                   >
-                    Open docs
+                    {tx("Open docs")}
                   </Button>
                 ) : undefined
               }
@@ -93,7 +95,7 @@ export function ProviderWizardAuthenticationStep({
           disabled={active}
           onClick={onFinish}
         >
-          {signedIn ? "Done" : "Skip for now"}
+          {signedIn ? tx("Done") : tx("Skip for now")}
         </Button>
       </WizardFooter>
     </>

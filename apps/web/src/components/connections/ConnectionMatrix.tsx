@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { Fragment, useId, useState, type ReactNode } from "react";
 import type {
   NativeConnection,
@@ -238,6 +240,7 @@ export function ConnectionMatrix({
   pendingId?: string | null;
   initialDensity?: Density;
 }) {
+  const tx = useTx();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** A row opened from its name: its details without one tool's declaration chosen. */
   const [openRow, setOpenRow] = useState<string | null>(null);
@@ -509,11 +512,11 @@ export function ConnectionMatrix({
               onClick={() => onApply?.(action.input)}
             >
               {pending ? (
-                "Saving…"
+                tx("Saving…")
               ) : view.glyph === "add" ? (
                 <>
                   <PlusIcon aria-hidden />
-                  Add
+                  {tx("Add")}
                 </>
               ) : (
                 action.label
@@ -535,7 +538,7 @@ export function ConnectionMatrix({
         aria-label={`${found.label}: ${found.connection.name}`}
         onClick={() => onApply?.(found.input)}
       >
-        {pendingId === found.connection.id ? "Saving…" : found.label}
+        {pendingId === found.connection.id ? tx("Saving…") : found.label}
       </Button>
     );
   }
@@ -557,7 +560,7 @@ export function ConnectionMatrix({
         onClick={() => copyLocation(id, location)}
       >
         {copied === id ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-        {copied === id ? "Copied" : "Copy location"}
+        {copied === id ? tx("Copied") : tx("Copy location")}
       </Button>
     );
   }
@@ -591,7 +594,7 @@ export function ConnectionMatrix({
         aria-label={`${label}: ${entry.name}`}
         onClick={() => onApply(input)}
       >
-        {pendingId === entry.id ? "Checking…" : label}
+        {pendingId === entry.id ? tx("Checking…") : label}
       </Button>
     );
     const id = entry.id;
@@ -624,9 +627,17 @@ export function ConnectionMatrix({
   function pluginButton(plugin: (typeof plugins)[number]) {
     if (!onApply || !manage) return null;
     if (plugin.overridden)
-      return <span className="text-xs text-muted-foreground">Set by this project's settings</span>;
+      return (
+        <span className="text-xs text-muted-foreground">
+          {tx("Set by this project's settings")}
+        </span>
+      );
     if (plugin.switchable === false)
-      return <span className="text-xs text-muted-foreground">Managed in your ChatGPT account</span>;
+      return (
+        <span className="text-xs text-muted-foreground">
+          {tx("Managed in your ChatGPT account")}
+        </span>
+      );
     // Codex loads an account plugin's apps whatever config.toml says; only its skills switch.
     const what = plugin.account ? "skills" : "plugin";
     const label = plugin.enabled ? `Turn off ${what}` : `Turn on ${what}`;
@@ -645,7 +656,7 @@ export function ConnectionMatrix({
           })
         }
       >
-        {pendingId === plugin.key ? "Checking…" : label}
+        {pendingId === plugin.key ? tx("Checking…") : label}
       </Button>
     );
   }
@@ -681,22 +692,26 @@ export function ConnectionMatrix({
           <h3 className="font-medium">{title}</h3>
           <Button variant="ghost" size="sm" onClick={closeDetails}>
             <XIcon aria-hidden />
-            Close details
+            {tx("Close details")}
           </Button>
         </div>
         {selected ? (
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-            <dt className="text-muted-foreground">Source</dt>
+            <dt className="text-muted-foreground">{tx("Source")}</dt>
             <dd>{detailSource(selected)}</dd>
-            <dt className="text-muted-foreground">Transport</dt>
+            <dt className="text-muted-foreground">{tx("Transport")}</dt>
             <dd>{selected.transport}</dd>
-            <dt className="text-muted-foreground">Access owner</dt>
-            <dd>{toolName(selected.provider)} manages native access</dd>
-            <dt className="text-muted-foreground">Session</dt>
-            <dd>Not checked</dd>
+            <dt className="text-muted-foreground">{tx("Access owner")}</dt>
+            <dd>
+              {renderRich(tx("{value} manages native access"), {
+                value: toolName(selected.provider),
+              })}
+            </dd>
+            <dt className="text-muted-foreground">{tx("Session")}</dt>
+            <dd>{tx("Not checked")}</dd>
             {alternatives.length > 0 && (
               <>
-                <dt className="text-muted-foreground">Other declarations</dt>
+                <dt className="text-muted-foreground">{tx("Other declarations")}</dt>
                 <dd>
                   {alternatives
                     .map((c) => `${detailSource(c)}${c.shadowed ? " (overridden)" : ""}`)
@@ -715,7 +730,7 @@ export function ConnectionMatrix({
           <p className="text-sm">
             {declaredIn.length > 0
               ? `Declared for ${declaredIn.map((c) => c.label).join(", ")}. Select a status to manage one tool's entry.`
-              : "Not declared in any tool shown."}
+              : tx("Not declared in any tool shown.")}
           </p>
         )}
         <div className="flex flex-wrap gap-2" data-testid="connection-actions">
@@ -746,8 +761,9 @@ export function ConnectionMatrix({
           <div data-testid="computer-use-connection-note">{computerUseNote}</div>
         ) : null}
         <p className="text-xs text-muted-foreground">
-          Project trust, account permissions and runtime policy may prevent use. SpecWithCode
-          project grants apply only to SpecWithCode-managed calls.
+          {tx(
+            "Project trust, account permissions and runtime policy may prevent use. SpecWithCode project grants apply only to SpecWithCode-managed calls.",
+          )}
         </p>
       </div>
     );
@@ -797,26 +813,26 @@ export function ConnectionMatrix({
       <p className="text-sm text-muted-foreground">{PER_TOOL_NOTE}</p>
       {(issues.length > 0 || otherIssues.length > 0) && (
         <div role="status" className="text-sm text-warning-foreground">
-          Some sources could not be inspected:{" "}
-          {[
-            ...issues.map((s) => `${sourceName(s.id)} (${s.status.replaceAll("_", " ")})`),
-            ...otherIssues.map(
-              (t) => `${otherToolNames[t.tool]} (${t.status.replaceAll("_", " ")})`,
-            ),
-          ].join(", ")}
-          . Results are incomplete.
+          {renderRich(tx("Some sources could not be inspected: {value}. Results are incomplete."), {
+            value: [
+              ...issues.map((s) => `${sourceName(s.id)} (${s.status.replaceAll("_", " ")})`),
+              ...otherIssues.map(
+                (t) => `${otherToolNames[t.tool]} (${t.status.replaceAll("_", " ")})`,
+              ),
+            ].join(", "),
+          })}
         </div>
       )}
       {snapshot.truncated && (
         <p role="status" className="text-sm text-warning-foreground">
-          Connection limit reached. Results are incomplete.
+          {tx("Connection limit reached. Results are incomplete.")}
         </p>
       )}
       {names.length === 0 ? (
         <p role="status">
           {issues.length || otherIssues.length || snapshot.truncated
-            ? "No declarations could be confirmed."
-            : "No MCP declarations found in the inspected configuration files."}
+            ? tx("No declarations could be confirmed.")
+            : tx("No MCP declarations found in the inspected configuration files.")}
         </p>
       ) : (
         <>
@@ -826,13 +842,13 @@ export function ConnectionMatrix({
               <input
                 type="search"
                 value={query}
-                placeholder="Search servers, plugins, folders"
-                aria-label="Search connections"
+                placeholder={tx("Search servers, plugins, folders")}
+                aria-label={tx("Search connections")}
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
-            <div className="connection-chips" role="group" aria-label="Filter by AI tool">
-              <span className="connection-chips-label">Show tools</span>
+            <div className="connection-chips" role="group" aria-label={tx("Filter by AI tool")}>
+              <span className="connection-chips-label">{tx("Show tools")}</span>
               {chip(
                 chosenTools === null,
                 "All",
@@ -857,15 +873,19 @@ export function ConnectionMatrix({
                 ),
               )}
             </div>
-            <div className="connection-chips" role="group" aria-label="Filter by status">
-              <span className="connection-chips-label">Show servers</span>
+            <div className="connection-chips" role="group" aria-label={tx("Filter by status")}>
+              <span className="connection-chips-label">{tx("Show servers")}</span>
               {statusFilters
                 .filter((f) => f.id !== "invalid" || counts.invalid > 0 || status === "invalid")
                 .map((f) =>
                   chip(status === f.id, f.label, counts[f.id], () => setStatus(f.id), f.tip),
                 )}
             </div>
-            <div className="connection-chips connection-density" role="group" aria-label="Density">
+            <div
+              className="connection-chips connection-density"
+              role="group"
+              aria-label={tx("Density")}
+            >
               {(["compact", "detailed"] as const).map((d) => (
                 <Tip
                   key={d}
@@ -881,7 +901,7 @@ export function ConnectionMatrix({
                     aria-pressed={density === d}
                     onClick={() => setDensity(d)}
                   >
-                    {d === "compact" ? "Compact" : "Detailed"}
+                    {d === "compact" ? tx("Compact") : tx("Detailed")}
                   </button>
                 </Tip>
               ))}
@@ -889,14 +909,17 @@ export function ConnectionMatrix({
           </div>
           {shownRows.length === 0 ? (
             <div role="status" className="connection-empty">
-              No connections match these filters.
-              <Button variant="outline" size="xs" onClick={clearFilters}>
-                Clear filters
-              </Button>
+              {renderRich(tx("No connections match these filters.{button}"), {
+                button: (
+                  <Button variant="outline" size="xs" onClick={clearFilters}>
+                    {tx("Clear filters")}
+                  </Button>
+                ),
+              })}
             </div>
           ) : (
             <TooltipProvider delay={250}>
-              <ul className="connection-legend" aria-label="Status legend">
+              <ul className="connection-legend" aria-label={tx("Status legend")}>
                 {legendShown.map((item) => (
                   <li key={item.glyph}>
                     <Tip content={item.tip}>
@@ -916,7 +939,9 @@ export function ConnectionMatrix({
                     minWidth: `${Math.max(480, nameWidth + (columns - 1) * toolWidth)}px`,
                   }}
                 >
-                  <caption className="sr-only">Configured MCP connections by AI tool</caption>
+                  <caption className="sr-only">
+                    {tx("Configured MCP connections by AI tool")}
+                  </caption>
                   <colgroup>
                     {columns > 3 ? (
                       <col style={{ width: nameWidth }} />
@@ -929,7 +954,7 @@ export function ConnectionMatrix({
                   </colgroup>
                   <thead>
                     <tr>
-                      <th scope="col">Server</th>
+                      <th scope="col">{tx("Server")}</th>
                       {columnsShown.map((column) => (
                         <th key={column.id} scope="col">
                           {column.label}
@@ -1025,17 +1050,24 @@ export function ConnectionMatrix({
           )}
           {filtered && shownRows.length > 0 ? (
             <p className="text-xs text-muted-foreground" role="status">
-              Showing {shownRows.length} of {names.length} servers.{" "}
-              <button type="button" className="underline" onClick={clearFilters}>
-                Clear filters
-              </button>
+              {renderRich(tx("Showing {length} of {length2} servers. {button}"), {
+                length: shownRows.length,
+                length2: names.length,
+                button: (
+                  <button type="button" className="underline" onClick={clearFilters}>
+                    {tx("Clear filters")}
+                  </button>
+                ),
+              })}
             </p>
           ) : null}
         </>
       )}
       {plugins.length > 0 && (
         <details className="text-sm" data-testid="connection-plugins">
-          <summary className="cursor-pointer">Plugins · {plugins.length}</summary>
+          <summary className="cursor-pointer">
+            {renderRich(tx("Plugins · {length}"), { length: plugins.length })}
+          </summary>
           <ul className="mt-2 space-y-2">
             {plugins.map((plugin) => (
               <li
@@ -1045,7 +1077,7 @@ export function ConnectionMatrix({
                 <span className="font-medium">{plugin.label}</span>
                 <span className="text-xs text-muted-foreground">
                   {toolName(plugin.provider)} · {pluginState(plugin)}
-                  {plugin.account ? " · From your ChatGPT account" : ""}
+                  {plugin.account ? tx(" · From your ChatGPT account") : ""}
                 </span>
                 {pluginButton(plugin)}
               </li>
@@ -1054,13 +1086,18 @@ export function ConnectionMatrix({
         </details>
       )}
       <details className="text-xs text-muted-foreground" data-testid="connection-about">
-        <summary className="cursor-pointer">About this list: sources and limits</summary>
+        <summary className="cursor-pointer">{tx("About this list: sources and limits")}</summary>
         <p className="mt-2">
-          {project
-            ? "Project configuration includes user declarations and project overrides."
-            : "User configurations, plugins and folder-only Claude Code entries on this machine."}{" "}
-          Enabled means the entry is turned on in its file; sign-in and session availability are not
-          checked.
+          {renderRich(
+            tx(
+              "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.",
+            ),
+            {
+              value: project
+                ? "Project configuration includes user declarations and project overrides."
+                : "User configurations, plugins and folder-only Claude Code entries on this machine.",
+            },
+          )}
         </p>
         <ul className="mt-2 space-y-1">
           {snapshot.sources.map((s) => (
@@ -1075,20 +1112,22 @@ export function ConnectionMatrix({
           ))}
         </ul>
         <p className="mt-2">
-          {project
-            ? "Only the registered project root is inspected. "
-            : "Select a project to inspect its project files and overrides. "}
-          Plugins count only when enabled. Changes go to user files only, each previewed first and
-          backed up so it can be undone. Copy location copies the file and key, never the command,
-          URL or secrets. claude.ai connectors and other account connectors live in your account
-          rather than in files, so they are not listed. Managed settings, ancestor configurations
-          and alternate client profiles are not inventoried. Matching names do not prove matching
-          servers or accounts.
+          {renderRich(
+            tx(
+              "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.",
+            ),
+            {
+              value: project
+                ? "Only the registered project root is inspected. "
+                : "Select a project to inspect its project files and overrides. ",
+            },
+          )}
         </p>
       </details>
       <p className="text-xs text-muted-foreground">
-        Scanned {new Date(snapshot.observedAt).toLocaleString()} · Tools pick up changes when they
-        next start
+        {renderRich(tx("Scanned {value} · Tools pick up changes when they next start"), {
+          value: new Date(snapshot.observedAt).toLocaleString(),
+        })}
       </p>
     </div>
   );

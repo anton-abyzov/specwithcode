@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import type {
@@ -59,6 +60,7 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
   };
 
 export function SourceControlWritingSettingsSection() {
+  const tx = useTx();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
@@ -137,7 +139,7 @@ export function SourceControlWritingSettingsSection() {
         resetAction={
           isSourceControlWritingStyleDirty ? (
             <SettingResetButton
-              label="source control writing style"
+              label={tx("source control writing style")}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -165,7 +167,7 @@ export function SourceControlWritingSettingsSection() {
             <SelectTrigger
               size="sm"
               className="w-full sm:w-56"
-              aria-label="Source control writing style"
+              aria-label={tx("Source control writing style")}
             >
               <SelectValue>
                 {(value: SourceControlWritingStyleMode | null) =>
@@ -191,8 +193,10 @@ export function SourceControlWritingSettingsSection() {
                   value={allInstructions ?? ""}
                   onChange={(event) => setAllInstructions(event.target.value)}
                   rows={4}
-                  aria-label="Custom source control instructions for all selected environments"
-                  placeholder="Write the instructions each selected environment should use."
+                  aria-label={tx(
+                    "Custom source control instructions for all selected environments",
+                  )}
+                  placeholder={tx("Write the instructions each selected environment should use.")}
                 />
                 <Button
                   size="sm"
@@ -209,7 +213,7 @@ export function SourceControlWritingSettingsSection() {
                     setEditingAllInstructions(false);
                   }}
                 >
-                  Apply instructions to all
+                  {tx("Apply instructions to all")}
                 </Button>
               </>
             ) : (
@@ -221,7 +225,7 @@ export function SourceControlWritingSettingsSection() {
                   setEditingAllInstructions(true);
                 }}
               >
-                Write custom instructions for all
+                {tx("Write custom instructions for all")}
               </Button>
             )}
           </div>
@@ -238,8 +242,8 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep titles concise. Use short bullet points in descriptions."
-              aria-label="Custom source control writing instructions"
+              placeholder={tx("Keep titles concise. Use short bullet points in descriptions.")}
+              aria-label={tx("Custom source control writing instructions")}
             />
           </div>
         ) : null}
@@ -255,7 +259,7 @@ export function SourceControlWritingSettingsSection() {
           templatesMixed ||
           style.followChangeRequestTemplates !== defaults.followChangeRequestTemplates ? (
             <SettingResetButton
-              label="change request templates"
+              label={tx("change request templates")}
               onClick={() =>
                 updateSettings({
                   sourceControlWritingStyle: {
@@ -277,7 +281,7 @@ export function SourceControlWritingSettingsSection() {
                 },
               })
             }
-            aria-label="Follow change request templates"
+            aria-label={tx("Follow change request templates")}
           />
         }
       />
@@ -290,13 +294,13 @@ export function SourceControlWritingSettingsSection() {
         control={
           !hasServerTargets ? (
             <span className="text-sm text-muted-foreground">
-              Connect an environment to choose its source control writer model.
+              {tx("Connect an environment to choose its source control writer model.")}
             </span>
           ) : (
             <div className="flex flex-wrap items-center justify-end gap-2">
               {usesDedicatedModel && !canEnableDedicatedModel ? (
                 <span className="text-sm text-muted-foreground">
-                  No text generation providers available.
+                  {tx("No text generation providers available.")}
                 </span>
               ) : null}
               {usesDedicatedModel && canEnableDedicatedModel ? (
@@ -350,7 +354,7 @@ export function SourceControlWritingSettingsSection() {
                       : null,
                   })
                 }
-                aria-label="Use a separate source control writer model"
+                aria-label={tx("Use a separate source control writer model")}
               />
             </div>
           )

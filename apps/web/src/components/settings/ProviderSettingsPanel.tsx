@@ -1,3 +1,4 @@
+import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SettingsGroup } from "./SettingsGroup";
@@ -166,6 +167,7 @@ function configuredBinaryPath(config: unknown): string {
 }
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
+  const tx = useTx();
   useRelativeTimeTick();
   const lastCheckedRelative = getRelativeTimeState(lastCheckedAt);
 
@@ -174,18 +176,19 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   }
 
   if (lastCheckedRelative.status === "invalid") {
-    return <span>Checked unavailable</span>;
+    return <span>{tx("Checked unavailable")}</span>;
   }
 
   return (
     <span>
       {lastCheckedRelative.suffix ? (
         <>
-          Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
+          {tx("Checked")}{" "}
+          <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
           {lastCheckedRelative.suffix}
         </>
       ) : (
-        <>Checked {lastCheckedRelative.value}</>
+        <>{renderRich(tx("Checked {value}"), { value: lastCheckedRelative.value })}</>
       )}
     </span>
   );
@@ -213,6 +216,7 @@ export function ProviderReadinessSummary({
   readonly enabled: boolean;
   readonly environmentLabel: string;
 }) {
+  const tx = useTx();
   const auth = provider?.auth.status;
   const nextStep = !enabled
     ? "Enable this agent below to use it in chat."
@@ -255,8 +259,15 @@ export function ProviderReadinessSummary({
     ["Models", provider?.models.length ? `${provider.models.length} reported` : "None reported"],
   ] as const;
   return (
-    <section aria-label="Agent readiness" className="space-y-3 border-b border-border/70 pb-4">
-      <p className="text-xs text-muted-foreground">Agent runs on {environmentLabel}.</p>
+    <section
+      aria-label={tx("Agent readiness")}
+      className="space-y-3 border-b border-border/70 pb-4"
+    >
+      <p className="text-xs text-muted-foreground">
+        {renderRich(tx("Agent runs on {environmentLabel}."), {
+          environmentLabel: environmentLabel,
+        })}
+      </p>
       <dl className="grid grid-cols-3 gap-3">
         {stages.map(([label, value]) => (
           <div key={label} className="min-w-0">
@@ -379,6 +390,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
 }
 
 function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
+  const tx = useTx();
   const { environments, isReady } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
@@ -457,7 +469,7 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     !target.scoped && !onlyPrimaryDevice && options.length > 0 ? (
       <ScrollArea radius="none" hideScrollbars scrollFade className="h-11 min-w-0 flex-1">
         <ToggleGroup
-          aria-label="Devices"
+          aria-label={tx("Devices")}
           variant="segmented"
           className="my-2"
           value={effectiveEnvironmentId ? [effectiveEnvironmentId] : []}
@@ -512,18 +524,20 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
         <ProviderSettingsPlaceholder
           deviceTabs={deviceTabs}
           icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
-          title="Device unavailable"
-          description="Reconnect this device to set up its provider, or select another device."
+          title={tx("Device unavailable")}
+          description={tx(
+            "Reconnect this device to set up its provider, or select another device.",
+          )}
         />
       ) : null}
       {options.length === 0 && !targetEnvironmentMissing ? (
         <ProviderSettingsPlaceholder
           icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
-          title={isReady ? "No connected devices" : "Loading devices"}
+          title={isReady ? tx("No connected devices") : tx("Loading devices")}
           description={
             isReady
-              ? "Connect an execution environment before configuring providers."
-              : "Reading connected execution environments."
+              ? tx("Connect an execution environment before configuring providers.")
+              : tx("Reading connected execution environments.")
           }
         />
       ) : null}
@@ -644,6 +658,7 @@ export function EnvironmentProviderSettings({
    */
   readonly readOnly?: boolean;
 }) {
+  const tx = useTx();
   const settings = useEnvironmentSettings(environmentId);
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
@@ -1300,10 +1315,10 @@ export function EnvironmentProviderSettings({
                     onClick={() => void refreshProviders()}
                   >
                     <RefreshIcon refreshing={isRefreshingProviders} />
-                    <span className="sr-only">Refresh provider status</span>
+                    <span className="sr-only">{tx("Refresh provider status")}</span>
                     <span className="hidden min-w-0 truncate sm:inline">
                       {isRefreshingProviders ? (
-                        "Refreshing providers"
+                        tx("Refreshing providers")
                       ) : (
                         <ProviderLastChecked lastCheckedAt={lastCheckedAt} />
                       )}
@@ -1311,7 +1326,7 @@ export function EnvironmentProviderSettings({
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
+              <TooltipPopup side="top">{tx("Refresh provider status")}</TooltipPopup>
             </Tooltip>
             {!readOnly ? (
               <Tooltip>
@@ -1321,14 +1336,14 @@ export function EnvironmentProviderSettings({
                       size="xs"
                       variant="outline"
                       onClick={() => setIsAddInstanceDialogOpen(true)}
-                      aria-label="Add provider"
+                      aria-label={tx("Add provider")}
                     >
                       <PlusIcon />
-                      Add provider
+                      {tx("Add provider")}
                     </Button>
                   }
                 />
-                <TooltipPopup side="top">Add provider</TooltipPopup>
+                <TooltipPopup side="top">{tx("Add provider")}</TooltipPopup>
               </Tooltip>
             ) : null}
           </div>
@@ -1338,8 +1353,12 @@ export function EnvironmentProviderSettings({
           <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">{deviceTabs}</div>
         ) : null}
         <p className="px-3 pb-3 text-xs leading-relaxed text-muted-foreground sm:px-4">
-          Configure agents on {environmentLabel}. Add Copilot, Grok, Gemini or another agent,
-          complete setup, then choose its models in chat.
+          {renderRich(
+            tx(
+              "Configure agents on {environmentLabel}. Add Copilot, Grok, Gemini or another agent, complete setup, then choose its models in chat.",
+            ),
+            { environmentLabel: environmentLabel },
+          )}
         </p>
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
@@ -1385,8 +1404,8 @@ export function EnvironmentProviderSettings({
             ) : (
               <div className="p-6 text-sm text-muted-foreground">
                 {targetInstanceMissing
-                  ? "This provider instance is no longer available on this device."
-                  : "No providers configured."}
+                  ? tx("This provider instance is no longer available on this device.")
+                  : tx("No providers configured.")}
               </div>
             )}
           </div>
@@ -1429,16 +1448,16 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
       />
 
-      <SettingsSection title="Advanced" reach={{ kind: "machine", name: environmentLabel }}>
+      <SettingsSection title={tx("Advanced")} reach={{ kind: "machine", name: environmentLabel }}>
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={
             <span className="inline-flex items-center gap-1.5">
               {searchableSetting("provider-health-check-interval").title}
               <PolicyTooltip>
-                This interval is configured here, then the shared Background activity policy decides
-                whether provider probes may run when the timer fires. Custom intervals appear as
-                Advanced in General settings.
+                {tx(
+                  "This interval is configured here, then the shared Background activity policy decides whether provider probes may run when the timer fires. Custom intervals appear as Advanced in General settings.",
+                )}
               </PolicyTooltip>
             </span>
           }
@@ -1450,7 +1469,7 @@ export function EnvironmentProviderSettings({
                 className={!canWriteSettings ? "opacity-50" : undefined}
               >
                 <SettingResetButton
-                  label="provider health check interval"
+                  label={tx("provider health check interval")}
                   onClick={() =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
@@ -1494,12 +1513,16 @@ export function EnvironmentProviderSettings({
                 }
               >
                 <NumberFieldGroup>
-                  <NumberFieldDecrement aria-label="Decrease provider health check interval" />
-                  <NumberFieldInput aria-label="Provider health check interval in seconds" />
-                  <NumberFieldIncrement aria-label="Increase provider health check interval" />
+                  <NumberFieldDecrement
+                    aria-label={tx("Decrease provider health check interval")}
+                  />
+                  <NumberFieldInput aria-label={tx("Provider health check interval in seconds")} />
+                  <NumberFieldIncrement
+                    aria-label={tx("Increase provider health check interval")}
+                  />
                 </NumberFieldGroup>
               </NumberField>
-              <span className="text-xs text-muted-foreground">seconds</span>
+              <span className="text-xs text-muted-foreground">{tx("seconds")}</span>
             </div>
           }
         />

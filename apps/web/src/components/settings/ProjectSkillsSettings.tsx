@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   EnvironmentId,
   ThreadId,
@@ -69,6 +71,7 @@ import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
  * machine, switchable without touching any other agent.
  */
 export function ProjectSkillsSettings() {
+  const tx = useTx();
   const { search: value, scope } = useSettingsScope();
   const groups = useSettingsProjectGroups();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -117,7 +120,7 @@ export function ProjectSkillsSettings() {
           </SettingsPageContainer>
         ) : (
           <SettingsScopeNotice target="project">
-            Choose a project to see which skills each agent loads in its folder.
+            {tx("Choose a project to see which skills each agent loads in its folder.")}
           </SettingsScopeNotice>
         )}
       </div>
@@ -135,7 +138,9 @@ export function ProjectSkillsSettings() {
             memberProjects={group?.memberProjects ?? []}
           />
         ) : (
-          <p className="text-sm text-muted-foreground">This project is no longer available.</p>
+          <p className="text-sm text-muted-foreground">
+            {tx("This project is no longer available.")}
+          </p>
         )}
       </SettingsPageContainer>
     </div>
@@ -289,6 +294,7 @@ function StatusBadge({ row }: { row: ProjectSkillRow }) {
  * `version:` leaves the lock ahead of the file.
  */
 function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | null }) {
+  const tx = useTx();
   const versions = projectSkillVersions(row);
   const pinned = row.lock?.pinnedVersion ?? null;
   const files = versions.files.map((file) => file.version);
@@ -307,14 +313,16 @@ function VersionCell({ row, update }: { row: ProjectSkillRow; update?: string | 
         {lockOnly ? versions.lock : files.join(" / ") || versions.lock}
       </span>
       {versions.lockOutOfDate ? (
-        <div className="text-xs text-warning-foreground">lock says {versions.lock}</div>
+        <div className="text-xs text-warning-foreground">
+          {renderRich(tx("lock says {lock}"), { lock: versions.lock })}
+        </div>
       ) : null}
       {pinned || update ? (
         <span className="mt-0.5 flex flex-wrap gap-1">
           {pinned ? (
             <Badge size="sm" variant="outline" data-testid="version-pinned">
               <PinIcon aria-hidden />
-              pinned
+              {tx("pinned")}
             </Badge>
           ) : null}
           {update ? (
@@ -339,6 +347,7 @@ function SkillRow({
   update: string | null;
   onOpen: (name: string, focus?: SkillSheetFocus) => void;
 }) {
+  const tx = useTx();
   const issue = row.issues[0];
   return (
     <TableRow
@@ -369,7 +378,7 @@ function SkillRow({
       </TableCell>
       <TableCell>
         {row.providers.length === 0 ? (
-          <span className="text-muted-foreground">None</span>
+          <span className="text-muted-foreground">{tx("None")}</span>
         ) : (
           <div className="flex flex-wrap gap-1">
             {projectSkillProviderBadges(row).map((badge) => (
@@ -382,7 +391,7 @@ function SkillRow({
                   />
                   {badge.enabled ? badge.label : `${badge.label} (off)`}
                   {badge.enabled && badge.agentOnly ? (
-                    <span className="text-muted-foreground">agent only</span>
+                    <span className="text-muted-foreground">{tx("agent only")}</span>
                   ) : null}
                 </Badge>
               </Hinted>
@@ -432,6 +441,7 @@ const DRIFT_LABELS: Readonly<Record<ProjectSkillRow["drift"], string>> = {
 
 /** Everything known about one skill: where each agent loads it from, its lock and its problems. */
 function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: ProviderEntries }) {
+  const tx = useTx();
   const problems = [...new Set([...row.issues, ...row.doctor])];
   return (
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6 text-sm">
@@ -445,13 +455,15 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
         ))}
       </div>
       {row.aliases?.length ? (
-        <p className="text-muted-foreground">Also listed as {row.aliases.join(", ")}.</p>
+        <p className="text-muted-foreground">
+          {renderRich(tx("Also listed as {value}."), { value: row.aliases.join(", ") })}
+        </p>
       ) : null}
       <ProjectSkillLinkButtons row={row} />
       <ProjectSkillVersionSection />
       {problems.length > 0 ? (
-        <section aria-label="Problems" className="space-y-1">
-          <h3 className="font-medium text-foreground">Needs attention</h3>
+        <section aria-label={tx("Problems")} className="space-y-1">
+          <h3 className="font-medium text-foreground">{tx("Needs attention")}</h3>
           <ul className="list-disc space-y-1 ps-5 text-muted-foreground">
             {problems.map((problem) => (
               <li key={problem}>{problem}</li>
@@ -459,10 +471,10 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
           </ul>
         </section>
       ) : null}
-      <section aria-label="Loaded by" className="space-y-1">
-        <h3 className="font-medium text-foreground">Loaded by</h3>
+      <section aria-label={tx("Loaded by")} className="space-y-1">
+        <h3 className="font-medium text-foreground">{tx("Loaded by")}</h3>
         {row.providers.length === 0 ? (
-          <p className="text-muted-foreground">No agent loads this skill in this folder.</p>
+          <p className="text-muted-foreground">{tx("No agent loads this skill in this folder.")}</p>
         ) : (
           <ul className="space-y-2">
             {row.providers.map((presence) => (
@@ -475,21 +487,23 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
                   </Badge>
                   {(presence.pluginVersion ?? presence.fileVersion) ? (
                     <Badge size="sm" variant="outline">
-                      {presence.pluginVersion ? "plugin " : ""}
+                      {presence.pluginVersion ? tx("plugin ") : ""}
                       {presence.pluginVersion ?? presence.fileVersion}
                     </Badge>
                   ) : null}
                   {presence.name ? (
-                    <span className="text-muted-foreground">as {presence.name}</span>
+                    <span className="text-muted-foreground">
+                      {renderRich(tx("as {name}"), { name: presence.name })}
+                    </span>
                   ) : null}
                   {presence.enabled ? null : (
                     <Badge size="sm" variant="secondary">
-                      off
+                      {tx("off")}
                     </Badge>
                   )}
                   {presence.userInvocable === false ? (
                     <Badge size="sm" variant="secondary">
-                      agent only
+                      {tx("agent only")}
                     </Badge>
                   ) : null}
                   <ProjectSkillAgentToggle presence={presence} />
@@ -504,13 +518,15 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
         )}
         {row.copies > 1 ? (
           <p className="text-xs text-muted-foreground">
-            {row.copies} separate copies on disk
-            {row.divergent ? ", and their contents differ." : ", all identical."}
+            {renderRich(tx("{copies} separate copies on disk{value}"), {
+              copies: row.copies,
+              value: row.divergent ? tx(", and their contents differ.") : tx(", all identical."),
+            })}
           </p>
         ) : null}
       </section>
-      <section aria-label="Install" className="space-y-1">
-        <h3 className="font-medium text-foreground">Install</h3>
+      <section aria-label={tx("Install")} className="space-y-1">
+        <h3 className="font-medium text-foreground">{tx("Install")}</h3>
         <dl>
           {/* The link buttons and the Version section above cover links, version and pin. */}
           <DetailItem term="Source">{row.lock?.source ?? "—"}</DetailItem>
@@ -581,23 +597,27 @@ function FacetGroup({
 }
 
 function SkillsFootnotes({ snapshot }: { snapshot: ProjectSkillsSnapshot }) {
+  const tx = useTx();
   const notes = snapshot.providers.filter((provider) => provider.state !== "ok");
   return (
     <div className="space-y-1 px-3 pb-3 text-xs text-muted-foreground sm:px-4">
       <p>
-        Agents:{" "}
-        {snapshot.providers.map((provider) => `${provider.label} ${provider.skills}`).join(" · ") ||
-          "none enabled"}
-        . Lockfiles:{" "}
-        {snapshot.locks.length === 0
-          ? "none found"
-          : snapshot.locks.map((lock) => `${lock.path} (${lock.scope})`).join(", ")}
-        .{" "}
-        {snapshot.doctor === "ok"
-          ? "Includes vskill doctor findings."
-          : snapshot.doctor === "failed"
-            ? "vskill doctor did not answer; its findings are left out."
-            : "vskill doctor is not available here, so its findings are left out."}
+        {renderRich(tx("Agents: {value}. Lockfiles: {value2}. {value3}"), {
+          value:
+            snapshot.providers
+              .map((provider) => `${provider.label} ${provider.skills}`)
+              .join(" · ") || "none enabled",
+          value2:
+            snapshot.locks.length === 0
+              ? "none found"
+              : snapshot.locks.map((lock) => `${lock.path} (${lock.scope})`).join(", "),
+          value3:
+            snapshot.doctor === "ok"
+              ? "Includes vskill doctor findings."
+              : snapshot.doctor === "failed"
+                ? "vskill doctor did not answer; its findings are left out."
+                : "vskill doctor is not available here, so its findings are left out.",
+        })}
       </p>
       {notes.map((provider) => (
         <p key={provider.instanceId}>
@@ -643,6 +663,7 @@ function ScopedProjectSkillsView({
   /** The machine-wide view: user-level skills of every agent, read from the home folder. */
   userLevel?: boolean;
 }) {
+  const tx = useTx();
   const linked = useSearch({ strict: false }) as {
     readonly skill?: unknown;
     readonly agent?: string;
@@ -777,26 +798,31 @@ function ScopedProjectSkillsView({
           }}
         >
           {query.isPending ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
-          Rescan
+          {tx("Rescan")}
         </Button>
       }
     >
       <div className="space-y-3 px-3 pt-3 sm:px-4">
         {userLevel ? (
           <p className="text-xs text-muted-foreground" data-testid="skills-user-level">
-            Every skill each agent loads for you on this machine, in every project. Turning one off
-            changes only that agent&apos;s own settings, so other agents keep it and nothing is
-            deleted. Pick a project to see its project skills too. Click a skill for details.
+            {tx(
+              "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.",
+            )}
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Which skills each agent loads in{" "}
-            <span className="break-all font-mono text-foreground/80">
-              {snapshot?.cwd ?? folder}
-            </span>
-            , and whether each still matches the version vskill installed. Filter by agent or by
-            level: project skills live in this folder, user skills apply to every project. Click a
-            skill for details.
+            {renderRich(
+              tx(
+                "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.",
+              ),
+              {
+                span: (
+                  <span className="break-all font-mono text-foreground/80">
+                    {snapshot?.cwd ?? folder}
+                  </span>
+                ),
+              },
+            )}
           </p>
         )}
         {linkedMissing ? (
@@ -806,8 +832,9 @@ function ScopedProjectSkillsView({
             data-testid="skills-linked-missing"
           >
             <span>
-              <span className="font-medium text-foreground">{linkedName}</span> is not loaded in
-              this project.
+              {renderRich(tx("{span} is not loaded in this project."), {
+                span: <span className="font-medium text-foreground">{linkedName}</span>,
+              })}
             </span>
             <Button
               size="micro"
@@ -818,7 +845,7 @@ function ScopedProjectSkillsView({
                 setOpenSkill(null);
               }}
             >
-              Dismiss
+              {tx("Dismiss")}
             </Button>
           </p>
         ) : null}
@@ -826,7 +853,10 @@ function ScopedProjectSkillsView({
           <p className="text-sm text-foreground" role="status" data-testid="skills-summary">
             {summarizeProjectSkills(snapshot.rows)}
             {filtered ? (
-              <span className="text-muted-foreground"> · showing {rows.length}</span>
+              <span className="text-muted-foreground">
+                {" "}
+                {renderRich(tx("· showing {length}"), { length: rows.length })}
+              </span>
             ) : null}
           </p>
         ) : null}
@@ -837,27 +867,31 @@ function ScopedProjectSkillsView({
               size="sm"
               type="search"
               className="w-full"
-              aria-label="Search skills"
-              placeholder="Search skills, agents, sources"
+              aria-label={tx("Search skills")}
+              placeholder={tx("Search skills, agents, sources")}
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
               style={{ paddingLeft: "1.75rem" }}
             />
           </div>
           <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-foreground">
-            <Switch
-              size="sm"
-              checked={problemsOnly}
-              onCheckedChange={(checked) => setProblemsOnly(checked)}
-              aria-label="Only problems"
-            />
-            Only problems{attention > 0 ? ` (${attention})` : ""}
+            {renderRich(tx("{switch}Only problems{value}"), {
+              switch: (
+                <Switch
+                  size="sm"
+                  checked={problemsOnly}
+                  onCheckedChange={(checked) => setProblemsOnly(checked)}
+                  aria-label={tx("Only problems")}
+                />
+              ),
+              value: attention > 0 ? ` (${attention})` : "",
+            })}
           </label>
         </div>
         {snapshot && snapshot.rows.length > 0 ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="skills-filters">
             <FacetGroup
-              label="Agent"
+              label={tx("Agent")}
               options={facets.providers}
               value={providers}
               onChange={setProviders}
@@ -868,8 +902,18 @@ function ScopedProjectSkillsView({
                 ) : null;
               }}
             />
-            <FacetGroup label="Level" options={facets.levels} value={levels} onChange={setLevels} />
-            <FacetGroup label="Tier" options={facets.tiers} value={tiers} onChange={setTiers} />
+            <FacetGroup
+              label={tx("Level")}
+              options={facets.levels}
+              value={levels}
+              onChange={setLevels}
+            />
+            <FacetGroup
+              label={tx("Tier")}
+              options={facets.tiers}
+              value={tiers}
+              onChange={setTiers}
+            />
             {filtered ? (
               <Button
                 size="xs"
@@ -884,7 +928,7 @@ function ScopedProjectSkillsView({
                 }}
               >
                 <XIcon />
-                Clear filters
+                {tx("Clear filters")}
               </Button>
             ) : null}
           </div>
@@ -902,32 +946,34 @@ function ScopedProjectSkillsView({
           className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground sm:px-4"
         >
           <Spinner className="size-3.5" />
-          Scanning skill folders and lockfiles…
+          {tx("Scanning skill folders and lockfiles…")}
         </p>
       ) : snapshot.rows.length === 0 ? (
         <p className="px-3 py-4 text-sm text-muted-foreground sm:px-4">
-          No agent loads any skill in this folder, and no vskill lockfile lists one.
+          {tx("No agent loads any skill in this folder, and no vskill lockfile lists one.")}
         </p>
       ) : (
         <>
           {query.error ? (
             <p role="alert" className="px-3 text-xs text-destructive-foreground sm:px-4">
-              The last rescan failed ({query.error}); showing the previous result.
+              {renderRich(tx("The last rescan failed ({error}); showing the previous result."), {
+                error: query.error,
+              })}
             </p>
           ) : null}
           <div className="px-1 sm:px-2" data-testid="skills-table">
-            <Table className="min-w-[44rem]" aria-label="Project skills">
+            <Table className="min-w-[44rem]" aria-label={tx("Project skills")}>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Skill</TableHead>
-                  <TableHead>Providers</TableHead>
-                  <TableHead>Scope</TableHead>
-                  <TableHead>Version</TableHead>
-                  <TableHead>Tier</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead>{tx("Skill")}</TableHead>
+                  <TableHead>{tx("Providers")}</TableHead>
+                  <TableHead>{tx("Scope")}</TableHead>
+                  <TableHead>{tx("Version")}</TableHead>
+                  <TableHead>{tx("Tier")}</TableHead>
+                  <TableHead>{tx("Source")}</TableHead>
+                  <TableHead>{tx("Status")}</TableHead>
                   <TableHead>
-                    <span className="sr-only">Actions</span>
+                    <span className="sr-only">{tx("Actions")}</span>
                   </TableHead>
                 </TableRow>
               </TableHeader>
@@ -937,8 +983,8 @@ function ScopedProjectSkillsView({
                     <TableCell colSpan={8}>
                       <p className="py-2 text-center text-muted-foreground">
                         {problemsOnly && !search.trim() && !chipsActive
-                          ? "Nothing needs attention."
-                          : "No skills match these filters."}
+                          ? tx("Nothing needs attention.")
+                          : tx("No skills match these filters.")}
                       </p>
                     </TableCell>
                   </TableRow>

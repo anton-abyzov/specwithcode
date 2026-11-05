@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import * as Option from "effect/Option";
 import type { SshDeviceHostConfig } from "@specweave-studio/contracts";
@@ -37,6 +39,7 @@ export function DeviceHostEditor({
   onSave: (host: SshDeviceHostConfig) => void;
   onClose: () => void;
 }) {
+  const tx = useTx();
   const [draft, setDraft] = useState(host);
   const { checks, testConnection } = useHostConnectionChecks(targets);
   const results = checks[deviceHostConnectionKey(draft)];
@@ -64,44 +67,46 @@ export function DeviceHostEditor({
         }
       >
         <DialogHeader>
-          <DialogTitle>{isNew ? "Add device host" : "Edit device host"}</DialogTitle>
+          <DialogTitle>{isNew ? tx("Add device host") : tx("Edit device host")}</DialogTitle>
           <DialogDescription>
-            {targets.length === 1
-              ? `Connect from ${targets[0]?.label}.`
-              : `Connect from ${targets.length} selected environments.`}{" "}
-            Hosts on the same machine are skipped.
+            {renderRich(tx("{value} Hosts on the same machine are skipped."), {
+              value:
+                targets.length === 1
+                  ? `Connect from ${targets[0]?.label}.`
+                  : `Connect from ${targets.length} selected environments.`,
+            })}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <label className="block space-y-1.5 text-sm">
-            <span>Name</span>
+            <span>{tx("Name")}</span>
             <Input
               autoFocus
               required
               value={draft.label}
               disabled={busy}
               onChange={(event) => setDraft({ ...draft, label: event.target.value })}
-              placeholder="Mac mini"
+              placeholder={tx("Mac mini")}
             />
           </label>
           <label className="block space-y-1.5 text-sm">
-            <span>SSH target</span>
+            <span>{tx("SSH target")}</span>
             <Input
               required
               value={draft.target}
               disabled={busy}
               onChange={(event) => setDraft({ ...draft, target: event.target.value })}
-              placeholder="user@host or SSH alias"
+              placeholder={tx("user@host or SSH alias")}
             />
           </label>
           <details
             open={host.port !== undefined || host.identityFile !== undefined || undefined}
             className="text-sm"
           >
-            <summary className="cursor-pointer text-muted-foreground">SSH options</summary>
+            <summary className="cursor-pointer text-muted-foreground">{tx("SSH options")}</summary>
             <div className="mt-3 grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
               <label className="block space-y-1.5">
-                <span>Identity file</span>
+                <span>{tx("Identity file")}</span>
                 <Input
                   value={draft.identityFile ?? ""}
                   disabled={busy}
@@ -111,11 +116,11 @@ export function DeviceHostEditor({
                       event.target.value ? { ...rest, identityFile: event.target.value } : rest,
                     );
                   }}
-                  placeholder="SSH config default"
+                  placeholder={tx("SSH config default")}
                 />
               </label>
               <label className="block space-y-1.5">
-                <span>Port</span>
+                <span>{tx("Port")}</span>
                 <Input
                   type="number"
                   min={1}
@@ -128,24 +133,24 @@ export function DeviceHostEditor({
                       event.target.value ? { ...rest, port: Number(event.target.value) } : rest,
                     );
                   }}
-                  placeholder="Default"
+                  placeholder={tx("Default")}
                 />
               </label>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Optional. Resolved separately on each environment.
+              {tx("Optional. Resolved separately on each environment.")}
             </p>
           </details>
           <div className="rounded-lg border border-border/60">
             <div className="flex items-center justify-between gap-3 px-3 py-2.5">
               <p role="status" className="text-xs text-muted-foreground">
                 {checking
-                  ? "Checking environments…"
+                  ? tx("Checking environments…")
                   : results
                     ? failed
                       ? `${failed} of ${targets.length} failed`
-                      : "Connection checks passed"
-                    : "Check access before saving"}
+                      : tx("Connection checks passed")
+                    : tx("Check access before saving")}
               </p>
               <Button
                 type="button"
@@ -156,7 +161,7 @@ export function DeviceHostEditor({
                   if (Option.isSome(input)) void testConnection(input.value);
                 }}
               >
-                {checking ? <Spinner size="xs" /> : null} Test connection
+                {checking ? <Spinner size="xs" /> : null} {tx("Test connection")}
               </Button>
             </div>
             {results ? (
@@ -173,19 +178,19 @@ export function DeviceHostEditor({
                         >
                           {result.status === "pending" ? (
                             <>
-                              <Spinner size="xs" /> Checking…
+                              <Spinner size="xs" /> {tx("Checking…")}
                             </>
                           ) : result.status === "local" ? (
                             <>
-                              <MonitorIcon className="size-3" /> Already available locally
+                              <MonitorIcon className="size-3" /> {tx("Already available locally")}
                             </>
                           ) : result.status === "failed" ? (
                             <>
-                              <XIcon className="size-3" /> Failed
+                              <XIcon className="size-3" /> {tx("Failed")}
                             </>
                           ) : (
                             <>
-                              <CheckIcon className="size-3" /> Connected
+                              <CheckIcon className="size-3" /> {tx("Connected")}
                             </>
                           )}
                         </span>
@@ -197,7 +202,7 @@ export function DeviceHostEditor({
                       ) : null}
                       {result.status === "failed" ? (
                         <details className="mt-1.5 text-muted-foreground">
-                          <summary className="cursor-pointer">Show error</summary>
+                          <summary className="cursor-pointer">{tx("Show error")}</summary>
                           <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words">
                             {result.error}
                           </p>
@@ -212,10 +217,10 @@ export function DeviceHostEditor({
         </DialogPanel>
         <DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
-            Cancel
+            {tx("Cancel")}
           </Button>
           <Button type="submit" disabled={busy || checking || !valid || !draft.label.trim()}>
-            {busy ? <Spinner size="xs" /> : null} Save host
+            {busy ? <Spinner size="xs" /> : null} {tx("Save host")}
           </Button>
         </DialogFooter>
       </DialogPopup>

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 /** The Skills table's per-row menu and the sheet's link buttons. */
 import type { ProjectSkillRow } from "@specweave-studio/contracts";
 import {
@@ -37,6 +38,7 @@ export function ProjectSkillRowMenu({
   row: ProjectSkillRow;
   onOpen: (name: string, focus: SkillSheetFocus) => void;
 }) {
+  const tx = useTx();
   const links = projectSkillLinks(row);
   const { copyToClipboard } = useCopyToClipboard({ timeout: 1500, target: "path" });
   const versioned = links.skillId !== null;
@@ -61,26 +63,26 @@ export function ProjectSkillRowMenu({
           onClick={() => links.sourceUrl && void openSkillLink(links.sourceUrl)}
         >
           <FileCodeIcon />
-          Open source
+          {tx("Open source")}
         </MenuItem>
         <MenuItem
           disabled={!links.registryUrl}
           onClick={() => links.registryUrl && void openSkillLink(links.registryUrl)}
         >
           <BadgeCheckIcon />
-          Open on verified-skill.com
+          {tx("Open on verified-skill.com")}
         </MenuItem>
         <MenuSeparator />
         <MenuItem disabled={!versioned} onClick={() => onOpen(row.name, "version")}>
           <TagIcon />
-          Change version…
+          {tx("Change version…")}
         </MenuItem>
         <MenuItem
           disabled={!versioned || !row.lock?.version}
           onClick={() => onOpen(row.name, "push")}
         >
           <SendIcon />
-          Push to machines…
+          {tx("Push to machines…")}
         </MenuItem>
         <MenuItem
           variant="destructive"
@@ -88,7 +90,7 @@ export function ProjectSkillRowMenu({
           onClick={() => onOpen(row.name, "version")}
         >
           <Trash2Icon />
-          Remove…
+          {tx("Remove…")}
         </MenuItem>
         <MenuSeparator />
         <MenuItem
@@ -96,7 +98,7 @@ export function ProjectSkillRowMenu({
           onClick={() => row.path && copyToClipboard(row.path, undefined)}
         >
           <CopyIcon />
-          Copy path
+          {tx("Copy path")}
         </MenuItem>
       </MenuPopup>
     </Menu>

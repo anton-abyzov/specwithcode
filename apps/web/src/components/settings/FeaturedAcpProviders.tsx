@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   ProviderDriverKind,
   type AcpRegistrySearchAgent,
@@ -85,6 +86,7 @@ export function FeaturedAcpProviderCards({
   readonly grok: CatalogQuery;
   readonly gemini: CatalogQuery;
 }) {
+  const tx = useTx();
   const allProviders: ReadonlyArray<FeaturedProvider> = [
     {
       id: "github-copilot-cli",
@@ -109,7 +111,7 @@ export function FeaturedAcpProviderCards({
     ? allProviders
     : allProviders.filter((provider) => provider.id !== "grok-build");
   return (
-    <section className="grid gap-2" aria-label="Featured ACP providers">
+    <section className="grid gap-2" aria-label={tx("Featured ACP providers")}>
       <div
         className={cn(
           "grid grid-cols-1 gap-2",
@@ -156,19 +158,21 @@ export function FeaturedAcpProviderCards({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="min-w-0 text-xs text-muted-foreground" role="status">
                   {added
-                    ? "Added · check setup"
+                    ? tx("Added · check setup")
                     : catalog.isPending
-                      ? "Checking registry…"
+                      ? tx("Checking registry…")
                       : catalog.error
-                        ? "Registry unavailable"
+                        ? tx("Registry unavailable")
                         : !agent
-                          ? "Unavailable on this environment"
+                          ? tx("Unavailable on this environment")
                           : `v${agent.version} · ${agent.distribution}`}
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   {addsAccount && agent ? (
                     <Button
-                      aria-label={preparing ? `Preparing ${label}` : "Add another GitHub account"}
+                      aria-label={
+                        preparing ? `Preparing ${label}` : tx("Add another GitHub account")
+                      }
                       disabled={blocked}
                       onClick={() => {
                         if (!blocked) onPrepare(agent);
@@ -176,7 +180,7 @@ export function FeaturedAcpProviderCards({
                       size="xs"
                       variant="outline"
                     >
-                      {preparing ? "Preparing…" : "Add another GitHub account"}
+                      {preparing ? tx("Preparing…") : tx("Add another GitHub account")}
                     </Button>
                   ) : null}
                   {added && onManage && configuredId ? (
@@ -189,7 +193,7 @@ export function FeaturedAcpProviderCards({
                       size="xs"
                       variant="outline"
                     >
-                      Manage
+                      {tx("Manage")}
                     </Button>
                   ) : unavailable && !added ? (
                     <Button
@@ -199,7 +203,7 @@ export function FeaturedAcpProviderCards({
                       size="xs"
                       variant="ghost-muted"
                     >
-                      Retry
+                      {tx("Retry")}
                     </Button>
                   ) : addsAccount ? null : (
                     <Button
@@ -211,7 +215,7 @@ export function FeaturedAcpProviderCards({
                       size="xs"
                       variant="outline"
                     >
-                      {added ? "Added" : preparing ? "Preparing…" : "Add"}
+                      {added ? tx("Added") : preparing ? tx("Preparing…") : tx("Add")}
                     </Button>
                   )}
                 </div>
@@ -221,9 +225,9 @@ export function FeaturedAcpProviderCards({
         })}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in
-        the project folder; projects with additional approved folders currently require Codex,
-        Claude or Muse Code.
+        {tx(
+          "Add an agent, complete its sign-in, then choose its models in chat. Registry agents work in the project folder; projects with additional approved folders currently require Codex, Claude or Muse Code.",
+        )}
       </p>
     </section>
   );

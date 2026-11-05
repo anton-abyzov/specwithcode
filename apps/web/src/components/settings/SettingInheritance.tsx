@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   DEFAULT_SERVER_SETTINGS,
   PROJECT_FILE_BACKED_SETTINGS,
@@ -197,6 +199,7 @@ export function SettingInheritance({
   overridingProjects?: readonly SettingOverridingProject[];
   onClearOverrides?: (entries: readonly ProjectOverrideEntry[]) => void;
 }) {
+  const tx = useTx();
   const key = keys[0];
   if (!key || targets.length === 0) return null;
   const overrideSummary =
@@ -269,7 +272,7 @@ export function SettingInheritance({
                         layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      {layer.key === "environment" ? "Environment" : layer.label}
+                      {layer.key === "environment" ? tx("Environment") : layer.label}
                     </span>
                     <span
                       className={cn(
@@ -300,10 +303,10 @@ export function SettingInheritance({
                 return (
                   <div className="mt-2 border-t border-border/60 pt-2">
                     <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
-                      <span>Overridden by</span>
+                      <span>{tx("Overridden by")}</span>
                       {onClearOverrides ? (
                         <InlineButton onClick={() => onClearOverrides(overriding)}>
-                          Reset {overriding.length === 1 ? "it" : "all"}
+                          {tx(overriding.length === 1 ? "Reset it" : "Reset all")}
                         </InlineButton>
                       ) : null}
                     </div>

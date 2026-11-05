@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { ChevronRightIcon, FolderCodeIcon, MessageSquareIcon, SearchIcon } from "lucide-react";
@@ -99,6 +101,7 @@ function FolderPath({ folder, fallback }: { folder: SheetFolder; fallback?: stri
 }
 
 function ProjectRow({ project, onNavigate }: { project: SheetProject; onNavigate: () => void }) {
+  const tx = useTx();
   const [expanded, setExpanded] = useState(false);
   const first = project.folders[0]!;
   const name = (
@@ -106,12 +109,12 @@ function ProjectRow({ project, onNavigate }: { project: SheetProject; onNavigate
       <span className="truncate font-medium text-sm">{project.name}</span>
       {project.folders.length > 1 ? (
         <Badge size="sm" variant="secondary">
-          {project.folders.length} folders
+          {renderRich(tx("{length} folders"), { length: project.folders.length })}
         </Badge>
       ) : null}
       {project.archived ? (
         <Badge size="sm" variant="outline">
-          Archived
+          {tx("Archived")}
         </Badge>
       ) : null}
     </span>
@@ -176,7 +179,7 @@ function ProjectRow({ project, onNavigate }: { project: SheetProject; onNavigate
                   <FolderPath folder={folder} fallback={project.name} />
                   {folder.archived && !project.archived ? (
                     <Badge size="sm" variant="outline">
-                      Archived
+                      {tx("Archived")}
                     </Badge>
                   ) : null}
                 </span>
@@ -203,6 +206,7 @@ function MachineRemoteSheet({
   canOperate: boolean;
   onNavigate: () => void;
 }) {
+  const tx = useTx();
   const groups = useSettingsProjectGroups();
   const configs = useServerConfigs();
   const shells = useThreadShells();
@@ -286,7 +290,7 @@ function MachineRemoteSheet({
             </InputGroupAddon>
             <InputGroupInput
               aria-label={`Search projects and threads on ${name}`}
-              placeholder="Search projects and threads"
+              placeholder={tx("Search projects and threads")}
               type="search"
               size="sm"
               value={query}
@@ -295,11 +299,13 @@ function MachineRemoteSheet({
           </InputGroup>
         ) : null}
         {nothingMatches ? (
-          <p className="px-2 text-muted-foreground text-sm">Nothing matches “{query.trim()}”.</p>
+          <p className="px-2 text-muted-foreground text-sm">
+            {renderRich(tx("Nothing matches “{value}”."), { value: query.trim() })}
+          </p>
         ) : null}
         {!searching || model.projects.length + model.temporary.length > 0 ? (
           <section aria-label={`Projects on ${name}`}>
-            <h3 className={SECTION_TITLE}>Projects</h3>
+            <h3 className={SECTION_TITLE}>{tx("Projects")}</h3>
             {model.projects.length > 0 ? (
               <ul>
                 {visibleProjects.map((project) => (
@@ -307,10 +313,12 @@ function MachineRemoteSheet({
                 ))}
               </ul>
             ) : searching ? null : (
-              <p className="px-2 text-muted-foreground text-sm">No projects on {name} yet.</p>
+              <p className="px-2 text-muted-foreground text-sm">
+                {renderRich(tx("No projects on {name} yet."), { name: name })}
+              </p>
             )}
             {temporaryVisible && model.temporary.length > 0 ? (
-              <ul aria-label="Temporary workspaces" className="mt-1">
+              <ul aria-label={tx("Temporary workspaces")} className="mt-1">
                 {model.temporary.map((project) => (
                   <ProjectRow key={project.key} project={project} onNavigate={onNavigate} />
                 ))}
@@ -326,7 +334,9 @@ function MachineRemoteSheet({
                     className="text-muted-foreground"
                     onClick={() => setShowAllProjects((value) => !value)}
                   >
-                    {showAllProjects ? "Show fewer" : `Show all ${model.projects.length} projects`}
+                    {showAllProjects
+                      ? tx("Show fewer")
+                      : `Show all ${model.projects.length} projects`}
                   </Button>
                 ) : null}
                 {model.temporary.length > 0 ? (
@@ -338,7 +348,7 @@ function MachineRemoteSheet({
                     onClick={() => setShowTemporary((value) => !value)}
                   >
                     {showTemporary
-                      ? "Hide temporary workspaces"
+                      ? tx("Hide temporary workspaces")
                       : `Show ${model.temporary.length} temporary ${
                           model.temporary.length === 1 ? "workspace" : "workspaces"
                         }`}
@@ -350,7 +360,7 @@ function MachineRemoteSheet({
         ) : null}
         {!searching || model.threads.length > 0 ? (
           <section aria-label={`Recent threads on ${name}`}>
-            <h3 className={SECTION_TITLE}>Recent threads</h3>
+            <h3 className={SECTION_TITLE}>{tx("Recent threads")}</h3>
             {visibleThreads.length > 0 ? (
               <ul>
                 {visibleThreads.map((thread) => (
@@ -387,7 +397,9 @@ function MachineRemoteSheet({
                 ))}
               </ul>
             ) : (
-              <p className="px-2 text-muted-foreground text-sm">No threads on {name} yet.</p>
+              <p className="px-2 text-muted-foreground text-sm">
+                {renderRich(tx("No threads on {name} yet."), { name: name })}
+              </p>
             )}
             {!searching && model.threads.length > RECENT_THREADS ? (
               <Button
@@ -396,7 +408,7 @@ function MachineRemoteSheet({
                 className="mt-1 text-muted-foreground"
                 onClick={() => setShowAllThreads((value) => !value)}
               >
-                {showAllThreads ? "Show fewer" : `Show all ${model.threads.length}`}
+                {showAllThreads ? tx("Show fewer") : `Show all ${model.threads.length}`}
               </Button>
             ) : null}
           </section>
@@ -409,21 +421,21 @@ function MachineRemoteSheet({
           onClick={onNavigate}
           className="text-center text-muted-foreground text-sm hover:text-foreground"
         >
-          Agents on {name}
+          {renderRich(tx("Agents on {name}"), { name: name })}
         </Link>
         <Button
           size="sm"
           variant="outline"
           disabled={!canOperate}
           title={
-            canOperate ? "Opens setup on this machine. It does not start an agent." : undefined
+            canOperate ? tx("Opens setup on this machine. It does not start an agent.") : undefined
           }
           onClick={() => {
             onNavigate();
             openCommandPalette({ open: "add-project", environmentId });
           }}
         >
-          Add a project
+          {tx("Add a project")}
         </Button>
       </DialogFooter>
     </>
@@ -438,6 +450,7 @@ export function MachineRemoteControl({
   environmentId: EnvironmentId;
   name: string;
 }) {
+  const tx = useTx();
   const [open, setOpen] = useState(false);
   const { environments } = useEnvironments();
   const environment = environments.find((item) => item.environmentId === environmentId);
@@ -471,7 +484,7 @@ export function MachineRemoteControl({
                 )}
               />
               <span>
-                {phase === "connected" ? "Online" : "Offline"} · {availability.detail}
+                {phase === "connected" ? tx("Online") : tx("Offline")} · {availability.detail}
               </span>
             </DialogDescription>
           </DialogHeader>

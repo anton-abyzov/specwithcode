@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { resolveEnvironmentMachineKind } from "@specweave-studio/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { ChevronDownIcon, LayersIcon } from "lucide-react";
@@ -57,6 +59,7 @@ interface SettingsScopeMenuProps {
  * once there is more than one. Only the Project pages pick a project.
  */
 export function SettingsScopeSentence() {
+  const tx = useTx();
   const scope = useOptionalSettingsScope();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useNamedEnvironments();
@@ -77,7 +80,9 @@ export function SettingsScopeSentence() {
   if (pageScope === "machine") {
     return (
       <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
-        <span className="shrink-0">Applying settings {connective}</span>
+        <span className="shrink-0">
+          {renderRich(tx("Applying settings {connective}"), { connective: connective })}
+        </span>
         <EnvironmentScopeMenu {...props} />
       </p>
     );
@@ -86,7 +91,7 @@ export function SettingsScopeSentence() {
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-base text-muted-foreground sm:px-4">
       {/* Each connective stays with its picker so a wrap never strands "on". */}
       <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">Applying settings for</span>
+        <span className="shrink-0">{tx("Applying settings for")}</span>
         <ProjectScopeMenu {...props} />
       </span>
       <span className="flex min-w-0 items-center gap-1.5">
@@ -131,6 +136,7 @@ function EnvironmentScopeMenu({
   onChange,
   singleEnvironment,
 }: SettingsScopeMenuProps) {
+  const tx = useTx();
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
     value,
@@ -163,10 +169,10 @@ function EnvironmentScopeMenu({
         selected
           ? settingsScopeEnvironmentLabel(selected, environments)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
-            ? "Unavailable environment"
+            ? tx("Unavailable environment")
             : singleEnvironment
-              ? "No environments"
-              : "All environments"
+              ? tx("No environments")
+              : tx("All environments")
       }
     >
       <MenuRadioGroup
@@ -180,7 +186,7 @@ function EnvironmentScopeMenu({
             <MenuRadioItem value={ALL_ENVIRONMENTS_VALUE}>
               <span className="flex min-w-0 items-center gap-2">
                 <LayersIcon aria-hidden className="size-3.5" />
-                <span className="min-w-0 flex-1 truncate">All environments</span>
+                <span className="min-w-0 flex-1 truncate">{tx("All environments")}</span>
                 <MenuRadioItemIndicator />
               </span>
             </MenuRadioItem>
@@ -199,9 +205,9 @@ function EnvironmentScopeMenu({
                 {settingsScopeEnvironmentLabel(environment, environments)}
               </span>
               {environment.connection.phase !== "connected" ? (
-                <span className="shrink-0 text-xs text-muted-foreground">Offline</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{tx("Offline")}</span>
               ) : projectEnvironmentIds && !projectEnvironmentIds.has(environment.environmentId) ? (
-                <span className="shrink-0 text-xs text-muted-foreground">No checkout</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{tx("No checkout")}</span>
               ) : null}
               <MenuRadioItemIndicator />
             </span>
@@ -213,6 +219,7 @@ function EnvironmentScopeMenu({
 }
 
 function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
+  const tx = useTx();
   const configs = useServerConfigs();
   const selected = groups.find((group) => group.projectKey === value.project);
   const { choices, unavailable } = settingsScopeProjectChoices(
@@ -224,7 +231,9 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
     <ScopeMenu
       ariaLabel="Project scope"
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
-      label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
+      label={
+        selected?.displayName ?? (value.project ? tx("Unavailable project") : tx("All projects"))
+      }
     >
       <MenuRadioGroup
         value={projectAxisValue(value)}
@@ -234,7 +243,7 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
       >
         <MenuRadioItem value={ALL_PROJECTS_VALUE}>
           <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 flex-1 truncate">All projects</span>
+            <span className="min-w-0 flex-1 truncate">{tx("All projects")}</span>
             <MenuRadioItemIndicator />
           </span>
         </MenuRadioItem>

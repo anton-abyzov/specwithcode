@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { resolveEnvironmentMachineKind } from "@specweave-studio/contracts";
 
 import {
@@ -60,6 +61,7 @@ export function LoadBalancingSettings({
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
+  const tx = useTx();
   const settings = useClientSettings();
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdateClientSettings();
@@ -78,7 +80,7 @@ export function LoadBalancingSettings({
       }
       control={
         <Switch
-          aria-label="Automatically balance load"
+          aria-label={tx("Automatically balance load")}
           checked={settings.loadBalancingEnabled}
           disabled={!settingsHydrated}
           onCheckedChange={(loadBalancingEnabled) => updateSettings({ loadBalancingEnabled })}
@@ -86,8 +88,9 @@ export function LoadBalancingSettings({
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        New threads in shared projects start on the machine with the most free CPU and memory,
-        weighted by each machine's preference.
+        {tx(
+          "New threads in shared projects start on the machine with the most free CPU and memory, weighted by each machine's preference.",
+        )}
       </p>
       {environments.map((environment) => (
         <EnvironmentRow

@@ -19,7 +19,12 @@ const state = vi.hoisted(() => ({
 vi.mock("react", async (original) => {
   const actual = await original<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");
-  return { ...actual, useState: reactHookHarness.useState, useRef: reactHookHarness.useRef };
+  return {
+    ...actual,
+    useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
+    useState: reactHookHarness.useState,
+    useRef: reactHookHarness.useRef,
+  };
 });
 vi.mock("react/compiler-runtime", async () => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");

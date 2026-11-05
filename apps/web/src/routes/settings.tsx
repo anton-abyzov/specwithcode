@@ -1,3 +1,5 @@
+import { renderRich } from "../i18n/rich";
+import { useTx } from "../i18n";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useMemo, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
@@ -36,6 +38,7 @@ import {
 } from "../components/settings/settingsSearch";
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
+  const tx = useTx();
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
     <Button
@@ -45,12 +48,13 @@ function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void })
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
-      Restore device defaults
+      {tx("Restore device defaults")}
     </Button>
   );
 }
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
+  const tx = useTx();
   const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
@@ -109,7 +113,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-sm text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          {renderRich(tx("Reconnect {label} to change its settings."), { label: scope.label })}
         </p>
       </SettingsPageContainer>
     );

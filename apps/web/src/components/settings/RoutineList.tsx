@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * The list in Settings > Routines: every routine across the machines in scope,
  * with search, filters for machine, project, provider and state, and a choice
@@ -173,6 +175,7 @@ function FilterSelect({
 
 /** Deletes every finished one-time routine in view, after one confirmation. */
 function DeleteFinishedButton({ entries }: { readonly entries: readonly RoutineListEntry[] }) {
+  const tx = useTx();
   const remove = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "routine delete finished",
   });
@@ -223,7 +226,7 @@ function DeleteFinishedButton({ entries }: { readonly entries: readonly RoutineL
       data-routine-delete-finished
     >
       <Trash2Icon className="size-3" />
-      Delete finished ({entries.length})
+      {renderRich(tx("Delete finished ({length})"), { length: entries.length })}
     </Button>
   );
 }
@@ -240,6 +243,7 @@ export function RoutineList({
   readonly taskId: ScheduledTaskId | undefined;
   readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
 }) {
+  const tx = useTx();
   const { scope } = useSettingsScope();
   const projects = useProjects();
   const [sources, setSources] = useState<ReadonlyMap<EnvironmentId, EnvironmentRoutines>>(
@@ -383,15 +387,15 @@ export function RoutineList({
             </InputGroupAddon>
             <InputGroupInput
               type="search"
-              aria-label="Search routines"
-              placeholder="Search routines"
+              aria-label={tx("Search routines")}
+              placeholder={tx("Search routines")}
               value={filters.query}
               onChange={(event) => setFilter("query", event.currentTarget.value)}
             />
           </InputGroup>
           {machineChoices.length > 1 ? (
             <FilterSelect
-              label="Machine"
+              label={tx("Machine")}
               value={effective.environmentId}
               allLabel="All machines"
               choices={machineChoices}
@@ -400,7 +404,7 @@ export function RoutineList({
           ) : null}
           {!projectScoped && projectChoices.length > 1 ? (
             <FilterSelect
-              label="Project"
+              label={tx("Project")}
               value={effective.projectKey}
               allLabel="All projects"
               choices={projectChoices}
@@ -409,7 +413,7 @@ export function RoutineList({
           ) : null}
           {providerChoices.length > 1 ? (
             <FilterSelect
-              label="Provider"
+              label={tx("Provider")}
               value={effective.providerKey}
               allLabel="All providers"
               choices={providerChoices}
@@ -417,7 +421,7 @@ export function RoutineList({
             />
           ) : null}
           <FilterSelect
-            label="State"
+            label={tx("State")}
             value={filters.state}
             allLabel="Any state"
             choices={(["attention", "active", "paused", "finished"] as const).map((key) => ({
@@ -430,10 +434,16 @@ export function RoutineList({
             value={groupBy}
             onValueChange={(value) => value && setGroupBy(value as RoutineGroupBy)}
           >
-            <SelectTrigger size="sm" aria-label="Group by" className={FILTER_TRIGGER_CLASSNAME}>
+            <SelectTrigger
+              size="sm"
+              aria-label={tx("Group by")}
+              className={FILTER_TRIGGER_CLASSNAME}
+            >
               <SelectValue>
                 <span className="truncate">
-                  Group by {ROUTINE_GROUP_BY_LABELS[groupBy].toLowerCase()}
+                  {renderRich(tx("Group by {value}"), {
+                    value: ROUTINE_GROUP_BY_LABELS[groupBy].toLowerCase(),
+                  })}
                 </span>
               </SelectValue>
             </SelectTrigger>
@@ -451,7 +461,7 @@ export function RoutineList({
               variant="ghost-muted"
               onClick={() => setFilters(DEFAULT_ROUTINE_FILTERS)}
             >
-              Clear filters
+              {tx("Clear filters")}
             </Button>
           ) : null}
           <DeleteFinishedButton entries={finished} />
@@ -519,7 +529,7 @@ export function RoutineList({
                 variant="outline"
                 onClick={() => setFilters(DEFAULT_ROUTINE_FILTERS)}
               >
-                Clear filters
+                {tx("Clear filters")}
               </Button>
             }
           />
@@ -551,7 +561,7 @@ export function RoutineList({
               const bucket = routineBucket(entry.task);
               return renderRow(entry, bucket === "paused" || bucket === "finished");
             })}
-            <ArchivedDisclosure count={group.inactive.length} label="paused and finished">
+            <ArchivedDisclosure count={group.inactive.length} label={tx("paused and finished")}>
               {group.inactive.map((entry) => renderRow(entry, true))}
             </ArchivedDisclosure>
           </SettingsSection>

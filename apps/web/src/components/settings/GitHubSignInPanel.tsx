@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
@@ -56,6 +58,7 @@ export function GitHubSignInPanel({
   /** A quieter idle state: just the button, without the explanation. */
   readonly secondary?: boolean;
 }) {
+  const tx = useTx();
   const enabled = useGitHubSignInAvailable(environmentId);
   const options = { reportFailure: false } as const;
   const start = useAtomCommand(gitHubSignIn.start, options);
@@ -162,15 +165,23 @@ export function GitHubSignInPanel({
         ) : (
           <>
             <p className="text-muted-foreground">
-              Sign in from here: {environmentLabel} runs gh, you approve it on github.com in this
-              browser. The sign-in stays on {environmentLabel}.
+              {renderRich(
+                tx(
+                  "Sign in from here: {environmentLabel} runs gh, you approve it on github.com in this browser. The sign-in stays on {environmentLabel2}.",
+                ),
+                { environmentLabel: environmentLabel, environmentLabel2: environmentLabel },
+              )}
             </p>
             <div>{signInButton(startLabel)}</div>
           </>
         )
       ) : null}
       {phase === "starting" ? (
-        <p className="text-muted-foreground">Starting gh on {environmentLabel}…</p>
+        <p className="text-muted-foreground">
+          {renderRich(tx("Starting gh on {environmentLabel}…"), {
+            environmentLabel: environmentLabel,
+          })}
+        </p>
       ) : null}
       {phase === "waiting" && code ? (
         <section
@@ -178,8 +189,12 @@ export function GitHubSignInPanel({
           className="grid min-w-0 gap-2 rounded-md border border-border bg-muted/30 p-3"
         >
           <p className="text-muted-foreground">
-            Open {pageLabel(code.url)} on this device, enter this code and approve. The sign-in is
-            saved on {environmentLabel} only.
+            {renderRich(
+              tx(
+                "Open {value} on this device, enter this code and approve. The sign-in is saved on {environmentLabel} only.",
+              ),
+              { value: pageLabel(code.url), environmentLabel: environmentLabel },
+            )}
           </p>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <code className="select-all font-mono text-lg font-semibold tracking-wider">
@@ -195,33 +210,50 @@ export function GitHubSignInPanel({
               }
             >
               <CopyIcon />
-              Copy code
+              {tx("Copy code")}
             </Button>
             {copied === code.userCode ? (
               <span role="status" className="text-muted-foreground">
-                Code copied
+                {tx("Code copied")}
               </span>
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="xs" variant="outline" onClick={() => void openPage(code.url)}>
               <ExternalLinkIcon />
-              Open {pageLabel(code.url)}
+              {renderRich(tx("Open {value}"), { value: pageLabel(code.url) })}
             </Button>
             <Button size="xs" variant="ghost" disabled={busy} onClick={() => void stop()}>
-              Cancel
+              {tx("Cancel")}
             </Button>
           </div>
-          <p className="text-muted-foreground">Waiting for GitHub to confirm…</p>
+          <p className="text-muted-foreground">{tx("Waiting for GitHub to confirm…")}</p>
         </section>
       ) : null}
       {phase === "verifying" ? (
-        <p className="text-muted-foreground">Checking the sign-in on {environmentLabel}…</p>
+        <p className="text-muted-foreground">
+          {renderRich(tx("Checking the sign-in on {environmentLabel}…"), {
+            environmentLabel: environmentLabel,
+          })}
+        </p>
       ) : null}
       {phase === "succeeded" ? (
         <p role="status" className="text-success-foreground">
-          {flow?.alreadySignedIn ? "Already signed in" : "Signed in"}
-          {flow?.login ? ` as ${flow.login}` : ""} on {environmentLabel}.
+          {renderRich(
+            tx(
+              flow?.alreadySignedIn
+                ? flow.login
+                  ? "Already signed in as {login} on {environmentLabel}."
+                  : "Already signed in on {environmentLabel}."
+                : flow?.login
+                  ? "Signed in as {login} on {environmentLabel}."
+                  : "Signed in on {environmentLabel}.",
+            ),
+            {
+              login: flow?.login ?? "",
+              environmentLabel: environmentLabel,
+            },
+          )}
         </p>
       ) : null}
       {phase === "failed" || phase === "cancelled" ? (
@@ -231,7 +263,7 @@ export function GitHubSignInPanel({
               ? `The GitHub CLI is not installed on ${environmentLabel}. Run specwithcode provision on ${environmentLabel}, then try again.`
               : flow?.failure === "outdated"
                 ? `The GitHub CLI on ${environmentLabel} is too old. Update gh on ${environmentLabel}, then sign in.`
-                : (flow?.message ?? "The GitHub sign-in stopped.")}
+                : (flow?.message ?? tx("The GitHub sign-in stopped."))}
           </p>
           <div>{signInButton("Retry")}</div>
         </>

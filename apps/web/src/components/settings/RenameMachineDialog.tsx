@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { MACHINE_NICKNAME_MAX_LENGTH, type EnvironmentId } from "@specweave-studio/contracts";
 import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import { useEffect, useId, useState } from "react";
@@ -39,6 +41,7 @@ export function RenameMachineDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const tx = useTx();
   const fieldId = useId();
   const countId = useId();
   const resolve = useMachineNicknames();
@@ -63,9 +66,14 @@ export function RenameMachineDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-sm" data-testid="rename-machine-dialog">
         <DialogHeader>
-          <DialogTitle>Rename machine</DialogTitle>
+          <DialogTitle>{tx("Rename machine")}</DialogTitle>
           <DialogDescription>
-            A short name for {hostLabel}. Thread rows, Run on and your other devices show it.
+            {renderRich(
+              tx(
+                "A short name for {hostLabel}. Thread rows, Run on and your other devices show it.",
+              ),
+              { hostLabel: hostLabel },
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -76,7 +84,7 @@ export function RenameMachineDialog({
               if (canSave) save(next);
             }}
           >
-            <Label htmlFor={fieldId}>Name</Label>
+            <Label htmlFor={fieldId}>{tx("Name")}</Label>
             <Input
               id={fieldId}
               value={value}
@@ -101,14 +109,14 @@ export function RenameMachineDialog({
               disabled={lock !== null}
               onClick={() => save("")}
             >
-              Use {defaultName}
+              {renderRich(tx("Use {defaultName}"), { defaultName: defaultName })}
             </Button>
           ) : null}
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {tx("Cancel")}
           </Button>
           <Button disabled={!canSave} onClick={() => save(next)}>
-            Save
+            {tx("Save")}
           </Button>
         </DialogFooter>
       </DialogPopup>

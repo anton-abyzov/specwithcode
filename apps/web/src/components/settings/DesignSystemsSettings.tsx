@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * Settings > Design systems: wires this machine's design-system RPCs into
  * the list, the proposals waiting for review, the new-system flows and the
@@ -83,14 +85,19 @@ const searchTarget = () =>
     : { id: "design-systems", title: "Design systems" };
 
 export function DesignSystemsSettings() {
+  const tx = useTx();
   const environmentId = usePrimaryEnvironmentId();
   const canRead = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   return (
     <SettingsPageContainer>
       {environmentId === null ? (
-        <p className="text-sm text-muted-foreground">Connect to this Mac to see design systems.</p>
+        <p className="text-sm text-muted-foreground">
+          {tx("Connect to this Mac to see design systems.")}
+        </p>
       ) : !canRead ? (
-        <p className="text-sm text-muted-foreground">This window may not read design systems.</p>
+        <p className="text-sm text-muted-foreground">
+          {tx("This window may not read design systems.")}
+        </p>
       ) : (
         <SettingsSearchTarget {...searchTarget()}>
           <ConnectedDesignSystems environmentId={environmentId} />
@@ -123,6 +130,7 @@ function manageFailure(cause: unknown, fallback: string): string {
 }
 
 function ConnectedDesignSystems({ environmentId }: { environmentId: EnvironmentId }) {
+  const tx = useTx();
   const now = useNow(30_000);
   const router = useRouter();
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
@@ -399,7 +407,7 @@ function ConnectedDesignSystems({ environmentId }: { environmentId: EnvironmentI
                   })
                 }
               >
-                Open {lost.title}
+                {renderRich(tx("Open {title}"), { title: lost.title })}
               </button>
             </li>
           ))}

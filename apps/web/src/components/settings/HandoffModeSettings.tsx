@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type {
   EnvironmentId,
   HandoffConfig,
@@ -59,6 +60,7 @@ export interface HandoffModeSettingsViewProps {
  * page and a thread from its menu. Rare choices sit under More options.
  */
 export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
+  const tx = useTx();
   const { config } = props.snapshot;
   const sleepTarget = props.destinations.find((item) => item.environmentId === config.sleepTarget);
   const overrides = props.overrides ?? [];
@@ -67,16 +69,16 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
       {...searchableSetting("handoff-mode")}
       headerAction={
         <Button size="xs" variant="ghost-muted" onClick={props.onHandOffMachine}>
-          Move running threads…
+          {tx("Move running threads…")}
         </Button>
       }
     >
       <SettingsRow
-        title="Keep threads ready to move"
+        title={tx("Keep threads ready to move")}
         description="Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens."
         control={
           <Switch
-            aria-label="Keep threads ready to move"
+            aria-label={tx("Keep threads ready to move")}
             checked={config.defaultMode === "on"}
             disabled={props.pending}
             onCheckedChange={(on) => props.onConfig({ defaultMode: on ? "on" : "off" })}
@@ -84,15 +86,16 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
         }
       >
         {overrides.length > 0 ? (
-          <ul className="mt-2 flex flex-col gap-1.5" aria-label="Projects set differently">
+          <ul className="mt-2 flex flex-col gap-1.5" aria-label={tx("Projects set differently")}>
             {overrides.map((override) => (
               <li key={override.id} className="flex items-center justify-between gap-3 text-sm">
                 <span
                   className="min-w-0 truncate text-muted-foreground"
                   title={override.workspaceRoot ?? undefined}
                 >
-                  {override.title ?? "A removed project"}
-                  {override.archived ? " (archived)" : ""}: {override.mode === "on" ? "On" : "Off"}
+                  {override.title ?? tx("A removed project")}
+                  {override.archived ? " (archived)" : ""}:{" "}
+                  {override.mode === "on" ? "On" : tx("Off")}
                 </span>
                 <Button
                   size="xs"
@@ -101,7 +104,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
                   onClick={() => props.onProjectMode(override.id, null)}
                   aria-label={`Use the default for ${override.title ?? "the removed project"}`}
                 >
-                  Use default
+                  {tx("Use default")}
                 </Button>
               </li>
             ))}
@@ -124,18 +127,18 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           >
             <SelectTrigger
               size="sm"
-              aria-label="Machine to move running threads to when this Mac sleeps"
+              aria-label={tx("Machine to move running threads to when this Mac sleeps")}
             >
               <SelectValue>
                 {sleepTarget
                   ? destinationText(sleepTarget)
                   : config.sleepTarget
-                    ? "A removed machine"
-                    : "Off"}
+                    ? tx("A removed machine")
+                    : tx("Off")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="off">{tx("Off")}</SelectItem>
               {props.destinations.map((destination) => (
                 <SelectItem key={destination.environmentId} value={destination.environmentId}>
                   {destinationText(destination)}
@@ -151,7 +154,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
             aria-hidden
             className="size-3.5 transition-transform group-data-panel-open:rotate-90"
           />
-          More options
+          {tx("More options")}
         </CollapsibleTrigger>
         <CollapsiblePanel keepMounted>
           <SettingsRow
@@ -163,7 +166,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
                 disabled={props.pending}
                 onValueChange={(value) => props.onConfig({ autoTakeoverMinutes: Number(value) })}
               >
-                <SelectTrigger size="sm" aria-label="Automatic takeover">
+                <SelectTrigger size="sm" aria-label={tx("Automatic takeover")}>
                   <SelectValue>{takeoverLabel(config.autoTakeoverMinutes)}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -179,7 +182,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
             }
           />
           <SettingsRow
-            title="Turn summary"
+            title={tx("Turn summary")}
             description="A short note at each turn end: what's done, what's next, open questions. It helps the next machine pick up."
             control={
               <Select
@@ -190,7 +193,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
                     props.onConfig({ noteModel: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Turn summary">
+                <SelectTrigger size="sm" aria-label={tx("Turn summary")}>
                   <SelectValue>{NOTE_LABELS[config.noteModel]}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -202,11 +205,11 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
             }
           />
           <SettingsRow
-            title="Also back up syncs to the repository's remote"
+            title={tx("Also back up syncs to the repository's remote")}
             description="Pushes each sync to origin under refs/specwithcode/handoff, including uncommitted and untracked files. Moves don't need it. Your branches are never pushed."
             control={
               <Switch
-                aria-label="Also back up syncs to the repository's remote"
+                aria-label={tx("Also back up syncs to the repository's remote")}
                 checked={config.pushToOrigin}
                 disabled={props.pending}
                 onCheckedChange={(pushToOrigin) => props.onConfig({ pushToOrigin })}

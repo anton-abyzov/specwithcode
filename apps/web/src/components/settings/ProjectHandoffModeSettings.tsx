@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type { EnvironmentId, HandoffModeSnapshot, ProjectId } from "@specweave-studio/contracts";
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
@@ -62,6 +64,7 @@ export interface ProjectHandoffModeSettingsViewProps {
 }
 
 export function ProjectHandoffModeSettingsView(props: ProjectHandoffModeSettingsViewProps) {
+  const tx = useTx();
   const value = projectHandoffValue(props.members);
   const defaultText = projectHandoffDefaultText(props.members, props.label);
   return (
@@ -84,19 +87,21 @@ export function ProjectHandoffModeSettingsView(props: ProjectHandoffModeSettings
             <SelectTrigger
               size="sm"
               className="w-36"
-              aria-label="Keep this project's threads ready to move"
+              aria-label={tx("Keep this project's threads ready to move")}
             >
               <SelectValue>{MODE_LABEL[value]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {value === "mixed" ? (
                 <SelectItem value="mixed" disabled>
-                  Mixed
+                  {tx("Mixed")}
                 </SelectItem>
               ) : null}
-              <SelectItem value="default">Default ({defaultText})</SelectItem>
+              <SelectItem value="default">
+                {renderRich(tx("Default ({defaultText})"), { defaultText: defaultText })}
+              </SelectItem>
               <SelectItem value="on">On</SelectItem>
-              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="off">{tx("Off")}</SelectItem>
             </SelectPopup>
           </Select>
         }

@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { type EnvironmentId, UsageLimitSourceId } from "@specweave-studio/contracts";
 import { useState } from "react";
 
@@ -53,6 +55,7 @@ export function AddUsageLimitSourceDialog({
   /** Prefilled for a hub found on the server's machine whose key it could not read. */
   readonly initialUrl?: string;
 }) {
+  const tx = useTx();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState(initialUrl);
@@ -95,10 +98,14 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a CLIProxyAPI usage hub</DialogTitle>
+          <DialogTitle>{tx("Add a CLIProxyAPI usage hub")}</DialogTitle>
           <DialogDescription>
-            Read Codex account quotas on {environmentLabel}. Claude accounts are skipped. This does
-            not connect chat models or sign in an agent. The key stays on that server.
+            {renderRich(
+              tx(
+                "Read Codex account quotas on {environmentLabel}. Claude accounts are skipped. This does not connect chat models or sign in an agent. The key stays on that server.",
+              ),
+              { environmentLabel: environmentLabel },
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -110,7 +117,7 @@ export function AddUsageLimitSourceDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-url">Hub URL</Label>
+              <Label htmlFor="usage-source-url">{tx("Hub URL")}</Label>
               <Input
                 id="usage-source-url"
                 placeholder="https://hub.example.ts.net:8318"
@@ -120,7 +127,7 @@ export function AddUsageLimitSourceDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-key">Management key</Label>
+              <Label htmlFor="usage-source-key">{tx("Management key")}</Label>
               <Input
                 id="usage-source-key"
                 type="password"
@@ -130,10 +137,10 @@ export function AddUsageLimitSourceDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-label">Label (optional)</Label>
+              <Label htmlFor="usage-source-label">{tx("Label (optional)")}</Label>
               <Input
                 id="usage-source-label"
-                placeholder="Defaults to the hub's host name"
+                placeholder={tx("Defaults to the hub's host name")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />
@@ -148,10 +155,10 @@ export function AddUsageLimitSourceDialog({
               onOpenChange(false);
             }}
           >
-            Cancel
+            {tx("Cancel")}
           </Button>
           <Button onClick={save} disabled={!canSave}>
-            Add hub
+            {tx("Add hub")}
           </Button>
         </DialogFooter>
       </DialogPopup>

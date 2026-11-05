@@ -6,6 +6,10 @@ import type {
 } from "@specweave-studio/contracts/studioFleet";
 import { visitElements } from "../../test/reactElementTree";
 
+vi.mock("react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react")>()),
+  useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
+}));
 vi.mock("./IncomingWorkerSetup", () => ({ IncomingWorkerSetup: () => null }));
 vi.mock("../../studio/fleet", () => ({
   changeMachineWorkGrant: vi.fn(),

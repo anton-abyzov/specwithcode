@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthTerminalOperateScope,
@@ -83,12 +84,13 @@ export function MachineTerminalButton({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const tx = useTx();
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   if (!canOperateTerminal) return null;
   return (
     <Button size="xs" variant="outline" aria-expanded={open} onClick={() => onOpenChange(!open)}>
       <TerminalIcon aria-hidden />
-      {open ? "Close terminal" : `Terminal on ${environmentLabel}`}
+      {open ? tx("Close terminal") : `Terminal on ${environmentLabel}`}
     </Button>
   );
 }
@@ -106,6 +108,7 @@ export function MachineTerminal({
   readonly environmentLabel: string;
   readonly onClose: () => void;
 }) {
+  const tx = useTx();
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const [advancedTypography] = useLocalStorage(
@@ -127,13 +130,13 @@ export function MachineTerminal({
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-2xs font-medium text-muted-foreground">
           {!canOperateTerminal
-            ? "This connection cannot control terminals on this machine."
+            ? tx("This connection cannot control terminals on this machine.")
             : serverConfig === null
               ? `Connecting to ${environmentLabel}…`
               : `Shell on ${environmentLabel}, in its home folder`}
         </span>
         <Button size="xs" variant="ghost-muted" onClick={onClose}>
-          Close
+          {tx("Close")}
         </Button>
       </div>
       <div className="h-72">

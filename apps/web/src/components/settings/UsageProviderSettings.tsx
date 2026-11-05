@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -42,6 +44,7 @@ export function UsageProviderSettings({
   readonly cursorKeychainUsageEnabled: boolean;
   readonly readOnly: boolean;
 }) {
+  const tx = useTx();
   const navigate = useNavigate();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -115,7 +118,7 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding({ url: "" })}>
               <PlusIcon className="size-3" aria-hidden />
-              Add hub
+              {tx("Add hub")}
             </Button>
           ) : null
         }
@@ -137,7 +140,7 @@ export function UsageProviderSettings({
                   });
                 }}
               >
-                Set up chat providers
+                {tx("Set up chat providers")}
               </Button>
             ) : null
           }
@@ -149,7 +152,7 @@ export function UsageProviderSettings({
             description="Read your existing Cursor CLI login from macOS Keychain to show account history and plan limits. macOS may ask you to allow access."
             control={
               <Switch
-                aria-label="Cursor account usage"
+                aria-label={tx("Cursor account usage")}
                 checked={cursorKeychainUsageEnabled}
                 disabled={readOnly || updatingCursor}
                 onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
@@ -164,20 +167,22 @@ export function UsageProviderSettings({
             title={`CLIProxyAPI found on ${environmentLabel}`}
             description={
               <span className="break-all">
-                {hub.url} · {hub.running ? "Running" : "Not running"} · {hub.configPath}
+                {hub.url} · {hub.running ? tx("Running") : tx("Not running")} · {hub.configPath}
                 {hub.keyAvailable
-                  ? ". Adding it reads the management key on that machine; the key never reaches this browser."
-                  : ". Its management key is not stored beside it, so paste the key to add it."}
+                  ? tx(
+                      ". Adding it reads the management key on that machine; the key never reaches this browser.",
+                    )
+                  : tx(". Its management key is not stored beside it, so paste the key to add it.")}
               </span>
             }
             control={
               hub.keyAvailable ? (
                 <Button size="xs" disabled={adopting} onClick={() => void adopt(hub)}>
-                  Add this hub
+                  {tx("Add this hub")}
                 </Button>
               ) : (
                 <Button size="xs" variant="outline" onClick={() => setAdding({ url: hub.url })}>
-                  Add with key
+                  {tx("Add with key")}
                 </Button>
               )
             }
@@ -197,9 +202,11 @@ export function UsageProviderSettings({
                 literal
                 description={
                   <span className="break-all">
-                    CLIProxyAPI · Usage reporting{source.enabled ? "" : " · Disabled"}
-                    {stopped.has(id) ? " · Not running" : ""}
-                    {label !== source.url ? ` · ${source.url}` : ""}
+                    {renderRich(tx("CLIProxyAPI · Usage reporting{value}{value2}{value3}"), {
+                      value: source.enabled ? "" : tx(" · Disabled"),
+                      value2: stopped.has(id) ? tx(" · Not running") : "",
+                      value3: label !== source.url ? ` · ${source.url}` : "",
+                    })}
                   </span>
                 }
                 control={
@@ -236,24 +243,29 @@ function RemoveUsageProviderButton({
   readonly label: string;
   readonly onConfirm: () => void;
 }) {
+  const tx = useTx();
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        {tx("Remove")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {renderRich(tx("Remove {label}?"), { label: label })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              {tx(
+                "The hub's management key is deleted from this server. Its accounts leave the Limits view; the hub itself is untouched. Add it again with the URL and key to bring them back.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {tx("Cancel")}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -261,7 +273,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {tx("Remove hub")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

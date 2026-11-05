@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads source files.
+import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- a test that reads source files.
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 
 import { DRIVER_OPTIONS } from "../components/settings/providerDriverMeta";
@@ -22,6 +27,8 @@ import { ko as koPhrases } from "./phrases/ko";
 import { pt as ptPhrases } from "./phrases/pt";
 import { ru as ruPhrases } from "./phrases/ru";
 import { zh as zhPhrases } from "./phrases/zh";
+
+const SRC_DIR = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
 
 const CATALOGS = { ru, es, "zh-CN": zh, ja, "pt-BR": pt, ko, de, fr } as const;
 const PHRASE_CATALOGS = {
@@ -171,14 +178,36 @@ describe("phrases", () => {
 
   it("only holds phrases the interface still shows", () => {
     // A copy edit that renames a phrase must move its translations too.
-    const files = import.meta.glob<string>(["../**/*.{ts,tsx}", "!../i18n/**", "!../**/*.test.*"], {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    });
-    const sources = Object.values(files).join("\n");
+    // Reads the files directly and looks phrases up by quote position. A raw glob
+    // import plus a full-text search per phrase took this test past its timeout
+    // under release load (1.0.196).
+    const sources = NodeFS.readdirSync(SRC_DIR, { recursive: true, encoding: "utf8" })
+      .filter(
+        (file) =>
+          /\.tsx?$/.test(file) &&
+          !NodePath.basename(file).includes(".test.") &&
+          !file.startsWith(`i18n${NodePath.sep}`),
+      )
+      .map((file) => NodeFS.readFileSync(NodePath.join(SRC_DIR, file), "utf8"))
+      .join("\n");
+    // Every needle starts with a quote, so it can only occur where a quote does:
+    // index quote positions by their first PREFIX characters and check those.
+    const PREFIX = 3;
+    const atQuote = new Map<string, number[]>();
+    for (let at = 0; at < sources.length; at++) {
+      const char = sources[at];
+      if (char !== '"' && char !== "'") continue;
+      const key = sources.slice(at, at + PREFIX);
+      const positions = atQuote.get(key);
+      if (positions) positions.push(at);
+      else atQuote.set(key, [at]);
+    }
+    const occurs = (needle: string) =>
+      needle.length < PREFIX
+        ? sources.includes(needle)
+        : (atQuote.get(needle.slice(0, PREFIX)) ?? []).some((at) => sources.startsWith(needle, at));
     const stale = reference.filter(
-      (phrase) => !sources.includes(JSON.stringify(phrase)) && !sources.includes(`'${phrase}'`),
+      (phrase) => !occurs(JSON.stringify(phrase)) && !occurs(`'${phrase}'`),
     );
     expect(stale).toEqual([]);
   });

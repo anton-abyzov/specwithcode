@@ -1,8 +1,10 @@
+import { renderRich } from "../../../i18n/rich";
 /**
  * Settings > Design systems, without data wiring: every system across the
  * Playground and projects, proposals waiting for review, and the ways to
  * start a new one.
  */
+import { useTx } from "../../../i18n";
 import type {
   DesignSystemProposalSummary,
   DesignSystemSummary,
@@ -115,6 +117,7 @@ function SystemRowMenu({
   onRename: ((system: DesignSystemSummary) => void) | undefined;
   onDelete: ((system: DesignSystemSummary) => void) | undefined;
 }) {
+  const tx = useTx();
   if (onOpen === undefined && onRename === undefined && onDelete === undefined) return null;
   return (
     <Menu>
@@ -134,13 +137,13 @@ function SystemRowMenu({
         {onOpen ? (
           <MenuItem onClick={() => onOpen(system)}>
             <ExternalLinkIcon aria-hidden />
-            Open
+            {tx("Open")}
           </MenuItem>
         ) : null}
         {onRename ? (
           <MenuItem disabled={!canWrite} onClick={() => onRename(system)}>
             <PencilIcon aria-hidden />
-            Rename…
+            {tx("Rename…")}
           </MenuItem>
         ) : null}
         {onDelete ? (
@@ -148,7 +151,7 @@ function SystemRowMenu({
             <MenuSeparator />
             <MenuItem variant="destructive" disabled={!canWrite} onClick={() => onDelete(system)}>
               <Trash2Icon aria-hidden />
-              Delete…
+              {tx("Delete…")}
             </MenuItem>
           </>
         ) : null}
@@ -169,6 +172,7 @@ export function figmaDesktopLabel(figma: FigmaStatusView): string {
 }
 
 function FigmaDesktopRow({ figma }: { figma: FigmaStatusView }) {
+  const tx = useTx();
   return (
     <div
       className="flex items-center justify-between gap-3 px-4 py-2.5"
@@ -180,7 +184,7 @@ function FigmaDesktopRow({ figma }: { figma: FigmaStatusView }) {
       </div>
       <Button variant="ghost" size="xs" disabled={figma.checking} onClick={figma.onCheck}>
         <RefreshCwIcon aria-hidden className={figma.checking ? "animate-spin" : ""} />
-        {figma.checking ? "Checking" : "Check again"}
+        {figma.checking ? tx("Checking") : tx("Check again")}
       </Button>
     </div>
   );
@@ -232,6 +236,7 @@ function RescanCell({
   canWrite: boolean;
   onRescan: () => void;
 }) {
+  const tx = useTx();
   if (!isRescannable(system)) return null;
   const note =
     state?.status === "unchanged"
@@ -263,13 +268,14 @@ function RescanCell({
         onClick={onRescan}
       >
         <RefreshCwIcon aria-hidden className={state?.status === "busy" ? "animate-spin" : ""} />
-        {state?.status === "busy" ? "Rescanning" : "Rescan"}
+        {state?.status === "busy" ? tx("Rescanning") : tx("Rescan")}
       </Button>
     </div>
   );
 }
 
 export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps) {
+  const tx = useTx();
   const [query, setQuery] = useState("");
   const systems = props.systems === null ? null : filterSystems(props.systems, query);
 
@@ -279,7 +285,7 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
         render={
           <Button size="sm" disabled={!props.canWrite} data-testid="new-design-system">
             <PlusIcon aria-hidden />
-            New design system
+            {tx("New design system")}
             <ChevronDownIcon aria-hidden />
           </Button>
         }
@@ -306,8 +312,8 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
       <InputGroupInput
         size="sm"
         type="search"
-        aria-label="Search design systems"
-        placeholder="Search by name"
+        aria-label={tx("Search design systems")}
+        placeholder={tx("Search by name")}
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
@@ -317,12 +323,12 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
   // Proposals waiting for review come first; an empty list sits at the bottom.
   const pending = (props.proposals?.length ?? 0) > 0;
   const proposalsSection = (
-    <Section title="Pending proposals" testId="design-system-proposals">
+    <Section title={tx("Pending proposals")} testId="design-system-proposals">
       {props.proposals === null ? (
-        <p className="px-4 py-3 text-sm text-muted-foreground">Loading proposals…</p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">{tx("Loading proposals…")}</p>
       ) : props.proposals.length === 0 ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">
-          No proposals are waiting for review.
+          {tx("No proposals are waiting for review.")}
         </p>
       ) : (
         props.proposals.map((proposal) => (
@@ -334,7 +340,7 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
           >
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="truncate text-sm text-foreground">
-                {proposal.target === null ? "New: " : "Update: "}
+                {proposal.target === null ? tx("New: ") : tx("Update: ")}
                 {proposal.name}
               </span>
               <span className="truncate text-xs text-muted-foreground">
@@ -350,7 +356,7 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
             </div>
             <span className="text-xs text-muted-foreground">{countsLabel(proposal.counts)}</span>
             <Button size="xs" variant="outline" onClick={() => props.onOpenProposal(proposal)}>
-              Review
+              {tx("Review")}
             </Button>
           </div>
         ))
@@ -361,15 +367,15 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
   return (
     <div className="flex flex-col gap-8" data-testid="design-systems-settings">
       <p className="px-3 text-sm text-muted-foreground sm:px-4">
-        Design systems give designs in SpecWithCode your real tokens and components. A project's
-        systems are saved in its folder and travel with the repository; Playground systems stay on
-        this machine.
+        {tx(
+          "Design systems give designs in SpecWithCode your real tokens and components. A project's systems are saved in its folder and travel with the repository; Playground systems stay on this machine.",
+        )}
       </p>
 
       {pending ? proposalsSection : null}
 
       <Section
-        title="Design systems"
+        title={tx("Design systems")}
         testId="design-system-list"
         action={
           <>
@@ -383,11 +389,11 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
             {props.systemsError}
           </p>
         ) : systems === null ? (
-          <p className="px-4 py-3 text-sm text-muted-foreground">Loading design systems…</p>
+          <p className="px-4 py-3 text-sm text-muted-foreground">{tx("Loading design systems…")}</p>
         ) : systems.length === 0 ? (
           <p className="px-4 py-3 text-sm text-muted-foreground">
             {query.trim() === ""
-              ? "No design systems yet. Start one with New design system."
+              ? tx("No design systems yet. Start one with New design system.")
               : `No design system is named like "${query.trim()}".`}
           </p>
         ) : (
@@ -396,12 +402,18 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
-                  <th className="px-4 py-2 font-normal">Name</th>
-                  <th className="hidden px-2 py-2 font-normal @lg/systems:table-cell">Owner</th>
-                  <th className="hidden px-2 py-2 font-normal @xl/systems:table-cell">Sources</th>
-                  <th className="hidden px-2 py-2 font-normal @xl/systems:table-cell">Updated</th>
+                  <th className="px-4 py-2 font-normal">{tx("Name")}</th>
+                  <th className="hidden px-2 py-2 font-normal @lg/systems:table-cell">
+                    {tx("Owner")}
+                  </th>
+                  <th className="hidden px-2 py-2 font-normal @xl/systems:table-cell">
+                    {tx("Sources")}
+                  </th>
+                  <th className="hidden px-2 py-2 font-normal @xl/systems:table-cell">
+                    {tx("Updated")}
+                  </th>
                   <th className="px-4 py-2 font-normal">
-                    <span className="sr-only">Actions</span>
+                    <span className="sr-only">{tx("Actions")}</span>
                   </th>
                 </tr>
               </thead>
@@ -419,7 +431,10 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
                         onOpen={props.onOpenSystem}
                       />
                       <div className="truncate text-xs text-muted-foreground">
-                        {system.tokenCount} tokens · {system.componentCount} components
+                        {renderRich(tx("{tokenCount} tokens · {componentCount} components"), {
+                          tokenCount: system.tokenCount,
+                          componentCount: system.componentCount,
+                        })}
                       </div>
                       <div
                         className="truncate text-xs text-muted-foreground @xl/systems:hidden"
@@ -481,7 +496,7 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
       </Section>
       {pending ? null : proposalsSection}
       {props.figma === undefined ? null : (
-        <Section title="Sources" testId="design-system-sources">
+        <Section title={tx("Sources")} testId="design-system-sources">
           <FigmaDesktopRow figma={props.figma} />
         </Section>
       )}

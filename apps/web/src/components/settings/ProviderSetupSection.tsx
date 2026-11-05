@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -47,9 +48,10 @@ export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMetho
 
 /** Setup state belongs to the selected environment and is never saved in client settings. */
 export function ProviderSetupSection(props: ProviderSetupSectionProps) {
+  const tx = useTx();
   return (
     <section
-      aria-label="Antigravity setup"
+      aria-label={tx("Antigravity setup")}
       className="@container/setup divide-y divide-border/50 text-xs"
     >
       <SettingsRow
@@ -63,7 +65,7 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
             </span>
             {!props.enabled && !props.readOnly ? (
               <Button size="sm" variant="outline" onClick={props.onEnable}>
-                Enable Antigravity
+                {tx("Enable Antigravity")}
               </Button>
             ) : null}
           </div>
@@ -106,6 +108,7 @@ function ProviderSetupActions({
   readonly provider: ServerProvider;
   readonly authMethod: AntigravityAuthMethod;
 }) {
+  const tx = useTx();
   const target = { environmentId, input: { instanceId } };
   const authQuery = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
   const installQuery = useEnvironmentQuery(serverEnvironment.providerInstallState(target));
@@ -195,12 +198,14 @@ function ProviderSetupActions({
           <div className="space-y-2">
             {usesCustomBinary ? (
               <p className="text-muted-foreground">
-                Uses the custom binary path below. Installation keeps that path.
+                {tx("Uses the custom binary path below. Installation keeps that path.")}
               </p>
             ) : null}
             {!installed && !provider.setup?.canInstall ? (
               <p className="text-muted-foreground">
-                Automatic installation unavailable. Set a binary path or use another environment.
+                {tx(
+                  "Automatic installation unavailable. Set a binary path or use another environment.",
+                )}
               </p>
             ) : null}
           </div>
@@ -215,7 +220,7 @@ function ProviderSetupActions({
               installation.totalBytes !== null &&
               installation.totalBytes > 0 ? (
                 <progress
-                  aria-label="Antigravity download"
+                  aria-label={tx("Antigravity download")}
                   className="block h-1 w-full accent-foreground"
                   value={installation.downloadedBytes}
                   max={installation.totalBytes}
@@ -244,7 +249,7 @@ function ProviderSetupActions({
                       );
                     }}
                   >
-                    Cancel installation
+                    {tx("Cancel installation")}
                   </Button>
                 ) : !installActive && provider.setup?.canInstall ? (
                   <Button
@@ -258,13 +263,13 @@ function ProviderSetupActions({
                     {installation?.installedVersion
                       ? installation.version &&
                         installation.version !== installation.installedVersion
-                        ? "Update Antigravity"
-                        : "Reinstall Antigravity"
+                        ? tx("Update Antigravity")
+                        : tx("Reinstall Antigravity")
                       : installation?.phase === "failed" || installation?.phase === "cancelled"
-                        ? "Retry installation"
+                        ? tx("Retry installation")
                         : installed
-                          ? "Install managed runtime"
-                          : "Install Antigravity"}
+                          ? tx("Install managed runtime")
+                          : tx("Install Antigravity")}
                   </Button>
                 ) : null}
               </div>
@@ -276,7 +281,7 @@ function ProviderSetupActions({
                         size="icon-sm"
                         variant="ghost"
                         className="col-start-1 row-start-1"
-                        aria-label="Remove downloaded runtime"
+                        aria-label={tx("Remove downloaded runtime")}
                         disabled={actionsDisabled || authActive}
                         onClick={() => void removeRuntime()}
                       />
@@ -284,7 +289,7 @@ function ProviderSetupActions({
                   >
                     <Trash2Icon className="size-3.5" />
                   </TooltipTrigger>
-                  <TooltipPopup>Remove downloaded runtime</TooltipPopup>
+                  <TooltipPopup>{tx("Remove downloaded runtime")}</TooltipPopup>
                 </Tooltip>
               ) : null}
             </div>
@@ -318,7 +323,7 @@ function ProviderSetupActions({
                 installQuery.refresh();
               }}
             >
-              Retry setup status
+              {tx("Retry setup status")}
             </Button>
           ) : null}
         </div>

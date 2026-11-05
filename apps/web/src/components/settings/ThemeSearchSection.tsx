@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -84,6 +86,7 @@ export function ThemeSearchSection({
   open: boolean;
   onInstalled: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
+  const tx = useTx();
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<OpenVsxThemeSort>("downloadCount");
   const [results, setResults] = useState<ReadonlyArray<OpenVsxThemeExtension> | null>(null);
@@ -260,10 +263,10 @@ export function ThemeSearchSection({
     <section className="space-y-3" aria-labelledby="theme-search-heading">
       <div>
         <h3 className="text-sm font-medium" id="theme-search-heading">
-          Search community themes
+          {tx("Search community themes")}
         </h3>
         <p className="mt-0.5 text-muted-foreground text-xs">
-          Find open-source themes from Open VSX.
+          {tx("Find open-source themes from Open VSX.")}
         </p>
       </div>
       <InputGroup>
@@ -271,7 +274,7 @@ export function ThemeSearchSection({
           {isSearching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
         </InputGroupAddon>
         <InputGroupInput
-          aria-label="Search Open VSX themes"
+          aria-label={tx("Search Open VSX themes")}
           autoFocus
           onChange={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
@@ -279,7 +282,7 @@ export function ThemeSearchSection({
             if (event.key === "Enter" && !isSearching && installingId === null)
               void runSearch(query.trim());
           }}
-          placeholder="Search themes..."
+          placeholder={tx("Search themes...")}
           size="lg"
           type="search"
           value={query}
@@ -289,7 +292,7 @@ export function ThemeSearchSection({
       {!isSearching || results !== null ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <p className="text-muted-foreground text-xs">Popular</p>
+            <p className="text-muted-foreground text-xs">{tx("Popular")}</p>
             {SUGGESTED_SEARCHES.map((suggestion) => (
               <Button
                 key={suggestion}
@@ -310,13 +313,13 @@ export function ThemeSearchSection({
           </div>
           {results && results.length > 0 ? (
             <div className="flex shrink-0 items-center justify-end gap-2">
-              <p className="text-muted-foreground text-xs">Sort</p>
+              <p className="text-muted-foreground text-xs">{tx("Sort")}</p>
               <Select
                 disabled={installingId !== null}
                 value={sortBy}
                 onValueChange={handleSortChange}
               >
-                <SelectTrigger size="sm" className="w-40" aria-label="Sort themes">
+                <SelectTrigger size="sm" className="w-40" aria-label={tx("Sort themes")}>
                   <SelectValue>
                     {SORT_OPTIONS.find((option) => option.value === sortBy)?.label}
                   </SelectValue>
@@ -336,7 +339,7 @@ export function ThemeSearchSection({
 
       <div className="sr-only" role="status">
         {isSearching
-          ? "Searching themes..."
+          ? tx("Searching themes...")
           : results
             ? `${results.length} supported ${results.length === 1 ? "theme" : "themes"} found.`
             : ""}
@@ -350,15 +353,15 @@ export function ThemeSearchSection({
 
       {isSearching && results === null ? (
         <div className="flex min-h-20 items-center justify-center gap-2 text-muted-foreground text-sm">
-          <Spinner /> Searching themes...
+          <Spinner /> {tx("Searching themes...")}
         </div>
       ) : null}
 
       {results ? (
         results.length === 0 ? (
           <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-            <p className="text-sm font-medium">No supported open-source themes found</p>
-            <p className="mt-1 text-muted-foreground text-xs">Try a broader search.</p>
+            <p className="text-sm font-medium">{tx("No supported open-source themes found")}</p>
+            <p className="mt-1 text-muted-foreground text-xs">{tx("Try a broader search.")}</p>
           </div>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
@@ -379,13 +382,15 @@ export function ThemeSearchSection({
                     <div className="min-w-0 flex-1">
                       <h4 className="truncate text-sm font-medium">{extension.name}</h4>
                       <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
+                        {renderRich(tx("{publisher} · {value} downloads"), {
+                          publisher: extension.publisher,
+                          value: DOWNLOAD_FORMAT.format(extension.downloadCount),
+                        })}
                       </p>
                     </div>
                   </div>
                   <p className="line-clamp-2 min-h-8 text-muted-foreground text-xs leading-4">
-                    {extension.description || "A community color theme for your editor."}
+                    {extension.description || tx("A community color theme for your editor.")}
                   </p>
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
@@ -432,14 +437,19 @@ export function ThemeSearchSection({
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Update “{pendingUpdate?.name}”?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {renderRich(tx("Update “{name}”?"), { name: pendingUpdate?.name })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This replaces its installed variants, including any local edits. Variants no longer in
-              the extension will be removed.
+              {tx(
+                "This replaces its installed variants, including any local edits. Variants no longer in the extension will be removed.",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {tx("Cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 const extension = pendingUpdate;
@@ -447,7 +457,7 @@ export function ThemeSearchSection({
                 if (extension) void handleInstall(extension, true);
               }}
             >
-              Update theme
+              {tx("Update theme")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

@@ -152,6 +152,7 @@ function ProviderCommandArguments({
   value,
   onChange,
 }: Pick<ProviderSettingsFormProps, "value" | "onChange">) {
+  const tx = useTx();
   const args = useMemo(() => {
     const configured =
       value !== null && typeof value === "object"
@@ -203,7 +204,7 @@ function ProviderCommandArguments({
           onClick={() => updateArguments([...rowsRef.current, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
-          Add argument
+          {tx("Add argument")}
         </Button>
       }
     >

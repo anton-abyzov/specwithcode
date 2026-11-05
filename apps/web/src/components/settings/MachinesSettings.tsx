@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { MachineRemoteControl } from "./MachineRemoteControl";
 import { useAtomValue } from "@effect/atom-react";
@@ -87,6 +89,7 @@ function currentServerOrigin(): string | null {
 
 /** Settings > Machines: the machines this app knows of, then who may run work on this one. */
 export function MachinesSettingsPanel() {
+  const tx = useTx();
   const fleet = usePrimaryFleet();
   const rawGrants = useMachineWorkGrants(fleet.primaryEnvironmentId);
   const { environments } = useEnvironments();
@@ -176,8 +179,9 @@ export function MachinesSettingsPanel() {
   return (
     <SettingsPageContainer width="wide">
       <p className="text-sm text-muted-foreground">
-        Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed
-        action.
+        {tx(
+          "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.",
+        )}
       </p>
       {error ? (
         <p role="alert" className="text-sm text-destructive-foreground">
@@ -200,7 +204,7 @@ export function MachinesSettingsPanel() {
                 row,
                 <details className="pl-7 text-sm">
                   <summary className="cursor-pointer">
-                    Access, routes and worker permissions
+                    {tx("Access, routes and worker permissions")}
                   </summary>
                   <ul>{controls}</ul>
                 </details>,
@@ -237,6 +241,7 @@ export function MachineListSection({
   renderAddForAgents?: (row: MachineRowModel) => ReactNode;
   renderConnectBothWays?: (row: MachineRowModel) => ReactNode;
 }) {
+  const tx = useTx();
   return (
     <SettingsSection
       id="machines"
@@ -244,13 +249,13 @@ export function MachineListSection({
       headerAction={
         <Button size="xs" variant="ghost-muted" onClick={onRefresh} disabled={loading}>
           <RefreshCwIcon className="size-3" />
-          {loading ? "Checking…" : "Refresh"}
+          {loading ? tx("Checking…") : tx("Refresh")}
         </Button>
       }
     >
       {rows.length === 0 ? (
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
-          {loading ? "Checking your machines…" : "No machines yet."}
+          {loading ? tx("Checking your machines…") : tx("No machines yet.")}
         </p>
       ) : (
         <ul className="divide-y divide-border/60">
@@ -271,13 +276,18 @@ export function MachineListSection({
         </ul>
       )}
       <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-        Add a machine, manage its routes and allow or stop workers in{" "}
-        <Link to="/settings/machines" className="underline underline-offset-2">
-          Advanced connection settings
-        </Link>
-        . Machines that may run work here are under Who can run work here. To disconnect one, use
-        its card there: Remove machine stops agents here from using it, and Remove under
-        Environments stops this app seeing it.
+        {renderRich(
+          tx(
+            "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.",
+          ),
+          {
+            link: (
+              <Link to="/settings/machines" className="underline underline-offset-2">
+                {tx("Advanced connection settings")}
+              </Link>
+            ),
+          },
+        )}
       </p>
       {error ? (
         <p
@@ -493,13 +503,16 @@ function ProjectWhere({
  * reader hears every name either way.
  */
 function AccountAlsoOn({ names }: { names: readonly string[] }) {
+  const tx = useTx();
   const shown = names.slice(0, MAX_MACHINE_CHIPS);
   const rest = names.slice(MAX_MACHINE_CHIPS);
   return (
     <span className="flex min-w-0 items-center gap-1">
-      <span className="sr-only">also on {names.join(", ")}</span>
+      <span className="sr-only">
+        {renderRich(tx("also on {value}"), { value: names.join(", ") })}
+      </span>
       <span aria-hidden className="shrink-0">
-        also on
+        {tx("also on")}
       </span>
       {shown.map((name) => (
         <span
@@ -525,7 +538,7 @@ function AccountAlsoOn({ names }: { names: readonly string[] }) {
             +{rest.length}
           </TooltipTrigger>
           <TooltipPopup side="top" className="max-w-72">
-            Same account on {names.join(", ")}
+            {renderRich(tx("Same account on {value}"), { value: names.join(", ") })}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -583,6 +596,7 @@ export function MachineRow({
   addForAgents?: ReactNode;
   connectBothWays?: ReactNode;
 }) {
+  const tx = useTx();
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
   const [renaming, setRenaming] = useState(false);
   const nickname = useMachineNickname(row.environmentId, row.label);
@@ -612,7 +626,7 @@ export function MachineRow({
           size="icon-xs"
           variant="ghost-muted"
           aria-label={`Rename ${nickname}`}
-          title="Rename"
+          title={tx("Rename")}
           onClick={() => setRenaming(true)}
         >
           <PencilIcon className="size-3" />
@@ -637,7 +651,7 @@ export function MachineRow({
                     disabled={pending !== null || !row.connect.enabled}
                     onClick={() => row.fleetMachine && onConnect(row.fleetMachine)}
                   >
-                    {pending === row.environmentId ? "Connecting…" : row.connect.label}
+                    {pending === row.environmentId ? tx("Connecting…") : row.connect.label}
                   </Button>
                 </TeamRulesInert>
               </>
@@ -655,7 +669,7 @@ export function MachineRow({
 
       {row.workers ? (
         <DetailLine
-          label="Workers from this machine"
+          label={tx("Workers from this machine")}
           help="Whether agents on this machine may start work there. You decide this for each machine."
         >
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
@@ -665,7 +679,7 @@ export function MachineRow({
             <span>{row.workers.detail}</span>
             {row.workers.status === "not-allowed" ? (
               <Link to="/settings/machines" className="underline underline-offset-2">
-                Allow workers
+                {tx("Allow workers")}
               </Link>
             ) : null}
           </p>
@@ -675,7 +689,7 @@ export function MachineRow({
       {addForAgents}
 
       {row.workHere ? (
-        <DetailLine label="Work it may run here">
+        <DetailLine label={tx("Work it may run here")}>
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={WORK_HERE_BADGE[row.workHere.status]}>
               {row.workHere.label}
@@ -686,13 +700,15 @@ export function MachineRow({
       ) : null}
 
       {row.teamRules ? (
-        <DetailLine label="Team rules">
+        <DetailLine label={tx("Team rules")}>
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={row.teamRules.tone}>
               {row.teamRules.label}
             </Badge>
             {row.teamRules.fingerprint ? (
-              <span className="font-mono">rules {row.teamRules.fingerprint}</span>
+              <span className="font-mono">
+                {renderRich(tx("rules {fingerprint}"), { fingerprint: row.teamRules.fingerprint })}
+              </span>
             ) : null}
             {row.teamRules.detail ? <span>{row.teamRules.detail}</span> : null}
           </p>
@@ -700,19 +716,19 @@ export function MachineRow({
       ) : null}
 
       <DetailLine
-        label="Projects"
+        label={tx("Projects")}
         help="This machine's projects. For a machine this app cannot see, only those it shares with one it can. Automated ones were made by checks or agents; archived ones are kept but out of your lists. Both stay collapsed, as in the sidebar."
       >
         {row.projects.own.length > 0 ? (
           <ProjectList projects={row.projects.own} here={here} />
         ) : (
           <p className="text-xs text-muted-foreground">
-            {seen ? "No projects of your own here." : "Connect to see its projects."}
+            {seen ? tx("No projects of your own here.") : tx("Connect to see its projects.")}
           </p>
         )}
         <ArchivedDisclosure
           count={row.projects.automated.length}
-          label="automated"
+          label={tx("automated")}
           className="-ml-3 sm:-ml-4"
         >
           <div className="pl-3 sm:pl-4">
@@ -726,11 +742,11 @@ export function MachineRow({
         </ArchivedDisclosure>
       </DetailLine>
 
-      <DetailLine label="Accounts">
+      <DetailLine label={tx("Accounts")}>
         {row.accounts === null ? (
-          <p className="text-xs text-muted-foreground">Connect to see its accounts.</p>
+          <p className="text-xs text-muted-foreground">{tx("Connect to see its accounts.")}</p>
         ) : row.accounts.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No account reported.</p>
+          <p className="text-xs text-muted-foreground">{tx("No account reported.")}</p>
         ) : (
           <ul className="space-y-0.5">
             {row.accounts.map((account) => (
@@ -819,20 +835,24 @@ export function AddForAgentsView({
   error: string | null;
   onAdd: () => void;
 }) {
+  const tx = useTx();
   return (
     <DetailLine
-      label="Agents on this machine"
+      label={tx("Agents on this machine")}
       help="Seeing a machine in this app does not tell this machine's server about it. Adding it gives the server its own key to that machine for a year, which can manage its access, updates and skills, with this window closed. Agents still cannot start work until you allow workers."
     >
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">
           {added ? (
             <>
-              Added {machineLabel}. Next,{" "}
-              <Link to="/settings/machines" className="underline underline-offset-2">
-                allow workers
-              </Link>{" "}
-              on its card.
+              {renderRich(tx("Added {machineLabel}. Next, {link} on its card."), {
+                machineLabel: machineLabel,
+                link: (
+                  <Link to="/settings/machines" className="underline underline-offset-2">
+                    {tx("allow workers")}
+                  </Link>
+                ),
+              })}
             </>
           ) : allowed ? (
             `This app can see ${machineLabel}, but agents on this machine cannot use it yet.`
@@ -848,7 +868,7 @@ export function AddForAgentsView({
             disabled={adding}
             onClick={onAdd}
           >
-            {adding ? "Adding…" : "Add for agents"}
+            {adding ? tx("Adding…") : tx("Add for agents")}
           </Button>
         ) : null}
       </div>
@@ -975,15 +995,20 @@ export function ConnectBothWaysView({
   onCreate: () => void;
   onDone: () => void;
 }) {
+  const tx = useTx();
   return (
-    <DetailLine label="Connect both ways">
+    <DetailLine label={tx("Connect both ways")}>
       {teamRulesLock !== null ? (
         <TeamRulesLockNote lock={teamRulesLock} />
       ) : created === null ? (
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
-            This app sees {machineLabel}. To let {machineLabel}&rsquo;s app see this machine, make a
-            one-time link here and open it there.
+            {renderRich(
+              tx(
+                "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.",
+              ),
+              { machineLabel: machineLabel, machineLabel2: machineLabel },
+            )}
           </p>
           <Button
             className="shrink-0 self-start sm:self-auto"
@@ -992,7 +1017,11 @@ export function ConnectBothWaysView({
             disabled={creating || !canCreate}
             onClick={onCreate}
           >
-            {creating ? "Creating…" : canCreate ? "Connect both ways" : "Manage access required"}
+            {creating
+              ? tx("Creating…")
+              : canCreate
+                ? tx("Connect both ways")
+                : tx("Manage access required")}
           </Button>
         </div>
       ) : (
@@ -1007,7 +1036,7 @@ export function ConnectBothWaysView({
               readOnly
               size="sm"
               className="min-w-0 flex-1 font-mono text-xs"
-              aria-label={created.link ? "Pairing link" : "Pairing code"}
+              aria-label={created.link ? tx("Pairing link") : tx("Pairing code")}
               value={created.link ?? created.code}
               onFocus={(event) => event.currentTarget.select()}
             />
@@ -1018,15 +1047,19 @@ export function ConnectBothWaysView({
                 void copyText(created.link ?? created.code, created.link ? "Link" : "Pairing code")
               }
             >
-              Copy
+              {tx("Copy")}
             </Button>
             <Button size="xs" variant="ghost-muted" onClick={onDone}>
-              Done
+              {tx("Done")}
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Works once, until {created.expiresAt}. Paste it only into SpecWithCode on {machineLabel}
-            , not into a chat.
+            {renderRich(
+              tx(
+                "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.",
+              ),
+              { expiresAt: created.expiresAt, machineLabel: machineLabel },
+            )}
           </p>
         </div>
       )}

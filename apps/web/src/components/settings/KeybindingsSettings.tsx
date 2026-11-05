@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
@@ -121,6 +123,7 @@ function KeybindingsSearchInput({
   onChange: (next: string) => void;
   inputRef: RefObject<HTMLInputElement | null>;
 }) {
+  const tx = useTx();
   return (
     <InputGroup className="min-w-0 basis-full **:[input]:h-9 sm:basis-0 sm:flex-1 sm:**:[input]:h-8">
       <InputGroupAddon>
@@ -139,8 +142,8 @@ function KeybindingsSearchInput({
           if (query.length > 0) onChange("");
           else event.currentTarget.blur();
         }}
-        placeholder="Search keybindings"
-        aria-label="Search keybindings"
+        placeholder={tx("Search keybindings")}
+        aria-label={tx("Search keybindings")}
         size="sm"
       />
     </InputGroup>
@@ -250,6 +253,7 @@ function UnknownWhenVariableWarning({
   identifiers: ReadonlyArray<string>;
   focusable?: boolean;
 }) {
+  const tx = useTx();
   if (identifiers.length === 0) return null;
   const label =
     identifiers.length === 1
@@ -258,13 +262,15 @@ function UnknownWhenVariableWarning({
 
   return (
     <WarningTooltipIcon label={label} focusable={focusable} className="size-4.5">
-      SpecWithCode does not recognize this condition yet. It can still be saved, but it may not
-      match unless the runtime provides it.
+      {tx(
+        "SpecWithCode does not recognize this condition yet. It can still be saved, but it may not match unless the runtime provides it.",
+      )}
     </WarningTooltipIcon>
   );
 }
 
 function KeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }) {
+  const tx = useTx();
   if (labels.length === 0) return null;
   const description =
     labels.length === 1
@@ -273,7 +279,10 @@ function KeybindingConflictWarning({ labels }: { labels: ReadonlyArray<string> }
 
   return (
     <WarningTooltipIcon label={description}>
-      {description} The most recent matching binding wins when both conditions can apply.
+      {renderRich(
+        tx("{description} The most recent matching binding wins when both conditions can apply."),
+        { description: description },
+      )}
     </WarningTooltipIcon>
   );
 }
@@ -289,6 +298,7 @@ function WhenVariableSelect({
   unknownIdentifiers?: ReadonlyArray<string>;
   onChange: (value: string) => void;
 }) {
+  const tx = useTx();
   const selected = variables.find((option) => option === value);
   const options =
     selected || variables.some((option) => option === value) ? variables : [value, ...variables];
@@ -296,7 +306,7 @@ function WhenVariableSelect({
   return (
     <Select value={value} onValueChange={(nextValue) => nextValue && onChange(nextValue)}>
       <SelectTrigger size="compact" className="min-w-0 flex-1">
-        <SelectValue placeholder="Condition" />
+        <SelectValue placeholder={tx("Condition")} />
         {unknownIdentifiers && unknownIdentifiers.length > 0 ? (
           <UnknownWhenVariableWarning identifiers={unknownIdentifiers} focusable={false} />
         ) : null}
@@ -356,6 +366,7 @@ function WhenExpressionNodeEditor({
   onChange: (node: KeybindingWhenNode) => void;
   onRemove?: () => void;
 }) {
+  const tx = useTx();
   const condition = conditionParts(node);
 
   if (condition) {
@@ -373,7 +384,7 @@ function WhenExpressionNodeEditor({
           size="compact"
           className="min-w-10"
         >
-          Not
+          {tx("Not")}
         </Toggle>
         <WhenVariableSelect
           value={condition.identifier}
@@ -403,12 +414,12 @@ function WhenExpressionNodeEditor({
           <Toggle
             pressed
             onPressedChange={(pressed) => onChange(pressed ? node : node.node)}
-            aria-label="Negate group"
+            aria-label={tx("Negate group")}
             variant="outline"
             size="compact"
             className="min-w-10"
           >
-            Not
+            {tx("Not")}
           </Toggle>
           {onRemove ? (
             <WhenExpressionRemoveButton
@@ -507,17 +518,17 @@ function WhenExpressionNodeEditor({
             <SelectValue />
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false}>
-            <SelectItem value="and">and</SelectItem>
-            <SelectItem value="or">or</SelectItem>
+            <SelectItem value="and">{tx("and")}</SelectItem>
+            <SelectItem value="or">{tx("or")}</SelectItem>
           </SelectContent>
         </Select>
         <Button type="button" variant="outline" size="compact" onClick={addCondition}>
           <PlusIcon className="size-3.5" />
-          Condition
+          {tx("Condition")}
         </Button>
         <Button type="button" variant="outline" size="compact" onClick={addGroup}>
           <PlusIcon className="size-3.5" />
-          Group
+          {tx("Group")}
         </Button>
         {onRemove ? (
           <WhenExpressionRemoveButton
@@ -569,6 +580,7 @@ function WhenExpressionBuilder({
   onChange: (value: KeybindingWhenNode | undefined) => void;
   onValidityChange?: (valid: boolean) => void;
 }) {
+  const tx = useTx();
   const expression = whenAstToExpression(value);
   const [expressionDraft, setExpressionDraft] = useState(expression);
   const parseResult = useMemo(() => parseWhenExpressionDraft(expressionDraft), [expressionDraft]);
@@ -611,16 +623,16 @@ function WhenExpressionBuilder({
     <div className="w-[min(34rem,calc(100vw-2rem))] space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground">When</div>
+          <div className="text-sm font-medium text-foreground">{tx("When")}</div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button type="button" variant="outline" size="compact" onClick={addRootCondition}>
             <PlusIcon className="size-3.5" />
-            Condition
+            {tx("Condition")}
           </Button>
           <Button type="button" variant="outline" size="compact" onClick={addRootGroup}>
             <PlusIcon className="size-3.5" />
-            Group
+            {tx("Group")}
           </Button>
         </div>
       </div>
@@ -630,9 +642,9 @@ function WhenExpressionBuilder({
           <InputGroupInput
             value={expressionDraft}
             onChange={(event) => updateExpressionDraft(event.currentTarget.value)}
-            placeholder="Always"
+            placeholder={tx("Always")}
             aria-invalid={Boolean(parseError)}
-            aria-label="When expression"
+            aria-label={tx("When expression")}
             size="compact"
             font="mono"
           />
@@ -663,18 +675,18 @@ function WhenExpressionBuilder({
             <div className="flex flex-wrap gap-2">
               <Button type="button" size="compact" onClick={addRootCondition}>
                 <PlusIcon className="size-3.5" />
-                Condition
+                {tx("Condition")}
               </Button>
               <Button type="button" variant="outline" size="compact" onClick={addRootGroup}>
                 <PlusIcon className="size-3.5" />
-                Group
+                {tx("Group")}
               </Button>
             </div>
           </div>
         )}
         {parseError ? (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg border border-destructive/30 bg-background/75 p-4 text-center text-xs text-destructive-foreground backdrop-blur-xs">
-            Fix the expression above to continue editing visually.
+            {tx("Fix the expression above to continue editing visually.")}
           </div>
         ) : null}
       </div>
@@ -797,6 +809,7 @@ function KeybindingKeyControl({
   isSaving: boolean;
   pillClassName?: string | undefined;
 }) {
+  const tx = useTx();
   const { keyDraft, isRecording, isDirty, isWhenDraftValid, setDraft, save, captureKeybinding } =
     editor;
   const showPill = !isRecording && keyDraft === row.key && row.key.length > 0 && !isDirty;
@@ -809,7 +822,7 @@ function KeybindingKeyControl({
           disabled={isSaving || keyDraft.trim().length === 0 || !isWhenDraftValid}
           onClick={save}
         >
-          {isSaving ? "Saving" : "Save"}
+          {isSaving ? tx("Saving") : tx("Save")}
         </Button>
       ) : null}
       {showPill ? (
@@ -830,7 +843,7 @@ function KeybindingKeyControl({
           autoFocus={isRecording}
           aria-label={`Keybinding for ${commandLabel(row.command)}`}
           value={isRecording ? "" : keyDraft}
-          placeholder={isRecording ? "Press shortcut" : "Unassigned"}
+          placeholder={isRecording ? tx("Press shortcut") : tx("Unassigned")}
           size="sm"
           font="mono"
           className="w-44"
@@ -860,6 +873,7 @@ function WhenClauseControl({
   onChange: (value: KeybindingWhenNode | undefined) => void;
   onValidityChange: (valid: boolean) => void;
 }) {
+  const tx = useTx();
   return (
     <Popover>
       <PopoverTrigger
@@ -872,7 +886,7 @@ function WhenClauseControl({
         }
         aria-label={`Edit when clause for ${label}`}
       >
-        <span className="truncate font-mono">{expression || "Always"}</span>
+        <span className="truncate font-mono">{expression || tx("Always")}</span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>
@@ -898,6 +912,7 @@ function KeybindingRowMenu({
   onReset: (row: KeybindingRow) => void;
   onRemove: (row: KeybindingRow) => void;
 }) {
+  const tx = useTx();
   const canReset = row.source === "Custom" && row.defaultKey !== null;
   const canRemove = row.source !== "Default";
   if (!canReset && !canRemove) return null;
@@ -920,12 +935,12 @@ function KeybindingRowMenu({
       <MenuPopup align="end">
         {canReset ? (
           <MenuItem disabled={isSaving} onClick={() => onReset(row)}>
-            Reset to default
+            {tx("Reset to default")}
           </MenuItem>
         ) : null}
         {canRemove ? (
           <MenuItem variant="destructive" disabled={isSaving} onClick={() => onRemove(row)}>
-            Remove
+            {tx("Remove")}
           </MenuItem>
         ) : null}
       </MenuPopup>
@@ -963,9 +978,10 @@ function KeybindingRowWhen({
   editor: KeybindingRowEditor;
   variables: ReadonlyArray<WhenVariableOption>;
 }) {
+  const tx = useTx();
   return (
     <span className="flex h-6 items-center gap-1.5">
-      <span className="text-xs leading-none text-muted-foreground">When</span>
+      <span className="text-xs leading-none text-muted-foreground">{tx("When")}</span>
       <WhenClauseControl
         label={commandLabel(row.command)}
         expression={editor.whenDraftExpression}
@@ -1107,13 +1123,14 @@ function NewKeybindingCommandSelect({
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
   className?: string | undefined;
 }) {
+  const tx = useTx();
   return (
     <Select
       value={draft.commandDraft}
       onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
     >
       <SelectTrigger size="sm" className={className}>
-        <SelectValue placeholder="Command" />
+        <SelectValue placeholder={tx("Command")} />
       </SelectTrigger>
       <SelectContent alignItemWithTrigger={false} matchTriggerWidth={false} className="max-h-72">
         {commandOptions.map((command) => (
@@ -1135,13 +1152,14 @@ function NewKeybindingKeyInput({
   autoFocus?: boolean;
   className?: string | undefined;
 }) {
+  const tx = useTx();
   return (
     <Input
       data-keybinding-capture=""
       autoFocus={autoFocus}
       aria-label={`Keybinding for ${draft.commandLabelText}`}
       value={draft.isRecording ? "" : draft.keyDraft}
-      placeholder={draft.isRecording ? "Press shortcut" : "Unassigned"}
+      placeholder={draft.isRecording ? tx("Press shortcut") : tx("Unassigned")}
       size="sm"
       font="mono"
       className={className}
@@ -1179,6 +1197,7 @@ function NewKeybindingCancelIcon({
   isSaving: boolean;
   onCancel: () => void;
 }) {
+  const tx = useTx();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -1188,20 +1207,21 @@ function NewKeybindingCancelIcon({
             variant="ghost-muted"
             size="icon-sm"
             disabled={isSaving}
-            aria-label="Cancel new keybinding"
+            aria-label={tx("Cancel new keybinding")}
             onClick={onCancel}
           />
         }
       >
         <XIcon className="size-3.5" />
       </TooltipTrigger>
-      <TooltipPopup side="top">Cancel</TooltipPopup>
+      <TooltipPopup side="top">{tx("Cancel")}</TooltipPopup>
     </Tooltip>
   );
 }
 
 /** Add-binding form shaped like the binding rows below it. */
 function NewKeybindingSettingsRow(props: NewKeybindingProps) {
+  const tx = useTx();
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
   const draft = useNewKeybindingDraft({ allRows, onSave });
 
@@ -1211,7 +1231,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
       title="New keybinding"
       description={
         <span className="flex h-6 items-center gap-1.5">
-          <span className="text-xs leading-none text-muted-foreground">When</span>
+          <span className="text-xs leading-none text-muted-foreground">{tx("When")}</span>
           <NewKeybindingWhen draft={draft} variables={variables} />
         </span>
       }
@@ -1225,7 +1245,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
           <KeybindingConflictWarning labels={draft.conflictLabels} />
           <NewKeybindingKeyInput draft={draft} className="w-44" />
           <Button size="sm" disabled={isSaving || !draft.canSave} onClick={draft.save}>
-            {isSaving ? "Saving" : "Save"}
+            {isSaving ? tx("Saving") : tx("Save")}
           </Button>
           <NewKeybindingCancelIcon isSaving={isSaving} onCancel={onCancel} />
         </div>
@@ -1281,6 +1301,7 @@ function BrowserKeybindingNotice() {
 }
 
 export function KeybindingsSettingsPanel() {
+  const tx = useTx();
   // The representative environment supplies the displayed bindings; edits
   // fan out to every connected environment in the selection, so one
   // shortcut change reaches each machine the user runs SpecWithCode on.
@@ -1501,7 +1522,7 @@ export function KeybindingsSettingsPanel() {
             onClick={() => setIsAddingBinding(true)}
           >
             <PlusIcon aria-hidden className="size-4" />
-            Add keybinding
+            {tx("Add keybinding")}
           </Button>
           <Tooltip>
             <TooltipTrigger
@@ -1512,20 +1533,20 @@ export function KeybindingsSettingsPanel() {
                   size="icon"
                   disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
                   onClick={openKeybindingsFile}
-                  aria-label="Open keybindings.json"
+                  aria-label={tx("Open keybindings.json")}
                 >
                   <FileJsonIcon aria-hidden className="size-4" />
                 </Button>
               }
             />
-            <TooltipPopup side="top">Open keybindings.json</TooltipPopup>
+            <TooltipPopup side="top">{tx("Open keybindings.json")}</TooltipPopup>
           </Tooltip>
         </div>
       </SettingsSection>
 
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
-          This connection can view keybindings but cannot change them.
+          {tx("This connection can view keybindings but cannot change them.")}
         </p>
       ) : null}
       <div inert={!canWriteSettings}>
@@ -1552,7 +1573,7 @@ export function KeybindingsSettingsPanel() {
         ) : (
           <SettingsGroup>
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No keybindings match your search.
+              {tx("No keybindings match your search.")}
             </div>
           </SettingsGroup>
         )}

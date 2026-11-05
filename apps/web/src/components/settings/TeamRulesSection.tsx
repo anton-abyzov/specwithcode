@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId, TeamRulesSummary } from "@specweave-studio/contracts";
 import { teamRulesSetByLabel } from "@specweave-studio/shared/teamRules";
 
@@ -17,6 +19,7 @@ function Contact({ contact }: { readonly contact: string }) {
 }
 
 export function TeamRulesSectionView({ summary }: { readonly summary: TeamRulesSummary }) {
+  const tx = useTx();
   const setBy = teamRulesSetByLabel(summary.owner);
   if (summary.status === "hold") {
     return (
@@ -26,13 +29,20 @@ export function TeamRulesSectionView({ summary }: { readonly summary: TeamRulesS
           status={<TeamRulesLabel>{setBy}</TeamRulesLabel>}
           description={
             <>
-              The team rules file has an error, so no agent turn can start on this machine. Fixing
-              the file resumes agents without a restart.
-              {summary.contact === undefined ? null : (
-                <>
-                  {" "}
-                  See <Contact contact={summary.contact} />.
-                </>
+              {renderRich(
+                tx(
+                  "The team rules file has an error, so no agent turn can start on this machine. Fixing the file resumes agents without a restart.{value}",
+                ),
+                {
+                  value:
+                    summary.contact === undefined ? null : (
+                      <>
+                        {renderRich(tx("See {contact}."), {
+                          contact: <Contact contact={summary.contact} />,
+                        })}
+                      </>
+                    ),
+                },
               )}
             </>
           }
@@ -50,12 +60,16 @@ export function TeamRulesSectionView({ summary }: { readonly summary: TeamRulesS
         literal
         description={
           <>
-            {summary.contact === undefined ? null : (
-              <>
-                Why this is locked: <Contact contact={summary.contact} />.{" "}
-              </>
-            )}
-            Your own choices come back if the rules are removed.
+            {renderRich(tx("{value}Your own choices come back if the rules are removed."), {
+              value:
+                summary.contact === undefined ? null : (
+                  <>
+                    {renderRich(tx("Why this is locked: {contact}."), {
+                      contact: <Contact contact={summary.contact} />,
+                    })}
+                  </>
+                ),
+            })}
           </>
         }
       />

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAuth } from "@clerk/react";
 import { LinkIcon, LogInIcon } from "lucide-react";
 
@@ -102,6 +103,7 @@ function ConfiguredConnectReachBanner({
 }: {
   readonly machines: ReadonlyArray<UnreachableMachine>;
 }) {
+  const tx = useTx();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const discovery = useRelayEnvironmentDiscovery();
   const { authPrompt, openAuthPrompt } = useStudioConnectAuthPrompt();
@@ -124,7 +126,7 @@ function ConfiguredConnectReachBanner({
           <AlertAction>
             <Button size="xs" onClick={openAuthPrompt}>
               <LogInIcon className="size-3" />
-              Sign in to SpecWithCode Connect
+              {tx("Sign in to SpecWithCode Connect")}
             </Button>
           </AlertAction>
         ) : addRoutes ? (
@@ -136,7 +138,7 @@ function ConfiguredConnectReachBanner({
               }
             >
               <LinkIcon className="size-3" />
-              Use SpecWithCode Connect
+              {tx("Use SpecWithCode Connect")}
             </Button>
           </AlertAction>
         ) : null}

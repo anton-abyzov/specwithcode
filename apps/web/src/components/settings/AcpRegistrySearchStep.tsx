@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { AuthProvidersManageScope } from "@specweave-studio/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
@@ -80,6 +82,7 @@ export function AcpRegistrySearchStep({
   moreAgentsOpen,
   onMoreAgentsOpenChange,
 }: AcpRegistrySearchStepProps) {
+  const tx = useTx();
   const [query, setQuery] = useState("");
   const [uncontrolledMoreOpen, setUncontrolledMoreOpen] = useState(false);
   const isMoreOpen = moreAgentsOpen ?? uncontrolledMoreOpen;
@@ -178,20 +181,26 @@ export function AcpRegistrySearchStep({
     <section className="grid grid-cols-1 gap-3" aria-labelledby="acp-registry-search-heading">
       <div className="grid gap-1">
         <h3 className="text-sm font-medium text-foreground" id="acp-registry-search-heading">
-          From the ACP Registry
+          {tx("From the ACP Registry")}
         </h3>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          The ACP Registry is the public catalog of coding agents built on the Agent Client
-          Protocol, an open standard that lets any app drive any agent. The app installs the agent
-          you pick on this machine.{" "}
-          <a
-            className="text-foreground underline-offset-2 hover:underline"
-            href={ACP_OVERVIEW_URL}
-            rel="noreferrer"
-            target="_blank"
-          >
-            About ACP
-          </a>
+          {renderRich(
+            tx(
+              "The ACP Registry is the public catalog of coding agents built on the Agent Client Protocol, an open standard that lets any app drive any agent. The app installs the agent you pick on this machine. {a}",
+            ),
+            {
+              a: (
+                <a
+                  className="text-foreground underline-offset-2 hover:underline"
+                  href={ACP_OVERVIEW_URL}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  {tx("About ACP")}
+                </a>
+              ),
+            },
+          )}
         </p>
       </div>
 
@@ -215,9 +224,9 @@ export function AcpRegistrySearchStep({
       <Collapsible open={isMoreOpen} onOpenChange={setMoreOpen}>
         <CollapsibleTrigger className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left ring-1 ring-black/5 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring dark:ring-white/5 dark:hover:bg-white/5">
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-medium text-foreground">More agents</span>
+            <span className="block text-sm font-medium text-foreground">{tx("More agents")}</span>
             <span className="block truncate text-xs text-muted-foreground">
-              Search the full registry, or add an agent by ID or local command
+              {tx("Search the full registry, or add an agent by ID or local command")}
             </span>
           </span>
           <ChevronDownIcon
@@ -233,7 +242,7 @@ export function AcpRegistrySearchStep({
                   <SearchIcon />
                 </InputGroupAddon>
                 <InputGroupInput
-                  aria-label="Search ACP Registry"
+                  aria-label={tx("Search ACP Registry")}
                   disabled={preparingId !== null}
                   onChange={(event) => {
                     const nextQuery = event.currentTarget.value;
@@ -245,7 +254,7 @@ export function AcpRegistrySearchStep({
                       setSubmittedQuery(nextQuery.trim());
                     }, 300);
                   }}
-                  placeholder="Search agents…"
+                  placeholder={tx("Search agents…")}
                   size="sm"
                   type="search"
                   value={query}
@@ -258,7 +267,7 @@ export function AcpRegistrySearchStep({
                 type="button"
                 variant="ghost-muted"
               >
-                Enter manually
+                {tx("Enter manually")}
               </Button>
               {onLocalConfiguration ? (
                 <Button
@@ -268,16 +277,16 @@ export function AcpRegistrySearchStep({
                   type="button"
                   variant="outline"
                 >
-                  Local ACP command
+                  {tx("Local ACP command")}
                 </Button>
               ) : null}
             </form>
 
             <div className="sr-only" role="status">
               {isInitialSearch
-                ? "Searching the ACP Registry."
+                ? tx("Searching the ACP Registry.")
                 : isRefreshing
-                  ? "Refreshing ACP Registry results."
+                  ? tx("Refreshing ACP Registry results.")
                   : results
                     ? `${resultCount} compatible ${resultCount === 1 ? "agent" : "agents"} found.`
                     : ""}
@@ -285,7 +294,7 @@ export function AcpRegistrySearchStep({
 
             {isInitialSearch ? (
               <div className="flex min-h-20 items-center justify-center text-sm text-muted-foreground">
-                Searching the registry...
+                {tx("Searching the registry...")}
               </div>
             ) : null}
 
@@ -295,18 +304,27 @@ export function AcpRegistrySearchStep({
                   {builtInMatches.length > 0 ? (
                     <>
                       <p className="text-sm font-medium">
-                        {builtInMatches.join(", ")} {builtInMatches.length === 1 ? "is" : "are"}{" "}
-                        built in
+                        {tx(
+                          builtInMatches.length === 1
+                            ? "{value} is built in"
+                            : "{value} are built in",
+                          { value: builtInMatches.join(", ") },
+                        )}
                       </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        Choose {builtInMatches.length === 1 ? "it" : "them"} under Built-in
-                        providers above.
+                        {tx(
+                          builtInMatches.length === 1
+                            ? "Choose it under Built-in providers above."
+                            : "Choose them under Built-in providers above.",
+                        )}
                       </p>
                     </>
                   ) : (
                     <>
-                      <p className="text-sm font-medium">No compatible agents found</p>
-                      <p className="mt-1 text-xs text-muted-foreground">Try a broader search.</p>
+                      <p className="text-sm font-medium">{tx("No compatible agents found")}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {tx("Try a broader search.")}
+                      </p>
                     </>
                   )}
                 </div>
@@ -368,7 +386,9 @@ export function AcpRegistrySearchStep({
                                       </Button>
                                     }
                                   />
-                                  <TooltipPopup>About {agent.name}</TooltipPopup>
+                                  <TooltipPopup>
+                                    {renderRich(tx("About {name}"), { name: agent.name })}
+                                  </TooltipPopup>
                                 </Tooltip>
                               ) : null}
                               <Button
@@ -380,7 +400,11 @@ export function AcpRegistrySearchStep({
                                 size="xs"
                                 variant={isPreparing ? "secondary" : "outline"}
                               >
-                                {alreadyAdded ? "Added" : isPreparing ? progressLabel : "Add"}
+                                {alreadyAdded
+                                  ? tx("Added")
+                                  : isPreparing
+                                    ? progressLabel
+                                    : tx("Add")}
                               </Button>
                             </div>
                           </div>

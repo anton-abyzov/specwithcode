@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import {
@@ -36,6 +37,7 @@ export function PhoneSetupDialog(props: {
   readonly onCopyAddress: () => void;
   readonly onCopyCode: () => void;
 }) {
+  const tx = useTx();
   const { address, code } = props;
   const [fallbackChosen, setFallbackChosen] = useState(false);
   // Reset on opening, not on closing, so the dialog keeps its content while it animates out.
@@ -60,24 +62,25 @@ export function PhoneSetupDialog(props: {
   if (address === null) {
     instructions = (
       <p>
-        The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode
-        Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead,
-        this computer needs a private HTTPS address: set up Tailscale on this computer and your
-        iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.
+        {tx(
+          "The simplest way to reach this computer from your iPhone is to sign in to SpecWithCode Connect in the desktop app. No Tailscale is needed. To pair with a private QR code instead, this computer needs a private HTTPS address: set up Tailscale on this computer and your iPhone, sign in to the same tailnet, then enable Tailscale HTTPS in Connections.",
+        )}
       </p>
     );
   } else if (address.hint === "tailnet") {
     instructions = (
       <ol className="list-decimal space-y-2 pl-5">
         <li>
-          Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn
-          the VPN on.
+          {tx(
+            "Install Tailscale on your iPhone. Sign in to the same tailnet as this computer and turn the VPN on.",
+          )}
         </li>
         <li>
-          Copy the computer address below and open it in Safari on your iPhone. If it cannot load,
-          check Tailscale on both devices before making a code.
+          {tx(
+            "Copy the computer address below and open it in Safari on your iPhone. If it cannot load, check Tailscale on both devices before making a code.",
+          )}
         </li>
-        <li>Open SpecWithCode on your iPhone, tap Pair a machine, then Scan QR code.</li>
+        <li>{tx("Open SpecWithCode on your iPhone, tap Pair a machine, then Scan QR code.")}</li>
       </ol>
     );
   } else {
@@ -85,8 +88,9 @@ export function PhoneSetupDialog(props: {
       <ol className="list-decimal space-y-2 pl-5">
         <li>{describePhoneNetworkHint(address.hint)}</li>
         <li>
-          Open the computer address in Safari on your iPhone. Once it loads, open SpecWithCode and
-          tap Pair a machine, then Scan QR code.
+          {tx(
+            "Open the computer address in Safari on your iPhone. Once it loads, open SpecWithCode and tap Pair a machine, then Scan QR code.",
+          )}
         </li>
       </ol>
     );
@@ -96,12 +100,16 @@ export function PhoneSetupDialog(props: {
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {code?.status === "ready" ? "Scan with your iPhone" : "Pair with a private QR code"}
+            {code?.status === "ready"
+              ? tx("Scan with your iPhone")
+              : tx("Pair with a private QR code")}
           </DialogTitle>
           <DialogDescription>
             {code?.status === "ready"
               ? `This code works once and expires at ${code.expiresAt}. Keep this computer awake.`
-              : "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code."}
+              : tx(
+                  "A fallback for when you can't use SpecWithCode Connect. Your iPhone must reach this computer directly, on the same network or over Tailscale. Prepare the connection first, then make a one-time code.",
+                )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -110,18 +118,19 @@ export function PhoneSetupDialog(props: {
             {address !== null ? (
               <div className="rounded-lg border border-border p-3">
                 <p className="text-xs font-medium text-muted-foreground">
-                  Computer address · no pairing code
+                  {tx("Computer address · no pairing code")}
                 </p>
                 <p className="mt-1 break-all text-sm">{address.httpBaseUrl}</p>
                 <Button className="mt-2" size="sm" variant="outline" onClick={props.onCopyAddress}>
-                  Copy computer address
+                  {tx("Copy computer address")}
                 </Button>
               </div>
             ) : null}
             {!props.canPair ? (
               <p role="alert" className="text-sm text-destructive-foreground">
-                This window cannot create pairing codes. Reopen SpecWithCode with access to this
-                computer.
+                {tx(
+                  "This window cannot create pairing codes. Reopen SpecWithCode with access to this computer.",
+                )}
               </p>
             ) : null}
             {props.canPair && code?.status === "ready" ? (
@@ -132,22 +141,22 @@ export function PhoneSetupDialog(props: {
                     size={208}
                     level="M"
                     marginSize={1}
-                    title="Pairing code for the SpecWithCode iPhone app"
+                    title={tx("Pairing code for the SpecWithCode iPhone app")}
                   />
                 </div>
                 <p className="text-center text-xs text-muted-foreground">
-                  Ready to scan. The phone has not confirmed a connection yet.
+                  {tx("Ready to scan. The phone has not confirmed a connection yet.")}
                 </p>
               </div>
             ) : null}
             {code?.status === "expired" ? (
               <p role="status" className="text-sm">
-                This code expired. Generate a new code when your phone is ready.
+                {tx("This code expired. Generate a new code when your phone is ready.")}
               </p>
             ) : null}
             {code?.status === "route-changed" ? (
               <p role="status" className="text-sm">
-                The computer address changed. Generate a new code for this address.
+                {tx("The computer address changed. Generate a new code for this address.")}
               </p>
             ) : null}
             {props.error ? (
@@ -156,26 +165,27 @@ export function PhoneSetupDialog(props: {
               </p>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              If scanning fails, check the address in Safari, the VPN connection and the code's
-              expiry. A working address on this computer does not prove your phone can reach it.
+              {tx(
+                "If scanning fails, check the address in Safari, the VPN connection and the code's expiry. A working address on this computer does not prove your phone can reach it.",
+              )}
             </p>
           </div>
         </DialogPanel>
         {showAccessSetup || showPairing ? (
           <DialogFooter>
             {showAccessSetup ? (
-              <Button onClick={props.onShowAccessSettings}>Set up Tailscale HTTPS</Button>
+              <Button onClick={props.onShowAccessSettings}>{tx("Set up Tailscale HTTPS")}</Button>
             ) : null}
             {showPairing ? (
               code?.status === "ready" ? (
-                <Button onClick={props.onCopyCode}>Copy pairing link</Button>
+                <Button onClick={props.onCopyCode}>{tx("Copy pairing link")}</Button>
               ) : (
                 <Button disabled={props.isCreating} onClick={props.onGenerate}>
                   {props.isCreating
-                    ? "Creating…"
+                    ? tx("Creating…")
                     : code === null
-                      ? "Generate pairing code"
-                      : "Generate new code"}
+                      ? tx("Generate pairing code")
+                      : tx("Generate new code")}
                 </Button>
               )
             ) : null}
@@ -195,34 +205,38 @@ function ConnectFirstContent(props: {
   readonly onUseConnect: () => void;
   readonly onUseFallback: () => void;
 }) {
+  const tx = useTx();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Add your iPhone with SpecWithCode Connect</DialogTitle>
+        <DialogTitle>{tx("Add your iPhone with SpecWithCode Connect")}</DialogTitle>
         <DialogDescription>
-          Sign in with the same account on this computer and on the iPhone. It works from anywhere,
-          with no Tailscale, VPN or QR code.
+          {tx(
+            "Sign in with the same account on this computer and on the iPhone. It works from anywhere, with no Tailscale, VPN or QR code.",
+          )}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
           <li>
-            On this computer, check Your phones. If it does not say this computer
-            is ready for your iPhone yet, sign in there and turn it on.
+            {tx(
+              "On this computer, check Your phones. If it does not say this computer is ready for your iPhone yet, sign in there and turn it on.",
+            )}
           </li>
-          <li>On the iPhone, open SpecWithCode and sign in with the same account.</li>
-          <li>This computer appears in the iPhone's list. Tap it to start.</li>
+          <li>{tx("On the iPhone, open SpecWithCode and sign in with the same account.")}</li>
+          <li>{tx("This computer appears in the iPhone's list. Tap it to start.")}</li>
         </ol>
         <p className="mt-4 text-sm text-muted-foreground">
-          For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own;
-          phones do not count toward your Connect machines.
+          {tx(
+            "For a second iPhone, repeat the last two steps on it. Each iPhone signs in on its own; phones do not count toward your Connect machines.",
+          )}
         </p>
       </DialogPanel>
       <DialogFooter>
         <Button variant="ghost" onClick={props.onUseFallback}>
-          Use a private QR code instead
+          {tx("Use a private QR code instead")}
         </Button>
-        <Button onClick={props.onUseConnect}>Go to SpecWithCode Connect</Button>
+        <Button onClick={props.onUseConnect}>{tx("Go to SpecWithCode Connect")}</Button>
       </DialogFooter>
     </>
   );

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
@@ -20,6 +21,7 @@ export function ArchivedDisclosure({
   readonly className?: string;
   readonly label?: string;
 }) {
+  const tx = useTx();
   const [open, setOpen] = useState(false);
   const id = useId();
   if (count === 0) return null;
@@ -36,7 +38,7 @@ export function ArchivedDisclosure({
           aria-hidden
           className={cn("size-3.5 transition-transform", open && "rotate-90")}
         />
-        {open ? "Hide" : "Show"} {label} ({count})
+        {open ? tx("Hide") : tx("Show")} {label} ({count})
       </button>
       {open ? (
         <div

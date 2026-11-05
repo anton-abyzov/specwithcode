@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import type {
@@ -61,6 +63,7 @@ export function IncomingWorkerSetup({
   snapshot: StudioWorkGrantsSnapshot;
   onGranted: () => void;
 }) {
+  const tx = useTx();
   const { environments } = useEnvironments();
   const name = useMachineNicknames();
   const [selected, setSelected] = useState<EnvironmentId | null>(null);
@@ -75,31 +78,35 @@ export function IncomingWorkerSetup({
   const here = environments.find((environment) => environment.environmentId === environmentId);
   return (
     <div className="space-y-2 border-t border-border/60 px-3 py-3 sm:px-4">
-      <p className="text-sm font-medium">Allow another machine to run work here</p>
+      <p className="text-sm font-medium">{tx("Allow another machine to run work here")}</p>
       <p className="text-xs text-muted-foreground">
-        Choose the machine that will send work to this one. This does not grant automatic access to
-        secrets; each secret transfer still needs your approval.
+        {tx(
+          "Choose the machine that will send work to this one. This does not grant automatic access to secrets; each secret transfer still needs your approval.",
+        )}
       </p>
       <label className="flex flex-wrap items-center gap-2 text-xs">
-        Machine sending work
-        <select
-          aria-label="Machine sending work"
-          className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
-          value={chosen?.environmentId ?? ""}
-          onChange={(event) =>
-            setSelected(
-              candidates.find((item) => item.environmentId === event.target.value)?.environmentId ??
-                null,
-            )
-          }
-        >
-          <option value="">Choose a machine</option>
-          {candidates.map((environment) => (
-            <option key={environment.environmentId} value={environment.environmentId}>
-              {name(environment.environmentId, environment.label)}
-            </option>
-          ))}
-        </select>
+        {renderRich(tx("Machine sending work{select}"), {
+          select: (
+            <select
+              aria-label={tx("Machine sending work")}
+              className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
+              value={chosen?.environmentId ?? ""}
+              onChange={(event) =>
+                setSelected(
+                  candidates.find((item) => item.environmentId === event.target.value)
+                    ?.environmentId ?? null,
+                )
+              }
+            >
+              <option value="">{tx("Choose a machine")}</option>
+              {candidates.map((environment) => (
+                <option key={environment.environmentId} value={environment.environmentId}>
+                  {name(environment.environmentId, environment.label)}
+                </option>
+              ))}
+            </select>
+          ),
+        })}
       </label>
       {!candidates.length ? (
         <p className="text-xs text-muted-foreground">
@@ -137,6 +144,7 @@ function IncomingWorkerAction({
   connected: boolean;
   onGranted: () => void;
 }) {
+  const tx = useTx();
   const manageHere = useEnvironmentScope(here, AuthAccessWriteScope);
   const manageThere = useEnvironmentScope(coordinator, AuthAccessWriteScope);
   const [access, setAccess] = useState<StudioFleetWorkerAccess>(DEFAULT_FLEET_WORKER_ACCESS);
@@ -178,32 +186,39 @@ function IncomingWorkerAction({
         {coordinatorLabel} → {hereLabel}
       </p>
       <label className="flex flex-wrap items-center gap-2 text-xs">
-        Most access for this work
-        <select
-          aria-label="Most access for incoming work"
-          className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
-          value={access}
-          disabled={pending || done || unavailable !== null}
-          onChange={(event) => setAccess(event.target.value as StudioFleetWorkerAccess)}
-        >
-          {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
-            <option key={choice.value} value={choice.value}>
-              {choice.label}
-            </option>
-          ))}
-        </select>
+        {renderRich(tx("Most access for this work{select}"), {
+          select: (
+            <select
+              aria-label={tx("Most access for incoming work")}
+              className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
+              value={access}
+              disabled={pending || done || unavailable !== null}
+              onChange={(event) => setAccess(event.target.value as StudioFleetWorkerAccess)}
+            >
+              {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          ),
+        })}
       </label>
       {unavailable ? (
         <p role="status" className="text-xs text-muted-foreground">
-          {unavailable} On {coordinatorLabel}, open Settings &gt; Machines, expand Access, routes
-          and worker permissions on {hereLabel}'s card, and choose Allow workers.
+          {renderRich(
+            tx(
+              "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.",
+            ),
+            { unavailable: unavailable, coordinatorLabel: coordinatorLabel, hereLabel: hereLabel },
+          )}
         </p>
       ) : (
         <Button size="xs" disabled={pending || done} onClick={() => void allow()}>
           {pending
-            ? "Setting up…"
+            ? tx("Setting up…")
             : done
-              ? "Worker access allowed"
+              ? tx("Worker access allowed")
               : `Allow ${coordinatorLabel} to run work here`}
         </Button>
       )}

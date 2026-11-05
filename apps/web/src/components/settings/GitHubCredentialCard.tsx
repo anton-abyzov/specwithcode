@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
@@ -55,6 +57,7 @@ export function GitHubCredentialCard({
   /** Reports what the machine uses for GitHub each time it is read. */
   readonly onState?: (state: GitHubCredentialState) => void;
 }) {
+  const tx = useTx();
   const workerSupported =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment?.capabilities
       ?.gitHubCredentialCopy === true;
@@ -224,28 +227,34 @@ export function GitHubCredentialCard({
       </p>
       {state.ghAccounts.length > 0 && inUse?.source !== "gh" ? (
         <p className="text-muted-foreground wrap-anywhere">
-          gh on {environmentLabel}:{" "}
-          {state.ghAccounts
-            .map(
-              (account) =>
-                `${account.login}${account.active ? " (active)" : ""}${account.authenticated ? "" : " (not working)"}`,
-            )
-            .join(", ")}
-          . SpecWithCode never switches or removes it.
+          {renderRich(
+            tx("gh on {environmentLabel}: {value}. SpecWithCode never switches or removes it."),
+            {
+              environmentLabel: environmentLabel,
+              value: state.ghAccounts
+                .map(
+                  (account) =>
+                    `${account.login}${account.active ? " (active)" : ""}${account.authenticated ? "" : " (not working)"}`,
+                )
+                .join(", "),
+            },
+          )}
         </p>
       ) : null}
       {inUse?.source === "copied" ? (
         <p className="text-muted-foreground">
-          SpecWithCode's pull requests and reviews on {environmentLabel}, and the agents, terminals
-          and git it starts there, use the copied sign-in for github.com over HTTPS; it wins over
-          GH_TOKEN and gh there. {environmentLabel}'s gh logins, git config and credential helpers
-          stay as they were, and SSH remotes keep using SSH keys.
+          {renderRich(
+            tx(
+              "SpecWithCode's pull requests and reviews on {environmentLabel}, and the agents, terminals and git it starts there, use the copied sign-in for github.com over HTTPS; it wins over GH_TOKEN and gh there. {environmentLabel2}'s gh logins, git config and credential helpers stay as they were, and SSH remotes keep using SSH keys.",
+            ),
+            { environmentLabel: environmentLabel, environmentLabel2: environmentLabel },
+          )}
         </p>
       ) : null}
       {state.credentialHelpers.length > 0 ? (
         <p className="text-muted-foreground wrap-anywhere">
           git credential helpers on {environmentLabel}: {state.credentialHelpers.join(", ")}
-          {state.gitHubCredentialHelper ? " (one for github.com)" : ""}.
+          {state.gitHubCredentialHelper ? tx(" (one for github.com)") : ""}.
         </p>
       ) : null}
       {done ? (
@@ -256,31 +265,42 @@ export function GitHubCredentialCard({
       {confirming && preview?.login ? (
         <div
           className="grid gap-2 rounded-md border border-border bg-muted/30 p-2"
-          aria-label="Confirm copying the GitHub sign-in"
+          aria-label={tx("Confirm copying the GitHub sign-in")}
         >
           <p className="wrap-anywhere">
-            Copy {preview.login}'s GitHub sign-in ({describeToken(preview)}) from {sourceLabel}? It
-            is stored only in {environmentLabel}'s secret store and can be removed here; revoking it
-            on GitHub signs out every machine using it.
-            {plan.replacesSaved
-              ? ` It replaces the token saved in Settings on ${environmentLabel}${inUse?.login ? ` (${inUse.login})` : ""}, which is kept and comes back when you remove the copy.`
-              : ""}
+            {renderRich(
+              tx(
+                "Copy {login}'s GitHub sign-in ({value}) from {sourceLabel}? It is stored only in {environmentLabel}'s secret store and can be removed here; revoking it on GitHub signs out every machine using it.{value2}",
+              ),
+              {
+                login: preview.login,
+                value: describeToken(preview),
+                sourceLabel: sourceLabel,
+                environmentLabel: environmentLabel,
+                value2: plan.replacesSaved
+                  ? ` It replaces the token saved in Settings on ${environmentLabel}${inUse?.login ? ` (${inUse.login})` : ""}, which is kept and comes back when you remove the copy.`
+                  : "",
+              },
+            )}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="xs" disabled={busy} onClick={() => void runCopy()}>
-              Copy sign-in
+              {tx("Copy sign-in")}
             </Button>
             <Button size="xs" variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>
-              Cancel
+              {tx("Cancel")}
             </Button>
             {plan.replacesSaved ? null : (
               <label className="flex items-center gap-1.5 text-muted-foreground">
-                <Checkbox
-                  checked={dontAsk}
-                  aria-label="Don't ask again"
-                  onCheckedChange={(checked) => setDontAsk(checked === true)}
-                />
-                Don't ask again
+                {renderRich(tx("{checkbox}Don't ask again"), {
+                  checkbox: (
+                    <Checkbox
+                      checked={dontAsk}
+                      aria-label={tx("Don't ask again")}
+                      onCheckedChange={(checked) => setDontAsk(checked === true)}
+                    />
+                  ),
+                })}
               </label>
             )}
           </div>
@@ -319,11 +339,13 @@ export function GitHubCredentialCard({
       {inUse?.source === "copied" ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button size="xs" variant="outline" disabled={busy} onClick={() => void remove()}>
-            Remove copied sign-in
+            {tx("Remove copied sign-in")}
           </Button>
           {plan.otherGhLogin ? (
             <Button size="xs" variant="ghost" disabled={busy} onClick={() => void remove()}>
-              Use gh's {plan.otherGhLogin} for SpecWithCode instead
+              {renderRich(tx("Use gh's {otherGhLogin} for SpecWithCode instead"), {
+                otherGhLogin: plan.otherGhLogin,
+              })}
             </Button>
           ) : null}
         </div>

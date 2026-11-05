@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthProvidersManageScope,
@@ -35,6 +36,7 @@ export function AddClaudeAccountDialog({
   readonly environmentLabel: string;
   readonly onClose: () => void;
 }) {
+  const tx = useTx();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
@@ -118,7 +120,7 @@ export function AddClaudeAccountDialog({
     >
       <WizardPopup size="wide">
         <WizardHeader
-          title={created ? created.displayName : "Add Claude account"}
+          title={created ? created.displayName : tx("Add Claude account")}
           description={`Each Claude account gets its own instance and sign-in on ${environmentLabel}. The Claude account already signed in there stays as it is.`}
         />
         <WizardPanel>
@@ -135,7 +137,7 @@ export function AddClaudeAccountDialog({
                 <Button
                   size="icon-xs"
                   variant="ghost"
-                  aria-label={copied ? "Copied" : "Copy command"}
+                  aria-label={copied ? tx("Copied") : tx("Copy command")}
                   onClick={() =>
                     void writeTextToClipboard(command).then(() => {
                       setCopied(true);
@@ -160,7 +162,7 @@ export function AddClaudeAccountDialog({
                       disabled={checking}
                       onClick={() => void check()}
                     >
-                      {checking ? "Checking…" : "Check sign-in"}
+                      {checking ? tx("Checking…") : tx("Check sign-in")}
                     </Button>
                   )
                 }
@@ -179,11 +181,11 @@ export function AddClaudeAccountDialog({
                 description="Shown in the provider list, the model picker and Limits."
                 control={
                   <Input
-                    aria-label="Account name"
+                    aria-label={tx("Account name")}
                     value={name}
                     disabled={pending}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="e.g. Work or Marketing"
+                    placeholder={tx("e.g. Work or Marketing")}
                   />
                 }
               />
@@ -193,12 +195,12 @@ export function AddClaudeAccountDialog({
         <WizardFooter>
           {created ? (
             <Button variant={signedIn ? "default" : "outline"} onClick={onClose}>
-              {signedIn ? "Done" : "Finish later"}
+              {signedIn ? tx("Done") : tx("Finish later")}
             </Button>
           ) : (
             <>
               <Button variant="outline" disabled={pending} onClick={onClose}>
-                Cancel
+                {tx("Cancel")}
               </Button>
               <Button
                 type="submit"
@@ -206,7 +208,7 @@ export function AddClaudeAccountDialog({
                 disabled={pending || !name.trim() || !canManageProviders}
               >
                 <ClaudeAI className="size-4 shrink-0" aria-hidden="true" />
-                {pending ? "Adding account…" : "Continue"}
+                {pending ? tx("Adding account…") : tx("Continue")}
               </Button>
             </>
           )}

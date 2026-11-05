@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { ComponentProps } from "react";
 import { ExternalLinkIcon } from "lucide-react";
 import { CHATGPT_USAGE_URL } from "@specweave-studio/shared/usageLimits";
@@ -5,6 +6,7 @@ import { ensureLocalApi } from "../../localApi";
 import { Button } from "../ui/button";
 
 export function ChatGptUsageButton(props: Omit<ComponentProps<typeof Button>, "onClick">) {
+  const tx = useTx();
   return (
     <Button
       variant="ghost-muted"
@@ -12,7 +14,7 @@ export function ChatGptUsageButton(props: Omit<ComponentProps<typeof Button>, "o
       {...props}
       onClick={() => void ensureLocalApi().shell.openExternal(CHATGPT_USAGE_URL)}
     >
-      Manage usage
+      {tx("Manage usage")}
       <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
     </Button>
   );

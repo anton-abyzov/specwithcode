@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
@@ -224,10 +226,11 @@ function MainMachineIdField({
   >;
   readonly canManage: boolean;
 }) {
+  const tx = useTx();
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-medium text-foreground">
-        Main machine environment ID
+        {tx("Main machine environment ID")}
       </span>
       <Input
         value={controller.coordinatorEnvironmentId}
@@ -256,6 +259,7 @@ function MainMachinePicker({
   >;
   readonly canManage: boolean;
 }) {
+  const tx = useTx();
   const [otherChosen, setOtherChosen] = useState(false);
   const chosenId = controller.coordinatorEnvironmentId;
   // An ID no button stands for stays on show: it is what the line would approve.
@@ -265,7 +269,7 @@ function MainMachinePicker({
   const disabled = controller.pending !== null || !canManage;
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <span className="text-xs font-medium text-foreground">Main machine</span>
+      <span className="text-xs font-medium text-foreground">{tx("Main machine")}</span>
       <div className="flex flex-wrap gap-1.5">
         {options.map((option) => (
           <Button
@@ -296,7 +300,7 @@ function MainMachinePicker({
             controller.setCoordinatorEnvironmentId("");
           }}
         >
-          Another machine
+          {tx("Another machine")}
         </Button>
       </div>
       {other ? <MainMachineIdField controller={controller} canManage={canManage} /> : null}
@@ -340,13 +344,15 @@ export function FleetInvitePanel({
   /** Other machines this app knows, offered before asking for an ID. */
   readonly mainMachines?: ReadonlyArray<MainMachineOption>;
 }) {
+  const tx = useTx();
   const { name, setName, pending, invitation, revoked, problem } = controller;
   return (
     <div className="flex min-w-0 flex-col gap-3">
       {controller.ownEnvironmentId ? (
         <p className="text-xs text-muted-foreground">
-          This machine’s environment ID:{" "}
-          <code className="select-all">{controller.ownEnvironmentId}</code>
+          {renderRich(tx("This machine’s environment ID: {code}"), {
+            code: <code className="select-all">{controller.ownEnvironmentId}</code>,
+          })}
         </p>
       ) : null}
       {invitation ? (
@@ -356,21 +362,21 @@ export function FleetInvitePanel({
               readOnly
               font="mono"
               size="sm"
-              aria-label="Invitation line for the main machine"
+              aria-label={tx("Invitation line for the main machine")}
               className="min-w-0 flex-1"
               value={invitation.code}
               onFocus={(event) => event.currentTarget.select()}
             />
             <Button size="sm" variant="outline" onClick={() => onCopy(invitation.code)}>
               {copied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-              {copied ? "Copied" : "Copy"}
+              {copied ? tx("Copied") : tx("Copy")}
             </Button>
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
             Paste this line on your main machine under Settings &gt; Connections &gt; Add a machine.
             It works like a password, so only paste it there, and it is{" "}
             {fleetInviteValidity(invitation.expiresAt)}.
-            {invitation.redeemBy ? " Use it within an hour; it works once." : null}
+            {invitation.redeemBy ? tx(" Use it within an hour; it works once.") : null}
           </p>
           <p className="text-xs text-muted-foreground">{fleetInviteAddresses(invitation)}</p>
           <div>
@@ -380,7 +386,7 @@ export function FleetInvitePanel({
               disabled={pending !== null}
               onClick={() => void controller.revoke()}
             >
-              {pending === "revoke" ? "Revoking…" : "Revoke this line"}
+              {pending === "revoke" ? tx("Revoking…") : tx("Revoke this line")}
             </Button>
           </div>
         </>
@@ -397,12 +403,12 @@ export function FleetInvitePanel({
           )}
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">
-              Name on the main machine (optional)
+              {tx("Name on the main machine (optional)")}
             </span>
             <Input
               value={name}
               maxLength={80}
-              placeholder={defaultName ?? "This machine"}
+              placeholder={defaultName ?? tx("This machine")}
               autoComplete="off"
               disabled={pending !== null || !canManage}
               onChange={(event) => setName(event.target.value)}
@@ -410,7 +416,7 @@ export function FleetInvitePanel({
           </label>
           {revoked ? (
             <p role="status" className="text-xs text-muted-foreground">
-              Revoked. That line no longer works anywhere.
+              {tx("Revoked. That line no longer works anywhere.")}
             </p>
           ) : null}
           <div>
@@ -425,10 +431,10 @@ export function FleetInvitePanel({
               onClick={() => void controller.create()}
             >
               {pending === "create"
-                ? "Making the line…"
+                ? tx("Making the line…")
                 : canManage
                   ? createLabel
-                  : "Manage access required"}
+                  : tx("Manage access required")}
             </Button>
           </div>
         </>
@@ -654,12 +660,13 @@ export function TailscaleReadinessNotice({
   readonly canManage: boolean;
   readonly onCopyCommand: (command: string) => void;
 }) {
+  const tx = useTx();
   const view = tailscaleReadinessView(readiness.status, readiness.failed);
   if (view.kind === "ready") return null;
   if (view.kind !== "checking" && readiness.status?.connect?.linked)
     return (
       <p role="status" className="text-xs text-muted-foreground">
-        Tailscale is off here, so the line uses SpecWithCode Connect.
+        {tx("Tailscale is off here, so the line uses SpecWithCode Connect.")}
       </p>
     );
   if (view.kind === "checking")
@@ -680,24 +687,24 @@ export function TailscaleReadinessNotice({
               variant="outline"
               onClick={() => readiness.openUrl(view.downloadUrl!)}
             >
-              Install Tailscale
+              {tx("Install Tailscale")}
             </Button>
           </span>
         ) : null}
         {view.brewCommand ? (
           <span className="mt-2 flex min-w-0 items-center gap-2">
-            <span className="shrink-0">Or in Terminal:</span>
+            <span className="shrink-0">{tx("Or in Terminal:")}</span>
             <Input
               readOnly
               font="mono"
               size="sm"
-              aria-label="Command that installs Tailscale with Homebrew"
+              aria-label={tx("Command that installs Tailscale with Homebrew")}
               className="min-w-0 flex-1"
               value={view.brewCommand}
               onFocus={(event) => event.currentTarget.select()}
             />
             <Button size="xs" variant="outline" onClick={() => onCopyCommand(view.brewCommand!)}>
-              Copy
+              {tx("Copy")}
             </Button>
           </span>
         ) : null}
@@ -710,10 +717,10 @@ export function TailscaleReadinessNotice({
               onClick={() => void readiness.signIn()}
             >
               {readiness.signingIn
-                ? "Opening Tailscale…"
+                ? tx("Opening Tailscale…")
                 : canManage
-                  ? "Sign in to Tailscale"
-                  : "Manage access required"}
+                  ? tx("Sign in to Tailscale")
+                  : tx("Manage access required")}
             </Button>
             {readiness.loginUrl ? (
               <Button
@@ -721,7 +728,7 @@ export function TailscaleReadinessNotice({
                 variant="link"
                 onClick={() => readiness.openUrl(readiness.loginUrl!)}
               >
-                Open the sign-in page again
+                {tx("Open the sign-in page again")}
               </Button>
             ) : null}
           </span>
@@ -754,6 +761,7 @@ export function ConnectReadinessNotice({
   readonly canManage: boolean;
   readonly onCopyCommand: (command: string) => void;
 }) {
+  const tx = useTx();
   if (!hasCloudPublicConfig())
     return (
       <TailscaleReadinessNotice
@@ -767,17 +775,17 @@ export function ConnectReadinessNotice({
   if (status === null)
     return failed ? null : (
       <p role="status" className="text-xs text-muted-foreground">
-        Checking SpecWithCode Connect…
+        {tx("Checking SpecWithCode Connect…")}
       </p>
     );
   return (
-    <Alert variant="warning" role="status" aria-label="Link SpecWithCode Connect first">
-      <AlertTitle>Link SpecWithCode Connect first</AlertTitle>
+    <Alert variant="warning" role="status" aria-label={tx("Link SpecWithCode Connect first")}>
+      <AlertTitle>{tx("Link SpecWithCode Connect first")}</AlertTitle>
       <AlertDescription>
         <span className="block">
-          The line carries this machine’s SpecWithCode Connect address, so your main machine can
-          reach it from anywhere. This updates on its own once Connect is linked here. Your main
-          machine does not need to be signed in.
+          {tx(
+            "The line carries this machine’s SpecWithCode Connect address, so your main machine can reach it from anywhere. This updates on its own once Connect is linked here. Your main machine does not need to be signed in.",
+          )}
         </span>
         <ConnectNextStep canManage={canManage} />
       </AlertDescription>
@@ -796,17 +804,20 @@ export function ConnectLinkedNote({
 }: {
   readonly readiness: Pick<TailscaleReadiness, "status">;
 }) {
+  const tx = useTx();
   if (!hasCloudPublicConfig() || readiness.status?.connect?.linked !== true) return null;
   return (
     <p role="status" className="text-xs text-muted-foreground">
-      SpecWithCode Connect is linked on this machine, so you can make the line now. No sign-in is
-      needed in this window.
+      {tx(
+        "SpecWithCode Connect is linked on this machine, so you can make the line now. No sign-in is needed in this window.",
+      )}
     </p>
   );
 }
 
 /** Linking needs a Connect account in this window; once signed in, link in Settings. */
 function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
+  const tx = useTx();
   const { isLoaded, isSignedIn } = useAuth();
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
   if (!isLoaded) return null;
@@ -820,7 +831,7 @@ function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
   return (
     <span className="mt-2 flex flex-wrap items-center gap-2">
       <Button size="xs" variant="outline" disabled={!canManage} onClick={openAuthPrompt}>
-        {canManage ? "Sign in to SpecWithCode Connect" : "Manage access required"}
+        {canManage ? tx("Sign in to SpecWithCode Connect") : tx("Manage access required")}
       </Button>
     </span>
   );
@@ -846,6 +857,7 @@ export function FleetInviteDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly readiness: TailscaleReadiness;
 }) {
+  const tx = useTx();
   const controller = useFleetInvite(environmentId, readiness.status?.connect !== undefined);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "invitation line" });
   const { environments } = useEnvironments();
@@ -872,11 +884,11 @@ export function FleetInviteDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Join a main machine</DialogTitle>
+          <DialogTitle>{tx("Join a main machine")}</DialogTitle>
           <DialogDescription>
-            Your main machine can then start work here. The line carries this machine’s SpecWithCode
-            Connect address, so link Connect here first. After that, the main machine’s own keys
-            reach this machine; no one needs to stay signed in.
+            {tx(
+              "Your main machine can then start work here. The line carries this machine’s SpecWithCode Connect address, so link Connect here first. After that, the main machine’s own keys reach this machine; no one needs to stay signed in.",
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

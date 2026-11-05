@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import {
   AuthFilesystemReadScope,
@@ -29,6 +31,7 @@ export function NativeConnectionsPanel({
   environmentId: EnvironmentId;
   projectId?: ProjectId | undefined;
 }) {
+  const tx = useTx();
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   // Both hooks run every render: inside `&&` the second was skipped while write
   // access was missing, and the hook count change crashed Settings > Connections.
@@ -118,34 +121,37 @@ export function NativeConnectionsPanel({
   if (!connected)
     return (
       <p role="status" className="text-sm text-muted-foreground">
-        {environment ? `${machineStatus(environment.connection).text.replace(/…$/, "")}. ` : ""}
-        Connect this machine to inspect its MCP configurations.
+        {renderRich(tx("{value}Connect this machine to inspect its MCP configurations."), {
+          value: environment
+            ? `${machineStatus(environment.connection).text.replace(/…$/, "")}. `
+            : "",
+        })}
       </p>
     );
   if (!permitted)
     return (
       <p role="status" className="text-sm text-muted-foreground">
-        Filesystem read access is required to inspect configurations on this machine.
+        {tx("Filesystem read access is required to inspect configurations on this machine.")}
       </p>
     );
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-sm font-medium">Connections library</h3>
+        <h3 className="text-sm font-medium">{tx("Connections library")}</h3>
         <div className="flex gap-2">
           {canEdit && query.data && !legacy && !adding ? (
             <Button variant="outline" size="xs" onClick={() => setAdding(true)}>
-              Add server
+              {tx("Add server")}
             </Button>
           ) : null}
           <Button variant="outline" size="xs" disabled={query.isPending} onClick={query.refresh}>
-            {query.isPending ? "Scanning…" : "Refresh configurations"}
+            {query.isPending ? tx("Scanning…") : tx("Refresh configurations")}
           </Button>
         </div>
       </div>
       {query.error ? (
         <p role="alert" className="text-sm text-destructive-foreground">
-          Could not inspect connections. {query.error}
+          {renderRich(tx("Could not inspect connections. {error}"), { error: query.error })}
         </p>
       ) : query.data ? (
         <>
@@ -158,7 +164,7 @@ export function NativeConnectionsPanel({
             <div role="status" className="flex flex-wrap items-center gap-2 text-sm">
               {saved.text}
               <Button variant="outline" size="xs" disabled={pendingId !== null} onClick={undo}>
-                {pendingId === "undo" ? "Undoing…" : "Undo"}
+                {pendingId === "undo" ? tx("Undoing…") : tx("Undo")}
               </Button>
             </div>
           ) : null}
@@ -188,7 +194,7 @@ export function NativeConnectionsPanel({
         </>
       ) : (
         <p role="status" className="text-sm text-muted-foreground">
-          Reading native configurations…
+          {tx("Reading native configurations…")}
         </p>
       )}
     </div>

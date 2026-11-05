@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ActiveThreadCapSetting } from "./ActiveThreadCapSetting";
 import { InactiveThreadArchiveSetting } from "./InactiveThreadArchiveSetting";
 import {
@@ -37,6 +38,7 @@ import {
 } from "./useScopedSettings";
 
 export function WorktreesDirectoryRow() {
+  const tx = useTx();
   const { connectedEnvironments, targets, scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -74,13 +76,13 @@ export function WorktreesDirectoryRow() {
     <>
       <SettingsRow
         {...searchableSetting("storage-worktrees-location")}
-        title="Worktree storage"
+        title={tx("Worktree storage")}
         description="Choose where new isolated checkouts are created. Project folder stays unchanged. Existing worktrees stay where they are."
         serverScoped
         settingKeys={["worktreeLocationMode", "worktreesDirectory"]}
         resetAction={
           <SettingResetButton
-            label="worktree storage"
+            label={tx("worktree storage")}
             onClick={() => updateSettings({ worktreeLocationMode: "managed" })}
           />
         }
@@ -92,22 +94,22 @@ export function WorktreesDirectoryRow() {
                 updateSettings({ worktreeLocationMode: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Worktree storage">
+            <SelectTrigger size="sm" aria-label={tx("Worktree storage")}>
               <SelectValue>
                 {mixed
-                  ? "Mixed"
+                  ? tx("Mixed")
                   : mode === "managed"
                     ? "App-managed"
                     : mode === "project"
-                      ? "Inside project"
-                      : "Custom folder"}
+                      ? tx("Inside project")
+                      : tx("Custom folder")}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="managed">App-managed</SelectItem>
-              <SelectItem value="project">Inside project</SelectItem>
+              <SelectItem value="managed">{tx("App-managed")}</SelectItem>
+              <SelectItem value="project">{tx("Inside project")}</SelectItem>
               <SelectItem value="custom" disabled={!oneMachine}>
-                Custom folder
+                {tx("Custom folder")}
               </SelectItem>
             </SelectPopup>
           </Select>
@@ -126,7 +128,7 @@ export function WorktreesDirectoryRow() {
           control={
             <Input
               key={`${targets.map((target) => target.environmentId).join(",")}:${settings.worktreesDirectory}`}
-              aria-label="Worktree location"
+              aria-label={tx("Worktree location")}
               autoCapitalize="none"
               spellCheck={false}
               disabled={!oneMachine}
@@ -147,9 +149,11 @@ export function WorktreesDirectoryRow() {
       )}
       <p className="break-all px-4 pb-3 text-xs text-muted-foreground">
         {mixed
-          ? "Storage differs across selected machines."
+          ? tx("Storage differs across selected machines.")
           : connectedEnvironments.length > 1
-            ? "Each selected machine uses its own worktree storage. Select one machine to inspect its resolved path."
+            ? tx(
+                "Each selected machine uses its own worktree storage. Select one machine to inspect its resolved path.",
+              )
             : `New worktrees: ${resolved}`}
       </p>
     </>
@@ -175,6 +179,7 @@ function RetentionControl({
   enableWith?: number;
   onChange: (value: number | null) => void;
 }) {
+  const tx = useTx();
   const [draft, setDraft] = useState(value);
   const [savedValue, setSavedValue] = useState(value);
   if (savedValue !== value) {
@@ -185,7 +190,7 @@ function RetentionControl({
   return (
     <div className="flex items-center gap-3">
       {mixed || daysMixed ? (
-        <span className="text-xs text-muted-foreground">Mixed</span>
+        <span className="text-xs text-muted-foreground">{tx("Mixed")}</span>
       ) : value !== null ? (
         <NumberField
           value={draft}
@@ -212,13 +217,13 @@ function RetentionControl({
               className="field-sizing-content w-auto min-w-[1ch] grow-0 text-right"
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
-              days
+              {tx("days")}
             </span>
             <NumberFieldIncrement aria-label={`Increase ${label}`} />
           </NumberFieldGroup>
         </NumberField>
       ) : (
-        <span className="text-xs text-muted-foreground">Off</span>
+        <span className="text-xs text-muted-foreground">{tx("Off")}</span>
       )}
       <Switch
         aria-label={label}
@@ -231,6 +236,7 @@ function RetentionControl({
 }
 
 export function StorageSettingsPanel() {
+  const tx = useTx();
   const { scope, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -285,7 +291,7 @@ export function StorageSettingsPanel() {
   ) {
     return (
       <SettingsScopeNotice target="all">
-        Update the selected machines to configure project worktree cleanup.
+        {tx("Update the selected machines to configure project worktree cleanup.")}
       </SettingsScopeNotice>
     );
   }
@@ -305,8 +311,9 @@ export function StorageSettingsPanel() {
           )
           .map((environment) => environment.environmentId)}
       >
-        Update the selected environments to use storage cleanup, or choose a machine that supports
-        it.
+        {tx(
+          "Update the selected environments to use storage cleanup, or choose a machine that supports it.",
+        )}
       </SettingsScopeNotice>
     );
   }
@@ -323,14 +330,14 @@ export function StorageSettingsPanel() {
           ) && (
             <>
               <SettingsRow
-                title="Purge deleted chats"
+                title={tx("Purge deleted chats")}
                 status={ruleStatus("deletedThreadHistoryAfterDays")}
                 mixed={ruleMixed("deletedThreadHistoryAfterDays")}
                 description="Permanently remove the messages, steps and attachments of chats deleted this many days ago, to keep the database small. 7 days by default; it cannot be undone."
                 serverScoped
                 control={
                   <RetentionControl
-                    label="Purge deleted chats"
+                    label={tx("Purge deleted chats")}
                     value={settings.deletedThreadHistoryAfterDays}
                     mixed={ruleMixed("deletedThreadHistoryAfterDays")}
                     daysMixed={daysMixed("deletedThreadHistoryAfterDays")}
@@ -342,14 +349,14 @@ export function StorageSettingsPanel() {
                 }
               />
               <SettingsRow
-                title="Compact archived chats"
+                title={tx("Compact archived chats")}
                 status={ruleStatus("archivedThreadHistoryAfterDays")}
                 mixed={ruleMixed("archivedThreadHistoryAfterDays")}
                 description="Drop the raw event log of chats archived and untouched this many days. Their messages, steps, titles and pull request links stay readable. 2 days by default."
                 serverScoped
                 control={
                   <RetentionControl
-                    label="Compact archived chats"
+                    label={tx("Compact archived chats")}
                     value={settings.archivedThreadHistoryAfterDays}
                     mixed={ruleMixed("archivedThreadHistoryAfterDays")}
                     daysMixed={daysMixed("archivedThreadHistoryAfterDays")}
@@ -365,14 +372,14 @@ export function StorageSettingsPanel() {
                   environment.serverConfig?.environment.capabilities.threadHistoryHorizon === true,
               ) && (
                 <SettingsRow
-                  title="Detailed history"
+                  title={tx("Detailed history")}
                   status={ruleStatus("threadHistoryDays")}
                   mixed={ruleMixed("threadHistoryDays")}
                   description="Keep every chat's raw event log (replay detail) this many days. Older activity folds into the chat itself: messages, steps, titles and pull request links stay readable. Chats linked to another machine or still working are never folded. 7 days by default."
                   serverScoped
                   control={
                     <RetentionControl
-                      label="Detailed history"
+                      label={tx("Detailed history")}
                       value={settings.threadHistoryDays}
                       mixed={ruleMixed("threadHistoryDays")}
                       daysMixed={daysMixed("threadHistoryDays")}
@@ -385,7 +392,7 @@ export function StorageSettingsPanel() {
             </>
           )}
       </SettingsSection>
-      <SettingsSection id="storage-worktrees" title="Worktrees">
+      <SettingsSection id="storage-worktrees" title={tx("Worktrees")}>
         <WorktreesDirectoryRow />
         {isProjectScope && (
           <SettingsRow
@@ -410,21 +417,21 @@ export function StorageSettingsPanel() {
                     updateSettings({ worktreeCleanup: { mode: "custom", rules: {} } });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Automatic worktree cleanup">
+                <SelectTrigger size="sm" aria-label={tx("Automatic worktree cleanup")}>
                   <SelectValue>
                     {mixedModes
-                      ? "Mixed"
+                      ? tx("Mixed")
                       : mode === "inherit"
-                        ? "Inherit"
+                        ? tx("Inherit")
                         : mode === "off"
-                          ? "Off"
-                          : "Custom"}
+                          ? tx("Off")
+                          : tx("Custom")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
-                  <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="inherit">{tx("Inherit")}</SelectItem>
+                  <SelectItem value="off">{tx("Off")}</SelectItem>
+                  <SelectItem value="custom">{tx("Custom")}</SelectItem>
                 </SelectPopup>
               </Select>
             }
@@ -433,14 +440,14 @@ export function StorageSettingsPanel() {
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title="Delete worktrees with deleted threads"
+              title={tx("Delete worktrees with deleted threads")}
               status={ruleStatus("worktreeOnDelete")}
               mixed={ruleMixed("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
-                  aria-label="Delete worktrees with deleted threads"
+                  aria-label={tx("Delete worktrees with deleted threads")}
                   mixed={ruleMixed("worktreeOnDelete")}
                   checked={ruleMixed("worktreeOnDelete") ? false : settings.worktreeOnDelete}
                   onCheckedChange={(worktreeOnDelete) => updateWorktree({ worktreeOnDelete })}
@@ -448,14 +455,14 @@ export function StorageSettingsPanel() {
               }
             />
             <SettingsRow
-              title="Delete inactive worktrees"
+              title={tx("Delete inactive worktrees")}
               status={ruleStatus("worktreeAfterDays")}
               mixed={ruleMixed("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
-                  label="Delete inactive worktrees"
+                  label={tx("Delete inactive worktrees")}
                   value={settings.worktreeAfterDays}
                   mixed={ruleMixed("worktreeAfterDays")}
                   daysMixed={daysMixed("worktreeAfterDays")}
@@ -464,14 +471,14 @@ export function StorageSettingsPanel() {
               }
             />
             <SettingsRow
-              title="Delete merged worktrees"
+              title={tx("Delete merged worktrees")}
               status={ruleStatus("worktreeOnMerge")}
               mixed={ruleMixed("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
-                  aria-label="Delete merged worktrees"
+                  aria-label={tx("Delete merged worktrees")}
                   mixed={ruleMixed("worktreeOnMerge")}
                   checked={ruleMixed("worktreeOnMerge") ? false : settings.worktreeOnMerge}
                   onCheckedChange={(worktreeOnMerge) => updateWorktree({ worktreeOnMerge })}
@@ -479,14 +486,14 @@ export function StorageSettingsPanel() {
               }
             />
             <SettingsRow
-              title="Delete unchanged worktrees"
+              title={tx("Delete unchanged worktrees")}
               status={ruleStatus("worktreeUnchanged")}
               mixed={ruleMixed("worktreeUnchanged")}
               description="Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
-                  aria-label="Delete unchanged worktrees"
+                  aria-label={tx("Delete unchanged worktrees")}
                   mixed={ruleMixed("worktreeUnchanged")}
                   checked={ruleMixed("worktreeUnchanged") ? false : settings.worktreeUnchanged}
                   onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
@@ -501,7 +508,7 @@ export function StorageSettingsPanel() {
         <SettingsSection id="storage-app-folder" title="App folder">
           <AppFolderUsage />
           <SettingsRow
-            title="Warn when the app folder is large"
+            title={tx("Warn when the app folder is large")}
             status={ruleStatus("homeSizeWarningGb")}
             mixed={ruleMixed("homeSizeWarningGb")}
             description="Mark the app folder here when it passes this size, or when a part of it grows by 10 GB or more between checks. The size is checked every six hours. A notice appears only when the disk itself runs low."
@@ -515,14 +522,14 @@ export function StorageSettingsPanel() {
             }
           />
           <SettingsRow
-            title="Delete old scratch folders"
+            title={tx("Delete old scratch folders")}
             status={ruleStatus("scratchAfterDays")}
             mixed={ruleMixed("scratchAfterDays")}
             description="Delete folders in the scratch folder that nothing changed in for this many days. Folders a thread, project, agent session, terminal or running process uses are always kept. Deleted folders are not copied anywhere. Off unless you turn it on."
             serverScoped
             control={
               <RetentionControl
-                label="Delete old scratch folders"
+                label={tx("Delete old scratch folders")}
                 value={settings.scratchAfterDays}
                 mixed={ruleMixed("scratchAfterDays")}
                 daysMixed={daysMixed("scratchAfterDays")}
@@ -538,14 +545,14 @@ export function StorageSettingsPanel() {
       {!isProjectScope && (
         <SettingsSection id="storage-artifacts" title="Artifacts and logs">
           <SettingsRow
-            title="Delete old browser artifacts"
+            title={tx("Delete old browser artifacts")}
             status={ruleStatus("browserArtifactsAfterDays")}
             mixed={ruleMixed("browserArtifactsAfterDays")}
             description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
             control={
               <RetentionControl
-                label="Delete old browser artifacts"
+                label={tx("Delete old browser artifacts")}
                 value={settings.browserArtifactsAfterDays}
                 mixed={ruleMixed("browserArtifactsAfterDays")}
                 daysMixed={daysMixed("browserArtifactsAfterDays")}
@@ -554,14 +561,14 @@ export function StorageSettingsPanel() {
             }
           />
           <SettingsRow
-            title="Delete old rotated logs"
+            title={tx("Delete old rotated logs")}
             status={ruleStatus("logsAfterDays")}
             mixed={ruleMixed("logsAfterDays")}
             description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
             control={
               <RetentionControl
-                label="Delete old rotated logs"
+                label={tx("Delete old rotated logs")}
                 value={settings.logsAfterDays}
                 mixed={ruleMixed("logsAfterDays")}
                 daysMixed={daysMixed("logsAfterDays")}

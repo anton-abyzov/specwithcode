@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -100,6 +101,7 @@ export function addMachineTarget(
  * work grant covers the project.
  */
 export function MachineFallbackSettings() {
+  const tx = useTx();
   const { target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -172,7 +174,7 @@ export function MachineFallbackSettings() {
         }
         resetAction={
           targets.length > 0 && teamRulesLock === null ? (
-            <SettingResetButton label="other machines" onClick={() => saveTargets([])} />
+            <SettingResetButton label={tx("other machines")} onClick={() => saveTargets([])} />
           ) : null
         }
         control={
@@ -186,7 +188,7 @@ export function MachineFallbackSettings() {
               >
                 <SelectTrigger
                   size="sm"
-                  aria-label="Add a machine"
+                  aria-label={tx("Add a machine")}
                   disabled={targets.length >= MAX_FALLBACK_MODELS}
                 >
                   <SelectValue>{() => (mixedTargets ? "Mixed" : "Add machine")}</SelectValue>
@@ -210,17 +212,17 @@ export function MachineFallbackSettings() {
             ) : (
               <span className="text-sm text-muted-foreground">
                 {machinesKnown
-                  ? "No paired machines"
+                  ? tx("No paired machines")
                   : fleet.failed
-                    ? "Couldn't read paired machines"
-                    : "Checking paired machines"}
+                    ? tx("Couldn't read paired machines")
+                    : tx("Checking paired machines")}
               </span>
             )}
           </TeamRulesInert>
         }
       >
         {targets.length > 0 ? (
-          <ol className="flex flex-col gap-1" aria-label="Machine targets">
+          <ol className="flex flex-col gap-1" aria-label={tx("Machine targets")}>
             {targets.map((entry, index) => (
               <MachineTargetRow
                 key={`${entry.environmentId}:${entry.modelSelection.instanceId}:${entry.modelSelection.model}`}
@@ -251,7 +253,7 @@ export function MachineFallbackSettings() {
           </ol>
         ) : null}
         {targets.length > 0 && preview.length > 0 ? (
-          <p className="text-xs text-muted-foreground" aria-label="Order tried">
+          <p className="text-xs text-muted-foreground" aria-label={tx("Order tried")}>
             {`Tried in this order: ${preview
               .map((candidate) =>
                 candidate.kind === "machine"
@@ -271,7 +273,7 @@ export function MachineFallbackSettings() {
         settingKeys={["providerLimitTargetOrder"]}
         mixed={mixedOrder}
         id="provider-limit-target-order"
-        title="Try first"
+        title={tx("Try first")}
         description={
           teamRulesLock?.message ??
           "Which list a limited thread tries first: other machines, or this machine's fallback order. When nothing qualifies, the thread waits and the limit banner names the reason for each machine."
@@ -280,7 +282,7 @@ export function MachineFallbackSettings() {
         resetAction={
           order !== "other-machine-first" && teamRulesLock === null ? (
             <SettingResetButton
-              label="try first"
+              label={tx("try first")}
               onClick={() => updateSettings({ providerLimitTargetOrder: "other-machine-first" })}
             />
           ) : null
@@ -294,7 +296,7 @@ export function MachineFallbackSettings() {
                   updateSettings({ providerLimitTargetOrder: value });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Try first">
+              <SelectTrigger size="sm" aria-label={tx("Try first")}>
                 <SelectValue>
                   {(value: string | null) =>
                     value === "other-machine-first" || value === "same-machine-first"
@@ -319,7 +321,7 @@ export function MachineFallbackSettings() {
         settingKeys={["providerLimitUnknownUsageEligible"]}
         mixed={mixedUnknown}
         id="provider-limit-unknown-usage"
-        title="Use machines with unknown usage"
+        title={tx("Use machines with unknown usage")}
         description={
           teamRulesLock?.message ??
           "Count a machine whose provider reports no usage as having room. Off by default: a machine that may be on the same account, or near its limit, is skipped."
@@ -328,7 +330,7 @@ export function MachineFallbackSettings() {
         resetAction={
           settings.providerLimitUnknownUsageEligible && teamRulesLock === null ? (
             <SettingResetButton
-              label="unknown usage"
+              label={tx("unknown usage")}
               onClick={() => updateSettings({ providerLimitUnknownUsageEligible: false })}
             />
           ) : null
@@ -340,7 +342,7 @@ export function MachineFallbackSettings() {
               onCheckedChange={(checked) =>
                 updateSettings({ providerLimitUnknownUsageEligible: Boolean(checked) })
               }
-              aria-label="Use machines with unknown usage"
+              aria-label={tx("Use machines with unknown usage")}
             />
           </TeamRulesInert>
         }
@@ -363,6 +365,7 @@ function MachineTargetRow(props: {
   readonly onMove: (by: -1 | 1) => void;
   readonly onRemove: () => void;
 }) {
+  const tx = useTx();
   const { index, count, entry, machines, machinesKnown, providers, settings } = props;
   const label = machineTargetLabel(entry, machines, providers);
   const machine = machines.find((candidate) => candidate.environmentId === entry.environmentId);
@@ -381,11 +384,11 @@ function MachineTargetRow(props: {
       <span className="min-w-0 flex-1 break-words">
         {label}
         {props.refused ? (
-          <span className="ml-2 text-xs text-muted-foreground">different rules</span>
+          <span className="ml-2 text-xs text-muted-foreground">{tx("different rules")}</span>
         ) : !machinesKnown ? null : machine === undefined ? (
-          <span className="ml-2 text-xs text-muted-foreground">not paired</span>
+          <span className="ml-2 text-xs text-muted-foreground">{tx("not paired")}</span>
         ) : machine.status !== "reachable" ? (
-          <span className="ml-2 text-xs text-muted-foreground">offline</span>
+          <span className="ml-2 text-xs text-muted-foreground">{tx("offline")}</span>
         ) : null}
       </span>
       {entries.length > 0 ? (

@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
 import { useState } from "react";
@@ -28,6 +30,7 @@ function readAcknowledgedProfiles(): string[] {
 
 /** Read the verified environment snapshot, never the browser callback acknowledgment. */
 export function ChatGptWelcomeCoordinator() {
+  const tx = useTx();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
@@ -64,18 +67,22 @@ export function ChatGptWelcomeCoordinator() {
       <DialogPopup>
         <DialogHeader>
           <OpenAI className="mb-2 size-8" aria-hidden="true" />
-          <DialogTitle>Your ChatGPT plan is connected</DialogTitle>
+          <DialogTitle>{tx("Your ChatGPT plan is connected")}</DialogTitle>
           <DialogDescription>
-            Eligible usage in SpecWithCode uses your ChatGPT plan. Manage your shared usage and any
-            credit settings in ChatGPT.
+            {tx(
+              "Eligible usage in SpecWithCode uses your ChatGPT plan. Manage your shared usage and any credit settings in ChatGPT.",
+            )}
           </DialogDescription>
           <p className="text-xs text-muted-foreground">
-            {next?.providerName} on {next?.environmentLabel}
+            {renderRich(tx("{providerName} on {environmentLabel}"), {
+              providerName: next?.providerName,
+              environmentLabel: next?.environmentLabel,
+            })}
           </p>
         </DialogHeader>
         <DialogFooter>
           <ChatGptUsageButton />
-          <Button onClick={dismiss}>Continue</Button>
+          <Button onClick={dismiss}>{tx("Continue")}</Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

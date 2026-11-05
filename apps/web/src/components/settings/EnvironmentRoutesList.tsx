@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   DndContext,
   type DragEndEvent,
@@ -52,6 +54,7 @@ export function EnvironmentRoutesList({
   readonly destinationLabel?: string;
   readonly onAddRoute: () => void;
 }) {
+  const tx = useTx();
   const saved = connectionRoutes(environment.entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
   // A dropped order shows until the catalog matches it, so the row does not
@@ -112,11 +115,15 @@ export function EnvironmentRoutesList({
   return (
     <div className="mt-2 rounded-md border border-border/70">
       <div className="border-b border-border/70 p-3 text-xs">
-        <p className="font-medium">Connection paths to {destinationLabel}</p>
+        <p className="font-medium">
+          {renderRich(tx("Connection paths to {destinationLabel}"), {
+            destinationLabel: destinationLabel,
+          })}
+        </p>
         <p className="mt-1 text-muted-foreground">
-          Tried in preference order. If one cannot connect, another is tried. Drag to change the
-          order. An address may forward through another machine; the destination identity must still
-          match.
+          {tx(
+            "Tried in preference order. If one cannot connect, another is tried. Drag to change the order. An address may forward through another machine; the destination identity must still match.",
+          )}
         </p>
       </div>
       <DndContext
@@ -147,7 +154,7 @@ export function EnvironmentRoutesList({
       <div className="border-t border-border/70 px-1 py-1">
         <Button size="xs" variant="ghost-muted" onClick={onAddRoute}>
           <PlusIcon className="size-3" />
-          Add connection path
+          {tx("Add connection path")}
         </Button>
       </div>
     </div>
@@ -169,6 +176,7 @@ function SortableRouteRow({
   readonly removable: boolean;
   readonly onRemove: () => void;
 }) {
+  const tx = useTx();
   const id = connectionRouteId(route.target);
   const label = connectionRouteLabel(route);
   const {
@@ -221,7 +229,7 @@ function SortableRouteRow({
           >
             <XIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">Remove route</TooltipPopup>
+          <TooltipPopup side="top">{tx("Remove route")}</TooltipPopup>
         </Tooltip>
       ) : null}
     </li>
@@ -240,6 +248,7 @@ export function ConnectionPathDetails({
   readonly position: number;
   readonly inUse: boolean;
 }) {
+  const tx = useTx();
   const address = connectionRouteAddress(route);
   return (
     <div className="min-w-0 flex-1 py-1">
@@ -253,20 +262,24 @@ export function ConnectionPathDetails({
             inUse ? "text-success-foreground" : "text-muted-foreground",
           )}
         >
-          {inUse ? "In use" : "Saved alternative"}
+          {inUse ? tx("In use") : tx("Saved alternative")}
         </span>
       </p>
       <p className="mt-1 text-xs">
-        {inUse ? "Connected to" : "Destination"}: {destinationLabel}
+        {inUse ? tx("Connected to") : tx("Destination")}: {destinationLabel}
       </p>
       {address !== null && (
-        <p className="mt-1 break-all text-2xs text-muted-foreground">Address: {address}</p>
+        <p className="mt-1 break-all text-2xs text-muted-foreground">
+          {renderRich(tx("Address: {address}"), { address: address })}
+        </p>
       )}
       <p className="mt-1 text-2xs text-muted-foreground">
         {inUse
-          ? "Identity verified by the current connection."
-          : "Used when selected by connection order and availability. Identity checked when connecting."}
-        {isLearned(route) ? " Found automatically." : ""}
+          ? tx("Identity verified by the current connection.")
+          : tx(
+              "Used when selected by connection order and availability. Identity checked when connecting.",
+            )}
+        {isLearned(route) ? tx(" Found automatically.") : ""}
       </p>
     </div>
   );

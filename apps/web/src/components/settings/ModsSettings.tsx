@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { ModEntry, ModPermission, ModStatus } from "@specweave-studio/contracts";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import {
@@ -58,6 +60,7 @@ function ModRow({
   onReview: () => void;
   onDisable: () => void;
 }) {
+  const tx = useTx();
   const status = STATUS_COPY[mod.status];
   const runtimeError = useModsStore((state) => state.errors[mod.name]);
   return (
@@ -74,12 +77,12 @@ function ModRow({
           <div className="flex items-center gap-2">
             {mod.status === "pending" || mod.status === "changed" || mod.status === "disabled" ? (
               <Button size="compact" disabled={busy} onClick={onReview}>
-                {mod.status === "disabled" ? "Turn on" : "Review and approve"}
+                {mod.status === "disabled" ? tx("Turn on") : tx("Review and approve")}
               </Button>
             ) : null}
             {mod.status === "approved" ? (
               <Button size="compact" variant="outline" disabled={busy} onClick={onDisable}>
-                Turn off
+                {tx("Turn off")}
               </Button>
             ) : null}
           </div>
@@ -93,7 +96,9 @@ function ModRow({
           ))}
         </ul>
       ) : (
-        <p className="text-muted-foreground text-xs">Draws its own commands and panes only.</p>
+        <p className="text-muted-foreground text-xs">
+          {tx("Draws its own commands and panes only.")}
+        </p>
       )}
       {mod.problems.map((problem) => (
         <p key={problem} className="text-destructive-foreground text-xs">
@@ -101,13 +106,16 @@ function ModRow({
         </p>
       ))}
       {runtimeError && mod.status === "approved" ? (
-        <p className="text-destructive-foreground text-xs">Stopped with an error: {runtimeError}</p>
+        <p className="text-destructive-foreground text-xs">
+          {renderRich(tx("Stopped with an error: {runtimeError}"), { runtimeError: runtimeError })}
+        </p>
       ) : null}
     </div>
   );
 }
 
 export function ModsSettingsPanel() {
+  const tx = useTx();
   const environmentId = usePrimaryEnvironmentId();
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { data, error, isPending, refresh } = useModsList(environmentId);
@@ -138,25 +146,33 @@ export function ModsSettingsPanel() {
   const mods = data?.mods ?? [];
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Mods" icon={<PuzzleIcon className="size-4" />} id="mods">
+      <SettingsSection title={tx("Mods")} icon={<PuzzleIcon className="size-4" />} id="mods">
         <div className="flex flex-col gap-1 px-3 py-3 text-muted-foreground text-sm sm:px-4">
           <p>
-            Mods add commands, panes and status to the workbench. Each runs in a sandbox with no
-            network, files or credentials, and only after you approve its exact contents. Any edit
-            pauses it until you approve again.
+            {tx(
+              "Mods add commands, panes and status to the workbench. Each runs in a sandbox with no network, files or credentials, and only after you approve its exact contents. Any edit pauses it until you approve again.",
+            )}
           </p>
           {data ? (
             <p className="text-xs">
-              Folder on this host: <span className="font-mono">{data.modsDir}</span>. Check a mod
-              with <span className="font-mono">specweave-studio mods validate &lt;folder&gt;</span>.
+              {renderRich(tx("{value} {span}. Check a mod with {span2}."), {
+                value: tx("Folder on this host:"),
+                span: <span className="font-mono">{data.modsDir}</span>,
+                span2: (
+                  <span className="font-mono">specweave-studio mods validate &lt;folder&gt;</span>
+                ),
+              })}
             </p>
           ) : null}
         </div>
         {support === "unsupported" ? (
           <p className="px-3 py-3 text-muted-foreground text-sm sm:px-4">
-            The SpecWithCode service this app is connected to
-            {serverVersion ? ` (version ${serverVersion})` : ""} is older than Mods, so it has no
-            mods to show. Update that service to list, approve and run mods.
+            {renderRich(
+              tx(
+                "The SpecWithCode service this app is connected to{value} is older than Mods, so it has no mods to show. Update that service to list, approve and run mods.",
+              ),
+              { value: serverVersion ? ` (version ${serverVersion})` : "" },
+            )}
           </p>
         ) : null}
         {error ? (
@@ -164,7 +180,7 @@ export function ModsSettingsPanel() {
         ) : null}
         {!error && !isPending && data && mods.length === 0 ? (
           <p className="px-3 py-3 text-muted-foreground text-sm sm:px-4">
-            No mods on this host yet.
+            {tx("No mods on this host yet.")}
           </p>
         ) : null}
         {mods.map((mod) => (
@@ -189,11 +205,16 @@ export function ModsSettingsPanel() {
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Approve {reviewing?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {renderRich(tx("Approve {name}?"), { name: reviewing?.name })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Read the files in {data?.modsDir ?? "the mods folder"}/{reviewing?.name} first. This
-              approves exactly the contents with this fingerprint; the CLI&apos;s validate command
-              prints the same one.
+              {renderRich(
+                tx(
+                  "Read the files in {value}/{name} first. This approves exactly the contents with this fingerprint; the CLI's validate command prints the same one.",
+                ),
+                { value: data?.modsDir ?? "the mods folder", name: reviewing?.name },
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex flex-col gap-2 px-6 text-sm">
@@ -205,14 +226,18 @@ export function ModsSettingsPanel() {
                 ))}
               </ul>
             ) : (
-              <span>It asks for no permissions beyond drawing its own UI.</span>
+              <span>{tx("It asks for no permissions beyond drawing its own UI.")}</span>
             )}
             <span className="text-muted-foreground text-xs">
-              A mod can never answer approvals, grant folders, choose accounts or start a turn.
+              {tx(
+                "A mod can never answer approvals, grant folders, choose accounts or start a turn.",
+              )}
             </span>
           </div>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {tx("Cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 const mod = reviewing;
@@ -224,7 +249,7 @@ export function ModsSettingsPanel() {
                 );
               }}
             >
-              Approve
+              {tx("Approve")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

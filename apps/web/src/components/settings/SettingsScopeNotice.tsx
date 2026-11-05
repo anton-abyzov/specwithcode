@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { resolveEnvironmentMachineKind } from "@specweave-studio/contracts";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -40,6 +41,7 @@ export function SettingsScopeNotice({
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
+  const tx = useTx();
   const { selectScope, search } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -59,7 +61,7 @@ export function SettingsScopeNotice({
             <p>{children}</p>
             <AlertAction>
               <Button size="sm" variant="outline" onClick={() => pick({})}>
-                Open all environments
+                {tx("Open all environments")}
               </Button>
             </AlertAction>
           </AlertDescription>
@@ -105,7 +107,7 @@ export function SettingsScopeNotice({
       <div className="flex flex-col gap-3">
         <p className="text-sm text-muted-foreground">{children}</p>
         {choices.length === 0 && archivedChoices.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nothing to choose yet.</p>
+          <p className="text-sm text-muted-foreground">{tx("Nothing to choose yet.")}</p>
         ) : choices.length > 0 ? (
           <SettingsScopeChoiceList
             // A different list starts with a fresh search and the first page.

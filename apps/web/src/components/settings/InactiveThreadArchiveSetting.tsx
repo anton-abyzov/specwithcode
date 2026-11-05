@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -10,6 +12,7 @@ import {
 
 /** Scoped like worktree cleanup, but controls chat visibility only. */
 export function InactiveThreadArchiveSetting() {
+  const tx = useTx();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["archiveInactiveThreadsAfterDays"]);
@@ -18,14 +21,14 @@ export function InactiveThreadArchiveSetting() {
   const mode = mixed ? "mixed" : days === null ? "never" : days === 30 && !custom ? "30" : "custom";
   return (
     <SettingsRow
-      title="Archive inactive chats"
+      title={tx("Archive inactive chats")}
       description="Archive completed chats after 30 days without activity. Running, stopped, pinned, scheduled chats and saved drafts stay protected. History stays available. Worktree cleanup is a separate policy and preserves dirty or unpushed work."
       serverScoped
       settingKeys={["archiveInactiveThreadsAfterDays"]}
       resetAction={
         mixed || days !== 30 ? (
           <SettingResetButton
-            label="inactive chat archiving"
+            label={tx("inactive chat archiving")}
             onClick={() => {
               setCustom(false);
               update({ archiveInactiveThreadsAfterDays: 30 });
@@ -52,35 +55,38 @@ export function InactiveThreadArchiveSetting() {
               }
             }}
           >
-            <SelectTrigger aria-label="Archive inactive chats">
+            <SelectTrigger aria-label={tx("Archive inactive chats")}>
               <SelectValue />
             </SelectTrigger>
             <SelectPopup>
-              {mixed ? <SelectItem value="mixed">Mixed</SelectItem> : null}
-              <SelectItem value="30">After 30 days</SelectItem>
-              <SelectItem value="custom">Custom</SelectItem>
-              <SelectItem value="never">Never</SelectItem>
+              {mixed ? <SelectItem value="mixed">{tx("Mixed")}</SelectItem> : null}
+              <SelectItem value="30">{tx("After 30 days")}</SelectItem>
+              <SelectItem value="custom">{tx("Custom")}</SelectItem>
+              <SelectItem value="never">{tx("Never")}</SelectItem>
             </SelectPopup>
           </Select>
           {mode === "custom" ? (
             <label className="flex items-center gap-2 text-xs">
-              <Input
-                key={days}
-                aria-label="Archive after days"
-                type="number"
-                min={1}
-                max={3650}
-                step={1}
-                defaultValue={days ?? 30}
-                className="w-20"
-                onBlur={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isInteger(value) && value >= 1 && value <= 3650)
-                    update({ archiveInactiveThreadsAfterDays: value });
-                  else event.target.value = String(days ?? 30);
-                }}
-              />{" "}
-              days
+              {renderRich(tx("{input} days"), {
+                input: (
+                  <Input
+                    key={days}
+                    aria-label={tx("Archive after days")}
+                    type="number"
+                    min={1}
+                    max={3650}
+                    step={1}
+                    defaultValue={days ?? 30}
+                    className="w-20"
+                    onBlur={(event) => {
+                      const value = Number(event.target.value);
+                      if (Number.isInteger(value) && value >= 1 && value <= 3650)
+                        update({ archiveInactiveThreadsAfterDays: value });
+                      else event.target.value = String(days ?? 30);
+                    }}
+                  />
+                ),
+              })}
             </label>
           ) : null}
         </div>

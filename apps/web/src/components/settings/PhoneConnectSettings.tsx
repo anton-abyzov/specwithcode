@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useAuth } from "@clerk/react";
 import { AuthRelayWriteScope } from "@specweave-studio/contracts";
 import { SmartphoneIcon } from "lucide-react";
@@ -55,6 +56,7 @@ export function PhoneConnectSettings() {
 }
 
 function ConfiguredPhoneConnectSettings() {
+  const tx = useTx();
   const { isLoaded } = useAuth();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
@@ -117,7 +119,7 @@ function ConfiguredPhoneConnectSettings() {
           status={<TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel>}
           control={
             <TeamRulesInert lock={teamRulesLock}>
-              <Button size="sm">Turn on</Button>
+              <Button size="sm">{tx("Turn on")}</Button>
             </TeamRulesInert>
           }
         />
@@ -134,7 +136,7 @@ function ConfiguredPhoneConnectSettings() {
               status={linkState.error}
               control={
                 <Button size="sm" variant="outline" onClick={() => linkState.refresh()}>
-                  Try again
+                  {tx("Try again")}
                 </Button>
               }
             />
@@ -154,7 +156,7 @@ function ConfiguredPhoneConnectSettings() {
                   openAuthPrompt();
                 }}
               >
-                Sign in
+                {tx("Sign in")}
               </Button>
             }
           />
@@ -174,7 +176,7 @@ function ConfiguredPhoneConnectSettings() {
             status={operationError ?? linkState.error}
             control={
               <Button size="sm" disabled={busy} onClick={() => void turnOn()}>
-                {busy ? "Turning on…" : "Turn on"}
+                {busy ? tx("Turning on…") : tx("Turn on")}
               </Button>
             }
           />

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { AppSheet } from "../ui/app-sheet";
@@ -20,6 +21,7 @@ export function SettingsDialog({
   children: ReactNode;
   onClose: () => void;
 }) {
+  const tx = useTx();
   const opener = useRef(readSettingsOpener());
   useEffect(() => {
     const returnTo = opener.current;
@@ -28,7 +30,7 @@ export function SettingsDialog({
 
   return (
     <AppSheet
-      title="Settings"
+      title={tx("Settings")}
       closeLabel="Close settings"
       slot="settings"
       popupProps={{ "data-settings-dialog": "" }}

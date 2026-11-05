@@ -21,6 +21,7 @@ vi.mock("react", async (original) => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return {
     ...actual,
+    useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
     useState: reactHookHarness.useState,
     useRef: reactHookHarness.useRef,
     useEffect: (effect: () => () => void, dependencies: unknown[]) => {

@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { MAX_PROJECT_SECRET_FILES } from "@specweave-studio/contracts";
@@ -48,6 +50,7 @@ export function ProjectSecretFilesSettings({
 }: {
   readonly members: ReadonlyArray<EnvironmentProject>;
 }) {
+  const tx = useTx();
   const machines = useLinkMachines();
   const update = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const saved = (members[0]?.workspaceSettings?.secretFiles ?? []).join("\n");
@@ -94,7 +97,7 @@ export function ProjectSecretFilesSettings({
       />
       <div className="space-y-2 px-3 pb-3 sm:px-4">
         <Textarea
-          aria-label="Secret files"
+          aria-label={tx("Secret files")}
           value={text}
           disabled={pending}
           rows={4}
@@ -107,7 +110,13 @@ export function ProjectSecretFilesSettings({
         />
         {problems.length > 0 || tooMany ? (
           <ul role="alert" className="space-y-1 text-xs text-destructive-foreground">
-            {tooMany ? <li>Keep it to {MAX_PROJECT_SECRET_FILES} entries.</li> : null}
+            {tooMany ? (
+              <li>
+                {renderRich(tx("Keep it to {MAX_PROJECT_SECRET_FILES} entries."), {
+                  MAX_PROJECT_SECRET_FILES: MAX_PROJECT_SECRET_FILES,
+                })}
+              </li>
+            ) : null}
             {problems.map((problem) => (
               <li key={problem}>{problem}</li>
             ))}
@@ -125,7 +134,7 @@ export function ProjectSecretFilesSettings({
           disabled={pending || entries.join("\n") === saved || problems.length > 0 || tooMany}
           onClick={() => void save()}
         >
-          Save secret files
+          {tx("Save secret files")}
         </Button>
       </div>
     </SettingsSection>

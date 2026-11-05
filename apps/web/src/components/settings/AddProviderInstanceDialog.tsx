@@ -1,5 +1,8 @@
 "use client";
 
+import { renderRich } from "../../i18n/rich";
+
+import { useTx } from "../../i18n";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
@@ -119,6 +122,7 @@ export function AddProviderInstanceDialog({
   onOpenChange,
   onCreated,
 }: AddProviderInstanceDialogProps) {
+  const tx = useTx();
   const settings = useEnvironmentSettings(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
@@ -422,8 +426,14 @@ export function AddProviderInstanceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <WizardPopup size="wide">
         <WizardHeader
-          title="Add provider"
-          description={<>Add an account or configure a provider on {environmentLabel}.</>}
+          title={tx("Add provider")}
+          description={
+            <>
+              {renderRich(tx("Add an account or configure a provider on {environmentLabel}."), {
+                environmentLabel: environmentLabel,
+              })}
+            </>
+          }
         >
           {isAcpRegistry ? (
             <AddProviderInstanceWizardSteps
@@ -462,7 +472,7 @@ export function AddProviderInstanceDialog({
             >
               <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
                 <div id="add-instance-driver-label" className="text-sm font-medium text-foreground">
-                  Built-in providers
+                  {tx("Built-in providers")}
                 </div>
                 <RadioGroup
                   disabled={isPreparingRegistryAgent}
@@ -509,8 +519,12 @@ export function AddProviderInstanceDialog({
                 </RadioGroup>
                 {driver === "grok" ? (
                   <p className="text-xs text-muted-foreground">
-                    Grok runs the grok CLI already on {environmentLabel}. No CLI there? Add Grok
-                    Build below instead; it installs Grok as its own registry agent.
+                    {renderRich(
+                      tx(
+                        "Grok runs the grok CLI already on {environmentLabel}. No CLI there? Add Grok Build below instead; it installs Grok as its own registry agent.",
+                      ),
+                      { environmentLabel: environmentLabel },
+                    )}
                   </p>
                 ) : null}
               </div>
@@ -522,12 +536,14 @@ export function AddProviderInstanceDialog({
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <h3 className="text-sm font-medium text-foreground">
-                            {isLocalAcp ? "Local ACP command" : "Enter manually"}
+                            {isLocalAcp ? tx("Local ACP command") : tx("Enter manually")}
                           </h3>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {isLocalAcp
                               ? `Run an installed ACP executable on ${environmentLabel}.`
-                              : "Enter an official registry ID and any local executable or auth override."}
+                              : tx(
+                                  "Enter an official registry ID and any local executable or auth override.",
+                                )}
                           </p>
                         </div>
                         <Button
@@ -538,7 +554,7 @@ export function AddProviderInstanceDialog({
                           size="xs"
                           variant="ghost"
                         >
-                          Search registry
+                          {tx("Search registry")}
                         </Button>
                       </div>
                       <SettingsGroup variant="plain">
@@ -608,7 +624,7 @@ export function AddProviderInstanceDialog({
                         rel="noreferrer"
                         target="_blank"
                       >
-                        Docs
+                        {tx("Docs")}
                       </a>
                     ) : null}
                     {selectedAcp.repository ? (
@@ -619,7 +635,7 @@ export function AddProviderInstanceDialog({
                         rel="noreferrer"
                         target="_blank"
                       >
-                        Source
+                        {tx("Source")}
                       </a>
                     ) : null}
                   </div>
@@ -631,9 +647,11 @@ export function AddProviderInstanceDialog({
                 className={cn(wizardStep !== identityStep && "hidden")}
               >
                 <SettingsRow
-                  title={<label htmlFor="add-provider-label">Label</label>}
+                  title={<label htmlFor="add-provider-label">{tx("Label")}</label>}
                   description={
-                    <span id="add-provider-label-description">Shown in the provider list.</span>
+                    <span id="add-provider-label-description">
+                      {tx("Shown in the provider list.")}
+                    </span>
                   }
                   control={
                     <Input
@@ -641,17 +659,17 @@ export function AddProviderInstanceDialog({
                       aria-describedby="add-provider-label-description"
                       size="sm"
                       className="w-full @min-[32rem]/settings-row:w-56"
-                      placeholder="e.g. Work"
+                      placeholder={tx("e.g. Work")}
                       value={label}
                       onChange={(event) => setIdentityDraft({ label: event.target.value })}
                     />
                   }
                 />
                 <SettingsRow
-                  title={<label htmlFor="add-provider-instance-id">Instance ID</label>}
+                  title={<label htmlFor="add-provider-instance-id">{tx("Instance ID")}</label>}
                   description={
                     <span id="add-provider-instance-id-description">
-                      Letters, digits, '-', or '_'.
+                      {tx("Letters, digits, '-', or '_'.")}
                     </span>
                   }
                   status={
@@ -711,7 +729,7 @@ export function AddProviderInstanceDialog({
               ) : !isAcpRegistry && wizardStep === 2 ? (
                 <div className="grid gap-2">
                   <p className="text-sm text-muted-foreground">
-                    This driver has no required configuration. You can add the instance now.
+                    {tx("This driver has no required configuration. You can add the instance now.")}
                   </p>
                 </div>
               ) : null}
@@ -730,12 +748,12 @@ export function AddProviderInstanceDialog({
                   setWizardStep((step) => Math.max(0, step - 1));
                 }}
               >
-                {wizardStep === 0 ? "Cancel" : "Back"}
+                {wizardStep === 0 ? tx("Cancel") : tx("Back")}
               </Button>
               {wizardStep === 0 && driver === "codex" ? (
                 <>
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
-                    Configure manually
+                    {tx("Configure manually")}
                   </Button>
                   <ChatGptConnectionButton
                     size="sm"
@@ -745,11 +763,12 @@ export function AddProviderInstanceDialog({
               ) : wizardStep === 0 && driver === "claudeAgent" ? (
                 <>
                   <Button variant="outline" size="sm" onClick={() => navigateToStep(1)}>
-                    Configure manually
+                    {tx("Configure manually")}
                   </Button>
                   <Button size="sm" onClick={() => setAddingClaudeAccount(true)}>
-                    <ClaudeAI className="size-4 shrink-0" aria-hidden="true" />
-                    Add Claude account
+                    {renderRich(tx("{claudeAI}Add Claude account"), {
+                      claudeAI: <ClaudeAI className="size-4 shrink-0" aria-hidden="true" />,
+                    })}
                   </Button>
                 </>
               ) : wizardStep < (isAcpRegistry ? 1 : 2) ? (
@@ -758,7 +777,7 @@ export function AddProviderInstanceDialog({
                   disabled={isPreparingRegistryAgent}
                   onClick={() => navigateToStep(wizardStep + 1)}
                 >
-                  Next
+                  {tx("Next")}
                 </Button>
               ) : (
                 <Button
@@ -769,8 +788,8 @@ export function AddProviderInstanceDialog({
                   {isSaving
                     ? "Adding..."
                     : isAcpRegistry && !isLocalAcp
-                      ? "Continue to sign-in"
-                      : "Add instance"}
+                      ? tx("Continue to sign-in")
+                      : tx("Add instance")}
                 </Button>
               )}
             </WizardFooter>

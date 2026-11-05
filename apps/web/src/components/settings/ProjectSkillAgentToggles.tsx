@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /** One agent's switches in the sheet's "Loaded by" list: the skill, and the plugin it ships in. */
 import type { ProjectSkillPresence } from "@specweave-studio/contracts";
 
@@ -63,6 +65,7 @@ export function ProjectSkillAgentToggle({ presence }: { presence: ProjectSkillPr
 
 /** Whole-plugin control beside the agent's path. */
 export function ProjectSkillPluginToggle({ presence }: { presence: ProjectSkillPresence }) {
+  const tx = useTx();
   const controls = useSkillControls();
   const plugin = skillPluginOf(presence);
   if (!controls || !plugin) return null;
@@ -83,7 +86,9 @@ export function ProjectSkillPluginToggle({ presence }: { presence: ProjectSkillP
         disabled={!controls.canOperate || controls.pending !== null}
         onClick={() => controls.propose(action)}
       >
-        {enablePlugin ? "Turn on" : "Turn off"} plugin {plugin.name}
+        {tx(enablePlugin ? "Turn on plugin {name}" : "Turn off plugin {name}", {
+          name: plugin.name,
+        })}
       </Button>
     </SkillControlReason>
   );

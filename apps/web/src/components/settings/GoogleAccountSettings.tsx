@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type {
   GoogleAccountStatus,
   GoogleConnectedAccount,
@@ -80,6 +82,7 @@ const accountTitle = (account: GoogleConnectedAccount) =>
     : (account.email ?? "Google account");
 
 export function GoogleAccountSettingsPanel() {
+  const tx = useTx();
   const returnTo = useLocation({ select: (location) => location.href });
   const environmentId = usePrimaryEnvironmentId();
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
@@ -412,7 +415,7 @@ export function GoogleAccountSettingsPanel() {
             })}
             {accounts.length > 1 && enabled.length > 0 && selected?.connected === true ? (
               isDefault ? (
-                <Badge variant="secondary">Default account</Badge>
+                <Badge variant="secondary">{tx("Default account")}</Badge>
               ) : (
                 <Button
                   size="xs"
@@ -421,7 +424,7 @@ export function GoogleAccountSettingsPanel() {
                   aria-label={`Make ${selected === null ? "this account" : accountTitle(selected)} the default for ${project.title}`}
                   onClick={() => makeDefault(project.id)}
                 >
-                  Make default
+                  {tx("Make default")}
                 </Button>
               )
             ) : null}
@@ -440,7 +443,7 @@ export function GoogleAccountSettingsPanel() {
                   />
                 }
               >
-                Morning briefing
+                {tx("Morning briefing")}
               </Button>
             ) : null}
           </div>
@@ -457,32 +460,34 @@ export function GoogleAccountSettingsPanel() {
         id="google-account"
         headerAction={
           status?.connected ? (
-            <Badge variant="success">Connected</Badge>
+            <Badge variant="success">{tx("Connected")}</Badge>
           ) : status?.clientConfigured ? (
-            <Badge variant="secondary">Not connected</Badge>
+            <Badge variant="secondary">{tx("Not connected")}</Badge>
           ) : undefined
         }
       >
         <div className="flex flex-col gap-1 px-3 py-3 text-muted-foreground text-sm sm:px-4">
           <p>
-            Let a project&apos;s agents read your Gmail, Calendar and Drive, so a Personal project
-            can brief you on your day, find a document or check who is coming to a meeting.
+            {tx(
+              "Let a project's agents read your Gmail, Calendar and Drive, so a Personal project can brief you on your day, find a document or check who is coming to a meeting.",
+            )}
           </p>
           <p className="text-xs">
-            Agents read. With Gmail drafts on they save reply drafts, and send one only when you
-            choose Send for it on a reply card; they never change or delete anything. SpecWithCode
-            talks Google from this machine, keeps the sign-in in a private file on this machine, and
-            gives a project nothing until you turn it on below. Only your Personal project starts
-            with access.
+            {tx(
+              "Agents read. With Gmail drafts on they save reply drafts, and send one only when you choose Send for it on a reply card; they never change or delete anything. SpecWithCode talks Google from this machine, keeps the sign-in in a private file on this machine, and gives a project nothing until you turn it on below. Only your Personal project starts with access.",
+            )}
           </p>
           {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
         </div>
 
         {config !== undefined && !supported ? (
           <p className="px-3 py-3 text-muted-foreground text-sm sm:px-4">
-            The SpecWithCode service this app is connected to (version{" "}
-            {config.environment.serverVersion}) is older than Google account support. Update that
-            service to use it.
+            {renderRich(
+              tx(
+                "The SpecWithCode service this app is connected to (version {serverVersion}) is older than Google account support. Update that service to use it.",
+              ),
+              { serverVersion: config.environment.serverVersion },
+            )}
           </p>
         ) : null}
         {query.error ? (
@@ -492,22 +497,27 @@ export function GoogleAccountSettingsPanel() {
         {status !== null && showClientForm && teamRulesLock === null ? (
           <div className="flex flex-col gap-3 border-t px-3 py-4 sm:px-4">
             <div className="flex flex-col gap-1">
-              <span className="font-medium text-sm">Your own OAuth client</span>
+              <span className="font-medium text-sm">{tx("Your own OAuth client")}</span>
               <span className="text-muted-foreground text-xs">
-                {status.clientConfigured
-                  ? "Optional. Use a client from your own Google Cloud project instead of SpecWithCode's, for example when your organisation only allows its own apps. "
-                  : "This SpecWithCode build has no Google client of its own, so connecting needs one from your Google Cloud project. "}
-                In Google Cloud Console, enable the Gmail, Google Calendar and Google Drive APIs,
-                set up the consent screen, then create credentials of type{" "}
-                <span className="font-medium">OAuth client ID</span> and application type{" "}
-                <span className="font-medium">Desktop app</span>. Paste its ID and secret here.
+                {renderRich(
+                  tx(
+                    "{value}In Google Cloud Console, enable the Gmail, Google Calendar and Google Drive APIs, set up the consent screen, then create credentials of type {span} and application type {span2}. Paste its ID and secret here.",
+                  ),
+                  {
+                    value: status.clientConfigured
+                      ? "Optional. Use a client from your own Google Cloud project instead of SpecWithCode's, for example when your organisation only allows its own apps. "
+                      : "This SpecWithCode build has no Google client of its own, so connecting needs one from your Google Cloud project. ",
+                    span: <span className="font-medium">{tx("OAuth client ID")}</span>,
+                    span2: <span className="font-medium">{tx("Desktop app")}</span>,
+                  },
+                )}
               </span>
             </div>
             <Input
               size="sm"
               autoComplete="off"
               spellCheck={false}
-              aria-label="Google OAuth client ID"
+              aria-label={tx("Google OAuth client ID")}
               placeholder="1234567890-abc123.apps.googleusercontent.com"
               value={clientId}
               disabled={!canWrite || busy}
@@ -518,7 +528,7 @@ export function GoogleAccountSettingsPanel() {
               type="password"
               autoComplete="off"
               spellCheck={false}
-              aria-label="Google OAuth client secret"
+              aria-label={tx("Google OAuth client secret")}
               placeholder="GOCSPX-..."
               value={clientSecret}
               disabled={!canWrite || busy}
@@ -526,7 +536,7 @@ export function GoogleAccountSettingsPanel() {
             />
             {trimmedId !== "" && !GOOGLE_CLIENT_ID_PATTERN.test(trimmedId) ? (
               <span className="text-destructive-foreground text-xs">
-                A client ID ends in .apps.googleusercontent.com.
+                {tx("A client ID ends in .apps.googleusercontent.com.")}
               </span>
             ) : null}
             <div className="flex flex-wrap gap-2">
@@ -535,11 +545,11 @@ export function GoogleAccountSettingsPanel() {
                 disabled={!canWrite || busy || !clientLooksValid}
                 onClick={saveClient}
               >
-                Save client
+                {tx("Save client")}
               </Button>
               {replacingClient ? (
                 <Button size="sm" variant="outline" onClick={() => setReplacingClient(false)}>
-                  Cancel
+                  {tx("Cancel")}
                 </Button>
               ) : null}
             </div>
@@ -551,7 +561,9 @@ export function GoogleAccountSettingsPanel() {
             {usesOwnClient ? (
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span className="min-w-0 truncate text-muted-foreground">
-                  Your OAuth client <span className="font-mono text-xs">{status.clientId}</span>
+                  {renderRich(tx("Your OAuth client {span}"), {
+                    span: <span className="font-mono text-xs">{status.clientId}</span>,
+                  })}
                 </span>
                 <TeamRulesInert lock={teamRulesLock}>
                   <Button
@@ -560,7 +572,7 @@ export function GoogleAccountSettingsPanel() {
                     disabled={!canWrite || busy}
                     onClick={() => setReplacingClient(true)}
                   >
-                    Replace client
+                    {tx("Replace client")}
                   </Button>
                 </TeamRulesInert>
               </div>
@@ -583,7 +595,7 @@ export function GoogleAccountSettingsPanel() {
                             ·{" "}
                             {account.connected
                               ? `reads ${listServices(account.services) || "nothing"}`
-                              : "not connected"}
+                              : tx("not connected")}
                           </span>
                         </span>
                         <div className="flex flex-wrap gap-1">
@@ -595,7 +607,7 @@ export function GoogleAccountSettingsPanel() {
                               aria-label={`${account.connected ? "Reconnect" : "Connect"} ${accountTitle(account)}`}
                               onClick={() => beginSignIn(account.id)}
                             >
-                              {account.connected ? "Reconnect" : "Connect"}
+                              {account.connected ? tx("Reconnect") : tx("Connect")}
                             </Button>
                           </TeamRulesInert>
                           {account.connected ? (
@@ -611,7 +623,7 @@ export function GoogleAccountSettingsPanel() {
                                 );
                               }}
                             >
-                              Disconnect
+                              {tx("Disconnect")}
                             </Button>
                           ) : null}
                           <Button
@@ -629,7 +641,7 @@ export function GoogleAccountSettingsPanel() {
                               );
                             }}
                           >
-                            Remove
+                            {tx("Remove")}
                           </Button>
                         </div>
                       </div>
@@ -637,7 +649,7 @@ export function GoogleAccountSettingsPanel() {
                         <Input
                           size="sm"
                           aria-label={`Label for ${account.email ?? "this account"}`}
-                          placeholder="Label, such as Work or Personal"
+                          placeholder={tx("Label, such as Work or Personal")}
                           maxLength={GOOGLE_ACCOUNT_LABEL_MAX}
                           value={draft ?? account.label ?? ""}
                           disabled={!canWrite || busy}
@@ -654,7 +666,7 @@ export function GoogleAccountSettingsPanel() {
                             disabled={!canWrite || busy}
                             onClick={() => saveLabel(account)}
                           >
-                            Save label
+                            {tx("Save label")}
                           </Button>
                         ) : null}
                       </div>
@@ -670,8 +682,10 @@ export function GoogleAccountSettingsPanel() {
             ) : status.connected ? (
               <div className="flex flex-col gap-1 text-sm">
                 <span>
-                  Signed in as <span className="font-medium">{status.email ?? "your account"}</span>
-                  . SpecWithCode can read {listServices(status.services) || "nothing"}.
+                  {renderRich(tx("Signed in as {span}. SpecWithCode can read {value}."), {
+                    span: <span className="font-medium">{status.email ?? tx("your account")}</span>,
+                    value: listServices(status.services) || tx("nothing"),
+                  })}
                 </span>
                 {status.lastError ? (
                   <span className="text-destructive-foreground text-xs">{status.lastError}</span>
@@ -679,11 +693,11 @@ export function GoogleAccountSettingsPanel() {
               </div>
             ) : (
               <div className="flex flex-col gap-1">
-                <span className="font-medium text-sm">Connect your Google account</span>
+                <span className="font-medium text-sm">{tx("Connect your Google account")}</span>
                 <span className="text-muted-foreground text-xs">
-                  Pick what SpecWithCode may read. Gmail drafts lets your assistant save replies and
-                  send an exact copy only after you choose Send on its review card. The original
-                  draft stays in Gmail. Google asks you to confirm access in your browser.
+                  {tx(
+                    "Pick what SpecWithCode may read. Gmail drafts lets your assistant save replies and send an exact copy only after you choose Send on its review card. The original draft stays in Gmail. Google asks you to confirm access in your browser.",
+                  )}
                 </span>
               </div>
             )}
@@ -715,7 +729,7 @@ export function GoogleAccountSettingsPanel() {
                     disabled={!canWrite || busy || wanted.size === 0}
                     onClick={() => beginSignIn(accounts[0]?.id)}
                   >
-                    {status.connected ? "Reconnect" : "Connect Google"}
+                    {status.connected ? tx("Reconnect") : tx("Connect Google")}
                   </Button>
                 </TeamRulesInert>
               ) : null}
@@ -727,7 +741,7 @@ export function GoogleAccountSettingsPanel() {
                     disabled={!canWrite || busy || wanted.size === 0}
                     onClick={() => beginSignIn()}
                   >
-                    Add another Google account
+                    {tx("Add another Google account")}
                   </Button>
                 </TeamRulesInert>
               ) : null}
@@ -743,43 +757,52 @@ export function GoogleAccountSettingsPanel() {
                     );
                   }}
                 >
-                  Disconnect
+                  {tx("Disconnect")}
                 </Button>
               ) : null}
             </div>
 
             {clientSource === "studio" && !status.connected ? (
               <span className="text-muted-foreground text-xs">
-                If Google says it has not verified SpecWithCode yet, choose Advanced, then Go to
-                SpecWithCode.
+                {tx(
+                  "If Google says it has not verified SpecWithCode yet, choose Advanced, then Go to SpecWithCode.",
+                )}
               </span>
             ) : null}
 
             {status.signIn && teamRulesLock === null ? (
               <div className="flex flex-col gap-2 rounded-md border bg-muted/40 p-3 text-sm">
                 <span>
-                  Finish in the{" "}
-                  <a
-                    className="underline"
-                    href={status.signIn.authorizationUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Google sign-in tab
-                  </a>
-                  . This page updates when Google sends you back.
+                  {renderRich(
+                    tx("Finish in the {a}. This page updates when Google sends you back."),
+                    {
+                      a: (
+                        <a
+                          className="underline"
+                          href={status.signIn.authorizationUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {tx("Google sign-in tab")}
+                        </a>
+                      ),
+                    },
+                  )}
                 </span>
                 <span className="text-muted-foreground text-xs">
-                  Google returns to {status.signIn.redirectUri}. If SpecWithCode runs on another
-                  machine, that page will not load: copy the address from the browser and paste it
-                  here.
+                  {renderRich(
+                    tx(
+                      "Google returns to {redirectUri}. If SpecWithCode runs on another machine, that page will not load: copy the address from the browser and paste it here.",
+                    ),
+                    { redirectUri: status.signIn.redirectUri },
+                  )}
                 </span>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     size="sm"
                     autoComplete="off"
                     spellCheck={false}
-                    aria-label="Address Google sent you to"
+                    aria-label={tx("Address Google sent you to")}
                     placeholder="http://127.0.0.1:…/api/google/oauth/callback?state=…&code=…"
                     value={pasted}
                     disabled={!canWrite || busy}
@@ -791,7 +814,7 @@ export function GoogleAccountSettingsPanel() {
                     disabled={!canWrite || busy || !pasted.includes("code=")}
                     onClick={finishFromPaste}
                   >
-                    Finish sign-in
+                    {tx("Finish sign-in")}
                   </Button>
                 </div>
               </div>
@@ -804,17 +827,26 @@ export function GoogleAccountSettingsPanel() {
             <div className="flex flex-col gap-1 px-3 pt-4 pb-2 sm:px-4">
               <span className="font-medium text-sm">
                 {accounts.length > 1
-                  ? "Projects that may read each account"
-                  : "Projects that may read it"}
+                  ? tx("Projects that may read each account")
+                  : tx("Projects that may read it")}
               </span>
               <span className="text-muted-foreground text-xs">
-                Agents in a project see only the services you turn on for it.
-                {accounts.length > 1
-                  ? " Agents use the default account unless asked for another, and may read every account turned on here."
-                  : ""}
+                {renderRich(
+                  tx("Agents in a project see only the services you turn on for it.{value}"),
+                  {
+                    value:
+                      accounts.length > 1
+                        ? " Agents use the default account unless asked for another, and may read every account turned on here."
+                        : "",
+                  },
+                )}
               </span>
               {accounts.length > 1 ? (
-                <div role="group" aria-label="Google account" className="flex flex-wrap gap-1 pt-1">
+                <div
+                  role="group"
+                  aria-label={tx("Google account")}
+                  className="flex flex-wrap gap-1 pt-1"
+                >
                   {accounts.map((account) => (
                     <Button
                       key={account.id}
@@ -835,9 +867,17 @@ export function GoogleAccountSettingsPanel() {
                 className="mx-3 mb-2 flex flex-col gap-2 rounded-md border bg-muted/40 p-3 text-sm sm:mx-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <span>
-                  Connected. Let all {projects.length} active{" "}
-                  {projects.length === 1 ? "project" : "projects"} read {listServices(grantedReads)}
-                  ?
+                  {renderRich(
+                    tx(
+                      projects.length === 1
+                        ? "Connected. Let the active project read {value2}?"
+                        : "Connected. Let all {length} active projects read {value2}?",
+                    ),
+                    {
+                      length: projects.length,
+                      value2: listServices(grantedReads),
+                    },
+                  )}
                 </span>
                 <div className="flex gap-2">
                   <Button
@@ -848,10 +888,10 @@ export function GoogleAccountSettingsPanel() {
                       void applyChanges("Could not enable access", enableAllPending);
                     }}
                   >
-                    Enable for all active projects
+                    {tx("Enable for all active projects")}
                   </Button>
                   <Button size="xs" variant="ghost-muted" onClick={() => setOfferEnableAll(false)}>
-                    Not now
+                    {tx("Not now")}
                   </Button>
                 </div>
               </div>
@@ -860,7 +900,7 @@ export function GoogleAccountSettingsPanel() {
             automatedProjects.length === 0 &&
             archivedProjects.length === 0 ? (
               <p className="px-3 pb-4 text-muted-foreground text-sm sm:px-4">
-                Add a project first. A Personal project suits a personal agent.
+                {tx("Add a project first. A Personal project suits a personal agent.")}
               </p>
             ) : (
               <>
@@ -889,8 +929,11 @@ export function GoogleAccountSettingsPanel() {
                             className="flex flex-wrap items-center justify-between gap-2 text-xs"
                           >
                             <span className="text-muted-foreground">
-                              <span className="font-medium text-foreground">{label}</span> ·{" "}
-                              {onCount} of {projects.length} active
+                              {renderRich(tx("{span} · {onCount} of {length} active"), {
+                                span: <span className="font-medium text-foreground">{label}</span>,
+                                onCount: onCount,
+                                length: projects.length,
+                              })}
                             </span>
                             <div className="flex gap-1">
                               <Button
@@ -900,7 +943,7 @@ export function GoogleAccountSettingsPanel() {
                                 aria-label={`Enable ${label} for all active projects`}
                                 onClick={() => setServiceForAll(service, true)}
                               >
-                                Enable for all active projects
+                                {tx("Enable for all active projects")}
                               </Button>
                               <Button
                                 size="xs"
@@ -909,7 +952,7 @@ export function GoogleAccountSettingsPanel() {
                                 aria-label={`Disable ${label} for all projects`}
                                 onClick={() => setServiceForAll(service, false)}
                               >
-                                Disable all
+                                {tx("Disable all")}
                               </Button>
                             </div>
                           </div>
@@ -922,12 +965,12 @@ export function GoogleAccountSettingsPanel() {
                   <ul className="flex flex-col py-2">{projects.map(renderProjectRow)}</ul>
                 ) : (
                   <p className="px-3 py-2 text-muted-foreground text-sm sm:px-4">
-                    No active projects of your own here.
+                    {tx("No active projects of your own here.")}
                   </p>
                 )}
                 <ArchivedDisclosure
                   count={automatedProjects.length}
-                  label="automated"
+                  label={tx("automated")}
                   className="pb-1"
                 >
                   <ul className="flex flex-col">{automatedProjects.map(renderProjectRow)}</ul>
@@ -948,7 +991,7 @@ export function GoogleAccountSettingsPanel() {
               disabled={!canWrite || busy}
               onClick={() => setReplacingClient(true)}
             >
-              Use your own OAuth client
+              {tx("Use your own OAuth client")}
             </Button>
           </div>
         ) : null}
@@ -956,8 +999,9 @@ export function GoogleAccountSettingsPanel() {
         {status?.connected || usesOwnClient || (status?.projects.length ?? 0) > 0 ? (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t px-3 py-3 sm:px-4">
             <span className="text-muted-foreground text-xs">
-              Remove forgets every sign-in, your own OAuth client if you saved one, and every
-              project&apos;s access on this machine.
+              {tx(
+                "Remove forgets every sign-in, your own OAuth client if you saved one, and every project's access on this machine.",
+              )}
             </span>
             <Button
               size="xs"
@@ -970,7 +1014,7 @@ export function GoogleAccountSettingsPanel() {
                 );
               }}
             >
-              Remove
+              {tx("Remove")}
             </Button>
           </div>
         ) : null}

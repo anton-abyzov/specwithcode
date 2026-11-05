@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { EnvironmentId, type StudioProjectFileScript } from "@specweave-studio/contracts";
@@ -41,6 +42,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
  * binding on an environment.
  */
 export function ProjectActionsSettings() {
+  const tx = useTx();
   const { scope, targets, target } = useSettingsScope();
   const { environments } = useEnvironments();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -159,14 +161,14 @@ export function ProjectActionsSettings() {
                     />
                   }
                 >
-                  Import scripts
+                  {tx("Import scripts")}
                   <ChevronDownIcon className="size-3.5" />
                 </MenuTrigger>
                 <MenuPopup align="end">
                   <MenuGroup>
-                    <MenuGroupLabel>Import from studio.json</MenuGroupLabel>
+                    <MenuGroupLabel>{tx("Import from studio.json")}</MenuGroupLabel>
                     <p className="px-2 pb-2 text-pretty text-sm text-muted-foreground">
-                      Add actions declared by this checkout without editing them first.
+                      {tx("Add actions declared by this checkout without editing them first.")}
                     </p>
                   </MenuGroup>
                   <MenuSeparator />
@@ -194,7 +196,7 @@ export function ProjectActionsSettings() {
               onClick={() => setRequest({ scriptId: null, initial: EMPTY_PROJECT_SCRIPT_INPUT })}
             >
               <PlusIcon className="size-3.5" />
-              Add action
+              {tx("Add action")}
             </Button>
           </div>
         }

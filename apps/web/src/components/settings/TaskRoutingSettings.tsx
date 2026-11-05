@@ -1,3 +1,4 @@
+import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import {
   TASK_CLASSES,
@@ -134,7 +135,7 @@ export function TaskRoutingSettings() {
         settingKeys={["taskRouting"]}
         mixed={mixed}
         id="task-routing-mode"
-        title="Auto model routing"
+        title={tx("Auto model routing")}
         description={
           isProjectScope
             ? "Picks the model for this project's delegated workers by what the task needs: routine work such as translation, transcripts or a first animation draft can run on a cheaper model, while final code, review and design stay on a strong one. A model named for a thread always wins. Decided by rules, without a model call."
@@ -144,15 +145,15 @@ export function TaskRoutingSettings() {
         resetAction={
           auto ? (
             <SettingResetButton
-              label="Auto model routing"
-              tooltip="Turn Auto off"
+              label={tx("Auto model routing")}
+              tooltip={tx("Turn Auto off")}
               onClick={() => save({ mode: "off" })}
             />
           ) : null
         }
         control={
           <Switch
-            aria-label="Auto model routing"
+            aria-label={tx("Auto model routing")}
             mixed={mixed}
             checked={mixed ? false : auto}
             onCheckedChange={(enabled) => save({ mode: enabled ? "auto" : "off" })}
@@ -162,16 +163,20 @@ export function TaskRoutingSettings() {
         {auto && !mixed ? (
           <div className="flex flex-col gap-1 text-xs text-muted-foreground" data-routing-notes>
             <p>
-              Long audio is transcribed first (speech to text), the transcript is split into chunks
-              that fit the model's context, and the cheaper model works through the chunks. Auto
-              never sends audio to a model that cannot hear it.
+              {tx(
+                "Long audio is transcribed first (speech to text), the transcript is split into chunks that fit the model's context, and the cheaper model works through the chunks. Auto never sends audio to a model that cannot hear it.",
+              )}
             </p>
             <p>
-              A failure on the cheaper model gets one retry on the model the work would have used
-              without Auto. Model changes happen only between turns.
+              {tx(
+                "A failure on the cheaper model gets one retry on the model the work would have used without Auto. Model changes happen only between turns.",
+              )}
             </p>
             {conflicts.length > 0 ? (
-              <ul className="list-disc ps-4 text-warning-foreground" aria-label="Routing conflicts">
+              <ul
+                className="list-disc ps-4 text-warning-foreground"
+                aria-label={tx("Routing conflicts")}
+              >
                 {conflicts.map((note) => (
                   <li key={note}>{note}</li>
                 ))}
@@ -196,7 +201,7 @@ export function TaskRoutingSettings() {
                     save({ quality: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Quality preference">
+                <SelectTrigger size="sm" aria-label={tx("Quality preference")}>
                   <SelectValue>
                     {(value: TaskRoutingQuality | null) =>
                       value === null ? tx("Mixed") : tx(QUALITY_LABELS[value])
@@ -221,11 +226,14 @@ export function TaskRoutingSettings() {
             description="The cheapest tier each kind of task may use. Code, review, design and final animation never go below Standard; other work stays on Frontier. Unclear tasks keep their usual model."
             resetAction={
               Object.keys(policy.classTiers).length > 0 ? (
-                <SettingResetButton label="task tiers" onClick={() => save({ classTiers: {} })} />
+                <SettingResetButton
+                  label={tx("task tiers")}
+                  onClick={() => save({ classTiers: {} })}
+                />
               ) : null
             }
           >
-            <ul className="flex flex-col gap-1.5" aria-label="Model tier per task">
+            <ul className="flex flex-col gap-1.5" aria-label={tx("Model tier per task")}>
               {TASK_CLASSES.map((taskClass) => {
                 const override = policy.classTiers[taskClass];
                 const effective = classTier(taskClass, policy);
@@ -266,7 +274,9 @@ export function TaskRoutingSettings() {
                       </SelectTrigger>
                       <SelectPopup align="end" alignItemWithTrigger={false}>
                         <SelectItem value={DEFAULT_OPTION}>
-                          Default ({TIER_LABELS[DEFAULT_CLASS_TIERS[taskClass]]})
+                          {renderRich(tx("Default ({value})"), {
+                            value: TIER_LABELS[DEFAULT_CLASS_TIERS[taskClass]],
+                          })}
                         </SelectItem>
                         {tierOptionsFor(taskClass).map((tier) => (
                           <SelectItem key={tier} value={tier}>
@@ -295,7 +305,7 @@ export function TaskRoutingSettings() {
                     save({ minimumTier: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Minimum tier">
+                <SelectTrigger size="sm" aria-label={tx("Minimum tier")}>
                   <SelectValue>
                     {(value: string | null) =>
                       value === NO_FLOOR || value === null
@@ -305,7 +315,7 @@ export function TaskRoutingSettings() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value={NO_FLOOR}>None</SelectItem>
+                  <SelectItem value={NO_FLOOR}>{tx("None")}</SelectItem>
                   {MODEL_TIERS.map((tier) => (
                     <SelectItem key={tier} value={tier}>
                       {TIER_LABELS[tier]}
@@ -323,9 +333,9 @@ export function TaskRoutingSettings() {
             description="Auto picks only among providers that are switched on here, signed in and below the usage threshold. A worker never moves to a provider you turn off."
           >
             {entries.length === 0 ? (
-              <span className="text-sm text-muted-foreground">No providers available</span>
+              <span className="text-sm text-muted-foreground">{tx("No providers available")}</span>
             ) : (
-              <ul className="flex flex-col gap-1.5" aria-label="Providers Auto may use">
+              <ul className="flex flex-col gap-1.5" aria-label={tx("Providers Auto may use")}>
                 {entries.map((entry) => {
                   const excluded = policy.excludedProviders.includes(entry.instanceId);
                   return (
@@ -371,7 +381,7 @@ export function TaskRoutingSettings() {
                   else if (value === "economy" || value === "standard") setConfirmingPaidApi(value);
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Paid API models">
+                <SelectTrigger size="sm" aria-label={tx("Paid API models")}>
                   <SelectValue>
                     {(value: TaskRoutingPaidApi | null) =>
                       value === null ? "Mixed" : PAID_API_LABELS[value]
@@ -396,7 +406,7 @@ export function TaskRoutingSettings() {
             description="When a thread Auto moved fails for a reason a stronger model may fix, it continues once, in the same thread, on the model it would have used without Auto. A delegated task reports its failure to the thread that started it, which may retry it once on that model. Usage limits are left to the fallback rules above."
             control={
               <Switch
-                aria-label="Retry once on the usual model"
+                aria-label={tx("Retry once on the usual model")}
                 checked={policy.escalate}
                 onCheckedChange={(escalate) => save({ escalate })}
               />
@@ -412,22 +422,28 @@ export function TaskRoutingSettings() {
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Let Auto use paid API models?</AlertDialogTitle>
+            <AlertDialogTitle>{tx("Let Auto use paid API models?")}</AlertDialogTitle>
             <AlertDialogDescription>
               {isProjectScope
-                ? "Workers in this project may run on providers billed per token, up to the tier you picked. Those turns are billed to the provider's API account at API rates. SpecWithCode cannot read or cap that balance; set a spend limit with the provider."
-                : "Workers may run on providers billed per token, up to the tier you picked, in every project that does not override this. Those turns are billed to the provider's API account at API rates. SpecWithCode cannot read or cap that balance; set a spend limit with the provider."}
+                ? tx(
+                    "Workers in this project may run on providers billed per token, up to the tier you picked. Those turns are billed to the provider's API account at API rates. SpecWithCode cannot read or cap that balance; set a spend limit with the provider.",
+                  )
+                : tx(
+                    "Workers may run on providers billed per token, up to the tier you picked, in every project that does not override this. Those turns are billed to the provider's API account at API rates. SpecWithCode cannot read or cap that balance; set a spend limit with the provider.",
+                  )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {tx("Cancel")}
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 if (confirmingPaidApi !== null) save({ paidApi: confirmingPaidApi });
                 setConfirmingPaidApi(null);
               }}
             >
-              Allow paid API
+              {tx("Allow paid API")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

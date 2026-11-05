@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   DEFAULT_SERVER_SETTINGS,
   INCOGNITO_BROWSER_PROFILE_ID,
@@ -79,6 +80,7 @@ export function ProjectDefaultsSettings({
   /** Rendered on the Project page, where a picked project edits every category. */
   onProjectPage?: boolean;
 }) {
+  const tx = useTx();
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -206,7 +208,7 @@ export function ProjectDefaultsSettings({
       }
       resetAction={
         settings.defaultModelSelection !== null ? (
-          <SettingResetButton label="default model" onClick={() => setModel(null)} />
+          <SettingResetButton label={tx("default model")} onClick={() => setModel(null)} />
         ) : null
       }
       control={
@@ -250,7 +252,7 @@ export function ProjectDefaultsSettings({
             ) : null}
           </div>
         ) : (
-          <span className="text-sm text-muted-foreground">No providers available</span>
+          <span className="text-sm text-muted-foreground">{tx("No providers available")}</span>
         )
       }
     />
@@ -283,14 +285,14 @@ export function ProjectDefaultsSettings({
       resetAction={
         target?.sources.defaultThreadEnvMode === "project" ? (
           <SettingResetButton
-            label="Use worktrees"
+            label={tx("Use worktrees")}
             onClick={() => updateSettings({ defaultThreadEnvMode: null })}
           />
         ) : null
       }
       control={
         <Switch
-          aria-label="Use worktrees"
+          aria-label={tx("Use worktrees")}
           mixed={mixedWorkspace}
           checked={mixedWorkspace ? false : projectUsesWorktrees}
           onCheckedChange={(checked) =>
@@ -314,7 +316,7 @@ export function ProjectDefaultsSettings({
           variant="outline"
           onClick={() => void navigate({ to: "/settings/projects" })}
         >
-          Open Projects
+          {tx("Open Projects")}
         </Button>
       }
     />
@@ -358,7 +360,7 @@ export function ProjectDefaultsSettings({
                 })
               }
             >
-              Open project settings
+              {tx("Open project settings")}
             </Button>
           }
         />
@@ -376,7 +378,7 @@ export function ProjectDefaultsSettings({
         settings.newWorktreesStartFromOrigin !==
         DEFAULT_SERVER_SETTINGS.newWorktreesStartFromOrigin ? (
           <SettingResetButton
-            label="new worktrees start from origin"
+            label={tx("new worktrees start from origin")}
             onClick={() =>
               updateSettings({
                 newWorktreesStartFromOrigin: DEFAULT_SERVER_SETTINGS.newWorktreesStartFromOrigin,
@@ -387,7 +389,7 @@ export function ProjectDefaultsSettings({
       }
       control={
         <Switch
-          aria-label="Start new worktrees from origin by default"
+          aria-label={tx("Start new worktrees from origin by default")}
           mixed={mixedStartFromOrigin}
           checked={mixedStartFromOrigin ? false : settings.newWorktreesStartFromOrigin}
           onCheckedChange={(checked) =>
@@ -422,7 +424,7 @@ export function ProjectDefaultsSettings({
               settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode &&
               teamRulesModeAllowed(teamRules.state, DEFAULT_SERVER_SETTINGS.defaultRuntimeMode) ? (
                 <SettingResetButton
-                  label="default permissions"
+                  label={tx("default permissions")}
                   onClick={() =>
                     updateSettings({
                       defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
@@ -438,12 +440,12 @@ export function ProjectDefaultsSettings({
                   if (value) updateSettings({ defaultRuntimeMode: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Default permissions">
+                <SelectTrigger size="sm" aria-label={tx("Default permissions")}>
                   {!mixedPermissions && (
                     <PermissionIcon className="size-3.5 shrink-0 text-muted-foreground" />
                   )}
                   <SelectValue>
-                    {mixedPermissions ? "Mixed" : runtimeModeConfig[effectiveRuntimeMode].label}
+                    {mixedPermissions ? tx("Mixed") : runtimeModeConfig[effectiveRuntimeMode].label}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -483,7 +485,7 @@ export function ProjectDefaultsSettings({
             resetAction={
               !isProjectScope && settings.worktreeSubmodules !== null ? (
                 <SettingResetButton
-                  label="worktree submodules"
+                  label={tx("worktree submodules")}
                   onClick={() => updateSettings({ worktreeSubmodules: null })}
                 />
               ) : null
@@ -495,7 +497,7 @@ export function ProjectDefaultsSettings({
                   if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Worktree submodules">
+                <SelectTrigger size="sm" aria-label={tx("Worktree submodules")}>
                   <SelectValue>
                     {(value: string | null) =>
                       isWorktreeSubmodules(value)
@@ -528,7 +530,7 @@ export function ProjectDefaultsSettings({
             settingKeys={["defaultAutoPull"]}
             mixed={mixedAutoPull}
             id="automatic-pull"
-            title="Refresh upstreams at startup"
+            title={tx("Refresh upstreams at startup")}
             description={
               isProjectScope
                 ? "Fetches this project's upstream refs when SpecWithCode starts. Use Pull to update the checkout."
@@ -537,15 +539,15 @@ export function ProjectDefaultsSettings({
             resetAction={
               settings.defaultAutoPull ? (
                 <SettingResetButton
-                  label="startup upstream refresh"
-                  tooltip="Reset startup upstream refresh to off"
+                  label={tx("startup upstream refresh")}
+                  tooltip={tx("Reset startup upstream refresh to off")}
                   onClick={() => updateSettings({ defaultAutoPull: false })}
                 />
               ) : null
             }
             control={
               <Switch
-                aria-label="Refresh upstreams at startup"
+                aria-label={tx("Refresh upstreams at startup")}
                 mixed={mixedAutoPull}
                 checked={mixedAutoPull ? false : settings.defaultAutoPull}
                 onCheckedChange={(enabled) => updateSettings({ defaultAutoPull: enabled })}
@@ -561,15 +563,15 @@ export function ProjectDefaultsSettings({
             resetAction={
               settings.removeAgentCreditsOnMerge ? (
                 <SettingResetButton
-                  label="agent credit removal"
-                  tooltip="Keep agent credits"
+                  label={tx("agent credit removal")}
+                  tooltip={tx("Keep agent credits")}
                   onClick={() => updateSettings({ removeAgentCreditsOnMerge: false })}
                 />
               ) : null
             }
             control={
               <Switch
-                aria-label="Remove agent credits when merging"
+                aria-label={tx("Remove agent credits when merging")}
                 mixed={mixedAgentCredits}
                 checked={mixedAgentCredits ? false : settings.removeAgentCreditsOnMerge}
                 onCheckedChange={(enabled) =>
@@ -596,7 +598,7 @@ export function ProjectDefaultsSettings({
                     updateSettings({ threadFinishAction: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="When a thread finishes">
+                <SelectTrigger size="sm" aria-label={tx("When a thread finishes")}>
                   <SelectValue>
                     {(value: string | null) =>
                       value === "leave" || value === "pull_request" || value === "auto_merge"
@@ -630,8 +632,8 @@ export function ProjectDefaultsSettings({
             resetAction={
               settings.pullRequestMergeMethod !== null ? (
                 <SettingResetButton
-                  label="default merge method"
-                  tooltip="Reset to last selected"
+                  label={tx("default merge method")}
+                  tooltip={tx("Reset to last selected")}
                   onClick={() => updateSettings({ pullRequestMergeMethod: null })}
                 />
               ) : null
@@ -645,7 +647,7 @@ export function ProjectDefaultsSettings({
                     updateSettings({ pullRequestMergeMethod: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Default pull request merge method">
+                <SelectTrigger size="sm" aria-label={tx("Default pull request merge method")}>
                   <SelectValue>
                     {(value: string | null) =>
                       value === "merge" || value === "squash" || value === "rebase"
@@ -657,7 +659,7 @@ export function ProjectDefaultsSettings({
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="last">Last selected</SelectItem>
+                  <SelectItem value="last">{tx("Last selected")}</SelectItem>
                   <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
                   <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
                   <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
@@ -673,7 +675,7 @@ export function ProjectDefaultsSettings({
             settingKeys={["enableAgentBrowserAccess"]}
             mixed={mixedBrowser}
             id={searchableSetting("agent-browser-access").id}
-            title="Agent browser access"
+            title={tx("Agent browser access")}
             description={
               isProjectScope
                 ? "Allow agents in this project to use the shared browser. Applies when the agent session next starts."
@@ -683,7 +685,7 @@ export function ProjectDefaultsSettings({
               settings.enableAgentBrowserAccess !==
               DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess ? (
                 <SettingResetButton
-                  label="default browser access"
+                  label={tx("default browser access")}
                   onClick={() =>
                     updateSettings({
                       enableAgentBrowserAccess: DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess,
@@ -694,7 +696,7 @@ export function ProjectDefaultsSettings({
             }
             control={
               <Switch
-                aria-label="Agent browser access"
+                aria-label={tx("Agent browser access")}
                 mixed={mixedBrowser}
                 checked={mixedBrowser ? false : settings.enableAgentBrowserAccess}
                 onCheckedChange={(enabled) => updateSettings({ enableAgentBrowserAccess: enabled })}
@@ -708,7 +710,7 @@ export function ProjectDefaultsSettings({
               settingKeys={["enableAgentComputerAccess"]}
               mixed={mixedComputer}
               id={searchableSetting("agent-computer-access").id}
-              title="Agent computer access"
+              title={tx("Agent computer access")}
               description={
                 computerUseLock?.message ??
                 "Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. Available on macOS only for now; Windows and Linux are not supported yet. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
@@ -723,7 +725,7 @@ export function ProjectDefaultsSettings({
                 settings.enableAgentComputerAccess !==
                   DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess ? (
                   <SettingResetButton
-                    label="default computer access"
+                    label={tx("default computer access")}
                     onClick={() =>
                       updateSettings({
                         enableAgentComputerAccess:
@@ -736,7 +738,7 @@ export function ProjectDefaultsSettings({
               control={
                 <TeamRulesInert lock={computerUseLock}>
                   <Switch
-                    aria-label="Agent computer access"
+                    aria-label={tx("Agent computer access")}
                     mixed={mixedComputer}
                     checked={
                       mixedComputer || computerUseLock ? false : settings.enableAgentComputerAccess
@@ -760,7 +762,7 @@ export function ProjectDefaultsSettings({
               settingKeys={["agentBrowserProfileId"]}
               mixed={mixedBrowserProfile}
               id={searchableSetting("agent-browser-profile").id}
-              title="Browser profile for agents"
+              title={tx("Browser profile for agents")}
               description={
                 isProjectScope
                   ? "The SpecWithCode browser profile this project's agents open pages in, with its saved logins. Isolated tabs keep no logins."
@@ -769,7 +771,7 @@ export function ProjectDefaultsSettings({
               resetAction={
                 isProjectScope && browserProfileSource === "project" ? (
                   <SettingResetButton
-                    label="browser profile"
+                    label={tx("browser profile")}
                     onClick={() => updateSettings({ agentBrowserProfileId: null })}
                   />
                 ) : null
@@ -790,7 +792,7 @@ export function ProjectDefaultsSettings({
                     });
                   }}
                 >
-                  <SelectTrigger size="sm" aria-label="Browser profile for agents">
+                  <SelectTrigger size="sm" aria-label={tx("Browser profile for agents")}>
                     <SelectValue>
                       {(value: string | null) =>
                         mixedBrowserProfile
@@ -804,7 +806,7 @@ export function ProjectDefaultsSettings({
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
                     <SelectItem value={INCOGNITO_BROWSER_PROFILE_ID}>
-                      Isolated, no logins
+                      {tx("Isolated, no logins")}
                     </SelectItem>
                     {browserProfiles.map((profile) => (
                       <SelectItem key={profile.id} value={profile.id}>

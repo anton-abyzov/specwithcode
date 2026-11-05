@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   AuthProvidersManageScope,
@@ -52,6 +54,7 @@ export function AddApiCreditAccountDialog({
   readonly driver: ApiCreditAccountDriver;
   readonly onCreated?: (instanceId: ProviderInstanceId) => void;
 }) {
+  const tx = useTx();
   const meta = API_CREDIT_ACCOUNT_DRIVERS[driver];
   const settings = useEnvironmentSettings(environmentId);
   const persist = usePersistEnvironmentProviderInstanceMutation(environmentId);
@@ -116,11 +119,14 @@ export function AddApiCreditAccountDialog({
     <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add an API account</DialogTitle>
+          <DialogTitle>{tx("Add an API account")}</DialogTitle>
           <DialogDescription>
-            Turns on this account are billed per token to its credits at API prices, not to your
-            subscription. Create the key in the {meta.console}. Add one account per key; when one
-            runs out of credits, a stopped thread can continue on the next.
+            {renderRich(
+              tx(
+                "Turns on this account are billed per token to its credits at API prices, not to your subscription. Create the key in the {console}. Add one account per key; when one runs out of credits, a stopped thread can continue on the next.",
+              ),
+              { console: meta.console },
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -132,7 +138,7 @@ export function AddApiCreditAccountDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="api-credit-account-key">API key</Label>
+              <Label htmlFor="api-credit-account-key">{tx("API key")}</Label>
               <Input
                 id="api-credit-account-key"
                 type="password"
@@ -145,7 +151,9 @@ export function AddApiCreditAccountDialog({
             </div>
             {asksWorkspace ? (
               <div className="grid gap-1.5">
-                <Label htmlFor="api-credit-account-workspace">Workspace ID (optional)</Label>
+                <Label htmlFor="api-credit-account-workspace">
+                  {tx("Workspace ID (optional)")}
+                </Label>
                 <Input
                   id="api-credit-account-workspace"
                   autoComplete="off"
@@ -156,13 +164,15 @@ export function AddApiCreditAccountDialog({
                 />
                 <p className="text-xs text-muted-foreground">
                   {workspaceInvalid
-                    ? "A workspace ID starts with wrkspc_."
-                    : "Needed for a key that is not scoped to a workspace (user keys, sk-ant-usr…). Copy it from Settings → Workspaces in the Claude Console."}
+                    ? tx("A workspace ID starts with wrkspc_.")
+                    : tx(
+                        "Needed for a key that is not scoped to a workspace (user keys, sk-ant-usr…). Copy it from Settings → Workspaces in the Claude Console.",
+                      )}
                 </p>
               </div>
             ) : null}
             <div className="grid gap-1.5">
-              <Label htmlFor="api-credit-account-label">Name (optional)</Label>
+              <Label htmlFor="api-credit-account-label">{tx("Name (optional)")}</Label>
               <Input
                 id="api-credit-account-label"
                 placeholder={meta.label}
@@ -172,17 +182,17 @@ export function AddApiCreditAccountDialog({
             </div>
             {!canManage ? (
               <p role="status" className="text-xs text-muted-foreground">
-                This device cannot change providers on that machine.
+                {tx("This device cannot change providers on that machine.")}
               </p>
             ) : null}
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button variant="outline" onClick={close}>
-            Cancel
+            {tx("Cancel")}
           </Button>
           <Button onClick={() => void save()} disabled={!canSave}>
-            {saving ? "Adding…" : "Add account"}
+            {saving ? tx("Adding…") : tx("Add account")}
           </Button>
         </DialogFooter>
       </DialogPopup>

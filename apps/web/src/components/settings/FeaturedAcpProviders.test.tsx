@@ -7,6 +7,10 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { visitElements } from "../../test/reactElementTree";
 
+vi.mock("react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react")>()),
+  useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
+}));
 const state = vi.hoisted(() => ({ search: vi.fn(), queries: [] as unknown[] }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { searchAcpRegistry: state.search } }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => state.queries.shift() }));

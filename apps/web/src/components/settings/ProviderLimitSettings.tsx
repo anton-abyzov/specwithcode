@@ -25,7 +25,7 @@ import {
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
-import { useT, type Translate } from "../../i18n";
+import { type Translate, useT, useTx } from "../../i18n";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import {
   AlertDialog,
@@ -103,6 +103,7 @@ const waitUnderLabel = (t: Translate, value: string) =>
  * another waits for the reset.
  */
 export function ProviderLimitSettings() {
+  const tx = useTx();
   const t = useT();
   const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
@@ -210,7 +211,7 @@ export function ProviderLimitSettings() {
         resetAction={
           settings.providerLimitAction !== "switch" ? (
             <SettingResetButton
-              label="usage limit rule"
+              label={tx("usage limit rule")}
               onClick={() => updateSettings({ providerLimitAction: "switch" })}
             />
           ) : null
@@ -266,7 +267,10 @@ export function ProviderLimitSettings() {
         }
         resetAction={
           fallbackOrder.length > 0 ? (
-            <SettingResetButton label="fallback order" onClick={() => saveFallbackOrder([])} />
+            <SettingResetButton
+              label={tx("fallback order")}
+              onClick={() => saveFallbackOrder([])}
+            />
           ) : null
         }
         control={
@@ -316,7 +320,7 @@ export function ProviderLimitSettings() {
           resetAction={
             settings.providerLimitFallbackListOnly ? (
               <SettingResetButton
-                label="only these models"
+                label={tx("only these models")}
                 onClick={() => updateSettings({ providerLimitFallbackListOnly: false })}
               />
             ) : null
@@ -347,7 +351,7 @@ export function ProviderLimitSettings() {
         resetAction={
           excludedModels.length > 0 ? (
             <SettingResetButton
-              label="excluded models"
+              label={tx("excluded models")}
               onClick={() => updateSettings({ providerLimitExcludedModels: [] })}
             />
           ) : null
@@ -376,7 +380,7 @@ export function ProviderLimitSettings() {
         resetAction={
           switchAt !== DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT ? (
             <SettingResetButton
-              label="switch threshold"
+              label={tx("switch threshold")}
               onClick={() =>
                 updateSettings({
                   providerLimitSwitchAtPercent: DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
@@ -425,7 +429,7 @@ export function ProviderLimitSettings() {
         resetAction={
           settings.providerLimitWaitUnderMinutes !== DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES ? (
             <SettingResetButton
-              label="reset wait"
+              label={tx("reset wait")}
               onClick={() =>
                 updateSettings({
                   providerLimitWaitUnderMinutes: DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES,
@@ -469,8 +473,8 @@ export function ProviderLimitSettings() {
         resetAction={
           settings.autoApproveSubscriptionChange === false ? (
             <SettingResetButton
-              label="subscription change approval"
-              tooltip="Continue on a new subscription automatically"
+              label={tx("subscription change approval")}
+              tooltip={tx("Continue on a new subscription automatically")}
               onClick={() => updateSettings({ autoApproveSubscriptionChange: true })}
             />
           ) : null
@@ -498,8 +502,8 @@ export function ProviderLimitSettings() {
         resetAction={
           settings.providerLimitRedeemResets ? (
             <SettingResetButton
-              label="banked reset use"
-              tooltip="Keep banked resets for manual use"
+              label={tx("banked reset use")}
+              tooltip={tx("Keep banked resets for manual use")}
               onClick={() => updateSettings({ providerLimitRedeemResets: false })}
             />
           ) : null
@@ -526,8 +530,8 @@ export function ProviderLimitSettings() {
         resetAction={
           settings.providerLimitSpendCredits ? (
             <SettingResetButton
-              label="credit spending"
-              tooltip="Stop spending credits automatically"
+              label={tx("credit spending")}
+              tooltip={tx("Stop spending credits automatically")}
               onClick={() => updateSettings({ providerLimitSpendCredits: false })}
             />
           ) : null
@@ -568,8 +572,8 @@ export function ProviderLimitSettings() {
         resetAction={
           settings.providerLimitUseApiCredits ? (
             <SettingResetButton
-              label="API credit use"
-              tooltip="Stop using API credits automatically"
+              label={tx("API credit use")}
+              tooltip={tx("Stop using API credits automatically")}
               onClick={() => updateSettings({ providerLimitUseApiCredits: false })}
             />
           ) : null

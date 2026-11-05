@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 /**
  * The Skills control center inside a skill's detail sheet: one place that
  * previews a change, applies it after the user confirms, and offers Undo.
@@ -377,6 +378,7 @@ export function SkillControlsProvider({
 
 /** The one-line confirm card: what runs or changes, when it takes effect, Apply or Cancel. */
 export function SkillActionPreviewCard() {
+  const tx = useTx();
   const controls = useSkillControls();
   if (!controls || (!controls.proposal && !controls.error)) return null;
   const { proposal, error, pending } = controls;
@@ -405,7 +407,7 @@ export function SkillActionPreviewCard() {
       {error ? <p className="text-destructive-foreground">{error}</p> : null}
       <div className="flex justify-end gap-1.5">
         <Button size="xs" variant="ghost" type="button" onClick={controls.cancel}>
-          {proposal ? "Cancel" : "Dismiss"}
+          {proposal ? tx("Cancel") : tx("Dismiss")}
         </Button>
         {proposal ? (
           <Button
@@ -416,7 +418,7 @@ export function SkillActionPreviewCard() {
             data-testid="skill-action-apply"
           >
             {pending !== null ? <Spinner className="size-3" /> : null}
-            Apply
+            {tx("Apply")}
           </Button>
         ) : null}
       </div>

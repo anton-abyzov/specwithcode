@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -24,6 +25,7 @@ import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
+  const tx = useTx();
   const { scope, environments, connectedEnvironments } = useSettingsScope();
   const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -100,14 +102,14 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
             setEditing({ id: randomUUID(), label: "", target: "" });
           }}
         >
-          <PlusIcon className="size-3.5" /> Add host
+          <PlusIcon className="size-3.5" /> {tx("Add host")}
         </Button>
       }
     >
       <div className="pt-3 pb-2">
         {!props.environmentId ? (
           <p className="text-sm text-muted-foreground">
-            Connect a selected environment to manage device hosts.
+            {tx("Connect a selected environment to manage device hosts.")}
           </p>
         ) : (
           <>
@@ -186,13 +188,14 @@ function DeviceHostList({
   checks: ReturnType<typeof useHostConnectionChecks>["checks"];
   testConnection: ReturnType<typeof useHostConnectionChecks>["testConnection"];
 }) {
+  const tx = useTx();
   const { state } = useDeviceState(environmentId);
   const retry = useAtomCommand(deviceEnvironment.list);
   const [retrying, setRetrying] = useState<string | null>(null);
   return (
     <>
       {hosts.length === 0 ? (
-        <p className="py-2 text-sm text-muted-foreground">No device hosts.</p>
+        <p className="py-2 text-sm text-muted-foreground">{tx("No device hosts.")}</p>
       ) : null}
       {hosts.map((host) => {
         const status = state.hostStatuses[host.id];
@@ -232,7 +235,9 @@ function DeviceHostList({
                             tabIndex={0}
                             role="img"
                             aria-label={
-                              platform.platform === "ios" ? "iOS available" : "Android available"
+                              platform.platform === "ios"
+                                ? tx("iOS available")
+                                : tx("Android available")
                             }
                             className="shrink-0 text-muted-foreground"
                           />
@@ -246,7 +251,9 @@ function DeviceHostList({
                         )}
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {platform.platform === "ios" ? "iOS available" : "Android available"}
+                        {platform.platform === "ios"
+                          ? tx("iOS available")
+                          : tx("Android available")}
                       </TooltipPopup>
                     </Tooltip>
                   ))}
@@ -255,7 +262,7 @@ function DeviceHostList({
               {status?.status === "ready" && status.androidDiscoveryIncomplete ? (
                 <p role="status" className="mt-1 text-xs text-warning-foreground">
                   {status.detail ??
-                    "The Android device list may be incomplete. Refresh devices to try again."}
+                    tx("The Android device list may be incomplete. Refresh devices to try again.")}
                 </p>
               ) : null}
               <DeviceHostDiagnostics
@@ -272,12 +279,14 @@ function DeviceHostList({
                 }
               />
               {check?.status === "local" ? (
-                <p className="mt-1 text-xs text-muted-foreground">Already available locally</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {tx("Already available locally")}
+                </p>
               ) : null}
               {error ? (
                 <div className="mt-1" role="status">
                   <details className="text-xs text-destructive-foreground">
-                    <summary>Connection failed</summary>
+                    <summary>{tx("Connection failed")}</summary>
                     <p className="mt-1 whitespace-pre-wrap break-words">{error}</p>
                   </details>
                 </div>
@@ -311,10 +320,10 @@ function DeviceHostList({
                     onEdit(host);
                   }}
                 >
-                  Edit
+                  {tx("Edit")}
                 </MenuItem>
                 <MenuItem variant="destructive" onClick={() => onRemove(host)}>
-                  Remove
+                  {tx("Remove")}
                 </MenuItem>
               </MenuPopup>
             </Menu>
@@ -332,7 +341,7 @@ function DeviceHostList({
                   );
                 }}
               >
-                {retrying === host.id ? "Retrying…" : "Retry"}
+                {retrying === host.id ? tx("Retrying…") : tx("Retry")}
               </Button>
             ) : (
               <Button
@@ -341,7 +350,7 @@ function DeviceHostList({
                 disabled={busy || progress !== null}
                 onClick={() => void testConnection(host)}
               >
-                Test connection
+                {tx("Test connection")}
               </Button>
             )}
           </div>

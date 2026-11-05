@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   AuthStandardClientScopes,
   type AdvertisedEndpoint,
@@ -86,6 +87,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   folded = false,
   teamRulesLock = null,
 }: PairPhoneSettingsProps) {
+  const tx = useTx();
   const address = useMemo(
     () =>
       resolvePhonePairingAddress({
@@ -193,7 +195,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   const content = (
     <>
       <SettingsRow
-        title="Pair a phone"
+        title={tx("Pair a phone")}
         description={teamRulesLock?.message ?? description}
         status={teamRulesLock ? <TeamRulesLabel>{teamRulesLock.setBy}</TeamRulesLabel> : undefined}
         control={
@@ -204,7 +206,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
               disabled={!canPair}
               onClick={() => changeOpen(true)}
             >
-              Pair a phone
+              {tx("Pair a phone")}
             </Button>
           </TeamRulesInert>
         }
@@ -260,7 +262,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
     return (
       <SettingsDisclosure
         {...searchableSetting(PAIR_PHONE_SETTING)}
-        title="Or pair with a private QR code"
+        title={tx("Or pair with a private QR code")}
       >
         {content}
       </SettingsDisclosure>

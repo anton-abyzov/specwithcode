@@ -1,3 +1,4 @@
+import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -53,12 +54,12 @@ function Row({
     <li className="flex min-w-0 items-start gap-2" data-slot="readiness-row" data-ok={ok ?? "info"}>
       {ok === false ? (
         <CircleAlertIcon
-          aria-label="Needs attention"
+          aria-label={tx("Needs attention")}
           className="mt-0.5 size-3.5 shrink-0 text-warning-foreground"
         />
       ) : (
         <CheckIcon
-          aria-label="Ready"
+          aria-label={tx("Ready")}
           className="mt-0.5 size-3.5 shrink-0 text-success-foreground"
         />
       )}
@@ -129,6 +130,7 @@ export function MachineReadinessChecklist({
   /** Lists only the provider the project's coordinator runs with there. */
   readonly coordinatorOnly?: boolean;
 }) {
+  const tx = useTx();
   const coordinatorProvider = useCoordinatorProvider(
     environmentId,
     coordinatorOnly ? (projectId ?? null) : null,
@@ -211,17 +213,25 @@ export function MachineReadinessChecklist({
     <section
       className="space-y-2 text-sm"
       data-slot="machine-readiness"
-      aria-label={`Ready to work on ${environmentLabel}`}
+      aria-label={tx("Ready to work on {environmentLabel}", { environmentLabel })}
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-medium">Ready to work on {environmentLabel}?</h3>
+        <h3 className="text-sm font-medium">
+          {renderRich(tx("Ready to work on {environmentLabel}?"), {
+            environmentLabel: environmentLabel,
+          })}
+        </h3>
         <Button size="xs" variant="outline" disabled={checking} onClick={() => void run()}>
-          {checking ? "Checking…" : report ? "Check again" : "Check readiness"}
+          {checking ? tx("Checking…") : report ? tx("Check again") : tx("Check readiness")}
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Coding-agent sign-ins are never copied between machines. Each one happens on{" "}
-        {environmentLabel} itself.
+        {renderRich(
+          tx(
+            "Coding-agent sign-ins are never copied between machines. Each one happens on {environmentLabel} itself.",
+          ),
+          { environmentLabel: environmentLabel },
+        )}
       </p>
       <ul className="space-y-1">
         {missing ? (
@@ -231,7 +241,7 @@ export function MachineReadinessChecklist({
             detail={`The coordinator runs with it. Install and turn it on in Settings › Providers on ${environmentLabel}.`}
           />
         ) : enabled.length === 0 ? (
-          <Row ok={false} title="No coding agent is installed and enabled there." />
+          <Row ok={false} title={tx("No coding agent is installed and enabled there.")} />
         ) : (
           enabled.map((provider) => {
             const signedIn = provider.auth.status === "authenticated";
@@ -261,7 +271,9 @@ export function MachineReadinessChecklist({
                       variant="outline"
                       onClick={() => setSigningIn(provider.instanceId)}
                     >
-                      Sign in on {environmentLabel}
+                      {renderRich(tx("Sign in on {environmentLabel}"), {
+                        environmentLabel: environmentLabel,
+                      })}
                     </Button>
                   )
                 ) : null}
@@ -283,10 +295,10 @@ export function MachineReadinessChecklist({
               (report.github.status === "signed-in"
                 ? `GitHub CLI: signed in as ${report.github.accounts.map((account) => `${account.login} (${account.host})`).join(", ")}`
                 : report.github.status === "not-installed"
-                  ? "GitHub CLI: not installed"
+                  ? tx("GitHub CLI: not installed")
                   : report.github.status === "signed-out"
-                    ? "GitHub CLI: not signed in"
-                    : "GitHub CLI: sign-in unknown")
+                    ? tx("GitHub CLI: not signed in")
+                    : tx("GitHub CLI: sign-in unknown"))
             }
             detail={
               tokenAccess !== null
@@ -310,8 +322,12 @@ export function MachineReadinessChecklist({
             ) : null}
             {suggestGhLogin ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                {offerGitHubSignIn ? "Or, in" : "In"} a terminal on {environmentLabel}, run gh auth
-                login.
+                {tx(
+                  offerGitHubSignIn
+                    ? "Or, in a terminal on {environmentLabel}, run gh auth login."
+                    : "In a terminal on {environmentLabel}, run gh auth login.",
+                  { environmentLabel },
+                )}
               </p>
             ) : null}
           </Row>
@@ -326,11 +342,11 @@ export function MachineReadinessChecklist({
             title={
               report.credentialHelper.status === "configured"
                 ? report.credentialHelper.usesGh
-                  ? "Git uses the GitHub CLI's sign-in"
-                  : "Git has its own credential helper for GitHub"
+                  ? tx("Git uses the GitHub CLI's sign-in")
+                  : tx("Git has its own credential helper for GitHub")
                 : report.credentialHelper.status === "missing"
-                  ? "Git has no credential helper for GitHub"
-                  : "Git credential helper: unknown"
+                  ? tx("Git has no credential helper for GitHub")
+                  : tx("Git credential helper: unknown")
             }
             detail={
               report.credentialHelper.status === "missing"
@@ -355,8 +371,8 @@ export function MachineReadinessChecklist({
               <ul className="mt-1 space-y-1 text-xs">
                 {blocked.map((repo) => (
                   <li key={repo.path} className="wrap-anywhere">
-                    <span className="font-mono">{repo.path}</span> ({repo.origin ?? "no origin"}):{" "}
-                    {REPOSITORY_PROBLEM[repo.status]}
+                    <span className="font-mono">{repo.path}</span> ({repo.origin ?? tx("no origin")}
+                    ): {REPOSITORY_PROBLEM[repo.status]}
                     {repo.detail ? `. ${repo.detail}` : ""}
                   </li>
                 ))}
@@ -369,7 +385,7 @@ export function MachineReadinessChecklist({
             ok={missingTools.length === 0}
             title={
               missingTools.length === 0
-                ? "Every tool the project's actions call is installed"
+                ? tx("Every tool the project's actions call is installed")
                 : `Missing tools: ${missingTools.map((tool) => tool.name).join(", ")}`
             }
             detail={

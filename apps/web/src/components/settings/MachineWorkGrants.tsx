@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { type ReactNode, useState } from "react";
 import { IncomingWorkerSetup } from "./IncomingWorkerSetup";
 import { RefreshCwIcon } from "lucide-react";
@@ -170,6 +172,7 @@ export function MachineWorkGrantRow({
   pending: boolean;
   onChange: (change: GrantChange) => void;
 }) {
+  const tx = useTx();
   const coordinatorEnvironmentId = grant.coordinatorEnvironmentId;
   const revoked = grant.status === "revoked";
   const busy = pending || !canManage || revoked;
@@ -207,7 +210,7 @@ export function MachineWorkGrantRow({
             disabled={pending || !canManage}
             onClick={() => onChange({ action: "restore", input: { coordinatorEnvironmentId } })}
           >
-            Allow again
+            {tx("Allow again")}
           </Button>
         ) : (
           <Button
@@ -217,22 +220,23 @@ export function MachineWorkGrantRow({
             disabled={pending || !canManage}
             onClick={() => onChange({ action: "revoke", input: { coordinatorEnvironmentId } })}
           >
-            Revoke
+            {tx("Revoke")}
           </Button>
         )}
       </div>
       {grant.legacy ? (
         <p className="text-xs text-muted-foreground">
-          Allowed before work could be limited, so it may use every project and sign-in here until
-          you change it.
+          {tx(
+            "Allowed before work could be limited, so it may use every project and sign-in here until you change it.",
+          )}
         </p>
       ) : null}
       <dl className="grid min-w-0 grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">Whose machine</dt>
+        <dt className="text-muted-foreground">{tx("Whose machine")}</dt>
         <dd className="flex min-w-0 flex-wrap items-center gap-2">
           <ChoiceSelect
             label={`Whose machine ${grant.machineLabel} is`}
-            heading="Whose machine is it"
+            heading={tx("Whose machine is it")}
             value={grant.owner}
             choices={(["self", "other"] as const).map((value) => ({
               value,
@@ -242,15 +246,20 @@ export function MachineWorkGrantRow({
             onChange={(owner) => update({ owner })}
           />
           <span className="text-muted-foreground">
-            Work from it may pass through {grant.hopLimit} machine{grant.hopLimit === 1 ? "" : "s"}
+            {tx(
+              grant.hopLimit === 1
+                ? "Work from it may pass through {hopLimit} machine"
+                : "Work from it may pass through {hopLimit} machines",
+              { hopLimit: grant.hopLimit },
+            )}
           </span>
         </dd>
-        <dt className="text-muted-foreground">Projects</dt>
+        <dt className="text-muted-foreground">{tx("Projects")}</dt>
         <dd className="flex min-w-0 flex-col gap-1.5">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <ChoiceSelect<StudioWorkGrantProjects["kind"]>
               label={`Projects ${grant.machineLabel} may use`}
-              heading="Projects it may run work in"
+              heading={tx("Projects it may run work in")}
               value={grant.projects.kind}
               choices={[
                 { value: "linked", label: "Linked to it" },
@@ -302,7 +311,7 @@ export function MachineWorkGrantRow({
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <ChoiceSelect<StudioWorkGrantAccounts["kind"]>
               label={`Sign-ins ${grant.machineLabel} may use`}
-              heading="Sign-ins its work may use"
+              heading={tx("Sign-ins its work may use")}
               value={grant.accounts.kind}
               choices={[
                 { value: "all", label: "All sign-ins" },
@@ -333,7 +342,7 @@ export function MachineWorkGrantRow({
             />
           ) : null}
         </dd>
-        <dt className="text-muted-foreground">Most access</dt>
+        <dt className="text-muted-foreground">{tx("Most access")}</dt>
         <dd className="text-muted-foreground">{runtimeCapLabel(grant)}</dd>
       </dl>
     </li>
@@ -364,6 +373,7 @@ export function MachineWorkGrantsList({
   onChange: (change: GrantChange) => void;
   setup?: ReactNode;
 }) {
+  const tx = useTx();
   return (
     <SettingsSection
       {...searchableSetting("machine-work-grants")}
@@ -375,13 +385,13 @@ export function MachineWorkGrantsList({
           disabled={loading || pending !== null}
         >
           <RefreshCwIcon className="size-3" />
-          {loading ? "Checking…" : "Refresh"}
+          {loading ? tx("Checking…") : tx("Refresh")}
         </Button>
       }
     >
       {failed ? (
         <p role="status" className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
-          Could not read who can run work here. Refresh to retry.
+          {tx("Could not read who can run work here. Refresh to retry.")}
         </p>
       ) : snapshot?.grants.length ? (
         <ul className="divide-y divide-border/60">
@@ -399,16 +409,21 @@ export function MachineWorkGrantsList({
       ) : (
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           {loading
-            ? "Checking who can run work here…"
-            : "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card."}
+            ? tx("Checking who can run work here…")
+            : tx(
+                "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.",
+              )}
         </p>
       )}
       {setup}
       {snapshot?.grants.length ? (
         <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then
-          stop; their worktrees and changes stay.
-          {canManage ? null : " Changing this needs Manage access on this machine."}
+          {renderRich(
+            tx(
+              "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}",
+            ),
+            { value: canManage ? null : " Changing this needs Manage access on this machine." },
+          )}
         </p>
       ) : null}
       {notice || error ? (

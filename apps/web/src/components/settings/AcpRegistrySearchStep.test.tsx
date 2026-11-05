@@ -33,6 +33,7 @@ vi.mock("react", async (importOriginal) => {
   const { reactHookHarness } = await import("../../test/reactHookHarness");
   return {
     ...actual,
+    useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
     useEffect: (effect: () => void | (() => void)) => {
       const cleanup = effect();
       if (cleanup) lifecycle.cleanups.push(cleanup);

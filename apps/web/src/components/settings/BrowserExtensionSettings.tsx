@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useEffect, useState } from "react";
 import {
   AuthAccessWriteScope,
@@ -63,6 +65,7 @@ function failureMessage(result: unknown, fallback: string): string {
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
+  const tx = useTx();
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: label });
   return (
     <Button
@@ -72,7 +75,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       onClick={() => copyToClipboard(value, undefined)}
     >
       <CopyIcon />
-      {isCopied ? "Copied" : "Copy"}
+      {isCopied ? tx("Copied") : tx("Copy")}
     </Button>
   );
 }
@@ -106,6 +109,7 @@ export function BrowserExtensionCard({
   thisComputer?: string | null;
   onSwitchToThisComputer?: (() => void) | undefined;
 }) {
+  const tx = useTx();
   const otherComputer = thisComputer !== null;
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
@@ -221,7 +225,7 @@ export function BrowserExtensionCard({
         <p role="status" className="px-4 py-4 text-sm text-muted-foreground">
           {!connected
             ? `${machine} is offline. Connect it to set up Chrome on it.`
-            : "This device cannot read that machine's settings."}
+            : tx("This device cannot read that machine's settings.")}
         </p>
       </SettingsSection>
     );
@@ -245,35 +249,45 @@ export function BrowserExtensionCard({
   const setup = status && (
     <div className="space-y-4" data-testid="browser-extension-setup">
       <div className="space-y-2">
-        <p className="text-sm font-medium">1. Install the SpecWithCode Browser extension</p>
+        <p className="text-sm font-medium">{tx("1. Install the SpecWithCode Browser extension")}</p>
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" render={<a href={storeUrl} target="_blank" rel="noreferrer" />}>
             <ExternalLinkIcon />
-            Add to Chrome
-            <span className="sr-only"> (opens the Chrome Web Store)</span>
+            {tx("Add to Chrome")}
+            <span className="sr-only"> {tx("(opens the Chrome Web Store)")}</span>
           </Button>
-          <CopyButton value={storeUrl} label="Chrome Web Store link" />
+          <CopyButton value={storeUrl} label={tx("Chrome Web Store link")} />
         </div>
         {otherComputer ? (
           <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
             <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-            Install it in Chrome on {machine}: copy the link and open it there, in the profile
-            agents should use.
+            {renderRich(
+              tx(
+                "Install it in Chrome on {machine}: copy the link and open it there, in the profile agents should use.",
+              ),
+              { machine: machine },
+            )}
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
-            Open the link in the Chrome profile agents should use. Chrome keeps the extension up to
-            date.
+            {tx(
+              "Open the link in the Chrome profile agents should use. Chrome keeps the extension up to date.",
+            )}
           </p>
         )}
       </div>
 
       <div className="space-y-2">
-        <p className="text-sm font-medium">2. Pair it with {machine}</p>
+        <p className="text-sm font-medium">
+          {renderRich(tx("2. Pair it with {machine}"), { machine: machine })}
+        </p>
         {otherComputer && (
           <p className="flex items-start gap-1.5 text-xs text-warning-foreground">
             <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-            This code works only in Chrome on {machine}, not in Chrome on {thisComputer}.
+            {renderRich(
+              tx("This code works only in Chrome on {machine}, not in Chrome on {thisComputer}."),
+              { machine: machine, thisComputer: thisComputer },
+            )}
           </p>
         )}
         {code === null ? (
@@ -284,7 +298,7 @@ export function BrowserExtensionCard({
             onClick={() => void showCode()}
           >
             {busy === "pairing" ? <Spinner /> : <KeyRoundIcon />}
-            Show pairing code
+            {tx("Show pairing code")}
           </Button>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
@@ -294,13 +308,13 @@ export function BrowserExtensionCard({
               font="mono"
               size="compact"
               className="max-w-xs"
-              aria-label="Pairing code"
+              aria-label={tx("Pairing code")}
               value={code}
             />
-            <CopyButton value={code} label="pairing code" />
+            <CopyButton value={code} label={tx("pairing code")} />
             <Button size="sm" variant="ghost" onClick={() => setCode(null)}>
               <EyeOffIcon />
-              Hide
+              {tx("Hide")}
             </Button>
             <Button
               size="sm"
@@ -309,7 +323,7 @@ export function BrowserExtensionCard({
               onClick={() => void resetCode()}
             >
               {busy === "reset" ? <Spinner /> : <RefreshCwIcon />}
-              Reset code
+              {tx("Reset code")}
             </Button>
           </div>
         )}
@@ -322,7 +336,10 @@ export function BrowserExtensionCard({
           ]}
         />
         <p className="text-xs text-muted-foreground">
-          The code lets a Chrome profile act for agents on {machine}. Keep it private.
+          {renderRich(
+            tx("The code lets a Chrome profile act for agents on {machine}. Keep it private."),
+            { machine: machine },
+          )}
         </p>
       </div>
     </div>
@@ -345,13 +362,17 @@ export function BrowserExtensionCard({
             <p className="flex min-w-0 items-start gap-1.5">
               <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
               <span>
-                You are on <b>{thisComputer}</b>. This sets up Chrome on <b>{machine}</b>, a
-                different computer; its pairing code does not work in Chrome here.
+                {renderRich(
+                  tx(
+                    "You are on {b}. This sets up Chrome on {b2}, a different computer; its pairing code does not work in Chrome here.",
+                  ),
+                  { b: <b>{thisComputer}</b>, b2: <b>{machine}</b> },
+                )}
               </span>
             </p>
             {onSwitchToThisComputer && (
               <Button size="sm" onClick={onSwitchToThisComputer}>
-                Set up Chrome on {thisComputer}
+                {renderRich(tx("Set up Chrome on {thisComputer}"), { thisComputer: thisComputer })}
               </Button>
             )}
           </div>
@@ -369,10 +390,12 @@ export function BrowserExtensionCard({
               </Badge>
             )}
             <p className="text-sm text-muted-foreground">
-              Every chat, project thread and Aide on {machine}, with any provider, uses the paired
-              Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode
-              tab group. Threads on your other connected machines can use it too, once you allow
-              that machine here.
+              {renderRich(
+                tx(
+                  "Every chat, project thread and Aide on {machine}, with any provider, uses the paired Chrome profile at the same time. Each works in its own tabs, in the blue SpecWithCode tab group. Threads on your other connected machines can use it too, once you allow that machine here.",
+                ),
+                { machine: machine },
+              )}
             </p>
           </div>
           {profiles.length > 0 && (
@@ -384,7 +407,7 @@ export function BrowserExtensionCard({
                 onClick={() => void runCheck("test")}
               >
                 {busy === "test" ? <Spinner /> : <PlugZapIcon />}
-                Test connection
+                {tx("Test connection")}
               </Button>
               {offerReconnect && (
                 <Button
@@ -393,7 +416,7 @@ export function BrowserExtensionCard({
                   onClick={() => void runCheck("reconnect")}
                 >
                   {busy === "reconnect" ? <Spinner /> : <RefreshCwIcon />}
-                  Reconnect
+                  {tx("Reconnect")}
                 </Button>
               )}
             </div>
@@ -404,7 +427,9 @@ export function BrowserExtensionCard({
 
         {!canOperate && (
           <p className="text-xs text-muted-foreground">
-            This device can view {machine}'s Chrome but not pair or test it.
+            {renderRich(tx("This device can view {machine}'s Chrome but not pair or test it."), {
+              machine: machine,
+            })}
           </p>
         )}
         {(error || query.error) && (
@@ -416,7 +441,7 @@ export function BrowserExtensionCard({
 
         {query.isPending && !status ? (
           <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Spinner /> Reading Chrome on {machine}…
+            <Spinner /> {renderRich(tx("Reading Chrome on {machine}…"), { machine: machine })}
           </p>
         ) : status ? (
           profiles.length === 0 ? (
@@ -442,7 +467,7 @@ export function BrowserExtensionCard({
                 className="rounded-md border border-border/60 px-3 py-2 text-sm"
                 open={profiles.some((profile) => profile.fromStore === false) || undefined}
               >
-                <summary className="cursor-pointer">Pair another Chrome profile</summary>
+                <summary className="cursor-pointer">{tx("Pair another Chrome profile")}</summary>
                 <div className="mt-3">{setup}</div>
               </details>
               <RecentActions environmentId={environmentId} actions={status.recentActions} />
@@ -471,6 +496,7 @@ function OtherMachines({
   busy: string | null;
   onAnswer: (id: string, allow: boolean) => void;
 }) {
+  const tx = useTx();
   if (peers.length === 0) return null;
   const answerButton = (peer: BrowserExtensionPeer, allow: boolean, label: string) => (
     <Button
@@ -485,7 +511,7 @@ function OtherMachines({
   );
   return (
     <div className="space-y-2" data-testid="browser-extension-peers">
-      <p className="text-sm font-medium">Your other machines</p>
+      <p className="text-sm font-medium">{tx("Your other machines")}</p>
       <ul className="divide-y divide-border/60 rounded-md border border-border/60">
         {peers.map((peer) => (
           <li
@@ -500,7 +526,7 @@ function OtherMachines({
                   ? `wants its threads to use Chrome on ${machine} · asked ${formatRelativeTimeLabel(peer.requestedAt)}`
                   : peer.state === "allowed"
                     ? `can use Chrome on ${machine}`
-                    : "was declined"}
+                    : tx("was declined")}
               </span>
               <span className="block text-xs text-muted-foreground">{`Signed in as ${peer.label}`}</span>
             </span>
@@ -514,7 +540,9 @@ function OtherMachines({
       </ul>
       {!canGrant && (
         <p className="text-xs text-muted-foreground">
-          This device cannot change who may use {machine}'s Chrome.
+          {renderRich(tx("This device cannot change who may use {machine}'s Chrome."), {
+            machine: machine,
+          })}
         </p>
       )}
     </div>
@@ -522,6 +550,7 @@ function OtherMachines({
 }
 
 function CheckResult({ check }: { check: BrowserExtensionCheck }) {
+  const tx = useTx();
   const label = CHECK_LABELS[check.state];
   return (
     <div
@@ -532,7 +561,7 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
       <p className="flex items-center gap-2">
         <Badge variant={label.tone}>{label.label}</Badge>
         <span className="text-xs text-muted-foreground">
-          Checked {formatRelativeTimeLabel(check.checkedAt)}
+          {renderRich(tx("Checked {value}"), { value: formatRelativeTimeLabel(check.checkedAt) })}
         </span>
       </p>
       {check.message && <p className="text-muted-foreground">{check.message}</p>}
@@ -554,8 +583,8 @@ function CheckResult({ check }: { check: BrowserExtensionCheck }) {
                       profile.roundTripMs !== undefined && `${profile.roundTripMs} ms`,
                     ]
                       .filter(Boolean)
-                      .join(" · ") || "Answered"
-                  : (profile.message ?? "No answer")}
+                      .join(" · ") || tx("Answered")
+                  : (profile.message ?? tx("No answer"))}
               </span>
             </li>
           ))}
@@ -584,6 +613,7 @@ function PreferSpecWithCodeBrowser({
   environmentId: EnvironmentId;
   machine: string;
 }) {
+  const tx = useTx();
   const prefer = useEnvironmentSettings(
     environmentId,
     (settings) => settings.preferSpecWithCodeBrowser,
@@ -598,15 +628,18 @@ function PreferSpecWithCodeBrowser({
       data-testid="prefer-specwithcode-browser"
     >
       <div className="min-w-0 max-w-prose space-y-0.5">
-        <p className="text-sm font-medium">Use SpecWithCode Browser in Claude threads</p>
+        <p className="text-sm font-medium">{tx("Use SpecWithCode Browser in Claude threads")}</p>
         <p className="text-xs text-muted-foreground">
-          While a Chrome profile is paired with {machine}, Claude threads there start without Claude
-          in Chrome, so agents use the profile named above instead of asking you to pick a browser.
-          Off keeps Claude in Chrome. Applies from a thread's next message.
+          {renderRich(
+            tx(
+              "While a Chrome profile is paired with {machine}, Claude threads there start without Claude in Chrome, so agents use the profile named above instead of asking you to pick a browser. Off keeps Claude in Chrome. Applies from a thread's next message.",
+            ),
+            { machine: machine },
+          )}
         </p>
       </div>
       <Switch
-        aria-label="Use SpecWithCode Browser in Claude threads"
+        aria-label={tx("Use SpecWithCode Browser in Claude threads")}
         checked={prefer}
         disabled={!canWrite}
         onCheckedChange={(checked) =>
@@ -627,10 +660,11 @@ export function ThreadName({
   environmentId: EnvironmentId;
   threadId: string;
 }) {
+  const tx = useTx();
   const shell = useThreadShell({ environmentId, threadId: ThreadId.make(threadId) });
   const title = shell?.title?.trim();
   return (
-    <span className="font-medium text-foreground">{title || "A thread no longer listed"}</span>
+    <span className="font-medium text-foreground">{title || tx("A thread no longer listed")}</span>
   );
 }
 
@@ -642,12 +676,19 @@ function ThreadLabel({
   environmentId: EnvironmentId;
   use: { readonly threadId: string; readonly title?: string; readonly machine?: string };
 }) {
+  const tx = useTx();
   if (use.machine === undefined)
     return <ThreadName environmentId={environmentId} threadId={use.threadId} />;
   return (
     <span>
-      <span className="font-medium text-foreground">{use.title?.trim() || "Untitled thread"}</span>{" "}
-      on {use.machine}
+      {renderRich(tx("{span} on {machine}"), {
+        span: (
+          <span className="font-medium text-foreground">
+            {use.title?.trim() || tx("Untitled thread")}
+          </span>
+        ),
+        machine: use.machine,
+      })}
     </span>
   );
 }
@@ -667,6 +708,7 @@ function ConnectedProfiles({
   busy: string | null;
   onStop: (profileId: string, threadId?: string) => void;
 }) {
+  const tx = useTx();
   const stopButton = (key: string, label: string, onClick: () => void) => (
     <Button
       size="sm"
@@ -680,7 +722,7 @@ function ConnectedProfiles({
   );
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">Paired Chrome profiles</p>
+      <p className="text-sm font-medium">{tx("Paired Chrome profiles")}</p>
       <ul className="divide-y divide-border/50 rounded-md border border-border/60">
         {profiles.map((profile) => {
           const threads = threadsOf(profile);
@@ -695,11 +737,23 @@ function ConnectedProfiles({
                 <div className="min-w-0 space-y-0.5">
                   <p className="font-medium">{profile.label}</p>
                   <p className="text-xs text-muted-foreground">
-                    {profile.browser} · extension {profile.extensionVersion} · connected{" "}
-                    {formatRelativeTimeLabel(profile.connectedAt)} ·{" "}
-                    {threads.length === 0
-                      ? "idle"
-                      : `in use by ${threads.length} thread${threads.length === 1 ? "" : "s"}`}
+                    {renderRich(
+                      tx("{browser} · extension {extensionVersion} · connected {value} · {value2}"),
+                      {
+                        browser: profile.browser,
+                        extensionVersion: profile.extensionVersion,
+                        value: formatRelativeTimeLabel(profile.connectedAt),
+                        value2:
+                          threads.length === 0
+                            ? tx("idle")
+                            : tx(
+                                threads.length === 1
+                                  ? "in use by {count} thread"
+                                  : "in use by {count} threads",
+                                { count: threads.length },
+                              ),
+                      },
+                    )}
                   </p>
                   {profile.fromStore === false && (
                     <p
@@ -708,14 +762,37 @@ function ConnectedProfiles({
                     >
                       <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
                       <span>
-                        Loaded by hand, so it does not update itself. Remove it in{" "}
-                        <code className="text-xs">chrome://extensions</code>, then{" "}
-                        <a href={storeUrl} target="_blank" rel="noreferrer" className="underline">
-                          add it from the Chrome Web Store
-                          <ExternalLinkIcon className="ml-0.5 inline size-3" />
-                          <span className="sr-only"> (opens the Chrome Web Store)</span>
-                        </a>{" "}
-                        and pair it under Pair another Chrome profile, with the same name.
+                        {renderRich(
+                          tx(
+                            "Loaded by hand, so it does not update itself. Remove it in {code}, then {a} and pair it under Pair another Chrome profile, with the same name.",
+                          ),
+                          {
+                            code: <code className="text-xs">chrome://extensions</code>,
+                            a: (
+                              <a
+                                href={storeUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline"
+                              >
+                                {renderRich(
+                                  tx("add it from the Chrome Web Store{externalLinkIcon}{span}"),
+                                  {
+                                    externalLinkIcon: (
+                                      <ExternalLinkIcon className="ml-0.5 inline size-3" />
+                                    ),
+                                    span: (
+                                      <span className="sr-only">
+                                        {" "}
+                                        {tx("(opens the Chrome Web Store)")}
+                                      </span>
+                                    ),
+                                  },
+                                )}
+                              </a>
+                            ),
+                          },
+                        )}
                       </span>
                     </p>
                   )}
@@ -735,9 +812,18 @@ function ConnectedProfiles({
                       className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
                     >
                       <span className="min-w-0 truncate">
-                        <ThreadLabel environmentId={environmentId} use={use} /> · {use.tabs} tab
-                        {use.tabs === 1 ? "" : "s"} · last action{" "}
-                        {formatRelativeTimeLabel(use.lastActionAt)}
+                        {renderRich(
+                          tx(
+                            use.tabs === 1
+                              ? "{threadLabel} · {tabs} tab · last action {value2}"
+                              : "{threadLabel} · {tabs} tabs · last action {value2}",
+                          ),
+                          {
+                            threadLabel: <ThreadLabel environmentId={environmentId} use={use} />,
+                            tabs: use.tabs,
+                            value2: formatRelativeTimeLabel(use.lastActionAt),
+                          },
+                        )}
                       </span>
                       {stopButton(`stop:${profile.id}:${use.threadId}`, "Stop", () =>
                         onStop(profile.id, use.threadId),
@@ -761,10 +847,11 @@ function RecentActions({
   environmentId: EnvironmentId;
   actions: ReadonlyArray<BrowserExtensionAction>;
 }) {
+  const tx = useTx();
   if (actions.length === 0) return null;
   return (
     <details className="rounded-md border border-border/60 px-3 py-2 text-sm">
-      <summary className="cursor-pointer">Recent agent actions</summary>
+      <summary className="cursor-pointer">{tx("Recent agent actions")}</summary>
       <ul className="mt-2 space-y-0.5 text-xs">
         {actions.map((action, index) => (
           <li

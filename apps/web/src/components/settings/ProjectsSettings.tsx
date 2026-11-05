@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { EnvironmentId } from "@specweave-studio/contracts";
 
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
@@ -7,6 +8,7 @@ import { SettingsPageContainer } from "./settingsLayout";
 
 /** Project identity and checkout management for the selected project. */
 export function ProjectsSettings() {
+  const tx = useTx();
   const { search: value, scope } = useSettingsScope();
   // The panel follows remembered members when grouping replaces a project key.
   const projectScope =
@@ -28,7 +30,7 @@ export function ProjectsSettings() {
         </SettingsPageContainer>
       ) : (
         <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
+          {tx("Choose a project to manage its name, icon, checkouts and actions.")}
         </SettingsScopeNotice>
       )}
     </div>

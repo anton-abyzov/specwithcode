@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId, SourceControlProviderAuth } from "@specweave-studio/contracts";
 import { EyeIcon, EyeOffIcon } from "lucide-react";
 import { useState } from "react";
@@ -25,6 +27,7 @@ function RedactedLogin(props: {
   /** Distinguishes hidden logins from each other for a screen reader, e.g. "Account 2". */
   readonly label?: string;
 }) {
+  const tx = useTx();
   return props.revealed ? (
     <span className="min-w-0 truncate font-mono text-2xs">{props.account}</span>
   ) : (
@@ -32,7 +35,7 @@ function RedactedLogin(props: {
       <span className="select-none blur-xs" aria-hidden>
         {redactedPlaceholder(props.account)}
       </span>
-      <span className="sr-only">{props.label ?? "Hidden account"}</span>
+      <span className="sr-only">{props.label ?? tx("Hidden account")}</span>
     </span>
   );
 }
@@ -52,6 +55,7 @@ export function GitHubAccountSettings({
   readonly auth: SourceControlProviderAuth;
   readonly onSaved: () => void;
 }) {
+  const tx = useTx();
   const hosts = useEnvironmentSettings(environmentId, (settings) => settings.github.hosts);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "save GitHub account settings",
@@ -80,9 +84,17 @@ export function GitHubAccountSettings({
   if (groups.length === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        {signInAvailable ? "Sign in above, or with" : "Sign in with"}{" "}
-        <code className="rounded bg-muted px-1 py-px text-2xs">gh auth login</code> on{" "}
-        {environmentLabel}, then rescan to choose accounts here. A saved token above also works.
+        {renderRich(
+          tx(
+            signInAvailable
+              ? "Sign in above, or with {code} on {environmentLabel}, then rescan to choose accounts here. A saved token above also works."
+              : "Sign in with {code} on {environmentLabel}, then rescan to choose accounts here. A saved token above also works.",
+          ),
+          {
+            code: <code className="rounded bg-muted px-1 py-px text-2xs">gh auth login</code>,
+            environmentLabel: environmentLabel,
+          },
+        )}
       </p>
     );
   }
@@ -91,14 +103,15 @@ export function GitHubAccountSettings({
     <div className="grid gap-4">
       <div className="flex items-center justify-between gap-3">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Choose which <code className="rounded bg-muted px-1 py-px text-2xs">gh</code> login each
-          GitHub host uses, or turn a host off.
+          {renderRich(tx("Choose which {code} login each GitHub host uses, or turn a host off."), {
+            code: <code className="rounded bg-muted px-1 py-px text-2xs">gh</code>,
+          })}
         </p>
         <Button
           size="icon-xs"
           variant="ghost-muted"
           onClick={() => setRevealed((current) => !current)}
-          aria-label={revealed ? "Hide GitHub accounts" : "Reveal GitHub accounts"}
+          aria-label={revealed ? tx("Hide GitHub accounts") : tx("Reveal GitHub accounts")}
           aria-pressed={revealed}
         >
           {revealed ? <EyeOffIcon /> : <EyeIcon />}
@@ -117,7 +130,7 @@ export function GitHubAccountSettings({
                 <span className="text-xs font-medium text-foreground">{group.host}</span>
                 {group.selectable.length === 1 && group.selectable[0] !== undefined ? (
                   <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                    <span>Signed in as</span>
+                    <span>{tx("Signed in as")}</span>
                     <RedactedLogin revealed={revealed} account={group.selectable[0]} />
                   </p>
                 ) : null}
@@ -131,7 +144,7 @@ export function GitHubAccountSettings({
             </div>
             {group.selectable.length > 1 ? (
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">Account</span>
+                <span className="text-xs text-muted-foreground">{tx("Account")}</span>
                 <div className="w-64 max-w-full">
                   <Select
                     value={pinned}
@@ -148,17 +161,18 @@ export function GitHubAccountSettings({
                         {(value: string) =>
                           value === ACTIVE_ACCOUNT ? (
                             <span className="flex min-w-0 items-center gap-1">
-                              Active gh account
-                              {group.activeAccount ? (
-                                <>
-                                  (
-                                  <RedactedLogin
-                                    revealed={revealed}
-                                    account={group.activeAccount}
-                                  />
-                                  )
-                                </>
-                              ) : null}
+                              {renderRich(tx("Active gh account{value}"), {
+                                value: group.activeAccount ? (
+                                  <>
+                                    (
+                                    <RedactedLogin
+                                      revealed={revealed}
+                                      account={group.activeAccount}
+                                    />
+                                    )
+                                  </>
+                                ) : null,
+                              })}
                             </span>
                           ) : (
                             <RedactedLogin revealed={revealed} account={value} />
@@ -169,12 +183,14 @@ export function GitHubAccountSettings({
                     <SelectPopup align="end" alignItemWithTrigger={false}>
                       <SelectItem value={ACTIVE_ACCOUNT}>
                         <span className="flex min-w-0 items-center gap-1">
-                          Active gh account
-                          {group.activeAccount ? (
-                            <>
-                              (<RedactedLogin revealed={revealed} account={group.activeAccount} />)
-                            </>
-                          ) : null}
+                          {renderRich(tx("Active gh account{value}"), {
+                            value: group.activeAccount ? (
+                              <>
+                                (<RedactedLogin revealed={revealed} account={group.activeAccount} />
+                                )
+                              </>
+                            ) : null,
+                          })}
                         </span>
                       </SelectItem>
                       {group.selectable.map((account, index) => (
@@ -194,7 +210,7 @@ export function GitHubAccountSettings({
             {stalePin ? (
               <div className="flex items-center justify-between gap-3">
                 <p className="text-xs text-warning-foreground">
-                  The chosen login is no longer signed in, so the active gh login is used.
+                  {tx("The chosen login is no longer signed in, so the active gh login is used.")}
                 </p>
                 <Button
                   size="xs"
@@ -202,7 +218,7 @@ export function GitHubAccountSettings({
                   disabled={saving}
                   onClick={() => void save(group.host, { account: null })}
                 >
-                  Use active login
+                  {tx("Use active login")}
                 </Button>
               </div>
             ) : null}
@@ -212,13 +228,21 @@ export function GitHubAccountSettings({
                 className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground"
               >
                 <RedactedLogin revealed={revealed} account={entry.account} />
-                <span>can't be used: {entry.error ?? "gh reports this login as invalid."}</span>
+                <span>
+                  {renderRich(tx("can't be used: {value}"), {
+                    value: entry.error ?? tx("gh reports this login as invalid."),
+                  })}
+                </span>
               </p>
             ))}
             {group.environmentVariable ? (
               <p className="text-xs text-warning-foreground">
-                {group.environmentVariable} is set on the server, so it overrides the account chosen
-                here until it is unset.
+                {renderRich(
+                  tx(
+                    "{environmentVariable} is set on the server, so it overrides the account chosen here until it is unset.",
+                  ),
+                  { environmentVariable: group.environmentVariable },
+                )}
               </p>
             ) : null}
           </div>

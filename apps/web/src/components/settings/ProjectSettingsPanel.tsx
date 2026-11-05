@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope, logicalProjectTitle } from "@specweave-studio/contracts";
@@ -69,6 +70,7 @@ export function ProjectSettingsPanel({
   environmentId?: EnvironmentId | null;
   checkoutKey?: string | null;
 }) {
+  const tx = useTx();
   const groups = useSettingsProjectGroups();
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -155,8 +157,8 @@ export function ProjectSettingsPanel({
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
         {groups.length === 0
-          ? "Add a project from the sidebar to configure it here."
-          : "This project is no longer available."}
+          ? tx("Add a project from the sidebar to configure it here.")
+          : tx("This project is no longer available.")}
       </div>
     );
   }
@@ -211,6 +213,7 @@ function ProjectDetail({
   domainMembers: readonly SidebarProjectGroupMember[];
   hasOtherMembers: boolean;
 }) {
+  const tx = useTx();
   const navigate = useNavigate({ from: "/settings" });
   const { confirmDeletion, deletionDialog, removeConfirmedWorktrees } =
     useProjectDeletionConfirmation();
@@ -528,7 +531,7 @@ function ProjectDetail({
               onClick={() => void removeMembers([member])}
               aria-label={`Remove checkout ${member.workspaceRoot}`}
             >
-              Remove
+              {tx("Remove")}
             </Button>
           }
         />
@@ -544,8 +547,8 @@ function ProjectDetail({
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
-                ? "Shared settings require permission to change every checkout in this group."
-                : "This connection cannot change this project."}
+                ? tx("Shared settings require permission to change every checkout in this group.")
+                : tx("This connection cannot change this project.")}
             </p>
           ) : null}
           {nameProblem ? (
@@ -565,12 +568,12 @@ function ProjectDetail({
                         size="icon-xs"
                         variant="ghost"
                         type="button"
-                        aria-label="Change the project icon"
+                        aria-label={tx("Change the project icon")}
                       >
                         <ProjectFavicon project={representative} className="size-4" />
                       </Button>
                     }
-                    tooltip="Change icon"
+                    tooltip={tx("Change icon")}
                     current={projectIcon}
                     customized={iconCustomized}
                     projectName={representative.title}
@@ -583,7 +586,7 @@ function ProjectDetail({
                 <InputGroupInput
                   key={`${group.projectKey}:${displayName}`}
                   size="sm"
-                  aria-label="Project name"
+                  aria-label={tx("Project name")}
                   disabled={!canEditName}
                   defaultValue={displayName}
                   onChange={() => {
@@ -602,7 +605,7 @@ function ProjectDetail({
             }
           />
           <SettingsRow
-            title="Skills"
+            title={tx("Skills")}
             description="Which skills each agent loads in this folder, with vskill versions and drift."
             control={
               <Button
@@ -614,7 +617,7 @@ function ProjectDetail({
                 }
               >
                 <SparklesIcon />
-                Open skills
+                {tx("Open skills")}
               </Button>
             }
           />
@@ -653,10 +656,10 @@ function ProjectDetail({
               >
                 <Trash2Icon />
                 {hasOtherMembers
-                  ? "Remove checkout"
+                  ? tx("Remove checkout")
                   : group.memberProjects.length > 1
-                    ? "Remove all entries"
-                    : "Remove project"}
+                    ? tx("Remove all entries")
+                    : tx("Remove project")}
               </Button>
             }
           />

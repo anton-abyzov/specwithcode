@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
@@ -28,6 +30,7 @@ export function GitHubTokenSettings({
   readonly environmentId: EnvironmentId;
   readonly onSaved: () => void;
 }) {
+  const tx = useTx();
   const tokens = useEnvironmentSettings(environmentId, (settings) => settings.github.tokens);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "save GitHub token",
@@ -68,26 +71,33 @@ export function GitHubTokenSettings({
       {/* Locked while saving: a successful save clears the draft, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          A token saved here is used before{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">GH_TOKEN</code> and the{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">gh</code> login, so GitHub works
-          without the GitHub CLI. Give it read and write access to pull requests and contents.{" "}
-          <InlineButton
-            render={
-              <a
-                href={newTokenUrl(normalizedHost || DEFAULT_HOST)}
-                target="_blank"
-                rel="noreferrer noopener"
-              />
-            }
-          >
-            Create a token
-            <ExternalLinkIcon aria-hidden className="size-3" />
-          </InlineButton>
+          {renderRich(
+            tx(
+              "A token saved here is used before {code} and the {code2} login, so GitHub works without the GitHub CLI. Give it read and write access to pull requests and contents. {inlineButton}",
+            ),
+            {
+              code: <code className="rounded bg-muted px-1 py-px text-2xs">GH_TOKEN</code>,
+              code2: <code className="rounded bg-muted px-1 py-px text-2xs">gh</code>,
+              inlineButton: (
+                <InlineButton
+                  render={
+                    <a
+                      href={newTokenUrl(normalizedHost || DEFAULT_HOST)}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    />
+                  }
+                >
+                  {tx("Create a token")}
+                  <ExternalLinkIcon aria-hidden className="size-3" />
+                </InlineButton>
+              ),
+            },
+          )}
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`github-token-host-${environmentId}`}>Host</Label>
+            <Label htmlFor={`github-token-host-${environmentId}`}>{tx("Host")}</Label>
             <Input
               id={`github-token-host-${environmentId}`}
               autoComplete="off"
@@ -98,13 +108,15 @@ export function GitHubTokenSettings({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`github-token-${environmentId}`}>Token</Label>
+            <Label htmlFor={`github-token-${environmentId}`}>{tx("Token")}</Label>
             <Input
               id={`github-token-${environmentId}`}
               type="password"
               autoComplete="off"
               size="sm"
-              placeholder={isSaved ? "Stored secret, enter a new value to replace" : "Not set"}
+              placeholder={
+                isSaved ? tx("Stored secret, enter a new value to replace") : tx("Not set")
+              }
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />
@@ -113,7 +125,7 @@ export function GitHubTokenSettings({
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {savedHosts.length === 0
-              ? "No token saved; the server uses GH_TOKEN or the gh login."
+              ? tx("No token saved; the server uses GH_TOKEN or the gh login.")
               : `Saved for ${savedHosts.join(", ")}.`}
           </p>
           <div className="flex shrink-0 gap-2">
@@ -124,11 +136,11 @@ export function GitHubTokenSettings({
                 disabled={saving}
                 onClick={() => void save(normalizedHost, "")}
               >
-                Remove
+                {tx("Remove")}
               </Button>
             ) : null}
             <Button type="submit" size="xs" disabled={!normalizedHost || !draft.trim() || saving}>
-              Save
+              {tx("Save")}
             </Button>
           </div>
         </div>

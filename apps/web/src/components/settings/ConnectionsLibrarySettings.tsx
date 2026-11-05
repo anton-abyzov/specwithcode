@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { useState } from "react";
 
@@ -36,6 +37,7 @@ const choiceLabel = (choice: Choice) =>
  * so it is only as tall as its content.
  */
 export function ConnectionsLibrarySettings() {
+  const tx = useTx();
   const { scope, environments, search } = useSettingsScope();
   const { environments: presentations } = useEnvironments();
   const scopeKey = JSON.stringify([search.project, search.machine, search.checkout]);
@@ -91,9 +93,9 @@ export function ConnectionsLibrarySettings() {
       <SelectTrigger
         size="xs"
         className="w-auto max-w-72 min-w-0"
-        aria-label="Connections execution machine"
+        aria-label={tx("Connections execution machine")}
       >
-        <SelectValue placeholder="Select a machine">
+        <SelectValue placeholder={tx("Select a machine")}>
           {selected ? choiceLabel(selected) : null}
         </SelectValue>
       </SelectTrigger>
@@ -137,8 +139,8 @@ export function ConnectionsLibrarySettings() {
         ) : (
           <p role="status" className="text-sm text-muted-foreground">
             {selection
-              ? "The selected machine or project is no longer in this scope."
-              : "Connect a machine to see its MCP servers."}
+              ? tx("The selected machine or project is no longer in this scope.")
+              : tx("Connect a machine to see its MCP servers.")}
           </p>
         )}
       </div>

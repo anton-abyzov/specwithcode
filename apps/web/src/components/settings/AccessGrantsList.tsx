@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 /**
  * The "Always on this machine" grants of one kind (apps or devices), listed
  * under the setting that lets agents use them, each with a Remove button.
@@ -52,6 +53,7 @@ export function AccessGrantsList({
   readonly kind: AccessGrantsKind;
   readonly environmentId: EnvironmentId;
 }) {
+  const tx = useTx();
   const listGrants = useAtomCommand(serverEnvironment.listAccessGrants, { reportFailure: false });
   const revokeGrant = useAtomCommand(serverEnvironment.revokeAccessGrant, {
     reportFailure: false,
@@ -98,7 +100,7 @@ export function AccessGrantsList({
       <p className="text-xs font-medium text-foreground">{copy.title}</p>
       {shown === null ? (
         error === null ? (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <p className="text-xs text-muted-foreground">{tx("Loading…")}</p>
         ) : null
       ) : shown.length === 0 ? (
         <p className="text-xs text-muted-foreground">{copy.empty}</p>
@@ -117,7 +119,7 @@ export function AccessGrantsList({
                 disabled={removingKey !== null}
                 onClick={() => void remove(grant)}
               >
-                {removingKey === grant.key ? "Removing…" : "Remove"}
+                {removingKey === grant.key ? tx("Removing…") : tx("Remove")}
               </Button>
             </li>
           ))}

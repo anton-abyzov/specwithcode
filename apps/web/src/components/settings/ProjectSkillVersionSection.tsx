@@ -1,4 +1,6 @@
+import { renderRich } from "../../i18n/rich";
 /** The detail sheet's Version section: installed and pinned versions, and the vskill actions. */
+import { useTx } from "../../i18n";
 import { PinIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -11,6 +13,7 @@ import { useSkillControls } from "./ProjectSkillControls";
 import { SkillControlReason } from "./ProjectSkillReason";
 
 export function ProjectSkillVersionSection() {
+  const tx = useTx();
   const controls = useSkillControls();
   const [chosen, setChosen] = useState<string | null>(null);
   if (!controls) return null;
@@ -18,9 +21,9 @@ export function ProjectSkillVersionSection() {
   const lock = skillVersionControl(row);
   if (!lock.skillId) {
     return (
-      <section aria-label="Version" className="space-y-1" data-testid="skill-version">
-        <h3 className="font-medium text-foreground">Version</h3>
-        <p className="text-muted-foreground">Local skill. No registry versions.</p>
+      <section aria-label={tx("Version")} className="space-y-1" data-testid="skill-version">
+        <h3 className="font-medium text-foreground">{tx("Version")}</h3>
+        <p className="text-muted-foreground">{tx("Local skill. No registry versions.")}</p>
       </section>
     );
   }
@@ -43,14 +46,14 @@ export function ProjectSkillVersionSection() {
   const installReason =
     permission ?? (exact && selected === installed ? `${selected} is installed.` : null);
   return (
-    <section aria-label="Version" className="space-y-2" data-testid="skill-version">
+    <section aria-label={tx("Version")} className="space-y-2" data-testid="skill-version">
       <div className="flex flex-wrap items-center gap-1.5">
-        <h3 className="font-medium text-foreground">Version</h3>
+        <h3 className="font-medium text-foreground">{tx("Version")}</h3>
         <span className="font-mono text-foreground">{installed ?? "—"}</span>
         {pinned ? (
           <Badge size="sm" variant="outline" data-testid="skill-pinned">
             <PinIcon aria-hidden />
-            pinned {pinned === installed ? "" : pinned}
+            {renderRich(tx("pinned {value}"), { value: pinned === installed ? "" : pinned })}
           </Badge>
         ) : null}
         {updateAvailable && latest ? (
@@ -62,7 +65,7 @@ export function ProjectSkillVersionSection() {
       </div>
       {versions.error && !data ? (
         <p className="text-xs text-muted-foreground">
-          Versions could not be read: {versions.error}
+          {renderRich(tx("Versions could not be read: {error}"), { error: versions.error })}
         </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -73,7 +76,7 @@ export function ProjectSkillVersionSection() {
         >
           <SelectTrigger size="xs" className="w-40 min-w-0" aria-label={`Version of ${row.name}`}>
             <SelectValue>
-              {selected ?? (versions.isPending ? "Loading…" : "No versions")}
+              {selected ?? (versions.isPending ? tx("Loading…") : tx("No versions"))}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
@@ -84,7 +87,7 @@ export function ProjectSkillVersionSection() {
                   <span className="ms-1.5 text-2xs text-muted-foreground">{version.certTier}</span>
                 ) : null}
                 {version.installed ? (
-                  <span className="ms-1.5 text-2xs text-muted-foreground">installed</span>
+                  <span className="ms-1.5 text-2xs text-muted-foreground">{tx("installed")}</span>
                 ) : null}
               </SelectItem>
             ))}
@@ -98,7 +101,7 @@ export function ProjectSkillVersionSection() {
             disabled={!exact || busy || !canOperate || selected === installed}
             onClick={() => controls.propose({ kind: "install-version", version: selected! })}
           >
-            Install
+            {tx("Install")}
           </Button>
         </SkillControlReason>
         {pinned ? (
@@ -110,7 +113,7 @@ export function ProjectSkillVersionSection() {
               disabled={busy || !canOperate || !lock.canPin}
               onClick={() => controls.propose({ kind: "unpin" })}
             >
-              Unpin
+              {tx("Unpin")}
             </Button>
           </SkillControlReason>
         ) : (
@@ -122,7 +125,7 @@ export function ProjectSkillVersionSection() {
               disabled={!exact || busy || !canOperate || !lock.canPin}
               onClick={() => controls.propose({ kind: "pin", version: selected! })}
             >
-              Pin
+              {tx("Pin")}
             </Button>
           </SkillControlReason>
         )}
@@ -135,7 +138,7 @@ export function ProjectSkillVersionSection() {
               disabled={busy || !canOperate}
               onClick={() => controls.propose({ kind: "update-latest" })}
             >
-              Update to {latest}
+              {renderRich(tx("Update to {latest}"), { latest: latest })}
             </Button>
           </SkillControlReason>
         ) : null}
@@ -148,7 +151,7 @@ export function ProjectSkillVersionSection() {
               disabled={busy || !canOperate}
               onClick={() => controls.propose({ kind: "remove" })}
             >
-              Remove
+              {tx("Remove")}
             </Button>
           </SkillControlReason>
         ) : null}

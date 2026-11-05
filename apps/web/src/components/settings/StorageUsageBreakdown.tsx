@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { formatStorageFreeSpace, type StorageHomeUsage } from "@specweave-studio/contracts";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -18,6 +20,7 @@ export function AppFolderSizeWarningControl({
   mixed: boolean;
   onChange: (value: number | null) => void;
 }) {
+  const tx = useTx();
   const sizes: ReadonlyArray<number> =
     value === null || WARNING_SIZES_GB.includes(value as (typeof WARNING_SIZES_GB)[number])
       ? WARNING_SIZES_GB
@@ -31,11 +34,11 @@ export function AppFolderSizeWarningControl({
         else if (typeof next === "string" && Number.isInteger(Number(next))) onChange(Number(next));
       }}
     >
-      <SelectTrigger size="sm" aria-label="Warn when the app folder is large">
-        <SelectValue>{mixed ? "Mixed" : label(value)}</SelectValue>
+      <SelectTrigger size="sm" aria-label={tx("Warn when the app folder is large")}>
+        <SelectValue>{mixed ? tx("Mixed") : label(value)}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        <SelectItem value="off">Off</SelectItem>
+        <SelectItem value="off">{tx("Off")}</SelectItem>
         {sizes.map((size) => (
           <SelectItem key={size} value={String(size)}>
             {label(size)}
@@ -63,6 +66,7 @@ export function homeUsageBreakdown(usage: StorageHomeUsage): string {
  * and worktree count, so a regression in any cleanup shows here first.
  */
 export function AppFolderUsage() {
+  const tx = useTx();
   const { connectedEnvironments } = useSettingsScope();
   const measured = connectedEnvironments.flatMap((environment) => {
     const usage = environment.serverConfig?.storage?.homeUsage;
@@ -94,9 +98,18 @@ export function AppFolderUsage() {
         <>
           <span className="block">{homeUsageBreakdown(usage)}</span>
           <span className="block text-muted-foreground">
-            {usage.path}, checked {formatRelativeTimeLabel(usage.checkedAt)}
-            {usage.complete ? "" : ". The check stopped early, so these sizes are a lower bound"}.
-            Copies that share disk space (APFS clones) count in full here, so the disk may use less.
+            {renderRich(
+              tx(
+                "{path}, checked {value}{value2}. Copies that share disk space (APFS clones) count in full here, so the disk may use less.",
+              ),
+              {
+                path: usage.path,
+                value: formatRelativeTimeLabel(usage.checkedAt),
+                value2: usage.complete
+                  ? ""
+                  : ". The check stopped early, so these sizes are a lower bound",
+              },
+            )}
           </span>
         </>
       }

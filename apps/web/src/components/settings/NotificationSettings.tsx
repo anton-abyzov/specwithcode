@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useEffect, useState } from "react";
 
 import {
@@ -19,6 +20,7 @@ import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 export function NotificationSettings() {
+  const tx = useTx();
   const mode = useScopedSettings((settings) => settings.notificationMode);
   const updateSettings = useUpdateScopedSettings();
   const connected = useNotificationsConnected();
@@ -106,7 +108,7 @@ export function NotificationSettings() {
                   }
                   onClick={() => void test()}
                 >
-                  Send test
+                  {tx("Send test")}
                 </Button>
                 <Button
                   size="sm"
@@ -118,7 +120,7 @@ export function NotificationSettings() {
                     );
                   }}
                 >
-                  Disconnect
+                  {tx("Disconnect")}
                 </Button>
               </>
             ) : (
@@ -148,7 +150,7 @@ export function NotificationSettings() {
                   }
                 }}
               >
-                Connect notifications
+                {tx("Connect notifications")}
               </Button>
             )}
           </div>
@@ -163,7 +165,7 @@ export function NotificationSettings() {
         </p>
       ) : null}
       <SettingsRow
-        title="Other thread alerts"
+        title={tx("Other thread alerts")}
         description="Choose alerts for completions, failures and stalls. Input-needed alerts have their own switch below. Disconnect turns off all system alerts."
         control={
           <Select
@@ -180,7 +182,11 @@ export function NotificationSettings() {
               updateSettings({ notificationMode: value });
             }}
           >
-            <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Other thread alerts">
+            <SelectTrigger
+              size="sm"
+              className="w-full sm:w-56"
+              aria-label={tx("Other thread alerts")}
+            >
               <SelectValue>{NOTIFICATION_MODE_LABELS[mode]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>

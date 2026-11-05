@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   PROVIDER_MODEL_TIERS,
   type ProviderModelTier,
@@ -54,6 +55,7 @@ function modelName(provider: ServerProvider, slug: string | undefined): string {
  * frontier depth and for work flagged hardest.
  */
 export function ProviderModelTiersSettings() {
+  const tx = useTx();
   const { scope, target } = useSettingsScope();
   const clearSettings = useClearScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -167,7 +169,7 @@ export function ProviderModelTiersSettings() {
                 isProjectScope ? clearSettings(["modelTiers"]) : updateSettings({ modelTiers: {} })
               }
             >
-              {isProjectScope ? "Use machine settings" : "Reset to built-in"}
+              {isProjectScope ? tx("Use machine settings") : tx("Reset to built-in")}
             </Button>
           }
         />

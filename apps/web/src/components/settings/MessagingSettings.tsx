@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { EnvironmentId, ProjectId, TelegramChannelStatus } from "@specweave-studio/contracts";
 import {
   AuthOrchestrationReadScope,
@@ -45,6 +47,7 @@ function pollingBadge(status: TelegramChannelStatus) {
 }
 
 export function MessagingSettingsPanel() {
+  const tx = useTx();
   const environmentId = usePrimaryEnvironmentId();
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
@@ -167,7 +170,7 @@ export function MessagingSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Telegram"
+        title={tx("Telegram")}
         icon={<MessageCircleIcon className="size-4" />}
         id="messaging"
         headerAction={
@@ -178,23 +181,26 @@ export function MessagingSettingsPanel() {
       >
         <div className="flex flex-col gap-1 px-3 py-3 text-muted-foreground text-sm sm:px-4">
           <p>
-            Talk to a project&apos;s coordinator from your phone, like a personal agent. Messages
-            you send become work for the coordinator on this machine, and its answers, your
-            routines&apos; results and waiting approvals come back to the chat.
+            {tx(
+              "Talk to a project's coordinator from your phone, like a personal agent. Messages you send become work for the coordinator on this machine, and its answers, your routines' results and waiting approvals come back to the chat.",
+            )}
           </p>
           <p className="text-xs">
-            This machine calls Telegram; nothing on it is opened to the internet. Only the one chat
-            that sends the pairing code can reach the coordinator, and approvals still happen in
-            SpecWithCode. Answers arrive while this machine is awake.
+            {tx(
+              "This machine calls Telegram; nothing on it is opened to the internet. Only the one chat that sends the pairing code can reach the coordinator, and approvals still happen in SpecWithCode. Answers arrive while this machine is awake.",
+            )}
           </p>
           {teamRulesLock ? <TeamRulesLockNote lock={teamRulesLock} /> : null}
         </div>
 
         {config !== undefined && !supported ? (
           <p className="px-3 py-3 text-muted-foreground text-sm sm:px-4">
-            The SpecWithCode service this app is connected to (version{" "}
-            {config.environment.serverVersion}) is older than the Telegram channel. Update that
-            service to use it.
+            {renderRich(
+              tx(
+                "The SpecWithCode service this app is connected to (version {serverVersion}) is older than the Telegram channel. Update that service to use it.",
+              ),
+              { serverVersion: config.environment.serverVersion },
+            )}
           </p>
         ) : null}
         {query.error ? (
@@ -205,13 +211,13 @@ export function MessagingSettingsPanel() {
           <div className="flex flex-col gap-4 border-t px-3 py-4 sm:px-4">
             <TeamRulesInert lock={teamRulesLock} className="flex flex-col gap-4">
               <label className="flex flex-col gap-1.5">
-                <span className="font-medium text-sm">Bot token</span>
+                <span className="font-medium text-sm">{tx("Bot token")}</span>
                 <Input
                   size="sm"
                   type="password"
                   autoComplete="off"
                   spellCheck={false}
-                  aria-label="Telegram bot token"
+                  aria-label={tx("Telegram bot token")}
                   placeholder={
                     status?.configured
                       ? `Saved for @${status.botUsername ?? "your bot"}. Paste a new token to replace it.`
@@ -223,20 +229,24 @@ export function MessagingSettingsPanel() {
                 />
                 <span className="text-muted-foreground text-xs">
                   {tokenLooksValid
-                    ? "In Telegram, message @BotFather, send /newbot and paste the token it gives you. It stays on this machine."
-                    : "That does not look like a bot token. It has digits, a colon, then letters."}
+                    ? tx(
+                        "In Telegram, message @BotFather, send /newbot and paste the token it gives you. It stays on this machine.",
+                      )
+                    : tx(
+                        "That does not look like a bot token. It has digits, a colon, then letters.",
+                      )}
                 </span>
               </label>
 
               <div className="flex flex-col gap-1.5">
-                <span className="font-medium text-sm">Project</span>
+                <span className="font-medium text-sm">{tx("Project")}</span>
                 <Select
                   value={projectId}
                   onValueChange={(value) => setProjectId(value as ProjectId | null)}
                 >
                   <SelectTrigger
                     size="sm"
-                    aria-label="Project for the Telegram channel"
+                    aria-label={tx("Project for the Telegram channel")}
                     className="max-w-sm"
                   >
                     <SelectValue>
@@ -265,13 +275,14 @@ export function MessagingSettingsPanel() {
                   </SelectPopup>
                 </Select>
                 <span className="text-muted-foreground text-xs">
-                  {unavailableProject
-                    ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
-                    : null}
-                  Messages go to this project&apos;s coordinator.{" "}
-                  {aideEnabled
-                    ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
-                    : "A code project works for checking on builds from your phone."}
+                  {renderRich(tx("{value}Messages go to this project's coordinator. {value2}"), {
+                    value: unavailableProject
+                      ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
+                      : null,
+                    value2: aideEnabled
+                      ? "A personal assistant works best for everyday errands; a code project works for checking on builds from your phone."
+                      : "A code project works for checking on builds from your phone.",
+                  })}
                 </span>
               </div>
 
@@ -279,14 +290,14 @@ export function MessagingSettingsPanel() {
                 <div className="flex flex-col">
                   <span className="font-medium text-sm">On</span>
                   <span className="text-muted-foreground text-xs">
-                    Off stops listening; the pairing is kept.
+                    {tx("Off stops listening; the pairing is kept.")}
                   </span>
                 </div>
                 <Switch
                   size="sm"
                   checked={enabled}
                   disabled={!canWrite || busy}
-                  aria-label="Telegram channel on"
+                  aria-label={tx("Telegram channel on")}
                   onCheckedChange={setEnabled}
                 />
               </div>
@@ -295,7 +306,7 @@ export function MessagingSettingsPanel() {
             <div className="flex flex-wrap gap-2">
               <TeamRulesInert lock={teamRulesLock}>
                 <Button size="sm" disabled={!canSave} onClick={save}>
-                  {status?.configured ? "Save" : "Connect bot"}
+                  {status?.configured ? tx("Save") : tx("Connect bot")}
                 </Button>
               </TeamRulesInert>
               {status?.paired ? (
@@ -308,7 +319,7 @@ export function MessagingSettingsPanel() {
                     void run("Could not unpair", () => unpair({ environmentId, input: {} }));
                   }}
                 >
-                  Unpair chat
+                  {tx("Unpair chat")}
                 </Button>
               ) : null}
               {status?.configured ? (
@@ -323,7 +334,7 @@ export function MessagingSettingsPanel() {
                     );
                   }}
                 >
-                  Remove
+                  {tx("Remove")}
                 </Button>
               ) : null}
             </div>
@@ -333,8 +344,10 @@ export function MessagingSettingsPanel() {
         {status?.configured && status.paired ? (
           <div className="flex flex-col gap-1 border-t px-3 py-3 text-sm sm:px-4">
             <span>
-              Paired with <span className="font-medium">{status.chatLabel ?? "your chat"}</span>
-              {status.botUsername ? ` through @${status.botUsername}` : ""}.
+              {renderRich(tx("Paired with {span}{value}."), {
+                span: <span className="font-medium">{status.chatLabel ?? tx("your chat")}</span>,
+                value: status.botUsername ? tx(" through @{bot}", { bot: status.botUsername }) : "",
+              })}
             </span>
             {status.lastError ? (
               <span className="text-destructive-foreground text-xs">{status.lastError}</span>
@@ -346,35 +359,36 @@ export function MessagingSettingsPanel() {
           <div className="flex flex-col gap-3 border-t px-3 py-4 sm:flex-row sm:items-center sm:px-4">
             {deepLink ? (
               <div className="shrink-0 rounded-md bg-white p-2">
-                <QRCodeSvg value={deepLink} size={128} title="Open the bot in Telegram" />
+                <QRCodeSvg value={deepLink} size={128} title={tx("Open the bot in Telegram")} />
               </div>
             ) : null}
             <div className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium">Pair your phone</span>
+              <span className="font-medium">{tx("Pair your phone")}</span>
               {status.pairingCode ? (
                 <>
                   <span className="text-muted-foreground">
-                    Scan the code with your phone, or open{" "}
-                    {deepLink ? (
-                      <a className="underline" href={deepLink} target="_blank" rel="noreferrer">
-                        @{status.botUsername}
-                      </a>
-                    ) : (
-                      "your bot"
-                    )}{" "}
-                    and send:
+                    {renderRich(tx("Scan the code with your phone, or open {value} and send:"), {
+                      value: deepLink ? (
+                        <a className="underline" href={deepLink} target="_blank" rel="noreferrer">
+                          @{status.botUsername}
+                        </a>
+                      ) : (
+                        "your bot"
+                      ),
+                    })}
                   </span>
                   <span className="font-mono text-base tracking-wider">
                     /start {status.pairingCode}
                   </span>
                   <span className="text-muted-foreground text-xs">
-                    The code works once and expires in 30 minutes. This page updates when the chat
-                    pairs.
+                    {tx(
+                      "The code works once and expires in 30 minutes. This page updates when the chat pairs.",
+                    )}
                   </span>
                 </>
               ) : (
                 <span className="text-muted-foreground">
-                  The pairing code expired. Press Save to get a new one.
+                  {tx("The pairing code expired. Press Save to get a new one.")}
                 </span>
               )}
             </div>

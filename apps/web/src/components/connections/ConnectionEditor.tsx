@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import type {
   NativeConnectionApplyInput,
@@ -34,6 +35,7 @@ export function ConnectionEditor({
   onSubmit: (input: NativeConnectionApplyInput) => void;
   onCancel: () => void;
 }) {
+  const tx = useTx();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<"command" | "url">("command");
   const [command, setCommand] = useState("");
@@ -99,17 +101,17 @@ export function ConnectionEditor({
         submit();
       }}
     >
-      <h4 className="text-sm font-medium">Add an MCP server</h4>
+      <h4 className="text-sm font-medium">{tx("Add an MCP server")}</h4>
       <label className="block space-y-1 text-sm">
-        <span>Name</span>
+        <span>{tx("Name")}</span>
         <Input
           value={name}
-          aria-label="Server name"
-          placeholder="search"
+          aria-label={tx("Server name")}
+          placeholder={tx("search")}
           onChange={(e) => setName(e.target.value)}
         />
       </label>
-      <div className="flex gap-2" role="group" aria-label="How the tool reaches the server">
+      <div className="flex gap-2" role="group" aria-label={tx("How the tool reaches the server")}>
         <Button
           type="button"
           size="xs"
@@ -117,7 +119,7 @@ export function ConnectionEditor({
           aria-pressed={kind === "command"}
           onClick={() => setKind("command")}
         >
-          Command
+          {tx("Command")}
         </Button>
         <Button
           type="button"
@@ -132,27 +134,27 @@ export function ConnectionEditor({
       {kind === "command" ? (
         <>
           <label className="block space-y-1 text-sm">
-            <span>Command</span>
+            <span>{tx("Command")}</span>
             <Input
               value={command}
-              aria-label="Command"
-              placeholder="npx"
+              aria-label={tx("Command")}
+              placeholder={tx("npx")}
               onChange={(e) => setCommand(e.target.value)}
             />
           </label>
           <label className="block space-y-1 text-sm">
-            <span>Arguments, one per line</span>
+            <span>{tx("Arguments, one per line")}</span>
             <Textarea
               value={args}
-              aria-label="Arguments"
+              aria-label={tx("Arguments")}
               onChange={(e) => setArgs(e.target.value)}
             />
           </label>
           <label className="block space-y-1 text-sm">
-            <span>Environment, KEY=value per line</span>
+            <span>{tx("Environment, KEY=value per line")}</span>
             <Textarea
               value={env}
-              aria-label="Environment"
+              aria-label={tx("Environment")}
               onChange={(e) => setEnv(e.target.value)}
             />
           </label>
@@ -169,17 +171,17 @@ export function ConnectionEditor({
             />
           </label>
           <label className="block space-y-1 text-sm">
-            <span>Headers, Name: value per line</span>
+            <span>{tx("Headers, Name: value per line")}</span>
             <Textarea
               value={headers}
-              aria-label="Headers"
+              aria-label={tx("Headers")}
               onChange={(e) => setHeaders(e.target.value)}
             />
           </label>
         </>
       )}
       <fieldset className="space-y-1 text-sm">
-        <legend>Add it to</legend>
+        <legend>{tx("Add it to")}</legend>
         <div className="flex flex-wrap gap-x-4 gap-y-1">
           {tools.map(({ tool, label }) => (
             <label key={tool} className="flex items-center gap-2">
@@ -204,10 +206,10 @@ export function ConnectionEditor({
       ) : null}
       <div className="flex gap-2">
         <Button type="submit" size="xs" disabled={pending}>
-          {pending ? "Checking…" : "Preview"}
+          {pending ? tx("Checking…") : tx("Preview")}
         </Button>
         <Button type="button" size="xs" variant="ghost" onClick={onCancel}>
-          Cancel
+          {tx("Cancel")}
         </Button>
       </div>
     </form>
@@ -226,14 +228,15 @@ export function ChangePreview({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const tx = useTx();
   return (
     <div
       role="dialog"
-      aria-label="Review the change"
+      aria-label={tx("Review the change")}
       className="space-y-3 rounded-lg border border-border p-4"
       data-testid="change-preview"
     >
-      <h4 className="text-sm font-medium">Review the change</h4>
+      <h4 className="text-sm font-medium">{tx("Review the change")}</h4>
       <ul className="space-y-2 text-sm">
         {change.files.map((file) => (
           <li key={file.path}>
@@ -249,14 +252,16 @@ export function ChangePreview({
         ))}
       </ul>
       <p className="text-xs text-muted-foreground">
-        A backup is kept, so you can undo this. Tools pick the change up when they next start.
+        {tx(
+          "A backup is kept, so you can undo this. Tools pick the change up when they next start.",
+        )}
       </p>
       <div className="flex gap-2">
         <Button size="xs" disabled={pending} onClick={onConfirm}>
-          {pending ? "Saving…" : "Save"}
+          {pending ? tx("Saving…") : tx("Save")}
         </Button>
         <Button size="xs" variant="ghost" disabled={pending} onClick={onCancel}>
-          Cancel
+          {tx("Cancel")}
         </Button>
       </div>
     </div>

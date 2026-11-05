@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
 import { usePermissionStatus } from "../permissions/usePermissionStatus";
 import type { BrowserImportSource } from "@specweave-studio/contracts";
@@ -204,19 +206,23 @@ function QuitStep({
   readonly onCancel: () => void;
   readonly onRechecked: () => void;
 }) {
+  const tx = useTx();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Quit {source.name} to import</DialogTitle>
+        <DialogTitle>{renderRich(tx("Quit {name} to import"), { name: source.name })}</DialogTitle>
         <DialogDescription>
-          {source.name} is open, so its cookies can&rsquo;t be read yet. Quit it, then continue.
+          {renderRich(
+            tx("{name} is open, so its cookies can’t be read yet. Quit it, then continue."),
+            { name: source.name },
+          )}
         </DialogDescription>
       </DialogHeader>
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>
-          Cancel
+          {tx("Cancel")}
         </Button>
-        <Button onClick={onRechecked}>I&rsquo;ve quit it</Button>
+        <Button onClick={onRechecked}>{tx("I’ve quit it")}</Button>
       </DialogFooter>
     </>
   );
@@ -262,6 +268,7 @@ function FullDiskAccessStep({
   readonly onGranted: () => void;
   readonly stillRequired: boolean;
 }) {
+  const tx = useTx();
   const [opening, setOpening] = useState(false);
   const [openingError, setOpeningError] = useState<string | null>(null);
   const permission = usePermissionStatus(async () => ({ fullDiskAccess: await onCheck() }), {
@@ -279,11 +286,16 @@ function FullDiskAccessStep({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Let SpecWithCode read {source.name}&rsquo;s cookies</DialogTitle>
+        <DialogTitle>
+          {renderRich(tx("Let SpecWithCode read {name}’s cookies"), { name: source.name })}
+        </DialogTitle>
         <DialogDescription>
-          To import cookies from {source.name}, SpecWithCode needs Full Disk Access. Turn it on in
-          System Settings, then come back to finish the import — you can revoke it again once the
-          import is done.
+          {renderRich(
+            tx(
+              "To import cookies from {name}, SpecWithCode needs Full Disk Access. Turn it on in System Settings, then come back to finish the import — you can revoke it again once the import is done.",
+            ),
+            { name: source.name },
+          )}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -313,21 +325,25 @@ function FullDiskAccessStep({
         {!permission.isReady(["fullDiskAccess"]) ? (
           <p className="mt-3 text-xs text-muted-foreground">
             {stillRequired
-              ? "Access is still required. Quit and reopen SpecWithCode if you just allowed it, then retry the import."
-              : "If access doesn't update after you allow it, quit and reopen SpecWithCode, then retry the import."}
+              ? tx(
+                  "Access is still required. Quit and reopen SpecWithCode if you just allowed it, then retry the import.",
+                )
+              : tx(
+                  "If access doesn't update after you allow it, quit and reopen SpecWithCode, then retry the import.",
+                )}
           </p>
         ) : null}
       </DialogPanel>
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>
-          Cancel
+          {tx("Cancel")}
         </Button>
         <PermissionContinueButton
           ready={permission.isReady(["fullDiskAccess"])}
           busy={opening}
           onClick={onGranted}
         >
-          Continue
+          {tx("Continue")}
         </PermissionContinueButton>
       </DialogFooter>
     </>
@@ -346,6 +362,7 @@ function ConfigureStep({
   onCancel,
   onImport,
 }: ConfigureStepProps) {
+  const tx = useTx();
   const targetMissing =
     target.kind === "existing" &&
     !targetProfiles.some((profile) => profile.id === target.profileId);
@@ -363,9 +380,11 @@ function ConfigureStep({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Import from {source.name}</DialogTitle>
+        <DialogTitle>{renderRich(tx("Import from {name}"), { name: source.name })}</DialogTitle>
         <DialogDescription>
-          Choose which cookies to import for {destinationEnvironmentName}.
+          {renderRich(tx("Choose which cookies to import for {destinationEnvironmentName}."), {
+            destinationEnvironmentName: destinationEnvironmentName,
+          })}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -373,7 +392,7 @@ function ConfigureStep({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <section className="flex-1 space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              From
+              {tx("From")}
             </p>
             {source.profiles.map((profile) => (
               <SelectableTile
@@ -391,13 +410,13 @@ function ConfigureStep({
           </div>
           <section className="flex-1 space-y-2">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Into
+              {tx("Into")}
             </p>
             {canCreateProfile ? (
               <SelectableTile
                 selected={target.kind === "new"}
-                title="New profile"
-                subtitle="Created for these cookies"
+                title={tx("New profile")}
+                subtitle={tx("Created for these cookies")}
                 onSelect={() => onTargetChange({ kind: "new" })}
               />
             ) : null}
@@ -406,7 +425,7 @@ function ConfigureStep({
                 key={profile.id}
                 selected={target.kind === "existing" && target.profileId === profile.id}
                 title={profile.name}
-                subtitle="Existing profile"
+                subtitle={tx("Existing profile")}
                 onSelect={() => onTargetChange({ kind: "existing", profileId: profile.id })}
               />
             ))}
@@ -420,13 +439,13 @@ function ConfigureStep({
       </DialogPanel>
       <DialogFooter>
         <Button variant="outline" onClick={onCancel}>
-          Cancel
+          {tx("Cancel")}
         </Button>
         <Button
           disabled={sourceProfileDirectory === "" || targetMissing || targetUncreatable}
           onClick={onImport}
         >
-          Import
+          {tx("Import")}
         </Button>
       </DialogFooter>
     </>
@@ -478,16 +497,17 @@ function SelectableTile({
 }
 
 function ImportingStep() {
+  const tx = useTx();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Importing cookies</DialogTitle>
-        <DialogDescription>This may take a moment.</DialogDescription>
+        <DialogTitle>{tx("Importing cookies")}</DialogTitle>
+        <DialogDescription>{tx("This may take a moment.")}</DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <div className="flex items-center gap-3 py-2">
           <Spinner size="md" tone="muted" />
-          <span className="text-sm text-muted-foreground">Importing…</span>
+          <span className="text-sm text-muted-foreground">{tx("Importing…")}</span>
         </div>
       </DialogPanel>
     </>
@@ -501,21 +521,24 @@ function CheckingStep({
   readonly sourceName: string;
   readonly check: "browser" | "fullDiskAccess";
 }) {
+  const tx = useTx();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Checking {sourceName}</DialogTitle>
+        <DialogTitle>
+          {renderRich(tx("Checking {sourceName}"), { sourceName: sourceName })}
+        </DialogTitle>
         <DialogDescription>
           {check === "fullDiskAccess"
-            ? "Checking Full Disk Access."
-            : "Checking whether the browser has closed."}
+            ? tx("Checking Full Disk Access.")
+            : tx("Checking whether the browser has closed.")}
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         <div className="flex items-center gap-3 py-2">
           <Spinner size="md" tone="muted" />
           <span className="text-sm text-muted-foreground">
-            {check === "fullDiskAccess" ? "Checking access…" : "Checking…"}
+            {check === "fullDiskAccess" ? tx("Checking access…") : tx("Checking…")}
           </span>
         </div>
       </DialogPanel>
@@ -536,6 +559,7 @@ function DoneStep({
   readonly targetName: string;
   readonly destinationEnvironmentName: string;
 }) {
+  const tx = useTx();
   return (
     <>
       <DialogHeader>
@@ -544,7 +568,7 @@ function DoneStep({
             ? `Imported ${cookieResultCount(imported)}`
             : skipped > 0
               ? `Skipped ${cookieResultCount(skipped)}`
-              : "No cookies found"}
+              : tx("No cookies found")}
         </DialogTitle>
         <DialogDescription>
           {imported > 0
@@ -557,7 +581,7 @@ function DoneStep({
       {skippedDomains.length > 0 ? (
         <DialogPanel>
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Skipped
+            {tx("Skipped")}
           </p>
           <p className="mt-1 text-sm text-foreground">{formatSkippedDomains(skippedDomains)}</p>
         </DialogPanel>
@@ -575,15 +599,18 @@ function BlockedStep({
   readonly reason: keyof typeof BROWSER_IMPORT_FAILURE_COPY;
   readonly onRetry: (() => void) | undefined;
 }) {
+  const tx = useTx();
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Couldn&rsquo;t import from {source.name}</DialogTitle>
+        <DialogTitle>
+          {renderRich(tx("Couldn’t import from {name}"), { name: source.name })}
+        </DialogTitle>
         <DialogDescription>{BROWSER_IMPORT_FAILURE_COPY[reason]}</DialogDescription>
       </DialogHeader>
       {onRetry ? (
         <DialogFooter>
-          <Button onClick={onRetry}>Try again</Button>
+          <Button onClick={onRetry}>{tx("Try again")}</Button>
         </DialogFooter>
       ) : null}
     </>

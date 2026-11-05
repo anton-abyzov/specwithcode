@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { ServerProcessSignal } from "@specweave-studio/contracts";
 
 import { InlineButton } from "../ui/button";
@@ -11,6 +12,7 @@ export function ProcessSignalActions({
   disabled: boolean;
   onSignal: (signal: ServerProcessSignal) => void;
 }) {
+  const tx = useTx();
   return (
     <div className="flex items-center justify-end gap-1.5">
       <Tooltip>
@@ -18,7 +20,7 @@ export function ProcessSignalActions({
           render={
             <InlineButton
               disabled={disabled}
-              aria-label="Send SIGINT"
+              aria-label={tx("Send SIGINT")}
               tone="muted"
               onClick={() => onSignal("SIGINT")}
             >
@@ -26,14 +28,14 @@ export function ProcessSignalActions({
             </InlineButton>
           }
         />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
+        <TooltipPopup side="top">{tx("Send SIGINT")}</TooltipPopup>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger
           render={
             <InlineButton
               disabled={disabled}
-              aria-label="Send SIGKILL"
+              aria-label={tx("Send SIGKILL")}
               tone="destructive"
               onClick={() => onSignal("SIGKILL")}
             >
@@ -41,7 +43,7 @@ export function ProcessSignalActions({
             </InlineButton>
           }
         />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
+        <TooltipPopup side="top">{tx("Send SIGKILL")}</TooltipPopup>
       </Tooltip>
     </div>
   );

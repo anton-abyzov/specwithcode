@@ -1,3 +1,4 @@
+import { renderRich } from "../../i18n/rich";
 /** One routine in Settings > Routines: state, when it runs next, where it lands, its actions. */
 import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
@@ -98,6 +99,7 @@ export function ScheduledTaskRow({
   readonly compact?: boolean;
   readonly onEdit: () => void;
 }) {
+  const tx = useTx();
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -230,7 +232,7 @@ export function ScheduledTaskRow({
               onClick={() => void act("run")}
             >
               <PlayIcon className="size-3" />
-              Run
+              {tx("Run")}
             </Button>
           )}
           <Menu>
@@ -249,24 +251,24 @@ export function ScheduledTaskRow({
             <MenuPopup align="end">
               <MenuItem onClick={onEdit}>
                 <PencilIcon />
-                Edit
+                {tx("Edit")}
               </MenuItem>
               {task.schedule.type === "manual" ? null : (
                 <MenuItem onClick={() => void act("toggle")}>
                   {task.enabled ? <PauseIcon /> : <PlayIcon />}
-                  {task.enabled ? "Pause" : "Resume"}
+                  {task.enabled ? tx("Pause") : tx("Resume")}
                 </MenuItem>
               )}
               {isWebhook ? (
                 <MenuItem onClick={() => setDeliveriesOpen(true)}>
                   <InboxIcon />
-                  Deliveries
+                  {tx("Deliveries")}
                 </MenuItem>
               ) : null}
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
                 <Trash2Icon />
-                Delete
+                {tx("Delete")}
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -292,6 +294,7 @@ function WebhookDeliveriesDialog({
   readonly task: ScheduledTask;
   readonly onClose: () => void;
 }) {
+  const tx = useTx();
   const deliveriesQuery = useEnvironmentQuery(
     serverEnvironment.scheduledTaskWebhookDeliveries({ environmentId, input: { id: task.id } }),
   );
@@ -319,14 +322,16 @@ function WebhookDeliveriesDialog({
     >
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Deliveries · {task.title}</DialogTitle>
-          <DialogDescription>Recent requests to this routine's webhook URL.</DialogDescription>
+          <DialogTitle>{renderRich(tx("Deliveries · {title}"), { title: task.title })}</DialogTitle>
+          <DialogDescription>
+            {tx("Recent requests to this routine's webhook URL.")}
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           {error ? <p className="text-sm text-destructive-foreground">{error}</p> : null}
           {selectedId !== null && selected === null && selectedQuery.error === null ? (
             <p className="text-sm text-muted-foreground" role="status">
-              Loading delivery…
+              {tx("Loading delivery…")}
             </p>
           ) : selected ? (
             <div className="space-y-4">
@@ -338,38 +343,40 @@ function WebhookDeliveriesDialog({
                   {selected.method} · {relativeLabel(selected.receivedAt)}
                 </span>
                 {selected.signatureVerified ? (
-                  <span className="text-muted-foreground">Signature verified</span>
+                  <span className="text-muted-foreground">{tx("Signature verified")}</span>
                 ) : null}
               </div>
               {selected.error ? (
                 <p className="text-sm text-destructive-foreground">{selected.error}</p>
               ) : null}
-              <DeliveryBlock title="Prompt sent to the agent">
-                {selected.renderedPrompt ?? "No run was started for this request."}
+              <DeliveryBlock title={tx("Prompt sent to the agent")}>
+                {selected.renderedPrompt ?? tx("No run was started for this request.")}
               </DeliveryBlock>
               {selected.missingFields.length > 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  Empty placeholders: {selected.missingFields.join(", ")}
+                  {renderRich(tx("Empty placeholders: {value}"), {
+                    value: selected.missingFields.join(", "),
+                  })}
                 </p>
               ) : null}
-              <DeliveryBlock title="Headers">
+              <DeliveryBlock title={tx("Headers")}>
                 {Object.entries(selected.headers)
                   .map(([name, value]) => `${name}: ${value}`)
                   .join("\n")}
               </DeliveryBlock>
               {selected.query ? (
-                <DeliveryBlock title="Query">{selected.query}</DeliveryBlock>
+                <DeliveryBlock title={tx("Query")}>{selected.query}</DeliveryBlock>
               ) : null}
-              <DeliveryBlock title={selected.bodyTruncated ? "Body (truncated)" : "Body"}>
+              <DeliveryBlock title={selected.bodyTruncated ? tx("Body (truncated)") : tx("Body")}>
                 {selected.body || "(empty)"}
               </DeliveryBlock>
             </div>
           ) : selectedId !== null ? null : deliveries === null ? (
             <p className="text-sm text-muted-foreground" role="status">
-              Loading deliveries…
+              {tx("Loading deliveries…")}
             </p>
           ) : deliveries.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No requests yet.</p>
+            <p className="text-sm text-muted-foreground">{tx("No requests yet.")}</p>
           ) : (
             <ul className="divide-y divide-border">
               {deliveries.map((delivery) => (
@@ -388,8 +395,12 @@ function WebhookDeliveriesDialog({
                     </span>
                     {delivery.missingFields.length > 0 ? (
                       <span className="text-muted-foreground">
-                        {delivery.missingFields.length} empty placeholder
-                        {delivery.missingFields.length === 1 ? "" : "s"}
+                        {tx(
+                          delivery.missingFields.length === 1
+                            ? "{length} empty placeholder"
+                            : "{length} empty placeholders",
+                          { length: delivery.missingFields.length },
+                        )}
                       </span>
                     ) : null}
                   </button>
@@ -401,7 +412,7 @@ function WebhookDeliveriesDialog({
         <DialogFooter>
           {selectedId !== null ? (
             <Button variant="outline" size="sm" onClick={() => setSelectedId(null)}>
-              Back
+              {tx("Back")}
             </Button>
           ) : (
             <Button
@@ -410,7 +421,7 @@ function WebhookDeliveriesDialog({
               disabled={deliveriesQuery.isPending}
               onClick={deliveriesQuery.refresh}
             >
-              Refresh
+              {tx("Refresh")}
             </Button>
           )}
         </DialogFooter>

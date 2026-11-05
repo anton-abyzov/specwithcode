@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { BitbucketSettings, EnvironmentId } from "@specweave-studio/contracts";
 import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
@@ -55,13 +56,14 @@ function TokenInput({
   readonly draft: string;
   readonly onDraftChange: (draft: string) => void;
 }) {
+  const tx = useTx();
   return (
     <Input
       id={id}
       type="password"
       autoComplete="off"
       size="sm"
-      placeholder={isSaved ? "Stored secret, enter a new value to replace" : "Not set"}
+      placeholder={isSaved ? tx("Stored secret, enter a new value to replace") : tx("Not set")}
       value={draft}
       onChange={(event) => onDraftChange(event.target.value)}
     />
@@ -80,6 +82,7 @@ export function BitbucketCredentialsSettings({
   readonly environmentId: EnvironmentId;
   readonly onSaved: () => void;
 }) {
+  const tx = useTx();
   const saved = useEnvironmentSettings(environmentId, (settings) => settings.bitbucket);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "save Bitbucket credentials",
@@ -140,7 +143,7 @@ export function BitbucketCredentialsSettings({
       {/* Locked while saving: a successful save clears the drafts, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
         <ToggleGroup
-          aria-label="Bitbucket sign-in method"
+          aria-label={tx("Bitbucket sign-in method")}
           variant="segmented"
           value={[method]}
           onValueChange={(next) => {
@@ -160,7 +163,7 @@ export function BitbucketCredentialsSettings({
         </p>
         {method === "access-token" ? (
           <div className="grid gap-1.5">
-            <Label htmlFor={`bitbucket-access-token-${environmentId}`}>Access token</Label>
+            <Label htmlFor={`bitbucket-access-token-${environmentId}`}>{tx("Access token")}</Label>
             <TokenInput
               id={`bitbucket-access-token-${environmentId}`}
               isSaved={methodIsSaved}
@@ -171,7 +174,9 @@ export function BitbucketCredentialsSettings({
         ) : (
           <>
             <div className="grid gap-1.5">
-              <Label htmlFor={`bitbucket-email-${environmentId}`}>Atlassian account email</Label>
+              <Label htmlFor={`bitbucket-email-${environmentId}`}>
+                {tx("Atlassian account email")}
+              </Label>
               <Input
                 id={`bitbucket-email-${environmentId}`}
                 type="email"
@@ -183,7 +188,7 @@ export function BitbucketCredentialsSettings({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor={`bitbucket-api-token-${environmentId}`}>API token</Label>
+              <Label htmlFor={`bitbucket-api-token-${environmentId}`}>{tx("API token")}</Label>
               <TokenInput
                 id={`bitbucket-api-token-${environmentId}`}
                 isSaved={methodIsSaved}
@@ -196,7 +201,9 @@ export function BitbucketCredentialsSettings({
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">
             {current === null
-              ? "Without a saved token, the server falls back to its STUDIO_BITBUCKET_* environment variables."
+              ? tx(
+                  "Without a saved token, the server falls back to its STUDIO_BITBUCKET_* environment variables.",
+                )
               : methodIsSaved
                 ? null
                 : `Saving replaces your ${METHODS[current].label.toLowerCase()}.`}
@@ -209,11 +216,11 @@ export function BitbucketCredentialsSettings({
                 disabled={saving}
                 onClick={() => void save({ accessToken: "", email: "", apiToken: "" })}
               >
-                Remove
+                {tx("Remove")}
               </Button>
             ) : null}
             <Button type="submit" size="xs" disabled={!canSave || saving}>
-              Save
+              {tx("Save")}
             </Button>
           </div>
         </div>

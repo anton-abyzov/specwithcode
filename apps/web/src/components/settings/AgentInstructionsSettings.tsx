@@ -39,11 +39,12 @@ const WORKFLOW_MODES = {
 } satisfies Record<ClaudeWorkflowMode, string>;
 
 function ResponseStyleSettings() {
+  const tx = useTx();
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["responseStyle"]);
   return (
-    <SettingsSection title="Response style">
+    <SettingsSection title={tx("Response style")}>
       <SettingsRow
         serverScoped
         settingKeys={["responseStyle"]}
@@ -52,7 +53,7 @@ function ResponseStyleSettings() {
         resetAction={
           mixed || settings.responseStyle !== DEFAULT_SERVER_SETTINGS.responseStyle ? (
             <SettingResetButton
-              label="response style"
+              label={tx("response style")}
               onClick={() => update({ responseStyle: DEFAULT_SERVER_SETTINGS.responseStyle })}
             />
           ) : null
@@ -65,7 +66,7 @@ function ResponseStyleSettings() {
                 update({ responseStyle: value as ResponseStyle });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Response style">
+            <SelectTrigger size="sm" aria-label={tx("Response style")}>
               <SelectValue>
                 {(value: ResponseStyle | null) =>
                   value === null ? "Mixed" : RESPONSE_STYLE_LABELS[value]
@@ -83,9 +84,9 @@ function ResponseStyleSettings() {
         }
       />
       <p className="px-3 pb-3 text-sm text-muted-foreground sm:px-4">
-        Changes what coordinators, workers and threads write, for every provider. The reply button
-        in a thread or project header sets it for that project. Timeline detail only changes how
-        much of their work is shown. New turns use the saved style.
+        {tx(
+          "Changes what coordinators, workers and threads write, for every provider. The reply button in a thread or project header sets it for that project. Timeline detail only changes how much of their work is shown. New turns use the saved style.",
+        )}
       </p>
     </SettingsSection>
   );
@@ -106,7 +107,7 @@ function ClaudeWorkflowSettings() {
         resetAction={
           mixed || settings.claudeWorkflowMode !== DEFAULT_SERVER_SETTINGS.claudeWorkflowMode ? (
             <SettingResetButton
-              label="Claude workflow mode"
+              label={tx("Claude workflow mode")}
               onClick={() =>
                 update({ claudeWorkflowMode: DEFAULT_SERVER_SETTINGS.claudeWorkflowMode })
               }
@@ -121,7 +122,7 @@ function ClaudeWorkflowSettings() {
                 update({ claudeWorkflowMode: value as ClaudeWorkflowMode });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Claude workflow mode">
+            <SelectTrigger size="sm" aria-label={tx("Claude workflow mode")}>
               <SelectValue>
                 {(value: ClaudeWorkflowMode | null) =>
                   value === null ? tx("Mixed") : tx(WORKFLOW_MODES[value])
@@ -139,8 +140,9 @@ function ClaudeWorkflowSettings() {
         }
       />
       <p className="px-3 pb-3 text-sm text-muted-foreground sm:px-4">
-        Applies to Claude Code providers with native workflow support. Workers already running keep
-        their launch settings.
+        {tx(
+          "Applies to Claude Code providers with native workflow support. Workers already running keep their launch settings.",
+        )}
       </p>
     </SettingsSection>
   );
@@ -151,6 +153,7 @@ function InstructionEditor({
 }: {
   readonly previews: readonly AgentInstructionPreview[];
 }) {
+  const tx = useTx();
   const countId = useId();
   const project = previews[0]?.projectId !== null;
   const mixed = instructionValuesAreMixed(previews);
@@ -179,7 +182,7 @@ function InstructionEditor({
         resetAction={
           mixed || initial !== resetValue ? (
             <SettingResetButton
-              label="agent instructions"
+              label={tx("agent instructions")}
               onClick={() => {
                 update({ agentInstructions: resetValue });
                 setDraft(resetValue);
@@ -200,10 +203,10 @@ function InstructionEditor({
             disabled={!canWrite}
             placeholder={
               mixed
-                ? "Mixed. Enter instructions to apply to all selected targets."
+                ? tx("Mixed. Enter instructions to apply to all selected targets.")
                 : project
-                  ? "Add project conventions, goals, and verification rules."
-                  : "Add your working preferences and shared rules."
+                  ? tx("Add project conventions, goals, and verification rules.")
+                  : tx("Add your working preferences and shared rules.")
             }
             onChange={(event) => {
               edited.current = true;
@@ -223,15 +226,13 @@ function InstructionEditor({
             max={AGENT_INSTRUCTIONS_MAX_LENGTH}
           />
           <p className="text-sm text-muted-foreground">
-            SpecWithCode adds its own rules (response style, safety and orchestration) after these;
-            editing or clearing this text never removes them. Native project instructions remain
-            included. These reach every coordinator and worker on Claude Code, Codex, Cursor,
-            OpenCode and ACP agents, and Claude workflow workers. New sessions and resumed turns use
-            the saved rules; running workers keep their launch context.
+            {tx(
+              "SpecWithCode adds its own rules (response style, safety and orchestration) after these; editing or clearing this text never removes them. Native project instructions remain included. These reach every coordinator and worker on Claude Code, Codex, Cursor, OpenCode and ACP agents, and Claude workflow workers. New sessions and resumed turns use the saved rules; running workers keep their launch context.",
+            )}
           </p>
           <details className="rounded-md border border-border px-3 py-2">
             <summary className="cursor-pointer text-sm font-medium">
-              Effective instructions preview
+              {tx("Effective instructions preview")}
             </summary>
             <div className="mt-3 space-y-4">
               {previews.map((preview) => (
@@ -241,8 +242,8 @@ function InstructionEditor({
                   ) : null}
                   <p className="mb-2 text-xs text-muted-foreground">
                     {preview.projectId === null
-                      ? "Global instructions"
-                      : "Global instructions + project additions"}
+                      ? tx("Global instructions")
+                      : tx("Global instructions + project additions")}
                   </p>
                   <pre
                     className="whitespace-pre-wrap break-words rounded bg-muted/40 p-3 text-xs"
@@ -262,6 +263,7 @@ function InstructionEditor({
 }
 
 export function AgentInstructionsSettings() {
+  const tx = useTx();
   const { targets, connectedEnvironments } = useSettingsScope();
   const previews = agentInstructionPreviews(targets, connectedEnvironments);
   const editorKey = JSON.stringify(
@@ -277,7 +279,7 @@ export function AgentInstructionsSettings() {
         <InstructionEditor key={editorKey} previews={previews} />
       ) : (
         <p className="px-3 text-sm text-muted-foreground">
-          Connect a selected environment to edit agent instructions.
+          {tx("Connect a selected environment to edit agent instructions.")}
         </p>
       )}
       <ResponseStyleSettings />

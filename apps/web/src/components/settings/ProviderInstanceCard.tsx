@@ -433,7 +433,9 @@ export function ProviderEnvironmentSection(props: {
                 type={variable.sensitive ? "password" : undefined}
                 autoComplete="off"
                 placeholder={
-                  variable.valueRedacted ? "Stored secret, enter a new value to replace" : "value"
+                  variable.valueRedacted
+                    ? tx("Stored secret, enter a new value to replace")
+                    : tx("value")
                 }
                 spellCheck={false}
                 aria-label={`Environment variable value ${index + 1}`}
@@ -463,7 +465,7 @@ export function ProviderEnvironmentSection(props: {
                   }
                 />
                 <TooltipPopup side="top">
-                  {variable.sensitive ? "Sensitive, stored separately" : "Plain text"}
+                  {variable.sensitive ? tx("Sensitive, stored separately") : tx("Plain text")}
                 </TooltipPopup>
               </Tooltip>
               <Button
@@ -478,7 +480,7 @@ export function ProviderEnvironmentSection(props: {
             </div>
           ))}
           <p className="text-xs text-muted-foreground">
-            Sensitive values are stored separately and never returned to the app.
+            {tx("Sensitive values are stored separately and never returned to the app.")}
           </p>
         </div>
       ) : null}
@@ -804,9 +806,11 @@ export function ProviderInstanceCard({
           <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
         ) : null}
         <span className="min-w-0 [overflow-wrap:anywhere]">
-          Authenticated as <ProviderAuthEmail email={authEmail} />
-          {authLabel ? ` · ${authLabel}` : null}
-          {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+          {renderRich(tx("Authenticated as {providerAuthEmail}{value}{value2}"), {
+            providerAuthEmail: <ProviderAuthEmail email={authEmail} />,
+            value: authLabel ? ` · ${authLabel}` : null,
+            value2: inlineStatusDetail ? ` · ${inlineStatusDetail}` : null,
+          })}
         </span>
       </>
     ) : isAuthenticated && authLogin ? (
@@ -815,9 +819,11 @@ export function ProviderInstanceCard({
           <span className="flex h-[1.45em] shrink-0 items-center">{statusDotNode}</span>
         ) : null}
         <span className="min-w-0 [overflow-wrap:anywhere]">
-          Signed in as {authLogin}
-          {authLabel ? ` · ${authLabel}` : null}
-          {inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+          {renderRich(tx("Signed in as {authLogin}{value}{value2}"), {
+            authLogin: authLogin,
+            value: authLabel ? ` · ${authLabel}` : null,
+            value2: inlineStatusDetail ? ` · ${inlineStatusDetail}` : null,
+          })}
         </span>
       </>
     ) : (
@@ -887,17 +893,18 @@ export function ProviderInstanceCard({
             >
               {isUpdating ? <Spinner /> : <DownloadIcon />}
               {isUpdating
-                ? "Updating"
+                ? tx("Updating")
                 : versionAdvisory.targetVersion
                   ? `Install ${getProviderVersionLabel(versionAdvisory.targetVersion)}`
-                  : "Update now"}
+                  : tx("Update now")}
             </Button>
           ) : null}
           {onRunVersionAction && updateCommand ? (
             <div className="flex items-center gap-2 text-3xs font-medium uppercase tracking-wider text-muted-foreground">
-              <span aria-hidden className="h-px flex-1 bg-border" />
-              or, update manually using
-              <span aria-hidden className="h-px flex-1 bg-border" />
+              {renderRich(tx("{span}or, update manually using{span2}"), {
+                span: <span aria-hidden className="h-px flex-1 bg-border" />,
+                span2: <span aria-hidden className="h-px flex-1 bg-border" />,
+              })}
             </div>
           ) : null}
           {updateCommand ? (
@@ -914,13 +921,13 @@ export function ProviderInstanceCard({
                       variant="ghost-muted"
                       className="shrink-0"
                       onClick={() => copyToClipboard(updateCommand, { providerName: displayName })}
-                      aria-label="Copy update command"
+                      aria-label={tx("Copy update command")}
                     >
                       <CopyIcon className="size-3" />
                     </Button>
                   }
                 />
-                <TooltipPopup side="top">Copy command</TooltipPopup>
+                <TooltipPopup side="top">{tx("Copy command")}</TooltipPopup>
               </Tooltip>
             </div>
           ) : null}
@@ -935,23 +942,26 @@ export function ProviderInstanceCard({
         data-testid="provider-auto-enabled-notice"
         className="pointer-events-auto relative z-10 mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground"
       >
-        Turned on automatically because its CLI is signed in.
-        <button
-          type="button"
-          className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
-          disabled={readOnly}
-          aria-label={`Undo: turn off ${displayName}`}
-          onClick={(event) => {
-            // The notice unmounts with this button; keep focus on the card's switch.
-            const card = event.currentTarget.closest('[data-slot="settings-row"], section');
-            updateEnabled(false);
-            requestAnimationFrame(() =>
-              card?.querySelector<HTMLElement>('[role="switch"]')?.focus(),
-            );
-          }}
-        >
-          Undo
-        </button>
+        {renderRich(tx("Turned on automatically because its CLI is signed in.{button}"), {
+          button: (
+            <button
+              type="button"
+              className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
+              disabled={readOnly}
+              aria-label={`Undo: turn off ${displayName}`}
+              onClick={(event) => {
+                // The notice unmounts with this button; keep focus on the card's switch.
+                const card = event.currentTarget.closest('[data-slot="settings-row"], section');
+                updateEnabled(false);
+                requestAnimationFrame(() =>
+                  card?.querySelector<HTMLElement>('[role="switch"]')?.focus(),
+                );
+              }}
+            >
+              {tx("Undo")}
+            </button>
+          ),
+        })}
       </span>
     ) : null;
 
@@ -1062,8 +1072,12 @@ export function ProviderInstanceCard({
       title="Driver"
       description={
         <span>
-          This instance uses <code className="text-foreground">{String(instance.driver)}</code>,
-          which is not available in this build. Its configuration is preserved.
+          {renderRich(
+            tx(
+              "This instance uses {code}, which is not available in this build. Its configuration is preserved.",
+            ),
+            { code: <code className="text-foreground">{String(instance.driver)}</code> },
+          )}
         </span>
       }
     />
@@ -1110,7 +1124,7 @@ export function ProviderInstanceCard({
                     disabled={readOnly}
                   >
                     <ExternalLinkIcon />
-                    Continue authentication
+                    {tx("Continue authentication")}
                   </Button>
                 </div>
               ) : null}
@@ -1138,7 +1152,7 @@ export function ProviderInstanceCard({
                 className="min-w-0 flex-1 @min-[32rem]/settings-row:w-56"
                 value={instance.displayName ?? ""}
                 onCommit={updateDisplayName}
-                placeholder={driverOption?.label ?? "Instance label"}
+                placeholder={driverOption?.label ?? tx("Instance label")}
                 spellCheck={false}
               />
             </div>
@@ -1198,7 +1212,7 @@ export function ProviderInstanceCard({
         <SettingsDisclosure
           key={`${instanceId}-runtime`}
           id={`provider-instance-${instanceId}-runtime`}
-          title="Runtime"
+          title={tx("Runtime")}
           reach={machineReach}
         >
           <div
@@ -1215,7 +1229,7 @@ export function ProviderInstanceCard({
       <SettingsDisclosure
         key={`${instanceId}-environment`}
         id={`provider-instance-${instanceId}-environment`}
-        title="Environment variables"
+        title={tx("Environment variables")}
         reach={machineReach}
       >
         {teamLock !== null ? (
@@ -1245,7 +1259,7 @@ export function ProviderInstanceCard({
       ) : null}
 
       {driverOption !== undefined ? (
-        <SettingsSection title="Models">
+        <SettingsSection title={tx("Models")}>
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
               {renderRich(

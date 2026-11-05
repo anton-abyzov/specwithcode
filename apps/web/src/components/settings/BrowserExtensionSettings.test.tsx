@@ -152,13 +152,20 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const text = () => JSON.stringify(renderer.toJSON());
-const button = (label: string) =>
-  renderer.root.findAll(
-    (node) =>
-      typeof node.type !== "string" &&
-      node.props.onClick &&
-      [node.props.children].flat(2).includes(label),
-  )[0]!;
+const button = (label: string) => {
+  const clickable = renderer.root.findAll(
+    (node) => typeof node.type !== "string" && node.props.onClick,
+  );
+  return (clickable.find((node) => [node.props.children].flat(2).includes(label)) ??
+    clickable.find((node) => nodeText(node).startsWith(label)))!;
+};
+/** The text a test-renderer node shows, including text inside translated sentences. */
+const nodeText = (node: { children: ReadonlyArray<unknown> }): string =>
+  node.children
+    .map((child) =>
+      typeof child === "string" ? child : nodeText(child as { children: ReadonlyArray<unknown> }),
+    )
+    .join("");
 /** The store link the "Add to Chrome" button opens. */
 const storeLink = () =>
   renderer.root.findAll(

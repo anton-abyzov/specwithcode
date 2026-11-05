@@ -111,11 +111,15 @@ export type TranslatePhrase = (english: string, values?: MessageValues) => strin
 export const englishPhrase: TranslatePhrase = (english, values) =>
   interpolate(english, values, DEFAULT_LOCALE);
 
+const phraseTranslators = new Map<Locale, TranslatePhrase>();
+
+/** One stable `TranslatePhrase` per locale, so callers can list it as a dependency. */
 export function useTx(): TranslatePhrase {
   const locale = useLocale();
-  return useCallback(
-    (english: string, values?: MessageValues) =>
-      interpolate(translatePhrase(locale, english), values, locale),
-    [locale],
-  );
+  let translator = phraseTranslators.get(locale);
+  if (translator === undefined) {
+    translator = (english, values) => interpolate(translatePhrase(locale, english), values, locale);
+    phraseTranslators.set(locale, translator);
+  }
+  return translator;
 }

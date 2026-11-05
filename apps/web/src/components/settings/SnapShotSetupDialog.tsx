@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
 import { usePermissionStatus } from "../permissions/usePermissionStatus";
 import {
@@ -97,6 +98,7 @@ export function SnapShotSetupDialog({
   onClose: (completed: boolean) => Promise<void>;
   onLeaveStep: () => void;
 }) {
+  const tx = useTx();
   const [step, setStep] = useState(() => captureSetupInitialStep(state, initialStep));
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -234,7 +236,7 @@ export function SnapShotSetupDialog({
       }}
     >
       <WizardPopup showCloseButton={!busy}>
-        <WizardHeader title={desktop ? `Set up snapshots for ${desktop}` : "Set up snapshots"}>
+        <WizardHeader title={desktop ? `Set up snapshots for ${desktop}` : tx("Set up snapshots")}>
           <WizardSteps
             steps={SETUP_STEPS.map((item) => item.label)}
             currentStep={stepIndex}
@@ -299,7 +301,7 @@ export function SnapShotSetupDialog({
                     disabled={busy}
                     onClick={() => void onAction(installHelper)}
                   >
-                    Reinstall helper
+                    {tx("Reinstall helper")}
                   </Button>
                 ) : null}
               </>
@@ -330,24 +332,24 @@ export function SnapShotSetupDialog({
                     disabled={busy}
                     onClick={() => void onAction("retry-shortcut")}
                   >
-                    {state.mode === "portal" ? "Shortcut permissions" : "Try again"}
+                    {state.mode === "portal" ? tx("Shortcut permissions") : tx("Try again")}
                   </Button>
                 ) : null}
               </div>
             )}
             {step === "shortcut" && !accessReady ? (
               <p role="alert" className="text-destructive-foreground">
-                Capture needs attention. Go back to check access.
+                {tx("Capture needs attention. Go back to check access.")}
               </p>
             ) : null}
             {error ? (
               <p role="alert" className="text-destructive-foreground">
-                Couldn't finish this step. Try again or check Advanced for help.
+                {tx("Couldn't finish this step. Try again or check Advanced for help.")}
               </p>
             ) : null}
             {details.length > 0 || (step === "access" && (backend === "gnome" || helperBackend)) ? (
               <details className="text-xs text-muted-foreground">
-                <summary className="cursor-pointer">Advanced</summary>
+                <summary className="cursor-pointer">{tx("Advanced")}</summary>
                 <div className="mt-3 space-y-3">
                   {details.map((detail) => (
                     <p key={detail} className="break-words">
@@ -355,7 +357,7 @@ export function SnapShotSetupDialog({
                     </p>
                   ))}
                   {step === "access" && (backend === "gnome" || helperBackend) ? (
-                    <p>Included with SpecWithCode. No download needed.</p>
+                    <p>{tx("Included with SpecWithCode. No download needed.")}</p>
                   ) : null}
                   {step === "access" && backend === "gnome" && extension?.status === "enabled" ? (
                     <Button
@@ -364,7 +366,7 @@ export function SnapShotSetupDialog({
                       disabled={busy}
                       onClick={() => void onAction("disable-extension")}
                     >
-                      Disable extension
+                      {tx("Disable extension")}
                     </Button>
                   ) : null}
                   {step === "access" && helperBackend && helper?.status !== "not-installed" ? (
@@ -374,7 +376,7 @@ export function SnapShotSetupDialog({
                       disabled={busy}
                       onClick={() => void onAction(removeHelper)}
                     >
-                      Remove capture helper
+                      {tx("Remove capture helper")}
                     </Button>
                   ) : null}
                 </div>
@@ -385,12 +387,12 @@ export function SnapShotSetupDialog({
         <WizardFooter>
           {step !== "access" ? (
             <Button variant="outline" disabled={busy} onClick={() => changeStep("access")}>
-              Back
+              {tx("Back")}
             </Button>
           ) : null}
           {wasEnabled ? null : (
             <Button variant="outline" disabled={busy} onClick={() => void onClose(false)}>
-              Finish later
+              {tx("Finish later")}
             </Button>
           )}
           {step === "access" ? (
@@ -403,14 +405,14 @@ export function SnapShotSetupDialog({
                 }
               >
                 {checking
-                  ? "Checking…"
+                  ? tx("Checking…")
                   : busy
-                    ? "Installing…"
+                    ? tx("Installing…")
                     : helper?.status === "error"
-                      ? "Check again"
+                      ? tx("Check again")
                       : helper?.status === "update-required"
-                        ? "Update helper"
-                        : "Install helper"}
+                        ? tx("Update helper")
+                        : tx("Install helper")}
               </Button>
             ) : backend === "gnome" && !accessReady && extension?.status !== "enabled" ? (
               <Button
@@ -425,20 +427,20 @@ export function SnapShotSetupDialog({
                 }
               >
                 {checking
-                  ? "Checking…"
+                  ? tx("Checking…")
                   : busy
                     ? install
-                      ? "Installing…"
+                      ? tx("Installing…")
                       : enable
-                        ? "Enabling…"
-                        : "Working…"
+                        ? tx("Enabling…")
+                        : tx("Working…")
                     : install
                       ? extension?.status === "update-required"
-                        ? "Update extension"
-                        : "Install extension"
+                        ? tx("Update extension")
+                        : tx("Install extension")
                       : enable
-                        ? "Enable extension"
-                        : "Check again"}
+                        ? tx("Enable extension")
+                        : tx("Check again")}
               </Button>
             ) : (
               <PermissionContinueButton
@@ -449,14 +451,14 @@ export function SnapShotSetupDialog({
                 }}
               >
                 {busy
-                  ? "Working…"
+                  ? tx("Working…")
                   : macPermissions
-                    ? "Test capture and continue"
+                    ? tx("Test capture and continue")
                     : backend === "direct"
-                      ? "Allow capture"
+                      ? tx("Allow capture")
                       : !accessReady && !macPermissions
-                        ? "Try again"
-                        : "Continue"}
+                        ? tx("Try again")
+                        : tx("Continue")}
               </PermissionContinueButton>
             )
           ) : !configShortcut ? (
@@ -468,7 +470,7 @@ export function SnapShotSetupDialog({
                 if (!shortcutChanged || (await onSaveShortcut())) await onClose(true);
               }}
             >
-              {busy ? "Saving…" : shortcutChanged ? "Save and finish" : "Done"}
+              {busy ? tx("Saving…") : shortcutChanged ? tx("Save and finish") : tx("Done")}
             </Button>
           ) : null}
         </WizardFooter>

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { ManagedUpdatesSection } from "./ManagedUpdatesSection";
 import { usePrimaryEnvironment } from "../../state/environments";
 import type {
@@ -37,6 +38,7 @@ const errorText = (error: unknown, fallback: string) =>
  * updates for this app and for the Studio service on this computer.
  */
 export function UpdatePreferencesSection() {
+  const tx = useTx();
   const localEnvironment = usePrimaryEnvironment();
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
   const supported =
@@ -157,7 +159,7 @@ export function UpdatePreferencesSection() {
             checked={preferences.checkAutomatically}
             disabled={locked}
             onCheckedChange={(checked) => change({ checkAutomatically: checked })}
-            aria-label="Check for updates automatically"
+            aria-label={tx("Check for updates automatically")}
           />
         }
       />
@@ -169,7 +171,7 @@ export function UpdatePreferencesSection() {
             checked={preferences.downloadAutomatically}
             disabled={locked || !preferences.checkAutomatically}
             onCheckedChange={(checked) => change({ downloadAutomatically: checked })}
-            aria-label="Download updates in the background"
+            aria-label={tx("Download updates in the background")}
           />
         }
       />
@@ -181,7 +183,7 @@ export function UpdatePreferencesSection() {
             checked={preferences.installAutomatically}
             disabled={locked || !preferences.checkAutomatically}
             onCheckedChange={(checked) => change({ installAutomatically: checked })}
-            aria-label="Install updates automatically"
+            aria-label={tx("Install updates automatically")}
           />
         }
       />
@@ -195,7 +197,7 @@ export function UpdatePreferencesSection() {
               locked || !preferences.checkAutomatically || !preferences.installAutomatically
             }
             onCheckedChange={(checked) => change({ restartWhenIdle: checked })}
-            aria-label="Restart automatically when idle"
+            aria-label={tx("Restart automatically when idle")}
           />
         }
       />
@@ -210,7 +212,11 @@ export function UpdatePreferencesSection() {
               change({ forceInstallAfterMinutes: Number(value) });
             }}
           >
-            <SelectTrigger aria-label="Restart when idle waits up to" className="w-32" size="sm">
+            <SelectTrigger
+              aria-label={tx("Restart when idle waits up to")}
+              className="w-32"
+              size="sm"
+            >
               <SelectValue>
                 {forceInstallAfterLabel(forceInstallAfterMinutes(preferences))}
               </SelectValue>
@@ -239,7 +245,7 @@ export function UpdatePreferencesSection() {
               change({ pauseWorkAfterMinutes: Number(value) });
             }}
           >
-            <SelectTrigger aria-label="Pause running work after" className="w-32" size="sm">
+            <SelectTrigger aria-label={tx("Pause running work after")} className="w-32" size="sm">
               <SelectValue>
                 {forceInstallAfterLabel(pauseWorkAfterMinutes(preferences))}
               </SelectValue>
@@ -266,7 +272,7 @@ export function UpdatePreferencesSection() {
                 disabled={servicePending || (serviceAction === "install" && serviceUpdateBusy)}
                 onClick={runServiceAction}
               >
-                {serviceAction === "install" ? "Install now" : "Check now"}
+                {serviceAction === "install" ? tx("Install now") : tx("Check now")}
               </Button>
             )
           }

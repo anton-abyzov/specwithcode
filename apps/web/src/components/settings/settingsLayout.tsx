@@ -155,12 +155,17 @@ export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
 
 /** Info affordance explaining how a setting interacts with the shared background policy. */
 export function PolicyTooltip({ children }: { readonly children: string }) {
+  const tx = useTx();
   return (
     <Tooltip>
       <TooltipTrigger
         delay={200}
         render={
-          <Button size="icon-micro" variant="ghost-muted" aria-label="Background policy details">
+          <Button
+            size="icon-micro"
+            variant="ghost-muted"
+            aria-label={tx("Background policy details")}
+          >
             <InfoIcon className="size-3.5" />
           </Button>
         }
@@ -463,8 +468,8 @@ export function SettingsRow({
   const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
     source === "project" || source === "mixed" ? (
       <SettingResetButton
-        label={typeof shownTitle === "string" ? shownTitle : "override"}
-        tooltip="Reset to inherited value"
+        label={typeof shownTitle === "string" ? shownTitle : tx("override")}
+        tooltip={tx("Reset to inherited value")}
         onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
       />
     ) : null

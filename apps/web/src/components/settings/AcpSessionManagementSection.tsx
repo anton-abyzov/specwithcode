@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
@@ -51,6 +52,7 @@ export function AcpSessionManagementSection(props: {
   readonly projects: ReadonlyArray<AcpSessionProject>;
   readonly readOnly: boolean;
 }) {
+  const tx = useTx();
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   const canRead = useEnvironmentScope(props.environmentId, AuthOrchestrationReadScope);
   const [projectId, setProjectId] = useState<ProjectId | null>(props.projects[0]?.id ?? null);
@@ -322,7 +324,7 @@ export function AcpSessionManagementSection(props: {
                 disabled={props.readOnly || loggingOut}
                 onClick={() => void logoutProvider()}
               >
-                {loggingOut ? "Logging out" : "Log out"}
+                {loggingOut ? tx("Logging out") : tx("Log out")}
               </Button>
             ) : null}
             {canList && props.projects.length > 0 ? (
@@ -339,7 +341,11 @@ export function AcpSessionManagementSection(props: {
                     setProviderDrafts({});
                   }}
                 >
-                  <SelectTrigger aria-label="Project for ACP sessions" className="w-40" size="sm">
+                  <SelectTrigger
+                    aria-label={tx("Project for ACP sessions")}
+                    className="w-40"
+                    size="sm"
+                  >
                     <SelectValue>
                       {props.projects.find((project) => project.id === projectId)?.title}
                     </SelectValue>
@@ -359,7 +365,11 @@ export function AcpSessionManagementSection(props: {
                   disabled={!canRead || loading || projectId === null}
                   onClick={() => void loadSessions()}
                 >
-                  {loading ? "Loading" : sessions.length === 0 ? "List sessions" : "Refresh"}
+                  {loading
+                    ? tx("Loading")
+                    : sessions.length === 0
+                      ? tx("List sessions")
+                      : tx("Refresh")}
                 </Button>
               </>
             ) : null}
@@ -397,10 +407,10 @@ export function AcpSessionManagementSection(props: {
                         onClick={() => void importNativeSession(session)}
                       >
                         {session.importedThreadId !== null
-                          ? "Imported"
+                          ? tx("Imported")
                           : importingSessionId === session.sessionId
-                            ? "Importing"
-                            : "Import"}
+                            ? tx("Importing")
+                            : tx("Import")}
                       </Button>
                       {canDelete ? (
                         <Button
@@ -414,7 +424,7 @@ export function AcpSessionManagementSection(props: {
                           }
                           onClick={() => void deleteNativeSession(session)}
                         >
-                          {deletingSessionId === session.sessionId ? "Deleting" : "Delete"}
+                          {deletingSessionId === session.sessionId ? tx("Deleting") : tx("Delete")}
                         </Button>
                       ) : null}
                     </div>
@@ -432,7 +442,7 @@ export function AcpSessionManagementSection(props: {
                 disabled={!canRead || loading}
                 onClick={() => void loadSessions(nextCursor)}
               >
-                {loading ? "Loading" : "Load more"}
+                {loading ? tx("Loading") : tx("Load more")}
               </Button>
             ) : null}
           </>
@@ -443,9 +453,9 @@ export function AcpSessionManagementSection(props: {
         <div className="grid gap-3 border-t border-border/60 px-3 py-3 sm:px-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-xs font-medium text-foreground">Agent providers</p>
+              <p className="text-xs font-medium text-foreground">{tx("Agent providers")}</p>
               <p className="text-xs text-muted-foreground">
-                Configure non-secret routing. Headers are write-only.
+                {tx("Configure non-secret routing. Headers are write-only.")}
               </p>
             </div>
             <Button
@@ -455,7 +465,11 @@ export function AcpSessionManagementSection(props: {
               disabled={!canRead || loadingProviders || projectId === null}
               onClick={() => void loadProviders()}
             >
-              {loadingProviders ? "Loading" : providers.length === 0 ? "List providers" : "Refresh"}
+              {loadingProviders
+                ? tx("Loading")
+                : providers.length === 0
+                  ? tx("List providers")
+                  : tx("Refresh")}
             </Button>
           </div>
 
@@ -470,7 +484,11 @@ export function AcpSessionManagementSection(props: {
                 setProviderDrafts({});
               }}
             >
-              <SelectTrigger aria-label="Project for ACP providers" className="min-w-48" size="xs">
+              <SelectTrigger
+                aria-label={tx("Project for ACP providers")}
+                className="min-w-48"
+                size="xs"
+              >
                 <SelectValue>
                   {props.projects.find((project) => project.id === projectId)?.title}
                 </SelectValue>
@@ -506,8 +524,8 @@ export function AcpSessionManagementSection(props: {
                           {provider.providerId}
                         </p>
                         <p className="text-3xs text-muted-foreground">
-                          {provider.current === null ? "Disabled" : "Configured"}
-                          {provider.required ? " · Required" : ""}
+                          {provider.current === null ? tx("Disabled") : tx("Configured")}
+                          {provider.required ? tx(" · Required") : ""}
                         </p>
                       </div>
                       <div className="flex items-center gap-1">
@@ -523,7 +541,7 @@ export function AcpSessionManagementSection(props: {
                           }
                           onClick={() => void saveProvider(provider)}
                         >
-                          {savingProviderId === provider.providerId ? "Saving" : "Save"}
+                          {savingProviderId === provider.providerId ? tx("Saving") : tx("Save")}
                         </Button>
                         {!provider.required && provider.current !== null ? (
                           <Button
@@ -533,7 +551,7 @@ export function AcpSessionManagementSection(props: {
                             disabled={props.readOnly || savingProviderId !== null}
                             onClick={() => void disableConfiguredProvider(provider)}
                           >
-                            Disable
+                            {tx("Disable")}
                           </Button>
                         ) : null}
                       </div>

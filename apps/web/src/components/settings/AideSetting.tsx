@@ -5,6 +5,7 @@
  *
  * @module AideSetting
  */
+import { useTx } from "../../i18n";
 import {
   usePrimarySettings,
   usePrimarySettingsAvailable,
@@ -16,6 +17,7 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 export function AideSetting() {
+  const tx = useTx();
   const aideEnabled = usePrimarySettings((settings) => settings.aideEnabled);
   const available = usePrimarySettingsAvailable();
   const updateSettings = useUpdatePrimarySettings();
@@ -29,7 +31,7 @@ export function AideSetting() {
           checked={aideEnabled}
           disabled={!available}
           onCheckedChange={(checked) => void updateSettings({ aideEnabled: Boolean(checked) })}
-          aria-label="Personal assistant"
+          aria-label={tx("Personal assistant")}
         />
       }
     />

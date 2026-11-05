@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -38,6 +39,7 @@ export function AcpRegistryRepair({
   readonly instance: ProviderInstanceConfig;
   readonly readOnly: boolean;
 }) {
+  const tx = useTx();
   const agentId = repairableAcpRegistryAgentId(instance);
   const canManage = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const prepare = useAtomCommand(serverEnvironment.prepareAcpRegistryAgent, {
@@ -136,7 +138,7 @@ export function AcpRegistryRepair({
             size="sm"
             variant="outline"
           >
-            {pending ? "Installing…" : "Install / update agent"}
+            {pending ? tx("Installing…") : tx("Install / update agent")}
           </Button>
         }
       />

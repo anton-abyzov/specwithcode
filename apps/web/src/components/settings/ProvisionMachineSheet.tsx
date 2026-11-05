@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useState } from "react";
 import { CheckIcon, CircleAlertIcon, LoaderCircleIcon, PackageIcon } from "lucide-react";
@@ -104,24 +106,31 @@ function Readback({
   readonly readback: ProvisionReadback;
   readonly environmentLabel: string;
 }) {
+  const tx = useTx();
   return (
     <div className="space-y-3" data-slot="provision-readback">
       <p role="status">{readback.summary}</p>
       {readback.rootStep && !readback.rootStep.ran ? (
         <div className="rounded-lg border border-warning/40 p-2.5">
-          <p className="font-medium">One step needs the administrator password</p>
+          <p className="font-medium">{tx("One step needs the administrator password")}</p>
           <p className="text-xs text-muted-foreground">
-            SpecWithCode never asks for it. In a terminal on {environmentLabel}, read the script,
-            run this line, then press Retry.
+            {renderRich(
+              tx(
+                "SpecWithCode never asks for it. In a terminal on {environmentLabel}, read the script, run this line, then press Retry.",
+              ),
+              { environmentLabel: environmentLabel },
+            )}
           </p>
           <Command>{readback.rootStep.command}</Command>
         </div>
       ) : null}
       {readback.userSteps.length > 0 ? (
         <div>
-          <p className="font-medium">Your steps</p>
+          <p className="font-medium">{tx("Your steps")}</p>
           <p className="text-xs text-muted-foreground">
-            Provisioning never signs in, copies sign-ins, allows workers or turns on billing.
+            {tx(
+              "Provisioning never signs in, copies sign-ins, allows workers or turns on billing.",
+            )}
           </p>
           <ul className="mt-1 space-y-2">
             {readback.userSteps.map((step) => (
@@ -139,7 +148,9 @@ function Readback({
         </div>
       ) : null}
       {readback.logPath ? (
-        <p className="text-xs text-muted-foreground wrap-anywhere">Log: {readback.logPath}</p>
+        <p className="text-xs text-muted-foreground wrap-anywhere">
+          {renderRich(tx("Log: {logPath}"), { logPath: readback.logPath })}
+        </p>
       ) : null}
     </div>
   );
@@ -162,6 +173,7 @@ export function ProvisionMachineSheet({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const tx = useTx();
   const preview = useAtomCommand(machineProvision.preview, { reportFailure: false });
   const run = useAtomCommand(machineProvision.run, { reportFailure: false });
   const state = useAtomValue(provisionRunAtom(environmentId));
@@ -205,11 +217,16 @@ export function ProvisionMachineSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetPopup className="max-w-lg" layer="dialog" data-testid="provision-machine">
         <SheetHeader>
-          <SheetTitle className="me-8">Provision {environmentLabel}</SheetTitle>
+          <SheetTitle className="me-8">
+            {renderRich(tx("Provision {environmentLabel}"), { environmentLabel: environmentLabel })}
+          </SheetTitle>
           <SheetDescription>
-            Installs the tools workers need, at the versions this release pins, on{" "}
-            {environmentLabel} itself. It never restarts the SpecWithCode server there, signs in,
-            allows workers or turns on billing.
+            {renderRich(
+              tx(
+                "Installs the tools workers need, at the versions this release pins, on {environmentLabel} itself. It never restarts the SpecWithCode server there, signs in, allows workers or turns on billing.",
+              ),
+              { environmentLabel: environmentLabel },
+            )}
           </SheetDescription>
         </SheetHeader>
         <div className="space-y-4 overflow-y-auto px-6 pb-6 text-sm">
@@ -230,7 +247,11 @@ export function ProvisionMachineSheet({
             </p>
           ) : null}
           {checking && items.length === 0 ? (
-            <p className="text-muted-foreground">Checking {environmentLabel}…</p>
+            <p className="text-muted-foreground">
+              {renderRich(tx("Checking {environmentLabel}…"), {
+                environmentLabel: environmentLabel,
+              })}
+            </p>
           ) : null}
           {items.length > 0 ? (
             <ul className="space-y-2.5">
@@ -250,28 +271,28 @@ export function ProvisionMachineSheet({
                 onClick={() => start(false)}
               >
                 {plan?.target.supported && toChange === 0
-                  ? "Check and finish"
+                  ? tx("Check and finish")
                   : `Provision ${environmentLabel}`}
               </Button>
             ) : null}
             {running ? (
               <Button size="sm" disabled>
-                Provisioning…
+                {tx("Provisioning…")}
               </Button>
             ) : null}
             {canResumeProvision(state) ? (
               <Button size="sm" onClick={() => start(true)}>
-                Retry
+                {tx("Retry")}
               </Button>
             ) : null}
             {ran && !running ? (
               <Button size="sm" variant="outline" onClick={() => start(false)}>
-                Run again
+                {tx("Run again")}
               </Button>
             ) : null}
             {!ran ? (
               <Button size="sm" variant="outline" disabled={checking} onClick={() => void check()}>
-                {checking ? "Checking…" : "Check again"}
+                {checking ? tx("Checking…") : tx("Check again")}
               </Button>
             ) : null}
           </div>
@@ -289,6 +310,7 @@ export function ProvisionMachineButton({
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
 }) {
+  const tx = useTx();
   const supported =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities
       .machineProvision === true;
@@ -301,11 +323,11 @@ export function ProvisionMachineButton({
         size="xs"
         variant="outline"
         disabled={!canMaintain}
-        title={canMaintain ? undefined : "Needs permission to maintain that machine"}
+        title={canMaintain ? undefined : tx("Needs permission to maintain that machine")}
         onClick={() => setOpen(true)}
       >
         <PackageIcon aria-hidden />
-        Provision
+        {tx("Provision")}
       </Button>
       {open ? (
         <ProvisionMachineSheet

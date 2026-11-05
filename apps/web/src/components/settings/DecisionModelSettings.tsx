@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type {
   DecisionModelProvider,
   DecisionModelSettings as DecisionModelValue,
@@ -61,6 +63,7 @@ export function DecisionModelSettings(props: {
   readonly environmentId: EnvironmentId;
   readonly readOnly?: boolean;
 }) {
+  const tx = useTx();
   const saved = useEnvironmentSettings(props.environmentId, (settings) => settings.decisionModel);
   const updateSettings = useUpdateEnvironmentSettings(props.environmentId);
   const [key, setKey] = useState("");
@@ -80,11 +83,9 @@ export function DecisionModelSettings(props: {
         status={teamLock !== null ? <TeamRulesLabel>{teamLock}</TeamRulesLabel> : undefined}
         description={
           <>
-            Jev, from TypeSafe, picks one option from a fixed list in well under a second and costs
-            almost nothing. When the coordinator does not say whether a task is complex or routine,
-            Jev picks the lane, and it settles the kind of work when the keyword rules are unsure.
-            The coordinator can also ask it any multiple-choice question. If Jev is slow or
-            unreachable, routing keeps the rules&apos; answer.
+            {tx(
+              "Jev, from TypeSafe, picks one option from a fixed list in well under a second and costs almost nothing. When the coordinator does not say whether a task is complex or routine, Jev picks the lane, and it settles the kind of work when the keyword rules are unsure. The coordinator can also ask it any multiple-choice question. If Jev is slow or unreachable, routing keeps the rules' answer.",
+            )}
           </>
         }
         control={
@@ -95,8 +96,8 @@ export function DecisionModelSettings(props: {
               if (value !== null) apply({ provider: value as DecisionModelProvider });
             }}
           >
-            <SelectTrigger aria-label="Decision model provider" className="w-36" size="sm">
-              <SelectValue>{provider?.label ?? "Off"}</SelectValue>
+            <SelectTrigger aria-label={tx("Decision model provider")} className="w-36" size="sm">
+              <SelectValue>{provider?.label ?? tx("Off")}</SelectValue>
             </SelectTrigger>
             <SelectPopup>
               {DECISION_PROVIDER_OPTIONS.map((option) => (
@@ -124,11 +125,24 @@ export function DecisionModelSettings(props: {
               "A key is saved on this machine. Enter a new one to replace it."
             ) : (
               <>
-                Jev answers once a key is saved. Create one at{" "}
-                <a href={provider.keysUrl} target="_blank" rel="noreferrer" className="underline">
-                  {provider.label}
-                </a>
-                . It stays in this machine&apos;s secret store and is only sent to {provider.label}.
+                {renderRich(
+                  tx(
+                    "Jev answers once a key is saved. Create one at {a}. It stays in this machine's secret store and is only sent to {label}.",
+                  ),
+                  {
+                    a: (
+                      <a
+                        href={provider.keysUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline"
+                      >
+                        {provider.label}
+                      </a>
+                    ),
+                    label: provider.label,
+                  },
+                )}
               </>
             )
           }
@@ -138,7 +152,7 @@ export function DecisionModelSettings(props: {
                 aria-label={`${provider.label} API key`}
                 type="password"
                 autoComplete="off"
-                placeholder={hasKey ? "Saved" : "API key"}
+                placeholder={hasKey ? tx("Saved") : tx("API key")}
                 value={key}
                 disabled={props.readOnly}
                 onChange={(event) => setKey(event.target.value)}
@@ -150,7 +164,7 @@ export function DecisionModelSettings(props: {
                 disabled={props.readOnly || key.trim().length === 0}
                 onClick={() => apply({ key })}
               >
-                Save
+                {tx("Save")}
               </Button>
               {hasKey ? (
                 <Button
@@ -159,7 +173,7 @@ export function DecisionModelSettings(props: {
                   disabled={props.readOnly}
                   onClick={() => apply({ removeKey: true })}
                 >
-                  Remove
+                  {tx("Remove")}
                 </Button>
               ) : null}
             </div>

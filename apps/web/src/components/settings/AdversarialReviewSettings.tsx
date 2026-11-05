@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   DEFAULT_ADVERSARIAL_REVIEW_SETTINGS,
   type AdversarialReviewSettings as AdversarialReviewSettingsValue,
@@ -54,6 +56,7 @@ export const REVIEW_DEPTH_LABELS: Record<ProviderModelTier, string> = {
  * list is replaced whole, so it can be cleared.
  */
 export function AdversarialReviewSettings() {
+  const tx = useTx();
   const { scope, target } = useSettingsScope();
   const navigate = useNavigate();
   const settings = useScopedSettings();
@@ -150,7 +153,7 @@ export function AdversarialReviewSettings() {
         settingKeys={["adversarialReview"]}
         mixed={mixed}
         id="adversarial-review-auto"
-        title="Review finished features automatically"
+        title={tx("Review finished features automatically")}
         description={`When a thread finishes and every task of its increment is done, a model from a different family reviews the work in a new thread. ${
           isProjectScope
             ? "Turn it on for the projects where a second opinion is worth the usage."
@@ -159,14 +162,14 @@ export function AdversarialReviewSettings() {
         resetAction={
           review.autoOnFeatureComplete ? (
             <SettingResetButton
-              label="automatic review"
+              label={tx("automatic review")}
               onClick={() => save({ autoOnFeatureComplete: false })}
             />
           ) : null
         }
         control={
           <Switch
-            aria-label="Review finished features automatically"
+            aria-label={tx("Review finished features automatically")}
             checked={mixed ? false : review.autoOnFeatureComplete}
             onCheckedChange={(checked) => save({ autoOnFeatureComplete: Boolean(checked) })}
           />
@@ -177,11 +180,14 @@ export function AdversarialReviewSettings() {
         settingKeys={["adversarialReview"]}
         mixed={mixed}
         id="adversarial-review-depth"
-        title="Review depth"
+        title={tx("Review depth")}
         description="Which of each provider's models reviews while the reviewer order is empty. A frontier model is slower and uses more of the plan; set the models under Regular and frontier models."
         resetAction={
           review.tier !== "regular" ? (
-            <SettingResetButton label="review depth" onClick={() => save({ tier: "regular" })} />
+            <SettingResetButton
+              label={tx("review depth")}
+              onClick={() => save({ tier: "regular" })}
+            />
           ) : null
         }
         control={
@@ -191,7 +197,7 @@ export function AdversarialReviewSettings() {
               if (value === "regular" || value === "frontier") save({ tier: value });
             }}
           >
-            <SelectTrigger size="sm" aria-label="Review depth">
+            <SelectTrigger size="sm" aria-label={tx("Review depth")}>
               <SelectValue>
                 {(value: string | null) =>
                   value === "regular" || value === "frontier" ? REVIEW_DEPTH_LABELS[value] : "Mixed"
@@ -216,27 +222,31 @@ export function AdversarialReviewSettings() {
         title="Reviewer order"
         description={
           <span className="inline-flex items-center gap-1">
-            Tried top to bottom; the first ready model outside the author&apos;s family reviews.
-            <PolicyTooltip>{REVIEWER_ORDER_DETAILS}</PolicyTooltip>
+            {renderRich(
+              tx(
+                "Tried top to bottom; the first ready model outside the author's family reviews.{policyTooltip}",
+              ),
+              { policyTooltip: <PolicyTooltip>{REVIEWER_ORDER_DETAILS}</PolicyTooltip> },
+            )}
           </span>
         }
         resetAction={
           reviewers.length > 0 ? (
-            <SettingResetButton label="reviewer order" onClick={() => saveReviewers([])} />
+            <SettingResetButton label={tx("reviewer order")} onClick={() => saveReviewers([])} />
           ) : null
         }
         control={
           mixed ? (
-            <span className="text-sm text-muted-foreground">Mixed</span>
+            <span className="text-sm text-muted-foreground">{tx("Mixed")}</span>
           ) : view.isDefault ? (
             <Button
               size="sm"
               variant="outline"
-              aria-label="Customize reviewer order"
+              aria-label={tx("Customize reviewer order")}
               disabled={customized.length === 0}
               onClick={customize}
             >
-              Customize
+              {tx("Customize")}
             </Button>
           ) : pickerSelection ? (
             <ProviderModelPicker
@@ -254,7 +264,7 @@ export function AdversarialReviewSettings() {
               }
             />
           ) : (
-            <span className="text-sm text-muted-foreground">No providers available</span>
+            <span className="text-sm text-muted-foreground">{tx("No providers available")}</span>
           )
         }
       >
@@ -265,14 +275,17 @@ export function AdversarialReviewSettings() {
           >
             {view.isDefault ? (
               <p className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                <Badge variant="secondary">Default</Badge>
-                Each provider&apos;s {tierWord} model, other families first. Customize to reorder,
-                add or remove models.
+                {renderRich(
+                  tx(
+                    "{badge}Each provider's {tierWord} model, other families first. Customize to reorder, add or remove models.",
+                  ),
+                  { badge: <Badge variant="secondary">{tx("Default")}</Badge>, tierWord: tierWord },
+                )}
               </p>
             ) : null}
             {steps.length > 0 ? (
               <ModelOrderList
-                label="Reviewer order steps"
+                label={tx("Reviewer order steps")}
                 steps={steps}
                 providers={providers}
                 order={view.isDefault ? undefined : reviewers}
@@ -280,36 +293,60 @@ export function AdversarialReviewSettings() {
               />
             ) : (
               <p className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">
-                No provider on this machine has a {tierWord} model to review with.
+                {renderRich(
+                  tx("No provider on this machine has a {tierWord} model to review with."),
+                  { tierWord: tierWord },
+                )}
               </p>
             )}
             <p className="text-xs text-muted-foreground">
-              {isProjectScope ? (
-                ownProjectOrder ? (
-                  <>
-                    This project&apos;s own order; reset it to use the{" "}
-                    <button type="button" className={linkClassName} onClick={openAppWideOrder}>
-                      app-wide reviewer order
-                    </button>
-                    .{" "}
-                  </>
+              {renderRich(tx("{value}Availability follows the {button} rules."), {
+                value: isProjectScope ? (
+                  ownProjectOrder ? (
+                    <>
+                      {renderRich(tx("This project's own order; reset it to use the {button}."), {
+                        button: (
+                          <button
+                            type="button"
+                            className={linkClassName}
+                            onClick={openAppWideOrder}
+                          >
+                            {tx("app-wide reviewer order")}
+                          </button>
+                        ),
+                      })}
+                    </>
+                  ) : (
+                    <>
+                      {renderRich(
+                        tx("Uses the {button}; customize to give this project its own."),
+                        {
+                          button: (
+                            <button
+                              type="button"
+                              className={linkClassName}
+                              onClick={openAppWideOrder}
+                            >
+                              {tx("app-wide reviewer order")}
+                            </button>
+                          ),
+                        },
+                      )}
+                    </>
+                  )
                 ) : (
                   <>
-                    Uses the{" "}
-                    <button type="button" className={linkClassName} onClick={openAppWideOrder}>
-                      app-wide reviewer order
-                    </button>
-                    ; customize to give this project its own.{" "}
+                    {tx(
+                      "App-wide for this machine; a project can set its own in its settings.",
+                    )}{" "}
                   </>
-                )
-              ) : (
-                <>App-wide for this machine; a project can set its own in its settings. </>
-              )}
-              Availability follows the{" "}
-              <button type="button" className={linkClassName} onClick={openFallbackOrder}>
-                fallback order
-              </button>{" "}
-              rules.
+                ),
+                button: (
+                  <button type="button" className={linkClassName} onClick={openFallbackOrder}>
+                    {tx("fallback order")}
+                  </button>
+                ),
+              })}
             </p>
           </div>
         )}

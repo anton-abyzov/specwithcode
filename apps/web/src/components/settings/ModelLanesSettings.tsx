@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   MAX_LANE_MODELS,
   type LearnedModelPreference,
@@ -68,11 +70,12 @@ function LaneList(props: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly onChange: (models: ReadonlyArray<ModelSelection>) => void;
 }) {
+  const tx = useTx();
   const { lane, models, providers, onChange } = props;
   if (models.length === 0) {
     return (
       <div className="text-xs text-muted-foreground italic">
-        No models configured for this lane. Workers keep their baseline model.
+        {tx("No models configured for this lane. Workers keep their baseline model.")}
       </div>
     );
   }
@@ -140,6 +143,7 @@ function LaneList(props: {
  * fallback and default routing lists.
  */
 export function ModelLanesSettings() {
+  const tx = useTx();
   const { scope, target } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -222,7 +226,10 @@ export function ModelLanesSettings() {
         }
         resetAction={
           routineList.length > 0 ? (
-            <SettingResetButton label="everyday work" onClick={() => saveLane("routine", [])} />
+            <SettingResetButton
+              label={tx("everyday work")}
+              onClick={() => saveLane("routine", [])}
+            />
           ) : null
         }
         control={
@@ -235,7 +242,7 @@ export function ModelLanesSettings() {
                 onClick={() => seedFavoritesIntoLane("routine")}
               >
                 <SparklesIcon className="size-3" />
-                Seed from favorites
+                {tx("Seed from favorites")}
               </Button>
             ) : null}
             {pickerSelection ? (
@@ -278,7 +285,10 @@ export function ModelLanesSettings() {
         }
         resetAction={
           complexList.length > 0 ? (
-            <SettingResetButton label="hardest work" onClick={() => saveLane("complex", [])} />
+            <SettingResetButton
+              label={tx("hardest work")}
+              onClick={() => saveLane("complex", [])}
+            />
           ) : null
         }
         control={
@@ -291,7 +301,7 @@ export function ModelLanesSettings() {
                 onClick={() => seedFavoritesIntoLane("complex")}
               >
                 <SparklesIcon className="size-3" />
-                Seed from favorites
+                {tx("Seed from favorites")}
               </Button>
             ) : null}
             {pickerSelection ? (
@@ -326,11 +336,11 @@ export function ModelLanesSettings() {
         settingKeys={["taskRouting"]}
         mixed={mixedRouting}
         id="model-lanes-expiring-quota"
-        title="Use quota before it resets"
+        title={tx("Use quota before it resets")}
         description="When a model later in a lane has much of its subscription quota left and that quota resets soon (the 5-hour window within 90 minutes, the weekly within a day), the worker starts there instead, so the first model keeps its own quota. It only picks models already in the lane, and only from quota windows a subscription reports."
         control={
           <Switch
-            aria-label="Use quota before it resets"
+            aria-label={tx("Use quota before it resets")}
             checked={settings.taskRouting.spendExpiringQuota}
             onCheckedChange={(spendExpiringQuota) =>
               updateSettings({ taskRouting: { ...settings.taskRouting, spendExpiringQuota } })
@@ -353,7 +363,7 @@ export function ModelLanesSettings() {
         resetAction={
           learnedList.length > 0 ? (
             <SettingResetButton
-              label="learned preferences"
+              label={tx("learned preferences")}
               onClick={() => updateSettings({ learnedModelPreferences: [] })}
             />
           ) : null
@@ -361,11 +371,12 @@ export function ModelLanesSettings() {
       >
         {learnedList.length === 0 ? (
           <div className="text-xs text-muted-foreground italic">
-            No learned model preferences yet. Rules are learned when you give feedback in chat, or
-            can be recorded by the coordinator.
+            {tx(
+              "No learned model preferences yet. Rules are learned when you give feedback in chat, or can be recorded by the coordinator.",
+            )}
           </div>
         ) : (
-          <ul className="flex flex-col gap-1.5" aria-label="Learned model preferences">
+          <ul className="flex flex-col gap-1.5" aria-label={tx("Learned model preferences")}>
             {learnedList.map((pref) => {
               const text = describePreference(pref, providers);
               return (
@@ -378,7 +389,7 @@ export function ModelLanesSettings() {
                     <span className="font-medium truncate">{text}</span>
                     {pref.note ? (
                       <span className="text-xs text-muted-foreground truncate">
-                        Feedback: &ldquo;{pref.note}&rdquo;
+                        {renderRich(tx("Feedback: “{note}”"), { note: pref.note })}
                       </span>
                     ) : null}
                   </div>

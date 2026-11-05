@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { findErrorTraceId } from "@specweave-studio/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
@@ -39,6 +40,7 @@ import { SettingsRow, TeamRulesLabel } from "./settingsLayout";
  * Rows inside "Your phones", shown only while this window is signed in to Connect.
  */
 export function PhoneDevicesSettings() {
+  const tx = useTx();
   const phonesState = useManagedRelayPhones();
   const { summary: teamRules } = useTeamRules(usePrimaryEnvironmentId());
   const teamRulesLock = teamRulesReachLock(teamRules, "phones");
@@ -114,7 +116,7 @@ export function PhoneDevicesSettings() {
           status={phonesState.error}
           control={
             <Button size="sm" variant="outline" onClick={phonesState.refresh}>
-              Try again
+              {tx("Try again")}
             </Button>
           }
         />
@@ -144,7 +146,7 @@ export function PhoneDevicesSettings() {
             <span className="truncate">{phoneTitle(phone)}</span>
             {phone.current ? (
               <Badge variant="secondary" size="sm">
-                This phone
+                {tx("This phone")}
               </Badge>
             ) : null}
           </span>
@@ -159,7 +161,7 @@ export function PhoneDevicesSettings() {
             disabled={removingDeviceId !== null}
             onClick={() => setConfirming(phone)}
           >
-            Remove
+            {tx("Remove")}
           </Button>
         }
       />
@@ -185,7 +187,7 @@ export function PhoneDevicesSettings() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogClose disabled={pending} render={<Button variant="outline" />}>
-              Cancel
+              {tx("Cancel")}
             </AlertDialogClose>
             <Button
               variant="destructive"
@@ -195,7 +197,7 @@ export function PhoneDevicesSettings() {
               }}
             >
               {pending ? <Spinner size="sm" /> : null}
-              {pending ? "Removing…" : "Remove phone"}
+              {pending ? tx("Removing…") : tx("Remove phone")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { DownloadIcon, FileSearchIcon, ShieldCheckIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
@@ -37,29 +38,31 @@ export function DiagnosticsReportPreview({
   readonly report: PrivateDiagnosticsReport;
   readonly onDownload?: (report: PrivateDiagnosticsReport) => void;
 }) {
+  const tx = useTx();
   const [reviewed, setReviewed] = useState(false);
   return (
     <div className="space-y-4 p-4 sm:p-5">
       <p className="text-sm text-muted-foreground">
-        This is the entire report. It contains versions, diagnostic counts, and failure categories.
-        Conversation content, raw logs, files, credentials, paths, and identifiers are excluded.
+        {tx(
+          "This is the entire report. It contains versions, diagnostic counts, and failure categories. Conversation content, raw logs, files, credentials, paths, and identifiers are excluded.",
+        )}
       </p>
       <pre
         data-privacy-report
         tabIndex={0}
-        aria-label="Diagnostics report preview"
+        aria-label={tx("Diagnostics report preview")}
         className="max-h-80 overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 font-mono text-xs leading-relaxed"
       >
         {JSON.stringify(report, null, 2)}
       </pre>
       <label className="flex cursor-pointer items-start gap-2.5 text-sm">
         <Checkbox
-          aria-label="I reviewed this report"
+          aria-label={tx("I reviewed this report")}
           checked={reviewed}
           onCheckedChange={(checked) => setReviewed(checked === true)}
           className="mt-0.5"
         />
-        <span>I reviewed this report and want to save a copy.</span>
+        <span>{tx("I reviewed this report and want to save a copy.")}</span>
       </label>
       <Button
         disabled={!reviewed}
@@ -68,16 +71,17 @@ export function DiagnosticsReportPreview({
           if (reviewed) onDownload(report);
         }}
       >
-        <DownloadIcon className="size-4" /> Save report
+        <DownloadIcon className="size-4" /> {tx("Save report")}
       </Button>
       <p className="text-xs text-muted-foreground">
-        The file is saved on your device. Share it with support only if you choose.
+        {tx("The file is saved on your device. Share it with support only if you choose.")}
       </p>
     </div>
   );
 }
 
 export function PrivacySettingsPanel() {
+  const tx = useTx();
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const configuration = environment?.serverConfig;
@@ -124,62 +128,61 @@ export function PrivacySettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <section data-privacy-settings aria-label="Data and privacy" className="space-y-8">
+      <section data-privacy-settings aria-label={tx("Data and privacy")} className="space-y-8">
         <SettingsSection
           id="privacy-data"
           title="Your data"
           icon={<ShieldCheckIcon className="size-4" />}
         >
           <div className="space-y-3 p-4 text-sm sm:p-5">
-            <p className="font-medium">You control what you share.</p>
+            <p className="font-medium">{tx("You control what you share.")}</p>
             <p className="text-muted-foreground">
-              Chat history, uploaded attachments, server settings, and diagnostic logs are stored on
-              the environment you use. Provider logs and terminal output can contain conversation
-              content or sensitive data.
+              {tx(
+                "Chat history, uploaded attachments, server settings, and diagnostic logs are stored on the environment you use. Provider logs and terminal output can contain conversation content or sensitive data.",
+              )}
             </p>
             <p className="text-muted-foreground">
-              Drafts, preferences, and cached interface data can also remain on the device where you
-              use the app, including with a remote environment. Drafts can contain prompts,
-              attachment details, and selected terminal text.
+              {tx(
+                "Drafts, preferences, and cached interface data can also remain on the device where you use the app, including with a remote environment. Drafts can contain prompts, attachment details, and selected terminal text.",
+              )}
             </p>
             <p className="text-muted-foreground">
-              When you start an agent turn or use a connected service, the selected provider
-              receives the context needed for that request under its own privacy policy.
+              {tx(
+                "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.",
+              )}
             </p>
           </div>
         </SettingsSection>
         <SettingsSection id="privacy-collection" title="Product improvement and diagnostics">
           <div className="space-y-3 p-4 text-sm sm:p-5">
-            <p className="font-medium">Product usage collection</p>
+            <p className="font-medium">{tx("Product usage collection")}</p>
             <p className="rounded-md bg-muted/40 px-3 py-2" role="status">
               {productUsageStatusLabel(observability)}
             </p>
             <p className="text-muted-foreground">
-              Collection is off by default. If enabled by the server operator, usage events include
-              provider and model choices, turn results, durations, and token totals. They exclude
-              prompts, responses, and file contents.
+              {tx(
+                "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.",
+              )}
             </p>
             <p className="text-muted-foreground">
-              Local diagnostic collection helps troubleshoot problems. External trace, metric, and
-              log export is separate from product usage collection and can be configured by the
-              server operator.
+              {tx(
+                "Local diagnostic collection helps troubleshoot problems. External trace, metric, and log export is separate from product usage collection and can be configured by the server operator.",
+              )}
             </p>
             <p className="rounded-md bg-muted/40 px-3 py-2" role="status">
               {observability
                 ? `Selected environment: local tracing ${observability.localTracingEnabled ? "on" : "off"}; external diagnostic export ${externalConfigured ? "configured" : "off"}.`
-                : "Connect an environment to inspect its diagnostic export settings."}
+                : tx("Connect an environment to inspect its diagnostic export settings.")}
             </p>
             <Collapsible>
               <CollapsibleTrigger render={<Button size="sm" variant="ghost" />}>
-                Technical details
+                {tx("Technical details")}
               </CollapsibleTrigger>
               <CollapsiblePanel className="pt-3">
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  There is no built-in analytics destination. Enabling collection requires
-                  STUDIO_TELEMETRY_ENABLED=true and a PostHog host and key on the server. To disable
-                  it, set STUDIO_TELEMETRY_ENABLED=false and restart the server. External
-                  OpenTelemetry export is configured separately. These indicators show startup
-                  settings, not confirmed delivery.
+                  {tx(
+                    "There is no built-in analytics destination. Enabling collection requires STUDIO_TELEMETRY_ENABLED=true and a PostHog host and key on the server. To disable it, set STUDIO_TELEMETRY_ENABLED=false and restart the server. External OpenTelemetry export is configured separately. These indicators show startup settings, not confirmed delivery.",
+                  )}
                 </p>
               </CollapsiblePanel>
             </Collapsible>
@@ -192,8 +195,9 @@ export function PrivacySettingsPanel() {
         >
           <div className="space-y-3 p-4 sm:p-5">
             <p className="text-sm text-muted-foreground">
-              Create a report from the selected environment, review every field, then save it if you
-              want to share it. Creating a report does not upload it.
+              {tx(
+                "Create a report from the selected environment, review every field, then save it if you want to share it. Creating a report does not upload it.",
+              )}
             </p>
             <Button
               size="sm"
@@ -209,12 +213,12 @@ export function PrivacySettingsPanel() {
                 else setRequestedEnvironment(environmentId);
               }}
             >
-              {diagnostics.isPending ? "Preparing report…" : "Preview diagnostic report"}
+              {diagnostics.isPending ? tx("Preparing report…") : tx("Preview diagnostic report")}
             </Button>
             {access.error ? <p className="text-sm text-muted-foreground">{access.error}</p> : null}
             {requested && diagnostics.error ? (
               <p role="alert" className="text-sm text-destructive-foreground">
-                Could not prepare the report. Reconnect the environment and try again.
+                {tx("Could not prepare the report. Reconnect the environment and try again.")}
               </p>
             ) : null}
           </div>

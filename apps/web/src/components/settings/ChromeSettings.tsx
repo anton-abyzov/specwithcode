@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import {
   AuthFilesystemReadScope,
@@ -168,6 +170,7 @@ const PROVIDER_CONFIG_FILES: Record<BrowserBridgeProviderWiring["provider"], str
 };
 
 export function ChromeSettings() {
+  const tx = useTx();
   const { environments } = useEnvironments();
   const { search, selectScope } = useSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -191,16 +194,16 @@ export function ChromeSettings() {
       <SettingsSection title="Chrome for agents" icon={<ChromeIcon className="size-4" />}>
         <div className="space-y-4 px-4 py-4">
           <p className="max-w-prose text-sm text-muted-foreground">
-            Agents publish, read dashboards and fill forms in your real Chrome, signed in as you.
-            Pick the computer whose Chrome you are setting up: Chrome pairs only with SpecWithCode
-            on its own computer.
+            {tx(
+              "Agents publish, read dashboards and fill forms in your real Chrome, signed in as you. Pick the computer whose Chrome you are setting up: Chrome pairs only with SpecWithCode on its own computer.",
+            )}
           </p>
           {environments.length === 0 ? (
             <p role="status" className="text-sm text-muted-foreground">
-              Connect a machine to set up Chrome on it.
+              {tx("Connect a machine to set up Chrome on it.")}
             </p>
           ) : (
-            <div role="tablist" aria-label="Machine" className="flex flex-wrap gap-2">
+            <div role="tablist" aria-label={tx("Machine")} className="flex flex-wrap gap-2">
               {ordered.map((environment) => {
                 const active = environment.environmentId === selected?.environmentId;
                 const here = environment.environmentId === primaryEnvironmentId;
@@ -216,7 +219,7 @@ export function ChromeSettings() {
                     {environment.label}
                     {here && (
                       <Badge variant={active ? "secondary" : "success"} className="ms-1">
-                        This computer
+                        {tx("This computer")}
                       </Badge>
                     )}
                   </Button>
@@ -263,10 +266,11 @@ function ClaudeInChromeSection({
   environmentId: EnvironmentId;
   machine: string;
 }) {
+  const tx = useTx();
   const [open, setOpen] = useState(false);
   return (
     <SettingsSection
-      title="Claude in Chrome (optional)"
+      title={tx("Claude in Chrome (optional)")}
       icon={<ChromeIcon className="size-4" />}
       data-testid="claude-in-chrome-section"
     >
@@ -275,8 +279,12 @@ function ClaudeInChromeSection({
         onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
       >
         <summary className="cursor-pointer text-muted-foreground">
-          Not needed with the extension above. Open only if you also use Anthropic's Claude in
-          Chrome extension on {machine}.
+          {renderRich(
+            tx(
+              "Not needed with the extension above. Open only if you also use Anthropic's Claude in Chrome extension on {machine}.",
+            ),
+            { machine: machine },
+          )}
         </summary>
         {open && (
           <div className="mt-4 space-y-5">
@@ -299,6 +307,7 @@ export function MachineChromeCard({
   /** Inside another section: no card of its own. */
   bare?: boolean;
 }) {
+  const tx = useTx();
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const environment = useEnvironment(environmentId);
@@ -337,7 +346,7 @@ export function MachineChromeCard({
   const header = (
     <span className="flex items-center gap-2">
       <ChromeIcon className="size-4" />
-      Claude in Chrome on {machine}
+      {renderRich(tx("Claude in Chrome on {machine}"), { machine: machine })}
     </span>
   );
   if (!connected || !permitted)
@@ -345,14 +354,14 @@ export function MachineChromeCard({
       <p role="status" className="text-sm text-muted-foreground">
         {!connected
           ? `${machine} is offline. Connect it to check its Chrome.`
-          : "This device cannot read that machine's settings."}
+          : tx("This device cannot read that machine's settings.")}
       </p>
     ) : (
       <SettingsSection title={`Chrome on ${machine}`} icon={<ChromeIcon className="size-4" />}>
         <p role="status" className="px-4 py-4 text-sm text-muted-foreground">
           {!connected
             ? `${machine} is offline. Connect it to check its Chrome.`
-            : "This device cannot read that machine's settings."}
+            : tx("This device cannot read that machine's settings.")}
         </p>
       </SettingsSection>
     );
@@ -380,9 +389,12 @@ export function MachineChromeCard({
             </Badge>
             {check && (
               <span>
-                Checked {formatRelativeTimeLabel(check.checkedAt)}
-                {check.tabCount !== undefined &&
-                  ` · ${check.tabCount} agent tab${check.tabCount === 1 ? "" : "s"}`}
+                {renderRich(tx("Checked {value}{value2}"), {
+                  value: formatRelativeTimeLabel(check.checkedAt),
+                  value2:
+                    check.tabCount !== undefined &&
+                    ` · ${tx(check.tabCount === 1 ? "{count} agent tab" : "{count} agent tabs", { count: check.tabCount })}`,
+                })}
               </span>
             )}
           </div>
@@ -395,7 +407,7 @@ export function MachineChromeCard({
             onClick={() => void run("test")}
           >
             {busy === "test" ? <Spinner /> : <PlugZapIcon />}
-            Test connection
+            {tx("Test connection")}
           </Button>
           <Button
             size="sm"
@@ -404,20 +416,26 @@ export function MachineChromeCard({
             onClick={() => void run("reconnect")}
           >
             {busy === "reconnect" ? <Spinner /> : <RefreshCwIcon />}
-            Reconnect
+            {tx("Reconnect")}
           </Button>
         </div>
       </div>
 
       {busy === "reconnect" && (
         <p role="status" className="rounded-md bg-info/8 px-3 py-2 text-sm text-info-foreground">
-          Chrome on {machine} now shows Connect in the extension. Press it in the{" "}
-          {AGENT_CHROME_PROFILE} profile. Waiting up to 2 minutes.
+          {renderRich(
+            tx(
+              "Chrome on {machine} now shows Connect in the extension. Press it in the {AGENT_CHROME_PROFILE} profile. Waiting up to 2 minutes.",
+            ),
+            { machine: machine, AGENT_CHROME_PROFILE: AGENT_CHROME_PROFILE },
+          )}
         </p>
       )}
       {!canOperate && (
         <p className="text-xs text-muted-foreground">
-          This device can view {machine}'s Chrome but not test it.
+          {renderRich(tx("This device can view {machine}'s Chrome but not test it."), {
+            machine: machine,
+          })}
         </p>
       )}
       {(runError || query.error) && (
@@ -442,20 +460,22 @@ export function MachineChromeCard({
 
       {query.isPending && !status ? (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Spinner /> Reading Chrome on {machine}…
+          <Spinner /> {renderRich(tx("Reading Chrome on {machine}…"), { machine: machine })}
         </p>
       ) : status ? (
         <>
           <ChromeFacts status={status} />
           {check && check.browsers.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs font-medium text-muted-foreground">Connected browsers</p>
+              <p className="text-xs font-medium text-muted-foreground">
+                {tx("Connected browsers")}
+              </p>
               <ul className="flex flex-wrap gap-2">
                 {check.browsers.map((browser) => (
                   <li key={browser.deviceId ?? browser.name}>
                     <Badge variant={browser.inUse ? "success" : "outline"} size="lg">
                       {browser.name}
-                      {browser.inUse && " · in use"}
+                      {browser.inUse && tx(" · in use")}
                     </Badge>
                   </li>
                 ))}
@@ -523,10 +543,13 @@ function ChromeFacts({ status }: { status: BrowserBridgeStatus }) {
 }
 
 function ProviderRoutes({ providers }: { providers: ReadonlyArray<BrowserBridgeProviderWiring> }) {
+  const tx = useTx();
   if (providers.length === 0) return null;
   return (
     <div className="space-y-1.5">
-      <p className="text-xs font-medium text-muted-foreground">How each provider reaches Chrome</p>
+      <p className="text-xs font-medium text-muted-foreground">
+        {tx("How each provider reaches Chrome")}
+      </p>
       <ul className="flex flex-wrap gap-2">
         {providers.map((wiring) => {
           const route = ROUTE_LABELS[wiring.route];
@@ -548,16 +571,20 @@ function SharedBridgeSnippet({
 }: {
   providers: ReadonlyArray<BrowserBridgeProviderWiring>;
 }) {
+  const tx = useTx();
   const { copyToClipboard, isCopied } = useCopyToClipboard<string>();
   const [copied, setCopied] = useState<string | null>(null);
   const names = providers.map((p) => PROVIDER_NAMES[p.provider]).join(" and ");
   return (
     <details className="rounded-md border border-border/60 px-3 py-2 text-sm">
-      <summary className="cursor-pointer">Let {names} share Claude's browser</summary>
+      <summary className="cursor-pointer">
+        {renderRich(tx("Let {names} share Claude's browser"), { names: names })}
+      </summary>
       <div className="mt-2 space-y-3">
         <p className="text-muted-foreground">
-          Add this entry to the provider's MCP settings on this machine, then start a new thread. It
-          uses the same extension and the same Chrome profile.
+          {tx(
+            "Add this entry to the provider's MCP settings on this machine, then start a new thread. It uses the same extension and the same Chrome profile.",
+          )}
         </p>
         {providers.map((wiring) => {
           const snippet = wiring.provider === "codex" ? SHARED_BRIDGE_TOML : SHARED_BRIDGE_JSON;
@@ -576,7 +603,7 @@ function SharedBridgeSnippet({
                   }}
                 >
                   <CopyIcon />
-                  {isCopied && copied === wiring.provider ? "Copied" : "Copy"}
+                  {isCopied && copied === wiring.provider ? tx("Copied") : tx("Copy")}
                 </Button>
               </div>
               <pre className="overflow-x-auto rounded bg-muted px-2 py-1.5 text-xs">{snippet}</pre>
@@ -622,9 +649,10 @@ const SETUP_STEPS: ReadonlyArray<{ title: string; body: React.ReactNode }> = [
 ];
 
 function ClaudeInChromeSteps() {
+  const tx = useTx();
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium">Set up Claude in Chrome</p>
+      <p className="text-sm font-medium">{tx("Set up Claude in Chrome")}</p>
       <ol className="space-y-3">
         {SETUP_STEPS.map((step, index) => (
           <li key={step.title} className="flex gap-3">

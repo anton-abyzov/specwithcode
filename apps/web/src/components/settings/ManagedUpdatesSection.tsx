@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import type { ServerUpdateState } from "@specweave-studio/client-runtime/state/server";
 import { useState } from "react";
 import { type EnvironmentId, type ManagedUpdateStatus } from "@specweave-studio/contracts";
@@ -47,6 +49,7 @@ export function ManagedUpdatesView(props: {
   /** Present only where this Mac's desktop can repair its update agent. */
   onRepair?: () => void;
 }) {
+  const tx = useTx();
   const { status } = props;
   const valid = props.reachable && !props.error && status?.support === "supported";
   // A local service is managed by this Mac's updater; asking this connection for
@@ -59,41 +62,56 @@ export function ManagedUpdatesView(props: {
       className="mt-3 flex max-w-xl flex-col gap-2 rounded-lg border border-border/60 p-3 text-xs [--disabled-opacity:0.45]"
     >
       <div className="flex flex-wrap justify-between gap-2">
-        <span className="font-medium">Updates</span>
+        <span className="font-medium">{tx("Updates")}</span>
         {status?.currentVersion && (
-          <span className="text-muted-foreground">Service {status.currentVersion}</span>
+          <span className="text-muted-foreground">
+            {renderRich(tx("Service {currentVersion}"), { currentVersion: status.currentVersion })}
+          </span>
         )}
       </div>
       {!props.reachable ? (
-        <p>Machine unreachable. Saved update permission has not changed.</p>
+        <p>{tx("Machine unreachable. Saved update permission has not changed.")}</p>
       ) : props.error ? (
-        <p role="status">Update status unavailable. Permission has not been changed.</p>
+        <p role="status">{tx("Update status unavailable. Permission has not been changed.")}</p>
       ) : !status ? (
-        <p>Reading update status…</p>
+        <p>{tx("Reading update status…")}</p>
       ) : status.support !== "supported" ? (
         <p>
           {status.support === "unmanaged"
-            ? "This machine does not have a managed service installation."
-            : "Managed updates are unavailable on this installation."}
+            ? tx("This machine does not have a managed service installation.")
+            : tx("Managed updates are unavailable on this installation.")}
         </p>
       ) : (
         <>
           <p className="font-medium">
-            {managedHere ? "Managed by this Mac's updater." : consentLabels[status.remoteConsent]}
+            {managedHere
+              ? tx("Managed by this Mac's updater.")
+              : consentLabels[status.remoteConsent]}
           </p>
           <p>
-            Automatic updates on {props.label}:{" "}
-            {status.localAutomation === "unavailable"
-              ? "updater not installed"
-              : status.localAutomation === "enabled"
-                ? "enabled"
-                : "disabled"}
-            . Permission changes preserve this setting.
+            {renderRich(
+              tx(
+                "Automatic updates on {label}: {value}. Permission changes preserve this setting.",
+              ),
+              {
+                label: props.label,
+                value:
+                  status.localAutomation === "unavailable"
+                    ? "updater not installed"
+                    : status.localAutomation === "enabled"
+                      ? "enabled"
+                      : "disabled",
+              },
+            )}
           </p>
           <p>
-            Last result: {status.operation.replaceAll("-", " ")}
-            {status.availableVersion ? ` · ${status.availableVersion} available` : ""}. Last check:{" "}
-            {status.checkedAt ? new Date(status.checkedAt).toLocaleString() : "never"}.
+            {renderRich(tx("Last result: {value}{value2}. Last check: {value3}."), {
+              value: status.operation.replaceAll("-", " "),
+              value2: status.availableVersion
+                ? tx(" · {version} available", { version: status.availableVersion })
+                : "",
+              value3: status.checkedAt ? new Date(status.checkedAt).toLocaleString() : tx("never"),
+            })}
           </p>
           {problem && (
             <p role="status" className="text-destructive-foreground">
@@ -103,7 +121,7 @@ export function ManagedUpdatesView(props: {
         </>
       )}
       <p className="text-muted-foreground">
-        Update permission is separate from connection and agent work access.
+        {tx("Update permission is separate from connection and agent work access.")}
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
@@ -112,11 +130,11 @@ export function ManagedUpdatesView(props: {
           disabled={!props.reachable || props.pending}
           onClick={props.onRefresh}
         >
-          Refresh status
+          {tx("Refresh status")}
         </Button>
         {problem && props.onRepair && (
           <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onRepair}>
-            Repair
+            {tx("Repair")}
           </Button>
         )}
         {valid && !managedHere && (
@@ -129,13 +147,13 @@ export function ManagedUpdatesView(props: {
                 onClick={status.remoteConsent === "enrolled" ? props.onRevoke : props.onAllow}
               >
                 {status.remoteConsent === "enrolled"
-                  ? "Revoke update permission"
-                  : "Grant update permission"}
+                  ? tx("Revoke update permission")
+                  : tx("Grant update permission")}
               </Button>
             )}
             {props.canCheck && status.remoteConsent === "enrolled" && (
               <Button size="sm" variant="outline" disabled={props.pending} onClick={props.onCheck}>
-                Check for updates
+                {tx("Check for updates")}
               </Button>
             )}
           </>
@@ -147,17 +165,17 @@ export function ManagedUpdatesView(props: {
             ? `A machine administrator must change update permission on ${props.label}.`
             : `A machine administrator must approve update permission for this connection on ${props.label}.`}
           {props.local
-            ? " Use the installed app on this Mac."
-            : " Being connected does not grant update permission."}
+            ? tx(" Use the installed app on this Mac.")
+            : tx(" Being connected does not grant update permission.")}
         </p>
       )}
       {valid && !managedHere && (
         <p className="text-muted-foreground">
           {status.remoteConsent !== "enrolled"
-            ? "Checking for updates requires permission for this connection."
+            ? tx("Checking for updates requires permission for this connection.")
             : !props.canCheck
-              ? "This connection does not have maintenance access to check for updates."
-              : "Check for updates finds releases; it does not download or install them."}
+              ? tx("This connection does not have maintenance access to check for updates.")
+              : tx("Check for updates finds releases; it does not download or install them.")}
         </p>
       )}
     </section>
@@ -175,6 +193,7 @@ export function ManagedUpdatesSection({
   reachable: boolean;
   local?: boolean;
 }) {
+  const tx = useTx();
   const query = useEnvironmentQuery(
     reachable ? managedUpdates.status({ environmentId, input: {} }) : null,
   );
@@ -304,8 +323,9 @@ export function ManagedUpdatesSection({
       )}
       {failed && (
         <p role="alert" className="mt-1 text-xs text-destructive-foreground">
-          Update request was refused or failed. Refresh status and try again; changed permissions
-          require fresh approval.
+          {tx(
+            "Update request was refused or failed. Refresh status and try again; changed permissions require fresh approval.",
+          )}
         </p>
       )}
     </>

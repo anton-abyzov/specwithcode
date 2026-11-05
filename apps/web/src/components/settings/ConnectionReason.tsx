@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useId, useState } from "react";
 
@@ -30,6 +31,7 @@ export function ConnectionReason({
   readonly retryable?: boolean;
   readonly className?: string;
 }) {
+  const tx = useTx();
   const textId = useId();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
   const [retrying, setRetrying] = useState(false);
@@ -63,7 +65,7 @@ export function ConnectionReason({
                 }
               }}
             >
-              {retrying ? "Retrying…" : "Retry now"}
+              {retrying ? tx("Retrying…") : tx("Retry now")}
             </InlineButton>
           ) : null}
           {canExpand ? (
@@ -73,7 +75,7 @@ export function ConnectionReason({
               aria-controls={textId}
               onClick={() => setExpanded((value) => !value)}
             >
-              {expanded ? "Show less" : "Show more"}
+              {expanded ? tx("Show less") : tx("Show more")}
             </InlineButton>
           ) : null}
         </div>

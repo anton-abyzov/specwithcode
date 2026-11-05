@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { AuthProvidersManageScope } from "@specweave-studio/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
@@ -32,6 +33,7 @@ export function AddCodexAccountDialog({
     | undefined;
   readonly renderSetup: (instanceId: ProviderInstanceId, provider: ServerProvider) => ReactNode;
 }) {
+  const tx = useTx();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const createInstance = useAtomCommand(
@@ -94,8 +96,10 @@ export function AddCodexAccountDialog({
     >
       <WizardPopup size="wide">
         <WizardHeader
-          title={instanceId ? displayName : "Add ChatGPT account"}
-          description="Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          title={instanceId ? displayName : tx("Add ChatGPT account")}
+          description={tx(
+            "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.",
+          )}
         />
         <WizardPanel>
           {instanceId ? (
@@ -117,11 +121,11 @@ export function AddCodexAccountDialog({
                 description="Shown in the provider list and model picker."
                 control={
                   <Input
-                    aria-label="Account name"
+                    aria-label={tx("Account name")}
                     value={name}
                     disabled={pending}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="e.g. Personal or Work"
+                    placeholder={tx("e.g. Personal or Work")}
                   />
                 }
               />
@@ -131,19 +135,19 @@ export function AddCodexAccountDialog({
         <WizardFooter>
           {instanceId ? (
             <Button variant="outline" onClick={onClose}>
-              Finish later
+              {tx("Finish later")}
             </Button>
           ) : (
             <>
               <Button variant="outline" disabled={pending} onClick={onClose}>
-                Cancel
+                {tx("Cancel")}
               </Button>
               <Button
                 type="submit"
                 form="add-codex-account"
                 disabled={pending || !name.trim() || !canManageProviders}
               >
-                {pending ? "Adding account…" : "Continue"}
+                {pending ? tx("Adding account…") : tx("Continue")}
               </Button>
             </>
           )}

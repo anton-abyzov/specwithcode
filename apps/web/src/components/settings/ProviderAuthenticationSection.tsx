@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -41,6 +43,7 @@ export function ProviderAuthenticationSection({
   readonly provider: ServerProvider;
   readonly readOnly: boolean;
 }) {
+  const tx = useTx();
   const target = { environmentId, input: { instanceId } };
   const query = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
   const commands = { reportFailure: false, reportDefect: false };
@@ -179,18 +182,23 @@ export function ProviderAuthenticationSection({
       description={
         signedIn && !active && provider.auth.email?.trim() ? (
           <span>
-            Signed in as{" "}
-            <RedactedSensitiveText
-              key={provider.auth.email}
-              value={provider.auth.email}
-              ariaLabel="Toggle account email visibility"
-              revealTooltip="Click to reveal email"
-              hideTooltip="Click to hide email"
-              className="max-w-full truncate"
-            />
+            {renderRich(tx("Signed in as {redactedSensitiveText}"), {
+              redactedSensitiveText: (
+                <RedactedSensitiveText
+                  key={provider.auth.email}
+                  value={provider.auth.email}
+                  ariaLabel="Toggle account email visibility"
+                  revealTooltip="Click to reveal email"
+                  hideTooltip="Click to hide email"
+                  className="max-w-full truncate"
+                />
+              ),
+            })}
           </span>
         ) : signedIn && !active && provider.auth.login?.trim() ? (
-          <span role="status">Signed in as {provider.auth.login.trim()}</span>
+          <span role="status">
+            {renderRich(tx("Signed in as {value}"), { value: provider.auth.login.trim() })}
+          </span>
         ) : (
           <span role="status">{accountDescription}</span>
         )
@@ -210,14 +218,14 @@ export function ProviderAuthenticationSection({
               disabled={disabled}
               onValueChange={(value) => setMethodId(value ?? "")}
             >
-              <SelectTrigger size="sm" aria-label="Sign-in method" className="w-44">
+              <SelectTrigger size="sm" aria-label={tx("Sign-in method")} className="w-44">
                 <SelectValue>
                   {auth?.methods?.find((method) => method.id === methodId)?.name ??
-                    "Provider default"}
+                    tx("Provider default")}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup>
-                <SelectItem value="">Provider default</SelectItem>
+                <SelectItem value="">{tx("Provider default")}</SelectItem>
                 {auth?.methods?.map((method) => (
                   <SelectItem key={method.id} value={method.id}>
                     {method.name}
@@ -234,13 +242,13 @@ export function ProviderAuthenticationSection({
                 disabled={disabled}
                 onClick={() => void openBrowser()}
               >
-                Open browser
+                {tx("Open browser")}
               </Button>
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Copy sign-in link"
+                      aria-label={tx("Copy sign-in link")}
                       size="icon-sm"
                       variant="ghost-muted"
                       disabled={disabled}
@@ -259,7 +267,7 @@ export function ProviderAuthenticationSection({
                     </Button>
                   }
                 />
-                <TooltipPopup>Copy sign-in link</TooltipPopup>
+                <TooltipPopup>{tx("Copy sign-in link")}</TooltipPopup>
               </Tooltip>
             </>
           ) : null}
@@ -272,13 +280,13 @@ export function ProviderAuthenticationSection({
                   <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
                 }
               >
-                Open docs
+                {tx("Open docs")}
               </Button>
             ) : active && auth?.flowId ? (
               <Button
                 size="sm"
                 variant="ghost-muted"
-                aria-label="Cancel sign-in"
+                aria-label={tx("Cancel sign-in")}
                 disabled={disabled}
                 onClick={() =>
                   void run(() =>
@@ -286,7 +294,7 @@ export function ProviderAuthenticationSection({
                   )
                 }
               >
-                Cancel
+                {tx("Cancel")}
               </Button>
             ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
               <Button
@@ -308,10 +316,10 @@ export function ProviderAuthenticationSection({
                 }
               >
                 {signedIn
-                  ? "Change account"
+                  ? tx("Change account")
                   : auth?.phase === "failed" || auth?.phase === "cancelled"
-                    ? "Retry sign-in"
-                    : "Sign in"}
+                    ? tx("Retry sign-in")
+                    : tx("Sign in")}
               </Button>
             ) : null}
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
@@ -329,7 +337,7 @@ export function ProviderAuthenticationSection({
                     });
                 }}
               >
-                Sign out
+                {tx("Sign out")}
               </Button>
             ) : null}
           </>
@@ -349,11 +357,18 @@ export function ProviderAuthenticationSection({
               className="my-2 grid min-w-0 gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm"
             >
               <p className="font-medium">
-                Sign in to {provider.displayName ?? provider.driver} on {environmentLabel}
+                {renderRich(tx("Sign in to {value} on {environmentLabel}"), {
+                  value: provider.displayName ?? provider.driver,
+                  environmentLabel: environmentLabel,
+                })}
               </p>
               <p className="text-muted-foreground">
-                Open the sign-in page on this device, enter this code, and approve access for the
-                account you want to use on {environmentLabel}.
+                {renderRich(
+                  tx(
+                    "Open the sign-in page on this device, enter this code, and approve access for the account you want to use on {environmentLabel}.",
+                  ),
+                  { environmentLabel: environmentLabel },
+                )}
               </p>
               <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <code className="select-all break-all font-mono text-lg font-semibold tracking-wider">
@@ -373,18 +388,18 @@ export function ProviderAuthenticationSection({
                   }}
                 >
                   <CopyIcon />
-                  Copy code
+                  {tx("Copy code")}
                 </Button>
                 {copiedCode === deviceCodeKey ? (
                   <span role="status" className="text-xs text-muted-foreground">
-                    Code copied
+                    {tx("Code copied")}
                   </span>
                 ) : null}
               </div>
               <p className="break-all text-xs text-muted-foreground">{deviceCode.url}</p>
               {interaction?.type === "terminal" ? (
                 <p className="text-xs text-muted-foreground">
-                  If the provider asks for confirmation, use the sign-in terminal below.
+                  {tx("If the provider asks for confirmation, use the sign-in terminal below.")}
                 </p>
               ) : null}
             </section>
@@ -393,7 +408,7 @@ export function ProviderAuthenticationSection({
             <div className="py-2">
               <Suspense
                 fallback={
-                  <p className="text-xs text-muted-foreground">Loading sign-in terminal…</p>
+                  <p className="text-xs text-muted-foreground">{tx("Loading sign-in terminal…")}</p>
                 }
               >
                 <ProviderAuthTerminal
@@ -475,7 +490,7 @@ export function ProviderAuthenticationSection({
                 className="w-fit"
                 disabled={disabled}
               >
-                Connect
+                {tx("Connect")}
               </Button>
             </form>
           ) : null}
@@ -496,18 +511,24 @@ export function ProviderAuthenticationSection({
               }}
             >
               <label className="grid gap-1">
-                If the final localhost page does not load, paste its full URL here.
-                <Input
-                  size="sm"
-                  id={`provider-callback-${instanceId}`}
-                  type="url"
-                  autoComplete="off"
-                  value={values.callback ?? ""}
-                  disabled={disabled}
-                  maxLength={16_384}
-                  showCount
-                  onChange={(event) => updateDraft("callback", event.target.value)}
-                />
+                {renderRich(
+                  tx("If the final localhost page does not load, paste its full URL here.{input}"),
+                  {
+                    input: (
+                      <Input
+                        size="sm"
+                        id={`provider-callback-${instanceId}`}
+                        type="url"
+                        autoComplete="off"
+                        value={values.callback ?? ""}
+                        disabled={disabled}
+                        maxLength={16_384}
+                        showCount
+                        onChange={(event) => updateDraft("callback", event.target.value)}
+                      />
+                    ),
+                  },
+                )}
               </label>
               <Button
                 type="submit"
@@ -516,7 +537,7 @@ export function ProviderAuthenticationSection({
                 className="w-fit"
                 disabled={disabled || !values.callback?.trim()}
               >
-                Continue
+                {tx("Continue")}
               </Button>
             </form>
           ) : null}

@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import { useState } from "react";
 import type { ProviderAuthMethod } from "@specweave-studio/contracts";
 import { RadioGroup, Radio } from "../ui/radio-group";
@@ -22,6 +23,7 @@ export function ChatGptAccountPicker({
   onClose: () => void;
   onSelect: (methodId: string) => void;
 }) {
+  const tx = useTx();
   const profiles = methods.filter((method) => method.id.startsWith("chatgpt-profile:"));
   const [selection, setSelection] = useState<string | null>(null);
   const selectedMethodId =
@@ -39,14 +41,14 @@ export function ChatGptAccountPicker({
     >
       <DialogPopup>
         <DialogHeader>
-          <DialogTitle>Reconnect ChatGPT</DialogTitle>
+          <DialogTitle>{tx("Reconnect ChatGPT")}</DialogTitle>
           <DialogDescription>
-            On OpenAI, sign in with the account you choose here.
+            {tx("On OpenAI, sign in with the account you choose here.")}
           </DialogDescription>
         </DialogHeader>
         <div className="px-6 pb-6">
           <RadioGroup
-            aria-label="ChatGPT account to connect"
+            aria-label={tx("ChatGPT account to connect")}
             value={selectedMethodId}
             onValueChange={(value) => setSelection(value)}
           >
@@ -61,7 +63,7 @@ export function ChatGptAccountPicker({
             ))}
             <label className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-sm">
               <Radio value="chatgpt-change-account" />
-              <span className="font-medium">Use a different account</span>
+              <span className="font-medium">{tx("Use a different account")}</span>
             </label>
           </RadioGroup>
         </div>

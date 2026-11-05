@@ -9,7 +9,11 @@ const runtime = vi.hoisted(() => ({ invite: vi.fn(), revoke: vi.fn() }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   const { reactHookHarness } = await import("../../test/reactHookHarness");
-  return { ...actual, useState: reactHookHarness.useState };
+  return {
+    ...actual,
+    useSyncExternalStore: (_subscribe: unknown, getSnapshot: () => unknown) => getSnapshot(),
+    useState: reactHookHarness.useState,
+  };
 });
 vi.mock("react/compiler-runtime", async () => ({
   c: (await import("../../test/reactHookHarness")).reactHookHarness.useMemoCache,

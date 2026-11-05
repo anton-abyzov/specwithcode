@@ -495,7 +495,9 @@ export function ProviderModelsSection({
           {model.name !== model.slug ? (
             <code className="truncate font-mono text-2xs text-muted-foreground">{model.slug}</code>
           ) : null}
-          {model.isCustom ? <span className="text-2xs text-muted-foreground">custom</span> : null}
+          {model.isCustom ? (
+            <span className="text-2xs text-muted-foreground">{tx("custom")}</span>
+          ) : null}
         </span>
         {/*
           Always a grid item so the columns line up across rows; the text

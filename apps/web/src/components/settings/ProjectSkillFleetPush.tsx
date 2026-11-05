@@ -1,3 +1,5 @@
+import { renderRich } from "../../i18n/rich";
+import { useTx } from "../../i18n";
 /**
  * The detail sheet's sticky footer: the confirm card, "Push to machines…"
  * (install this version on other fleet machines over Connect) and the
@@ -30,6 +32,7 @@ import { openSkillLink } from "./ProjectSkillRowMenu";
 type PushResults = ProjectSkillsFleetPushResult["results"];
 
 function FleetPushPanel() {
+  const tx = useTx();
   const controls = useSkillControls()!;
   const fleet = useStudioFleet(controls.environmentId);
   const push = useAtomCommand(projectWorkspace.skillFleetPush, { reportFailure: false });
@@ -85,17 +88,21 @@ function FleetPushPanel() {
   return (
     <div className="space-y-3 text-xs" data-testid="skill-fleet-push">
       <p className="text-muted-foreground">
-        Install <span className="font-mono text-foreground">{lock.skillId}</span>{" "}
-        <span className="font-mono text-foreground">{version ?? "—"}</span> on other machines.
+        {renderRich(tx("Install {span} {span2} on other machines."), {
+          span: <span className="font-mono text-foreground">{lock.skillId}</span>,
+          span2: <span className="font-mono text-foreground">{version ?? "—"}</span>,
+        })}
       </p>
       {fleet.loading && !fleet.snapshot ? (
         <p className="flex items-center gap-1.5 text-muted-foreground">
-          <Spinner className="size-3" /> Reading the fleet…
+          <Spinner className="size-3" /> {tx("Reading the fleet…")}
         </p>
       ) : machines.length === 0 ? (
-        <p className="text-muted-foreground">No other machines are in this machine's fleet.</p>
+        <p className="text-muted-foreground">
+          {tx("No other machines are in this machine's fleet.")}
+        </p>
       ) : (
-        <ul className="space-y-1.5" aria-label="Machines">
+        <ul className="space-y-1.5" aria-label={tx("Machines")}>
           {machines.map((machine) => (
             <li key={machine.machineId}>
               <label
@@ -114,9 +121,9 @@ function FleetPushPanel() {
                 />
                 <span className="text-foreground">{machine.label}</span>
                 {!machine.reachable ? (
-                  <span className="text-muted-foreground">unreachable</span>
+                  <span className="text-muted-foreground">{tx("unreachable")}</span>
                 ) : scope === "project" && !machine.projectId ? (
-                  <span className="text-muted-foreground">project not there</span>
+                  <span className="text-muted-foreground">{tx("project not there")}</span>
                 ) : null}
               </label>
             </li>
@@ -127,21 +134,31 @@ function FleetPushPanel() {
         value={scope}
         onValueChange={(next) => setScope(next === "user" ? "user" : "project")}
         className="flex-row"
-        aria-label="Install for"
+        aria-label={tx("Install for")}
       >
         <label className="flex items-center gap-1.5">
-          <Radio value="project" disabled={busy} /> This project
+          {renderRich(tx("{radio} This project"), {
+            radio: <Radio value="project" disabled={busy} />,
+          })}
         </label>
         <label className="flex items-center gap-1.5">
-          <Radio value="user" disabled={busy} /> User
+          {renderRich(tx("{radio} User"), { radio: <Radio value="user" disabled={busy} /> })}
         </label>
       </RadioGroup>
       <label className="flex items-center gap-2">
-        <Checkbox checked={pin} disabled={busy} onCheckedChange={(next) => setPin(next === true)} />
-        Pin {version ?? "this version"}
+        {renderRich(tx("{checkbox}Pin {value}"), {
+          checkbox: (
+            <Checkbox
+              checked={pin}
+              disabled={busy}
+              onCheckedChange={(next) => setPin(next === true)}
+            />
+          ),
+          value: version ?? tx("this version"),
+        })}
       </label>
       {results ? (
-        <ul className="space-y-1" aria-label="Results" data-testid="skill-fleet-results">
+        <ul className="space-y-1" aria-label={tx("Results")} data-testid="skill-fleet-results">
           {results.map((result) => (
             <li key={result.machineId} className="flex items-start gap-1.5">
               {result.ok ? (
@@ -160,7 +177,7 @@ function FleetPushPanel() {
                 {": "}
                 {result.ok
                   ? `installed ${result.installedVersion ?? version}${result.pinnedVersion ? `, pinned` : ""}`
-                  : (result.message ?? result.reason ?? "failed")}
+                  : (result.message ?? result.reason ?? tx("failed"))}
               </span>
             </li>
           ))}
@@ -169,7 +186,9 @@ function FleetPushPanel() {
       {error ? <p className="text-destructive-foreground">{error}</p> : null}
       <div className="flex items-center justify-end gap-2">
         {!controls.canPush ? (
-          <span className="text-muted-foreground">Needs permission to maintain machines.</span>
+          <span className="text-muted-foreground">
+            {tx("Needs permission to maintain machines.")}
+          </span>
         ) : null}
         <SkillControlReason
           reason={
@@ -190,7 +209,12 @@ function FleetPushPanel() {
             onClick={() => void send()}
           >
             {busy ? <Spinner className="size-3" /> : <SendIcon aria-hidden />}
-            Install on {plan.targets.length} {plan.targets.length === 1 ? "machine" : "machines"}
+            {tx(
+              plan.targets.length === 1
+                ? "Install on {length} machine"
+                : "Install on {length} machines",
+              { length: plan.targets.length },
+            )}
           </Button>
         </SkillControlReason>
       </div>
@@ -199,6 +223,7 @@ function FleetPushPanel() {
 }
 
 function StudioLinkButton() {
+  const tx = useTx();
   const controls = useSkillControls()!;
   const link = useAtomCommand(projectWorkspace.skillStudioLink, { reportFailure: false });
   const [busy, setBusy] = useState(false);
@@ -238,11 +263,11 @@ function StudioLinkButton() {
           variant="ghost"
           type="button"
           disabled={busy || !controls.canOpenStudio}
-          title={error ?? "Bump, publish and submit a new version in Skill Studio."}
+          title={error ?? tx("Bump, publish and submit a new version in Skill Studio.")}
           onClick={() => void open()}
         >
           {busy ? <Spinner className="size-3" /> : null}
-          Release in Skill Studio
+          {tx("Release in Skill Studio")}
           <ExternalLinkIcon aria-hidden />
         </Button>
       </SkillControlReason>
@@ -252,6 +277,7 @@ function StudioLinkButton() {
 }
 
 export function ProjectSkillSheetFooter() {
+  const tx = useTx();
   const controls = useSkillControls();
   if (!controls) return null;
   const lock = skillVersionControl(controls.row);
@@ -264,7 +290,7 @@ export function ProjectSkillSheetFooter() {
           <Popover open={controls.pushOpen} onOpenChange={controls.setPushOpen}>
             <PopoverTrigger render={<Button size="xs" variant="outline" type="button" />}>
               <SendIcon aria-hidden />
-              Push to machines…
+              {tx("Push to machines…")}
             </PopoverTrigger>
             <PopoverPopup side="top" align="start" width="md">
               {controls.pushOpen ? <FleetPushPanel /> : null}
@@ -274,7 +300,7 @@ export function ProjectSkillSheetFooter() {
           <SkillControlReason reason="Only skills vskill installed from the registry can be pushed.">
             <Button size="xs" variant="outline" type="button" disabled>
               <SendIcon aria-hidden />
-              Push to machines…
+              {tx("Push to machines…")}
             </Button>
           </SkillControlReason>
         )}

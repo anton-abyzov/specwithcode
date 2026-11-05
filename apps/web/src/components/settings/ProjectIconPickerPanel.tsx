@@ -1,3 +1,4 @@
+import { useTx } from "../../i18n";
 import * as Schema from "effect/Schema";
 import {
   ProjectMonogramText,
@@ -83,6 +84,7 @@ export function ProjectIconPickerPanel({
   readonly onReset: () => void | Promise<unknown>;
   readonly onChooseImage?: (() => void) | undefined;
 }) {
+  const tx = useTx();
   const automatic = deriveProjectIdentity(projectName);
   const savedColor = current && current.kind !== "emoji" ? current.color : automatic.color;
   const savedLetters = current?.kind === "monogram" ? current.text : automatic.monogram;
@@ -212,7 +214,7 @@ export function ProjectIconPickerPanel({
             className="size-8"
           />
           <input
-            aria-label="Monogram letters"
+            aria-label={tx("Monogram letters")}
             className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm uppercase outline-none focus-visible:ring-2 focus-visible:ring-ring aria-invalid:border-destructive"
             value={letters}
             disabled={disabled}
@@ -247,8 +249,8 @@ export function ProjectIconPickerPanel({
           />
           <input
             type="search"
-            aria-label={mode === "lucide" ? "Search icons" : "Search or paste an emoji"}
-            placeholder={mode === "lucide" ? "Search icons" : "Search or paste an emoji"}
+            aria-label={mode === "lucide" ? tx("Search icons") : tx("Search or paste an emoji")}
+            placeholder={mode === "lucide" ? tx("Search icons") : tx("Search or paste an emoji")}
             className="h-7 w-full rounded-md border border-input bg-background ps-7 pe-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={query}
             autoComplete="off"
@@ -260,9 +262,11 @@ export function ProjectIconPickerPanel({
       )}
 
       {mode === "lucide" ? (
-        <div className="-mx-1 h-56 overflow-y-auto px-1" role="group" aria-label="Icons">
+        <div className="-mx-1 h-56 overflow-y-auto px-1" role="group" aria-label={tx("Icons")}>
           {icons.length === 0 ? (
-            <p className="py-8 text-center text-xs text-muted-foreground">No icons found.</p>
+            <p className="py-8 text-center text-xs text-muted-foreground">
+              {tx("No icons found.")}
+            </p>
           ) : (
             <div className={cn("grid grid-cols-9 gap-0.5", projectIconColorClassName(color))}>
               {icons.map((name) => (
@@ -285,10 +289,10 @@ export function ProjectIconPickerPanel({
           )}
         </div>
       ) : mode === "emoji" ? (
-        <div className="-mx-1 h-56 overflow-y-auto px-1" role="group" aria-label="Emoji">
+        <div className="-mx-1 h-56 overflow-y-auto px-1" role="group" aria-label={tx("Emoji")}>
           {emojis.length === 0 && !typedEmoji ? (
             <p className="py-8 text-center text-xs text-muted-foreground">
-              No emoji found. Paste any emoji to use it.
+              {tx("No emoji found. Paste any emoji to use it.")}
             </p>
           ) : (
             <div className="grid grid-cols-9 gap-0.5">
@@ -331,7 +335,7 @@ export function ProjectIconPickerPanel({
       ) : null}
 
       {mode !== "emoji" ? (
-        <div className="grid grid-cols-9 gap-0.5" role="group" aria-label="Icon color">
+        <div className="grid grid-cols-9 gap-0.5" role="group" aria-label={tx("Icon color")}>
           {PROJECT_ICON_COLORS.map((option) => (
             <button
               key={option.value}
@@ -355,7 +359,7 @@ export function ProjectIconPickerPanel({
       ) : null}
 
       <div className="-mx-1 flex items-center gap-1 border-t border-border/60 px-1 pt-2">
-        <div role="tablist" aria-label="Icon type" className="flex items-center gap-0.5">
+        <div role="tablist" aria-label={tx("Icon type")} className="flex items-center gap-0.5">
           {MODES.map((option) => (
             <button
               key={option.value}
@@ -383,7 +387,7 @@ export function ProjectIconPickerPanel({
             onClick={onChooseImage}
           >
             <ImageIcon aria-hidden className="size-3.5" />
-            Image…
+            {tx("Image…")}
           </button>
         ) : null}
       </div>
@@ -396,7 +400,7 @@ export function ProjectIconPickerPanel({
           onClick={() => send(null)}
         >
           <BanIcon aria-hidden className="size-4" />
-          Reset icon and color
+          {tx("Reset icon and color")}
         </button>
       </div>
     </div>

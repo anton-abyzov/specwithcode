@@ -1,3 +1,4 @@
+import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
 import { hasRelayRoute } from "@specweave-studio/client-runtime/connection";
 import { Link } from "@tanstack/react-router";
@@ -161,6 +162,7 @@ export function FleetWorkersRow({
   onDraftChange: (draft: WorkerDraft) => void;
   onAction: (action: "allow" | "stop") => void;
 }) {
+  const tx = useTx();
   const workers = machine.workers;
   if (!workers) return null;
   const view = fleetWorkersView(workers);
@@ -172,8 +174,8 @@ export function FleetWorkersRow({
   return (
     <div className="min-w-0 space-y-1.5" aria-label={`Workers on ${machine.label}`}>
       <p className="text-xs text-muted-foreground">
-        <span className="text-foreground/80">Workers</span>{" "}
-        <SettingHelp label="workers">
+        <span className="text-foreground/80">{tx("Workers")}</span>{" "}
+        <SettingHelp label={tx("workers")}>
           <div className="space-y-1.5">
             {fleetWorkersHelp(machine.label).map((line) => (
               <p key={line}>{line}</p>
@@ -181,7 +183,7 @@ export function FleetWorkersRow({
           </div>
         </SettingHelp>{" "}
         · {view.summary}
-        {view.action === "allow" && !canManage ? " Allowing them needs Manage access." : null}
+        {view.action === "allow" && !canManage ? tx(" Allowing them needs Manage access.") : null}
       </p>
       {view.accessHint ? <p className="text-xs text-muted-foreground">{view.accessHint}</p> : null}
       {view.problem ? <p className="text-xs text-warning-foreground">{view.problem}</p> : null}
@@ -206,7 +208,7 @@ export function FleetWorkersRow({
             </SelectTrigger>
             <SelectPopup align="start" alignItemWithTrigger={false}>
               <SelectGroup>
-                <SelectGroupLabel>Most access a worker gets</SelectGroupLabel>
+                <SelectGroupLabel>{tx("Most access a worker gets")}</SelectGroupLabel>
                 {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
                   <SelectItem key={choice.value} value={choice.value}>
                     {choice.label}
@@ -215,10 +217,14 @@ export function FleetWorkersRow({
               </SelectGroup>
             </SelectPopup>
           </Select>
-          <SettingHelp label="the most access a worker gets">
+          <SettingHelp label={tx("the most access a worker gets")}>
             <p className="mb-1.5">
-              The most a worker started on {machine.label} may do, even when its coordinator has
-              more.
+              {renderRich(
+                tx(
+                  "The most a worker started on {label} may do, even when its coordinator has more.",
+                ),
+                { label: machine.label },
+              )}
             </p>
             <dl className="space-y-1">
               {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
@@ -248,7 +254,7 @@ export function FleetWorkersRow({
                 disabled={busy || (codeNeeded && !draft.pairingCode.trim())}
                 onClick={() => onAction("allow")}
               >
-                Change access
+                {tx("Change access")}
               </Button>
             ) : null
           ) : (
@@ -258,7 +264,7 @@ export function FleetWorkersRow({
               title={`Let coordinators on this machine start threads on ${machine.label}`}
               onClick={() => onAction("allow")}
             >
-              Allow workers
+              {tx("Allow workers")}
             </Button>
           )}
         </div>
@@ -537,6 +543,7 @@ export function StudioFleetConnections({
 /** The ID with a Copy beside it, since nobody retypes one by hand. */
 /** A command or ID to copy, as its own line so it reads the same on every platform. */
 function CopyableCode({ value, label }: { readonly value: string; readonly label: string }) {
+  const tx = useTx();
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: label });
   return (
     <span className="mt-1 flex min-w-0 items-center gap-2 rounded-md border border-border/60 bg-muted/40 py-1 ps-2 pe-1">
@@ -550,7 +557,7 @@ function CopyableCode({ value, label }: { readonly value: string; readonly label
         aria-label={`Copy ${label}`}
         onClick={() => copyToClipboard(value, undefined)}
       >
-        {isCopied ? "Copied" : "Copy"}
+        {isCopied ? tx("Copied") : tx("Copy")}
       </Button>
     </span>
   );
@@ -746,6 +753,7 @@ export function StudioFleetRoster({
   /** Shown above the list, such as the Connect sign-in for machines that cannot be reached. */
   banner?: ReactNode;
 }) {
+  const tx = useTx();
   const [readinessFor, setReadinessFor] = useState<string | null>(null);
   const [terminalFor, setTerminalFor] = useState<string | null>(null);
   const closeMachineTerminal = useCloseMachineTerminal();
@@ -762,7 +770,7 @@ export function StudioFleetRoster({
           disabled={loading || pending !== null}
         >
           <RefreshCwIcon className="size-3" />
-          {loading ? "Checking…" : "Refresh"}
+          {loading ? tx("Checking…") : tx("Refresh")}
         </Button>
       }
     >
@@ -777,7 +785,7 @@ export function StudioFleetRoster({
       ) : null}
       {failed ? (
         <p role="status" className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
-          Private machines could not be checked. Refresh to retry.
+          {tx("Private machines could not be checked. Refresh to retry.")}
         </p>
       ) : snapshot?.machines.length ? (
         <ul className="divide-y divide-border/60">
@@ -874,7 +882,7 @@ export function StudioFleetRoster({
                     {current || saved ? (
                       <CheckIcon
                         aria-label={
-                          current ? "Current environment" : "Saved for the machine picker"
+                          current ? tx("Current environment") : tx("Saved for the machine picker")
                         }
                         className="size-3.5 text-muted-foreground"
                       />
@@ -890,15 +898,15 @@ export function StudioFleetRoster({
                         onClick={() => onPair(machine)}
                       >
                         {pending === machine.id
-                          ? "Connecting…"
+                          ? tx("Connecting…")
                           : rejected
-                            ? "Approve again"
-                            : "Connect machine"}
+                            ? tx("Approve again")
+                            : tx("Connect machine")}
                       </Button>
                     )}
                     {pending === `remove:${machine.id}` ? (
                       <span className="text-xs text-muted-foreground" role="status">
-                        Removing…
+                        {tx("Removing…")}
                       </span>
                     ) : null}
                     {canStop || canRemove ? (
@@ -921,13 +929,17 @@ export function StudioFleetRoster({
                               disabled={busy || !canManageWorkers}
                               onClick={() => onWorkers?.(machine, "stop")}
                             >
-                              Stop workers
+                              {tx("Stop workers")}
                             </MenuItem>
                           ) : null}
                           {canStop ? (
                             <p className="max-w-64 px-2 pb-2 text-xs text-muted-foreground">
-                              Coordinators on this machine can no longer start threads on{" "}
-                              {machine.label}. Workers already running there keep running.
+                              {renderRich(
+                                tx(
+                                  "Coordinators on this machine can no longer start threads on {label}. Workers already running there keep running.",
+                                ),
+                                { label: machine.label },
+                              )}
                             </p>
                           ) : null}
                           {canStop && canRemove ? <MenuSeparator /> : null}
@@ -937,7 +949,9 @@ export function StudioFleetRoster({
                               disabled={busy}
                               onClick={() => onRemove?.(machine)}
                             >
-                              {pending === `remove:${machine.id}` ? "Removing…" : "Remove machine"}
+                              {pending === `remove:${machine.id}`
+                                ? tx("Removing…")
+                                : tx("Remove machine")}
                             </MenuItem>
                           ) : null}
                         </MenuPopup>
@@ -974,7 +988,7 @@ export function StudioFleetRoster({
                           onClick={() => setReadinessFor(readinessOpen ? null : machine.id)}
                         >
                           <ListChecksIcon aria-hidden />
-                          {readinessOpen ? "Hide readiness" : "Check readiness"}
+                          {readinessOpen ? tx("Hide readiness") : tx("Check readiness")}
                         </Button>
                       </>
                     ) : null}
@@ -1018,8 +1032,8 @@ export function StudioFleetRoster({
       ) : renderMachine ? null : (
         <p className="px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
           {loading
-            ? "Checking your private machines…"
-            : "No other machines yet. Add another computer or a server you rent below."}
+            ? tx("Checking your private machines…")
+            : tx("No other machines yet. Add another computer or a server you rent below.")}
         </p>
       )}
       {!failed && snapshot?.invalidEntries?.length ? (
@@ -1053,16 +1067,16 @@ export function StudioFleetRoster({
           className="flex items-center justify-between gap-4 border-t border-border/60 px-3 py-2.5 sm:px-4"
         >
           <span className="min-w-0">
-            <span className="block text-sm">Connect automatically</span>
+            <span className="block text-sm">{tx("Connect automatically")}</span>
             <span className="block text-xs text-muted-foreground">
-              Pair with reachable machines when SpecWithCode opens. Saved on this device.
+              {tx("Pair with reachable machines when SpecWithCode opens. Saved on this device.")}
             </span>
           </span>
           <TeamRulesInert lock={linkLock}>
             <Switch
               checked={autoConnect}
               onCheckedChange={onAutoConnectChange}
-              aria-label="Connect private machines automatically"
+              aria-label={tx("Connect private machines automatically")}
             />
           </TeamRulesInert>
         </label>
@@ -1077,44 +1091,53 @@ export function StudioFleetRoster({
           }}
         >
           <div className="min-w-0">
-            <span className="block text-sm">Add a machine</span>
+            <span className="block text-sm">{tx("Add a machine")}</span>
             <span className="mt-0.5 block text-xs text-muted-foreground">
-              Let agents on this machine start work on another computer.
+              {tx("Let agents on this machine start work on another computer.")}
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Already connected to it? Open{" "}
-            <Link to="/settings/machines" className="underline underline-offset-2">
-              Settings &gt; Machines
-            </Link>{" "}
-            and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these
-            steps:
+            {renderRich(
+              tx(
+                "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:",
+              ),
+              {
+                link: (
+                  <Link to="/settings/machines" className="underline underline-offset-2">
+                    Settings &gt; Machines
+                  </Link>
+                ),
+              },
+            )}
           </p>
           <ol className="list-decimal space-y-2.5 ps-4 marker:text-xs marker:text-muted-foreground">
-            <AddMachineStep title="Link SpecWithCode Connect on the other machine">
+            <AddMachineStep title={tx("Link SpecWithCode Connect on the other machine")}>
               <p>
                 Open Settings &gt; Machines &gt; SpecWithCode Connect there, or run this command.
                 Any Connect account works. This machine does not need to be signed in.
               </p>
-              <CopyableCode value="specwithcode connect link" label="Connect command" />
+              <CopyableCode value="specwithcode connect link" label={tx("Connect command")} />
             </AddMachineStep>
-            <AddMachineStep title="Make a join line there">
+            <AddMachineStep title={tx("Make a join line there")}>
               <p>
                 There, choose Join a main machine under Settings &gt; Machines and enter this
                 machine&rsquo;s ID:
               </p>
-              <CopyableCode value={environmentId} label="this machine's ID" />
-              <p>Without its window, run this command on that machine instead:</p>
-              <CopyableCode value={fleetInviteCommand(environmentId)} label="join line command" />
+              <CopyableCode value={environmentId} label={tx("this machine's ID")} />
+              <p>{tx("Without its window, run this command on that machine instead:")}</p>
+              <CopyableCode
+                value={fleetInviteCommand(environmentId)}
+                label={tx("join line command")}
+              />
             </AddMachineStep>
-            <AddMachineStep title="Paste the join line here">
-              <p>It works once, within an hour.</p>
+            <AddMachineStep title={tx("Paste the join line here")}>
+              <p>{tx("It works once, within an hour.")}</p>
               <TeamRulesInert lock={linkLock}>
                 <div className="flex min-w-0 gap-2">
                   <input
-                    aria-label="Invitation from the other machine"
+                    aria-label={tx("Invitation from the other machine")}
                     className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-2 font-mono text-xs dark:bg-input/32"
-                    placeholder="swc-machine-…"
+                    placeholder={tx("swc-machine-…")}
                     autoComplete="off"
                     spellCheck={false}
                     value={invitation}
@@ -1127,29 +1150,31 @@ export function StudioFleetRoster({
                     disabled={pending !== null || !canManageWorkers || !invitation.trim()}
                   >
                     {pending === "add-machine"
-                      ? "Adding…"
+                      ? tx("Adding…")
                       : canManageWorkers
-                        ? "Add machine"
-                        : "Manage access required"}
+                        ? tx("Add machine")
+                        : tx("Manage access required")}
                   </Button>
                 </div>
               </TeamRulesInert>
             </AddMachineStep>
-            <AddMachineStep title="Allow workers">
-              <p>Choose Allow workers on its card above.</p>
+            <AddMachineStep title={tx("Allow workers")}>
+              <p>{tx("Choose Allow workers on its card above.")}</p>
             </AddMachineStep>
           </ol>
           <p className="text-xs text-muted-foreground">
-            Adding a Linux server you rent? Start with the{" "}
-            <a
-              className="underline underline-offset-2"
-              href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              Linux worker guide
-            </a>
-            .
+            {renderRich(tx("Adding a Linux server you rent? Start with the {a}."), {
+              a: (
+                <a
+                  className="underline underline-offset-2"
+                  href="https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/linux-worker.md"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  {tx("Linux worker guide")}
+                </a>
+              ),
+            })}
           </p>
         </form>
       ) : null}
@@ -1160,10 +1185,11 @@ export function StudioFleetRoster({
         >
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <span className="min-w-0">
-              <span className="block text-sm">Join a main machine</span>
+              <span className="block text-sm">{tx("Join a main machine")}</span>
               <span className="block text-xs text-muted-foreground">
-                Link SpecWithCode Connect here first, then make a line to paste on your main
-                machine.
+                {tx(
+                  "Link SpecWithCode Connect here first, then make a line to paste on your main machine.",
+                )}
               </span>
             </span>
             <TeamRulesInert lock={linkLock}>
@@ -1174,7 +1200,7 @@ export function StudioFleetRoster({
                 disabled={pending !== null || !canManageWorkers}
                 onClick={onInvite}
               >
-                {canManageWorkers ? "Make a join line" : "Manage access required"}
+                {canManageWorkers ? tx("Make a join line") : tx("Manage access required")}
               </Button>
             </TeamRulesInert>
           </div>
@@ -1188,11 +1214,17 @@ export function StudioFleetRoster({
           !savedEnvironmentIds.includes(machine.environmentId),
       ) ? (
         <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          To connect one, open a pairing link from this server’s owner with{" "}
-          {snapshot?.connectPermission === "orchestration:operate"
-            ? "Operate threads"
-            : "Manage access"}
-          , or use Add environment with that machine’s own link.
+          {renderRich(
+            tx(
+              "To connect one, open a pairing link from this server’s owner with {value}, or use Add environment with that machine’s own link.",
+            ),
+            {
+              value:
+                snapshot?.connectPermission === "orchestration:operate"
+                  ? "Operate threads"
+                  : "Manage access",
+            },
+          )}
         </p>
       ) : null}
       {removeUnavailable &&

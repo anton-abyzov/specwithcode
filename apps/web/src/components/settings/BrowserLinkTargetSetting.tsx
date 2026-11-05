@@ -5,6 +5,7 @@
  *
  * @module BrowserLinkTargetSetting
  */
+import { useTx } from "../../i18n";
 import { DEFAULT_BROWSER_LINK_TARGET } from "@specweave-studio/contracts";
 
 import { buildLinkTargetOptions } from "~/browser/externalBrowserOptions";
@@ -16,6 +17,7 @@ import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
 export function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+  const tx = useTx();
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
   const externalTarget = useClientSettings((settings) => settings.browserExternalTarget);
   const updateSettings = useUpdatePrimarySettings();
@@ -37,7 +39,7 @@ export function BrowserLinkTargetSetting({ disabled }: { readonly disabled: bool
       resetAction={
         !disabled && !isDefault ? (
           <SettingResetButton
-            label="link target"
+            label={tx("link target")}
             onClick={() =>
               updateSettings({
                 browserLinkTarget: DEFAULT_BROWSER_LINK_TARGET,
@@ -60,7 +62,7 @@ export function BrowserLinkTargetSetting({ disabled }: { readonly disabled: bool
             });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Open links in">
+          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label={tx("Open links in")}>
             <SelectValue>
               <span className="block truncate">{selected.label}</span>
             </SelectValue>
