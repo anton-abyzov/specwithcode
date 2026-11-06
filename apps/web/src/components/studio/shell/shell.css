@@ -1803,6 +1803,23 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   }
 }
 
+/* Results only: a status-only reply to a worker wake, folded to one line. */
+.sws-checked-wake {
+  margin: 6px 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+.sws-checked-wake > summary {
+  cursor: pointer;
+  width: fit-content;
+  border-radius: 4px;
+}
+.sws-checked-wake > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 /* Verbose timeline detail: one turn's steps under its answer. */
 .sws-run-activity {
   margin: 8px 0 2px;

@@ -1737,10 +1737,20 @@ export const ru: PhraseCatalog = {
   "Choose a machine": "Выберите машину",
   "Most access for this work{select}": "Максимальный доступ для этой работы{select}",
   "Most access for incoming work": "Максимальный доступ для входящей работы",
-  "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{unavailable} На {coordinatorLabel} откройте «Настройки» > «Машины», разверните «Доступ, маршруты и права исполнителей» в карточке {hereLabel} и выберите «Разрешить исполнителей».",
   "Setting up…": "Настройка…",
-  "Worker access allowed": "Доступ исполнителей разрешён",
+  "Allow {coordinatorLabel}": "Разрешить {coordinatorLabel}",
+  "On {coordinatorLabel}: done": "На {coordinatorLabel}: готово",
+  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
+    "На {coordinatorLabel}: ещё не настроено. Откройте «Настройки» > «Машины», разверните «Доступ, маршруты и права исполнителей» в карточке {hereLabel} и выберите «Разрешить исполнителей».",
+  "{coordinatorLabel} can run work here · {access} · until {date}":
+    "{coordinatorLabel} может запускать работу здесь · {access} · до {date}",
+  "{coordinatorLabel} can run work here · {access}":
+    "{coordinatorLabel} может запускать работу здесь · {access}",
+  "Open the installed desktop app to set this up.":
+    "Откройте установленное приложение для компьютера, чтобы настроить это.",
+  "Connect to {coordinatorLabel} first.": "Сначала подключитесь к {coordinatorLabel}.",
+  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
+    "Нужно право управления доступом на {hereLabel} и на {coordinatorLabel}.",
   "default browser viewport": "окно браузера по умолчанию",
   "Fill panel": "Заполнить панель",
   Responsive: "Адаптивно",

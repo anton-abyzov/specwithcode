@@ -289,6 +289,36 @@ describe("thread undo shortcut", () => {
   });
 });
 
+describe("project settings shortcut", () => {
+  // Shift+Comma reports key "<" on US layouts; the physical Comma code still matches.
+  it("resolves mod+shift+, from the shifted comma key", () => {
+    for (const [platform, modifier] of [
+      ["MacIntel", { metaKey: true }],
+      ["Linux", { ctrlKey: true }],
+      ["Win32", { ctrlKey: true }],
+    ] as const) {
+      assert.equal(
+        resolveShortcutCommand(
+          event({ key: "<", code: "Comma", shiftKey: true, ...modifier }),
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform, context: { terminalFocus: false } },
+        ),
+        "projectSettings.open",
+      );
+    }
+  });
+
+  it("leaves the shortcut to a focused terminal", () => {
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "<", code: "Comma", metaKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: true } },
+      ),
+    );
+  });
+});
+
 describe("copy thread reference shortcut", () => {
   it("resolves Cmd+Shift+C on macOS and Ctrl+Shift+C elsewhere", () => {
     assert.equal(

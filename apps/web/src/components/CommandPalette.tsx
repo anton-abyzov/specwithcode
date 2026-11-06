@@ -260,6 +260,8 @@ import {
   searchProjectSettings,
 } from "./studio/projectSettingsSearch.logic";
 import { requestProjectSettings } from "../studio/projectSettingsRequests";
+import { useSettingsProjectGroups } from "./settings/useSettingsProjectGroups";
+import { findLogicalProjectKey } from "./chat/TimelineDetailMenu";
 import { useProjectFolderCheckCommand } from "../studio/useProjectFolderHealth";
 import { announceWorkspaceGuidance } from "../studio/workspaceGuidanceToast";
 import {
@@ -735,6 +737,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           onFolderCopies={setFolderSuggestion}
         />
       </CommandDialog>
+      <ProjectSettingsShortcut />
       <FolderLinkSuggestion
         request={folderSuggestion}
         onClose={() => setFolderSuggestion(null)}
@@ -752,6 +755,50 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       )}
     </ComposerHandleContext>
   );
+}
+
+/**
+ * Opens Project settings for the project in view: the project page's, else the
+ * active thread or draft's. Without one the shortcut does nothing.
+ */
+function ProjectSettingsShortcut() {
+  const navigate = useNavigate();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const routeProjectKey = useParams({
+    strict: false,
+    select: (params) => params.projectKey ?? null,
+  });
+  const { activeDraftThread, activeThread } = useHandleNewThread();
+  const projectGroups = useSettingsProjectGroups();
+  const threadProject = activeThread ?? activeDraftThread;
+  const projectKey =
+    routeProjectKey ??
+    (threadProject
+      ? findLogicalProjectKey(projectGroups, {
+          environmentId: threadProject.environmentId,
+          projectId: threadProject.projectId,
+        })
+      : null);
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: { terminalFocus: isTerminalFocused(), previewFocus: isPreviewFocused() },
+      });
+      if (command !== "projectSettings.open" || projectKey === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat) return;
+      void navigate({ to: "/projects/$projectKey", params: { projectKey } }).then(() =>
+        requestProjectSettings(projectKey, Date.now(), { tab: "general" }),
+      );
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [keybindings, navigate, projectKey]);
+
+  return null;
 }
 
 function CommandPaletteDialog(props: {
@@ -2788,6 +2835,7 @@ function OpenCommandPaletteDialog(props: {
       title: "Project settings",
       description: contextualProjectGroup.displayName,
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "projectSettings.open",
       run: async () => {
         await navigate({
           to: "/projects/$projectKey",

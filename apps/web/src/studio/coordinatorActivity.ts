@@ -466,3 +466,131 @@ export function withFoldedReplies<T>(
   const merged = [...folded.flatMap(of), ...own];
   return merged.filter((value, index) => merged.indexOf(value) === index);
 }
+
+export type WakeReplyMessage = {
+  readonly id: string;
+  readonly role: "user" | "assistant" | "system";
+  readonly runId: string | null;
+  readonly text: string;
+  readonly createdBy: string;
+  /** Set on a server wake: a worker or delegated task finished. */
+  readonly wake: boolean;
+  readonly notification?: { readonly summary: string } | undefined;
+  /** Files or images the reply carries; those keep it open. */
+  readonly attachmentCount?: number;
+};
+
+export type CheckedWorker = { readonly threadId: string | null; readonly title: string };
+
+const STATUS_ONLY_LIMIT = 400;
+const STATUS_PHRASE =
+  /\b(still (running|going|pending|in progress|waiting|working|watching|awaits?)|no change|nothing (new|changed)|is watching|keeps? watching|awaits)\b/i;
+// Anything the reader may need to act on, or real news, keeps the reply open.
+const SUBSTANCE =
+  /\?|\b(you|your|please|fail(s|ed|ing|ure)?|errors?|block(s|ed|er|ing)?|merged|(to|can|should) merge|released|shipped|done|completed?|ready|decid\w*|decision\w*|approv\w*|broke\w*|stuck|conflict\w*|limit\w*|expired?|timed out|(was|were|got|been) cancel\w*|sign(ed)? in|log(ged)? in)\b/i;
+const MARKDOWN_LINK = /\[([^\]]*)\]\([^)]*\)/g;
+const SUMMARY_LINK = /\[([^\]]+)\]\(studio:\/\/thread\/([^)\s]+)\)/;
+
+const plainText = (text: string) => text.replace(MARKDOWN_LINK, "$1").trim();
+
+/** A reply with nothing the reader needs: no news, question or failure. */
+function hasSubstance(text: string): boolean {
+  const plain = plainText(text);
+  return plain.length > STATUS_ONLY_LIMIT || SUBSTANCE.test(plain);
+}
+
+/** A short reply that only says the worker is still going, with no news or question. */
+export function isStatusOnlyReply(text: string): boolean {
+  const plain = plainText(text);
+  if (plain.length === 0 || plain.length > STATUS_ONLY_LIMIT) return false;
+  if (/\n\s*([-*]|\d+\.)\s/.test(plain)) return false;
+  return STATUS_PHRASE.test(plain) && !SUBSTANCE.test(plain);
+}
+
+function wakeWorker(message: WakeReplyMessage): CheckedWorker {
+  const match = SUMMARY_LINK.exec(message.notification?.summary ?? "");
+  if (match === null) return { threadId: null, title: "a worker" };
+  let threadId = match[2]!;
+  try {
+    threadId = decodeURIComponent(threadId);
+  } catch {
+    // Keep the encoded form.
+  }
+  return { threadId, title: match[1]! };
+}
+
+/**
+ * Results only: the coordinator's replies to a worker wake that only report
+ * status, keyed by reply, with the worker they checked. Each folds into one
+ * "Checked <worker>" line. A run that also carries a person's message, or
+ * whose last reply has news, keeps its reply.
+ */
+export function checkedWakeReplies(
+  messages: ReadonlyArray<WakeReplyMessage>,
+): ReadonlyMap<string, CheckedWorker> {
+  const wakeByRun = new Map<string, CheckedWorker>();
+  const personRuns = new Set<string>();
+  const repliesByRun = new Map<string, WakeReplyMessage[]>();
+  for (const message of messages) {
+    if (message.runId === null) continue;
+    if (message.role === "assistant")
+      repliesByRun.set(message.runId, [...(repliesByRun.get(message.runId) ?? []), message]);
+    else if (message.role !== "user") continue;
+    else if (message.wake) {
+      if (!wakeByRun.has(message.runId)) wakeByRun.set(message.runId, wakeWorker(message));
+    } else personRuns.add(message.runId);
+  }
+  const checked = new Map<string, CheckedWorker>();
+  for (const [runId, worker] of wakeByRun) {
+    if (personRuns.has(runId)) continue;
+    // Results only folds a run's earlier replies into its last one, so all of them count.
+    const replies = repliesByRun.get(runId) ?? [];
+    const reply = replies.at(-1);
+    if (reply === undefined || !isStatusOnlyReply(reply.text)) continue;
+    if (replies.some((each) => hasSubstance(each.text) || (each.attachmentCount ?? 0) > 0))
+      continue;
+    checked.set(reply.id, worker);
+  }
+  return checked;
+}
+
+export type CheckedWakeGroup = {
+  /** The first reply of the run of checked lines; it carries the one line shown. */
+  readonly leaderId: string;
+  readonly worker: CheckedWorker;
+  readonly count: number;
+};
+
+/**
+ * Checked replies next to each other about the same worker thread show as one line,
+ * keyed by every reply in the run. Any other row in between starts a new line.
+ */
+export function groupCheckedWakes(
+  rowIds: ReadonlyArray<string>,
+  checked: ReadonlyMap<string, CheckedWorker>,
+): ReadonlyMap<string, CheckedWakeGroup> {
+  const groups = new Map<string, CheckedWakeGroup>();
+  let members: string[] = [];
+  const close = () => {
+    const leaderId = members[0];
+    if (leaderId !== undefined) {
+      const group = { leaderId, worker: checked.get(leaderId)!, count: members.length };
+      for (const id of members) groups.set(id, group);
+    }
+    members = [];
+  };
+  for (const id of rowIds) {
+    const worker = checked.get(id);
+    const leader = members[0] === undefined ? undefined : checked.get(members[0]);
+    // Workers known only as "a worker" are never taken for one another.
+    const same =
+      worker !== undefined &&
+      leader !== undefined &&
+      worker.threadId !== null &&
+      worker.threadId === leader.threadId;
+    if (!same) close();
+    if (worker !== undefined) members.push(id);
+  }
+  close();
+  return groups;
+}

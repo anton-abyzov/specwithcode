@@ -8,6 +8,12 @@
  * The launcher is the thread that sent the worker's first message. Delegated
  * children report through their own task wake, and threads people started,
  * or another machine started, have no launcher here.
+ *
+ * A worker watching CI ends many short runs (a PR watch notice, a finished
+ * background command, a delegated review). Only the run that leaves it done
+ * wakes the launcher: after a settle window no later run may report for it,
+ * nothing may run or wait to start, and no watch or subagent may hold it.
+ * The wait is in memory: a server restart inside it drops that run's wake.
  */
 import {
   CommandId,
@@ -23,8 +29,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import { backgroundWorkHoldsCompletion } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import { threadHasQueuedTurnStart } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -36,6 +44,76 @@ export const LAUNCHED_WORKER_WAKE_PREFIX = "launched-worker-wake:";
  * fallback starts a newer run in the same thread (its sweep runs every 30s).
  */
 export const FAILED_RUN_GRACE = Duration.seconds(90);
+
+/**
+ * How long a completed run waits before it is reported, so a burst of runs
+ * (a watch or task wake starting the next one) gives one wake, from the last.
+ */
+export const WAKE_SETTLE = Duration.seconds(45);
+
+/** How often a held worker (a run going, a PR watch, a subagent) is checked again. */
+export const HOLD_RECHECK = Duration.minutes(2);
+
+/** A worker still held after this long is reported anyway. */
+export const HOLD_LIMIT = Duration.hours(12);
+
+type SettleRun = Pick<
+  OrchestrationV2Run,
+  "id" | "ordinal" | "status" | "startedAt" | "queueHeld" | "queueHeldForRestart"
+>;
+
+/** A later run that already reported for itself: only completed and failed runs report. */
+const reported = (later: SettleRun) => later.status === "completed" || later.status === "failed";
+
+/**
+ * A later run that may still report: one going, or queued to start on its own.
+ * A queued run held for a person after a failure does not start by itself.
+ */
+const pending = (later: SettleRun) => {
+  switch (later.status) {
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "interrupted":
+    case "rolled_back":
+      return false;
+    case "queued":
+      return !(later.queueHeld === true && later.queueHeldForRestart !== true);
+    default:
+      return true;
+  }
+};
+
+/**
+ * What `run` left the worker as. "superseded": a later run reported instead.
+ * "held": a run still going, a message waiting to start, or a PR watch,
+ * subagent, monitor or workflow may wake it again. "done": wake the launcher.
+ */
+export function workerStateAfter(
+  run: Pick<OrchestrationV2Run, "id" | "ordinal">,
+  worker: Pick<
+    OrchestrationV2ThreadShell,
+    | "activeRunId"
+    | "pendingBackgroundTasks"
+    | "latestUserMessageAt"
+    | "latestRunRequestedAt"
+    | "latestRunStartedAt"
+    | "latestRunCompletedAt"
+    | "latestRunId"
+    | "status"
+  >,
+  runs: ReadonlyArray<SettleRun>,
+  nowMs: number,
+): "superseded" | "held" | "done" {
+  const later = runs.filter((other) => other.ordinal > run.ordinal);
+  if (later.some(reported)) return "superseded";
+  // A later run still going may yet be stopped without reporting: wait for it.
+  if (worker.activeRunId !== null || later.some(pending)) return "held";
+  // A queued message the orchestrator has not turned into a run yet.
+  if (worker.latestRunId === run.id && threadHasQueuedTurnStart(worker, nowMs)) return "held";
+  // A PR watch shows here as a monitor; a dev server left running does not hold.
+  return backgroundWorkHoldsCompletion(worker.pendingBackgroundTasks ?? []) ? "held" : "done";
+}
 
 /** Runs that end the work the launcher waits for; a stop or a restart does not. */
 const reportedStatus = (status: OrchestrationV2Run["status"]) =>
@@ -95,11 +173,21 @@ export const make = Effect.gen(function* () {
       if (worker === null || !launchedByAgent(worker)) return;
       const launcherId = yield* launcherOf(run.threadId);
       if (launcherId === undefined) return;
-      if (status === "failed") {
-        yield* Effect.sleep(FAILED_RUN_GRACE);
+      // A failed run also waits out the fallback, whose own run reports when it ends.
+      yield* Effect.sleep(status === "failed" ? FAILED_RUN_GRACE : WAKE_SETTLE);
+      // A watch or subagent wakes the worker again, and that run reports. But a
+      // watch can end without a run (its pull request merged), so keep checking.
+      let heldFor = Duration.zero;
+      while (true) {
         const latest = yield* threads.getThreadShell(run.threadId);
-        // The fallback's own run reports when it ends.
-        if (latest === null || latest.latestRunId !== run.id) return;
+        if (latest === null) return;
+        const { runs } = yield* threads.getThreadRecords(run.threadId, ["runs"]);
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const state = workerStateAfter(run, latest, runs, nowMs);
+        if (state === "superseded") return;
+        if (state === "done" || Duration.isGreaterThanOrEqualTo(heldFor, HOLD_LIMIT)) break;
+        yield* Effect.sleep(HOLD_RECHECK);
+        heldFor = Duration.sum(heldFor, HOLD_RECHECK);
       }
       const launcher = yield* threads.getThreadShell(launcherId);
       if (

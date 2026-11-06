@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  checkedWakeReplies,
   coordinatorConversationView,
+  groupCheckedWakes,
+  isStatusOnlyReply,
   runActivity,
   summarizeRunItems,
   withFoldedReplies,
   type ActivityItem,
   type ActivityMessage,
+  type WakeReplyMessage,
 } from "./coordinatorActivity";
 
 let ordinal = 0;
@@ -346,5 +350,123 @@ describe("coordinatorConversationView cost", () => {
     // Grouping reads each item's run a few times; filtering per run would read it
     // 300 times each, 90,000 in all.
     expect(reads).toBeLessThan(300 * 10);
+  });
+});
+
+describe("checkedWakeReplies", () => {
+  const worker = "[1209 skill authoring (app worktree)](studio://thread/mcp%3A6742c6aa)";
+  const wake = (id: string, runId: string): WakeReplyMessage => ({
+    id,
+    role: "user",
+    runId,
+    text: `Worker ${worker} finished: completed. Read it with studio_thread_read.`,
+    createdBy: "agent",
+    wake: true,
+    notification: { summary: `${worker} reported back.` },
+  });
+  const reply = (id: string, runId: string, text: string): WakeReplyMessage => ({
+    id,
+    role: "assistant",
+    runId,
+    text,
+    createdBy: "agent",
+    wake: false,
+  });
+
+  // The coordinator's replies to the 1209 worker's wakes on November 6.
+  const statusOnly = [
+    `${worker} is still running: the skill-authoring fixes (PR #1430) pass their tests and builds, and the review and CI are still going. The skill panel redesign starts after it merges.`,
+    `No change: PR #1430's checks are still running, and the three cancelled checks were from an older run. ${worker} is watching the rerun.`,
+    "PR #1430's web build passed; the remaining checks and the review are still running.",
+  ];
+
+  it("folds the status-only replies of November 6 into one checked line each", () => {
+    const messages = statusOnly.flatMap((text, index) => [
+      wake(`wake-${index}`, `run-${index}`),
+      reply(`reply-${index}`, `run-${index}`, text),
+    ]);
+    const checked = checkedWakeReplies(messages);
+    expect([...checked.keys()]).toEqual(["reply-0", "reply-1", "reply-2"]);
+    expect(checked.get("reply-1")).toEqual({
+      threadId: "mcp:6742c6aa",
+      title: "1209 skill authoring (app worktree)",
+    });
+  });
+
+  it("keeps news, questions and replies to a person", () => {
+    for (const text of [
+      "PR #1430 merged and the release is next.",
+      "PR #1430's server shard failed: `ProjectWorkspace.test.tsx` times out.",
+      "Checks are still running. Should I merge once they pass?",
+      "The review is still running and is blocked on your approval.",
+      "Still waiting on the decision about the migration.",
+      "Checks are green; still waiting for someone to merge.",
+      "The worker is still waiting: its usage limit resets at 3 PM.",
+      "Still running, but the sign in expired.",
+    ])
+      expect(isStatusOnlyReply(text)).toBe(false);
+    expect(isStatusOnlyReply("")).toBe(false);
+
+    const person: WakeReplyMessage = { ...wake("ask", "run-1"), wake: false, createdBy: "user" };
+    const checked = checkedWakeReplies([
+      wake("wake", "run-1"),
+      person,
+      reply("answer", "run-1", statusOnly[2]!),
+    ]);
+    expect(checked.size).toBe(0);
+  });
+
+  it("keeps a run whose earlier reply had news, or whose reply carries files", () => {
+    const earlier = checkedWakeReplies([
+      wake("wake", "run-1"),
+      reply("first", "run-1", "PR #1430 checks failed; I asked the worker to fix them."),
+      reply("last", "run-1", "Sent it; the worker is still running."),
+    ]);
+    expect(earlier.size).toBe(0);
+    const files = checkedWakeReplies([
+      wake("wake", "run-1"),
+      { ...reply("last", "run-1", statusOnly[2]!), attachmentCount: 1 },
+    ]);
+    expect(files.size).toBe(0);
+  });
+
+  it("only looks at the run's last reply", () => {
+    const checked = checkedWakeReplies([
+      wake("wake", "run-1"),
+      reply("first", "run-1", statusOnly[2]!),
+      reply("last", "run-1", "PR #1430 failed its Windows check."),
+    ]);
+    expect(checked.size).toBe(0);
+  });
+});
+
+describe("groupCheckedWakes", () => {
+  const skills = { threadId: "skills", title: "1209 skill authoring" };
+  const docs = { threadId: "docs", title: "Docs site" };
+  it("shows checked lines in a row about one worker as one line", () => {
+    const checked = new Map([
+      ["r2", skills],
+      ["r3", skills],
+      ["r4", skills],
+      ["r5", docs],
+      ["r7", skills],
+    ]);
+    const groups = groupCheckedWakes(["r1", "r2", "r3", "r4", "r5", "r6", "r7"], checked);
+    expect(groups.get("r1")).toBeUndefined();
+    expect(groups.get("r3")).toEqual({ leaderId: "r2", worker: skills, count: 3 });
+    expect(groups.get("r5")).toEqual({ leaderId: "r5", worker: docs, count: 1 });
+    // A reply in between starts a new line.
+    expect(groups.get("r7")).toEqual({ leaderId: "r7", worker: skills, count: 1 });
+  });
+  it("never merges workers it knows only as a worker", () => {
+    const unknown = { threadId: null, title: "a worker" };
+    const groups = groupCheckedWakes(
+      ["r1", "r2"],
+      new Map([
+        ["r1", unknown],
+        ["r2", unknown],
+      ]),
+    );
+    expect(groups.get("r2")).toEqual({ leaderId: "r2", worker: unknown, count: 1 });
   });
 });

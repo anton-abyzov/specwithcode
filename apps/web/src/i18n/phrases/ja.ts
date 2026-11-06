@@ -1738,10 +1738,20 @@ export const ja: PhraseCatalog = {
   "Choose a machine": "マシンを選択",
   "Most access for this work{select}": "この作業の最大アクセス{select}",
   "Most access for incoming work": "受け取る作業の最大アクセス",
-  "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{unavailable} {coordinatorLabel} で「設定」>「マシン」を開き、{hereLabel} のカードで「アクセス、ルート、ワーカーの権限」を展開して「ワーカーを許可」を選んでください。",
   "Setting up…": "設定しています…",
-  "Worker access allowed": "ワーカーのアクセスを許可しました",
+  "Allow {coordinatorLabel}": "{coordinatorLabel} を許可",
+  "On {coordinatorLabel}: done": "{coordinatorLabel} 側: 完了",
+  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
+    "{coordinatorLabel} 側: まだ設定されていません。「設定」>「マシン」を開き、{hereLabel} のカードで「アクセス、ルート、ワーカーの権限」を展開して「ワーカーを許可」を選んでください。",
+  "{coordinatorLabel} can run work here · {access} · until {date}":
+    "{coordinatorLabel} はここで作業を実行できます · {access} · {date} まで",
+  "{coordinatorLabel} can run work here · {access}":
+    "{coordinatorLabel} はここで作業を実行できます · {access}",
+  "Open the installed desktop app to set this up.":
+    "設定するには、インストール済みのデスクトップアプリを開いてください。",
+  "Connect to {coordinatorLabel} first.": "先に {coordinatorLabel} に接続してください。",
+  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
+    "{hereLabel} と {coordinatorLabel} の両方でアクセス管理の権限が必要です。",
   "default browser viewport": "既定のブラウザーのビューポート",
   "Fill panel": "パネルに合わせる",
   Responsive: "レスポンシブ",

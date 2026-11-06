@@ -1,3 +1,4 @@
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import type {
@@ -13,7 +14,13 @@ vi.mock("../../state/environments", () => ({ useEnvironments: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
-import { setUpIncomingWorkers } from "./IncomingWorkerSetup";
+vi.mock("../../env", () => ({ isElectron: true }));
+import { useEnvironmentScope } from "../../state/session";
+import {
+  IncomingWorkerAction,
+  IncomingWorkerSaved,
+  setUpIncomingWorkers,
+} from "./IncomingWorkerSetup";
 const here = EnvironmentId.make("m4");
 const coordinator = EnvironmentId.make("m1");
 const input = { here, coordinator, hereLabel: "M4", access: "full-access" as const };
@@ -174,5 +181,53 @@ describe("incoming worker setup", () => {
       "Choose another machine",
     );
     expect(ops.add).not.toHaveBeenCalled();
+  });
+});
+
+describe("incoming worker setup view", () => {
+  const action = (connected = true) =>
+    renderToStaticMarkup(
+      <IncomingWorkerAction
+        here={here}
+        coordinator={coordinator}
+        hereLabel="m4"
+        coordinatorLabel="m1"
+        connected={connected}
+        onGranted={vi.fn()}
+      />,
+    );
+  it("keeps a disabled Allow button with the reason when manage access is missing there", () => {
+    vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
+    const html = action();
+    expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
+    expect(html).toContain("Manage access is needed on both m4 and m1.");
+    expect(html).toContain("On m1: not set up yet. Open Settings &gt; Machines");
+  });
+  it("enables the Allow button when both machines can be managed", () => {
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    const html = action();
+    expect(html).toMatch(/<button(?![^>]* disabled="")[^>]*>Allow m1<\/button>/);
+    expect(html).not.toContain("not set up yet");
+  });
+  it("explains an unconnected sending machine", () => {
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    expect(action(false)).toContain("Connect to m1 first.");
+  });
+  it("shows the saved access, its expiry and the sending side as done", () => {
+    const html = renderToStaticMarkup(
+      <IncomingWorkerSaved
+        coordinatorLabel="m1"
+        access="full-access"
+        expiresAt="2027-11-06T12:00:00.000Z"
+      />,
+    );
+    expect(html).toContain("m1 can run work here · Full access · until November 6, 2027");
+    expect(html).toContain("On m1: done");
+  });
+  it("leaves the expiry out when none is known", () => {
+    const html = renderToStaticMarkup(
+      <IncomingWorkerSaved coordinatorLabel="m1" access="full-access" expiresAt={null} />,
+    );
+    expect(html).toContain("m1 can run work here · Full access</p>");
   });
 });

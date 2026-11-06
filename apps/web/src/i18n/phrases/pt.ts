@@ -1744,10 +1744,20 @@ export const pt: PhraseCatalog = {
   "Choose a machine": "Escolha uma máquina",
   "Most access for this work{select}": "Acesso máximo para este trabalho{select}",
   "Most access for incoming work": "Acesso máximo para trabalho recebido",
-  "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{unavailable} Em {coordinatorLabel}, abra Configurações > Máquinas, expanda Acesso, rotas e permissões de workers no card de {hereLabel} e escolha Permitir workers.",
   "Setting up…": "Configurando…",
-  "Worker access allowed": "Acesso de workers permitido",
+  "Allow {coordinatorLabel}": "Permitir {coordinatorLabel}",
+  "On {coordinatorLabel}: done": "Em {coordinatorLabel}: pronto",
+  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
+    "Em {coordinatorLabel}: ainda não configurado. Abra Configurações > Máquinas, expanda Acesso, rotas e permissões de workers no card de {hereLabel} e escolha Permitir workers.",
+  "{coordinatorLabel} can run work here · {access} · until {date}":
+    "{coordinatorLabel} pode executar trabalho aqui · {access} · até {date}",
+  "{coordinatorLabel} can run work here · {access}":
+    "{coordinatorLabel} pode executar trabalho aqui · {access}",
+  "Open the installed desktop app to set this up.":
+    "Abra o app de desktop instalado para configurar isso.",
+  "Connect to {coordinatorLabel} first.": "Conecte-se primeiro a {coordinatorLabel}.",
+  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
+    "É preciso gerenciar o acesso em {hereLabel} e em {coordinatorLabel}.",
   "default browser viewport": "viewport padrão do navegador",
   "Fill panel": "Preencher o painel",
   Responsive: "Responsivo",

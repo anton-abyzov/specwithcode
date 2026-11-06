@@ -1045,6 +1045,63 @@ describe("project coordinator surface", () => {
     expect(fold()).toBe("open");
     expect(footer().className).toContain("sticky");
   });
+  it("folds a status-only reply to a worker wake into one line in Results only", async () => {
+    const link = "[1209 skill authoring](studio://thread/worker)";
+    const wake = (id: string, runId: string) => ({
+      id,
+      runId,
+      role: "user",
+      createdBy: "agent",
+      text: `Worker ${link} finished: completed. Read it with studio_thread_read {threadId:"worker"}.`,
+      notification: {
+        source: { kind: "background_task" },
+        outcome: "completed",
+        summary: `${link} reported back.`,
+      },
+      streaming: false,
+      attachments: [],
+    });
+    const reply = (id: string, runId: string, text: string) => ({
+      id,
+      runId,
+      role: "assistant",
+      createdBy: "agent",
+      text,
+      streaming: false,
+      attachments: [],
+    });
+    const statusOnly = `No change: PR #1430's checks are still running. ${link} is watching the rerun.`;
+    state.messages = [
+      wake("wake-1", "run-1"),
+      reply("status", "run-1", statusOnly),
+      wake("wake-2", "run-2"),
+      reply("news", "run-2", "PR #1430 merged; the panel redesign starts next."),
+      // A wake turn that ended with no reply leaves nothing behind.
+      wake("wake-3", "run-3"),
+    ];
+    const conversation = () => container.querySelector('[aria-label="Coordinator conversation"]')!;
+    state.timelineDetail = "concise";
+    await render();
+    const checked = [...conversation().querySelectorAll("[data-checked-wake]")];
+    expect(checked.map((line) => line.querySelector("summary")?.textContent)).toEqual([
+      "Checked 1209 skill authoring",
+    ]);
+    expect(conversation().textContent).not.toContain("No change");
+    expect(conversation().textContent).toContain("PR #1430 merged");
+    expect(conversation().textContent).not.toContain("reported back");
+    // Opened on click.
+    await act(async () => {
+      const details = checked[0] as HTMLDetailsElement;
+      details.open = true;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(conversation().textContent).toContain("No change");
+    // Folded steps keeps every reply whole.
+    state.timelineDetail = "normal";
+    await render();
+    expect(conversation().querySelector("[data-checked-wake]")).toBeNull();
+    expect(conversation().textContent).toContain("No change");
+  });
   it("keeps a short worker receipt available on request", async () => {
     state.messages = [
       {

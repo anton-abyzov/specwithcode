@@ -1725,10 +1725,19 @@ export const ko: PhraseCatalog = {
   "Choose a machine": "컴퓨터 선택",
   "Most access for this work{select}": "이 작업의 최대 액세스{select}",
   "Most access for incoming work": "들어오는 작업의 최대 액세스",
-  "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{unavailable} {coordinatorLabel}에서 설정 > 컴퓨터를 열고 {hereLabel} 카드의 액세스, 경로 및 워커 권한을 펼친 다음 워커 허용을 선택하세요.",
   "Setting up…": "설정하는 중…",
-  "Worker access allowed": "워커 액세스 허용됨",
+  "Allow {coordinatorLabel}": "{coordinatorLabel} 허용",
+  "On {coordinatorLabel}: done": "{coordinatorLabel} 쪽: 완료",
+  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
+    "{coordinatorLabel} 쪽: 아직 설정되지 않았습니다. 설정 > 컴퓨터를 열고 {hereLabel} 카드의 액세스, 경로 및 워커 권한을 펼친 다음 워커 허용을 선택하세요.",
+  "{coordinatorLabel} can run work here · {access} · until {date}":
+    "{coordinatorLabel}에서 이곳의 작업을 실행할 수 있음 · {access} · {date}까지",
+  "{coordinatorLabel} can run work here · {access}":
+    "{coordinatorLabel}에서 이곳의 작업을 실행할 수 있음 · {access}",
+  "Open the installed desktop app to set this up.": "설정하려면 설치된 데스크톱 앱을 여세요.",
+  "Connect to {coordinatorLabel} first.": "먼저 {coordinatorLabel}에 연결하세요.",
+  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
+    "{hereLabel}과(와) {coordinatorLabel} 모두에서 액세스 관리 권한이 필요합니다.",
   "default browser viewport": "기본 브라우저 뷰포트",
   "Fill panel": "패널 채우기",
   Responsive: "반응형",

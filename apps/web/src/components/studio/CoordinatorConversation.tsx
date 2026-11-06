@@ -31,8 +31,12 @@ import { shouldCollapseReport } from "../chat/longReport";
 import { ReportArtifact } from "../chat/ReportArtifact";
 import { CoordinatorRunActivity } from "./CoordinatorRunActivity";
 import {
+  checkedWakeReplies,
   coordinatorConversationView,
+  groupCheckedWakes,
   withFoldedReplies,
+  type CheckedWakeGroup,
+  type CheckedWorker,
   type RunActivity,
 } from "../../studio/coordinatorActivity";
 import {
@@ -381,6 +385,25 @@ export function CoordinatorConversation({
       }),
     [messages, turnItems, runs, timelineDetail],
   );
+  // Results only: a reply to a worker wake that only says it is still going is one line.
+  const checkedWakes = useMemo(
+    () =>
+      timelineDetail === "concise"
+        ? checkedWakeReplies(
+            allMessages.map((message) => ({
+              id: message.id,
+              role: message.role,
+              runId: message.runId ?? null,
+              text: message.text,
+              createdBy: message.createdBy,
+              wake: isWorkerCompletionWake(message),
+              notification: message.notification ?? undefined,
+              attachmentCount: message.attachments?.length ?? 0,
+            })),
+          )
+        : null,
+    [allMessages, timelineDetail],
+  );
   // A follow-up the coordinator only passed back to its own worker is left out with its reply.
   const hidden = useMemo(() => {
     const returned = returnedFollowUpIds(messages, project, linkWorkers, turnItems ?? []);
@@ -455,6 +478,16 @@ export function CoordinatorConversation({
         })),
     [prepared, view, hidden, newThreads, messagesById, linkWorkers, answeredQuestions],
   );
+  const [openChecked, setOpenChecked] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleChecked = useCallback((leaderId: string, open: boolean) => {
+    setOpenChecked((current) => {
+      if (current.has(leaderId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(leaderId);
+      else next.delete(leaderId);
+      return next;
+    });
+  }, []);
   // Each worker started on another machine sits under the reply of the turn that
   // started it, so later messages follow it rather than stacking under it.
   const remote = useProjectRemoteWorkers(project.environmentId, project.id);
@@ -502,6 +535,23 @@ export function CoordinatorConversation({
   }, [placeKey, windowSize]);
   if (findQuery && windowSize < rows.length) setWindowSize(rows.length);
   const firstShown = findQuery ? 0 : Math.max(0, rows.length - windowSize);
+  // Checked lines next to each other about one worker read as one line.
+  const checkedGroups = useMemo(() => {
+    // Find reads every reply, so nothing folds while it is open.
+    if (checkedWakes === null || findQuery) return null;
+    const shown = rows.slice(firstShown).filter((row) => !row.decision?.folded);
+    // A reply announcing a new thread or carrying files keeps its card in view.
+    const eligible = new Map<string, CheckedWorker>();
+    for (const row of shown) {
+      const worker = checkedWakes.get(row.message.id);
+      if (worker !== undefined && !row.announcedKey && row.attachments.length === 0)
+        eligible.set(row.message.id, worker);
+    }
+    return groupCheckedWakes(
+      shown.map((row) => row.message.id),
+      eligible,
+    );
+  }, [rows, firstShown, checkedWakes, findQuery]);
   // A card whose turn is not mounted waits for it; an active one shows at the end meanwhile.
   const remotePlacement = useMemo(
     () =>
@@ -674,43 +724,50 @@ export function CoordinatorConversation({
               </>
             ) : null}
             {row.decision?.folded ? null : (
-              <CoordinatorMessageRow
-                message={row.message}
-                notice={row.notice}
-                text={row.text}
-                displayText={row.display.text}
-                sourceThreadId={row.display.sourceThread?.id ?? null}
-                sourceThreadTitle={row.display.sourceThread?.title ?? null}
-                routedFrom={row.display.routedFrom}
-                senderTitle={row.senderTitle}
-                executionLabel={row.executionLabel}
-                routine={row.routine}
-                routineCadence={row.routineCadence}
-                announcedKey={row.announcedKey}
-                attachments={row.attachments}
-                turn={turns.get(row.message.id)}
-                separatorAbove={row.decision !== null}
-                activity={view.activityByMessageId.get(row.message.id)}
-                failedActivity={
-                  row.message.runId != null && failedActivityRunIds.has(row.message.runId)
-                }
-                isReport={reportIds.has(row.message.id)}
-                timelineDetail={timelineDetail}
-                timestampFormat={timestampFormat}
-                environmentId={project.environmentId}
-                projectId={project.id}
-                workspaceRoot={project.workspaceRoot}
-                threadRef={ref}
-                coordinatorId={coordinatorId}
-                linkWorkers={linkWorkers}
-                linkTargets={environmentThreads}
-                canChange={canChange}
-                onOpenThread={onOpenThread}
-                onCreatePullRequest={onCreatePullRequest}
-                onOpenPullRequest={onOpenPullRequest}
-                onOpenCoordinatorPage={onOpenCoordinatorPage}
-                onOpenCoordinatorActivity={onOpenCoordinatorActivity}
-              />
+              <CheckedWakeLine
+                group={checkedGroups?.get(row.message.id)}
+                rowId={row.message.id}
+                openGroups={openChecked}
+                onToggle={toggleChecked}
+              >
+                <CoordinatorMessageRow
+                  message={row.message}
+                  notice={row.notice}
+                  text={row.text}
+                  displayText={row.display.text}
+                  sourceThreadId={row.display.sourceThread?.id ?? null}
+                  sourceThreadTitle={row.display.sourceThread?.title ?? null}
+                  routedFrom={row.display.routedFrom}
+                  senderTitle={row.senderTitle}
+                  executionLabel={row.executionLabel}
+                  routine={row.routine}
+                  routineCadence={row.routineCadence}
+                  announcedKey={row.announcedKey}
+                  attachments={row.attachments}
+                  turn={turns.get(row.message.id)}
+                  separatorAbove={row.decision !== null}
+                  activity={view.activityByMessageId.get(row.message.id)}
+                  failedActivity={
+                    row.message.runId != null && failedActivityRunIds.has(row.message.runId)
+                  }
+                  isReport={reportIds.has(row.message.id)}
+                  timelineDetail={timelineDetail}
+                  timestampFormat={timestampFormat}
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  workspaceRoot={project.workspaceRoot}
+                  threadRef={ref}
+                  coordinatorId={coordinatorId}
+                  linkWorkers={linkWorkers}
+                  linkTargets={environmentThreads}
+                  canChange={canChange}
+                  onOpenThread={onOpenThread}
+                  onCreatePullRequest={onCreatePullRequest}
+                  onOpenPullRequest={onOpenPullRequest}
+                  onOpenCoordinatorPage={onOpenCoordinatorPage}
+                  onOpenCoordinatorActivity={onOpenCoordinatorActivity}
+                />
+              </CheckedWakeLine>
             )}
             <RemoteWorkerCardList
               workers={remotePlacement.byMessage.get(row.message.id) ?? []}
@@ -789,6 +846,43 @@ function TurnSeparator({
  * derived from it, so a keystroke, a send or another thread's update leaves it,
  * and the Markdown inside it, as it was.
  */
+/**
+ * Results only: status-only replies to worker wakes fold into one
+ * "Checked <worker>" line that opens them. Other replies pass through.
+ */
+function CheckedWakeLine({
+  group,
+  rowId,
+  openGroups,
+  onToggle,
+  children,
+}: {
+  group: CheckedWakeGroup | undefined;
+  rowId: string;
+  openGroups: ReadonlySet<string>;
+  onToggle: (leaderId: string, open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  if (group === undefined) return children;
+  const open = openGroups.has(group.leaderId);
+  // The rest of the run shows only once its line is opened.
+  if (group.leaderId !== rowId) return open ? children : null;
+  return (
+    <details
+      className="sws-checked-wake"
+      data-checked-wake=""
+      open={open}
+      onToggle={(event) => onToggle(group.leaderId, event.currentTarget.open)}
+    >
+      <summary>
+        Checked {group.worker.title}
+        {group.count > 1 ? ` · ${group.count} times` : null}
+      </summary>
+      {open ? children : null}
+    </details>
+  );
+}
+
 const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   message,
   notice,

@@ -1680,10 +1680,19 @@ export const zh: PhraseCatalog = {
   "Choose a machine": "选择一台电脑",
   "Most access for this work{select}": "此工作的最高访问权限{select}",
   "Most access for incoming work": "传入工作的最高访问权限",
-  "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{unavailable} 在 {coordinatorLabel} 上打开“设置 > 电脑”，展开 {hereLabel} 卡片上的“访问、路由和工作者权限”，然后选择“允许工作者”。",
   "Setting up…": "正在设置…",
-  "Worker access allowed": "已允许工作者访问",
+  "Allow {coordinatorLabel}": "允许 {coordinatorLabel}",
+  "On {coordinatorLabel}: done": "{coordinatorLabel} 上：已完成",
+  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
+    "{coordinatorLabel} 上：尚未设置。打开“设置 > 电脑”，展开 {hereLabel} 卡片上的“访问、路由和工作者权限”，然后选择“允许工作者”。",
+  "{coordinatorLabel} can run work here · {access} · until {date}":
+    "{coordinatorLabel} 可以在这里运行工作 · {access} · 有效期至 {date}",
+  "{coordinatorLabel} can run work here · {access}":
+    "{coordinatorLabel} 可以在这里运行工作 · {access}",
+  "Open the installed desktop app to set this up.": "请打开已安装的桌面应用来设置。",
+  "Connect to {coordinatorLabel} first.": "请先连接到 {coordinatorLabel}。",
+  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
+    "{hereLabel} 和 {coordinatorLabel} 上都需要管理访问权限。",
   "default browser viewport": "默认浏览器视口",
   "Fill panel": "填满面板",
   Responsive: "自适应",

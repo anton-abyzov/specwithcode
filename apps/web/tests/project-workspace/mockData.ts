@@ -482,6 +482,76 @@ export const internalReceiptsProjection = {
   })),
   turnItems: [],
 };
+/**
+ * `?checked-wakes`: the coordinator on November 6, 2026 (1245). One question, then
+ * a worker watching CI woke it four times; three replies only said it was still going.
+ */
+export const checkedWakesFixture = new URLSearchParams(window.location.search).has("checked-wakes");
+const WAKE_WORKER = "[1209 skill authoring (app worktree)](studio://thread/skills)";
+const wakeMessage = (index: number) => ({
+  id: `wake-${index}`,
+  role: "user",
+  createdBy: "agent",
+  text: `Worker ${WAKE_WORKER} finished: completed. Read it with studio_thread_read {threadId:"skills"}.`,
+  notification: {
+    source: { kind: "background_task" },
+    outcome: "completed",
+    summary: `${WAKE_WORKER} reported back.`,
+  },
+  createdAt: reportAgo(10 - index * 2),
+  attachments: [],
+  streaming: false,
+  runId: `wake-run-${index}`,
+});
+const WAKE_REPLIES = [
+  `The fixes to the skill-authoring changes (PR #1430) are in, and its review and checks are running now. Once it merges, ${WAKE_WORKER} starts the skill detail panel redesign as a separate PR.`,
+  `${WAKE_WORKER} is still running: the skill-authoring fixes (PR #1430) pass their tests and builds, and the review and CI are still going. The skill panel redesign starts after it merges.`,
+  `No change: PR #1430's checks are still running, and the three cancelled checks were from an older run. ${WAKE_WORKER} is watching the rerun.`,
+  "PR #1430's web build passed; the remaining checks and the review are still running.",
+];
+export const checkedWakesProjection = {
+  messages: [
+    {
+      id: "ask",
+      role: "user",
+      createdBy: "user",
+      text: "What is next for the skill detail panel?",
+      createdAt: reportAgo(12),
+      attachments: [],
+      runId: "ask-run",
+    },
+    {
+      id: "ask-reply",
+      role: "assistant",
+      createdBy: "agent",
+      text: `The skill detail panel is next for ${WAKE_WORKER}, right after it finishes PR #1430, as a separate PR.`,
+      createdAt: reportAgo(11),
+      attachments: [],
+      runId: "ask-run",
+    },
+    ...WAKE_REPLIES.flatMap((text, index) => [
+      wakeMessage(index),
+      {
+        id: `wake-reply-${index}`,
+        role: "assistant",
+        createdBy: "agent",
+        text,
+        createdAt: reportAgo(9 - index * 2),
+        attachments: [],
+        streaming: false,
+        runId: `wake-run-${index}`,
+      },
+    ]),
+  ],
+  runs: ["ask-run", ...WAKE_REPLIES.map((_, index) => `wake-run-${index}`)].map((id, index) => ({
+    id,
+    status: "completed",
+    ordinal: index + 1,
+    providerInstanceId: "claudeAgent",
+    modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+  })),
+  turnItems: [],
+};
 export const agentMessagesProjection = {
   messages: [
     {
@@ -810,52 +880,54 @@ export const baseThreadProjection = () => ({
       }
     : reportFixture
       ? reportProjection
-      : agentMessagesFixture
-        ? internalReceiptsFixture
-          ? internalReceiptsProjection
-          : agentMessagesProjection
-        : payloadFixture
-          ? payloadProjection
-          : activity
-            ? activityProjection
-            : {
-                messages:
-                  fresh !== null
-                    ? failedTurn
-                      ? [
-                          {
-                            id: "m-failed",
-                            role: "user",
-                            createdBy: "user",
-                            runId: recoveryFailureId,
-                            text: "Reply with OK",
-                            attachments: [],
-                          },
-                        ]
-                      : []
-                    : turns
-                      ? turnMessages
-                      : followups
-                        ? followUpMessages
-                        : [
+      : checkedWakesFixture
+        ? checkedWakesProjection
+        : agentMessagesFixture
+          ? internalReceiptsFixture
+            ? internalReceiptsProjection
+            : agentMessagesProjection
+          : payloadFixture
+            ? payloadProjection
+            : activity
+              ? activityProjection
+              : {
+                  messages:
+                    fresh !== null
+                      ? failedTurn
+                        ? [
                             {
-                              id: "m1",
+                              id: "m-failed",
                               role: "user",
                               createdBy: "user",
-                              text: "Keep the project moving. Show me the work that needs a decision.",
-                              createdAt: "2026-10-09T00:00:00Z",
+                              runId: recoveryFailureId,
+                              text: "Reply with OK",
                               attachments: [],
                             },
-                            {
-                              id: "m2",
-                              role: "assistant",
-                              text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
-                              createdAt: "2026-10-09T00:00:04Z",
-                              updatedAt: "2026-10-09T00:00:05Z",
-                              attachments: [],
-                            },
-                          ],
-              },
+                          ]
+                        : []
+                      : turns
+                        ? turnMessages
+                        : followups
+                          ? followUpMessages
+                          : [
+                              {
+                                id: "m1",
+                                role: "user",
+                                createdBy: "user",
+                                text: "Keep the project moving. Show me the work that needs a decision.",
+                                createdAt: "2026-10-09T00:00:00Z",
+                                attachments: [],
+                              },
+                              {
+                                id: "m2",
+                                role: "assistant",
+                                text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
+                                createdAt: "2026-10-09T00:00:04Z",
+                                updatedAt: "2026-10-09T00:00:05Z",
+                                attachments: [],
+                              },
+                            ],
+                },
 });
 
 export function applySubagentScenario(current) {

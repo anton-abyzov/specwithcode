@@ -38,6 +38,10 @@ const shell = (
     deletedAt: null,
     archivedAt: null,
     latestRunId: RunId.make("run-1"),
+    activeRunId: null,
+    pendingBackgroundTasks: [],
+    latestUserMessageAt: null,
+    status: "completed",
     ...overrides,
   }) as OrchestrationV2ThreadShell;
 
@@ -57,19 +61,32 @@ const message = (
     ...overrides,
   }) as OrchestrationV2ConversationMessage;
 
-const run = (status: OrchestrationV2Run["status"], id = "run-1"): OrchestrationV2Run =>
-  ({ id: RunId.make(id), threadId: workerId, status }) as OrchestrationV2Run;
+const run = (
+  status: OrchestrationV2Run["status"],
+  id = "run-1",
+  overrides: Partial<OrchestrationV2Run> = {},
+): OrchestrationV2Run =>
+  ({
+    id: RunId.make(id),
+    threadId: workerId,
+    status,
+    ordinal: Number(id.replace(/\D/g, "")) || 1,
+    startedAt: at("2026-10-31T07:34:00.000Z"),
+    ...overrides,
+  }) as OrchestrationV2Run;
 
 interface Setup {
   readonly worker?: OrchestrationV2ThreadShell;
   readonly coordinator?: OrchestrationV2ThreadShell;
   readonly messages?: ReadonlyArray<OrchestrationV2ConversationMessage>;
   readonly paused?: boolean;
+  readonly runs?: ReadonlyArray<OrchestrationV2Run>;
 }
 
 const harness = (setup: Setup = {}) => {
   const sent: Array<ThreadManagement.ThreadManagementSendInput> = [];
   let worker = setup.worker ?? shell(workerId);
+  let runs = setup.runs ?? [run("completed")];
   const shells = () =>
     new Map<string, OrchestrationV2ThreadShell>([
       [workerId, worker],
@@ -88,6 +105,7 @@ const harness = (setup: Setup = {}) => {
             message("follow-up", "2026-10-31T07:40:00.000Z", { createdBy: "user" }),
             message("launch", "2026-10-31T07:33:00.000Z"),
           ],
+          runs,
         })) as never,
       sendToThread: (input) =>
         Effect.sync(() => {
@@ -110,10 +128,24 @@ const harness = (setup: Setup = {}) => {
     setWorker: (next: OrchestrationV2ThreadShell) => {
       worker = next;
     },
+    setRuns: (next: ReadonlyArray<OrchestrationV2Run>) => {
+      runs = next;
+    },
+    /** Starts observing; the reactor then waits out its settle window. */
+    start: (value: OrchestrationV2Run) =>
+      LaunchedWorkerWake.make.pipe(
+        Effect.flatMap((reactor) => reactor.observeRun(value)),
+        Effect.provide(layer),
+        Effect.forkChild,
+      ),
+    /** Observes a run and lets every settle window pass. */
     observe: (value: OrchestrationV2Run) =>
       LaunchedWorkerWake.make.pipe(
         Effect.flatMap((reactor) => reactor.observeRun(value)),
         Effect.provide(layer),
+        Effect.forkChild,
+        Effect.tap(() => TestClock.adjust(LaunchedWorkerWake.FAILED_RUN_GRACE)),
+        Effect.flatMap(Fiber.join),
       ),
   };
 };
@@ -206,19 +238,117 @@ it.effect("wakes a forked thread that launched the worker", () =>
 
 it.effect("reports a failed run only when no fallback run followed it", () =>
   Effect.gen(function* () {
-    const settled = harness();
-    const fiber = yield* settled.observe(run("failed")).pipe(Effect.forkChild);
-    yield* TestClock.adjust(LaunchedWorkerWake.FAILED_RUN_GRACE);
-    yield* Fiber.join(fiber);
+    const settled = harness({ runs: [run("failed")] });
+    yield* settled.observe(run("failed"));
     assert.equal(settled.sent.length, 1);
     assert.equal(settled.sent[0]?.notification?.outcome, "failed");
 
-    const fellBack = harness();
-    const pending = yield* fellBack.observe(run("failed")).pipe(Effect.forkChild);
+    const fellBack = harness({ runs: [run("failed")] });
+    const pending = yield* fellBack.start(run("failed"));
     yield* Effect.yieldNow;
     fellBack.setWorker(shell(workerId, { latestRunId: RunId.make("run-2") }));
+    fellBack.setRuns([run("failed"), run("completed", "run-2")]);
     yield* TestClock.adjust(LaunchedWorkerWake.FAILED_RUN_GRACE);
     yield* Fiber.join(pending);
     assert.equal(fellBack.sent.length, 0);
+  }),
+);
+
+it.effect("wakes once, after the last run of a burst, and not while a watch holds the worker", () =>
+  Effect.gen(function* () {
+    // November 6: runs 11 to 15 of a worker watching PR #1430's CI each
+    // ended within seconds of a PR watch notice, a background command or a
+    // delegated review starting the next one. Each one woke the coordinator.
+    const burst = ["run-11", "run-12", "run-13", "run-14", "run-15"].map((id) =>
+      run("completed", id),
+    );
+    const test = harness({
+      runs: burst,
+      worker: shell(workerId, { latestRunId: RunId.make("run-15") }),
+    });
+    const fibers = [];
+    for (const [index, ended] of burst.entries()) {
+      test.setRuns(burst.slice(0, index + 1));
+      fibers.push(yield* test.start(ended));
+      yield* TestClock.adjust("20 seconds");
+    }
+    test.setRuns(burst);
+    yield* TestClock.adjust(LaunchedWorkerWake.WAKE_SETTLE);
+    for (const fiber of fibers) yield* Fiber.join(fiber);
+    assert.deepEqual(
+      test.sent.map((wake) => String(wake.commandId)),
+      ["launched-worker-wake:run-15"],
+    );
+
+    // The same burst while the worker still watches its pull request: no wake yet.
+    const watch = { taskId: "pr-watch:1430", kind: "monitor" } as never;
+    const watching = harness({
+      runs: burst,
+      worker: shell(workerId, {
+        latestRunId: RunId.make("run-15"),
+        pendingBackgroundTasks: [watch],
+      }),
+    });
+    const held = yield* watching.start(run("completed", "run-15"));
+    yield* TestClock.adjust(LaunchedWorkerWake.WAKE_SETTLE);
+    yield* TestClock.adjust(LaunchedWorkerWake.HOLD_RECHECK);
+    assert.equal(watching.sent.length, 0);
+    // The pull request merged: the watch ends without another run, and the wake goes out.
+    watching.setWorker(shell(workerId, { latestRunId: RunId.make("run-15") }));
+    yield* TestClock.adjust(LaunchedWorkerWake.HOLD_RECHECK);
+    yield* Fiber.join(held);
+    assert.equal(watching.sent.length, 1);
+
+    // A later run still going holds the wake; a person stopping it releases it.
+    const active = harness({
+      runs: [run("completed", "run-1"), run("running", "run-2")],
+      worker: shell(workerId, { activeRunId: RunId.make("run-2") }),
+    });
+    const waiting = yield* active.start(run("completed", "run-1"));
+    yield* TestClock.adjust(LaunchedWorkerWake.WAKE_SETTLE);
+    assert.equal(active.sent.length, 0);
+    active.setRuns([run("completed", "run-1"), run("interrupted", "run-2")]);
+    active.setWorker(shell(workerId, { latestRunId: RunId.make("run-2"), status: "interrupted" }));
+    yield* TestClock.adjust(LaunchedWorkerWake.HOLD_RECHECK);
+    yield* Fiber.join(waiting);
+    assert.deepEqual(
+      active.sent.map((wake) => String(wake.commandId)),
+      ["launched-worker-wake:run-1"],
+    );
+  }),
+);
+
+it.effect("a superseded run that never started does not swallow the wake", () =>
+  Effect.gen(function* () {
+    // Run 16 was queued after run 15 and cancelled before it started.
+    const test = harness({
+      runs: [run("completed", "run-15"), run("cancelled", "run-16", { startedAt: null })],
+      worker: shell(workerId, { latestRunId: RunId.make("run-16"), status: "cancelled" }),
+    });
+    yield* test.observe(run("completed", "run-15"));
+    yield* test.observe(run("cancelled", "run-16", { startedAt: null }));
+    assert.deepEqual(
+      test.sent.map((wake) => String(wake.commandId)),
+      ["launched-worker-wake:run-15"],
+    );
+  }),
+);
+
+it.effect("a held queue, or a later run that was stopped, does not swallow the wake", () =>
+  Effect.gen(function* () {
+    // A failed run's queued follow-up is held for a person; nothing starts it on its own.
+    const heldQueue = harness({
+      runs: [run("failed", "run-1"), run("queued", "run-2", { startedAt: null, queueHeld: true })],
+    });
+    yield* heldQueue.observe(run("failed", "run-1"));
+    assert.equal(heldQueue.sent.length, 1);
+
+    // A watch notice started run 2 within the settle window, and it was interrupted.
+    const interrupted = harness({
+      runs: [run("completed", "run-1"), run("interrupted", "run-2")],
+      worker: shell(workerId, { latestRunId: RunId.make("run-2"), status: "interrupted" }),
+    });
+    yield* interrupted.observe(run("completed", "run-1"));
+    assert.equal(interrupted.sent.length, 1);
   }),
 );

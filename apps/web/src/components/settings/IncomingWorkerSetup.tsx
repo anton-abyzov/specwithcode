@@ -1,5 +1,5 @@
 import { renderRich } from "../../i18n/rich";
-import { useTx } from "../../i18n";
+import { useLocale, useTx } from "../../i18n";
 import { useState } from "react";
 import { AuthAccessWriteScope, type EnvironmentId } from "@specweave-studio/contracts";
 import type {
@@ -107,6 +107,17 @@ export function IncomingWorkerSetup({
   const { environments } = useEnvironments();
   const name = useMachineNicknames();
   const [selected, setSelected] = useState<EnvironmentId | null>(null);
+  // Kept here, not in the action: a granted machine leaves the candidates once
+  // the snapshot refreshes, which unmounts the action.
+  const [saved, setSaved] = useState<{
+    coordinator: EnvironmentId;
+    coordinatorLabel: string;
+    access: StudioFleetWorkerAccess;
+    expiresAt: string | null;
+  } | null>(null);
+  const savedGrant = saved
+    ? snapshot.grants.find((grant) => grant.coordinatorEnvironmentId === saved.coordinator)
+    : undefined;
   const candidates = environments.filter(
     (environment) =>
       environment.environmentId !== environmentId &&
@@ -148,7 +159,14 @@ export function IncomingWorkerSetup({
           ),
         })}
       </label>
-      {!candidates.length ? (
+      {saved ? (
+        <IncomingWorkerSaved
+          coordinatorLabel={saved.coordinatorLabel}
+          access={saved.access}
+          expiresAt={saved.expiresAt ?? savedGrant?.expiresAt ?? null}
+        />
+      ) : null}
+      {!candidates.length && !saved ? (
         <p className="text-xs text-muted-foreground">
           Connect the other machine in Settings &gt; Machines first. Machines already listed above
           use their existing access controls.
@@ -162,14 +180,63 @@ export function IncomingWorkerSetup({
           hereLabel={name(environmentId, here?.label ?? "this machine")}
           coordinatorLabel={name(chosen.environmentId, chosen.label)}
           connected={chosen.connection.phase === "connected"}
-          onGranted={onGranted}
+          onGranted={(grant) => {
+            setSaved({
+              coordinator: chosen.environmentId,
+              coordinatorLabel: name(chosen.environmentId, chosen.label),
+              ...grant,
+            });
+            setSelected(null);
+            onGranted();
+          }}
         />
       ) : null}
     </div>
   );
 }
 
-function IncomingWorkerAction({
+export function IncomingWorkerSaved({
+  coordinatorLabel,
+  access,
+  expiresAt,
+}: {
+  coordinatorLabel: string;
+  access: StudioFleetWorkerAccess;
+  expiresAt: string | null;
+}) {
+  const tx = useTx();
+  const locale = useLocale();
+  const accessLabel =
+    FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access;
+  const date = expiresAt
+    ? new Date(expiresAt).toLocaleDateString(locale, {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
+    : null;
+  return (
+    <div role="status" className="space-y-1 text-xs">
+      <p className="font-medium">
+        {date
+          ? tx("{coordinatorLabel} can run work here · {access} · until {date}", {
+              coordinatorLabel,
+              access: accessLabel,
+              date,
+            })
+          : tx("{coordinatorLabel} can run work here · {access}", {
+              coordinatorLabel,
+              access: accessLabel,
+            })}
+      </p>
+      <p className="text-muted-foreground">
+        {tx("On {coordinatorLabel}: done", { coordinatorLabel })}
+      </p>
+    </div>
+  );
+}
+
+export function IncomingWorkerAction({
   here,
   coordinator,
   hereLabel,
@@ -182,7 +249,7 @@ function IncomingWorkerAction({
   hereLabel: string;
   coordinatorLabel: string;
   connected: boolean;
-  onGranted: () => void;
+  onGranted: (grant: { access: StudioFleetWorkerAccess; expiresAt: string | null }) => void;
 }) {
   const tx = useTx();
   const manageHere = useEnvironmentScope(here, AuthAccessWriteScope);
@@ -190,16 +257,18 @@ function IncomingWorkerAction({
   const [access, setAccess] = useState<StudioFleetWorkerAccess>(DEFAULT_FLEET_WORKER_ACCESS);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
   const unavailable = !isElectron
-    ? "Open the installed desktop app to set this up."
+    ? tx("Open the installed desktop app to set this up.")
     : !connected
-      ? `Connect to ${coordinatorLabel} first.`
+      ? tx("Connect to {coordinatorLabel} first.", { coordinatorLabel })
       : !manageHere || !manageThere
-        ? `Manage access is needed on both ${hereLabel} and ${coordinatorLabel}.`
+        ? tx("Manage access is needed on both {hereLabel} and {coordinatorLabel}.", {
+            hereLabel,
+            coordinatorLabel,
+          })
         : null;
   async function allow() {
-    if (pending || done || unavailable) return;
+    if (pending || unavailable) return;
     setPending(true);
     setError(null);
     try {
@@ -207,9 +276,8 @@ function IncomingWorkerAction({
         `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
       );
       if (confirmed !== true) return;
-      await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
-      setDone(true);
-      onGranted();
+      const result = await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
+      onGranted({ access, expiresAt: result.workers.expiresAt });
     } catch (failure) {
       setError(
         failure instanceof Error
@@ -232,7 +300,7 @@ function IncomingWorkerAction({
               aria-label={tx("Most access for incoming work")}
               className="min-w-0 max-w-full rounded-md border border-input bg-background px-2 py-1"
               value={access}
-              disabled={pending || done || unavailable !== null}
+              disabled={pending || unavailable !== null}
               onChange={(event) => setAccess(event.target.value as StudioFleetWorkerAccess)}
             >
               {FLEET_WORKER_ACCESS_CHOICES.map((choice) => (
@@ -244,24 +312,25 @@ function IncomingWorkerAction({
           ),
         })}
       </label>
+      {/* The selects do not save on their own, so the button always shows. */}
+      <div className="space-y-1">
+        <Button size="xs" disabled={pending || unavailable !== null} onClick={() => void allow()}>
+          {pending ? tx("Setting up…") : tx("Allow {coordinatorLabel}", { coordinatorLabel })}
+        </Button>
+        {unavailable ? (
+          <p role="status" className="text-xs text-muted-foreground">
+            {unavailable}
+          </p>
+        ) : null}
+      </div>
       {unavailable ? (
-        <p role="status" className="text-xs text-muted-foreground">
-          {renderRich(
-            tx(
-              "{unavailable} On {coordinatorLabel}, open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.",
-            ),
-            { unavailable: unavailable, coordinatorLabel: coordinatorLabel, hereLabel: hereLabel },
+        <p className="text-xs text-muted-foreground">
+          {tx(
+            "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.",
+            { coordinatorLabel, hereLabel },
           )}
         </p>
-      ) : (
-        <Button size="xs" disabled={pending || done} onClick={() => void allow()}>
-          {pending
-            ? tx("Setting up…")
-            : done
-              ? tx("Worker access allowed")
-              : `Allow ${coordinatorLabel} to run work here`}
-        </Button>
-      )}
+      ) : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {error}
