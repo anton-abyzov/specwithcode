@@ -1,6 +1,6 @@
 # Allow another machine to run work here
 
-In SpecWithCode on the destination machine, open Settings > Machines > Who can run work here. Choose the machine that will send work, choose the maximum access for that work, and select Allow [machine] to run work here. Read the confirmation before approving: setup gives the sending machine a management key as well as worker access. Both machines must be connected with Manage access, and setup requires the installed desktop app.
+In SpecWithCode on the destination machine, open Settings > Machines > Who can run work here. Choose the machine that will send work, choose the maximum access for that work, and select Allow [machine] to run work here. Read the confirmation before approving: setup gives the sending machine a management key as well as worker access. Both machines must be connected with Manage access, and setup requires the installed desktop app. If the sending machine already lists the destination, setup reuses that line and its key, so a retry after a failed grant does not issue another key. It adds the line again only when its saved key cannot work, and then only once per page session.
 
 For example, on M4, choosing M1 sets up M1 → M4. The existing M1 card under M4's Connections page instead controls M4 → M1. A connected app or an update permission does not imply a worker grant in either direction.
 

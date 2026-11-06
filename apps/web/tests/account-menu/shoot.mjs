@@ -34,12 +34,12 @@ const SIGN_IN = "Sign in to SpecWithCode Connect";
 const cases = {
   local: { button: "Ada's MacBook Pro", has: [], hasNot: [SIGN_IN, "Sign in here", "Sign out"] },
   unlinked: {
-    button: "Ada's MacBook Pro",
+    button: "Not signed in",
     has: ["Not signed in", SIGN_IN],
     hasNot: ["Sign out", "Manage account"],
   },
   linked: {
-    button: "Ada's MacBook Pro",
+    button: "Not signed in",
     has: ["Linked to Connect", "Sign in here"],
     hasNot: ["Sign out", SIGN_IN],
   },

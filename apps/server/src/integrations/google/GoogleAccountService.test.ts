@@ -1,8 +1,10 @@
 import { ProjectId } from "@specweave-studio/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -57,28 +59,32 @@ const makeHarness = (
   let signInEmail = "me@example.com";
   const posts: Array<{ operation: string; url: string; body: unknown }> = [];
   const nextAccess = () => Redacted.make(`access-${++accessCounter}`);
+  /** Runs before each code exchange, so a test can hold Google mid-sign-in. */
+  let beforeExchange: Effect.Effect<void> = Effect.void;
 
   const api = GoogleApi.GoogleApi.of({
     endpoints: googleEndpoints(undefined),
     exchangeCode: (input) =>
-      (tokenClients.push(input.clientId), input.code === "good-code") &&
-      input.codeVerifier.length > 20
-        ? Effect.succeed({
-            accessToken: nextAccess(),
-            expiresInSeconds: 3600,
-            refreshToken: Redacted.make(
-              signInEmail === "me@example.com" ? "refresh-1" : `refresh-${signInEmail}`,
+      Effect.andThen(beforeExchange, () =>
+        (tokenClients.push(input.clientId), input.code === "good-code") &&
+        input.codeVerifier.length > 20
+          ? Effect.succeed({
+              accessToken: nextAccess(),
+              expiresInSeconds: 3600,
+              refreshToken: Redacted.make(
+                signInEmail === "me@example.com" ? "refresh-1" : `refresh-${signInEmail}`,
+              ),
+              scope,
+              idToken: idToken(signInEmail),
+            })
+          : Effect.fail(
+              new GoogleApi.GoogleApiError({
+                operation: "sign-in",
+                status: 400,
+                reason: "invalid_grant",
+              }),
             ),
-            scope,
-            idToken: idToken(signInEmail),
-          })
-        : Effect.fail(
-            new GoogleApi.GoogleApiError({
-              operation: "sign-in",
-              status: 400,
-              reason: "invalid_grant",
-            }),
-          ),
+      ),
     refresh: (input) =>
       (tokenClients.push(input.clientId), refreshFailure)
         ? Effect.fail(refreshFailure)
@@ -225,6 +231,9 @@ const makeHarness = (
     signInAs: (email: string) => {
       signInEmail = email;
     },
+    holdExchange: (hold: Effect.Effect<void>) => {
+      beforeExchange = hold;
+    },
   };
 };
 
@@ -291,6 +300,48 @@ it.effect("signs in once with the state it issued and keeps secrets off the stat
       "refresh-1",
     );
   }),
+);
+
+it.effect("keeps a sign-in in progress on the status until the account is saved", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const google = yield* GoogleAccountService.GoogleAccountService;
+    yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+    const signIn = (yield* google.startSignIn({ services: ["gmail"] })).signIn!;
+    const state = new URL(signIn.authorizationUrl).searchParams.get("state")!;
+    const exchanging = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    harness.holdExchange(
+      Deferred.succeed(exchanging, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    );
+    const finishing = yield* Effect.forkChild(
+      google.completeSignIn({ callbackUrl: `?code=good-code&state=${state}` }),
+    );
+    yield* Deferred.await(exchanging);
+
+    // Settings polls only while a sign-in is shown, so mid-exchange it must still be shown.
+    const midway = yield* google.status;
+    assert.strictEqual(midway.signIn?.authorizationUrl, signIn.authorizationUrl);
+    assert.isFalse(midway.connected);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(finishing);
+    const done = yield* google.status;
+    assert.isNull(done.signIn);
+    assert.isTrue(done.connected);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("stops showing a sign-in whose code exchange failed", () =>
+  Effect.gen(function* () {
+    const google = yield* GoogleAccountService.GoogleAccountService;
+    yield* google.configureClient({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
+    const signIn = (yield* google.startSignIn({ services: ["gmail"] })).signIn!;
+    const state = new URL(signIn.authorizationUrl).searchParams.get("state")!;
+    yield* Effect.exit(google.completeSignIn({ callbackUrl: `?code=bad-code&state=${state}` }));
+    const after = yield* google.status;
+    assert.isNull(after.signIn);
+    assert.isFalse(after.connected);
+  }).pipe(Effect.provide(makeHarness().layer)),
 );
 
 const connectForHealth = (google: GoogleAccountService.GoogleAccountService["Service"]) =>

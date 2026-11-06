@@ -1,4 +1,5 @@
 import { useAuth, useClerk, useUser } from "@clerk/react";
+import { useEffect, useState } from "react";
 
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { isElectron } from "../../env";
@@ -8,6 +9,9 @@ import { toastManager } from "../ui/toast";
 import { resolveClerkSignOutRedirectUrl } from "./authRedirect";
 import { useStudioConnectAccountPage } from "./StudioConnectAccountPages";
 import { useStudioConnectAuthPrompt } from "./useStudioConnectAuthPrompt";
+
+/** Clerk needs the network to start; past this, the window stops saying it is checking. */
+const CLERK_LOAD_GRACE_MS = 15_000;
 
 /**
  * Signing in here is this window's account session. A machine stays linked to
@@ -21,15 +25,26 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
   const { open: openAccountPage, portals } = useStudioConnectAccountPage();
   const link = usePrimaryCloudLinkState();
 
+  const [loadStalled, setLoadStalled] = useState(false);
+  useEffect(() => {
+    setLoadStalled(false);
+    if (isLoaded) return;
+    const timer = setTimeout(() => setLoadStalled(true), CLERK_LOAD_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [isLoaded]);
+
+  const linked = link.data?.linked === true;
   const account: ConnectAccount = !isLoaded
-    ? { status: "unavailable" }
+    ? loadStalled
+      ? { status: "notLoaded", linked }
+      : { status: "loading" }
     : isSignedIn
       ? {
           status: "signedIn",
           name: user?.fullName ?? null,
           email: user?.primaryEmailAddress?.emailAddress ?? null,
         }
-      : { status: "signedOut", linked: link.data?.linked === true };
+      : { status: "signedOut", linked };
 
   const signOut = () => {
     void clerk
@@ -49,7 +64,8 @@ export default function ConnectSidebarAccountMenu({ compact }: { readonly compac
         compact={compact}
         connect={{
           account,
-          onSignIn: openAuthPrompt,
+          onSignIn:
+            account.status === "notLoaded" ? () => window.location.reload() : openAuthPrompt,
           onManage: openAccountPage,
           onSignOut: signOut,
         }}

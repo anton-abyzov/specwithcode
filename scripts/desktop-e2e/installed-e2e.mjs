@@ -126,10 +126,13 @@ const results = {
 const record = (name, pass, observed = {}) => {
   results.checks.push({ name, status: pass ? "pass" : "fail", ...observed });
   log(pass ? "PASS" : "FAIL", name, pass ? "" : JSON.stringify(observed).slice(0, 600));
+  // Written after every check, so a run stopped from outside still leaves its results.
+  writeResults();
   return pass;
 };
-const writeResults = () =>
+function writeResults() {
   NodeFS.writeFileSync(NodePath.join(OUT, "results.json"), `${JSON.stringify(results, null, 2)}\n`);
+}
 const errorText = (error) =>
   (error instanceof Error ? error.message : String(error)).split("\n")[0];
 
@@ -483,9 +486,15 @@ const main = async () => {
         const ws = new WebSocket(
           `${location.origin.replace("http", "ws")}/ws?clientSurface=web&clientAppVersion=${encodeURIComponent(appVersion)}&clientDeviceType=desktop&connectionMethod=direct&orchestrationProtocol=2`,
         );
+        // page.evaluate has no timeout of its own, so a socket that never opens must not hang it.
         await new Promise((resolve, reject) => {
-          ws.addEventListener("open", resolve, { once: true });
+          const timer = setTimeout(
+            () => reject(new Error("websocket did not open in 15 s")),
+            15_000,
+          );
+          ws.addEventListener("open", () => (clearTimeout(timer), resolve()), { once: true });
           ws.addEventListener("error", () => reject(new Error("websocket error")), { once: true });
+          ws.addEventListener("close", () => reject(new Error("websocket closed")), { once: true });
         });
         const out = {};
         ws.addEventListener("message", (event) => {
@@ -703,6 +712,8 @@ const main = async () => {
   // through the web composer, answered by the agent.
   const threadId = `thread:project:${projectId}:${NodeCrypto.randomUUID()}`;
   const threadToken = `E2E-THREAD-${NodeCrypto.randomBytes(4).toString("hex")}`;
+  let sendAttempts = 0;
+  const sendLog = [];
   try {
     await rpcOne("orchestration.dispatchCommand", {
       type: "thread.create",
@@ -718,6 +729,7 @@ const main = async () => {
       branch: null,
       worktreePath: null,
     });
+    log("thread created", threadId);
     await page.goto(
       `${baseUrl}/${encodeURIComponent(environment.environmentId)}/${encodeURIComponent(threadId)}`,
       {
@@ -726,24 +738,54 @@ const main = async () => {
       },
     );
     const composer = page.getByRole("textbox", { name: "Message" });
+    const sendButton = page.getByRole("button", { name: "Send message" });
+    log("thread page loaded");
     await composer.waitFor({ state: "visible", timeout: TIMEOUT_MS });
-    await composer.fill(`Reply with the token ${threadToken}`);
-    // The composer can still be hydrating right after navigation, so send with
-    // Enter, then with the Send button, until the server has the message.
+    log("composer visible");
+    const prompt = `Reply with the token ${threadToken}`;
+    const composerText = () =>
+      composer.evaluate((el) => el.value ?? el.innerText ?? "", null, { timeout: 5_000 });
     const userMessageArrived = async () => {
       const projection = await rpcOne("orchestration.getThreadProjection", { threadId }, 30_000);
       return (projection?.messages ?? []).some(
         (m) => m.role === "user" && m.text.includes(threadToken),
       );
     };
-    let sendAttempts = 0;
-    for (; sendAttempts < 4 && !(await userMessageArrived()); sendAttempts++) {
-      if (sendAttempts === 0) await composer.press("Enter");
-      else await page.getByRole("button", { name: "Send message" }).click({ timeout: 10_000 });
+    // The composer can still be hydrating right after navigation, and on a slow
+    // runner hydration can empty it after the first fill. Before each attempt put
+    // the prompt back if it is gone, then send with Enter, later with the Send
+    // button once it is enabled, until the server has the message.
+    // One failed read (a slow server dropping the socket) is not a failed send.
+    const arrivedYet = () =>
+      userMessageArrived().catch((error) => {
+        sendLog.push({ readError: errorText(error) });
+        return false;
+      });
+    for (; sendAttempts < 4 && !(await arrivedYet()); sendAttempts++) {
+      const before = await composerText().catch((error) => `<${errorText(error)}>`);
+      if (!before.includes(threadToken)) await composer.fill(prompt);
+      const attempt = { before: before.slice(0, 120), refilled: !before.includes(threadToken) };
+      if (sendAttempts === 0) {
+        await composer.press("Enter");
+        attempt.via = "Enter";
+      } else {
+        attempt.sendEnabled = await waitFor(
+          "Send message to be enabled",
+          () => sendButton.isEnabled({ timeout: 1_000 }),
+          { timeout: 30_000 },
+        ).catch(() => false);
+        attempt.via = "Send button";
+        if (attempt.sendEnabled) await sendButton.click({ timeout: 10_000 });
+      }
+      sendLog.push(attempt);
+      log("send attempt", JSON.stringify(attempt));
       await waitFor("thread message to reach the server", userMessageArrived, {
         timeout: 10_000,
       }).catch(() => {});
     }
+    await waitFor("the thread message to reach the server", userMessageArrived, {
+      timeout: 30_000,
+    });
     const reply = await waitFor("thread reply", () => assistantReply(threadId, threadToken), {
       interval: 1500,
     });
@@ -756,6 +798,7 @@ const main = async () => {
     record("thread-reply", visible, {
       threadId,
       sendAttempts,
+      sendLog,
       token: threadToken,
       apiReply: reply.text,
       visibleInUi: visible,
@@ -766,6 +809,8 @@ const main = async () => {
       threadId,
       token: threadToken,
       reason: errorText(error),
+      sendAttempts,
+      sendLog,
       screenshot: await shot("02-thread-reply-FAILED"),
     });
   }

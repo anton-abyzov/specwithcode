@@ -346,6 +346,11 @@ const make = Effect.gen(function* () {
     yield* Ref.make<ReadonlyMap<string, Redacted.Redacted<string>>>(initialRefresh);
   const accessRef = yield* Ref.make<ReadonlyMap<string, CachedAccessToken>>(new Map());
   const pendingRef = yield* Ref.make<PendingSignIn | null>(null);
+  /**
+   * The sign-in being finished: no longer usable, but still shown as in progress until the
+   * account is saved, so a status read in between does not look like nothing is happening.
+   */
+  const completingRef = yield* Ref.make<PendingSignIn | null>(null);
   /** The last failure that belongs to no one account, such as a failed sign-in. */
   const lastErrorRef = yield* Ref.make<string | null>(null);
   const accountErrorsRef = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
@@ -414,12 +419,15 @@ const make = Effect.gen(function* () {
   if (startupState !== initialState) yield* persistState(startupState).pipe(Effect.ignore);
 
   const status: Effect.Effect<GoogleAccountStatus> = Effect.gen(function* () {
+    // The sign-in first: a completion that ends between these reads then shows its account.
+    const now = yield* Clock.currentTimeMillis;
+    const issued = yield* Ref.get(pendingRef);
+    const pending =
+      issued !== null && issued.expiresAt > now ? issued : yield* Ref.get(completingRef);
     const client = yield* Ref.get(clientRef);
     const state = yield* Ref.get(stateRef);
     const tokens = yield* Ref.get(refreshRef);
     const errors = yield* Ref.get(accountErrorsRef);
-    const pending = yield* Ref.get(pendingRef);
-    const now = yield* Clock.currentTimeMillis;
     const accounts = state.accounts.map((account) => {
       const connected = tokens.has(account.id);
       return {
@@ -449,7 +457,7 @@ const make = Effect.gen(function* () {
       services: connected ? first.services : [],
       projects: first?.projects ?? [],
       signIn:
-        pending !== null && pending.expiresAt > now
+        pending !== null
           ? {
               authorizationUrl: pending.authorizationUrl,
               redirectUri: pending.redirectUri,
@@ -624,7 +632,8 @@ const make = Effect.gen(function* () {
           yield* Ref.set(pendingRef, null);
           return yield* fail("This sign-in expired. Start sign-in again.");
         }
-        // Single use, whatever happens next.
+        // Single use, whatever happens next; shown as completing before it stops being pending.
+        yield* Ref.set(completingRef, pending);
         yield* Ref.set(pendingRef, null);
         if (params.type === "error") {
           const message = describeCallbackError(params.error);
@@ -724,8 +733,9 @@ const make = Effect.gen(function* () {
         );
         yield* setAccountError(accountId, undefined);
         yield* Ref.set(lastErrorRef, null);
+        yield* Ref.set(completingRef, null);
         return { status: yield* status, account };
-      }),
+      }).pipe(Effect.ensuring(Ref.set(completingRef, null))),
     );
 
   const renderCallback = (callbackUrl: string) =>

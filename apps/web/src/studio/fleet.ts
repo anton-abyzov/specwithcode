@@ -495,6 +495,21 @@ function preparedForInvite(environmentId: EnvironmentId) {
   return prepared;
 }
 
+/** The machines a coordinator lists, read fresh so setup can tell whether one is already there. */
+export async function readStudioFleetMachines(
+  environmentId: EnvironmentId,
+): Promise<StudioFleetSnapshot["machines"]> {
+  const prepared = readPreparedConnection(environmentId);
+  if (!prepared) throw new Error("Not connected to that machine.");
+  const result = await executeAtomQuery(
+    appAtomRegistry,
+    connectionAtomRuntime.atom(requestFleet(prepared)),
+    { reportFailure: false, reportDefect: false },
+  );
+  if (result._tag === "Failure") throw new Error("Could not read that machine's machine list.");
+  return result.value.machines;
+}
+
 /** Whether Tailscale here is installed, signed in and running. Read fresh each time. */
 export async function readStudioFleetTailscale(
   environmentId: EnvironmentId,

@@ -7,6 +7,7 @@ import type {
 vi.mock("../../studio/fleet", () => ({
   addVisibleMachineToStudioFleet: vi.fn(),
   allowStudioFleetWorkers: vi.fn(),
+  readStudioFleetMachines: vi.fn(),
 }));
 vi.mock("../../state/environments", () => ({ useEnvironments: vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
@@ -28,7 +29,11 @@ const allowed = {
   },
 } as StudioFleetWorkersResult;
 function operations() {
-  return { add: vi.fn().mockResolvedValue(added), allow: vi.fn().mockResolvedValue(allowed) };
+  return {
+    add: vi.fn().mockResolvedValue(added),
+    allow: vi.fn().mockResolvedValue(allowed),
+    read: vi.fn().mockResolvedValue([]),
+  };
 }
 describe("incoming worker setup", () => {
   it("adds this destination on the selected coordinator and grants that direction", async () => {
@@ -59,9 +64,7 @@ describe("incoming worker setup", () => {
     expect((failure as Error).message).toContain(
       "A management key may already have been issued on M4",
     );
-    expect((failure as Error).message).toContain(
-      "Settings > Machines > Authorized clients on M4",
-    );
+    expect((failure as Error).message).toContain("Settings > Machines > Authorized clients on M4");
     expect((failure as Error).message).toContain("Could not save machine configuration");
     expect(ops.allow).not.toHaveBeenCalled();
   });
@@ -75,8 +78,85 @@ describe("incoming worker setup", () => {
     const ops = operations();
     ops.allow.mockRejectedValue(new Error("Revoked on M4"));
     await expect(setUpIncomingWorkers(input, ops)).rejects.toThrow(
-      "was added there, but worker access was not confirmed",
+      "is listed on that machine, but worker access was not confirmed",
     );
+  });
+  it("does not issue another key when the machine is already listed", async () => {
+    const ops = operations();
+    ops.read.mockResolvedValue([
+      { id: "m4-line", environmentId: here, status: "reachable", pairingConfigured: true },
+    ]);
+    await setUpIncomingWorkers(input, ops);
+    expect(ops.add).not.toHaveBeenCalled();
+    expect(ops.allow).toHaveBeenCalledExactlyOnceWith(coordinator, {
+      id: "m4-line",
+      access: "full-access",
+    });
+  });
+  it("retries a failed grant without a second key", async () => {
+    const ops = operations();
+    ops.allow.mockRejectedValueOnce(new Error("offline"));
+    await expect(setUpIncomingWorkers(input, ops)).rejects.toThrow("not confirmed");
+    ops.read.mockResolvedValue([
+      { id: "m4", environmentId: here, status: "reachable", pairingConfigured: true },
+    ]);
+    await setUpIncomingWorkers(input, ops);
+    expect(ops.add).toHaveBeenCalledTimes(1);
+    expect(ops.allow).toHaveBeenCalledTimes(2);
+  });
+  it("changes nothing when the machine list cannot be read", async () => {
+    const ops = operations();
+    ops.read.mockRejectedValue(new Error("down"));
+    await expect(setUpIncomingWorkers(input, ops)).rejects.toThrow("nothing was changed");
+    expect(ops.add).not.toHaveBeenCalled();
+    expect(ops.allow).not.toHaveBeenCalled();
+  });
+  it("refuses an already listed machine that answers as another", async () => {
+    const ops = operations();
+    ops.read.mockResolvedValue([{ id: "m4", environmentId: here, status: "identity-mismatch" }]);
+    await expect(setUpIncomingWorkers(input, ops)).rejects.toThrow("different machine");
+    expect(ops.add).not.toHaveBeenCalled();
+    expect(ops.allow).not.toHaveBeenCalled();
+  });
+  it("does not replace a freshly issued key on a quick second retry", async () => {
+    const stale = {
+      id: "m4-stale",
+      environmentId: here,
+      status: "reachable",
+      pairingConfigured: true,
+      workers: { ...allowed.workers, status: "not_allowed", problem: "pairing_unavailable" },
+    };
+    const other = EnvironmentId.make("m2");
+    const ops = operations();
+    ops.read.mockResolvedValue([stale]);
+    ops.allow.mockRejectedValueOnce(new Error("rate limited"));
+    await expect(setUpIncomingWorkers({ ...input, coordinator: other }, ops)).rejects.toThrow();
+    await setUpIncomingWorkers({ ...input, coordinator: other }, ops);
+    expect(ops.add).toHaveBeenCalledTimes(1);
+    expect(ops.allow).toHaveBeenCalledTimes(2);
+  });
+  it("adds again when the listed line cannot mint a grant", async () => {
+    const rows = [
+      { coordinator: EnvironmentId.make("m5"), pairingConfigured: false },
+      {
+        coordinator: EnvironmentId.make("m6"),
+        pairingConfigured: true,
+        workers: { ...allowed.workers, status: "not_allowed", problem: "pairing_unavailable" },
+      },
+    ];
+    for (const { coordinator, ...row } of rows) {
+      const input = { here, coordinator, hereLabel: "M4", access: "full-access" as const };
+      const ops = operations();
+      ops.read.mockResolvedValue([
+        { id: "m4-old", environmentId: here, status: "reachable", ...row },
+      ]);
+      await setUpIncomingWorkers(input, ops);
+      expect(ops.add).toHaveBeenCalledExactlyOnceWith(coordinator, here, "M4");
+      expect(ops.allow).toHaveBeenCalledExactlyOnceWith(coordinator, {
+        id: "m4",
+        access: "full-access",
+      });
+    }
   });
   it("does not report success for an unconfirmed grant", async () => {
     const ops = operations();

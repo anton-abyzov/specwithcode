@@ -15,8 +15,20 @@ export const SidebarAccountMenu = memo(function SidebarAccountMenu({
   const local = <AccountMenu compact={compact} connect={null} />;
   if (!hasCloudPublicConfig()) return local;
   return (
-    // If the Connect chunk still cannot load, keep the local menu, not the root error page.
-    <RenderErrorBoundary fallback={local}>
+    // If the Connect chunk still cannot load, say so instead of showing the root error page.
+    <RenderErrorBoundary
+      fallback={
+        <AccountMenu
+          compact={compact}
+          connect={{
+            account: { status: "notLoaded", linked: false },
+            onSignIn: () => window.location.reload(),
+            onManage: null,
+            onSignOut: () => {},
+          }}
+        />
+      }
+    >
       <Suspense fallback={local}>
         <ConnectSidebarAccountMenu compact={compact} />
       </Suspense>

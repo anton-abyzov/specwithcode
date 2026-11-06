@@ -10,7 +10,11 @@ import { isElectron } from "../../env";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { useMachineNicknames } from "../../studio/machineNickname";
-import { addVisibleMachineToStudioFleet, allowStudioFleetWorkers } from "../../studio/fleet";
+import {
+  addVisibleMachineToStudioFleet,
+  allowStudioFleetWorkers,
+  readStudioFleetMachines,
+} from "../../studio/fleet";
 import {
   DEFAULT_FLEET_WORKER_ACCESS,
   FLEET_WORKER_ACCESS_CHOICES,
@@ -18,7 +22,16 @@ import {
 import { requestConfirmDialog } from "../../confirmDialog";
 import { Button } from "../ui/button";
 
-/** Both steps use the remote machine as coordinator and this machine as destination. */
+// Lines this page just gave a fresh key. The coordinator keeps the old failure
+// note until a grant succeeds, so without this a quick second retry would
+// replace that new key too.
+const freshKeys = new Set<string>();
+
+/**
+ * The remote machine is the coordinator and this machine the destination. A
+ * destination the coordinator already lists with a working key keeps it, so a
+ * retry never issues another one; a missing or unusable line is added.
+ */
 export async function setUpIncomingWorkers(
   input: {
     here: EnvironmentId;
@@ -26,18 +39,45 @@ export async function setUpIncomingWorkers(
     hereLabel: string;
     access: StudioFleetWorkerAccess;
   },
-  operations = { add: addVisibleMachineToStudioFleet, allow: allowStudioFleetWorkers },
+  operations = {
+    add: addVisibleMachineToStudioFleet,
+    allow: allowStudioFleetWorkers,
+    read: readStudioFleetMachines,
+  },
 ) {
   if (input.here === input.coordinator) throw new Error("Choose another machine.");
-  const added = await operations
-    .add(input.coordinator, input.here, input.hereLabel)
-    .catch((failure: unknown) => {
-      throw new Error(
-        `Setup did not finish. A management key may already have been issued on ${input.hereLabel}. Before retrying, review Settings > Machines > Authorized clients on ${input.hereLabel} and revoke the unused setup session if present. ${failure instanceof Error ? failure.message : "Could not add this machine."}`,
-      );
-    });
+  const listed = await operations.read(input.coordinator).catch(() => {
+    throw new Error(
+      `Could not check whether ${input.hereLabel} is already listed, so nothing was changed. Refresh and retry.`,
+    );
+  });
+  const existing = listed.find((machine) => machine.environmentId === input.here);
+  if (existing?.status === "identity-mismatch")
+    throw new Error(
+      `The machine listed as ${input.hereLabel} answers as a different machine. Worker access was not granted. Remove that line in Settings > Machines on the sending machine, then set up again.`,
+    );
+  // A line without a usable management token can never mint a grant, so
+  // adding it again (which replaces that token) is the only way forward.
+  const lineKey = `${input.coordinator}:${input.here}`;
+  const reusable =
+    existing !== undefined &&
+    (freshKeys.has(lineKey) ||
+      (existing.pairingConfigured && existing.workers?.problem !== "pairing_unavailable"));
+  const added =
+    existing && reusable
+      ? { id: existing.id, environmentId: existing.environmentId }
+      : await operations
+          .add(input.coordinator, input.here, input.hereLabel)
+          .catch((failure: unknown) => {
+            throw new Error(
+              `Setup did not finish. A management key may already have been issued on ${input.hereLabel}. Before retrying, review Settings > Machines > Authorized clients on ${input.hereLabel} and revoke the unused setup session if present. ${failure instanceof Error ? failure.message : "Could not add this machine."}`,
+            );
+          });
+  if (!reusable) freshKeys.add(lineKey);
   if (added.environmentId !== input.here)
-    throw new Error("The added machine's identity did not match. Worker access was not granted.");
+    throw new Error(
+      `The added machine's identity did not match. A management key may already have been issued on ${input.hereLabel}; review Settings > Machines > Authorized clients there and revoke the unused setup session. Worker access was not granted.`,
+    );
   try {
     const result = await operations.allow(input.coordinator, {
       id: added.id,
@@ -49,7 +89,7 @@ export async function setUpIncomingWorkers(
     return result;
   } catch (failure) {
     throw new Error(
-      `This machine was added there, but worker access was not confirmed. Open Settings > Machines on that machine and choose Allow workers on ${input.hereLabel}'s card. ${failure instanceof Error ? failure.message : "Refresh to retry."}`,
+      `${input.hereLabel} is listed on that machine, but worker access was not confirmed. A retry reuses that line while its key works. ${failure instanceof Error ? failure.message : "Refresh to retry."}`,
     );
   }
 }
