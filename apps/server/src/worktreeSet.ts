@@ -67,10 +67,12 @@ export function planWorktreeSet(
   projectRoot: string,
   repositories: ReadonlyArray<{ readonly path: string; readonly id?: string | undefined }>,
   path: Pick<Path.Path, "resolve" | "relative" | "isAbsolute" | "basename" | "sep">,
+  /** Top-level names in the project folder, which a repository outside it must not take. */
+  reserved: ReadonlyArray<string> = [],
 ): ReadonlyArray<WorktreeSetMember> {
   const root = path.resolve(projectRoot);
   const seen = new Set<string>();
-  const taken = new Set<string>();
+  const taken = new Set<string>(reserved);
   const inside: Array<WorktreeSetMember> = [];
   const outside: Array<{ repository: string; id?: string | undefined }> = [];
   for (const entry of repositories) {

@@ -12,10 +12,10 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { appendExcludeRule } from "../worktreePlacement.ts";
 import {
   planWorktreeSet,
   removeWorktreeSetManifest,
+  worktreeSetManifestPath,
   worktreeSetMemberPath,
   writeWorktreeSet,
   type WorktreeSetMember,
@@ -75,7 +75,10 @@ export const resolveWorktreeSetRepositories = Effect.fn("worktreeSet.resolveRepo
         return yield* Effect.fail(`Repository "${entry}" has no git checkout at ${repository}.`);
       resolved.push({ path: repository, ...(id === undefined ? {} : { id }) });
     }
-    return planWorktreeSet(root, resolved, path);
+    const rootEntries = yield* fs
+      .readDirectory(root)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    return planWorktreeSet(root, resolved, path, rootEntries);
   },
 );
 
@@ -122,30 +125,73 @@ const memberStart = Effect.fn("worktreeSet.memberStart")(function* (
     );
 });
 
-/**
- * Keeps nested members out of the root member's status: they sit inside its
- * worktree, so its repository ignores them locally (`info/exclude`, shared by
- * its checkouts). Best effort.
- */
-const excludeNestedMembers = Effect.fn("worktreeSet.excludeNested")(function* (
+/** The root repository's exclude file, or null when it has no `.git` folder of its own. */
+const rootExcludeFile = Effect.fn("worktreeSet.rootExclude")(function* (
   members: ReadonlyArray<WorktreeSetMember>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const rootMember = members.find((member) => member.relativePath === "");
-  if (rootMember === undefined) return;
+  if (rootMember === undefined) return null;
   const gitDir = path.join(rootMember.repository, ".git");
   const isDirectory = yield* fs.stat(gitDir).pipe(
     Effect.map((info) => info.type === "Directory"),
     Effect.orElseSucceed(() => false),
   );
-  if (!isDirectory) return;
-  const exclude = path.join(gitDir, "info", "exclude");
-  for (const member of members) {
-    if (member.relativePath === "") continue;
-    const rule = `/${member.relativePath.split(path.sep).join("/")}/`;
-    yield* appendExcludeRule(exclude, rule, fs, path).pipe(Effect.ignore);
-  }
+  return isDirectory ? path.join(gitDir, "info", "exclude") : null;
+});
+
+const excludeTag = (folder: string) => `# SpecWithCode worktree set ${folder}`;
+
+/**
+ * Keeps nested members out of the root member's status: they sit inside its
+ * worktree, so its repository ignores them locally (`info/exclude`, shared by
+ * its checkouts). Each rule follows a comment naming the set, so removing the
+ * set removes exactly its own rules. Best effort.
+ */
+const excludeNestedMembers = Effect.fn("worktreeSet.excludeNested")(function* (
+  folder: string,
+  members: ReadonlyArray<WorktreeSetMember>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const exclude = yield* rootExcludeFile(members);
+  if (exclude === null) return;
+  yield* Effect.gen(function* () {
+    const contents = (yield* fs.exists(exclude)) ? yield* fs.readFileString(exclude) : "";
+    const lines = members
+      .filter((member) => member.relativePath !== "")
+      .map((member) => `${excludeTag(folder)}\n/${member.relativePath.split(path.sep).join("/")}/`)
+      .filter((pair) => !`\n${contents}`.includes(`\n${pair}\n`));
+    if (lines.length === 0) return;
+    yield* fs.makeDirectory(path.dirname(exclude), { recursive: true });
+    const prefix = contents === "" || contents.endsWith("\n") ? contents : `${contents}\n`;
+    yield* fs.writeFileString(exclude, `${prefix}${lines.join("\n")}\n`);
+  }).pipe(Effect.ignore);
+});
+
+/** Removes the rules `excludeNestedMembers` wrote for `folder`. Best effort. */
+const removeNestedExcludes = Effect.fn("worktreeSet.removeExcludes")(function* (
+  folder: string,
+  members: ReadonlyArray<WorktreeSetMember>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const exclude = yield* rootExcludeFile(members);
+  if (exclude === null) return;
+  yield* Effect.gen(function* () {
+    if (!(yield* fs.exists(exclude))) return;
+    const lines = (yield* fs.readFileString(exclude)).split("\n");
+    const tag = excludeTag(folder);
+    const kept: Array<string> = [];
+    for (let index = 0; index < lines.length; index += 1) {
+      if (lines[index] === tag) {
+        index += 1;
+        continue;
+      }
+      kept.push(lines[index]!);
+    }
+    if (kept.length !== lines.length) yield* fs.writeFileString(exclude, kept.join("\n"));
+  }).pipe(Effect.ignore);
 });
 
 /**
@@ -168,6 +214,13 @@ export const createWorktreeSet = Effect.fn("worktreeSet.create")(function* (inpu
   const git = yield* GitWorkflowService.GitWorkflowService;
   if (yield* fs.exists(input.folder).pipe(Effect.orElseSucceed(() => false)))
     return yield* Effect.fail(`The thread folder ${input.folder} already exists.`);
+  // Another thread's set whose folder is waiting to be restored.
+  if (
+    yield* fs
+      .exists(worktreeSetManifestPath(input.folder, path))
+      .pipe(Effect.orElseSucceed(() => true))
+  )
+    return yield* Effect.fail(`The thread folder ${input.folder} belongs to another worktree set.`);
   yield* writeWorktreeSet(input.folder, input.members).pipe(
     Effect.mapError((cause) => `Could not record the worktree set: ${String(cause)}`),
   );
@@ -202,7 +255,7 @@ export const createWorktreeSet = Effect.fn("worktreeSet.create")(function* (inpu
         );
       created.push(member);
     }
-    yield* excludeNestedMembers(input.members);
+    yield* excludeNestedMembers(input.folder, input.members);
   }).pipe(Effect.exit);
   if (Exit.isSuccess(exit)) return;
   const kept = yield* removeWorktreeSetMembers({ folder: input.folder, members: created }).pipe(
@@ -234,6 +287,16 @@ export const removeWorktreeSetMembers = Effect.fn("worktreeSet.remove")(function
   const deepestFirst = input.members.toReversed();
   for (const member of deepestFirst) {
     const memberPath = worktreeSetMemberPath(input.folder, member, path);
+    // Removing a folder removes everything in it, including a member kept above.
+    const holdsKept = kept.find((entry) =>
+      worktreeSetMemberPath(input.folder, entry.member, path).startsWith(
+        `${memberPath}${path.sep}`,
+      ),
+    );
+    if (holdsKept !== undefined) {
+      kept.push({ member, reason: `It holds ${holdsKept.member.repository}, which stays.` });
+      continue;
+    }
     const outcome = yield* git
       .removeWorktree({ cwd: member.repository, path: memberPath, force: false }, input.context)
       .pipe(
@@ -249,6 +312,7 @@ export const removeWorktreeSetMembers = Effect.fn("worktreeSet.remove")(function
     if (outcome !== null) kept.push({ member, reason: outcome });
   }
   if (kept.length === 0) {
+    yield* removeNestedExcludes(input.folder, input.members);
     yield* removeWorktreeSetManifest(input.folder).pipe(Effect.ignore);
     // The folder of an umbrella set is plain; remove it once it is empty.
     const remaining = yield* fs
@@ -276,12 +340,8 @@ export const restoreWorktreeSet = Effect.fn("worktreeSet.restore")(function* (in
   const recreated: Array<WorktreeSetMember> = [];
   for (const member of input.members) {
     const memberPath = worktreeSetMemberPath(input.folder, member, path);
-    const present = yield* fs.stat(memberPath).pipe(
-      Effect.map((info) => info.type === "Directory"),
-      Effect.orElseSucceed(() => false),
-    );
-    // The plain folder of an umbrella set holds members, not files of its own.
-    if (present && (member.relativePath !== "" || (yield* hasGit(memberPath)))) continue;
+    // A folder without `.git` (left by a submodule path, say) is not the member.
+    if (yield* hasGit(memberPath)) continue;
     const hasBranch = yield* git
       .hasCommit({ cwd: member.repository, refName: `refs/heads/${input.branch}` })
       .pipe(Effect.orElseSucceed(() => false));
@@ -298,7 +358,7 @@ export const restoreWorktreeSet = Effect.fn("worktreeSet.restore")(function* (in
       return { _tag: "Failed", member, error: Cause.squash(exit.cause) } as WorktreeSetRestore;
     recreated.push(member);
   }
-  yield* excludeNestedMembers(input.members);
+  yield* excludeNestedMembers(input.folder, input.members);
   return { _tag: "Restored", recreated } as WorktreeSetRestore;
 });
 

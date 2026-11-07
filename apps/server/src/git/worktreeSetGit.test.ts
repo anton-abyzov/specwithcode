@@ -135,6 +135,40 @@ describe("worktree sets", () => {
         const status = yield* run(folder, ["status", "--porcelain"]);
         expect(status.stdout.trim()).toBe("");
         expect((yield* readWorktreeSet(folder))?.members).toHaveLength(3);
+        const exclude = path.join(project, ".git", "info", "exclude");
+        expect(yield* fs.readFileString(exclude)).toContain(
+          `# SpecWithCode worktree set ${folder}`,
+        );
+
+        // A set whose folder is gone but whose manifest stays is not overwritten.
+        yield* fs.remove(folder, { recursive: true });
+        const refused = yield* createWorktreeSet({
+          folder,
+          members,
+          branch: "feature/x2",
+          projectRoot: project,
+          baseRef: "main",
+          startFromOrigin: false,
+          submodules: null,
+        }).pipe(Effect.flip);
+        expect(String(refused)).toContain("belongs to another worktree set");
+        expect((yield* readWorktreeSet(folder))?.members).toHaveLength(3);
+
+        // Restoring then removing the set takes its exclude rules with it.
+        expect((yield* restoreWorktreeSet({ folder, members, branch: "feature/x" }))._tag).toBe(
+          "Restored",
+        );
+        const workflow = yield* GitWorkflowService.GitWorkflowService;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* run(project, ["worktree", "prune"]);
+        const kept = yield* removeWorktreeSetMembers({ folder, members }).pipe(
+          Effect.provideService(GitWorkflowService.GitWorkflowService, {
+            ...workflow,
+            removeWorktree: (input) => driver.removeWorktree(input),
+          }),
+        );
+        expect(kept).toEqual([]);
+        expect(yield* fs.readFileString(exclude)).not.toContain(folder);
       }),
     );
 
@@ -182,6 +216,13 @@ describe("worktree sets", () => {
         expect(head.stdout.trim()).toBe("feature/y");
         const missing = yield* restoreWorktreeSet({ folder, members, branch: "gone" });
         expect(missing._tag).toBe("Restored");
+        // An empty folder where a member belongs is recreated, not taken as the member.
+        yield* fs.remove(path.join(folder, "web"), { recursive: true });
+        yield* run(web, ["worktree", "prune"]);
+        yield* fs.makeDirectory(path.join(folder, "web"));
+        const refilled = yield* restoreWorktreeSet({ folder, members, branch: "feature/y" });
+        expect(refilled._tag).toBe("Restored");
+        expect(yield* fs.exists(path.join(folder, "web", ".git"))).toBe(true);
         yield* fs.remove(path.join(folder, "web"), { recursive: true });
         const branchGone = yield* restoreWorktreeSet({ folder, members, branch: "gone" });
         expect(branchGone._tag).toBe("BranchMissing");
@@ -252,8 +293,12 @@ describe("worktree sets", () => {
       const kept = yield* removeWorktreeSetMembers({ folder, members }).pipe(
         Effect.provideService(GitWorkflowService.GitWorkflowService, git("/repos/api")),
       );
-      expect(kept.map((entry) => entry.reason)).toEqual(["It has local changes."]);
-      expect(removed).toEqual([folder]);
+      // The root holds the kept member, so it stays too.
+      expect(kept.map((entry) => entry.reason)).toEqual([
+        "It has local changes.",
+        "It holds /repos/api, which stays.",
+      ]);
+      expect(removed).toEqual([]);
       expect(yield* fs.exists(worktreeSetManifestPath(folder, path))).toBe(true);
       removed.length = 0;
       const none = yield* removeWorktreeSetMembers({ folder, members }).pipe(

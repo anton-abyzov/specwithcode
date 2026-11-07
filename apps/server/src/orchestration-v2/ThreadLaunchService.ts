@@ -554,8 +554,12 @@ const make = Effect.gen(function* () {
             startFromOrigin: strategy.startFromOrigin === true,
             submodules: placementSettings.worktreeSubmodules,
           }),
-        ).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-        createdSet = { folder, members };
+        ).pipe(
+          Effect.mapError(mapError(input, "provision-worktree", threadId)),
+          // A cancel mid-checkout waits so the error handler knows what to remove.
+          Effect.tap(() => Effect.sync(() => void (createdSet = { folder, members }))),
+          Effect.uninterruptible,
+        );
         worktreePath = folder;
         const setBranch = branch;
         yield* setupTracker.update(threadId, (snapshot) => ({
@@ -770,19 +774,40 @@ const make = Effect.gen(function* () {
                 ...(exactName ? { exactName: true } : {}),
               })
               .pipe(
-                Effect.tap((renamed) =>
-                  Effect.forEach(
+                Effect.tap((renamed) => {
+                  // If a later member cannot take the name, put the renamed
+                  // ones back so the whole set stays on one branch.
+                  const done: Array<string> = [renameCwds[0]!];
+                  return Effect.forEach(
                     renameCwds.slice(1),
                     (cwd) =>
-                      git.renameBranch({
-                        cwd,
-                        oldBranch,
-                        newBranch: renamed.branch,
-                        exactName: true,
-                      }),
+                      git
+                        .renameBranch({
+                          cwd,
+                          oldBranch,
+                          newBranch: renamed.branch,
+                          exactName: true,
+                        })
+                        .pipe(Effect.tap(() => Effect.sync(() => void done.push(cwd)))),
                     { discard: true },
-                  ),
-                ),
+                  ).pipe(
+                    Effect.tapError(() =>
+                      Effect.forEach(
+                        done,
+                        (cwd) =>
+                          git
+                            .renameBranch({
+                              cwd,
+                              oldBranch: renamed.branch,
+                              newBranch: oldBranch,
+                              exactName: true,
+                            })
+                            .pipe(Effect.ignore),
+                        { discard: true },
+                      ),
+                    ),
+                  );
+                }),
               ),
           ),
           Effect.flatMap((renamed) =>

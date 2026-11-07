@@ -1,8 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - the planner is pure and takes Node's path for platform cases.
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { worktreeFolderName, worktreeSetFolder } from "./worktreePlacement.ts";
@@ -74,11 +76,8 @@ describe("worktree set folder", () => {
   it.effect("records its members beside the folder, so a deleted folder keeps them", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
-      const folder = path.join(
-        yield* Effect.promise(() => import("node:os").then((os) => os.tmpdir())),
-        `set-${Date.now()}`,
-        "feature",
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const folder = path.join(yield* fs.makeTempDirectoryScoped({ prefix: "set-" }), "feature");
       expect(worktreeSetManifestPath(folder, path)).toBe(
         path.join(path.dirname(folder), ".feature.worktree-set.json"),
       );
@@ -88,6 +87,6 @@ describe("worktree set folder", () => {
         version: 1,
         members: [{ repository: "/r", relativePath: "", id: "root" }],
       });
-    }).pipe(Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
