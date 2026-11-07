@@ -16,7 +16,7 @@ on:
       phases:
         required: false
         type: string
-        default: update,retry,replaced
+        default: update,retry,replaced,signed
   workflow_dispatch:
     inputs:
       version:
@@ -24,10 +24,10 @@ on:
         required: true
         type: string
       phases:
-        description: update, retry, replaced (retry and replaced need a candidate with #1199)
+        description: update, retry, replaced, signed (retry and replaced need a candidate with #1199)
         required: false
         type: string
-        default: update,retry,replaced
+        default: update,retry,replaced,signed
 
 permissions:
   contents: read
@@ -84,7 +84,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/previous" "$RUNNER_TEMP/candidate"
           if [ -z "$ARTIFACT" ]; then
-            gh release download "v$VERSION" -R "$PUBLIC_REPOSITORY" -p '*-amd64.deb' -D "$RUNNER_TEMP/candidate"
+            gh release download "v$VERSION" -R "$PUBLIC_REPOSITORY" -p '*-amd64.deb' -p latest-linux.yml -D "$RUNNER_TEMP/candidate"
           fi
           # The newest published release below the candidate that carries a .deb.
           previous=$(gh release list -R "$PUBLIC_REPOSITORY" -L 40 --exclude-pre-releases --json tagName --jq '.[].tagName' \
@@ -101,11 +101,12 @@ jobs:
           gh release download "v$previous" -R "$PUBLIC_REPOSITORY" -p '*-amd64.deb' -D "$RUNNER_TEMP/previous"
       - name: Prove the update
         env:
-          PHASES: ${{ inputs.phases || 'update,retry,replaced' }}
+          PHASES: ${{ inputs.phases || 'update,retry,replaced,signed' }}
         run: |
           node scripts/linux-update-proof.mjs \
             --previous "$(ls "$RUNNER_TEMP"/previous/*-amd64.deb)" \
             --candidate "$(ls "$RUNNER_TEMP"/candidate/*-amd64.deb)" \
+            --candidate-feed "$RUNNER_TEMP/candidate/latest-linux.yml" \
             --evidence "$RUNNER_TEMP/evidence" \
             --phases "$PHASES"
       - name: Keep the evidence

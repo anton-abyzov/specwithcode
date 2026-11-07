@@ -309,6 +309,14 @@ export function mergeWindowsFeeds(x64Text: string, arm64Text: string): string {
   return [...lines.slice(0, end), ...added, ...lines.slice(end)].join("\n");
 }
 
+/** The feed with the .deb's detached signature, which the updater hands the root helper. */
+export function feedWithDebSignature(feed: string, signature: Uint8Array): string {
+  if (/^debSignature:/m.test(feed)) throw new Error("the feed already has a debSignature");
+  if (signature.length === 0) throw new Error("the signature is empty");
+  const base = feed.endsWith("\n") ? feed : `${feed}\n`;
+  return `${base}debSignature: ${Buffer.from(signature).toString("base64")}\n`;
+}
+
 /** Problems with a packaged resources/app-update.yml: it must poll FEED_REPOSITORY's stable releases. */
 export function appUpdateConfigProblems(text: string, repository = FEED_REPOSITORY): string[] {
   const entries: Record<string, string> = {};
@@ -685,6 +693,15 @@ function main(argv: ReadonlyArray<string>): void {
       return collect(args);
     case "merge-feeds":
       return mergeFeeds(args);
+    case "add-deb-signature": {
+      const feed = args.one("feed");
+      const signature = NodeFS.readFileSync(args.one("signature"));
+      NodeFS.writeFileSync(
+        feed,
+        feedWithDebSignature(NodeFS.readFileSync(feed, "utf8"), signature),
+      );
+      return;
+    }
     case "check-feed": {
       const repository = args.values.get("repo")?.[0] ?? FEED_REPOSITORY;
       if (args.positional.length === 0) throw new Error("name at least one app-update.yml");

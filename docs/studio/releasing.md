@@ -446,6 +446,30 @@ compiles needs more than 2.35. Two prebuilt binaries that npm packages ship are 
 warn: `@crowecawcaw/xa11y` (2.39; the snap-shot accessibility tree) and, on arm64, the Cursor SDK's
 `cursorsandbox` (2.39). They do not load on Ubuntu 22.04 or Debian 12.
 
+### Linux .deb update signing
+
+An installed `.deb` updates as root with no password. `/usr/lib/specwithcode/update-helper` runs
+through `pkexec` under the polkit action `com.specwithcode.studio.update`, which an active local
+session may use without authenticating; anywhere else it needs admin authentication. Any process of
+that session can run the helper, so it installs only a package signed by the pinned key
+`/usr/lib/specwithcode/update-key.gpg`, named `studio`, of this machine's architecture and newer than
+the installed version. It reads the caller's files as the caller and works on a root-only copy.
+
+The release Linux job signs the `.deb` with the `LINUX_UPDATE_SIGNING_KEY` secret (armored private
+key, fingerprint `9B93F551ECE923E2F262872560ACC8279860A5D1`), checks the signature against the key
+inside that package, and adds it to the feed as `debSignature`. A real release fails without it. An
+install with the helper refuses an unsigned or badly signed package and does not fall back to the
+password prompt. The secret is the only copy of the private key and it grants root on every Linux
+install at its next update, so never copy it elsewhere.
+
+Rotating takes three releases. First, export both public keys into
+`apps/desktop/resources/linux/update-key.gpg` and release, still signed by the old key. Next, change
+the secret to the new key and release. Last, drop the old key from the file and release. The release
+checks the signature against the key file inside its own package, and installs check it against the
+file they already have, so both must hold the signing key at every step. If the old key is lost or
+leaked, change the file and the secret at once: installs on the old key refuse the update and need a
+by-hand `sudo apt install ./<new>.deb`.
+
 ### Windows code signing
 
 Windows builds are signed with Azure Trusted Signing (Microsoft now also calls it Azure Artifact

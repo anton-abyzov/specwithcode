@@ -99,7 +99,9 @@ terminal and source control work as on macOS. These do not:
 - [Computer use](./computer-use.md) controls a Mac's screen and is macOS only. Windows and Linux
   apps say so instead of offering it.
 - Updates: the Windows app, the AppImage and the `.deb` install update themselves from the
-  release, as on macOS; the `.deb` update asks for your password. A background service installed
+  release, as on macOS. The `.deb` updates without a password in your desktop session: it checks
+  the release's signature and installs only a newer `studio` package. The first update onto a
+  release that has this asks for your password one last time. A background service installed
   from the command line on Linux is updated with `specwithcode update`, not from the app.
 - The background service is a scheduled task for your user on Windows and a systemd user service
   on Linux ([Running in the background](./background-service.md)). The tray keeps it running when

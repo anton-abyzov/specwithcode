@@ -13,6 +13,7 @@ import {
   assetSetProblems,
   feedManifestName,
   feedProblems,
+  feedWithDebSignature,
   formatSums,
   isReleaseShAssetName,
   isStableVersion,
@@ -1271,5 +1272,36 @@ describe("release-windows-linux.yml", () => {
     const allowed =
       /^\s*#|select\(\.name == "latest-mac\.yml"|::error::latest-mac\.yml or SHA256SUMS changed/;
     expect(lines.filter((line) => !allowed.test(line))).toEqual([]);
+  });
+});
+
+describe("feedWithDebSignature", () => {
+  it("adds the signature in base64 and keeps the feed readable", () => {
+    const feed = "version: 1.0.170\nfiles: []\npath: a.AppImage\n";
+    const signed = feedWithDebSignature(feed, Buffer.from("signature"));
+    expect(signed).toBe(`${feed}debSignature: ${Buffer.from("signature").toString("base64")}\n`);
+  });
+
+  it("refuses a second signature and an empty one", () => {
+    expect(() => feedWithDebSignature("debSignature: a\n", Buffer.from("b"))).toThrow(/already/);
+    expect(() => feedWithDebSignature("version: 1\n", Buffer.alloc(0))).toThrow(/empty/);
+  });
+});
+
+describe("release signs the .deb", () => {
+  const workflow = NodeFS.readFileSync(
+    new URL("../.github/workflows/release-windows-linux.yml", import.meta.url),
+    "utf8",
+  );
+
+  it("needs the key on a real run and checks the signature against the packaged key", () => {
+    expect(workflow).toMatch(/for name in [^\n]*LINUX_UPDATE_SIGNING_KEY; do/);
+    expect(workflow).toContain(
+      'gpgv --keyring "$RUNNER_TEMP/packages/deb/usr/lib/specwithcode/update-key.gpg"',
+    );
+    expect(workflow).toContain("add-deb-signature");
+    expect(workflow.indexOf("name: Sign the .deb")).toBeGreaterThan(
+      workflow.indexOf("name: Check the packages' update feed"),
+    );
   });
 });

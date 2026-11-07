@@ -3155,10 +3155,16 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       fpm: [
         `${path.join(repoRoot, "apps/desktop/resources/linux/com.specweave.studio.metainfo.xml")}=/usr/share/metainfo/com.specweave.studio.metainfo.xml`,
         `${path.join(repoRoot, "THIRD_PARTY_NOTICES.md")}=/usr/share/doc/specweave-studio/copyright`,
+        // Installs a signed update with no password; see docs/studio/releasing.md.
+        `${path.join(repoRoot, "apps/desktop/resources/linux/update-helper")}=/usr/lib/specwithcode/update-helper`,
+        `${path.join(repoRoot, "apps/desktop/resources/linux/update-key.gpg")}=/usr/lib/specwithcode/update-key.gpg`,
+        `${path.join(repoRoot, "apps/desktop/resources/linux/com.specwithcode.studio.update.policy")}=/usr/share/polkit-1/actions/com.specwithcode.studio.update.policy`,
       ],
       // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
       // for 64-bit time; the old name is the fallback for older releases.
       depends: [
+        // Checks an update's signature (update-helper).
+        "gpgv",
         "libasound2t64 | libasound2",
         "libatspi2.0-0t64 | libatspi2.0-0",
         "libgbm1",

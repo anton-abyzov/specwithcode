@@ -3,11 +3,12 @@
 // Runs only on a throwaway CI machine: it installs packages and rewrites the installed feed config.
 //
 //   node scripts/linux-update-proof.mjs --previous old.deb --candidate new.deb --evidence dir \
-//     [--phases update,retry,replaced]
+//     [--candidate-feed latest-linux.yml] [--phases update,retry,replaced,signed]
 //
 // update:   the previous release updates itself to the candidate from a local feed.
 // retry:    the candidate meets a package dpkg refuses, reports why, and Retry responds.
 // replaced: a package replaces the running binary; the install relaunches without the updater.
+// signed:   the helper refuses a tampered package, then installs a signed one, with no /bin/bash run.
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -17,6 +18,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -34,7 +36,8 @@ const arg = (name, fallback) => {
 const previousDeb = arg("previous");
 const candidateDeb = arg("candidate");
 const evidence = arg("evidence");
-const KNOWN_PHASES = ["update", "retry", "replaced"];
+const candidateFeed = arg("candidate-feed", "");
+const KNOWN_PHASES = ["update", "retry", "replaced", "signed"];
 const requestedPhases = arg("phases", KNOWN_PHASES.join(",")).split(",");
 const unknownPhase = requestedPhases.find((phase) => !KNOWN_PHASES.includes(phase));
 if (unknownPhase) throw new Error(`Unknown phase ${unknownPhase}`);
@@ -46,6 +49,10 @@ const FEED_CONFIG = "/opt/SpecWithCode/resources/app-update.yml";
 const FEED_PORT = 8599;
 const CDP_PORT = 9333;
 const DISPLAY = ":99";
+const HELPER = "/usr/lib/specwithcode/update-helper";
+const KEYRING = "/usr/lib/specwithcode/update-key.gpg";
+const POLICY = "/usr/share/polkit-1/actions/com.specwithcode.studio.update.policy";
+const ACTION = "com.specwithcode.studio.update";
 
 mkdirSync(evidence, { recursive: true });
 const log = (message) => console.log(`[proof] ${message}`);
@@ -74,10 +81,10 @@ const until = async (what, timeoutMs, read) => {
 };
 
 // Feed: what electron-updater's generic provider reads, the same manifest shape a release carries.
-let feed = { version: "0.0.0", file: null };
+let feed = { version: "0.0.0", file: null, signature: null };
 const sha512 = (file) => createHash("sha512").update(readFileSync(file)).digest("base64");
-const setFeed = (version, file) => {
-  feed = { version, file, name: `SpecWithCode-${version}-amd64.deb`, sha: sha512(file) };
+const setFeed = (version, file, signature = null) => {
+  feed = { version, file, signature, name: `SpecWithCode-${version}-amd64.deb`, sha: sha512(file) };
 };
 const server = createServer((request, response) => {
   const name = basename(new URL(request.url, "http://x").pathname);
@@ -93,6 +100,7 @@ const server = createServer((request, response) => {
         `path: ${feed.name}`,
         `sha512: ${feed.sha}`,
         `releaseDate: '${new Date().toISOString()}'`,
+        ...(feed.signature === null ? [] : [`debSignature: ${feed.signature}`]),
         "",
       ].join("\n"),
     );
@@ -210,19 +218,93 @@ const install = () =>
     log(`install answered: ${JSON.stringify({ ...outcome, state: undefined })}`);
     return outcome.accepted ? outcome : false;
   });
-const pkexecRuns = () =>
+const pkexecRunsOf = (command) =>
   spawnSync("journalctl", ["-t", "pkexec", "--no-pager", "-q", "-o", "cat"], {
     encoding: "utf8",
   })
     .stdout.split("\n")
-    .filter((line) => line.includes("COMMAND=/bin/bash")).length;
+    .filter((line) => line.includes(`COMMAND=${command}`)).length;
+const pkexecRuns = () => pkexecRunsOf("/bin/bash");
+const helperRuns = () => pkexecRunsOf(HELPER);
+const hasHelper = (deb) =>
+  execFileSync("dpkg-deb", ["-c", deb], {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  }).includes(`.${HELPER}`);
+
+// A throwaway key stands in for the release key in the phases that need packages the release never
+// signed. The real signature is what the update phase checks, against the previous release's key.
+const gnupgHome = join(evidence, "gnupg");
+const gpg = (...args) =>
+  execFileSync("gpg", ["--homedir", gnupgHome, "--batch", "--quiet", "--yes", ...args]);
+const signWithProofKey = (file) => {
+  const out = `${file}.proof-sig`;
+  gpg("--detach-sign", "-o", out, file);
+  return readFileSync(out).toString("base64");
+};
+const pinProofKey = () => {
+  if (!existsSync(gnupgHome)) {
+    mkdirSync(gnupgHome, { recursive: true, mode: 0o700 });
+    gpg("--passphrase", "", "--quick-generate-key", "Update proof", "ed25519", "sign");
+    writeFileSync(join(evidence, "proof-key.gpg"), gpg("--export"));
+  }
+  sudo("cp", join(evidence, "proof-key.gpg"), KEYRING);
+};
+/** The candidate's payload under another package version: enough for dpkg, and it really runs. */
+const repackAs = (version) => {
+  const dir = join(evidence, "repack");
+  const out = join(evidence, `repacked-${version}.deb`);
+  execFileSync("dpkg-deb", ["-R", candidateDeb, dir]);
+  const control = join(dir, "DEBIAN/control");
+  writeFileSync(
+    control,
+    readFileSync(control, "utf8").replace(/^Version: .*$/m, `Version: ${version}`),
+  );
+  execFileSync("dpkg-deb", ["-Zgzip", "-z1", "--root-owner-group", "-b", dir, out], {
+    stdio: "ignore",
+  });
+  rmSync(dir, { recursive: true, force: true });
+  return out;
+};
+/** The installed files must stay out of the user's reach, or the action would give root away. */
+const checkInstalledHelper = () => {
+  for (const [file, mode] of [
+    [HELPER, "root root 755"],
+    [KEYRING, "root root 644"],
+    [POLICY, "root root 644"],
+  ]) {
+    const found = execFileSync("stat", ["-c", "%U %G %a", file], { encoding: "utf8" }).trim();
+    if (found !== mode) fail(`${file} is ${found}, expected ${mode}`);
+  }
+  // Ubuntu 22.04's pkaction exits 1 even when it prints the action, so only its output counts.
+  const action = spawnSync("pkaction", ["--verbose", "--action-id", ACTION], {
+    encoding: "utf8",
+  }).stdout;
+  if (!/implicit active:\s+yes/.test(action) || !/implicit any:\s+auth_admin/.test(action))
+    fail(`Unexpected polkit defaults:\n${action}`);
+  // The check an unattended install reads first (unattendedDebInstallReadiness).
+  const allowed = spawnSync("/usr/bin/pkcheck", [
+    "--action-id",
+    ACTION,
+    "--process",
+    String(process.pid),
+  ]);
+  if (allowed.status !== 0) fail(`pkcheck answered ${allowed.status} for ${ACTION}`);
+};
+const feedSignature = () => {
+  if (candidateFeed === "" || !existsSync(candidateFeed)) return null;
+  return readFileSync(candidateFeed, "utf8").match(/^debSignature: (.+)$/m)?.[1] ?? null;
+};
 
 const candidate = debVersion(candidateDeb);
 const candidateParts = candidate.split(".").map(Number);
 const firstDifference = candidateParts.findIndex((part, index) => part !== FIRST_WITH_RETRY[index]);
 const hasRetry =
   firstDifference === -1 || candidateParts[firstDifference] > FIRST_WITH_RETRY[firstDifference];
-const phases = hasRetry ? requestedPhases : requestedPhases.filter((phase) => phase === "update");
+const candidateHasHelper = hasHelper(candidateDeb);
+const phases = (
+  hasRetry ? requestedPhases : requestedPhases.filter((phase) => phase === "update")
+).filter((phase) => phase !== "signed" || candidateHasHelper);
 const previous = debVersion(previousDeb);
 const parts = candidate.split(".");
 const next = [parts[0], parts[1], Number(parts[2]) + 1].join(".");
@@ -234,19 +316,33 @@ log(`previous ${previous}, candidate ${candidate}, phases ${phases.join(" ")}`);
  */
 const noNewPrivileges = (pid) =>
   /^NoNewPrivs:\s*1\s*$/m.test(readFileSync(`/proc/${pid}/status`, "utf8"));
+const cdpPortAvailable = () =>
+  new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", (error) => {
+      if (error.code === "EADDRINUSE") resolve(false);
+      else reject(error);
+    });
+    probe.listen(CDP_PORT, "127.0.0.1", () =>
+      probe.close((error) => (error ? reject(error) : resolve(true))),
+    );
+  });
+
 const relaunchOnFeed = async (version) => {
   await quitApp();
+  await until(`DevTools port ${CDP_PORT} to be released`, 30_000, cdpPortAvailable);
   pointInstallAtFeed();
   launch();
   await waitForApp(version);
 };
 
 const prove = async () => {
-  // Real pkexec, no password: the rule stands in for the person at the prompt.
+  // Real pkexec, no password: the rule stands in for the person at the prompt, and for the active
+  // local session this machine lacks, which is all the helper's action asks for.
   if (existsSync("/etc/polkit-1/rules.d")) {
     writeFileSync(
       join(evidence, "49-proof.rules"),
-      'polkit.addRule(function(a,s){if(a.id=="org.freedesktop.policykit.exec"&&s.user=="' +
+      `polkit.addRule(function(a,s){if((a.id=="org.freedesktop.policykit.exec"||a.id=="${ACTION}")&&s.user=="` +
         `${process.env.USER}"){return polkit.Result.YES;}});\n`,
     );
     sudo("cp", join(evidence, "49-proof.rules"), "/etc/polkit-1/rules.d/49-proof.rules");
@@ -254,7 +350,7 @@ const prove = async () => {
     // Ubuntu 22.04's polkit 0.105 reads no .rules files.
     writeFileSync(
       join(evidence, "49-proof.pkla"),
-      `[proof]\nIdentity=unix-user:${process.env.USER}\nAction=org.freedesktop.policykit.exec\n` +
+      `[proof]\nIdentity=unix-user:${process.env.USER}\nAction=org.freedesktop.policykit.exec;${ACTION}\n` +
         "ResultAny=yes\nResultInactive=yes\nResultActive=yes\n",
     );
     sudo("mkdir", "-p", "/etc/polkit-1/localauthority/50-local.d");
@@ -276,16 +372,24 @@ const prove = async () => {
     sudo("apt-get", "install", "-y", previousDeb);
     if (installedVersion() !== previous) fail(`Installed ${installedVersion()}, not ${previous}`);
     pointInstallAtFeed();
-    setFeed(candidate, candidateDeb);
+    // From a release that has the helper, the release's real signature has to pass its pinned key.
+    const throughHelper = hasHelper(previousDeb);
+    const signature = feedSignature();
+    if (throughHelper && signature === null) fail("The candidate's feed has no debSignature");
+    setFeed(candidate, candidateDeb, signature);
     launch();
     const before = await waitForApp(previous);
     await downloadOffered(candidate);
-    const runs = pkexecRuns();
+    const runs = throughHelper ? helperRuns() : pkexecRuns();
+    const passwordRuns = pkexecRuns();
     await install();
     await until("dpkg to hold the candidate", 180_000, () => installedVersion() === candidate);
     const after = await waitForApp(candidate);
     if (after.pid === before.pid) fail("The app did not restart into the candidate");
-    if (pkexecRuns() <= runs) fail("The install never ran through pkexec");
+    if ((throughHelper ? helperRuns() : pkexecRuns()) <= runs)
+      fail("The install never ran through pkexec");
+    if (throughHelper && pkexecRuns() !== passwordRuns)
+      fail("The install asked for a password instead of using the helper");
     const updated = await until("the updated app", 30_000, appPid);
     if (noNewPrivileges(updated))
       fail(`App ${updated} runs under no_new_privs after the update, so its next install fails`);
@@ -299,7 +403,40 @@ const prove = async () => {
     sudo("apt-get", "install", "-y", candidateDeb);
   }
 
-  if (phases.includes("retry")) {
+  if (candidateHasHelper) checkInstalledHelper();
+
+  if (phases.includes("retry") && candidateHasHelper) {
+    log("== retry: the helper refuses a package, the app says why, and Retry reaches it again");
+    pinProofKey();
+    const refused = join(evidence, "refused.deb");
+    writeFileSync(refused, "this is not a Debian package\n");
+    setFeed(next, refused, signWithProofKey(refused));
+    await relaunchOnFeed(candidate);
+    await downloadOffered(next);
+    await install();
+    const failed = await until("the reason for the failed install", 180_000, async () => {
+      const state = await updateState();
+      return state.lastInstallFailure?.targetVersion === next ? state.lastInstallFailure : false;
+    });
+    log(`failure recorded: ${failed.reason}`);
+    if (!/Debian package/.test(failed.reason)) fail(`Unhelpful reason: ${failed.reason}`);
+    if (installedVersion() !== candidate) fail(`dpkg holds ${installedVersion()}`);
+    const installsBefore = helperRuns();
+    const passwordRuns = pkexecRuns();
+    // The app's own check soon offers the version again, and the button waits for its download.
+    await until("the Retry update button", 180_000, async () => {
+      const state = await updateState().catch(() => null);
+      if (state?.status === "available") {
+        await evaluate("window.desktopBridge.downloadUpdate()").catch(() => undefined);
+      }
+      return evaluate(
+        `(() => { const b = [...document.querySelectorAll("button")].find((x) => /Retry update/.test(x.textContent)); if (!b) return false; b.click(); return true; })()`,
+      ).catch(() => false);
+    });
+    await until("Retry to reach the helper", 120_000, () => helperRuns() > installsBefore);
+    if (pkexecRuns() !== passwordRuns) fail("Retry asked for a password");
+    log("retry: passed");
+  } else if (phases.includes("retry")) {
     log("== retry: a package dpkg refuses, then Retry");
     writeFileSync(join(evidence, "refused.deb"), "this is not a Debian package\n");
     setFeed(next, join(evidence, "refused.deb"));
@@ -362,6 +499,46 @@ const prove = async () => {
     if (pkexecRuns() !== runs) fail("The relaunch ran the updater's install");
     log(`replaced: passed, ${installed} relaunched into ${previous}`);
   }
+
+  if (phases.includes("signed")) {
+    log("== signed: tampered refused, signed installed, no password");
+    sudo("apt-get", "install", "-y", "--allow-downgrades", candidateDeb);
+    checkInstalledHelper();
+    pinProofKey();
+    const repacked = repackAs(next);
+    const signature = signWithProofKey(repacked);
+    const tampered = join(evidence, "tampered.deb");
+    writeFileSync(tampered, Buffer.concat([readFileSync(repacked), Buffer.from("tampered")]));
+    setFeed(next, tampered, signature);
+    await relaunchOnFeed(candidate);
+    await downloadOffered(next);
+    const passwordRuns = pkexecRuns();
+    // The retry phase's failure for this version is still on record, so only a later one counts.
+    const installStart = new Date().toISOString();
+    await install();
+    const failed = await until("the refusal of the tampered package", 180_000, async () => {
+      const state = await updateState();
+      const failure = state.lastInstallFailure;
+      return failure?.targetVersion === next && failure.at >= installStart ? failure : false;
+    });
+    if (!/signature/.test(failed.reason)) fail(`Unhelpful reason: ${failed.reason}`);
+    if (installedVersion() !== candidate)
+      fail(`The tampered package installed: ${installedVersion()}`);
+
+    setFeed(next, repacked, signature);
+    await relaunchOnFeed(candidate);
+    await downloadOffered(next);
+    const before = await until("the app process", 30_000, appPid);
+    const runs = helperRuns();
+    await install();
+    await until("dpkg to hold the signed package", 180_000, () => installedVersion() === next);
+    if (helperRuns() <= runs) fail("The install never ran the helper");
+    // The repacked package holds the candidate's app, so its version stays the candidate's.
+    const after = await waitForApp(candidate);
+    if (after.pid === before) fail("The app did not relaunch");
+    if (pkexecRuns() !== passwordRuns) fail("The install asked for a password");
+    log("signed: passed");
+  }
 };
 
 const collect = () => {
@@ -370,7 +547,7 @@ const collect = () => {
     `cp -r ${home}/.specwithcode/userdata/logs ${evidence}/logs 2>/dev/null`,
     `journalctl --no-pager -S "-60min" > ${evidence}/journal.txt 2>/dev/null`,
     `cp /var/log/dpkg.log ${evidence}/dpkg.log 2>/dev/null`,
-    `rm -f ${evidence}/refused.deb`,
+    `rm -rf ${evidence}/refused.deb* ${evidence}/tampered.deb ${evidence}/repacked-*.deb* ${evidence}/gnupg`,
   ]) {
     spawnSync("bash", ["-c", command]);
   }

@@ -13,6 +13,11 @@ import {
   readRunningExecutableLink,
   relaunchIntoReplacedInstall,
 } from "../updates/replacedInstall.ts";
+import {
+  type DebUpdaterInstall,
+  isDebInstall,
+  useSignedDebInstall,
+} from "../updates/signedDebInstall.ts";
 
 type AutoUpdater = typeof autoUpdater;
 
@@ -120,6 +125,9 @@ export function forgetDownloadRecord(updater: unknown): void {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
+  if (platform === "linux" && isDebInstall(process.resourcesPath)) {
+    useSignedDebInstall(autoUpdater as unknown as DebUpdaterInstall);
+  }
   // Squirrel.Mac's staging, from public events instead of MacUpdater's
   // private squirrelDownloadedUpdate (set once, never reset, so it stays true
   // for an older bundle): electron-updater's update-downloaded names the

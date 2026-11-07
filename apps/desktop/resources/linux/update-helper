@@ -1,0 +1,79 @@
+#!/bin/sh
+# Installs one signed SpecWithCode update as root, with no password in an active local session
+# (com.specwithcode.studio.update.policy). Any process of that session can run this, so the only
+# thing it may do is move this package forward to a release this project signed.
+#
+#   pkexec /usr/lib/specwithcode/update-helper <package.deb> <package.deb.sig>
+#
+# Exit: 0 installed, 3 not newer than the installed version, 64 bad call or unreadable file,
+# 65 bad signature, 66 not this package, 67 the install failed.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 077
+
+KEYRING=/usr/lib/specwithcode/update-key.gpg
+WORK_ROOT=/var/tmp
+PACKAGE=studio
+MAX_PACKAGE_BYTES=1073741824
+MAX_SIGNATURE_BYTES=65536
+
+refuse() {
+  printf 'SpecWithCode update refused: %s\n' "$2" >&2
+  exit "$1"
+}
+
+[ "$(id -u)" = 0 ] || refuse 64 "the update helper must run through pkexec."
+[ "$#" = 2 ] || refuse 64 "expected a package and its signature."
+case "${PKEXEC_UID:-}" in
+  '' | *[!0-9]*) refuse 64 "the update helper must run through pkexec." ;;
+esac
+caller_gid=$(id -g "$PKEXEC_UID") || refuse 64 "the calling user is unknown."
+for path in "$1" "$2"; do
+  case "$path" in
+    /*) ;;
+    *) refuse 64 "paths must be absolute." ;;
+  esac
+done
+
+work=$(mktemp -d "$WORK_ROOT/specwithcode-update.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# As the caller, so root never opens a path the caller chose. The copy cannot change after the check.
+read_as_caller() {
+  timeout 300 setpriv --reuid="$PKEXEC_UID" --regid="$caller_gid" --clear-groups --no-new-privs \
+    head -c "$2" -- "$1"
+}
+read_as_caller "$1" "$MAX_PACKAGE_BYTES" > "$work/update.deb" ||
+  refuse 64 "could not read the package."
+read_as_caller "$2" "$MAX_SIGNATURE_BYTES" > "$work/update.sig" ||
+  refuse 64 "could not read the signature."
+
+mkdir "$work/gnupg"
+gpgv --homedir "$work/gnupg" --keyring "$KEYRING" "$work/update.sig" "$work/update.deb" \
+  > /dev/null 2>&1 || refuse 65 "the package signature does not verify."
+
+package=$(dpkg-deb -f "$work/update.deb" Package 2> /dev/null) ||
+  refuse 66 "the signed file is not a Debian package."
+architecture=$(dpkg-deb -f "$work/update.deb" Architecture)
+version=$(dpkg-deb -f "$work/update.deb" Version)
+[ "$package" = "$PACKAGE" ] || refuse 66 "the signed package is $package, not $PACKAGE."
+[ "$architecture" = "$(dpkg --print-architecture)" ] ||
+  refuse 66 "the signed package is for $architecture."
+installed=$(dpkg-query -W -f='${Version}' "$PACKAGE" 2> /dev/null) || installed=
+[ -n "$installed" ] || refuse 66 "$PACKAGE is not installed."
+dpkg --compare-versions "$version" gt "$installed" ||
+  refuse 3 "$version is not newer than the installed $installed."
+
+# apt waits for another package manager's lock and brings a new dependency from the machine's own
+# signed sources. --no-remove keeps it from taking anything else off the machine.
+# The app shows the first line as the reason, so apt's own output follows the refusal. The package's
+# maintainer scripts get the usual umask, not this script's.
+umask 022
+if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-remove -o DPkg::Lock::Timeout=300 \
+  -- "$work/update.deb" < /dev/null > "$work/apt.log" 2>&1; then
+  printf 'SpecWithCode update refused: apt-get could not install %s.\n' "$version" >&2
+  tail -n 15 "$work/apt.log" >&2
+  exit 67
+fi

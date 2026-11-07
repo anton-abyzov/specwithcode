@@ -58,8 +58,9 @@ name: Release Windows and Linux
 # and STUDIO_GOOGLE_OAUTH_CLIENT_SECRET (the built-in Google pair, as in the macOS build), and
 # LINUX_UPDATE_SIGNING_KEY (the armored GPG release key: each AppImage and .deb and
 # SHA256SUMS-windows-linux get a detached .asc, and the public key goes on the release as
-# specwithcode-release-key.asc). Run from a repository other than FEED_REPOSITORY, a run attaches
-# the apps to the release on both.
+# specwithcode-release-key.asc; the .deb signature in the feed also lets the app install its
+# update without a password, docs/studio/releasing.md). Run from a repository other than
+# FEED_REPOSITORY, a run attaches the apps to the release on both.
 #
 # Build provenance: while the repository is public, a real run attests every file it uploads with
 # actions/attest-build-provenance (`gh attestation verify FILE --repo anton-abyzov/specwithcode`).
@@ -784,6 +785,32 @@ jobs:
           [ -n "$exe" ] || { echo "::error::No specweave-studio-desktop in the .deb"; exit 1; }
           node scripts/release/verify-built-app.mjs --mode fresh --no-proofs --app "$exe" \
             --version "$VERSION" --out "$RUNNER_TEMP/verify-linux"
+
+      # An installed .deb runs its update as root with no password only if this signature checks
+      # against the key the installed package pins, so it is checked here against this package's.
+      - name: Sign the .deb
+        shell: bash
+        env:
+          LINUX_UPDATE_SIGNING_KEY: ${{ secrets.LINUX_UPDATE_SIGNING_KEY }}
+          FEED: ${{ matrix.arch == 'arm64' && 'latest-linux-arm64.yml' || 'latest-linux.yml' }}
+          DRY_RUN: ${{ needs.plan.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LINUX_UPDATE_SIGNING_KEY" ]; then
+            [ "$DRY_RUN" = true ] || { echo "::error::LINUX_UPDATE_SIGNING_KEY is not set."; exit 1; }
+            echo "::warning::No LINUX_UPDATE_SIGNING_KEY: this dry run's .deb is unsigned."
+            exit 0
+          fi
+          deb="release/SpecWithCode-$VERSION-${{ matrix.deb }}.deb"
+          signature="$RUNNER_TEMP/deb.sig"
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
+          gpg --batch --quiet --import <<<"$LINUX_UPDATE_SIGNING_KEY"
+          gpg --batch --quiet --yes --detach-sign --digest-algo SHA512 -o "$signature" "$deb"
+          gpgv --keyring "$RUNNER_TEMP/packages/deb/usr/lib/specwithcode/update-key.gpg" "$signature" "$deb"
+          node "$RUNNER_TEMP/release-tools/release-windows-linux.ts" add-deb-signature \
+            --feed "release/$FEED" --signature "$signature"
 
       # Ubuntu 22.04 (glibc 2.35) and Debian 12 (2.36) are supported, so nothing this repository
       # builds may need a newer glibc. Prebuilt binaries that npm packages ship are outside this
