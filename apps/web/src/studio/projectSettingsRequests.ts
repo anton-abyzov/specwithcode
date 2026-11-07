@@ -63,3 +63,42 @@ export function useProjectSettingsRequest(
     if (request) onRequest(request.target);
   }, [waiting, projectKey, onRequest]);
 }
+
+/** Project settings opened over a page that is not that project's, such as a chat. */
+export interface InPlaceProjectSettings {
+  readonly projectKey: string;
+  readonly target: ProjectSettingsRequestTarget | null;
+}
+let inPlace: InPlaceProjectSettings | null = null;
+
+/**
+ * Opens Project settings over the page in view and never navigates, so the open
+ * thread, its `?thread=` panel and its scroll stay. That project's own page opens
+ * its dialog itself; any other page shows the shared host's.
+ */
+export function openProjectSettings(
+  routeProjectKey: string | null,
+  projectKey: string,
+  target: ProjectSettingsRequestTarget | null,
+): void {
+  if (routeProjectKey === projectKey) {
+    requestProjectSettings(projectKey, Date.now(), target);
+    return;
+  }
+  inPlace = { projectKey, target };
+  emit();
+}
+
+export function closeInPlaceProjectSettings(): void {
+  if (inPlace === null) return;
+  inPlace = null;
+  emit();
+}
+
+export function useInPlaceProjectSettings(): InPlaceProjectSettings | null {
+  return useSyncExternalStore(subscribe, readInPlaceProjectSettings, () => null);
+}
+
+export function readInPlaceProjectSettings(): InPlaceProjectSettings | null {
+  return inPlace;
+}
