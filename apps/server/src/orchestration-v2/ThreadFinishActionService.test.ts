@@ -1,10 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import { GitCommandError, type OrchestrationV2Run } from "@specweave-studio/contracts";
+import {
+  GitCommandError,
+  GitManagerError,
+  type OrchestrationV2Run,
+  type ThreadPullRequestLink,
+} from "@specweave-studio/contracts";
 
 import {
   branchReadyForPullRequest,
+  checkoutSignature,
   failureNotice,
+  linkedPullRequestDecision,
   latestStartedRun,
   mergeStep,
   threadFinished,
@@ -110,7 +117,133 @@ describe("thread finish action", () => {
   });
 });
 
+const link = (
+  number: number,
+  repository: string,
+  headBranch: string,
+  state: "open" | "merged" | "closed",
+  linkedAt: string,
+): ThreadPullRequestLink =>
+  ({
+    host: "github.com",
+    repository,
+    number,
+    url: `https://github.com/${repository}/pull/${number}`,
+    source: "agent",
+    linkedAt,
+    snapshot: { state, headBranch, baseBranch: "main" },
+    stack: null,
+  }) as unknown as ThreadPullRequestLink;
+
+describe("linked pull requests", () => {
+  // The 1209 thread after the repository move: its worktree branch merged in the old repository,
+  // and its work continued on another branch in the new one.
+  const merged1209 = link(
+    1430,
+    "anton-abyzov/specwithcode-dev",
+    "feat/1209-skill-authoring",
+    "merged",
+    "2026-11-05T22:55:29.777Z",
+  );
+  const open1248 = link(
+    26,
+    "anton-abyzov/specwithcode",
+    "feat/1248-skill-management",
+    "open",
+    "2026-11-07T04:42:13.711Z",
+  );
+
+  it("treats a branch whose pull request merged in any repository as landed", () => {
+    expect(linkedPullRequestDecision([merged1209, open1248], "feat/1209-skill-authoring")).toEqual({
+      type: "landed",
+    });
+    expect(
+      linkedPullRequestDecision(
+        [link(3, "o/r", "feat/x", "closed", "2026-11-01T00:00:00Z")],
+        "feat/x",
+      ),
+    ).toEqual({ type: "landed" });
+  });
+
+  it("reuses an open pull request instead of opening another", () => {
+    expect(linkedPullRequestDecision([open1248], "feat/1248-skill-management")).toEqual({
+      type: "open",
+      link: open1248,
+      onBranch: true,
+    });
+    expect(linkedPullRequestDecision([open1248], "feat/other")).toEqual({
+      type: "open",
+      link: open1248,
+      onBranch: false,
+    });
+  });
+
+  it("prefers the branch's own open pull request over an older closed one", () => {
+    const reopened = link(9, "o/r", "feat/x", "open", "2026-11-02T00:00:00Z");
+    expect(
+      linkedPullRequestDecision(
+        [link(3, "o/r", "feat/x", "closed", "2026-11-01T00:00:00Z"), reopened],
+        "feat/x",
+      ),
+    ).toEqual({ type: "open", link: reopened, onBranch: true });
+  });
+
+  it("proceeds only when nothing is linked", () => {
+    expect(linkedPullRequestDecision([], "feat/x")).toEqual({ type: "none" });
+  });
+});
+
+describe("checkoutSignature", () => {
+  const state = { refName: "feat/x", hasUpstream: true, aheadCount: 0, aheadOfDefaultCount: 4 };
+
+  it("stays the same until the branch, upstream or commits change", () => {
+    expect(checkoutSignature("/w", state)).toBe(checkoutSignature("/w", { ...state }));
+    expect(checkoutSignature("/w", state)).not.toBe(checkoutSignature("/other", state));
+    expect(checkoutSignature("/w", state)).not.toBe(
+      checkoutSignature("/w", { ...state, refName: "feat/y" }),
+    );
+    expect(checkoutSignature("/w", state)).not.toBe(
+      checkoutSignature("/w", { ...state, aheadOfDefaultCount: 5 }),
+    );
+    expect(checkoutSignature("/w", state)).not.toBe(
+      checkoutSignature("/w", { ...state, aheadCount: 1 }),
+    );
+  });
+});
+
 describe("failureNotice", () => {
+  it("says what to do when the branch has no history in common with the base", () => {
+    const error = new GitManagerError({
+      operation: "runPrStep",
+      cwd: "/w",
+      detail:
+        "Branch feat/1209-skill-authoring shares no commits with main, so there is nothing to propose into it.",
+    });
+    const [summary] = failureNotice("Could not open a pull request", error, {
+      branch: "feat/1209-skill-authoring",
+      worktree: "/w",
+    }).split("\n");
+    expect(summary).toBe(
+      "Could not open a pull request: feat/1209-skill-authoring has no history in common with main. Rebase it onto main, or link this thread's pull request.",
+    );
+  });
+
+  it("drops the Git manager prefix from the summary line", () => {
+    const error = new GitManagerError({
+      operation: "runPrStep",
+      cwd: "/w",
+      detail: "Current branch has not been pushed. Push before creating a PR.",
+    });
+    const message = failureNotice("Could not open a pull request", error, {
+      branch: "b",
+      worktree: "/w",
+    });
+    expect(message.split("\n")[0]).toBe(
+      "Could not open a pull request: Current branch has not been pushed. Push before creating a PR.",
+    );
+    expect(message).toContain("Operation: runPrStep");
+  });
+
   it("scrubs URL credentials while retaining the full automatic PR failure", () => {
     const error = new GitCommandError({
       operation: "GitVcsDriver.readRangeContext.diffStat",

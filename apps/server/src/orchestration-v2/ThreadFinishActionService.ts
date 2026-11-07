@@ -21,6 +21,7 @@ import {
   type PullRequestSummary,
   type ThreadFinishAction,
   type ThreadId,
+  type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@specweave-studio/contracts";
 import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
@@ -120,6 +121,47 @@ export function branchReadyForPullRequest(
   return status.pr?.state === "open" || (status.aheadOfDefaultCount ?? 1) > 0;
 }
 
+export type LinkedPullRequestDecision =
+  | { readonly type: "none" }
+  | { readonly type: "landed" }
+  | { readonly type: "open"; readonly link: ThreadPullRequestLink; readonly onBranch: boolean };
+
+/**
+ * What the thread's linked pull requests already say about `branch`, in any
+ * repository (a moved repository keeps its old links): a pull request open for
+ * it is reused, one merged or closed means its work landed, and any other open
+ * pull request is the thread's deliverable, so no second one is opened.
+ */
+export function linkedPullRequestDecision(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+  branch: string,
+): LinkedPullRequestDecision {
+  const latest = [...links].sort((a, b) => b.linkedAt.localeCompare(a.linkedAt));
+  const onBranch = latest.filter((link) => link.snapshot?.headBranch === branch);
+  const openOnBranch = onBranch.find((link) => link.snapshot?.state === "open");
+  if (openOnBranch) return { type: "open", link: openOnBranch, onBranch: true };
+  if (onBranch.some((link) => link.snapshot?.state !== "open")) return { type: "landed" };
+  const open = latest.find((link) => link.snapshot?.state === "open");
+  return open ? { type: "open", link: open, onBranch: false } : { type: "none" };
+}
+
+/**
+ * The checkout state a finish step saw. A failure is not retried until it
+ * changes: another branch, a push, or a new commit.
+ */
+export function checkoutSignature(
+  cwd: string,
+  status: Pick<VcsStatusResult, "refName" | "hasUpstream" | "aheadCount" | "aheadOfDefaultCount">,
+): string {
+  return [
+    cwd,
+    status.refName ?? "",
+    String(status.hasUpstream),
+    String(status.aheadCount),
+    String(status.aheadOfDefaultCount ?? ""),
+  ].join("\0");
+}
+
 export type MergeStep =
   | { readonly type: "done"; readonly notice: FinishNoticeKind; readonly message: string }
   | { readonly type: "merge" }
@@ -158,13 +200,24 @@ export function mergeStep(
     : { type: "auto-merge" };
 }
 
+const UNRELATED_HISTORY = /^Branch (\S+) shares no commits with (\S+?),/;
+
+/** The error's own words: a Git manager error without its `failed in <operation>` prefix. */
+function errorText(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+  const fields = error as { _tag?: unknown; detail?: unknown; message?: unknown };
+  if (fields._tag === "GitManagerError" && typeof fields.detail === "string") {
+    const unrelated = UNRELATED_HISTORY.exec(fields.detail);
+    return unrelated
+      ? `${unrelated[1]} has no history in common with ${unrelated[2]}. Rebase it onto ${unrelated[2]}, or link this thread's pull request.`
+      : fields.detail;
+  }
+  return "message" in fields ? String(fields.message) : String(error);
+}
+
 function errorDetail(error: unknown): string {
   // Redact complete credential shapes before truncation can remove their delimiters.
-  const message = scrubLogSecrets(
-    typeof error === "object" && error !== null && "message" in error
-      ? String((error as { message: unknown }).message)
-      : String(error),
-  );
+  const message = scrubLogSecrets(errorText(error));
   const line = message.split("\n").find((part) => part.trim() !== "") ?? message;
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
@@ -231,6 +284,8 @@ export const make = Effect.gen(function* () {
 
   // Merges handed to the host, retried until they land or are refused.
   const pending = new Map<ThreadId, PendingMerge>();
+  // The last failure reported per thread: the same checkout state is not retried after every turn.
+  const reported = new Map<ThreadId, string>();
 
   const projectAction = (projectId: Parameters<typeof resolveProjectSettings>[1]) =>
     settingsService.getSettings.pipe(
@@ -388,6 +443,7 @@ export const make = Effect.gen(function* () {
     if (thread.archivedAt !== null || thread.deletedAt !== null) return;
     // A native subagent works in its parent's checkout; the parent's finish covers it.
     if (thread.forkedFrom?.type === "node") return;
+    // A thread with its own branch and worktree; the checkout's branch now is the one to propose.
     if (thread.branch === null || thread.worktreePath === null) return;
     const action: ThreadFinishAction = (yield* projectAction(thread.projectId)).threadFinishAction;
     if (action === "leave") return;
@@ -397,13 +453,31 @@ export const make = Effect.gen(function* () {
     if (!(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => false)))) return;
     yield* git.invalidateStatus(cwd);
     const status = yield* git.status({ cwd });
-    if (!branchReadyForPullRequest(status, thread.branch)) return;
+    const branch = status.refName;
+    if (branch === null) return;
+    const linked = linkedPullRequestDecision(thread.pullRequests ?? [], branch);
+    if (linked.type === "landed") return;
+    if (linked.type === "open") {
+      // Merge only the branch this checkout is on; another branch's pull request has its own owner.
+      if (action === "auto_merge" && linked.onBranch)
+        yield* merge(threadId, {
+          ref: {
+            projectId: thread.projectId,
+            host: linked.link.host,
+            repository: linked.link.repository,
+            number: linked.link.number,
+          },
+          baseBranch: linked.link.snapshot?.baseBranch ?? "the default branch",
+        });
+      return;
+    }
+    if (!branchReadyForPullRequest(status, branch)) return;
+    const checkout = checkoutSignature(cwd, status);
+    if (reported.get(threadId) === checkout) return;
     const project = Option.getOrUndefined(yield* projectStore.getShell(thread.projectId));
     const runId = latestStartedRun(runs)?.id ?? null;
     const createEffect: HandoffMode.SideEffectInput | null =
-      runId === null
-        ? null
-        : { threadId, runId, kind: "pr-create", target: `branch:${thread.branch}` };
+      runId === null ? null : { threadId, runId, kind: "pr-create", target: `branch:${branch}` };
     if (createEffect !== null) {
       const verdict = yield* sideEffect(createEffect);
       if (verdict.kind === "refuse") {
@@ -422,16 +496,18 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.result);
     if (result._tag === "Failure") {
+      reported.set(threadId, checkout);
       yield* notice(
         threadId,
         "blocked",
         failureNotice("Could not open a pull request", result.failure, {
-          branch: thread.branch,
+          branch,
           worktree: cwd,
         }),
       );
       return;
     }
+    reported.delete(threadId);
     const key = createdPullRequestKey(result.success, project);
     if (key === null) return;
     if (createEffect !== null)
