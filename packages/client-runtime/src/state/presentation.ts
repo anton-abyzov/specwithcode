@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off globalDate:off - The connection grace is display timing for UI atoms, outside an Effect runtime.
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentMachineKind,
@@ -9,8 +10,10 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
 import {
+  CONNECTION_WARNING_GRACE_MS,
   connectionCatalogDisplayUrl,
   presentEnvironmentConnection,
+  settlingConnectionPresentation,
   type EnvironmentConnectionPhase,
   type EnvironmentPresentation,
 } from "../connection/presentation.ts";
@@ -37,22 +40,46 @@ export function createEnvironmentPresentationAtoms<E>(input: {
   /** Authoritative live server config, including streamed provider/settings updates. */
   readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
 }) {
+  // When each enabled machine that is not connected stops settling. A machine
+  // starts settling when the app first sees it and again when it loses its
+  // connection or is turned back on.
+  const settleUntil = new Map<EnvironmentId, number>();
   const presentationAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const entry = get(input.catalogValueAtom).entries.get(environmentId);
       if (entry === undefined) {
+        settleUntil.delete(environmentId);
         return null;
       }
       const state = Option.getOrElse(
         AsyncResult.value(get(input.stateAtom(environmentId))),
         () => AVAILABLE_CONNECTION_STATE,
       );
+      let connection =
+        entry.unsupportedReason === undefined
+          ? presentEnvironmentConnection(state)
+          : ({ phase: "unsupported", error: entry.unsupportedReason, traceId: null } as const);
+      if (!entry.enabled || connection.phase === "connected") {
+        settleUntil.delete(environmentId);
+      } else {
+        const at = Date.now();
+        let until = settleUntil.get(environmentId);
+        if (until === undefined) {
+          until = at + CONNECTION_WARNING_GRACE_MS;
+          settleUntil.set(environmentId, until);
+        }
+        if (at < until) {
+          const settled = settlingConnectionPresentation(connection);
+          if (settled !== connection) {
+            connection = settled;
+            const timer = setTimeout(() => get.refreshSelf(), until - at);
+            get.addFinalizer(() => clearTimeout(timer));
+          }
+        }
+      }
       return {
         entry,
-        connection:
-          entry.unsupportedReason === undefined
-            ? presentEnvironmentConnection(state)
-            : { phase: "unsupported", error: entry.unsupportedReason, traceId: null },
+        connection,
         serverConfig: get(input.serverConfigValueAtom(environmentId)),
       } satisfies EnvironmentPresentation;
     }).pipe(Atom.withLabel(`environment-presentation:${environmentId}`)),
