@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProjectId, ProviderDriverKind, ProviderInstanceId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- isolated filesystem fixture.
 import * as fs from "node:fs/promises";
@@ -13,7 +14,7 @@ const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })));
 });
-async function fixture() {
+async function fixture(alter?: (service: FileSystem.FileSystem) => FileSystem.FileSystem) {
   const root = await fs.mkdtemp(join(os.tmpdir(), "skill-copies-"));
   roots.push(root);
   const a = join(root, ".agents/skills/notes/SKILL.md"),
@@ -76,7 +77,12 @@ async function fixture() {
       }),
   };
   const api = await Effect.runPromise(
-    makeProjectSkillCopies(deps).pipe(Effect.provide(NodeServices.layer)),
+    Effect.gen(function* () {
+      const native = yield* FileSystem.FileSystem;
+      return yield* makeProjectSkillCopies(deps).pipe(
+        Effect.provideService(FileSystem.FileSystem, alter ? alter(native) : native),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
   const input = { projectId, skill: "notes" };
   const call = (extra: Parameters<typeof api.execute>[0]) => Effect.runPromise(api.execute(extra));
@@ -170,5 +176,102 @@ describe("inventory-bound skill copies", () => {
     await expect(f.call({ ...f.input, operation: "read" })).rejects.toMatchObject({
       reason: "scope_unsupported",
     });
+  });
+});
+
+describe("multi-copy reconciliation", () => {
+  const addThird = async (f: Awaited<ReturnType<typeof fixture>>) => {
+    const c = join(f.root, "third", "SKILL.md");
+    await fs.mkdir(join(c, ".."));
+    await fs.writeFile(c, "third original");
+    f.providers.push({ ...f.providers[1]!, path: c, instanceId: ProviderInstanceId.make("third") });
+    return c;
+  };
+  it("checks all targets before writing even when a later target changes during preflight", async () => {
+    let armed = false,
+      reads = 0,
+      c = "";
+    const f = await fixture((native) => ({
+      ...native,
+      open: (path, options) =>
+        Effect.gen(function* () {
+          if (armed && path.includes(".agents") && options?.flag === "r" && ++reads === 2) {
+            armed = false;
+            yield* Effect.promise(() => fs.writeFile(c, "changed during validation"));
+          }
+          return yield* native.open(path, options);
+        }),
+    }));
+    c = await addThird(f);
+    const read = await f.call({ ...f.input, operation: "read" });
+    const select = {
+      ...f.input,
+      sourceId: read.copies[0]!.id,
+      targetIds: read.copies.slice(1).map((copy) => copy.id),
+    };
+    const preview = await f.call({ ...select, operation: "preview" });
+    armed = true;
+    await expect(
+      f.call({ ...select, operation: "apply", expected: preview.expected! }),
+    ).rejects.toMatchObject({ reason: "stale" });
+    expect(await fs.readFile(f.b, "utf8")).toContain("Second copy");
+    expect(f.refreshed()).toBe(0);
+  });
+  it("returns applied/failed/not-applied receipts and refreshes successful targets after a later rename fails", async () => {
+    let blocked = "";
+    const f = await fixture((native) => ({
+      ...native,
+      rename: (from, to) =>
+        to === blocked ? FileSystem.makeNoop({}).rename(from, to) : native.rename(from, to),
+    }));
+    const c = await addThird(f);
+    blocked = await fs.realpath(c);
+    const d = join(f.root, "fourth", "SKILL.md");
+    await fs.mkdir(join(d, ".."));
+    await fs.writeFile(d, "fourth original");
+    f.providers.push({
+      ...f.providers[1]!,
+      path: d,
+      instanceId: ProviderInstanceId.make("fourth"),
+    });
+    const read = await f.call({ ...f.input, operation: "read" });
+    const select = {
+      ...f.input,
+      sourceId: read.copies[0]!.id,
+      targetIds: read.copies.slice(1).map((copy) => copy.id),
+    };
+    const preview = await f.call({ ...select, operation: "preview" });
+    const result = await f.call({ ...select, operation: "apply", expected: preview.expected! });
+    expect(result._tag).toBe("partial");
+    expect(result.receipts?.map((r) => r.status)).toEqual(["applied", "failed", "not_applied"]);
+    expect(await fs.readFile(f.b, "utf8")).toEqual(await fs.readFile(f.a, "utf8"));
+    expect(await fs.readFile(c, "utf8")).toBe("third original");
+    expect(await fs.readFile(d, "utf8")).toBe("fourth original");
+    expect(f.refreshed()).toBe(1);
+  });
+  it("preserves BOM bytes and destination mode", async () => {
+    const f = await fixture();
+    await fs.writeFile(f.a, "\uFEFF# Notes\nOriginal bytes\n");
+    await fs.chmod(f.b, 0o644);
+    const read = await f.call({ ...f.input, operation: "read" });
+    const select = { ...f.input, sourceId: read.copies[0]!.id, targetIds: [read.copies[1]!.id] };
+    const preview = await f.call({ ...select, operation: "preview" });
+    await f.call({ ...select, operation: "apply", expected: preview.expected! });
+    expect(await fs.readFile(f.b)).toEqual(await fs.readFile(f.a));
+    if (process.platform !== "win32") expect((await fs.stat(f.b)).mode & 0o777).toBe(0o644);
+  });
+  it("bounds aggregate copy contents", async () => {
+    const f = await fixture();
+    await fs.writeFile(f.a, "a".repeat(500 * 1024));
+    await fs.writeFile(f.b, "b".repeat(500 * 1024));
+    for (let i = 0; i < 3; i++) {
+      const file = join(f.root, `extra-${i}`, "SKILL.md");
+      await fs.mkdir(join(file, ".."));
+      await fs.writeFile(file, "x".repeat(500 * 1024));
+      f.providers.push({ ...f.providers[0]!, path: file });
+    }
+    await expect(f.call({ ...f.input, operation: "read" })).rejects.toThrow(
+      "combined skill copies exceed 2 MB",
+    );
   });
 });

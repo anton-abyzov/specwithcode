@@ -29,6 +29,7 @@ import { writeFakeCli } from "../testUtils/fakeCli.ts";
 
 import { fleetSkillAskOfFlags, fleetSkillTargetsOf } from "../cli/fleet.ts";
 import { dirname, join } from "../nodePath.ts";
+import { sha256 } from "../nodeCrypto.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -46,6 +47,7 @@ import {
   lockEntryOf,
   lockWithoutPin,
   makeFleetSkillWorker,
+  matchesFleetSkillContent,
   runFleetSkillInstall,
   runFleetSkillInstalls,
   vskillSearchDirs,
@@ -797,6 +799,89 @@ describe("the live fleet skill worker", () => {
   );
 
   it.live(
+    "verifies a Claude-only install from actual destination files without a shared copy",
+    () =>
+      Effect.gen(function* () {
+        const bin = yield* Effect.promise(() => tempDir("fleet-claude-bin-"));
+        const project = yield* Effect.promise(() => tempDir("fleet-claude-project-"));
+        const content =
+          "---\nname: sw-do\ndescription: Fixture\nallowed-tools: Read\n---\nFixture body\n";
+        const contentHash = sha256([content], "hex");
+        yield* Effect.sync(() =>
+          writeFakeCli({
+            directory: bin,
+            name: "vskill",
+            source: [
+              'import { mkdirSync, writeFileSync } from "node:fs";',
+              'mkdirSync(".claude/skills/sw-do", {recursive:true});',
+              `writeFileSync(".claude/skills/sw-do/SKILL.md", ${JSON.stringify(content)});`,
+              `writeFileSync("vskill.lock", JSON.stringify({skills:{"sw-do":{version:"1.2.3",pinnedVersion:"1.2.3",sha:${JSON.stringify(contentHash)}}}}));`,
+            ].join("\n"),
+          }),
+        );
+        const projects = Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: () => Effect.succeed(Option.some({ workspaceRoot: project } as never)),
+        });
+        const live = fleetSkillsLayer.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(projects),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  PATH: [
+                    bin,
+                    dirname(process.execPath),
+                    ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"]),
+                  ].join(process.platform === "win32" ? ";" : ":"),
+                },
+              }),
+            ),
+          ),
+        );
+        const service = yield* Effect.provide(FleetSkillWorker, live);
+        const ask = {
+          ...userAsk,
+          scope: "project" as const,
+          projectId: "fixture",
+          agents: ["claude-code"] as const,
+          contentHash,
+        };
+        const preview = yield* service.request({ ...ask, preview: true });
+        expect(yield* Effect.promise(() => NodeFSP.readdir(project))).toEqual([]);
+        if (process.platform !== "win32") {
+          const outside = yield* Effect.promise(() => tempDir("fleet-claude-outside-"));
+          yield* Effect.promise(() => NodeFSP.symlink(outside, join(project, ".claude"), "dir"));
+          expect(yield* service.request({ ...ask, preview: true }).pipe(Effect.flip)).toMatchObject(
+            { reason: "unsupported" },
+          );
+          expect(yield* Effect.promise(() => NodeFSP.readdir(outside))).toEqual([]);
+          yield* Effect.promise(() => NodeFSP.unlink(join(project, ".claude")));
+        }
+        yield* service.request({ ...ask, expectedHash: preview.expectedHash! });
+        const status = yield* settled(service);
+        expect(status, status.lastError).toMatchObject({
+          phase: "installed",
+          installedVersion: "1.2.3",
+        });
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(join(project, ".claude/skills/sw-do/SKILL.md"), "utf8"),
+          ),
+        ).toBe(content);
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.access(join(project, ".agents/skills/sw-do/SKILL.md")).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        ).toBe(false);
+      }),
+  );
+
+  it.live(
     "finds the platform vskill launcher on PATH, preserves argv and reads the project lock",
     () =>
       Effect.gen(function* () {
@@ -1225,5 +1310,20 @@ describe("the primary asking fleet machines to install a skill", () => {
         now: () => clock,
       }),
     ).rejects.toMatchObject({ reason: "busy" });
+  });
+});
+
+describe("transformed agent content proof", () => {
+  it("accepts only exact supported stripping backed by a hash-verified full copy", () => {
+    const full =
+      "---\nname: notes\ndescription: Notes\nallowed-tools: Read\nmodel: chosen\n---\nSame body\n";
+    const stripped = "---\nname: notes\ndescription: Notes\n---\nSame body\n";
+    const hash = sha256([full], "hex");
+    expect(matchesFleetSkillContent(stripped, hash, full)).toBe(true);
+    expect(matchesFleetSkillContent(stripped, hash)).toBe(false);
+    expect(
+      matchesFleetSkillContent(stripped.replace("Same body", "Different body"), hash, full),
+    ).toBe(false);
+    expect(matchesFleetSkillContent(stripped, hash, full + "changed")).toBe(false);
   });
 });

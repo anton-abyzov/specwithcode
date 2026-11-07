@@ -12,6 +12,7 @@ import { randomBytes, sha256 } from "../nodeCrypto.ts";
 import { actionError, type ProjectSkillsActionsDeps } from "./ProjectSkillsActionsCommon.ts";
 
 const MAX_COPY_BYTES = 512 * 1024;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 // Shared by all socket handlers: a concurrent reconciliation cannot pass the same preview twice.
 const copyWrites = Semaphore.makeUnsafe(1);
 
@@ -52,7 +53,10 @@ export const makeProjectSkillCopies = Effect.fn("ProjectSkillCopies.make")(funct
             }
             if (size > MAX_COPY_BYTES) return yield* fail("This skill copy is too large.");
             const content = yield* Effect.try({
-              try: () => new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)),
+              try: () =>
+                new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                  Buffer.concat(chunks),
+                ),
               catch: () => fail("This skill copy is not valid UTF-8 text."),
             });
             if (content.includes("\0")) return yield* fail("This skill copy is not text.");
@@ -80,6 +84,7 @@ export const makeProjectSkillCopies = Effect.fn("ProjectSkillCopies.make")(funct
       const grouped = new Map<string, { copy: ProjectSkillCopy; originalPaths: string[] }>();
       if (context.row.providers.length > 64)
         return yield* fail("Too many skill copies to inspect safely.");
+      let responseBytes = 0;
       for (const presence of context.row.providers) {
         const real = yield* fs
           .realPath(presence.path)
@@ -115,6 +120,11 @@ export const makeProjectSkillCopies = Effect.fn("ProjectSkillCopies.make")(funct
           continue;
         }
         const content = yield* readText(real);
+        responseBytes += Buffer.byteLength(content, "utf8");
+        if (responseBytes > MAX_RESPONSE_BYTES)
+          return yield* fail(
+            "The combined skill copies exceed 2 MB. Compare fewer copies at a time.",
+          );
         const id = sha256([key], "hex");
         grouped.set(key, {
           originalPaths: [presence.path],
@@ -178,6 +188,13 @@ export const makeProjectSkillCopies = Effect.fn("ProjectSkillCopies.make")(funct
           }
         }
       }
+      const projectedBytes = copies.reduce(
+        (total, copy) =>
+          total + Buffer.byteLength(ids.includes(copy.id) ? source.content : copy.content, "utf8"),
+        0,
+      );
+      if (projectedBytes > MAX_RESPONSE_BYTES)
+        return yield* fail("The reconciled copies would exceed 2 MB. Select fewer destinations.");
       const expected = {
         sourceHash: source.hash,
         targets: chosen.map((copy) => ({ id: copy.id, hash: copy.hash })),
@@ -194,38 +211,76 @@ export const makeProjectSkillCopies = Effect.fn("ProjectSkillCopies.make")(funct
         )
       )
         return yield* actionError(input.projectId, "stale");
-      // All targets are validated before the first mutation. Each file uses an atomic sibling rename.
-      for (const copy of chosen) {
-        const freshSource = yield* readText(source.path).pipe(
-          Effect.mapError(() => actionError(input.projectId, "stale")),
-        );
-        if (sha256([freshSource], "hex") !== source.hash)
-          return yield* actionError(input.projectId, "stale");
-        if ((yield* fs.realPath(copy.path).pipe(Effect.orElseSucceed(() => ""))) !== copy.path)
-          return yield* actionError(input.projectId, "stale");
-        const current = yield* readText(copy.path).pipe(
-          Effect.mapError(() => actionError(input.projectId, "stale")),
-        );
-        if (sha256([current], "hex") !== copy.hash)
-          return yield* actionError(input.projectId, "stale");
-        const temp = `${copy.path}.reconcile-${randomBytes(12).toString("hex")}`;
-        yield* fs.writeFileString(temp, source.content, { flag: "wx", mode: 0o600 }).pipe(
-          Effect.andThen(fs.rename(temp, copy.path)),
-          Effect.ensuring(fs.remove(temp).pipe(Effect.ignore)),
-          Effect.mapError(() =>
-            fail(
-              "A copy could not be replaced. Refresh to inspect the per-copy contents before retrying.",
+      const validate = (copy: ProjectSkillCopy) =>
+        Effect.gen(function* () {
+          const freshSource = yield* readText(source.path);
+          if (sha256([freshSource], "hex") !== source.hash)
+            return yield* actionError(input.projectId, "stale");
+          if ((yield* fs.realPath(copy.path).pipe(Effect.orElseSucceed(() => ""))) !== copy.path)
+            return yield* actionError(input.projectId, "stale");
+          const current = yield* readText(copy.path);
+          if (sha256([current], "hex") !== copy.hash)
+            return yield* actionError(input.projectId, "stale");
+          const stat = yield* fs
+            .stat(copy.path)
+            .pipe(Effect.mapError(() => actionError(input.projectId, "stale")));
+          return Number(stat.mode) & 0o777;
+        }).pipe(Effect.mapError(() => actionError(input.projectId, "stale")));
+      // Preflight every target before any write. Still recheck immediately before each rename.
+      const modes = yield* Effect.forEach(chosen, validate);
+      const applied: ProjectSkillCopy[] = [];
+      let failure: { id: string; message: string } | undefined;
+      for (const [index, copy] of chosen.entries()) {
+        const outcome = yield* Effect.gen(function* () {
+          yield* validate(copy);
+          const temp = `${copy.path}.reconcile-${randomBytes(12).toString("hex")}`;
+          yield* fs.writeFileString(temp, source.content, { flag: "wx", mode: 0o600 }).pipe(
+            Effect.andThen(fs.chmod(temp, modes[index]!)),
+            Effect.andThen(fs.rename(temp, copy.path)),
+            Effect.ensuring(fs.remove(temp).pipe(Effect.ignore)),
+            Effect.mapError(() =>
+              fail("This copy could not be replaced. Refresh before retrying."),
             ),
-          ),
-        );
+          );
+        }).pipe(Effect.result);
+        if (outcome._tag === "Failure") {
+          failure = { id: copy.id, message: outcome.failure.message };
+          break;
+        }
+        applied.push(copy);
       }
-      yield* deps.afterWrite({
-        projectId: context.projectId,
-        cwd: context.cwd,
-        instanceIds: chosen.flatMap((copy) => copy.agents.map((agent) => agent.instanceId)),
-      });
+      if (applied.length)
+        yield* deps.afterWrite({
+          projectId: context.projectId,
+          cwd: context.cwd,
+          instanceIds: applied.flatMap((copy) => copy.agents.map((agent) => agent.instanceId)),
+        });
+      const receipts = chosen.map((copy) => ({
+        id: copy.id,
+        status: applied.some((done) => done.id === copy.id)
+          ? ("applied" as const)
+          : failure?.id === copy.id
+            ? ("failed" as const)
+            : ("not_applied" as const),
+        ...(failure?.id === copy.id ? { message: failure.message } : {}),
+      }));
+      if (failure)
+        return {
+          _tag: "partial" as const,
+          copies: copies.map((copy) =>
+            applied.some((done) => done.id === copy.id)
+              ? { ...copy, content: source.content, hash: source.hash, version: source.version }
+              : copy,
+          ),
+          sourceId: source.id,
+          targetIds: ids,
+          expected,
+          receipts,
+          message: `${applied.length} of ${chosen.length} copies replaced. ${failure.message} Refresh to inspect current contents.`,
+        };
       return {
         _tag: "applied" as const,
+        receipts,
         copies: copies.map((copy) =>
           ids.includes(copy.id)
             ? { ...copy, content: source.content, hash: source.hash, version: source.version }

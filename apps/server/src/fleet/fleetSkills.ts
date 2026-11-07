@@ -57,6 +57,24 @@ import * as ProcessRunner from "../processRunner.ts";
 import { checkIdentity, FleetError, type FleetTarget, readBoundedJson } from "../studioFleet.ts";
 import { type FleetLink, fleetRequest, reachFleetMachine } from "./fleetTransport.ts";
 
+/** Only accept a transformed copy when a selected full copy proves the pinned source bytes. */
+export function matchesFleetSkillContent(
+  text: string,
+  expectedHash: string,
+  verifiedSource?: string,
+): boolean {
+  if (sha256([text], "hex") === expectedHash) return true;
+  if (verifiedSource === undefined || sha256([verifiedSource], "hex") !== expectedHash)
+    return false;
+  const normalized = verifiedSource.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  const match = /^---\n([\s\S]*?)\n---/.exec(normalized);
+  if (!match || !/^name:/m.test(match[1]!)) return false;
+  // Support only line-level removal, never reconstruct missing values or trust timestamps.
+  const fields = /^(?:user-invoc?k?able|allowed-tools|model|argument-hint|context)[ \t]*:.*\n?/gm;
+  const header = `\n${match[1]}\n`.replace(fields, "").replace(/\n{3,}/g, "\n\n");
+  return text === `---${header}---${normalized.slice(match[0].length)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Shared rules
 // ---------------------------------------------------------------------------
@@ -691,7 +709,6 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const files = [
           ...new Set([
-            path.join(root, ".agents", "skills", skillLockName(ask.skill), "SKILL.md"),
             ...(ask.agents ?? []).map((agent) =>
               path.join(root, agentDirs[agent]!, skillLockName(ask.skill), "SKILL.md"),
             ),
@@ -798,16 +815,33 @@ export const layer = Layer.effect(
       );
     const verifyFiles: NonNullable<FleetSkillWorkerDeps["verifyFiles"]> = (ask, root) =>
       checkedFiles(ask, root).pipe(
-        Effect.map((files) =>
-          files
-            .filter((file) => path.basename(file.file) === "SKILL.md")
-            .every(
+        Effect.map((files) => {
+          const skills = files.filter((file) => path.basename(file.file) === "SKILL.md");
+          const verifiedSource =
+            skills.find(
+              (file) =>
+                file.text !== null &&
+                ask.contentHash &&
+                sha256([file.text], "hex") === ask.contentHash,
+            )?.text ?? undefined;
+          return (
+            skills.length > 0 &&
+            skills.every(
               (file) =>
                 file.text !== null &&
                 file.text.length > 0 &&
-                (!ask.contentHash || sha256([file.text], "hex") === ask.contentHash),
-            ),
-        ),
+                (!ask.contentHash ||
+                  matchesFleetSkillContent(
+                    file.text,
+                    ask.contentHash,
+                    file.file ===
+                      path.join(root, ".agents", "skills", skillLockName(ask.skill), "SKILL.md")
+                      ? verifiedSource
+                      : undefined,
+                  )),
+            )
+          );
+        }),
       );
 
     return yield* makeFleetSkillWorker({

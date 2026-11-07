@@ -259,7 +259,17 @@ export const ProjectSkillCopiesInput = Schema.Struct({
 });
 export type ProjectSkillCopiesInput = typeof ProjectSkillCopiesInput.Type;
 export const ProjectSkillCopiesResult = Schema.Struct({
-  _tag: Schema.Literals(["read", "preview", "applied"]),
+  _tag: Schema.Literals(["read", "preview", "applied", "partial"]),
+  message: Schema.optional(Schema.String),
+  receipts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        status: Schema.Literals(["applied", "failed", "not_applied"]),
+        message: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
   copies: Schema.Array(ProjectSkillCopy),
   sourceId: Schema.optional(Schema.String),
   targetIds: Schema.optional(Schema.Array(Schema.String)),
