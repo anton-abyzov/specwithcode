@@ -790,9 +790,10 @@ export function MachineRow({
 
 /**
  * The other direction of a pair: that machine is connected but may not run
- * work here. The existing incoming setup adds this machine to its list over
- * Connect and allows its workers, after the same confirmation. Once the grants
- * refresh, the card shows the grant instead.
+ * work here. When this machine lists it, this machine's server asks it to add
+ * and allow this one; otherwise the existing incoming setup does both there,
+ * after the same confirmation. Once the grants refresh, the card shows the
+ * grant instead.
  */
 function AllowBack({
   row,
@@ -823,6 +824,7 @@ function AllowBack({
         hereLabel={hereLabel}
         coordinatorLabel={coordinatorLabel}
         connected={row.seen.state === "connected"}
+        coordinatorFleetId={row.fleetMachine?.id}
         actionLabel={tx("Let {coordinatorLabel} use this machine too", { coordinatorLabel })}
         onGranted={onGranted}
       />

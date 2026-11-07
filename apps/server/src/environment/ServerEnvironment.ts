@@ -335,6 +335,7 @@ export const make = Effect.gen(function* () {
       fleetUpdateRequest: true,
       fleetUpdateWaitsForFolderCopies: true,
       fleetSkillUpdate: true,
+      fleetSelfAllowWorkers: true,
       fleetDiskRoom: true,
       threadVisitedTracking: true,
       threadPullRequests: true,

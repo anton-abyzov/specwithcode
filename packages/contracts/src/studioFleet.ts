@@ -131,6 +131,26 @@ export const StudioFleetWorkersAllowInput = exactStruct({
 });
 export type StudioFleetWorkersAllowInput = typeof StudioFleetWorkersAllowInput.Type;
 
+/**
+ * A coordinator, with the management token it holds here, adds itself to this
+ * machine's fleet from its own invitation line and lets itself run workers.
+ */
+export const StudioFleetWorkersSelfAllowInput = exactStruct({
+  invitation: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16384)),
+  access: StudioFleetWorkerAccess,
+});
+export type StudioFleetWorkersSelfAllowInput = typeof StudioFleetWorkersSelfAllowInput.Type;
+
+/**
+ * Asks this server to let a machine in its fleet run workers here, through
+ * the management token it holds on that machine.
+ */
+export const StudioFleetWorkersIncomingInput = exactStruct({
+  id: StudioFleetMachineId,
+  access: StudioFleetWorkerAccess,
+});
+export type StudioFleetWorkersIncomingInput = typeof StudioFleetWorkersIncomingInput.Type;
+
 export const StudioFleetWorkersStopInput = exactStruct({ id: StudioFleetMachineId });
 export type StudioFleetWorkersStopInput = typeof StudioFleetWorkersStopInput.Type;
 

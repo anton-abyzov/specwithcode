@@ -16,6 +16,11 @@ import {
 } from "@specweave-studio/contracts";
 import type { TeamRulesRefusal } from "@specweave-studio/contracts";
 import {
+  type StudioFleetInviteInput,
+  StudioFleetWorkersResult,
+  StudioFleetWorkersSelfAllowInput,
+} from "@specweave-studio/contracts/studioFleet";
+import {
   teamRulesMachineLinkRefusal,
   teamRulesReachOff,
   teamRulesReachRefusal,
@@ -30,6 +35,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HttpEffect from "effect/http/HttpEffect";
@@ -65,12 +71,15 @@ import {
 } from "./serverRuntimeState.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./auth/requestOrigin.ts";
 import {
+  checkIdentity,
   connectFleet,
   discoverFleet,
   fleetConnectPermission,
   FleetError,
+  readBoundedJson,
   readFleetConfig,
 } from "./studioFleet.ts";
+import { fleetRequest, reachFleetMachine } from "./fleet/fleetTransport.ts";
 import {
   fleetInviteProblem,
   fleetTailscaleSignInProblem,
@@ -82,6 +91,7 @@ import {
 } from "./studioFleetInvite.ts";
 import {
   addFleetMachine,
+  decodeFleetJoinCode,
   FleetJoinError,
   removeFleetMachineEverywhere,
 } from "./studioFleetJoin.ts";
@@ -139,6 +149,20 @@ const grantFailure = (error: FleetWorkerGrants.FleetWorkerGrantError) =>
   error.reason === "unknown_machine" || error.reason === "rate_limited"
     ? new EnvironmentHttpBadRequestError({ message: error.message })
     : new EnvironmentHttpInternalServerError({ message: error.message });
+/** A fleet file change that failed: the user can act on everything but a write. */
+const joinFailure = (error: unknown) => {
+  const kind =
+    error instanceof FleetJoinError || error instanceof FleetError ? error.kind : "write";
+  const message =
+    error instanceof FleetJoinError || error instanceof FleetError
+      ? error.message
+      : new FleetJoinError("write").message;
+  return kind === "write" || kind === "config"
+    ? new EnvironmentHttpInternalServerError({ message })
+    : new EnvironmentHttpBadRequestError({ message });
+};
+const decodeWorkersResult = Schema.decodeUnknownOption(StudioFleetWorkersResult);
+const encodeSelfAllow = Schema.encodeSync(Schema.fromJsonString(StudioFleetWorkersSelfAllowInput));
 
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -292,6 +316,73 @@ export const layer = HttpApiBuilder.group(
           Effect.provideService(ServerEnvironment.ServerEnvironment, serverEnvironment),
         )
       : Effect.succeed(null);
+    /** Adds the machine an invitation line names to this machine's fleet file. */
+    const addMachine = (invitation: string, label?: string) =>
+      Effect.gen(function* () {
+        const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
+        return yield* Effect.tryPromise({
+          try: () =>
+            addFleetMachine({
+              baseDir: config.baseDir,
+              code: invitation,
+              label,
+              link: fleetLink,
+              localEnvironmentId,
+            }),
+          catch: joinFailure,
+        });
+      });
+    /**
+     * The line hands out the invite scopes, so only a caller holding all of
+     * them may make one: never more than the maker holds.
+     */
+    const requireInviteMaker = (message: string) =>
+      Effect.gen(function* () {
+        const principal = yield* requireEnvironmentScope(AuthAccessWriteScope);
+        if (!FLEET_INVITE_MAKER_SCOPES.every((scope) => principal.scopes.has(scope)))
+          return yield* new EnvironmentHttpForbiddenError({ message });
+        return principal;
+      });
+    /** An invitation line for `coordinatorEnvironmentId` to add this machine. */
+    const issueInvitation = (
+      input: Pick<StudioFleetInviteInput, "coordinatorEnvironmentId"> & {
+        readonly label?: string | undefined;
+        readonly days?: number | undefined;
+        readonly via?: StudioFleetInviteInput["via"];
+      },
+    ) =>
+      Effect.gen(function* () {
+        const descriptor = yield* serverEnvironment.getDescriptor;
+        const state = yield* listening;
+        const issued = yield* issueFleetInvitation({
+          environmentId: descriptor.environmentId,
+          coordinatorEnvironmentId: input.coordinatorEnvironmentId,
+          ownLabel: descriptor.label,
+          state,
+          // The port Tailscale HTTPS already uses here, so an existing
+          // mapping for this server is reused rather than duplicated.
+          servePort: config.tailscaleServeEnabled
+            ? config.tailscaleServePort
+            : DEFAULT_TAILSCALE_SERVE_PORT,
+          label: input.label,
+          ...(input.days !== undefined ? { ttl: Duration.days(input.days) } : {}),
+          via: input.via,
+          readConnectOrigin: connectOrigin,
+          fetch: fleetFetch,
+        }).pipe(
+          Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.mapError((error) =>
+            EnvironmentAuth.isServerAuthInternalError(error)
+              ? new EnvironmentHttpInternalServerError({
+                  message: "Could not make an invitation on this machine. Try again.",
+                })
+              : new StudioFleetInviteError(fleetInviteProblem(error)),
+          ),
+        );
+        return issued.invitation;
+      });
     /**
      * A change to who may run work here, made only by this machine's access
      * manager from this app, answering with the grant as the screen shows it.
@@ -435,30 +526,7 @@ export const layer = HttpApiBuilder.group(
             // Adding a machine stores a credential for it, like allowing workers there.
             yield* requireGrantManager;
             yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
-            const localEnvironmentId = yield* serverEnvironment.getEnvironmentId;
-            return yield* Effect.tryPromise({
-              try: () =>
-                addFleetMachine({
-                  baseDir: config.baseDir,
-                  code: payload.invitation,
-                  label: payload.label?.trim() || undefined,
-                  link: fleetLink,
-                  localEnvironmentId,
-                }),
-              catch: (error) => {
-                const kind =
-                  error instanceof FleetJoinError || error instanceof FleetError
-                    ? error.kind
-                    : "write";
-                const message =
-                  error instanceof FleetJoinError || error instanceof FleetError
-                    ? error.message
-                    : new FleetJoinError("write").message;
-                return kind === "write" || kind === "config"
-                  ? new EnvironmentHttpInternalServerError({ message })
-                  : new EnvironmentHttpBadRequestError({ message });
-              },
-            });
+            return yield* addMachine(payload.invitation, payload.label?.trim() || undefined);
           }),
         )
         .handle("inviteFleetMachine", ({ payload }) =>
@@ -471,44 +539,10 @@ export const layer = HttpApiBuilder.group(
             if (payload.via === "connect") {
               yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));
             }
-            // The line hands out the invite scopes, so only a caller holding all
-            // of them may make one: never more than the maker holds.
-            const principal = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            if (!FLEET_INVITE_MAKER_SCOPES.every((scope) => principal.scopes.has(scope)))
-              return yield* new EnvironmentHttpForbiddenError({
-                message:
-                  "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Join a main machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
-              });
-            const descriptor = yield* serverEnvironment.getDescriptor;
-            const state = yield* listening;
-            const issued = yield* issueFleetInvitation({
-              environmentId: descriptor.environmentId,
-              coordinatorEnvironmentId: payload.coordinatorEnvironmentId,
-              ownLabel: descriptor.label,
-              state,
-              // The port Tailscale HTTPS already uses here, so an existing
-              // mapping for this server is reused rather than duplicated.
-              servePort: config.tailscaleServeEnabled
-                ? config.tailscaleServePort
-                : DEFAULT_TAILSCALE_SERVE_PORT,
-              label: payload.label,
-              ...(payload.days !== undefined ? { ttl: Duration.days(payload.days) } : {}),
-              via: payload.via,
-              readConnectOrigin: connectOrigin,
-              fetch: fleetFetch,
-            }).pipe(
-              Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              Effect.provideService(HttpClient.HttpClient, httpClient),
-              Effect.mapError((error) =>
-                EnvironmentAuth.isServerAuthInternalError(error)
-                  ? new EnvironmentHttpInternalServerError({
-                      message: "Could not make an invitation on this machine. Try again.",
-                    })
-                  : new StudioFleetInviteError(fleetInviteProblem(error)),
-              ),
+            yield* requireInviteMaker(
+              "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Join a main machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
             );
-            return issued.invitation;
+            return yield* issueInvitation(payload);
           }),
         )
         // Another machine spends this machine's v2 invitation line: its
@@ -637,6 +671,142 @@ export const layer = HttpApiBuilder.group(
             return { id: payload.id, workers };
           }),
         )
+        // A coordinator adds itself here from a line its own machine made and
+        // lets itself run workers, so the owner allows them from that machine.
+        .handle("selfAllowFleetWorkers", ({ payload }) =>
+          Effect.gen(function* () {
+            yield* noStore;
+            const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const principal = session.principal;
+            if (principal?.kind !== "coordinator")
+              return yield* new EnvironmentHttpForbiddenError({
+                message:
+                  "Only a main machine, with the management token it holds here, can add itself to this machine's list.",
+              });
+            const invite = yield* Effect.try({
+              try: () => decodeFleetJoinCode(payload.invitation),
+              catch: joinFailure,
+            });
+            // A coordinator key may add and allow only its own machine.
+            if (invite.environmentId !== principal.environmentId)
+              return yield* new EnvironmentHttpForbiddenError({
+                message:
+                  "This line names a different machine. A main machine can add and allow only itself here.",
+              });
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
+            const added = yield* addMachine(payload.invitation);
+            const workers = yield* grants
+              .allow({ machineId: added.id, access: payload.access })
+              .pipe(Effect.mapError(grantFailure));
+            yield* Effect.logInfo("A main machine added itself and allowed its workers here.", {
+              coordinatorEnvironmentId: principal.environmentId,
+              machine: added.id,
+              change: added.change,
+            });
+            return { id: added.id, workers };
+          }),
+        )
+        // The owner lets a fleet machine run workers here from this machine:
+        // this machine invites it, then asks it to add and allow this one with
+        // the management token held there.
+        .handle("allowIncomingFleetWorkers", ({ payload }) =>
+          Effect.gen(function* () {
+            // The line sent holds a credential: never cached, never logged.
+            yield* noStore;
+            yield* requireGrantManager;
+            yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
+            yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));
+            yield* requireInviteMaker(
+              "Letting another machine run workers here hands out full access to this machine, so it needs a sign-in that has full access here.",
+            );
+            const fleetConfig = yield* attempt(() => readFleetConfig(config.baseDir));
+            const target = fleetConfig?.machines.find((machine) => machine.id === payload.id);
+            if (target === undefined)
+              return yield* new EnvironmentHttpBadRequestError({
+                message: new FleetError("unknown-machine").message,
+              });
+            const token = target.managementToken;
+            if (token === undefined)
+              return yield* new EnvironmentHttpBadRequestError({
+                message: `No management token is saved here for ${target.label}. On ${target.label}, choose Join a main machine in Settings > Connections and add the line here first.`,
+              });
+            const remote = yield* attempt(async () => {
+              const reached = await reachFleetMachine(fleetLink, target, { token });
+              return checkIdentity(fleetLink.fetch, {
+                url: reached.origin,
+                environmentId: target.environmentId,
+              });
+            });
+            if ((remote.capabilities as Record<string, unknown>).fleetSelfAllowWorkers !== true)
+              return yield* new EnvironmentHttpBadRequestError({
+                message: `${target.label} runs an older SpecWithCode; update it, then try again.`,
+              });
+            const descriptor = yield* serverEnvironment.getDescriptor;
+            const issued = yield* issueInvitation({
+              coordinatorEnvironmentId: target.environmentId,
+              label: descriptor.label,
+              via: "connect",
+            });
+            // Anything short of that machine's answer leaves no usable line behind.
+            const revokeIssued = Effect.all([
+              issued.pairingId === undefined
+                ? Effect.void
+                : environmentAuth.revokePairingLink(issued.pairingId),
+              issued.sessionId === undefined
+                ? Effect.void
+                : environmentAuth.revokeSession(issued.sessionId),
+            ]).pipe(Effect.ignore);
+            const answer = yield* Effect.tryPromise({
+              try: async () => {
+                const { response } = await fleetRequest(
+                  fleetLink,
+                  target,
+                  "/api/studio/fleet/workers/self-allow",
+                  {
+                    method: "POST",
+                    token,
+                    headers: { "content-type": "application/json" },
+                    body: encodeSelfAllow({ invitation: issued.code, access: payload.access }),
+                    timeoutMs: 60_000,
+                  },
+                );
+                const body = await readBoundedJson(response).catch(() => null);
+                return { ok: response.ok, status: response.status, body };
+              },
+              catch: (error) =>
+                new EnvironmentHttpInternalServerError({
+                  message: (error instanceof FleetError ? error : new FleetError("unreachable"))
+                    .message,
+                }),
+            }).pipe(Effect.tapError(() => revokeIssued));
+            if (!answer.ok) {
+              yield* revokeIssued;
+              const said =
+                typeof answer.body === "object" &&
+                answer.body !== null &&
+                "message" in answer.body &&
+                typeof answer.body.message === "string"
+                  ? answer.body.message
+                  : `${target.label} answered HTTP ${answer.status}.`;
+              const message = `${target.label} refused: ${said}`;
+              return yield* answer.status === 401 || answer.status === 403
+                ? Effect.fail(new EnvironmentHttpForbiddenError({ message }))
+                : Effect.fail(new EnvironmentHttpBadRequestError({ message }));
+            }
+            const result = decodeWorkersResult(answer.body);
+            if (Option.isNone(result)) {
+              yield* revokeIssued;
+              return yield* new EnvironmentHttpInternalServerError({
+                message: `${target.label} gave no answer about its workers.`,
+              });
+            }
+            yield* Effect.logInfo("Asked a fleet machine to add and allow this one.", {
+              machine: target.id,
+              workers: result.value.workers.status,
+            });
+            return result.value;
+          }),
+        )
         .handle("stopFleetWorkers", ({ payload }) =>
           Effect.gen(function* () {
             yield* noStore;
@@ -690,19 +860,7 @@ export const layer = HttpApiBuilder.group(
                       }),
                     ),
                 }),
-              catch: (error) => {
-                const kind =
-                  error instanceof FleetJoinError || error instanceof FleetError
-                    ? error.kind
-                    : "write";
-                const message =
-                  error instanceof FleetJoinError || error instanceof FleetError
-                    ? error.message
-                    : new FleetJoinError("write").message;
-                return kind === "write" || kind === "config"
-                  ? new EnvironmentHttpInternalServerError({ message })
-                  : new EnvironmentHttpBadRequestError({ message });
-              },
+              catch: joinFailure,
             });
           }),
         )

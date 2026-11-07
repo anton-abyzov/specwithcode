@@ -23,7 +23,9 @@ import {
   StudioFleetTailscaleStatus,
   StudioFleetRemoteWorkersResult,
   StudioFleetWorkersAllowInput,
+  StudioFleetWorkersIncomingInput,
   StudioFleetWorkersResult,
+  StudioFleetWorkersSelfAllowInput,
   StudioFleetWorkersStopInput,
   StudioFleetRemoveInput,
   StudioFleetRemoveResult,
@@ -1202,6 +1204,41 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
         EnvironmentHttpBadRequestError,
         EnvironmentHttpForbiddenError,
         EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * A coordinator's management token adds that coordinator to this
+     * machine's fleet from its own invitation line and allows its workers.
+     */
+    HttpApiEndpoint.post("selfAllowFleetWorkers", "/api/studio/fleet/workers/self-allow", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetWorkersSelfAllowInput,
+      success: StudioFleetWorkersResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    /**
+     * Lets a fleet machine run workers here: this server invites it and asks
+     * it, with the management token held there, to add and allow this one.
+     */
+    HttpApiEndpoint.post("allowIncomingFleetWorkers", "/api/studio/fleet/workers/incoming", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetWorkersIncomingInput,
+      success: StudioFleetWorkersResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+        StudioFleetInviteError,
       ],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
