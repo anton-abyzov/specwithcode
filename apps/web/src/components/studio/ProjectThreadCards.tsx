@@ -27,6 +27,7 @@ import { formatStudioThreadLink } from "../../studio/studioThreadLinks";
 import { compactThreadPlan } from "../../studio/threadPlanProgress";
 import { useThreadIncrementProgress } from "../../studio/useThreadIncrementProgress";
 import { PlanProgressChip } from "./PlanProgressChip";
+import { ThreadCardPlanLine } from "./ThreadCardPlanLine";
 
 /** A thread named in a message: its icon, status dot and live title; opens in the right pane. */
 export function ProjectThreadChip({
@@ -129,17 +130,7 @@ export function ProjectThreadCard({
         {plan ? <PlanProgressChip plan={plan} /> : null}
         <ChevronRightIcon className="sws-thread-card-open" aria-hidden />
       </button>
-      {plan && plan.current ? (
-        <span className="sws-thread-card-plan" data-thread-card-plan>
-          <span className="sws-thread-card-plan-label">Now</span> {plan.current}
-          {plan.next ? (
-            <>
-              {" "}
-              <span className="sws-thread-card-plan-label">· Next</span> {plan.next}
-            </>
-          ) : null}
-        </span>
-      ) : null}
+      <ThreadCardPlanLine plan={plan} />
       {blocker ? (
         <span className="sws-thread-card-blocker" data-thread-blocker>
           {blocker}

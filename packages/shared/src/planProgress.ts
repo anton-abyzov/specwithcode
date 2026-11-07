@@ -15,7 +15,10 @@ export interface PlanProgressSummary {
   /** Finished steps; skipped ones count as finished, as SpecWeave's closure gate counts them. */
   readonly completed: number;
   readonly total: number;
-  /** The step in progress, else the first open one. Null when everything is finished. */
+  /**
+   * The step in progress, else the first open one. Null when everything is
+   * finished or that step still has a template placeholder for a title.
+   */
   readonly current: string | null;
   /** The open step after `current`, so a row can say what comes next. */
   readonly next: string | null;
@@ -26,6 +29,19 @@ const MAX_STEP_TEXT = 160;
 function clip(text: string): string {
   const flat = text.replace(/\s+/gu, " ").trim();
   return flat.length > MAX_STEP_TEXT ? `${flat.slice(0, MAX_STEP_TEXT - 1)}…` : flat;
+}
+
+/**
+ * A title a spec template left unfilled, such as `[First task]` or
+ * `T-01 [Second task]`: it names no work, so no row shows it.
+ */
+export function isPlaceholderStepText(text: string): boolean {
+  return /^(?:T-\d+:?\s+)?\[[^\]]*\]$/u.test(text.trim());
+}
+
+/** The step's text for a row, or null while it is still a template placeholder. */
+export function planStepTitle(text: string): string | null {
+  return isPlaceholderStepText(text) ? null : clip(text);
 }
 
 export function summarizePlanSteps(steps: ReadonlyArray<PlanProgressStep>): PlanProgressSummary {
@@ -43,8 +59,8 @@ export function summarizePlanSteps(steps: ReadonlyArray<PlanProgressStep>): Plan
   return {
     completed,
     total: steps.length,
-    current: currentIndex === -1 ? null : clip(steps[currentIndex]!.text),
-    next: nextIndex === -1 ? null : clip(steps[nextIndex]!.text),
+    current: currentIndex === -1 ? null : planStepTitle(steps[currentIndex]!.text),
+    next: nextIndex === -1 ? null : planStepTitle(steps[nextIndex]!.text),
   };
 }
 
