@@ -673,21 +673,19 @@ export function ProjectRow(props: {
               </span>
             ) : null}
             {shared ? (
-              shared.role === "workers" ? (
-                <ArrowRightLeftIcon
-                  className="sws-side-row-pin sws-side-row-shared"
-                  data-shared-project="workers"
-                  aria-label={shared.label}
-                  role="img"
-                />
-              ) : (
-                <Share2Icon
-                  className="sws-side-row-pin sws-side-row-shared"
-                  data-shared-project="coordinator"
-                  aria-label={shared.label}
-                  role="img"
-                />
-              )
+              <span
+                className="sws-side-row-pin sws-side-row-shared"
+                data-shared-project={shared.role}
+                role="img"
+                aria-label={shared.label}
+                title={shared.label}
+              >
+                {shared.role === "workers" ? (
+                  <ArrowRightLeftIcon aria-hidden />
+                ) : (
+                  <Share2Icon aria-hidden />
+                )}
+              </span>
             ) : null}
             {/* Automated rows start without alerts; a bell on each would say nothing. */}
             {muted && !archived && !props.automated ? (
