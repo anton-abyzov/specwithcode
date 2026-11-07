@@ -1,3 +1,6 @@
+import * as ProviderSessions from "../orchestration-v2/ProviderSessionManager.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { checkWorkflow } from "./workflowCapabilities.ts";
 /**
  * ProjectSkillsService — which skills each agent loads in a project folder.
  *
@@ -75,15 +78,18 @@ export function providerSkillsForCwd(
   const label = providerSkillsLabel(provider);
   const workspace = provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
   const skills = workspace?.skills ?? (scan === "timeout" ? [] : provider.skills);
-  const state: ProjectSkillsProviderState["state"] = workspace
-    ? scan === "timeout"
-      ? "cached"
-      : "ok"
-    : scan === "timeout"
-      ? "timeout"
-      : provider.status === "error"
-        ? "error"
-        : "unsupported";
+  const state: ProjectSkillsProviderState["state"] =
+    workspace?.skillsDiscovery === "machine"
+      ? "unsupported"
+      : workspace
+        ? scan === "timeout"
+          ? "cached"
+          : "ok"
+        : scan === "timeout"
+          ? "timeout"
+          : provider.status === "error"
+            ? "error"
+            : "unsupported";
   const message =
     state === "cached"
       ? "A new scan is still running; showing the last one for this folder."
@@ -173,6 +179,70 @@ export const make = Effect.gen(function* () {
   // Absent in narrow test layers; then no agent's own switches are read.
   const instances = yield* Effect.serviceOption(ProviderInstanceRegistry.ProviderInstanceRegistry);
   const home = expandHomePath("~");
+  const sessions = yield* Effect.serviceOption(ProviderSessions.ProviderSessionManagerV2);
+  const identity = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironmentIdentity);
+  const environmentId = Option.isSome(identity) ? yield* identity.value.getEnvironmentId : null;
+  const withWorkflowEvidence = (
+    snapshot: ProjectSkillsSnapshot,
+    projectId: ProjectSkillsReadInput["projectId"],
+  ) =>
+    Effect.gen(function* () {
+      const inventories =
+        Option.isSome(sessions) && sessions.value.workflowInventories
+          ? yield* sessions.value.workflowInventories({ workspaceRoot: snapshot.cwd, projectId })
+          : [];
+      const rows = yield* Effect.forEach(
+        snapshot.rows,
+        (row) =>
+          Effect.gen(function* () {
+            const providers = yield* Effect.forEach(
+              row.providers,
+              (presence) =>
+                Effect.gen(function* () {
+                  const source = yield* (
+                    registry.workflowSkillSource?.({
+                      instanceId: presence.instanceId,
+                      cwd: snapshot.cwd,
+                    }) ?? Effect.succeed(undefined)
+                  );
+                  const workflow = yield* checkWorkflow({
+                    skill: presence,
+                    scope: {
+                      environmentId,
+                      instanceId: presence.instanceId,
+                      workspaceRoot: snapshot.cwd,
+                      sessionId: null,
+                      providerThreadId: null,
+                      nativeThreadId: null,
+                      threadId: null,
+                    },
+                    executionPath: source?.executionPath,
+                    discoveredAt: snapshot.checkedAt,
+                  });
+                  const workflows = yield* Effect.forEach(
+                    inventories.filter((entry) => entry.scope.instanceId === presence.instanceId),
+                    (entry) =>
+                      checkWorkflow({
+                        skill: presence,
+                        scope: entry.scope,
+                        inventory: entry.inventory,
+                        executionPath: entry.executionPath,
+                        discoveredAt: snapshot.checkedAt,
+                      }),
+                  );
+                  return { ...presence, workflow, workflows };
+                }),
+              { concurrency: 8 },
+            );
+            return { ...row, providers };
+          }),
+        { concurrency: 8 },
+      );
+      return { ...snapshot, rows };
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
   const cache = yield* Ref.make(
     new Map<
       string,
@@ -342,7 +412,7 @@ export const make = Effect.gen(function* () {
             now - entry.at < CACHE_TTL_MS &&
             path.resolve(entry.snapshot.cwd) === target
           )
-            return entry.snapshot;
+            return yield* withWorkflowEvidence(entry.snapshot, input.projectId);
       }
       const cwd = yield* cwdFor(input, workspaceRoot);
 
@@ -413,7 +483,7 @@ export const make = Effect.gen(function* () {
         while (next.size > MAX_CACHED_FOLDERS) next.delete(next.keys().next().value!);
         return next;
       });
-      return snapshot;
+      return yield* withWorkflowEvidence(snapshot, input.projectId);
     });
 
   return ProjectSkillsService.of({ read, resolveCwd, invalidate });

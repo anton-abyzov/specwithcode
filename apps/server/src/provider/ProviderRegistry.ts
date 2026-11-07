@@ -1,3 +1,5 @@
+import * as DateTime from "effect/DateTime";
+import { annotateWorkflowSkills } from "../project/workflowCapabilities.ts";
 /**
  * ProviderRegistry - Provider snapshot service.
  *
@@ -115,6 +117,14 @@ export class ProviderRegistry extends Context.Service<
      * also refreshes the instance's machine snapshot and drops other
      * instances' snapshots for the cwd.
      */
+    readonly workflowSkillSource?: (input: {
+      instanceId: ProviderInstanceId;
+      cwd: string;
+    }) => Effect.Effect<{
+      skills: ServerProvider["skills"];
+      discoveredAt?: string;
+      executionPath?: string;
+    }>;
     readonly refreshWorkspaceSnapshot: (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
@@ -1079,7 +1089,58 @@ export const layer = Layer.effect(
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
-      if (!instance?.snapshotForCwd) return providers;
+      if (!instance) return providers;
+      if (!instance.snapshotForCwd) {
+        const sourceSkills = provider.skills.filter((skill) => {
+          if (!["project", "repo", "local"].includes(skill.scope ?? "")) return true;
+          const relative = path.relative(input.cwd, skill.path);
+          return (
+            relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+          );
+        });
+        const skills = yield* annotateWorkflowSkills({
+          skills: sourceSkills,
+          executionPath: instance.workflowExecutionPath,
+          scope: {
+            environmentId: null,
+            instanceId: input.instanceId,
+            workspaceRoot: input.cwd,
+            sessionId: null,
+            providerThreadId: null,
+            nativeThreadId: null,
+            threadId: null,
+          },
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+        if ((yield* instanceRegistry.getInstance(input.instanceId)) !== instance)
+          return yield* Ref.get(providersRef);
+        const result = yield* updateProviders((current) =>
+          current.map((candidate) =>
+            candidate.instanceId === input.instanceId &&
+            Equal.equals(candidate.skills, provider.skills)
+              ? {
+                  ...candidate,
+                  workspaceSnapshots: [
+                    ...(candidate.workspaceSnapshots ?? []).filter(
+                      (entry) => entry.cwd !== input.cwd,
+                    ),
+                    {
+                      cwd: input.cwd,
+                      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+                      skills,
+                      slashCommands: candidate.slashCommands,
+                      skillsDiscovery: "machine" as const,
+                    },
+                  ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER),
+                }
+              : candidate,
+          ),
+        );
+        yield* Ref.update(workspaceScannedAtRef, (current) => new Map(current).set(scanKey, now));
+        return result;
+      }
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
         if (current?.has(input.cwd)) return [false, refreshes] as const;
@@ -1097,6 +1158,25 @@ export const layer = Layer.effect(
         : Effect.void;
       return yield* refreshMachineSnapshot.pipe(
         Effect.andThen(instance.snapshotForCwd(input.cwd)),
+        Effect.flatMap((snapshot) =>
+          annotateWorkflowSkills({
+            skills: snapshot.skills,
+            executionPath: instance.workflowExecutionPath,
+            scope: {
+              environmentId: null,
+              instanceId: input.instanceId,
+              workspaceRoot: input.cwd,
+              sessionId: null,
+              providerThreadId: null,
+              nativeThreadId: null,
+              threadId: null,
+            },
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.map((skills) => ({ ...snapshot, skills })),
+          ),
+        ),
         Effect.flatMap((scopedSnapshot) =>
           scopedSnapshot.status === "error" && scopedSnapshot.slashCommandsPending === undefined
             ? Ref.get(providersRef)
@@ -1153,6 +1233,25 @@ export const layer = Layer.effect(
 
     return {
       getProviders: ruledProviders,
+      workflowSkillSource: (input) =>
+        Effect.gen(function* () {
+          const provider = (yield* Ref.get(providersRef)).find(
+            (entry) => entry.instanceId === input.instanceId,
+          );
+          const instance = yield* instanceRegistry.getInstance(input.instanceId);
+          const workspace = provider?.workspaceSnapshots?.find((entry) => entry.cwd === input.cwd);
+          // A failed cwd scan must not borrow another folder's skills. Machine-wide
+          // discovery is valid only for instances that do not support cwd snapshots.
+          return {
+            skills:
+              workspace?.skills ??
+              (instance && !instance.snapshotForCwd ? (provider?.skills ?? []) : []),
+            ...(workspace?.checkedAt ? { discoveredAt: workspace.checkedAt } : {}),
+            ...(instance?.workflowExecutionPath === undefined
+              ? {}
+              : { executionPath: instance.workflowExecutionPath }),
+          };
+        }),
       refresh: (provider?: ProviderDriverKind) =>
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure), Effect.flatMap(ruled)),
       refreshInstance: (instanceId: ProviderInstanceId, options?: { readonly fresh?: boolean }) =>

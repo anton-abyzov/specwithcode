@@ -1,4 +1,5 @@
 import { TeamRulesSummary } from "./teamRules.ts";
+import { WorkflowPreflight } from "./workflowCapabilities.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
@@ -150,6 +151,7 @@ export const ServerProviderSlashCommand = Schema.Struct({
 export type ServerProviderSlashCommand = typeof ServerProviderSlashCommand.Type;
 
 export const ServerProviderSkill = Schema.Struct({
+  workflow: Schema.optionalKey(WorkflowPreflight),
   name: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   path: TrimmedNonEmptyString,
@@ -179,6 +181,8 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 export const ServerProviderWorkspaceSnapshot = Schema.Struct({
+  /** Provider offers a machine-wide list; this is local dependency annotation, not a native cwd scan. */
+  skillsDiscovery: Schema.optionalKey(Schema.Literal("machine")),
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),

@@ -107,9 +107,9 @@ export function dedupeProviderSkillsByName(
  * fair game: the server dispatches the pick in the provider's native form.
  */
 export function isProviderSkillUserInvocable(
-  skill: Pick<ServerProviderSkill, "enabled" | "userInvocable">,
+  skill: Pick<ServerProviderSkill, "enabled" | "userInvocable" | "workflow">,
 ): boolean {
-  return skill.enabled && skill.userInvocable !== false;
+  return skill.enabled && skill.userInvocable !== false && skill.workflow?.status !== "blocked";
 }
 
 export function getProviderSkillsForSlashMenu(

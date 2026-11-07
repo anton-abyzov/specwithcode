@@ -87,6 +87,8 @@ export type ProviderWorkspaceSnapshot = ServerProvider &
  * state.
  */
 export interface ProviderInstance {
+  /** Effective native PATH only; no other environment values are exposed to dependency checks. */
+  readonly workflowExecutionPath?: string;
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
   readonly continuationIdentity: ProviderContinuationIdentity;

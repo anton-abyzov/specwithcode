@@ -1,3 +1,4 @@
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import * as Schema from "effect/Schema";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -343,6 +344,8 @@ function makeProviderAdapter(
     readonly restartRequired?: Effect.Effect<string | null>;
     readonly replaceWhenIdle?: Effect.Effect<string | null>;
     readonly hangSessionScopeClose?: boolean;
+    readonly inspectWorkflowTools?: ProviderAdapterV2SessionRuntime["inspectWorkflowTools"];
+    readonly workflowExecutionPath?: string;
     readonly startTurn?: Effect.Effect<void>;
     readonly onStartInvocation?: () => void;
     readonly beforeUnload?: Effect.Effect<void>;
@@ -419,6 +422,12 @@ function makeProviderAdapter(
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
+          ...(options.inspectWorkflowTools
+            ? { inspectWorkflowTools: options.inspectWorkflowTools }
+            : {}),
+          ...(options.workflowExecutionPath === undefined
+            ? {}
+            : { workflowExecutionPath: options.workflowExecutionPath }),
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapterEventStreamError({
@@ -520,6 +529,8 @@ function layerTest(input: {
   readonly restartRequired?: Effect.Effect<string | null>;
   readonly replaceWhenIdle?: Effect.Effect<string | null>;
   readonly hangSessionScopeClose?: boolean;
+  readonly inspectWorkflowTools?: ProviderAdapterV2SessionRuntime["inspectWorkflowTools"];
+  readonly workflowExecutionPath?: string;
   readonly startTurn?: Effect.Effect<void>;
   readonly onStartInvocation?: () => void;
   readonly beforeUnload?: Effect.Effect<void>;
@@ -558,6 +569,10 @@ function layerTest(input: {
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
+      ...(input.inspectWorkflowTools ? { inspectWorkflowTools: input.inspectWorkflowTools } : {}),
+      ...(input.workflowExecutionPath === undefined
+        ? {}
+        : { workflowExecutionPath: input.workflowExecutionPath }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.onStartInvocation === undefined
         ? {}
@@ -5628,6 +5643,231 @@ it.effect(
             startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
               Effect.andThen(Effect.never),
             ),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect("workflow blockers stop actual session dispatch before the adapter starts a turn", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped();
+    const skillPath = `${directory}/SKILL.md`;
+    yield* fs.writeFileString(
+      skillPath,
+      "---\nmetadata:\n  specwithcode:\n    requires:\n      binaries: [workflow-fixture-missing-binary]\n---\n",
+    );
+    const state = yield* Ref.make(emptyState);
+    let starts = 0;
+    let discoveryCalls = 0;
+    const registryBase = ProviderRegistryMock.layer([
+      {
+        instanceId: modelSelection.instanceId,
+        driver: CODEX_DRIVER,
+        enabled: true,
+        status: "ready",
+        skills: [],
+        models: [],
+        installed: true,
+        version: null,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-28T04:00:00Z",
+        slashCommands: [],
+        workspaceSnapshots: [
+          {
+            cwd: runtimePolicy.cwd!,
+            checkedAt: "2026-10-28T04:00:00Z",
+            slashCommands: [],
+            skills: [{ name: "fixture", path: skillPath, enabled: true }],
+          },
+        ],
+      } satisfies ServerProvider,
+    ]);
+    const registry = Layer.effect(
+      ProviderRegistry.ProviderRegistry,
+      Effect.gen(function* () {
+        const base = yield* ProviderRegistry.ProviderRegistry;
+        return ProviderRegistry.ProviderRegistry.of({
+          ...base,
+          refreshWorkspaceSnapshot: (input) => {
+            discoveryCalls++;
+            return base.refreshWorkspaceSnapshot(input);
+          },
+          // Machine-wide-only providers expose this source without a cwd snapshot.
+          workflowSkillSource: () =>
+            Effect.succeed({ skills: [{ name: "fixture", path: skillPath, enabled: true }] }),
+        });
+      }),
+    ).pipe(Layer.provide(registryBase));
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-workflow-blocker");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const input = {
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "$fixture",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      };
+      yield* runtime.startTurn({
+        ...input,
+        message: { ...input.message, text: "ordinary message with $20k" },
+      });
+      assert.strictEqual(discoveryCalls, 0);
+      assert.strictEqual(starts, 1);
+      const result = yield* runtime.startTurn(input).pipe(Effect.exit);
+      assert.strictEqual(result._tag, "Failure");
+      if (Exit.isFailure(result))
+        assert.match(Cause.pretty(result.cause), /Workflow fixture cannot run here/);
+      assert.strictEqual(starts, 1);
+      // A legacy skill with no declaration is still dispatched normally.
+      yield* fs.writeFileString(skillPath, "---\nname: fixture\n---\n");
+      yield* runtime.startTurn(input);
+      assert.strictEqual(starts, 2);
+      yield* manager.close(providerSessionId);
+      assert.deepStrictEqual(
+        yield* manager.workflowInventories!({
+          workspaceRoot: runtimePolicy.cwd!,
+          projectId: ProjectId.make("project-provider-session-manager"),
+        }),
+        [],
+      );
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          providerRegistryLayer: registry,
+          workflowExecutionPath: directory,
+          onStartInvocation: () => {
+            starts++;
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "workflow inventory is fenced by project, active native reference and session release",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const inspectionStarted = yield* Deferred.make<void>();
+      const releaseInspection = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-workflow-inventory");
+        const projectId = ProjectId.make("project-workflow-inventory");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, projectId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const writeThread = (thread: OrchestrationV2ProviderThread) =>
+          Effect.gen(function* () {
+            return yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId }),
+                  type: "provider-thread.updated",
+                  threadId,
+                  driver: CODEX_DRIVER,
+                  occurredAt: now,
+                  payload: thread,
+                },
+              ],
+            });
+          });
+        yield* writeThread(providerThread);
+        const request = { workspaceRoot: runtimePolicy.cwd!, projectId };
+        assert.deepStrictEqual(
+          yield* manager.workflowInventories!({
+            ...request,
+            projectId: ProjectId.make("another-project"),
+          }),
+          [],
+        );
+        const pending = yield* manager.workflowInventories!(request).pipe(Effect.forkChild);
+        yield* Deferred.await(inspectionStarted);
+        yield* writeThread({
+          ...providerThread,
+          nativeThreadRef: {
+            driver: CODEX_DRIVER,
+            nativeId: "replacement-native",
+            strength: "strong",
+          },
+        });
+        yield* Deferred.succeed(releaseInspection, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(pending), []);
+        const current = yield* manager.workflowInventories!(request);
+        assert.strictEqual(current.length, 1);
+        assert.strictEqual(current[0]?.scope.nativeThreadId, "replacement-native");
+        yield* manager.close(providerSessionId);
+        assert.deepStrictEqual(yield* manager.workflowInventories!(request), []);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            inspectWorkflowTools: ({ scope }) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(inspectionStarted, undefined);
+                yield* Deferred.await(releaseInspection);
+                return {
+                  scope,
+                  observedAt: DateTime.formatIso(yield* DateTime.now),
+                  complete: false,
+                  state: "available" as const,
+                  source: "native fixture",
+                  tools: ["mcp__fixture__read"],
+                  servers: [],
+                };
+              }),
           }),
         ),
       );

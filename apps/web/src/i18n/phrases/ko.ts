@@ -2188,25 +2188,46 @@ export const ko: PhraseCatalog = {
   Pin: "고정",
   "Update to {latest}": "{latest}(으)로 업데이트",
   "Choose a project to see which skills each agent loads in its folder.":
-    "프로젝트를 선택하면 각 에이전트가 그 폴더에서 어떤 스킬을 불러오는지 볼 수 있습니다.",
+    "프로젝트를 선택하면 각 에이전트가 그 폴더에서 어떤 스킬을 발견하는지 볼 수 있습니다.",
   "lock says {lock}": "lock 파일에는 {lock}",
   pinned: "고정됨",
   "agent only": "에이전트만",
   "Also listed as {value}.": "{value}(으)로도 표시됩니다.",
   Problems: "문제",
-  "Loaded by": "불러오는 에이전트",
-  "No agent loads this skill in this folder.":
-    "이 폴더에서 이 스킬을 불러오는 에이전트가 없습니다.",
+  "Discovered by": "발견한 에이전트",
+  "No agent reports this skill in this folder.":
+    "이 폴더에서 이 스킬을 보고하는 에이전트가 없습니다.",
+  "Declared dependencies present": "선언된 종속성 있음",
+  "Cannot run here": "여기서 실행할 수 없음",
+  "Readiness unknown": "준비 상태 알 수 없음",
+  "Identity not reported": "ID가 보고되지 않음",
+  Folder: "폴더",
+  "Native thread": "네이티브 스레드",
+  "No live session selected": "선택된 실행 중 세션 없음",
+  Thread: "스레드",
+  "Capability evidence stages": "기능 증거 단계",
+  Discovered: "발견됨",
+  "Registered in session": "세션에 등록됨",
+  "Last safe check": "마지막 안전 검사",
+  "Workflow dependencies": "워크플로 종속성",
+  "{label} workflow capabilities": "{label} 워크플로 기능",
+  "{label} dependency checks": "{label} 종속성 검사",
+  "Discovery does not prove instructions loaded or service access. Checks apply only to the machine, provider, folder and session shown.":
+    "발견되었다고 해서 지침이 로드되었거나 서비스에 액세스할 수 있는 것은 아닙니다. 검사는 표시된 컴퓨터, 공급자, 폴더, 세션에만 적용됩니다.",
+  "Readiness unknown. This machine has not supplied dependency evidence; refresh or update its server.":
+    "준비 상태를 알 수 없습니다. 이 컴퓨터가 종속성 증거를 제공하지 않았습니다. 새로 고치거나 서버를 업데이트하세요.",
+  "Tools from another machine or account do not satisfy these checks. Configure missing dependencies on this machine; sign-in and access remain under your control.":
+    "다른 컴퓨터나 계정의 도구로는 이 검사를 충족할 수 없습니다. 누락된 종속성은 이 컴퓨터에서 구성하세요. 로그인과 액세스는 계속 사용자가 관리합니다.",
   "plugin ": "플러그인 ",
   "as {name}": "{name}(으)로",
   off: "끔",
   "{copies} separate copies on disk{value}": "디스크에 별도 사본 {copies}개{value}",
   "Agents: {value}. Lockfiles: {value2}. {value3}":
     "에이전트: {value}. 잠금 파일: {value2}. {value3}",
-  "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
-    "이 컴퓨터에서 각 에이전트가 모든 프로젝트에 걸쳐 불러오는 모든 스킬입니다. 하나를 끄면 해당 에이전트의 설정만 바뀌므로 다른 에이전트는 계속 사용하며 아무것도 삭제되지 않습니다. 프로젝트를 고르면 그 프로젝트 스킬도 볼 수 있습니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
-  "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
-    "각 에이전트가 {span}에서 어떤 스킬을 불러오는지, 그리고 각 스킬이 vskill이 설치한 버전과 여전히 일치하는지 보여 줍니다. 에이전트나 수준으로 필터링하세요. 프로젝트 스킬은 이 폴더에 있고, 사용자 스킬은 모든 프로젝트에 적용됩니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
+  "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
+    "이 컴퓨터에서 각 에이전트가 모든 프로젝트에 걸쳐 발견하는 모든 스킬입니다. 하나를 끄면 해당 에이전트의 설정만 바뀌므로 다른 에이전트는 계속 사용하며 아무것도 삭제되지 않습니다. 프로젝트를 고르면 그 프로젝트 스킬도 볼 수 있습니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
+  "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
+    "각 에이전트가 {span}에서 어떤 스킬을 발견하는지, 그리고 각 스킬이 vskill이 설치한 버전과 여전히 일치하는지 보여 줍니다. 에이전트나 수준으로 필터링하세요. 프로젝트 스킬은 이 폴더에 있고, 사용자 스킬은 모든 프로젝트에 적용됩니다. 스킬을 클릭하면 세부 정보를 볼 수 있습니다.",
   "{span} is not loaded in this project.": "{span}은(는) 이 프로젝트에서 불러오지 않습니다.",
   "· showing {length}": "· {length}개 표시",
   "Search skills": "스킬 검색",

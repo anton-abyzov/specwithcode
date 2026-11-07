@@ -271,6 +271,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   };
   return {
     instanceId,
+    workflowExecutionPath: mergeProviderInstanceEnvironment(input.environment).PATH ?? "",
     driverKind: DRIVER,
     continuationIdentity,
     displayName,

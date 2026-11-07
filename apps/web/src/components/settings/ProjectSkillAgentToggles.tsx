@@ -1,6 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
-/** One agent's switches in the sheet's "Loaded by" list: the skill, and the plugin it ships in. */
+/** One agent's switches in the sheet's "Discovered by" list: the skill, and the plugin it ships in. */
 import type { ProjectSkillPresence } from "@specweave-studio/contracts";
 
 import { Button } from "../ui/button";

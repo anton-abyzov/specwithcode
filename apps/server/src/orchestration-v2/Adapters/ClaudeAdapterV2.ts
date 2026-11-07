@@ -1,4 +1,5 @@
 import { CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS } from "./claudeReadOnlyMcpTools.ts";
+import { unknownToolInventory } from "../../project/workflowCapabilities.ts";
 import { nativeChildTerminalReceipt } from "../NativeChildTerminalReceipt.ts";
 import { stringifyJson } from "../../json.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
@@ -3658,6 +3659,9 @@ export function makeClaudeAdapterV2(
         // that arrives without `resetsAt` reuses it, so the stop keeps a reset.
         const knownLimitResets = new Map<string, number>();
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        const workflowTools = yield* Ref.make<
+          ReadonlyMap<string, { observedAt: string; tools: readonly string[] }>
+        >(new Map());
         // The failure class of the latest finalized turn (null when it did not
         // fail): what most likely ended a process that later turns find gone.
         const lastTurnFailureClass = yield* Ref.make<string | null>(null);
@@ -8401,6 +8405,11 @@ export function makeClaudeAdapterV2(
               ),
             ),
           };
+          yield* Ref.update(workflowTools, (current) => {
+            const next = new Map(current);
+            next.delete(nativeThreadId);
+            return next;
+          });
           yield* Ref.set(queryContext, context);
           yield* settleSubagentsFromEarlierProcesses(context, emitSettlement);
           yield* querySession.messages.pipe(
@@ -8412,7 +8421,25 @@ export function makeClaudeAdapterV2(
               ) {
                 context.permissionMode = message.permissionMode;
               }
-              return handleSdkMessage({ query: querySession, message });
+              const capture =
+                message.type === "system" &&
+                message.subtype === "init" &&
+                Array.isArray(message.tools)
+                  ? Ref.update(workflowTools, (current) =>
+                      new Map(current).set(nativeThreadId, {
+                        observedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+                        tools: message.tools
+                          .filter(
+                            (name) =>
+                              typeof name === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(name),
+                          )
+                          .slice(0, 4096),
+                      }),
+                    )
+                  : Effect.void;
+              return capture.pipe(
+                Effect.andThen(handleSdkMessage({ query: querySession, message })),
+              );
             }),
             Effect.exit,
             Effect.flatMap(
@@ -8908,6 +8935,30 @@ export function makeClaudeAdapterV2(
               selection,
             ),
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          workflowExecutionPath: adapterOptions.environment.PATH ?? "",
+          inspectWorkflowTools: (inspection) =>
+            Effect.gen(function* () {
+              const nativeId = yield* getNativeThreadId(inspection.providerThread);
+              const context = yield* Ref.get(queryContext);
+              if (context?.nativeThreadId !== nativeId || context.stopping)
+                return unknownToolInventory(inspection.scope, "unknown");
+              const observed = (yield* Ref.get(workflowTools)).get(nativeId);
+              if (!observed) return unknownToolInventory(inspection.scope, "unknown");
+              return {
+                scope: inspection.scope,
+                ...observed,
+                complete: false,
+                state: "available" as const,
+                source: "Claude native init (deferred tools may be omitted)",
+                servers: [],
+              };
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.interrupt
+                  : Effect.succeed(unknownToolInventory(inspection.scope, "error")),
+              ),
+            ),
           hasPendingBackgroundWork: Effect.gen(function* () {
             // Session capability: any native thread with pending work pins idle.
             for (const roster of (yield* Ref.get(pendingBackgroundTasksByNativeThread)).values()) {

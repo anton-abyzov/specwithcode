@@ -1,5 +1,6 @@
 import { renderRich } from "../../i18n/rich";
 import { useTx } from "../../i18n";
+import { WorkflowCapabilities } from "./WorkflowCapabilities";
 import {
   EnvironmentId,
   ThreadId,
@@ -495,10 +496,15 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
           </ul>
         </section>
       ) : null}
-      <section aria-label={tx("Loaded by")} className="space-y-1">
-        <h3 className="font-medium text-foreground">{tx("Loaded by")}</h3>
+      {row.providers.map((presence) => (
+        <WorkflowCapabilities key={`${presence.instanceId}:${presence.path}`} presence={presence} />
+      ))}
+      <section aria-label={tx("Discovered by")} className="space-y-1">
+        <h3 className="font-medium text-foreground">{tx("Discovered by")}</h3>
         {row.providers.length === 0 ? (
-          <p className="text-muted-foreground">{tx("No agent loads this skill in this folder.")}</p>
+          <p className="text-muted-foreground">
+            {tx("No agent reports this skill in this folder.")}
+          </p>
         ) : (
           <ul className="space-y-2">
             {groupSkillPresences(row.providers).map((group) => (
@@ -883,14 +889,14 @@ function ScopedProjectSkillsView({
         {userLevel ? (
           <p className="text-xs text-muted-foreground" data-testid="skills-user-level">
             {tx(
-              "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.",
+              "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.",
             )}
           </p>
         ) : (
           <p className="text-xs text-muted-foreground">
             {renderRich(
               tx(
-                "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.",
+                "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.",
               ),
               {
                 span: (

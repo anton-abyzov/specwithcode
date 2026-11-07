@@ -1,3 +1,4 @@
+import * as Skills from "../../../project/ProjectSkillsService.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- the source scan reads toolkit files synchronously.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -59,6 +60,20 @@ const request = {
 const fixture = () => {
   const calls: { operation: string; input: unknown }[] = [];
   const deps = Layer.mergeAll(
+    Layer.mock(Skills.ProjectSkillsService)({
+      read: (input) =>
+        Effect.sync(() => {
+          calls.push({ operation: "skillsRead", input });
+          return {
+            cwd: "/fixture",
+            checkedAt: "2026-10-28T04:00:00Z",
+            rows: [],
+            providers: [],
+            locks: [],
+            doctor: "unavailable" as const,
+          };
+        }),
+    }),
     Layer.mock(Connections.ProjectConnectionService)({
       // Two folders' Claude Code local entries: agents must never reach them.
       discoverNative: (input) =>
@@ -196,6 +211,7 @@ it("exposes no agent method to configure or grant connection permissions", () =>
   expect(Object.keys(ProjectConnectionsToolkit.tools).sort()).toEqual([
     "studio_project_connection_call",
     "studio_project_connections_list",
+    "studio_workflow_capabilities",
   ]);
 });
 
@@ -227,4 +243,27 @@ it("keeps native configuration discovery out of every agent toolkit", () => {
   );
   expect(sources.length).toBeGreaterThan(10);
   expect(offenders).toEqual([]);
+});
+
+it.effect("workflow evidence stays scoped to the calling project", () => {
+  const { calls, layer } = fixture();
+  return Effect.gen(function* () {
+    const toolkit = yield* ProjectConnectionsToolkit;
+    yield* toolkit
+      .handle("studio_workflow_capabilities", { skill: "fixture" })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(calls).toContainEqual({
+      operation: "skillsRead",
+      input: { projectId: caller.projectId },
+    });
+    const before = calls.length;
+    const denied = yield* toolkit
+      .handle("studio_workflow_capabilities", {
+        skill: "fixture",
+        projectId: ProjectId.make("foreign-project"),
+      })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(denied.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+    expect(calls.length).toBe(before);
+  }).pipe(Effect.provide(layer));
 });

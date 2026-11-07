@@ -341,6 +341,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
 
       return {
         instanceId,
+        workflowExecutionPath: processEnv.PATH ?? "",
         driverKind: DRIVER_KIND,
         continuationIdentity: {
           ...fallbackContinuationIdentity,

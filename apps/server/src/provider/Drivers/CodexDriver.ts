@@ -404,6 +404,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
 
       return {
         instanceId,
+        workflowExecutionPath: processEnv.PATH ?? "",
         driverKind: DRIVER_KIND,
         continuationIdentity,
         displayName,
