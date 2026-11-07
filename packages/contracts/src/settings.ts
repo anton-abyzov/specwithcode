@@ -2001,6 +2001,11 @@ export const ServerSettings = Schema.Struct({
    * so older clients, which require a literal here, keep decoding.
    */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
+  /**
+   * Use worktrees for projects created on this machine from now on: "worktree"
+   * gives each new project its own switch turned on. Existing projects keep theirs.
+   */
+  newProjectThreadEnvMode: ThreadEnvMode.pipe(Schema.withDecodingDefault(Effect.succeed("local"))),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
@@ -2403,6 +2408,7 @@ export const ServerSettingsPatch = Schema.Struct({
   /** Merged per machine, newest stamp wins; never replaces the whole map. */
   machineNicknames: Schema.optionalKey(MachineNicknames),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
+  newProjectThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),

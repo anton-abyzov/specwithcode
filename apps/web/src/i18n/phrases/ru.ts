@@ -548,8 +548,6 @@ export const ru: PhraseCatalog = {
   "Set how fast panels open and close.": "Задайте скорость открытия и закрытия панелей.",
   "Set how wide messages and the composer can grow on large screens.":
     "Задайте, насколько широкими могут быть сообщения и поле ввода на больших экранах.",
-  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
-    "Задаётся для каждого проекта. Новые треды начинаются в текущей рабочей копии проекта, если в проекте не включено «Использовать worktree» или его specweave-studio.json не задаёт worktree по умолчанию. Хранилище worktree настраивается отдельно в разделе «Хранилище».",
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "Задайте, скрывает ли панель диффа по умолчанию изменения только в пробелах.",
   "Shared Codex config, sessions, and state.": "Общие конфигурация, сессии и состояние Codex.",

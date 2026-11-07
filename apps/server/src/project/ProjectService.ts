@@ -625,25 +625,33 @@ export const make = Effect.gen(function* () {
   });
 
   // A new project merges a finished thread's branch once its checks pass, unless
-  // Settings changed the environment value; older projects keep that value.
-  const seedNewProjectFinishAction = (projectId: ProjectId) =>
+  // Settings changed the environment value; older projects keep that value. It
+  // also takes Settings' Use worktrees for new projects as its own switch.
+  const seedNewProjectSettings = (projectId: ProjectId, kind: string | undefined) =>
     Effect.gen(function* () {
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       if (Option.isNone(serverSettings)) return;
       const settings = yield* serverSettings.value.getSettings;
       const entry = settings.projectSettingsOverrides[projectId] ?? {};
-      if (settings.threadFinishAction !== "pull_request" || entry.threadFinishAction !== undefined)
-        return;
+      const set = {
+        ...(settings.threadFinishAction === "pull_request" && entry.threadFinishAction === undefined
+          ? { threadFinishAction: "auto_merge" as const }
+          : {}),
+        ...(settings.newProjectThreadEnvMode === "worktree" &&
+        kind !== "personal" &&
+        entry.defaultThreadEnvMode === undefined
+          ? { defaultThreadEnvMode: "worktree" as const }
+          : {}),
+      };
+      if (Object.keys(set).length === 0) return;
       yield* serverSettings.value.updateSettings({
-        projectSettingsOverrideChanges: {
-          [projectId]: { set: { threadFinishAction: "auto_merge" } },
-        },
+        projectSettingsOverrideChanges: { [projectId]: { set } },
       });
     }).pipe(
       // Best effort: a settings store that cannot write (or a test double without
       // updateSettings) must never fail project creation.
       Effect.catchCause((cause) =>
-        Effect.logWarning("Could not set a new project's finish action", { projectId, cause }),
+        Effect.logWarning("Could not seed a new project's settings", { projectId, cause }),
       ),
     );
 
@@ -699,7 +707,7 @@ export const make = Effect.gen(function* () {
         ...createdOrigin(input),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
-      yield* seedNewProjectFinishAction(input.projectId);
+      yield* seedNewProjectSettings(input.projectId, input.kind);
       const created = yield* readCommitted(input.projectId);
       if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)
         return created;

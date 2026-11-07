@@ -632,7 +632,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "New threads",
     to: "/settings/general",
     scope: "project-defaults",
-    searchTerms: ["default workspace mode draft local worktree use worktrees coordinator"],
+    searchTerms: [
+      "default workspace mode draft local worktree use worktrees coordinator new projects",
+    ],
   },
   {
     id: "worktree-submodules",

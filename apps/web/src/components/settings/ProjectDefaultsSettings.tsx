@@ -38,6 +38,8 @@ import { AccessGrantsList } from "./AccessGrantsList";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { projectWorktreesSummary, projectWorktreesSummaryText } from "./newProjectWorktrees";
+import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { worktreesSettingRecommendation } from "../../lib/folderLayoutGuidance";
 import { useProjectFolderCheck } from "../../studio/useProjectFolderHealth";
 import {
@@ -246,25 +248,9 @@ export function ProjectDefaultsSettings({
     />
   );
   const useWorktreesRow = <UseWorktreesSetting />;
-  // Where new threads start is each project's own choice, with no
-  // machine-wide default above it, so the environment page only points at
-  // the per-project switch.
-  const environmentWorkspaceRow = (
-    <SettingsRow
-      id={searchableSetting("new-threads").id}
-      title="Workspace"
-      description="Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage."
-      control={
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void navigate({ to: "/settings/projects" })}
-        >
-          {tx("Open Projects")}
-        </Button>
-      }
-    />
-  );
+  // Where new threads start is each project's own choice. The environment page
+  // holds only what new projects start with, and points at the per-project switch.
+  const environmentWorkspaceRow = <NewProjectWorktreesSetting />;
 
   const sectionTitle =
     category === "general" || category === "project"
@@ -787,6 +773,64 @@ export function ProjectDefaultsSettings({
         </>
       )}
     </SettingsSection>
+  );
+}
+
+/**
+ * Use worktrees for new projects: each project created from now on starts with
+ * its own switch set this way. It never changes an existing project's switch,
+ * and lists the projects that have it on when they differ.
+ */
+export function NewProjectWorktreesSetting() {
+  const tx = useTx();
+  const navigate = useNavigate();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["newProjectThreadEnvMode"]);
+  const groups = useSettingsProjectGroups();
+  const { environments } = useNamedEnvironments();
+  const summary = useMemo(
+    () => projectWorktreesSummaryText(projectWorktreesSummary(groups, environments)),
+    [environments, groups],
+  );
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["newProjectThreadEnvMode"]}
+      mixed={mixed}
+      id={searchableSetting("new-threads").id}
+      title="Use worktrees for new projects"
+      description={
+        <>
+          Each project has its own Use worktrees switch, on its General tab. This sets the switch
+          for projects added from now on; existing projects keep theirs.
+          {summary ? (
+            <span className="mt-1 block text-foreground" data-project-worktrees-summary="">
+              {summary}
+            </span>
+          ) : null}
+        </>
+      }
+      control={
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void navigate({ to: "/settings/projects" })}
+          >
+            {tx("Open Projects")}
+          </Button>
+          <Switch
+            aria-label={tx("Use worktrees for new projects")}
+            mixed={mixed}
+            checked={mixed ? false : settings.newProjectThreadEnvMode === "worktree"}
+            onCheckedChange={(checked) =>
+              updateSettings({ newProjectThreadEnvMode: checked ? "worktree" : "local" })
+            }
+          />
+        </div>
+      }
+    />
   );
 }
 

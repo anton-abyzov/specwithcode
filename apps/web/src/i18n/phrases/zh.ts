@@ -530,8 +530,6 @@ export const zh: PhraseCatalog = {
   "Set how fast panels open and close.": "设置面板打开和关闭的速度。",
   "Set how wide messages and the composer can grow on large screens.":
     "设置在大屏幕上消息和输入框最多能有多宽。",
-  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
-    "按项目设置。新会话从项目当前的检出开始，除非该项目开启了“使用工作树”，或其 specweave-studio.json 指定了默认工作树。工作树存储在“存储”中单独配置。",
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "设置差异面板是否默认忽略仅空白的修改。",
   "Shared Codex config, sessions, and state.": "共享的 Codex 配置、会话和状态。",
