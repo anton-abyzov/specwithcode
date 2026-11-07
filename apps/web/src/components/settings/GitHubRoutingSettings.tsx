@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
 import type { EnvironmentPresentation } from "~/state/environments";
+import { useMachineNicknames } from "~/studio/machineNickname";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
@@ -48,11 +49,16 @@ export function summarizeGitHubRouting(
  * Rendered only when two or more machines are on.
  */
 export function GitHubRoutingSettings({
-  environments,
+  environments: givenEnvironments,
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
   const tx = useTx();
+  const nickname = useMachineNicknames();
+  const environments = givenEnvironments.map((environment) => {
+    const label = nickname(environment.environmentId, environment.label);
+    return label === environment.label ? environment : { ...environment, label };
+  });
   const permissions = useAtomValue(environmentCatalog.githubRoutingPermissionsValueAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const update = useAtomCommand(environmentCatalog.setGitHubRoutingPermission);

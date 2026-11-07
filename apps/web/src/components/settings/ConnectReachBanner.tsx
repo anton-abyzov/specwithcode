@@ -5,6 +5,7 @@ import { LinkIcon, LogInIcon } from "lucide-react";
 import { requestConnectRoutes } from "../../cloud/connectRoutePlan";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useRelayEnvironmentDiscovery } from "../../state/environments";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -106,7 +107,12 @@ function ConfiguredConnectReachBanner({
   const tx = useTx();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const discovery = useRelayEnvironmentDiscovery();
+  const nickname = useMachineNicknames();
   const { authPrompt, openAuthPrompt } = useStudioConnectAuthPrompt();
+  const namedMachines = machines.map((machine) => ({
+    ...machine,
+    label: nickname(machine.environmentId, machine.label),
+  }));
   // Signed in, the "not on Connect" hint needs a loaded list: a failed or
   // offline discovery would otherwise blame every machine.
   if (
@@ -114,7 +120,7 @@ function ConfiguredConnectReachBanner({
     (isSignedIn && (discovery.refreshing || discovery.error._tag === "Some" || discovery.offline))
   )
     return null;
-  const copy = connectReachCopy(machines, isSignedIn === true, discovery.environments);
+  const copy = connectReachCopy(namedMachines, isSignedIn === true, discovery.environments);
   if (copy === null) return null;
   const addRoutes = copy.addRoutes;
   return (

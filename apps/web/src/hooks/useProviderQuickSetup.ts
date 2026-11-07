@@ -32,6 +32,7 @@ import {
 } from "../providerQuickSetup";
 import { isThisMachineTarget } from "../connection/desktopLocal";
 import { environmentPresentations } from "../state/presentation";
+import { machineNameSourcesAtom, resolveMachineNickname } from "../studio/machineNickname";
 import { serverEnvironment } from "../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -39,6 +40,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 /** Every connected machine except `environmentId`, with its configured providers. */
 const otherMachineProvidersAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): ReadonlyArray<MachineProviders> => {
+    const { nicknames } = get(machineNameSourcesAtom);
     const machines: MachineProviders[] = [];
     for (const [id, presentation] of get(environmentPresentations.presentationsAtom)) {
       if (id === environmentId || presentation.connection.phase !== "connected") continue;
@@ -47,7 +49,7 @@ const otherMachineProvidersAtom = Atom.family((environmentId: EnvironmentId) =>
       if (!providers || !settings) continue;
       machines.push({
         environmentId: id,
-        label: presentation.entry.target.label,
+        label: resolveMachineNickname(nicknames, id, presentation.entry.target.label),
         entries: applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
       });
     }
@@ -59,11 +61,12 @@ const otherMachineProvidersAtom = Atom.family((environmentId: EnvironmentId) =>
 export type TurnOnStep = "saving" | "installing" | "checking";
 
 const machineLabelAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make(
-    (get): string =>
-      get(environmentPresentations.presentationsAtom).get(environmentId)?.entry.target.label ??
-      "this machine",
-  ).pipe(Atom.withLabel(`web-provider-quick-setup:label:${environmentId}`)),
+  Atom.make((get): string => {
+    const presentation = get(environmentPresentations.presentationsAtom).get(environmentId);
+    if (!presentation) return "this machine";
+    const { nicknames } = get(machineNameSourcesAtom);
+    return resolveMachineNickname(nicknames, environmentId, presentation.entry.target.label);
+  }).pipe(Atom.withLabel(`web-provider-quick-setup:label:${environmentId}`)),
 );
 
 // Remote means the chat's machine is not the one this client runs on: a phone,

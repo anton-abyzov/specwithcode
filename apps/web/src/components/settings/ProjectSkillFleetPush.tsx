@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useStudioFleet } from "../../studio/fleet";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { refreshSkillAvailability } from "../skills/SkillAvailability";
 import { Button } from "../ui/button";
@@ -42,14 +43,16 @@ export function FleetPushPanel() {
   const push = useAtomCommand(projectWorkspace.skillFleetPush, { reportFailure: false });
   const lock = skillVersionControl(controls.row);
   const version = controls.versions.data?.installedVersion ?? lock.installedVersion;
+  const nickname = useMachineNicknames();
   const machines = useMemo(
     () =>
       fleetPushMachines(
         fleet.snapshot?.machines ?? [],
         controls.environmentId,
         controls.memberProjects,
+        nickname,
       ),
-    [controls.environmentId, controls.memberProjects, fleet.snapshot],
+    [controls.environmentId, controls.memberProjects, fleet.snapshot, nickname],
   );
   const [selection, setChecked] = useState<ReadonlySet<string> | null>(null);
   const checked =

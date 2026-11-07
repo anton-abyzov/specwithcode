@@ -16,6 +16,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowRightIcon, TicketIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { environmentPresentations } from "../../../state/presentation";
+import { useMachineNicknames } from "../../../studio/machineNickname";
 import {
   blockedLabel,
   leftPercent,
@@ -143,9 +144,10 @@ function ProviderSection({
 /** Every provider's pooled windows across the connected hosts and hubs, as of `now`. */
 function useSubscriptionUsage(now: number) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const nickname = useMachineNicknames();
   const pools = useMemo(
-    () => collectLimitPools(collectLimitAccounts(presentations), now),
-    [presentations, now],
+    () => collectLimitPools(collectLimitAccounts(presentations, { machineName: nickname }), now),
+    [presentations, nickname, now],
   );
   const providers = useMemo(() => usageIndicatorProviders(pools, now, null), [pools, now]);
   return { pools, providers };

@@ -135,6 +135,14 @@ describe("worker machine choices", () => {
     expect(choices[2]?.label).toContain("Settings > Connections");
   });
 
+  it("names each machine by its nickname when one is set", () => {
+    const nickname = (environmentId: EnvironmentId, hostLabel: string) =>
+      environmentId === EnvironmentId.make("env-m1") ? "M1" : hostLabel;
+    const choices = workerMachineChoices(snapshot, here, [], nickname);
+    expect(choices[1]?.label).toBe("M1");
+    expect(choices[2]?.label).not.toContain("M1");
+  });
+
   it("keeps a chosen machine listed, with its pinned project, even once its grant lapses", () => {
     const current = {
       machineId: "m3",

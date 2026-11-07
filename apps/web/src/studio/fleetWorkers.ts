@@ -168,6 +168,8 @@ export function workerMachineChoices(
   snapshot: StudioFleetSnapshot | null,
   environmentId: EnvironmentId,
   current: ReadonlyArray<ProjectWorkerMachine>,
+  /** The display name for a machine: its nickname when the user set one. */
+  machineName?: (environmentId: EnvironmentId, hostLabel: string) => string,
 ): ReadonlyArray<WorkerMachineChoice> {
   const choices: WorkerMachineChoice[] = [
     {
@@ -183,9 +185,10 @@ export function workerMachineChoices(
     const allowed = status === "allowed" || status === "expiring";
     const chosen = current.find((entry) => entry.machineId === machine.id);
     if (!allowed && !chosen && !machine.workers) continue;
+    const name = machineName?.(machine.environmentId, machine.label) ?? machine.label;
     choices.push({
       value: machine.id,
-      label: allowed ? machine.label : `${machine.label} (allow workers in Settings > Connections)`,
+      label: allowed ? name : `${name} (allow workers in Settings > Connections)`,
       disabled: !allowed && !chosen,
       machine: {
         machineId: machine.id,

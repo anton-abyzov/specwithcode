@@ -18,6 +18,11 @@ const history = vi.hoisted(() => ({
   granted: true,
 }));
 
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
+  machineNickname: (id: string, label?: string | null) => label ?? id,
+}));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../hooks/useSettings", () => ({
   usePrimarySettings: (select: (settings: { timestampFormat: string }) => unknown) =>

@@ -205,6 +205,25 @@ describe("threadMoveBanner", () => {
     });
   });
 
+  it("names the machine by the nickname the caller resolves, not the recorded label", () => {
+    const banner = threadMoveBanner(
+      {
+        environmentId: here,
+        id: sourceId,
+        movedTo: {
+          ...link,
+          kind: "handoff",
+          environmentId: minis,
+          machineLabel: "Anton's MacBook Pro M1Max (190)",
+        },
+      },
+      titles,
+      (environmentId) => (environmentId === minis ? "m1" : "another machine"),
+    );
+    expect(banner?.title).toBe("Moved to m1");
+    expect(banner?.actionLabel).toBe("Open on m1");
+  });
+
   it("never calls a handoff archived, with or without a note", () => {
     const banner = on({
       movedTo: { ...link, kind: "handoff", environmentId: minis, machineLabel: "Minis" },

@@ -75,6 +75,7 @@ import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
+import { useMachineNicknames } from "~/studio/machineNickname";
 import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -909,6 +910,7 @@ export function PullRequestDetailPanel({
   const newThread = useNewThreadHandler();
   const coordinatorHandoff = useProjectCoordinatorHandoff();
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const unavailableGitHubUrl = useMemo(() => {
     const identity = projects.find(
       (project) => project.id === reference.projectId && project.environmentId === environmentId,
@@ -925,12 +927,12 @@ export function PullRequestDetailPanel({
             projects,
             environments.map((environment) => ({
               environmentId: environment.environmentId,
-              label: environment.label,
+              label: nickname(environment.environmentId, environment.label),
               machine: resolveEnvironmentMachineKind(environment.serverConfig),
             })),
           )
         : [],
-    [context, environmentId, environments, projects, reference.projectId],
+    [context, environmentId, environments, nickname, projects, reference.projectId],
   );
   // Which server the reader chose, and only for the pull request they chose it on: this one panel
   // shows a different pull request every time it is opened, and the choice does not follow.

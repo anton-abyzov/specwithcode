@@ -23,6 +23,7 @@ import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { blockedLabel, usageToneTextClassOfUsed } from "../../studio/usageIndicatorModel";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
@@ -396,7 +397,11 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  const needingSetup = environmentsNeedingChatSetup(selected);
+  const nickname = useMachineNicknames();
+  const needingSetup = environmentsNeedingChatSetup(selected).map((environment) => ({
+    ...environment,
+    label: nickname(environment.environmentId, environment.label),
+  }));
   const [view, setView] = useState(readLimitsView);
   return (
     <div className="flex flex-col gap-4">

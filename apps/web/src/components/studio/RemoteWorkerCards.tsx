@@ -11,6 +11,7 @@ import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { useOpenThread } from "../../hooks/useOpenThread";
 import { useThreadShells } from "../../state/entities";
 import { REMOTE_WORKERS_REFRESH_MS, useProjectRemoteWorkers } from "../../studio/fleet";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { remoteWorkerCardStatus, visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
 import { Tip } from "./shell/Tip";
 
@@ -44,10 +45,15 @@ export function RemoteWorkerCardList({
 }) {
   const threads = useThreadShells();
   const { openThread } = useOpenThread();
-  if (workers.length === 0) return null;
+  const nickname = useMachineNicknames();
+  const named = workers.map((worker) => {
+    const machineLabel = nickname(worker.environmentId, worker.machineLabel);
+    return machineLabel === worker.machineLabel ? worker : { ...worker, machineLabel };
+  });
+  if (named.length === 0) return null;
   return (
     <ul className="sws-thread-cards" aria-label="Workers on other machines">
-      {workers.map((worker) => {
+      {named.map((worker) => {
         const reachableHere =
           worker.remoteThreadId !== null &&
           threads.some(

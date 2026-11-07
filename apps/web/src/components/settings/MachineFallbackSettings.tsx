@@ -27,6 +27,7 @@ import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useStudioFleet } from "../../studio/fleet";
 import { teamRulesMachineLinkLock, teamRulesMachineLock } from "../../teamRules/teamRulesView";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -118,12 +119,19 @@ export function MachineFallbackSettings() {
   const machineRefused = (machine: StudioFleetMachine | undefined) =>
     machine?.status === "reachable" &&
     teamRulesMachineLock(teamRules, {
-      label: machine.label,
+      label:
+        fleet.snapshot?.machines.find((entry) => entry.environmentId === machine.environmentId)
+          ?.label ?? machine.label,
       fingerprint: machine.teamRules?.fingerprint,
     }) !== null;
-  const machines = (fleet.snapshot?.machines ?? []).filter(
-    (machine) => machine.environmentId !== environmentId,
-  );
+  const nickname = useMachineNicknames();
+  // Rows show each machine's nickname; team rules still match the host's own label.
+  const machines = (fleet.snapshot?.machines ?? [])
+    .filter((machine) => machine.environmentId !== environmentId)
+    .map((machine) => {
+      const label = nickname(machine.environmentId, machine.label);
+      return label === machine.label ? machine : { ...machine, label };
+    });
   // Until the paired list arrives, no target is called unpaired or offline.
   const machinesKnown = fleet.snapshot !== null;
   const providersOn = (machineEnvironmentId: EnvironmentId) =>

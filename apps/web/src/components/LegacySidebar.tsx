@@ -231,6 +231,7 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+import { useMachineNicknames } from "../studio/machineNickname";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -3259,12 +3260,19 @@ export default function LegacySidebar() {
   const terminalFocused = useTerminalFocus();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const nickname = useMachineNicknames();
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              nickname(environment.environmentId, environment.label),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, nickname],
   );
   const desktopLocalEnvironmentIds = useMemo(
     () =>

@@ -6,6 +6,11 @@ import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { NativeConnectionsPanel } from "./NativeConnectionsPanel";
 import { ConnectionsLibrarySettings } from "../settings/ConnectionsLibrarySettings";
 import { Select } from "../ui/select";
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
+  machineNickname: (id: string, label?: string | null) => label ?? id,
+}));
 vi.mock("../ui/tooltip", async () => {
   const { cloneElement, isValidElement } = await import("react");
   return {

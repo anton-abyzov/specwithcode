@@ -160,6 +160,7 @@ import {
 } from "./studio/ProjectCreation";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
+import { useMachineNicknames } from "../studio/machineNickname";
 import { projectPickerMembers } from "../studio/projectListVisibility";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
@@ -1070,12 +1071,19 @@ function OpenCommandPaletteDialog(props: {
     [clientSettings],
   );
 
+  const nickname = useMachineNicknames();
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              nickname(environment.environmentId, environment.label),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, nickname],
   );
   const projectEnvironmentLocationById = useMemo(
     () =>
@@ -1090,14 +1098,14 @@ function OpenCommandPaletteDialog(props: {
               label: isPrimary
                 ? "Local"
                 : isLocal
-                  ? `${environment.label} (Local)`
-                  : environment.label,
+                  ? `${nickname(environment.environmentId, environment.label)} (Local)`
+                  : nickname(environment.environmentId, environment.label),
               machine: resolveEnvironmentMachineKind(environment.serverConfig),
             },
           ] as const;
         }),
       ),
-    [environments],
+    [environments, nickname],
   );
   const orderedProjects = useMemo(
     () =>
@@ -1183,7 +1191,7 @@ function OpenCommandPaletteDialog(props: {
         label: resolveEnvironmentOptionLabel({
           isPrimary,
           environmentId: environment.environmentId,
-          runtimeLabel: environment.label,
+          runtimeLabel: nickname(environment.environmentId, environment.label),
         }),
         isPrimary,
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
@@ -1207,7 +1215,7 @@ function OpenCommandPaletteDialog(props: {
     });
 
     return options;
-  }, [environments]);
+  }, [environments, nickname]);
   const currentExecutionEnvironmentId =
     activeThread?.environmentId ??
     activeDraftThread?.environmentId ??

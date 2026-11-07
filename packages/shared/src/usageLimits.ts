@@ -187,7 +187,13 @@ export interface LimitAccount {
  * entry per distinct account. The freshest reads supply windows and credits;
  * native instances supply names and environment labels.
  */
-export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+export function collectLimitAccounts(
+  presentations: LimitPresentations,
+  options: {
+    /** The display name for a machine: its nickname when the user set one. */
+    readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
+  } = {},
+): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -252,7 +258,9 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     });
   };
   for (const [environmentId, presentation] of presentations) {
-    const label = presentation.entry.target.label;
+    const label =
+      options.machineName?.(environmentId, presentation.entry.target.label) ??
+      presentation.entry.target.label;
     const offline = !isConnected(presentation);
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
@@ -374,6 +382,8 @@ export function collectLimitNotices(
   options: {
     /** The caller draws subscription agents as accounts (`collectUnreportedLimitAccounts`). */
     readonly excludeSubscriptionAgents?: boolean;
+    /** The display name for a machine: its nickname when the user set one. */
+    readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
   } = {},
 ): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
@@ -381,8 +391,10 @@ export function collectLimitNotices(
   const notices: string[] = [];
   const skip = (driver: string) =>
     options.excludeSubscriptionAgents === true && SUBSCRIPTION_DRIVERS.has(driver);
-  for (const presentation of presentations.values()) {
-    const environmentLabel = presentation.entry.target.label;
+  for (const [environmentId, presentation] of presentations) {
+    const environmentLabel =
+      options.machineName?.(environmentId, presentation.entry.target.label) ??
+      presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (skip(provider.driver)) continue;
       // An account that can never report (API key) is left out unless the
@@ -445,6 +457,10 @@ export interface UnreportedLimitAccount {
 export function collectUnreportedLimitAccounts(
   presentations: LimitPresentations,
   pooled: readonly LimitAccount[],
+  options: {
+    /** The display name for a machine: its nickname when the user set one. */
+    readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
+  } = {},
 ): readonly UnreportedLimitAccount[] {
   const pooledKeys = new Set(
     pooled.map((account) => accountKey(account.driver, account.email, account.limits)),
@@ -474,7 +490,9 @@ export function collectUnreportedLimitAccounts(
       unreported.push({
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
-        environmentLabel: presentation.entry.target.label,
+        environmentLabel:
+          options.machineName?.(environmentId, presentation.entry.target.label) ??
+          presentation.entry.target.label,
         offline: !isConnected(presentation),
         email: provider.auth.email,
         plan: provider.auth.label,

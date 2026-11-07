@@ -53,6 +53,11 @@ const state = vi.hoisted(() => ({
     byteLength: 40,
   },
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
+  machineNickname: (id: string, label?: string | null) => label ?? id,
+}));
 vi.mock("./ProjectIconEditor", () => ({
   useProjectIconEditor: () => ({
     busy: false,

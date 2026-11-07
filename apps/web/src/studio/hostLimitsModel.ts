@@ -272,6 +272,8 @@ export function collectHostLimitBlocks(
     readonly projectEnvironmentId: EnvironmentId | null;
     readonly saved: ReadonlyMap<EnvironmentId, SavedHostReading>;
     readonly driverLabel: (driver: ServerProvider["driver"]) => string;
+    /** The display name for a host: its nickname when the user set one. */
+    readonly machineName?: (environmentId: EnvironmentId, hostLabel: string) => string;
     readonly now: number;
   },
 ): readonly HostLimitBlock[] {
@@ -302,7 +304,9 @@ export function collectHostLimitBlocks(
     const readings = providers.flatMap((row) => (row.checkedAt === null ? [] : [row.checkedAt]));
     blocks.push({
       environmentId,
-      label: presentation.entry.target.label,
+      label:
+        options.machineName?.(environmentId, presentation.entry.target.label) ??
+        presentation.entry.target.label,
       isProjectHost: environmentId === options.projectEnvironmentId,
       isThisMachine: presentation.entry.target._tag === "PrimaryConnectionTarget",
       status,

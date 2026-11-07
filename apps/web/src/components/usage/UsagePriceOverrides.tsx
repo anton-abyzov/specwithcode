@@ -10,6 +10,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { environmentSession, readEnvironmentScope } from "../../state/session";
@@ -112,7 +113,12 @@ export function UsagePriceOverrides({
   readonly initialModel?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
-  const environments = useAtomValue(priceTargetsAtom);
+  const rawEnvironments = useAtomValue(priceTargetsAtom);
+  const nickname = useMachineNicknames();
+  const environments = rawEnvironments.map((environment) => ({
+    ...environment,
+    label: nickname(environment.environmentId, environment.label),
+  }));
   const [selectedIds, setSelectedIds] = useState(initialSelectedEnvironmentIds);
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),

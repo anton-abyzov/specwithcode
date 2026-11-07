@@ -4,6 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@specweave-studio/shared/usageLimits";
 import { useState } from "react";
 import { environmentPresentations } from "../../state/presentation";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
 import {
@@ -32,6 +33,7 @@ function readAcknowledgedProfiles(): string[] {
 export function ChatGptWelcomeCoordinator() {
   const tx = useTx();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const nickname = useMachineNicknames();
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
@@ -42,7 +44,7 @@ export function ChatGptWelcomeCoordinator() {
             provider.instanceId,
             provider.auth.profileId ?? provider.auth.email ?? "default",
           ]),
-          environmentLabel: presentation.entry.target.label,
+          environmentLabel: nickname(environmentId, presentation.entry.target.label),
           providerName: provider.displayName ?? "Codex",
         })),
   );

@@ -190,10 +190,13 @@ const machineOf = (
   thread: BannerThread,
   environmentId: EnvironmentId | undefined,
   label: string | undefined,
+  machineName?: (environmentId: EnvironmentId, hostLabel?: string | null) => string,
 ) =>
   environmentId === undefined || environmentId === thread.environmentId
     ? null
-    : (label ?? "another machine");
+    : machineName
+      ? machineName(environmentId, label)
+      : (label ?? "another machine");
 
 const sentence = (text: string) => (/[.!?…]$/.test(text) ? text : `${text}.`);
 
@@ -208,6 +211,8 @@ const sentence = (text: string) => (/[.!?…]$/.test(text) ? text : `${text}.`);
 export function threadMoveBanner(
   thread: BannerThread,
   projectTitle: (projectId: ProjectId) => string | undefined,
+  /** The display name for a machine: its nickname when the user set one. */
+  machineName?: (environmentId: EnvironmentId, hostLabel?: string | null) => string,
 ): ThreadMoveBanner | null {
   const movedTo = thread.movedTo ?? null;
   if (movedTo !== null) {
@@ -216,7 +221,7 @@ export function threadMoveBanner(
       threadId: movedTo.threadId,
     };
     if (movedTo.kind === "handoff") {
-      const machine = machineOf(thread, movedTo.environmentId, movedTo.machineLabel);
+      const machine = machineOf(thread, movedTo.environmentId, movedTo.machineLabel, machineName);
       const readOnly =
         machine === null
           ? "You can read it here. New messages go to the new thread."
@@ -272,7 +277,7 @@ export function threadMoveBanner(
           }
         : null;
   if (origin === null) return null;
-  const machine = machineOf(thread, origin.environmentId, origin.label);
+  const machine = machineOf(thread, origin.environmentId, origin.label, machineName);
   const carried =
     machine === null
       ? "Its conversation and file changes came from the original thread's last sync."

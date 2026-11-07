@@ -26,6 +26,11 @@ const state = vi.hoisted(() => ({
   useQuery: vi.fn(),
   command: vi.fn(),
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
+  machineNickname: (id: string, label?: string | null) => label ?? id,
+}));
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
     browserBridgeStatus: state.request,

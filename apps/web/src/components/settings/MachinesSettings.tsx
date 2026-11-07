@@ -908,6 +908,7 @@ function ConnectBothWays({
   const configs = useServerConfigs();
   const advertised = useDesktopAdvertisedEndpoints();
   const canCreate = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const nickname = useMachineNickname(row.environmentId, row.label);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<CreatedLink | null>(null);
 
@@ -920,7 +921,7 @@ function ConnectBothWays({
     setCreating(true);
     try {
       const result = await createServerPairingCredential({
-        label: `App on ${row.label}`,
+        label: `App on ${nickname}`,
         coordinatorEnvironmentId: row.environmentId,
         scopes,
       });
@@ -955,7 +956,7 @@ function ConnectBothWays({
 
   return (
     <ConnectBothWaysView
-      machineLabel={row.label}
+      machineLabel={nickname}
       canCreate={canCreate}
       creating={creating}
       created={created}

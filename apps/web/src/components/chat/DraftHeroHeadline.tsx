@@ -53,6 +53,7 @@ import {
   projectChoiceIneligibleReason,
   projectDestinationUnavailableReason,
 } from "~/studio/projectListVisibility";
+import { useMachineNicknames } from "~/studio/machineNickname";
 import {
   draftHasMachineBoundContent,
   draftMachineUnavailableReason,
@@ -95,12 +96,19 @@ export function DraftHeroHeadline({
   const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
 
+  const nickname = useMachineNicknames();
   const environmentLabelById = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              nickname(environment.environmentId, environment.label),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, nickname],
   );
   const projectGroups = useMemo(
     () =>

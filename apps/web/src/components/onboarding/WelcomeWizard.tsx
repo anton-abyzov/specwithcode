@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { StarOnGitHubLink } from "../github/StarOnGitHub";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
@@ -435,6 +436,7 @@ function ConnectionStep({
 }) {
   const t = useT();
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const cloudEnabled = hasCloudPublicConfig();
   const directEnvironments = environments.filter(
     (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
@@ -488,7 +490,7 @@ function ConnectionStep({
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-3">
                   <span className="min-w-0 text-sm font-medium break-words">
-                    {environment.label}
+                    {nickname(environment.environmentId, environment.label)}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {environment.connection.phase === "connected"
@@ -837,15 +839,18 @@ function AgentsStep({
   const t = useT();
   const tx = useTx();
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const machines = useMemo(
     () =>
       environmentIds.map((environmentId) => ({
         environmentId,
-        label:
+        label: nickname(
+          environmentId,
           environments.find((environment) => environment.environmentId === environmentId)?.label ??
-          t("wizard.computer"),
+            t("wizard.computer"),
+        ),
       })),
-    [environmentIds, environments, t],
+    [environmentIds, environments, nickname, t],
   );
   const reported = useAgentReadiness(machines);
   const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
@@ -1416,6 +1421,7 @@ function ImportStep({
   const t = useT();
   const importPermissionMessage = t("wizard.import.noPermission");
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
@@ -1698,9 +1704,11 @@ function ImportStep({
             const scanCandidates = candidates.filter(
               (candidate) => candidate.environmentId === scan.environmentId,
             );
-            const label =
+            const label = nickname(
+              scan.environmentId,
               environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? t("wizard.computer");
+                ?.label ?? t("wizard.computer"),
+            );
             return (
               <fieldset
                 key={scan.environmentId}

@@ -57,6 +57,7 @@ import { connectPairing } from "../../connection/onboarding";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { unreachableMachines } from "../../cloud/connectRoutePlan";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { ConnectReachBanner } from "./ConnectReachBanner";
 import { FleetInviteArea } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
@@ -288,7 +289,19 @@ export function StudioFleetConnections({
   renderMachine,
   additionalMachines,
 }: Props) {
-  const { snapshot, loading, failed, refresh } = useStudioFleet(environmentId);
+  const { snapshot: rawSnapshot, loading, failed, refresh } = useStudioFleet(environmentId);
+  const nickname = useMachineNicknames();
+  // Every machine below is named by its nickname; the roster and its rows
+  // render machine.label as-is.
+  const snapshot = rawSnapshot
+    ? {
+        ...rawSnapshot,
+        machines: rawSnapshot.machines.map((machine) => {
+          const label = nickname(machine.environmentId, machine.label);
+          return label === machine.label ? machine : { ...machine, label };
+        }),
+      }
+    : rawSnapshot;
   const canPair = useEnvironmentScope(
     environmentId,
     snapshot?.connectPermission ?? AuthAccessWriteScope,
@@ -359,14 +372,15 @@ export function StudioFleetConnections({
     setAdded(null);
     try {
       const result = await addStudioFleetMachine(environmentId, invitation.trim());
+      const addedName = nickname(result.environmentId, result.label);
       // The line holds a management token: never keep it once sent.
       setInvitation("");
       setAdded(
         result.change === "added"
-          ? `Added ${result.label}. ${autoConnect ? "This browser connects to it on its own." : "Choose Connect machine to use it here."} Choose Allow workers on it to let coordinators start work there.`
+          ? `Added ${addedName}. ${autoConnect ? "This browser connects to it on its own." : "Choose Connect machine to use it here."} Choose Allow workers on it to let coordinators start work there.`
           : result.previousUrl
-            ? `${result.label} now answers at its new address. Workers allowed there carry over.`
-            : `Renewed ${result.label}.`,
+            ? `${addedName} now answers at its new address. Workers allowed there carry over.`
+            : `Renewed ${addedName}.`,
       );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not add this machine.");

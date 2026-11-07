@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { machineStatus } from "../../lib/machineStatus";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { NativeConnectionsPanel } from "../connections/NativeConnectionsPanel";
 import {
   Select,
@@ -39,7 +39,7 @@ const choiceLabel = (choice: Choice) =>
 export function ConnectionsLibrarySettings() {
   const tx = useTx();
   const { scope, environments, search } = useSettingsScope();
-  const { environments: presentations } = useEnvironments();
+  const { environments: presentations } = useNamedEnvironments();
   const scopeKey = JSON.stringify([search.project, search.machine, search.checkout]);
   const [choiceState, setChoiceState] = useState<{ scopeKey: string; key: string } | null>(null);
   const selection = choiceState?.scopeKey === scopeKey ? choiceState.key : null;

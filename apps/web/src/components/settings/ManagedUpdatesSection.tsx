@@ -12,6 +12,7 @@ import { ServerUpdateProgress } from "../ServerUpdateAction";
 import { Button } from "../ui/button";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useMachineNickname } from "../../studio/machineNickname";
 
 const consentLabels = {
   "not-enrolled": "Update permission: Not granted.",
@@ -184,7 +185,7 @@ export function ManagedUpdatesView(props: {
 
 export function ManagedUpdatesSection({
   environmentId,
-  label,
+  label: hostLabel,
   reachable,
   local = false,
 }: {
@@ -194,6 +195,7 @@ export function ManagedUpdatesSection({
   local?: boolean;
 }) {
   const tx = useTx();
+  const label = useMachineNickname(environmentId, hostLabel);
   const query = useEnvironmentQuery(
     reachable ? managedUpdates.status({ environmentId, input: {} }) : null,
   );
