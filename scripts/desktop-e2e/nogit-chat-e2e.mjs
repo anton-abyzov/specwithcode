@@ -491,7 +491,7 @@ const main = async () => {
       /^Start as a main machine|up as my main machine/u,
       /^Do not import projects$/u,
       /^Skip/u,
-      /^Continue$/u,
+      /^Continue( without an agent)?$/u,
       /^(Finish|Done|Get started|Close)$/u,
     ];
     const deadline = Date.now() + TIMEOUT_MS;

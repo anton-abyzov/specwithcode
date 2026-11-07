@@ -534,12 +534,13 @@ const main = async () => {
     const nav = page.getByRole("navigation", { name: "Projects and chats" });
     const wizard = page.getByRole("dialog").filter({ hasText: "SpecWithCode" }).first();
     // First-run wizard: choose this machine as the main one, then skip the
-    // agent and project-import steps.
+    // agent and project-import steps. With no agent installed the agents step
+    // offers "Continue without an agent".
     const wizardButtons = [
       /^Start as a main machine|up as my main machine/u,
       /^Do not import projects$/u,
       /^Skip/u,
-      /^Continue$/u,
+      /^Continue( without an agent)?$/u,
       /^(Finish|Done|Get started|Close)$/u,
     ];
     // isVisible() does not wait, so poll until the sidebar is usable.
@@ -566,7 +567,19 @@ const main = async () => {
       }
       if (!ready) await page.waitForTimeout(1000);
     }
-    if (!ready) throw new Error("the sidebar navigation 'Projects and chats' never became visible");
+    if (!ready) {
+      const offered = await wizard
+        .getByRole("button")
+        .allInnerTexts()
+        .catch(() => []);
+      throw new Error(
+        `the sidebar navigation 'Projects and chats' never became visible${
+          offered.length
+            ? `; the wizard offered: ${offered.map((text) => JSON.stringify(text.trim())).join(", ")}`
+            : ""
+        }`,
+      );
+    }
     record("pairing-authenticated-ui", true, {
       url: new URL(page.url()).pathname,
       wizardSteps,
