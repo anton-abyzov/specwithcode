@@ -9,7 +9,7 @@ export const ja: Messages = {
   "settings.language.system": "システム（{language}）",
 
   "wizard.title": "SpecWithCode をセットアップ",
-  "wizard.stage.connect": "接続",
+  "wizard.stage.connect": "コンピューター",
   "wizard.stage.agents": "エージェント",
   "wizard.stage.projects": "プロジェクト",
   "wizard.close": "セットアップを閉じる",
@@ -55,7 +55,7 @@ export const ja: Messages = {
 
   "wizard.agents.title": "エージェントを接続",
   "wizard.agents.description":
-    "コーディングを始めるエージェントを選んでください。あとから追加できます。",
+    "コーディングを始めるエージェントを選んでください。Cursor、OpenCode、Grok などはセットアップ後に 設定 > プロバイダー で追加できます。",
   "wizard.agents.noTerminal": "この接続ではターミナルを操作できません。",
   "wizard.agents.anotherChatGpt": "別の ChatGPT アカウントを接続",
   "wizard.agents.readyToCode": "コーディングの準備ができました。",

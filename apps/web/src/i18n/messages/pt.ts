@@ -12,7 +12,7 @@ export const pt: Messages = {
   "settings.language.system": "Sistema ({language})",
 
   "wizard.title": "Configurar o SpecWithCode",
-  "wizard.stage.connect": "Conectar",
+  "wizard.stage.connect": "Computadores",
   "wizard.stage.agents": "Agentes",
   "wizard.stage.projects": "Projetos",
   "wizard.close": "Fechar configuração",
@@ -61,7 +61,7 @@ export const pt: Messages = {
 
   "wizard.agents.title": "Conecte seus agentes",
   "wizard.agents.description":
-    "Escolha um agente para começar a programar. Você pode adicionar outros depois.",
+    "Escolha um agente para começar a programar. Cursor, OpenCode, Grok e outros podem ser adicionados depois em Configurações > Provedores.",
   "wizard.agents.noTerminal": "Esta conexão não pode controlar terminais.",
   "wizard.agents.anotherChatGpt": "Conectar outra conta do ChatGPT",
   "wizard.agents.readyToCode": "Pronto para programar.",

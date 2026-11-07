@@ -9,7 +9,7 @@ export const ru: Messages = {
   "settings.language.system": "Системный ({language})",
 
   "wizard.title": "Настройка SpecWithCode",
-  "wizard.stage.connect": "Подключение",
+  "wizard.stage.connect": "Компьютеры",
   "wizard.stage.agents": "Агенты",
   "wizard.stage.projects": "Проекты",
   "wizard.close": "Закрыть настройку",
@@ -60,7 +60,7 @@ export const ru: Messages = {
 
   "wizard.agents.title": "Подключите агентов",
   "wizard.agents.description":
-    "Выберите агента, чтобы начать писать код. Других можно добавить позже.",
+    "Выберите агента, чтобы начать писать код. Cursor, OpenCode, Grok и других можно добавить после настройки в Настройки > Провайдеры.",
   "wizard.agents.noTerminal": "Это подключение не может управлять терминалами.",
   "wizard.agents.anotherChatGpt": "Подключить ещё один аккаунт ChatGPT",
   "wizard.agents.readyToCode": "Готов к работе.",

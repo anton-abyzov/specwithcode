@@ -8,7 +8,7 @@ export const zh: Messages = {
   "settings.language.system": "跟随系统（{language}）",
 
   "wizard.title": "设置 SpecWithCode",
-  "wizard.stage.connect": "连接",
+  "wizard.stage.connect": "电脑",
   "wizard.stage.agents": "智能体",
   "wizard.stage.projects": "项目",
   "wizard.close": "关闭设置",
@@ -51,7 +51,8 @@ export const zh: Messages = {
     "请先启动 SpecWithCode，或运行 {serve}。添加 {tailscale} 即可使用你的 tailnet。",
 
   "wizard.agents.title": "连接你的智能体",
-  "wizard.agents.description": "选择一个智能体开始编程。之后可以再添加更多。",
+  "wizard.agents.description":
+    "选择一个智能体开始编程。Cursor、OpenCode、Grok 等可以在设置完成后于 设置 > 提供商 中添加。",
   "wizard.agents.noTerminal": "此连接无法控制终端。",
   "wizard.agents.anotherChatGpt": "连接另一个 ChatGPT 账号",
   "wizard.agents.readyToCode": "可以开始编程。",

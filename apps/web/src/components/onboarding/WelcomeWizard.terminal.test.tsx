@@ -317,7 +317,7 @@ describe("welcome agent terminal setup", () => {
     expect(state.open).not.toHaveBeenCalled();
     expect(state.write).not.toHaveBeenCalled();
     expect(state.close).not.toHaveBeenCalled();
-    await click("Continue");
+    await click("Continue without an agent");
     await click("Do not import projects");
     expect(state.complete).toHaveBeenCalledOnce();
     expect(state.done).toHaveBeenCalledExactlyOnceWith(undefined);
@@ -389,6 +389,69 @@ describe("welcome agent terminal setup", () => {
     expect(text(renderer!.root)).toContain("Review the command, then press Enter to run it.");
   });
 
+  it("says chats will not start until an agent is ready, then names the ready agent", async () => {
+    await enterRemoteAgents();
+    expect(text(renderer!.root)).toContain("No agent is ready yet, so chats will not start.");
+    expect(text(renderer!.root)).toContain("Settings > Providers");
+    expect(button("Continue without an agent")).toBeDefined();
+    const ready: ServerProvider = {
+      ...signedOutCodex,
+      displayName: "Codex",
+      status: "ready",
+      auth: { status: "authenticated" },
+    };
+    await act(async () => {
+      for (const id of [primaryId, remoteId]) {
+        state.registry!.set(state.providers.get(id)!, [missingClaude, ready]);
+      }
+    });
+    expect(text(renderer!.root)).toContain("Ready: Codex.");
+    expect(button("Continue")).toBeDefined();
+    expect(button("Continue without an agent")).toBeUndefined();
+  });
+
+  it("stops saying checking when a provider never finishes its probe", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const neverProbed: ServerProvider = { ...missingClaude, status: "warning" };
+      await act(async () => {
+        state.registry!.set(state.providers.get(remoteId)!, [neverProbed]);
+      });
+      await enterRemoteAgents();
+      expect(text(renderer!.root)).toContain("Checking which agents can run");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+      expect(text(renderer!.root)).toContain("No agent is ready yet");
+      expect(button("Continue without an agent")).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("re-reads a machine's agents on Check again", async () => {
+    await enterRemoteAgents();
+    state.refresh.mockClear();
+    await click("Check again");
+    expect(state.refresh).toHaveBeenCalledExactlyOnceWith({ environmentId: remoteId, input: {} });
+  });
+
+  it("offers a terminal for an agent whose sign-in could not be read", async () => {
+    const unverified: ServerProvider = {
+      ...missingClaude,
+      installed: true,
+      status: "warning",
+      auth: { status: "unknown" },
+    };
+    await act(async () => {
+      state.registry!.set(state.providers.get(remoteId)!, [unverified, signedOutCodex]);
+    });
+    await enterRemoteAgents();
+    await click("Open terminal");
+    expect(state.write.mock.calls[0]![0].input.data).toBe("claude auth login");
+    expect(text(renderer!.root)).toContain("Could not confirm");
+  });
+
   it("checks access when a queued retry starts and recovers after regrant", async () => {
     state.open.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("Could not open"))));
     await enterRemoteAgents();
@@ -435,7 +498,7 @@ describe("welcome agent terminal setup", () => {
     await click("Close");
     expect(hasViewport()).toBe(false);
     expect(state.close).not.toHaveBeenCalled();
-    await click("Continue");
+    await click("Continue without an agent");
     expect(text(renderer!.root)).toContain("Choose your projects");
   });
 

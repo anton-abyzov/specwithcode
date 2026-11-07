@@ -64,6 +64,8 @@ import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { isOnboardingRelayEnvironment } from "../../onboarding/targetEnvironment.logic";
+import { useAgentReadiness } from "../../onboarding/useAgentReadiness";
+import { agentReadinessMessage } from "../../onboarding/agentReadiness.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
@@ -133,6 +135,9 @@ export interface WelcomeMachineRole {
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
+const CONNECT_SIGN_IN_TIMEOUT_MS = 10_000;
+// Some providers report "not checked yet" for good, so checking cannot last forever.
+const AGENT_CHECK_TIMEOUT_MS = 15_000;
 
 export function WelcomeWizard({
   localAvailable,
@@ -362,6 +367,7 @@ export function WelcomeWizard({
           ) : step === "connection" ? (
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
+              connectOptional={localAvailable}
               selectedIds={selectedIds}
               autoSelectedComputers={autoSelectedComputers.current}
               onSelectionChange={setSelection}
@@ -409,6 +415,7 @@ export function WelcomeWizard({
 
 function ConnectionStep({
   autoSelectedComputers,
+  connectOptional,
   expandPairingInitially,
   selectedIds,
   onSelectionChange,
@@ -417,6 +424,8 @@ function ConnectionStep({
   onPaired,
 }: {
   readonly autoSelectedComputers: Set<EnvironmentId>;
+  /** Off with no server here, where Connect or a pairing link is the way in. */
+  readonly connectOptional: boolean;
   readonly expandPairingInitially: boolean;
   readonly selectedIds: ReadonlySet<EnvironmentId>;
   readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId>) => void;
@@ -501,6 +510,7 @@ function ConnectionStep({
         {cloudEnabled ? (
           <ConnectAccountOption
             autoSelectedComputers={autoSelectedComputers}
+            optional={connectOptional}
             disabled={isPairing}
             selectedIds={selectedIds}
             onToggleEnvironment={onToggleEnvironment}
@@ -559,24 +569,42 @@ function ConnectionStep({
   );
 }
 
+/** True once `active` has held for `delayMs`, and false again when it stops. */
+function useHeldFor(active: boolean, delayMs: number) {
+  const [elapsed, setElapsed] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    const timer = setTimeout(() => setElapsed(true), delayMs);
+    return () => {
+      clearTimeout(timer);
+      setElapsed(false);
+    };
+  }, [active, delayMs]);
+  return active && elapsed;
+}
+
 function ConnectAccountOption({
   autoSelectedComputers,
+  optional,
   disabled,
   selectedIds,
   onToggleEnvironment,
 }: {
   readonly autoSelectedComputers: Set<EnvironmentId>;
+  readonly optional: boolean;
   readonly disabled: boolean;
   readonly selectedIds: ReadonlySet<EnvironmentId>;
   readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
 }) {
   const t = useT();
+  const tx = useTx();
   const { environments } = useEnvironments();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
   const [expanded, setExpanded] = useState(true);
   const [discoveryReady, setDiscoveryReady] = useState(false);
   const onDiscoveryReady = useCallback(() => setDiscoveryReady(true), []);
+  const signInStalled = useHeldFor(!isLoaded, CONNECT_SIGN_IN_TIMEOUT_MS);
 
   return (
     <div className="rounded-lg border border-border bg-background">
@@ -595,10 +623,19 @@ function ConnectAccountOption({
           }
         >
           <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1 text-left">SpecWithCode Connect</span>
+          <span className="min-w-0 flex-1 text-left">
+            <span className="block">SpecWithCode Connect</span>
+            {optional ? (
+              <span className="block text-xs font-normal text-muted-foreground">
+                {tx("Optional. Reach this computer from your phone and other machines.")}
+              </span>
+            ) : null}
+          </span>
           <span className="text-xs text-muted-foreground">
             {!isLoaded
-              ? t("wizard.connect.loadingSignIn")
+              ? signInStalled
+                ? tx("Sign-in did not load")
+                : t("wizard.connect.loadingSignIn")
               : !isSignedIn
                 ? t("wizard.connect.signIn")
                 : !discoveryReady
@@ -634,6 +671,26 @@ function ConnectAccountOption({
           </div>
         </CollapsiblePanel>
       </Collapsible>
+      {signInStalled ? (
+        <div role="alert" className="flex items-center justify-between gap-3 px-3 pb-3">
+          <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
+            {tx("Connect sign-in did not load, so check this computer's network.")}{" "}
+            {optional
+              ? tx(
+                  "Setup works without Connect, and you can add it later in Settings > Connections.",
+                )
+              : tx("You can add a computer with a pairing link instead.")}
+          </p>
+          <Button
+            className="shrink-0"
+            size="xs"
+            variant="outline"
+            onClick={() => window.location.reload()}
+          >
+            {tx("Retry")}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -778,26 +835,54 @@ function AgentsStep({
   readonly onContinue: () => void;
 }) {
   const t = useT();
+  const tx = useTx();
   const { environments } = useEnvironments();
+  const machines = useMemo(
+    () =>
+      environmentIds.map((environmentId) => ({
+        environmentId,
+        label:
+          environments.find((environment) => environment.environmentId === environmentId)?.label ??
+          t("wizard.computer"),
+      })),
+    [environmentIds, environments, t],
+  );
+  const reported = useAgentReadiness(machines);
+  const checkStalled = useHeldFor(reported.kind === "checking", AGENT_CHECK_TIMEOUT_MS);
+  const readiness = checkStalled ? ({ kind: "none" } as const) : reported;
   return (
     <StepShell title={t("wizard.agents.title")} description={t("wizard.agents.description")}>
       <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
         <div className="space-y-5 pr-3">
-          {environmentIds.map((environmentId) => (
+          {machines.map(({ environmentId, label }) => (
             <ConnectedAgentsStep
               key={environmentId}
               environmentId={environmentId}
-              machineLabel={
-                environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? t("wizard.computer")
-              }
+              machineLabel={label}
             />
           ))}
         </div>
       </ScrollArea>
-      <div className="mt-6 flex justify-end">
-        <Button autoFocus onClick={onContinue}>
-          {t("wizard.continue")}
+      <p
+        role="status"
+        className={cn(
+          "mt-4 text-sm leading-relaxed",
+          readiness.kind === "ready"
+            ? "text-success-foreground"
+            : readiness.kind === "checking"
+              ? "text-muted-foreground"
+              : "text-warning-foreground",
+        )}
+      >
+        {agentReadinessMessage(readiness, tx)}
+      </p>
+      <div className="mt-4 flex justify-end">
+        <Button
+          autoFocus
+          variant={readiness.kind === "none" ? "outline" : "default"}
+          onClick={onContinue}
+        >
+          {readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue")}
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
@@ -813,6 +898,7 @@ function ConnectedAgentsStep({
   readonly machineLabel: string;
 }) {
   const t = useT();
+  const tx = useTx();
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -826,6 +912,7 @@ function ConnectedAgentsStep({
     autoStart: boolean;
   } | null>(null);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const [rechecking, setRechecking] = useState(false);
 
   // Re-probe on entry so freshly installed CLIs show up without a manual
   // refresh; harmless when nothing changed (single-flighted per environment).
@@ -858,7 +945,23 @@ function ConnectedAgentsStep({
   }
   return (
     <section>
-      <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h2 className="min-w-0 text-sm font-medium break-words">{machineLabel}</h2>
+        <Button
+          className="shrink-0"
+          size="xs"
+          variant="ghost-muted"
+          disabled={rechecking}
+          onClick={() => {
+            setRechecking(true);
+            void Promise.resolve(refreshProviders({ environmentId, input: {} })).finally(() =>
+              setRechecking(false),
+            );
+          }}
+        >
+          {rechecking ? tx("Checking…") : tx("Check again")}
+        </Button>
+      </div>
       {!canOperateTerminal ? (
         <p className="mb-2 text-sm text-muted-foreground">{t("wizard.agents.noTerminal")}</p>
       ) : null}
@@ -1102,9 +1205,7 @@ function AgentCard({
           <span className="text-xs text-muted-foreground">{t("wizard.agents.checking")}</span>
         ) : providerState === "disabled" ? (
           <span className="text-xs text-muted-foreground">{t("wizard.agents.disabled")}</span>
-        ) : providerState === "attention" ? (
-          <span className="text-xs text-muted-foreground">{summary.headline}</span>
-        ) : (
+        ) : providerState === "attention" && provider?.auth.status === "authenticated" ? null : (
           <Button
             size="xs"
             variant="ghost"
@@ -1112,7 +1213,11 @@ function AgentCard({
             disabled={terminalOpen || !terminalAvailable}
           >
             <TerminalIcon className="size-3.5" />
-            {providerState === "signIn" ? t("wizard.agents.signIn") : t("wizard.agents.install")}
+            {providerState === "signIn"
+              ? t("wizard.agents.signIn")
+              : providerState === "attention"
+                ? tx("Open terminal")
+                : t("wizard.agents.install")}
           </Button>
         )}
       </div>
