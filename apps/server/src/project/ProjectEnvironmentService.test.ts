@@ -656,7 +656,7 @@ it.layer(layer, { excludeTestServices: true })("project environment real Git", (
       });
       assert.include(error.message, "is a repository URL, not a folder");
       // A rejected save carries the entry to the client, not only the sentence.
-      assert.deepEqual(projectMutationErrorEntry(error), { entry: error.entry });
+      assert.deepEqual(projectMutationErrorEntry(error), { entry: error.entry! });
       const relative = yield* normalizeProjectEnvironment(x.projectId, x.main, {
         additionalFolders: [],
         repositories: [{ id: "code", url, localPath: "checkouts/code" }],
