@@ -128,6 +128,8 @@ export function outgoingDelegation(input: {
   readonly origin: WorkOrigin | undefined;
   /** The ceiling the work carries there, if any. */
   readonly carried?: TeamRulesCarried | undefined;
+  /** See {@link mayReturnToOrigin}: the launch goes back to the machine that sent this work. */
+  readonly returnToOrigin?: boolean | undefined;
 }):
   | { readonly ok: true; readonly delegation: OrchestratorMcpDelegation }
   | {
@@ -135,7 +137,11 @@ export function outgoingDelegation(input: {
       readonly code: "delegation_cycle" | "delegation_limit";
       readonly path: ReadonlyArray<EnvironmentId>;
     } {
-  const path = [...(input.origin?.path ?? []), input.localEnvironmentId];
+  // Going straight back runs under this machine's own grant there, so the path
+  // starts here; the hop count carries on, so the machines cannot bounce work forever.
+  const returning =
+    input.returnToOrigin === true && input.origin?.path.at(-1) === input.targetEnvironmentId;
+  const path = [...(returning ? [] : (input.origin?.path ?? [])), input.localEnvironmentId];
   const hops = (input.origin?.hops ?? 0) + 1;
   if (path.includes(input.targetEnvironmentId))
     return { ok: false, code: "delegation_cycle", path: [...path, input.targetEnvironmentId] };
@@ -149,6 +155,21 @@ export function outgoingDelegation(input: {
     delegation: { path, hops, ...(input.carried === undefined ? {} : { carried: input.carried }) },
   };
 }
+
+/**
+ * Whether work another machine started here may reach that same machine
+ * again: launch there, move a file with it or move a thread back. Only the
+ * owner's own machine, only the one that sent the work, and only through the
+ * grant the user gave this machine there, which the call itself must present.
+ */
+export const mayReturnToOrigin = (input: {
+  readonly grant: Pick<EffectiveWorkGrant, "owner" | "revoked">;
+  readonly origin: WorkOrigin | undefined;
+  readonly targetEnvironmentId: string;
+}) =>
+  input.grant.owner === "self" &&
+  !input.grant.revoked &&
+  input.origin?.path?.at(-1) === input.targetEnvironmentId;
 
 /** The message a refused launch carries, naming the path. */
 export function delegationRefusal(

@@ -70,6 +70,8 @@ const setup = (
     readonly grantedRuntimeMode?: "approval-required" | "auto-accept-edits";
     /** Another machine's work started the calling thread here. */
     readonly origin?: WorkOrigin;
+    /** Whose machine the origin is, as this machine's grant records it (default the owner's). */
+    readonly originOwner?: "self" | "other";
     /** The other machine refuses or loses the launch with this code. */
     readonly remoteFails?: OrchestratorMcpFailure["code"];
     /** The caller's project is this machine's personal assistant. */
@@ -310,7 +312,8 @@ const setup = (
       ...WorkGrants.WorkGrants.defaultValue(),
       enabled: true,
       originOf: () => Effect.succeed(options.origin),
-      forCoordinator: (id) => Effect.succeed(unscopedGrant(id)),
+      forCoordinator: (id) =>
+        Effect.succeed({ ...unscopedGrant(id), owner: options.originOwner ?? "self" }),
     }),
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("env-m4"),
@@ -727,10 +730,41 @@ it.effect("never forwards a worktree ask that would override the other machine's
   });
 });
 
+it.effect(
+  "starts work back on the owner's machine that sent it, under this machine's grant",
+  () => {
+    // The owner's M1 started the calling thread here; the user also let this machine use M1.
+    const { launch, remoteLaunches } = setup({
+      origin: { coordinatorEnvironmentId: M1.environmentId, path: [M1.environmentId], hops: 1 },
+    });
+    return Effect.gen(function* () {
+      yield* launch({ title: "Fetch clip", message: "Find it", machine: "M1" });
+      // The path starts here, and the hop count carries on, so the work cannot bounce for ever.
+      expect(remoteLaunches[0]?.delegation).toEqual({ path: ["env-m4"], hops: 2 });
+    });
+  },
+);
+
+it.effect("never sends work further back along its path than the machine that sent it", () => {
+  const { launch, remoteLaunches } = setup({
+    origin: {
+      coordinatorEnvironmentId: EnvironmentId.make("env-m3"),
+      path: [M1.environmentId, EnvironmentId.make("env-m3")],
+      hops: 2,
+    },
+  });
+  return Effect.gen(function* () {
+    const result = yield* launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(result).toMatchObject({ code: "delegation_cycle" });
+    expect(remoteLaunches).toEqual([]);
+  });
+});
+
 it.effect("refuses to send work back to the machine it came from, before sending it", () => {
-  // M1 started the calling thread here; it may not start work on M1 in turn.
+  // Another person's M1 started the calling thread here; it may not start work on M1 in turn.
   const { launch, remoteLaunches } = setup({
     origin: { coordinatorEnvironmentId: M1.environmentId, path: [M1.environmentId], hops: 1 },
+    originOwner: "other",
   });
   return Effect.gen(function* () {
     const result = yield* launch({ title: "Fix CI", message: "Fix it", machine: "M1" });

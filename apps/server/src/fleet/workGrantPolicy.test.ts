@@ -6,6 +6,7 @@ import {
   checkIncomingDelegation,
   coordinatorOfWorkerLabel,
   delegationRefusal,
+  mayReturnToOrigin,
   outgoingDelegation,
   projectInGrant,
   WORKER_CLIENT_LABEL_PREFIX,
@@ -107,6 +108,69 @@ describe("work grant policy", () => {
     expect(
       outgoingDelegation({ localEnvironmentId: M3, targetEnvironmentId: M4, origin: undefined }).ok,
     ).toBe(true);
+  });
+
+  it("lets the owner's work go straight back to the machine that sent it, and nowhere further", () => {
+    const self = { owner: "self" as const, revoked: false };
+    const origin = { coordinatorEnvironmentId: M4, path: [M4], hops: 1 };
+    expect(mayReturnToOrigin({ grant: self, origin, targetEnvironmentId: M4 })).toBe(true);
+    expect(mayReturnToOrigin({ grant: self, origin, targetEnvironmentId: M3 })).toBe(false);
+    expect(mayReturnToOrigin({ grant: self, origin: undefined, targetEnvironmentId: M4 })).toBe(
+      false,
+    );
+    expect(
+      mayReturnToOrigin({
+        grant: { owner: "other", revoked: false },
+        origin,
+        targetEnvironmentId: M4,
+      }),
+    ).toBe(false);
+    expect(
+      mayReturnToOrigin({
+        grant: { owner: "self", revoked: true },
+        origin,
+        targetEnvironmentId: M4,
+      }),
+    ).toBe(false);
+    const relayed = { coordinatorEnvironmentId: M3, path: [M4, M3], hops: 2 };
+    expect(mayReturnToOrigin({ grant: self, origin: relayed, targetEnvironmentId: M4 })).toBe(
+      false,
+    );
+    // Back to M4: the path starts on M1, and the hop count carries on.
+    const back = outgoingDelegation({
+      localEnvironmentId: M1,
+      targetEnvironmentId: M4,
+      origin,
+      returnToOrigin: true,
+    });
+    expect(back).toEqual({ ok: true, delegation: { path: [M1], hops: 2 } });
+    // M4 accepts it within the owner's hop limit, and refuses a second bounce.
+    expect(
+      checkIncomingDelegation({
+        ownEnvironmentId: M4,
+        coordinatorEnvironmentId: M1,
+        delegation: back.ok ? back.delegation : undefined,
+        hopLimit: 2,
+      }).ok,
+    ).toBe(true);
+    const bounced = outgoingDelegation({
+      localEnvironmentId: M4,
+      targetEnvironmentId: M1,
+      origin: { coordinatorEnvironmentId: M1, path: [M1], hops: 2 },
+      returnToOrigin: true,
+    });
+    expect(
+      checkIncomingDelegation({
+        ownEnvironmentId: M1,
+        coordinatorEnvironmentId: M4,
+        delegation: bounced.ok ? bounced.delegation : undefined,
+        hopLimit: 2,
+      }),
+    ).toMatchObject({ ok: false, code: "delegation_limit" });
+    // Without the flag it is still the loop it always was.
+    expect(
+      outgoingDelegation({ localEnvironmentId: M1, targetEnvironmentId: M4, origin }),
+    ).toMatchObject({ ok: false, code: "delegation_cycle" });
   });
 
   it("scopes projects to all, linked to the coordinator, or listed", () => {

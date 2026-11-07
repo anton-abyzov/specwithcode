@@ -1738,6 +1738,10 @@ export const ru: PhraseCatalog = {
   "Most access for incoming work": "Максимальный доступ для входящей работы",
   "Setting up…": "Настройка…",
   "Allow {coordinatorLabel}": "Разрешить {coordinatorLabel}",
+  "{coordinatorLabel} cannot run work here yet.":
+    "{coordinatorLabel} пока не может запускать работу здесь.",
+  "Let {coordinatorLabel} use this machine too":
+    "Разрешить {coordinatorLabel} тоже использовать эту машину",
   "On {coordinatorLabel}: done": "На {coordinatorLabel}: готово",
   "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
     "На {coordinatorLabel}: ещё не настроено. Откройте «Настройки» > «Машины», разверните «Доступ, маршруты и права исполнителей» в карточке {hereLabel} и выберите «Разрешить исполнителей».",

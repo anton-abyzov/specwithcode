@@ -167,6 +167,8 @@ export interface MachineRowModel {
   readonly connectLock: TeamRulesLock | null;
   /** This app sees the machine, but this server does not list it, so agents here cannot use it. */
   readonly canAddForAgents: boolean;
+  /** A connected machine this one has never let run work here; one click sets that direction up. */
+  readonly canAllowBack: boolean;
 }
 
 const ROLE_LABELS: Readonly<Record<SharedProjectRole | "only-here", string>> = {
@@ -514,6 +516,12 @@ export function buildMachineRows(input: {
       ),
       accounts: accountsOn(environment.environmentId, input.hostBlocks),
       connectBothWays: fleetMachine !== null && connected,
+      canAllowBack: canAllowBack({
+        environmentId: environment.environmentId,
+        primaryEnvironmentId: input.primaryEnvironmentId,
+        connected,
+        workGrants: input.workGrants,
+      }),
       ...(isThisMachine
         ? { teamRules: anyRules ? teamRulesOwnMachineView(ownRules) : null, connectLock: null }
         : peerRulesFields(
@@ -549,9 +557,29 @@ export function buildMachineRows(input: {
       connectBothWays: false,
       ...peerRulesFields(machine.label, undefined, machine),
       canAddForAgents: false,
+      canAllowBack: false,
     });
   }
   return rows;
+}
+
+/**
+ * Whether to offer letting another machine run work on this one. Any grant,
+ * even a revoked or expired one, is managed under Who can run work here, and
+ * without a grants answer yet "none" means nothing, as for Add for agents.
+ */
+export function canAllowBack(input: {
+  readonly environmentId: EnvironmentId;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly connected: boolean;
+  readonly workGrants: StudioWorkGrantsSnapshot | null | undefined;
+}): boolean {
+  if (input.primaryEnvironmentId === null || input.environmentId === input.primaryEnvironmentId)
+    return false;
+  if (!input.connected || !input.workGrants) return false;
+  return !input.workGrants.grants.some(
+    (grant) => grant.coordinatorEnvironmentId === input.environmentId,
+  );
 }
 
 /**

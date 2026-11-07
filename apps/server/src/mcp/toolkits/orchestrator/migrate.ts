@@ -29,6 +29,7 @@ import {
   loadCaller,
   unavailable,
 } from "../../threadAccess.ts";
+import { mayReturnToOrigin } from "../../../fleet/workGrantPolicy.ts";
 import { assertThreadInGrant, assertThreadWritable, workGrantOf } from "../../workGrantAccess.ts";
 
 type FailureCode = OrchestratorMcpFailure["code"];
@@ -223,13 +224,38 @@ export const migrateThreads = (input: OrchestratorMcpThreadMigrateInput) =>
     yield* assertMayMigrate(context, caller);
     // A moved thread runs on the other machine as this machine's own work, past
     // the grant's path, hop limit and revocation, so only a legacy grant (the
-    // owner's own machines, from before grants) may migrate.
+    // owner's own machines, from before grants) may migrate anywhere. Other
+    // work of the owner's own machine may move back to the machine that sent it,
+    // through the grant the user gave this machine there.
     const work = yield* workGrantOf(context);
-    if (work !== undefined && work.grant.legacy !== true)
-      return yield* failure(
+    const workers = yield* RemoteWorkers.RemoteWorkers;
+    const outsideScope = () =>
+      failure(
         "outside_grant_scope",
-        `This machine does not let ${work.coordinatorLabel}'s work move threads to other machines. Ask this machine's coordinator to migrate them.`,
+        `This machine does not let ${work!.coordinatorLabel}'s work move threads to other machines than ${work!.coordinatorLabel}. Ask this machine's coordinator to migrate them.`,
       );
+    const destination = yield* workers
+      .resolveMachine(input.machine)
+      .pipe(
+        Effect.mapError((error) =>
+          work === undefined ||
+          work.grant.legacy === true ||
+          error.code === "machine_not_authorized"
+            ? error
+            : outsideScope(),
+        ),
+      );
+    if (
+      work !== undefined &&
+      work.grant.legacy !== true &&
+      destination.kind === "remote" &&
+      !mayReturnToOrigin({
+        grant: work.grant,
+        origin: work.origin,
+        targetEnvironmentId: destination.machine.environmentId,
+      })
+    )
+      return yield* outsideScope();
     // A personal assistant's threads never move, named or not; every thread
     // moved belongs to the caller's project.
     const project = yield* ProjectService.ProjectService.pipe(
@@ -252,8 +278,6 @@ export const migrateThreads = (input: OrchestratorMcpThreadMigrateInput) =>
       targets.push(yield* loadTarget(context, caller, threadId));
     }
 
-    const workers = yield* RemoteWorkers.RemoteWorkers;
-    const destination = yield* workers.resolveMachine(input.machine);
     if (destination.kind === "local") {
       return yield* failure(
         "invalid_request",

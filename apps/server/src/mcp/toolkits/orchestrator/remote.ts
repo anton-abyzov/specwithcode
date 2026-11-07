@@ -32,6 +32,7 @@ import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMc
 import {
   coordinatorOfWorkerLabel,
   delegationRefusal,
+  mayReturnToOrigin,
   outgoingDelegation,
 } from "../../../fleet/workGrantPolicy.ts";
 import { type Caller, loadCaller, readCaller } from "../../threadAccess.ts";
@@ -201,6 +202,11 @@ const assertGrantMayReach = (
       localEnvironmentId: context.scope.environmentId,
       targetEnvironmentId: machine.environmentId,
       origin: work.origin,
+      returnToOrigin: mayReturnToOrigin({
+        grant: work.grant,
+        origin: work.origin,
+        targetEnvironmentId: machine.environmentId,
+      }),
       carried: teamRulesOutgoingCarried(
         // The ceiling a zone or repository sets for this thread's folder leaves with it too.
         yield* teamRulesForFolder(

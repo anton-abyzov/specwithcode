@@ -16,7 +16,11 @@ import * as Schema from "effect/Schema";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
-import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
+import {
+  delegationRefusal,
+  mayReturnToOrigin,
+  outgoingDelegation,
+} from "../../../fleet/workGrantPolicy.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRules.ts";
 import type { Caller } from "../../threadAccess.ts";
@@ -233,10 +237,24 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
               }),
           ),
         );
+  const storage = () =>
+    new OrchestratorMcpFailure({
+      code: "orchestration_error",
+      message: "This machine could not read who may run work on it. Try again.",
+    });
   const outgoing = outgoingDelegation({
     localEnvironmentId: context.scope.environmentId,
     targetEnvironmentId: input.machine.machine.environmentId,
     origin,
+    returnToOrigin:
+      origin !== undefined &&
+      mayReturnToOrigin({
+        grant: yield* grants
+          .forCoordinator(origin.coordinatorEnvironmentId)
+          .pipe(Effect.mapError(storage)),
+        origin,
+        targetEnvironmentId: input.machine.machine.environmentId,
+      }),
     carried: teamRulesOutgoingCarried(
       yield* teamRulesForFolder(caller?.worktreePath ?? project?.workspaceRoot),
       caller?.origin?.carried,

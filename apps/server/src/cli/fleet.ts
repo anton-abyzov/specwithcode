@@ -106,6 +106,15 @@ const resolveFleetBaseDir = (explicit: Option.Option<string>) =>
     Effect.catchTags({ NoRunningServerError: () => fleetHomeWithoutServer(explicit) }),
   );
 
+/** The environment id the server saved under `baseDir`, or undefined before its first start. */
+const savedEnvironmentId = (baseDir: string) =>
+  Effect.promise(() =>
+    readFile(join(baseDir, "userdata", "environment-id"), "utf8").then(
+      (raw) => raw.trim() || undefined,
+      () => undefined,
+    ),
+  );
+
 /** The explicit or default home, for when no server is running. */
 const fleetHomeWithoutServer = (explicit: Option.Option<string>) =>
   Effect.gen(function* () {
@@ -274,7 +283,8 @@ const addCommand = Command.make("add", {
         Option.getOrUndefined(flags.baseDir),
       ).pipe(
         Effect.map((target) => target.descriptor.environmentId as string),
-        Effect.orElseSucceed(() => undefined),
+        // Without a running server, the id it saved: a line from this machine is still refused.
+        Effect.catch(() => savedEnvironmentId(baseDir)),
       );
       const added = yield* Effect.tryPromise({
         try: () =>

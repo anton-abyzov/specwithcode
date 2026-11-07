@@ -1754,6 +1754,10 @@ export const de: PhraseCatalog = {
   "Most access for incoming work": "Höchster Zugriff für eingehende Arbeit",
   "Setting up…": "Wird eingerichtet…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} erlauben",
+  "{coordinatorLabel} cannot run work here yet.":
+    "{coordinatorLabel} kann hier noch keine Arbeit ausführen.",
+  "Let {coordinatorLabel} use this machine too":
+    "{coordinatorLabel} diesen Rechner auch nutzen lassen",
   "On {coordinatorLabel}: done": "Auf {coordinatorLabel}: erledigt",
   "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
     "Auf {coordinatorLabel}: noch nicht eingerichtet. Öffne Einstellungen > Rechner, klappe auf der Karte von {hereLabel} Zugriff, Routen und Worker-Berechtigungen auf und wähle Worker erlauben.",

@@ -403,6 +403,43 @@ describe("Settings > Machines", () => {
     expect(html.match(/May run work here/g)).toHaveLength(1);
   });
 
+  it("offers letting a connected machine without a grant here use this machine too", () => {
+    setUp();
+    runtime.grants = { grants: [], projects: [], accounts: [] };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).toContain("MacBook Pro cannot run work here yet.");
+    expect(html.match(/Let MacBook Pro use this machine too/g)).toHaveLength(1);
+    // Never for this machine itself.
+    expect(html).not.toContain("Let M4MAX use this machine too");
+  });
+
+  it("shows no allow-back step before the grants load or once that machine holds a grant", () => {
+    setUp();
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("use this machine too");
+    runtime.grants = {
+      grants: [
+        {
+          coordinatorEnvironmentId: m3,
+          machineLabel: "MacBook Pro",
+          projects: { kind: "linked" },
+          accounts: { kind: "all" },
+          owner: "self",
+          hopLimit: 2,
+          runtimeCap: "auto",
+          expiresAt: null,
+          status: "revoked",
+          revokedAt: null,
+          interruptAt: null,
+          runningThreads: 0,
+          legacy: false,
+        },
+      ],
+      projects: [],
+      accounts: [],
+    };
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("use this machine too");
+  });
+
   it("names a coordinator the server sends only by id, never printing the raw id", () => {
     setUp();
     const grant = {

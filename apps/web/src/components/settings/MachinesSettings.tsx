@@ -60,6 +60,7 @@ import {
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
 import { HandoffModeSettings } from "./HandoffModeSettings";
+import { IncomingWorkerAction } from "./IncomingWorkerSetup";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingHelp } from "./SettingHelp";
 import { SettingsPageContainer, SettingsSection, TeamRulesLabel } from "./settingsLayout";
@@ -171,6 +172,15 @@ export function MachinesSettingsPanel() {
       connectBothWays={
         row.connectBothWays && fleet.primaryEnvironmentId ? (
           <ConnectBothWays row={row} primaryEnvironmentId={fleet.primaryEnvironmentId} />
+        ) : null
+      }
+      allowBack={
+        row.canAllowBack && fleet.primaryEnvironmentId ? (
+          <AllowBack
+            row={row}
+            primaryEnvironmentId={fleet.primaryEnvironmentId}
+            onGranted={grants.refresh}
+          />
         ) : null
       }
       details={details}
@@ -588,6 +598,7 @@ export function MachineRow({
   onConnect,
   addForAgents,
   connectBothWays,
+  allowBack,
 }: {
   remoteControl?: ReactNode;
   details?: ReactNode;
@@ -596,6 +607,8 @@ export function MachineRow({
   onConnect: (machine: StudioFleetMachine) => void;
   addForAgents?: ReactNode;
   connectBothWays?: ReactNode;
+  /** Shown where the grant would be until that machine may run work here. */
+  allowBack?: ReactNode;
 }) {
   const tx = useTx();
   const seen = row.seen.state === "this-machine" || row.seen.state === "connected";
@@ -698,7 +711,9 @@ export function MachineRow({
             <span>{row.workHere.detail}</span>
           </p>
         </DetailLine>
-      ) : null}
+      ) : (
+        allowBack
+      )}
 
       {row.teamRules ? (
         <DetailLine label={tx("Team rules")}>
@@ -770,6 +785,48 @@ export function MachineRow({
 
       {connectBothWays}
     </li>
+  );
+}
+
+/**
+ * The other direction of a pair: that machine is connected but may not run
+ * work here. The existing incoming setup adds this machine to its list over
+ * Connect and allows its workers, after the same confirmation. Once the grants
+ * refresh, the card shows the grant instead.
+ */
+function AllowBack({
+  row,
+  primaryEnvironmentId,
+  onGranted,
+}: {
+  row: MachineRowModel;
+  primaryEnvironmentId: EnvironmentId;
+  onGranted: () => void;
+}) {
+  const tx = useTx();
+  const name = useMachineNicknames();
+  const { environments } = useEnvironments();
+  const hereLabel = name(
+    primaryEnvironmentId,
+    environments.find((environment) => environment.environmentId === primaryEnvironmentId)?.label ??
+      "this machine",
+  );
+  const coordinatorLabel = name(row.environmentId, row.label);
+  return (
+    <DetailLine label={tx("Work it may run here")}>
+      <p className="text-xs text-muted-foreground">
+        {tx("{coordinatorLabel} cannot run work here yet.", { coordinatorLabel })}
+      </p>
+      <IncomingWorkerAction
+        here={primaryEnvironmentId}
+        coordinator={row.environmentId}
+        hereLabel={hereLabel}
+        coordinatorLabel={coordinatorLabel}
+        connected={row.seen.state === "connected"}
+        actionLabel={tx("Let {coordinatorLabel} use this machine too", { coordinatorLabel })}
+        onGranted={onGranted}
+      />
+    </DetailLine>
   );
 }
 
