@@ -39,9 +39,20 @@ import Testing
     #expect(TranscriptFolding.rows(rows, detail: .concise, isRunning: true).map(\.id) == ["u1", "fold:u1", "final", "u2"])
   }
 
-  @Test func foldedStepsKeepsTheRunningTurnOpen() {
-    let running = [user("u1"), reply("note"), command("c1"), command("c2", status: .running)]
-    #expect(TranscriptFolding.rows(running, detail: .normal, isRunning: true) == running)
+  @Test func foldedStepsFoldsTheRunningTurnsStepsIntoOneLiveRow() {
+    let running = [user("u1"), reply("note"), command("c1"), thought("t1"), command("c2", status: .running)]
+    let rows = TranscriptFolding.rows(running, detail: .normal, isRunning: true)
+    #expect(rows.map(\.id) == ["u1", "note", "fold:c1"])
+    #expect(rows[2].kind == .fold(label: "Working", summary: "Ran 2 commands", failures: 0, expanded: false, running: true))
+    let opened = TranscriptFolding.rows(running, detail: .normal, isRunning: true, expandedFolds: ["fold:c1"])
+    #expect(opened.map(\.id) == ["u1", "note", "fold:c1", "c1", "t1", "c2"])
+  }
+
+  @Test func foldedStepsKeepsNotesAndFailuresBetweenStepRuns() {
+    let running = [user("u1"), command("c1"), command("c2"), reply("note"), command("f1", status: .failed), command("c3"), command("c4", status: .running)]
+    let rows = TranscriptFolding.rows(running, detail: .normal, isRunning: true)
+    #expect(rows.map(\.id) == ["u1", "fold:c1", "note", "f1", "fold:c3"])
+    #expect(rows[1].kind == .fold(label: "Worked", summary: "Ran 2 commands", failures: 0, expanded: false, running: false))
   }
 
   @Test func resultsOnlyShowsTheLatestReplyAndOneLiveRowWhileRunning() {
@@ -56,12 +67,14 @@ import Testing
   @Test func earlierTurnsFoldWhileTheLastOneRuns() {
     let rows = settled + [user("u2"), command("c3", status: .running)]
     let shown = TranscriptFolding.rows(rows, detail: .normal, isRunning: true)
-    #expect(shown.map(\.id) == ["u1", "fold:u1", "final", "u2", "c3"])
+    #expect(shown.map(\.id) == ["u1", "fold:u1", "final", "u2", "fold:c3"])
   }
 
   @Test func aTurnWaitingOnAnApprovalStaysOpen() {
     let waiting = [user("u1"), command("c1"), TranscriptRow(id: "a1", kind: .approval(requestId: "r", prompt: "npm publish", resolved: false))]
     #expect(TranscriptFolding.rows(waiting, detail: .normal, isRunning: false) == waiting)
+    let twoSteps = [user("u1"), command("c1"), edit("e1"), waiting[2]]
+    #expect(TranscriptFolding.rows(twoSteps, detail: .normal, isRunning: false).map(\.id) == ["u1", "fold:c1", "a1"])
     let concise = TranscriptFolding.rows(waiting, detail: .concise, isRunning: false)
     #expect(concise.map(\.id) == ["u1", "a1", "fold:u1"])
   }

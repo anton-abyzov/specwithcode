@@ -26,7 +26,7 @@ struct ToolPresentation {
       "exec_command": "Run command",
       "apply_patch": "Edit files",
     ]
-    title = names[key] ?? "Use tool"
+    title = names[key] ?? ToolPresentation.readableName(key)
     var failure: String?
     if case let .object(object) = output, itemFailed || object["isError"] == .bool(true) {
       if case let .array(content) = object["content"] {
@@ -44,5 +44,17 @@ struct ToolPresentation {
     }
     failed = itemFailed || failure != nil
     detail = failure.map { "\($0)\nTool: \(name)" } ?? "Tool: \(name)"
+  }
+
+  /// A tool without a hand-written title, named from its own name:
+  /// `chrome_screenshot` reads "Chrome screenshot".
+  static func readableName(_ key: String) -> String {
+    let words = key
+      .replacingOccurrences(of: "_", with: " ")
+      .replacingOccurrences(of: "-", with: " ")
+      .split(separator: " ")
+      .joined(separator: " ")
+    guard let first = words.first else { return "Use tool" }
+    return first.uppercased() + words.dropFirst()
   }
 }
