@@ -1,8 +1,8 @@
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
-import { useNavigate } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { useProjects, useThreadShell } from "../../state/entities";
@@ -34,6 +34,10 @@ export function InPlaceProjectSettingsHost() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const unreachable = useUnreachableHosts();
   const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
+  // A request belongs to the page it was made on: one still loading when the person
+  // moves on never opens over the next page.
+  const pathname = useLocation({ select: (location) => location.pathname });
+  useEffect(() => closeInPlaceProjectSettings, [pathname]);
   if (request === null) return null;
   const group = findProjectGroup(groups, request.projectKey);
   const members = group?.memberProjects ?? [];
