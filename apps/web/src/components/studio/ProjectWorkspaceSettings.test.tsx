@@ -1579,11 +1579,26 @@ describe("rename from a double click on the sidebar row", () => {
       const entry = container.querySelector('[data-entry-key="repository:repo-one"]')!;
       expect(entry.textContent).toContain(message);
       expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
-        "An Environment entry needs attention",
+        "1 Environment entry needs attention",
       );
       expect(container.querySelector(".project-settings-footer")?.textContent).not.toContain(
         message,
       );
+      await input(pathField, "/scratch/atlas/code");
+      expect(entry.textContent).not.toContain(message);
+    });
+
+    it("holds Save while a typed URL waits for Done", async () => {
+      await render("environment");
+      await input(pathField, "/scratch/atlas/other");
+      await press(`Edit URL ${atlas}`);
+      await input(`input[aria-label="Repository URL for ${atlas}"]`, renamed);
+      expect(saveButton().disabled).toBe(true);
+      expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
+        "Press Done on the repository URL",
+      );
+      await click("Done");
+      expect(saveButton().disabled).toBe(false);
     });
   });
 });

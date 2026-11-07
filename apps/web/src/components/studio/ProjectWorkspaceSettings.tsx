@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -219,6 +220,15 @@ export function ProjectWorkspaceSettings({
     readonly message: string;
   } | null>(null);
   const [environmentFieldErrors, setEnvironmentFieldErrors] = useState(0);
+  const [urlEditOpen, setUrlEditOpen] = useState(false);
+  const [discards, setDiscards] = useState(0);
+  const reportFieldErrors = useCallback((count: number, editOpen: boolean) => {
+    setEnvironmentFieldErrors(count);
+    setUrlEditOpen(editOpen);
+  }, []);
+  // A flagged entry blocks only a save that sends the environment; an
+  // unapplied URL edit always blocks, or Save would drop it.
+  const environmentBlocked = environmentFieldErrors > 0 && (environmentEdited || urlEditOpen);
   const [confirmation, setConfirmation] = useState("");
   const [closeWarning, setCloseWarning] = useState(false);
   const hostConfig = useEnvironment(project.environmentId)?.serverConfig;
@@ -269,7 +279,7 @@ export function ProjectWorkspaceSettings({
     if (entry !== undefined && e instanceof Error) {
       setEnvironmentEntryError({ entry, message: e.message });
       setTab("environment");
-      setError("An Environment entry needs attention. The reason is shown beside it.");
+      setError("1 Environment entry needs attention. The reason is shown beside it.");
       return;
     }
     setError(
@@ -710,6 +720,11 @@ export function ProjectWorkspaceSettings({
                   onChange={(v) => {
                     change(setEnvironment, v);
                     setEnvironmentEdited(true);
+                    // The rejected entry is being edited; the next save checks it again.
+                    if (environmentEntryError) {
+                      setEnvironmentEntryError(null);
+                      setError(null);
+                    }
                   }}
                   onPrepared={(revision, value) => {
                     setBaseRevision(revision);
@@ -720,7 +735,8 @@ export function ProjectWorkspaceSettings({
                   onDraftChange={setEnvironmentDraftDirty}
                   onBusyChange={setEnvironmentBusy}
                   entryError={environmentEntryError}
-                  onFieldErrorsChange={setEnvironmentFieldErrors}
+                  onFieldErrorsChange={reportFieldErrors}
+                  resetKey={discards}
                 />
                 <ProjectConnections
                   environmentId={project.environmentId}
@@ -769,11 +785,13 @@ export function ProjectWorkspaceSettings({
               {/* The tab can be long; repeat a refusal where Save was pressed. */}
               {error ? (
                 <span className="project-settings-footer-error">{error}</span>
-              ) : environmentFieldErrors > 0 ? (
+              ) : environmentBlocked ? (
                 <span className="project-settings-footer-error">
-                  {environmentFieldErrors === 1
-                    ? "Fix the highlighted Environment entry before saving."
-                    : `Fix the ${environmentFieldErrors} highlighted Environment entries before saving.`}
+                  {urlEditOpen && environmentFieldErrors === 1
+                    ? "Press Done on the repository URL, or Cancel it, before saving."
+                    : environmentFieldErrors === 1
+                      ? "Fix the highlighted Environment entry before saving."
+                      : `Fix the ${environmentFieldErrors} highlighted Environment entries before saving.`}
                 </span>
               ) : (
                 <span>Unsaved project settings</span>
@@ -797,13 +815,14 @@ export function ProjectWorkspaceSettings({
                   setDirty(false);
                   setError(null);
                   setEnvironmentEntryError(null);
+                  setDiscards((count) => count + 1);
                 }}
               >
                 Discard
               </button>
               <button
                 className="project-control project-primary"
-                disabled={disabled || !title.trim() || environmentFieldErrors > 0}
+                disabled={disabled || !title.trim() || environmentBlocked}
                 onClick={() => void save()}
               >
                 Save changes

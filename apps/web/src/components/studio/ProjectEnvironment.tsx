@@ -42,6 +42,7 @@ export function ProjectEnvironment({
   onBusyChange,
   entryError = null,
   onFieldErrorsChange,
+  resetKey = 0,
 }: {
   project: EnvironmentProject;
   projectKey: string;
@@ -58,8 +59,13 @@ export function ProjectEnvironment({
   onBusyChange: (busy: boolean) => void;
   /** A rejected save that named one entry: shown beside that entry. */
   entryError?: { readonly entry: ProjectEnvironmentEntryRef; readonly message: string } | null;
-  /** How many entries have a field that cannot be saved as typed. */
-  onFieldErrorsChange?: (count: number) => void;
+  /**
+   * How many entries have a field that cannot be saved as typed, and whether
+   * one of them is a URL edit not yet applied with Done.
+   */
+  onFieldErrorsChange?: (count: number, urlEditOpen: boolean) => void;
+  /** Changes on Discard, which keeps the same revision, to drop open edits. */
+  resetKey?: number;
 }) {
   const countId = useId();
   const query = useEnvironmentQuery(
@@ -95,11 +101,17 @@ export function ProjectEnvironment({
     setEditingUrl(null);
     setUrlBefore(new Map());
     setPathBefore(new Map());
-  }, [revision]);
-  const fieldErrors = environmentFieldErrorCount(value);
+  }, [revision, resetKey]);
+  // An open URL edit with a new value has not reached the draft yet; Save waits for Done.
+  const openUrlEdit =
+    editingUrl !== null &&
+    value.repositories.some(
+      (repository) => repository.id === editingUrl.id && repository.url !== editingUrl.value.trim(),
+    );
+  const fieldErrors = environmentFieldErrorCount(value) + (openUrlEdit ? 1 : 0);
   useEffect(() => {
-    onFieldErrorsChange?.(fieldErrors);
-  }, [fieldErrors, onFieldErrorsChange]);
+    onFieldErrorsChange?.(fieldErrors, openUrlEdit);
+  }, [fieldErrors, openUrlEdit, onFieldErrorsChange]);
   // Bring the entry a save rejected into view, with its field focused.
   useEffect(() => {
     if (!entryError) return;
@@ -111,7 +123,13 @@ export function ProjectEnvironment({
       ...(sectionRef.current?.querySelectorAll<HTMLElement>("[data-entry-key]") ?? []),
     ].find((element) => element.dataset.entryKey === key);
     target?.scrollIntoView?.({ block: "center" });
-    target?.querySelector<HTMLElement>("input, button")?.focus({ preventScroll: true });
+    const field =
+      entryError.entry.kind === "repository"
+        ? target?.querySelector<HTMLElement>(
+            `#${CSS.escape(`checkout-path-${entryError.entry.repositoryId ?? ""}`)}`,
+          )
+        : null;
+    (field ?? target?.querySelector<HTMLElement>("input, button"))?.focus({ preventScroll: true });
   }, [entryError]);
   const setRepository = (
     id: string,
@@ -134,8 +152,8 @@ export function ProjectEnvironment({
     });
   };
   useEffect(() => {
-    onDraftChange(Boolean(url || folder));
-  }, [url, folder, onDraftChange]);
+    onDraftChange(Boolean(url || folder) || openUrlEdit);
+  }, [url, folder, openUrlEdit, onDraftChange]);
   const blocked = disabled || busy !== null;
   const problems = query.data?.problems ?? [];
   const folderProblem = (folder: string) =>

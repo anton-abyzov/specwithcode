@@ -35,15 +35,25 @@ import { formatSettingValueFor } from "./settingValueLabels";
 import { useNamedEnvironments } from "./useNamedEnvironments";
 import { useRunScopedPlan, type ScopedPlanFeedback } from "./useScopedSettings";
 
+/** The Select value for a stored null, such as "Last selected" for the merge method. */
+const NULL_OPTION = "__null";
+
 /** Keys edited in place with a Select; every other key opens its own row. */
 const ENUM_OPTIONS: Partial<Record<ProjectScopedServerSettingKey, readonly string[]>> = {
   threadFinishAction: ThreadFinishAction.literals,
   defaultRuntimeMode: RuntimeMode.literals,
   providerLimitAction: ProviderLimitAction.literals,
   defaultThreadEnvMode: ThreadEnvMode.literals,
-  pullRequestMergeMethod: PullRequestMergeMethod.literals,
+  pullRequestMergeMethod: [NULL_OPTION, ...PullRequestMergeMethod.literals],
   responseStreamingMode: ResponseStreamingMode.literals,
 };
+
+const optionValue = (value: unknown) => (value === null ? NULL_OPTION : String(value));
+
+function decodeOption(line: ProjectOverrideLine, option: string | null): unknown {
+  if (typeof line.rawValue === "boolean") return option === "true";
+  return option === NULL_OPTION ? null : option;
+}
 
 function editOptions(key: ProjectScopedServerSettingKey, line: ProjectOverrideLine) {
   const listed = ENUM_OPTIONS[key];
@@ -121,6 +131,20 @@ export function ProjectOverrides({
     [environmentKey],
   );
   const writable = useEnvironmentsWithScope(rowEnvironments, AuthSettingsWriteScope);
+  const connected = new Set(
+    environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+  );
+  // Why these machines cannot be changed now, or undefined when they all can.
+  const blockedReason = (machines: readonly ProjectOverrideMachine[]) => {
+    const offline = machines.filter((machine) => !connected.has(machine.environmentId));
+    if (offline.length > 0)
+      return `${machineNames(offline)} ${offline.length === 1 ? "is" : "are"} offline. Connect to change this setting there.`;
+    return machines.every((machine) => writable.has(machine.environmentId))
+      ? undefined
+      : tx("This connection cannot change settings on this machine.");
+  };
   const run = useRunScopedPlan();
   // What was changed here this session, by setting, so a cleared row stays
   // visible with its result and Undo instead of vanishing.
@@ -159,10 +183,17 @@ export function ProjectOverrides({
       ...new Set(machines.map((machine) => formatSettingValueFor(group.key, machine.rawValue))),
     ].join(" / ");
     const where = machineNames(machines);
+    const clearMarker = () =>
+      setChanges((latest) => {
+        const next = new Map(latest);
+        next.delete(group.key);
+        return next;
+      });
     const feedback: ScopedPlanFeedback = {
       title: describe(where),
       description: `Was: ${was}.`,
       undo,
+      onUndone: clearMarker,
     };
     const result = await run(plan, feedback);
     if (result.savedEnvironmentIds.size === 0) return;
@@ -180,11 +211,7 @@ export function ProjectOverrides({
       new Map(current).set(group.key, {
         text: `${describe(machineNames(saved))}. Was: ${was}.`,
         undo: () => {
-          setChanges((latest) => {
-            const next = new Map(latest);
-            next.delete(group.key);
-            return next;
-          });
+          clearMarker();
           void run(savedUndo, { title: "Change undone" });
         },
       }),
@@ -216,7 +243,7 @@ export function ProjectOverrides({
       </p>
       {groups.map((group) => {
         const allMachines = group.lines.flatMap((line) => line.machines);
-        const allWritable = allMachines.every((machine) => writable.has(machine.environmentId));
+        const allReason = blockedReason(allMachines);
         return (
           <SettingsRow
             key={group.key}
@@ -229,7 +256,8 @@ export function ProjectOverrides({
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={!allWritable}
+                  disabled={allReason !== undefined}
+                  title={allReason}
                   onClick={() =>
                     void apply(
                       group,
@@ -246,12 +274,8 @@ export function ProjectOverrides({
           >
             <ul role="list" className="mb-2 space-y-2">
               {group.lines.map((line) => {
-                const lineWritable = line.machines.every((machine) =>
-                  writable.has(machine.environmentId),
-                );
-                const reason = lineWritable
-                  ? undefined
-                  : tx("This connection cannot change settings on this machine.");
+                const reason = blockedReason(line.machines);
+                const lineWritable = reason === undefined;
                 const options = editOptions(group.key, line);
                 const where = machineNames(line.machines);
                 return (
@@ -282,12 +306,11 @@ export function ProjectOverrides({
                     <div className="flex flex-wrap items-center gap-2" title={reason}>
                       {options ? (
                         <Select
-                          value={String(line.rawValue)}
+                          value={optionValue(line.rawValue)}
                           disabled={!lineWritable}
                           onValueChange={(value) => {
-                            if (value === null || value === String(line.rawValue)) return;
-                            const next =
-                              typeof line.rawValue === "boolean" ? value === "true" : value;
+                            if (value === null || value === optionValue(line.rawValue)) return;
+                            const next = decodeOption(line, value);
                             const shown = formatSettingValueFor(group.key, next);
                             void apply(
                               group,
@@ -300,20 +323,14 @@ export function ProjectOverrides({
                           <SelectTrigger size="sm" aria-label={`${group.label} on ${where}`}>
                             <SelectValue>
                               {(value: string | null) =>
-                                formatSettingValueFor(
-                                  group.key,
-                                  typeof line.rawValue === "boolean" ? value === "true" : value,
-                                )
+                                formatSettingValueFor(group.key, decodeOption(line, value))
                               }
                             </SelectValue>
                           </SelectTrigger>
                           <SelectPopup align="end" alignItemWithTrigger={false}>
                             {options.map((option) => (
                               <SelectItem key={option} value={option}>
-                                {formatSettingValueFor(
-                                  group.key,
-                                  typeof line.rawValue === "boolean" ? option === "true" : option,
-                                )}
+                                {formatSettingValueFor(group.key, decodeOption(line, option))}
                               </SelectItem>
                             ))}
                           </SelectPopup>

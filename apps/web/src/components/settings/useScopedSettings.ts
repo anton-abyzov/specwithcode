@@ -73,6 +73,8 @@ export interface ScopedPlanFeedback {
   readonly description?: string;
   /** Restricted to the environments that saved before it runs; Undo is offered only when set. */
   readonly undo?: ScopedPlan;
+  /** Called when the toast's Undo runs, so a caller's own marker can clear. */
+  readonly onUndone?: () => void;
 }
 
 export interface ScopedPlanResult {
@@ -129,6 +131,7 @@ export function useRunScopedPlan() {
               children: "Undo",
               onClick: () => {
                 toastManager.close(id());
+                feedback?.onUndone?.();
                 void run(undo, { title: "Change undone" });
               },
             })
@@ -203,11 +206,11 @@ export function useClearProjectOverrides() {
       if (context === null || entries.length === 0) return;
       const machines = new Set(entries.map((entry) => entry.environmentId)).size;
       if (entries.length > 1) {
+        const message = `Reset "${label}" for ${entries.length} projects${machines > 1 ? ` on ${machines} machines` : ""}? They will follow the app setting. You can undo right after.`;
         const confirmed =
-          (await requestConfirmDialog(
-            `Reset "${label}" for ${entries.length} projects${machines > 1 ? ` on ${machines} machines` : ""}? They will follow the app setting. You can undo right after.`,
-            { confirmLabel: `Reset ${entries.length} projects` },
-          )) ?? true;
+          (await requestConfirmDialog(message, {
+            confirmLabel: `Reset ${entries.length} projects`,
+          })) ?? window.confirm(message);
         if (!confirmed) return;
       }
       const undo = planProjectOverrideEdits(

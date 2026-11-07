@@ -206,4 +206,48 @@ describe("ProjectOverrides", () => {
     const [, feedback] = state.run.mock.calls[0]! as [Plan, { title: string }];
     expect(feedback.title).toBe("Permissions for new threads changed to Accept edits on MacBook");
   });
+  it("disables a line with an offline machine and says why", async () => {
+    state.environments = [
+      environment({ [project]: { defaultRuntimeMode: "approval-required" } }),
+      {
+        ...environment(
+          { [project]: { defaultRuntimeMode: "approval-required" } },
+          storm,
+          "Ministorm",
+        ),
+        connection: { phase: "disconnected" },
+      },
+    ];
+    await act(async () =>
+      root.render(
+        <ProjectOverrides
+          checkouts={[
+            { environmentId: m4, id: project },
+            { environmentId: storm, id: project },
+          ]}
+        />,
+      ),
+    );
+    const clear = button("Use app setting");
+    expect(clear.disabled).toBe(true);
+    expect(clear.parentElement?.title).toBe(
+      "Ministorm is offline. Connect to change this setting there.",
+    );
+  });
+
+  it("names a stored null merge method and offers it back", async () => {
+    state.environments = [environment({ [project]: { pullRequestMergeMethod: null } })];
+    await act(async () =>
+      root.render(<ProjectOverrides checkouts={[{ environmentId: m4, id: project }]} />),
+    );
+    expect(container.textContent).toContain("Last selected");
+    expect(container.textContent).not.toMatch(/\bnull\b/);
+    const select = container.querySelector<HTMLSelectElement>('[data-testid="edit"]')!;
+    await act(async () => {
+      select.value = "squash";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const plan = state.run.mock.calls.at(-1)![0] as Plan;
+    expect(JSON.stringify(plan.serverWrites[0]!.patch)).toContain("squash");
+  });
 });
