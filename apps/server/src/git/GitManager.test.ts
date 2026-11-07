@@ -598,6 +598,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             input.bodyFile,
           ],
         }).pipe(Effect.asVoid),
+      editPullRequestBody: () => Effect.void,
       getDefaultBranch: (input) =>
         execute({
           cwd: input.cwd,

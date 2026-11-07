@@ -17,6 +17,7 @@ import {
   CommandId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type ProjectId,
   type PullRequestRef,
   type PullRequestSummary,
   type ThreadFinishAction,
@@ -32,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -39,6 +41,9 @@ import * as Stream from "effect/Stream";
 import * as GitManager from "../git/GitManager.ts";
 import * as HandoffMode from "../handoff/HandoffMode.ts";
 import { createdPullRequestKey } from "../git/linkCreatedPullRequest.ts";
+import { openWorktreeSetPullRequests } from "../git/worktreeSetPullRequests.ts";
+import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgressService.ts";
+import { readWorktreeSet, worktreeSetMemberPath, type WorktreeSetMember } from "../worktreeSet.ts";
 import { scrubLogSecrets } from "../pullRequest/gitHubCheckFailureLog.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -228,6 +233,10 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const updateHold = yield* ServiceUpdateHold.optional;
   const handoff = yield* Effect.serviceOption(HandoffMode.HandoffMode);
+  const setPath = yield* Effect.serviceOption(Path.Path);
+  const increments = yield* Effect.serviceOption(
+    ThreadIncrementProgressService.ThreadIncrementProgressService,
+  );
 
   // Merges handed to the host, retried until they land or are refused.
   const pending = new Map<ThreadId, PendingMerge>();
@@ -383,6 +392,127 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * A worktree set gets one pull request per repository with commits, each
+   * linked to the thread. Every description lists the others, the branch and
+   * the increment; where the host can edit descriptions the earlier ones are
+   * rewritten once all exist. Each merges on its own checks: auto-merge is
+   * not armed for a set.
+   */
+  const finishSet = Effect.fn("ThreadFinishActionService.finishSet")(function* (input: {
+    readonly thread: {
+      readonly id: ThreadId;
+      readonly projectId: ProjectId;
+      readonly branch: string;
+    };
+    readonly folder: string;
+    readonly members: ReadonlyArray<WorktreeSetMember>;
+    readonly path: Path.Path;
+    readonly runId: Parameters<typeof journal>[0]["runId"] | null;
+  }) {
+    const { thread, path } = input;
+    const ready: Array<{ readonly label: string; readonly cwd: string }> = [];
+    for (const member of input.members) {
+      const cwd = worktreeSetMemberPath(input.folder, member, path);
+      if (
+        !(yield* fileSystem.exists(path.join(cwd, ".git")).pipe(Effect.orElseSucceed(() => false)))
+      )
+        continue;
+      yield* git.invalidateStatus(cwd);
+      const status = yield* git.status({ cwd }).pipe(Effect.option);
+      if (Option.isNone(status) || !branchReadyForPullRequest(status.value, thread.branch))
+        continue;
+      ready.push({
+        label: member.id ?? (member.relativePath || path.basename(member.repository)),
+        cwd,
+      });
+    }
+    if (ready.length === 0) return;
+    const incrementId = Option.isNone(increments)
+      ? null
+      : yield* increments.value.read({ projectId: thread.projectId, threadIds: [thread.id] }).pipe(
+          Effect.map(
+            (snapshot) =>
+              snapshot.threads.find((entry) => entry.threadId === thread.id)?.incrementId ?? null,
+          ),
+          Effect.orElseSucceed(() => null),
+        );
+    const { opened, problems } = yield* openWorktreeSetPullRequests({
+      branch: thread.branch,
+      incrementId,
+      ready,
+      open: (entry, note) =>
+        Effect.gen(function* (): Effect.fn.Return<
+          { readonly number: number; readonly url: string; readonly created: boolean } | null,
+          string
+        > {
+          const createEffect: HandoffMode.SideEffectInput | null =
+            input.runId === null
+              ? null
+              : {
+                  threadId: thread.id,
+                  runId: input.runId,
+                  kind: "pr-create",
+                  target: `branch:${thread.branch}:${entry.label}`,
+                };
+          if (createEffect !== null) {
+            const verdict = yield* sideEffect(createEffect);
+            if (verdict.kind === "refuse")
+              return yield* Effect.fail(`${entry.label}: ${verdict.message}`);
+          }
+          const uuid = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+          const result = yield* git
+            .runStackedAction(
+              {
+                actionId: `thread-finish:${uuid}`,
+                cwd: entry.cwd,
+                action: "create_pr",
+                threadId: thread.id,
+                projectId: thread.projectId,
+              },
+              note === undefined ? undefined : { pullRequestNote: note },
+            )
+            .pipe(
+              Effect.mapError((error) =>
+                failureNotice(entry.label, error, { branch: thread.branch, worktree: entry.cwd }),
+              ),
+            );
+          // Only the URL names the repository: the project's identity is another one's.
+          const key = createdPullRequestKey(result, undefined);
+          if (key === null) return null;
+          if (createEffect !== null)
+            yield* journal(createEffect, `${key.host}/${key.repository}#${key.number}`);
+          yield* orchestrator
+            .dispatch({
+              type: "thread.pull-request.link",
+              commandId: CommandId.make(`server:thread-finish:link:${thread.id}:${uuid}`),
+              threadId: thread.id,
+              ...key,
+              source: "created",
+            })
+            .pipe(Effect.ignore);
+          return { number: key.number, url: key.url, created: result.pr.status === "created" };
+        }),
+      edit: (pr, rewrite) =>
+        git.editPullRequestBody({ cwd: pr.cwd, number: pr.number, edit: rewrite }).pipe(
+          Effect.asVoid,
+          Effect.mapError((error) => errorDetail(error)),
+        ),
+    });
+    if (opened.some((pr) => pr.created))
+      yield* notice(
+        thread.id,
+        "opened",
+        `Opened ${opened.map((pr) => `${pr.label} #${pr.number}`).join(", ")}; each merges on its own checks`,
+      );
+    if (problems.length > 0)
+      yield* notice(
+        thread.id,
+        "blocked",
+        `Could not open every pull request: ${problems.join("; ")}`,
+      );
+  });
+
   const finish = Effect.fn("ThreadFinishActionService.finish")(function* (threadId: ThreadId) {
     const thread = yield* projections.getThread(threadId);
     if (thread.archivedAt !== null || thread.deletedAt !== null) return;
@@ -395,6 +525,20 @@ export const make = Effect.gen(function* () {
     if (!threadFinished(runs)) return;
     const cwd = thread.worktreePath;
     if (!(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => false)))) return;
+    if (Option.isSome(setPath)) {
+      const set = yield* readWorktreeSet(cwd).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, setPath.value),
+      );
+      if (set !== null)
+        return yield* finishSet({
+          thread: { id: threadId, projectId: thread.projectId, branch: thread.branch },
+          folder: cwd,
+          members: set.members,
+          path: setPath.value,
+          runId: latestStartedRun(runs)?.id ?? null,
+        });
+    }
     yield* git.invalidateStatus(cwd);
     const status = yield* git.status({ cwd });
     if (!branchReadyForPullRequest(status, thread.branch)) return;

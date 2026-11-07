@@ -121,6 +121,15 @@ export class SourceControlProvider extends Context.Service<
       readonly title: string;
       readonly bodyFile: string;
     }) => Effect.Effect<void, SourceControlProviderError>;
+    /**
+     * Rewrites a change request's description from its current text. Absent
+     * where the host's provider cannot edit one yet.
+     */
+    readonly editChangeRequestBody?: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly edit: (body: string) => string;
+    }) => Effect.Effect<void, SourceControlProviderError>;
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

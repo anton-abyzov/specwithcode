@@ -264,6 +264,13 @@ export class GitHubCli extends Context.Service<
       readonly rateLimitHost?: string;
     }) => Effect.Effect<string | null, GitHubCliError>;
 
+    /** Rewrites a pull request's description from its current text. */
+    readonly editPullRequestBody: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly edit: (body: string) => string;
+    }) => Effect.Effect<void, GitHubCliError>;
+
     readonly checkoutPullRequest: (input: {
       readonly cwd: string;
       readonly reference: string;
@@ -327,6 +334,9 @@ const RawRepositorySchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeRawRepository = decodeJsonResult(RawRepositorySchema);
+const decodePullRequestBody = decodeJsonResult(
+  Schema.Struct({ body: Schema.optional(Schema.NullOr(Schema.String)) }),
+);
 
 function repositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawRepositorySchema>,
@@ -1063,6 +1073,33 @@ export const make = Effect.gen(function* () {
             body,
             maintainer_can_modify: true,
           },
+        });
+      }),
+    editPullRequestBody: (input) =>
+      Effect.gen(function* () {
+        const locator = yield* resolveRepository({ cwd: input.cwd });
+        const path = `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls/${input.number}`;
+        const current = yield* rest(input.cwd, {
+          host: locator.host,
+          operation: "readPullRequestBody",
+          path,
+        });
+        const decoded = decodePullRequestBody(current.body);
+        if (Result.isFailure(decoded))
+          return yield* new GitHubCliCommandError({
+            command: "gh",
+            cwd: input.cwd,
+            cause: decoded.failure,
+          });
+        const body = decoded.success.body ?? "";
+        const next = input.edit(body);
+        if (next === body) return;
+        yield* rest(input.cwd, {
+          host: locator.host,
+          operation: "editPullRequestBody",
+          method: "PATCH",
+          path,
+          body: { body: next },
         });
       }),
     getDefaultBranch: (input) =>

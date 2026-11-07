@@ -110,6 +110,34 @@ export const WorktreeMcpStatusResult = Schema.Struct({
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;
 
+/** Input for the `studio_worktree_add_repository` MCP tool. */
+export const WorktreeMcpAddRepositoryInput = Schema.Struct({
+  repository: TrimmedNonEmptyString.annotate({
+    description:
+      "The repository to add: a project environment repository id, or its path relative to the project folder (e.g. 'repositories/acme/api').",
+  }),
+});
+export type WorktreeMcpAddRepositoryInput = typeof WorktreeMcpAddRepositoryInput.Type;
+
+export const WorktreeMcpAddRepositoryResult = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString.annotate({
+    description: "This thread's folder, which holds every repository's worktree.",
+  }),
+  repositoryPath: TrimmedNonEmptyString.annotate({
+    description: "Where the added repository's worktree is, inside the thread's folder.",
+  }),
+  branch: TrimmedNonEmptyString,
+  members: Schema.Array(
+    Schema.Struct({
+      repository: TrimmedNonEmptyString.annotate({
+        description: "The repository's main checkout.",
+      }),
+      path: TrimmedNonEmptyString.annotate({ description: "Its worktree in this thread." }),
+    }),
+  ),
+});
+export type WorktreeMcpAddRepositoryResult = typeof WorktreeMcpAddRepositoryResult.Type;
+
 export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()(
   "WorktreeMcpFailure",
   {
@@ -118,6 +146,7 @@ export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()
       "thread_not_found",
       "project_not_found",
       "already_in_worktree",
+      "not_in_worktree",
       "handoff_in_progress",
       "invalid_request",
       "operation_failed",

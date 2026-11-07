@@ -467,6 +467,38 @@ describe("GitHubCli writes", () => {
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
   });
 
+  it.effect("rewrites a pull request description from its current text", () => {
+    const requests: Array<GitHubApi.GitHubRestInput> = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            requests.push(input);
+            return restResponse({ number: 7, body: "Generated" });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubCli.GitHubCli;
+      yield* gh.editPullRequestBody({
+        cwd: "/repo",
+        number: 7,
+        edit: (body) => `${body}\n\nLinks`,
+      });
+      yield* gh.editPullRequestBody({ cwd: "/repo", number: 7, edit: (body) => body });
+      assert.deepStrictEqual(
+        requests.map((request) => `${request.method ?? "GET"} ${request.path}`),
+        [
+          "GET repos/acme/web/pulls/7",
+          "PATCH repos/acme/web/pulls/7",
+          "GET repos/acme/web/pulls/7",
+        ],
+      );
+      assert.deepStrictEqual(requests[1]!.body, { body: "Generated\n\nLinks" });
+    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
+  });
+
   it.effect("creates a repository under an organization the viewer is not", () => {
     const requests: Array<string> = [];
     const { layer } = harness({

@@ -28,6 +28,10 @@ With Use worktrees on, a thread launched for a SpecWeave increment gets a worktr
 
 Restore recreates every missing member from its own repository, and deleting a project's worktrees inspects and removes the set as one entry. A handoff to another machine carries one repository, so a thread in a set stays on its machine. With Use worktrees off, or without an increment, a launch behaves as before.
 
+When the work turns out to need another repository, the agent calls `studio_worktree_add_repository` with its environment repository id or its path relative to the project folder. The repository joins the thread's folder on the thread's branch, and a thread with a single worktree becomes a set. Creating worktrees by hand in a thread's shell stays refused.
+
+When the thread finishes and the project opens pull requests, each repository with commits gets its own pull request into its own default branch. Every description ends with a note listing the other repositories' pull requests, the branch and the increment. On GitHub the earlier descriptions are rewritten once all exist, so each links every other; on other hosts a description names the repositories whose pull requests came later without linking them. Each pull request merges on its own checks: a set does not arm auto-merge.
+
 Use the current checkout for one writer working sequentially. Use separate worktrees for simultaneous code-writing threads on different branches. Two local threads see the same files, index and checked-out branch; selecting Local does not isolate their edits. Reusing an existing worktree avoids another checkout but also shares its files with any thread still using it.
 
 ## What consumes space

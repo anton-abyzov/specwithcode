@@ -272,6 +272,114 @@ export const createWorktreeSet = Effect.fn("worktreeSet.create")(function* (inpu
 });
 
 /**
+ * Adds one repository to a thread's folder on the thread's branch: a set gains
+ * a member, and a plain worktree of the project root becomes a set whose root
+ * member is the folder itself. `existing` is the set's members, or empty for a
+ * plain worktree. The branch is checked out when the repository already has
+ * it, else made from the repository's current branch. Returns the members now
+ * in the set.
+ */
+export const addWorktreeSetMember = Effect.fn("worktreeSet.addMember")(function* (input: {
+  readonly folder: string;
+  readonly existing: ReadonlyArray<WorktreeSetMember>;
+  readonly entry: string;
+  readonly checkouts: ReadonlyArray<SetRepositoryCheckout>;
+  readonly projectRoot: string;
+  readonly branch: string;
+  readonly startFromOrigin: boolean;
+  readonly submodules: WorktreeSubmodules | null;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const git = yield* GitWorkflowService.GitWorkflowService;
+  const root = path.resolve(input.projectRoot);
+  const existing: ReadonlyArray<WorktreeSetMember> =
+    input.existing.length > 0 ? input.existing : [{ repository: root, relativePath: "" }];
+  const [requested] = yield* resolveWorktreeSetRepositories(root, input.checkouts, [input.entry]);
+  if (requested === undefined)
+    return yield* Effect.fail(`Repository "${input.entry}" could not be resolved.`);
+  if (
+    existing.some(
+      (member) => path.resolve(member.repository) === path.resolve(requested.repository),
+    )
+  )
+    return yield* Effect.fail(`Repository "${input.entry}" is already in this thread's worktree.`);
+  if (requested.relativePath === "")
+    return yield* Effect.fail(
+      "The project folder's own repository can only be added when the thread's worktree is made.",
+    );
+  // Laid out with the members already there, so an outside repository's
+  // folder name never takes one of theirs.
+  const rootEntries = yield* fs
+    .readDirectory(root)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const planned = planWorktreeSet(
+    root,
+    [...existing, requested].map((member) => ({
+      path: member.repository,
+      ...(member.id === undefined ? {} : { id: member.id }),
+    })),
+    path,
+    [
+      ...(existing.some((member) => member.relativePath === "") ? rootEntries : []),
+      ...existing.map((member) => member.relativePath.split(path.sep)[0] ?? ""),
+    ],
+  );
+  const member =
+    planned.find(
+      (candidate) => path.resolve(candidate.repository) === path.resolve(requested.repository),
+    ) ?? requested;
+  const memberPath = worktreeSetMemberPath(input.folder, member, path);
+  if (yield* fs.exists(memberPath).pipe(Effect.orElseSucceed(() => true)))
+    return yield* Effect.fail(`${memberPath} already exists in this thread's worktree.`);
+  const members = [...existing, member];
+  yield* writeWorktreeSet(input.folder, members).pipe(
+    Effect.mapError((cause) => `Could not record the worktree set: ${String(cause)}`),
+  );
+  const created = yield* Effect.gen(function* () {
+    const hasBranch = yield* git
+      .hasCommit({ cwd: member.repository, refName: `refs/heads/${input.branch}` })
+      .pipe(Effect.orElseSucceed(() => false));
+    if (hasBranch) {
+      yield* git.createWorktree(
+        { cwd: member.repository, refName: input.branch, path: memberPath },
+        { submodules: input.submodules },
+      );
+      return;
+    }
+    const base = yield* memberBase(member, root, "HEAD");
+    const start = yield* memberStart(member.repository, base, input.startFromOrigin);
+    yield* git.createWorktree(
+      {
+        cwd: member.repository,
+        refName: start,
+        newRefName: input.branch,
+        ...(base === "HEAD" ? {} : { baseRefName: base }),
+        path: memberPath,
+      },
+      { submodules: input.submodules },
+    );
+  }).pipe(
+    Effect.mapError(
+      (error) =>
+        `Could not create the worktree of ${member.repository}: ${"detail" in error ? error.detail : String(error)}`,
+    ),
+    Effect.exit,
+  );
+  if (Exit.isFailure(created)) {
+    // Put the set back as it was; a plain worktree has no manifest.
+    yield* (
+      input.existing.length > 0
+        ? writeWorktreeSet(input.folder, input.existing)
+        : removeWorktreeSetManifest(input.folder)
+    ).pipe(Effect.ignore);
+    return yield* Effect.failCause(created.cause);
+  }
+  yield* excludeNestedMembers(input.folder, members);
+  return members;
+});
+
+/**
  * Removes the members of a set, deepest first so a nested worktree never
  * blocks the one holding it, then the manifest once every member is gone.
  * Each removal goes through the removal guard. Returns the members kept, with

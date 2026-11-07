@@ -187,6 +187,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Get", "Getting", "Got", "thread worktree status"],
     "worktree-status",
   ),
+  studio_worktree_add_repository: tool(
+    ["Add", "Adding", "Added", "a repository to this thread's worktree"],
+    "worktree-handoff",
+  ),
   preview_status: tool(["Get", "Getting", "Got", "preview browser status"], "browser", "browser"),
   preview_open: tool(
     ["Open", "Opening", "Opened", "a page in the preview browser"],

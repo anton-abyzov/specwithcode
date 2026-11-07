@@ -144,6 +144,7 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const toolNames = tools.map((tool) => tool.name);
       expect(toolNames).toContain("studio_worktree_handoff");
       expect(toolNames).toContain("studio_worktree_status");
+      expect(toolNames).toContain("studio_worktree_add_repository");
       // The worktree registration merges alongside the other toolkits rather
       // than replacing them.
       expect(toolNames).toContain("preview_status");
@@ -163,6 +164,8 @@ it.effect("production mcp layer lists worktree tools over http", () =>
       const status = tools.find((tool) => tool.name === "studio_worktree_status");
       expect(status?.annotations?.readOnlyHint).toBe(true);
       expect(status?.annotations?.destructiveHint).toBe(false);
+      const add = tools.find((tool) => tool.name === "studio_worktree_add_repository");
+      expect(add?.annotations?.readOnlyHint).toBe(false);
 
       // MCP requires every tool input schema to be a top-level object schema.
       // A non-object schema (e.g. the anyOf produced by an empty

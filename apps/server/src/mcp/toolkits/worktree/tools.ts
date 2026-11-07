@@ -6,6 +6,8 @@ import {
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
+  WorktreeMcpAddRepositoryInput,
+  WorktreeMcpAddRepositoryResult,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
@@ -59,6 +61,21 @@ const WorktreeStatusTool = Tool.make("studio_worktree_status", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const WorktreeAddRepositoryTool = Tool.make("studio_worktree_add_repository", {
+  description:
+    "Needs an agent running inside a SpecWithCode thread that already has its own worktree. Add one more repository to this thread's worktree when the work turns out to need it: the repository gets a worktree on the thread's branch inside the thread's folder, at its path relative to the project folder (a repository outside the project folder sits at the folder's top level under its own name). Name it by project environment repository id or by its path relative to the project folder. Use this instead of `git worktree add`, which SpecWithCode refuses in a thread's shell. Refused while the project's Use worktrees setting is off, or when the thread works in the project folder itself.",
+  parameters: WorktreeMcpAddRepositoryInput,
+  success: WorktreeMcpAddRepositoryResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Add a repository to this thread's worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true);
+
 const WorktreeListTool = Tool.make("studio_worktree_list", {
   description:
     "List branch refs and their associated checkout paths for a thread's workspace (omit threadId for this thread) using the app's ref inventory. Detached worktrees without a branch are not included. Use studio_worktree_status for the thread binding and studio_worktree_handoff to create a new worktree.",
@@ -85,5 +102,6 @@ const WorktreeListTool = Tool.make("studio_worktree_list", {
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
+  WorktreeAddRepositoryTool,
   WorktreeListTool,
 );
