@@ -603,6 +603,7 @@ public final class FixtureEngine: AppEngine {
     case let .thread(ref):
       if let thread = model.thread(ref) {
         session.title = thread.title
+        session.projectTitle = thread.projectTitle
         session.subtitle = ChatSession.threadSubtitle(
           thread.projectTitle ?? "Thread",
           machine: machine.map { MachineNickname.shortName($0.label) } ?? "",
