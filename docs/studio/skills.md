@@ -32,3 +32,7 @@ Select writable destinations, choose **Choose this copy**, inspect the exact des
 For a registry-backed skill, select **Install on all**. Choose reachable machines, agents and user/project scope, then preview installation. Review the pinned version, content hash and eligible destinations before selecting **Confirm installation**. A verified registry content hash and permission to maintain machines are required. Publish local-only skills before registry distribution.
 
 Installation reports a result for each target. Successful targets remain recorded; retry previews only the failed targets. Offline or permission-denied targets are not silently treated as installed. Running sessions are not restarted, so installation does not prove that they have loaded the new version.
+
+If the connection drops after a target accepts installation, its outcome stays unknown until checked. Refresh availability before retrying. Discovery does not substitute for an installation receipt.
+
+Current verification limit: Codex-only or Cursor-only installation of a skill containing Claude-specific frontmatter can finish writing but fail exact-content verification because the installer transforms those fields. Selecting Claude Code as well provides the original-content proof. An unverified result is never reported as installed.

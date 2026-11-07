@@ -96,6 +96,7 @@ function AvailabilityMachine({
           environmentId,
           input: {
             projectId,
+            refresh: true,
             ...(controls.userLevel ? { userLevel: true } : {}),
             ...(environmentId === controls.environmentId && !controls.userLevel
               ? {

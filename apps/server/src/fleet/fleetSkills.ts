@@ -863,6 +863,7 @@ export const layer = Layer.effect(
 // ---------------------------------------------------------------------------
 
 export type FleetSkillFailureReason =
+  | "outcome_unknown"
   | "unreachable"
   | "connect-unbound"
   | "connect-key-missing"
@@ -1067,15 +1068,17 @@ export async function runFleetSkillInstall(
         { method: "GET", token, idempotent: true, timeoutMs: 75_000 },
       ));
     } catch (error) {
-      throw failureOf(error);
+      throw new FleetSkillFailure("outcome_unknown", "The install was accepted, but its outcome could not be read. Check availability before retrying.");
     }
-    if (!statusResponse.ok) throw await refusalOf(statusResponse);
-    const status = await answerOf(statusResponse);
+    if (!statusResponse.ok) throw new FleetSkillFailure("outcome_unknown", "The install was accepted, but its status is unavailable. Check availability before retrying.");
+    const status = await answerOf(statusResponse).catch(() => {
+      throw new FleetSkillFailure("outcome_unknown", "The install status could not be read. Check availability before retrying.");
+    });
     if (!record(status) || typeof status.phase !== "string")
-      throw new FleetSkillFailure("install-failed", "The machine gave no skill install status.");
+      throw new FleetSkillFailure("outcome_unknown", "The machine gave no skill install status.");
     if (status.requestId !== requestId)
       throw new FleetSkillFailure(
-        "busy",
+        "outcome_unknown",
         `${target.label} moved on to another skill install before this one could be read.`,
       );
     if (status.phase === "installed")
@@ -1097,7 +1100,7 @@ export async function runFleetSkillInstall(
     }
     if (now() >= deadline)
       throw new FleetSkillFailure(
-        "busy",
+        "outcome_unknown",
         `${target.label} is still ${status.phase} ${ask.skill}@${ask.version}; ask again later.`,
       );
   }
