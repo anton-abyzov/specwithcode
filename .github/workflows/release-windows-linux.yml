@@ -55,8 +55,14 @@ name: Release Windows and Linux
 #
 # Secrets (real runs only, names only), in the `release` environment: RELEASE_GH_TOKEN (the token
 # release-macos.yml uses, with contents write on this repository), STUDIO_GOOGLE_OAUTH_CLIENT_ID
-# and STUDIO_GOOGLE_OAUTH_CLIENT_SECRET (the built-in Google pair, as in the macOS build). Run from
-# a repository other than FEED_REPOSITORY, a run attaches the apps to the release on both.
+# and STUDIO_GOOGLE_OAUTH_CLIENT_SECRET (the built-in Google pair, as in the macOS build), and
+# LINUX_UPDATE_SIGNING_KEY (the armored GPG release key: each AppImage and .deb and
+# SHA256SUMS-windows-linux get a detached .asc, and the public key goes on the release as
+# specwithcode-release-key.asc). Run from a repository other than FEED_REPOSITORY, a run attaches
+# the apps to the release on both.
+#
+# Build provenance: while the repository is public, a real run attests every file it uploads with
+# actions/attest-build-provenance (`gh attestation verify FILE --repo anton-abyzov/specwithcode`).
 #
 # Windows code signing (Azure Trusted Signing), optional: AZURE_TENANT_ID, AZURE_CLIENT_ID,
 # AZURE_CLIENT_SECRET, AZURE_TRUSTED_SIGNING_ENDPOINT, AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
@@ -174,6 +180,7 @@ jobs:
           RELEASE_GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN != '' && 'set' || '' }}
           STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_ID != '' && 'set' || '' }}
           STUDIO_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_SECRET != '' && 'set' || '' }}
+          LINUX_UPDATE_SIGNING_KEY: ${{ secrets.LINUX_UPDATE_SIGNING_KEY != '' && 'set' || '' }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID != '' && 'set' || '' }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID != '' && 'set' || '' }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET != '' && 'set' || '' }}
@@ -243,7 +250,7 @@ jobs:
           # A real run needs every secret; find out now rather than after the builds.
           if [ "$dry_run" != true ]; then
             missing=()
-            for name in RELEASE_GH_TOKEN STUDIO_GOOGLE_OAUTH_CLIENT_ID STUDIO_GOOGLE_OAUTH_CLIENT_SECRET; do
+            for name in RELEASE_GH_TOKEN STUDIO_GOOGLE_OAUTH_CLIENT_ID STUDIO_GOOGLE_OAUTH_CLIENT_SECRET LINUX_UPDATE_SIGNING_KEY; do
               if [ -z "${!name:-}" ]; then missing+=("$name"); fi
             done
             if [ ${#missing[@]} -gt 0 ]; then
@@ -867,6 +874,11 @@ jobs:
     runs-on: ubuntu-24.04
     environment: release
     timeout-minutes: 90
+    # id-token and attestations: actions/attest-build-provenance, real runs of a public repository only.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     # Two runs of one version (a release event and a dispatch, say) upload one at a time; the
     # second one's plan-upload then refuses the names the first attached. A dry run uploads
     # nothing and takes no lock.
@@ -908,9 +920,59 @@ jobs:
         shell: bash
         run: node "$TOOL" merge-feeds --dir "$ASSETS"
 
+      # Detached signatures of the Linux packages first, so the checksum file lists them and the
+      # public key; then the checksum file's own. Every signature is checked against the published
+      # key before anything is uploaded. Plan refuses a real run without the key.
+      - name: Sign the Linux packages
+        shell: bash
+        env:
+          LINUX_UPDATE_SIGNING_KEY: ${{ secrets.LINUX_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LINUX_UPDATE_SIGNING_KEY" ]; then
+            [ "$DRY_RUN" = true ] || { echo "::error::LINUX_UPDATE_SIGNING_KEY is not set."; exit 1; }
+            echo "::warning::No LINUX_UPDATE_SIGNING_KEY: this dry run's Linux packages are unsigned."
+            exit 0
+          fi
+          GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          export GNUPGHOME
+          gpg --batch --quiet --import <<< "$LINUX_UPDATE_SIGNING_KEY"
+          gpg --batch --armor --export > "$ASSETS/specwithcode-release-key.asc"
+          node "$TOOL" signed-names --version "$VERSION" --dir "$ASSETS" | while IFS= read -r name; do
+            gpg --batch --yes --pinentry-mode error --armor --detach-sign --digest-algo SHA512 \
+              -o "$ASSETS/$name.asc" "$ASSETS/$name"
+          done
+
       - name: Write checksums
         shell: bash
         run: node "$TOOL" sums --dir "$ASSETS"
+
+      - name: Sign and check the signatures
+        if: env.GNUPGHOME != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'gpgconf --kill gpg-agent; rm -rf "$GNUPGHOME"' EXIT
+          gpg --batch --yes --pinentry-mode error --armor --detach-sign --digest-algo SHA512 \
+            -o "$ASSETS/SHA256SUMS-windows-linux.asc" "$ASSETS/SHA256SUMS-windows-linux"
+          keyring="$RUNNER_TEMP/release-key.gpg"
+          gpg --dearmor < "$ASSETS/specwithcode-release-key.asc" > "$keyring"
+          checked=0
+          for signature in "$ASSETS"/*.asc; do
+            [ "$signature" = "$ASSETS/specwithcode-release-key.asc" ] && continue
+            gpgv --keyring "$keyring" "$signature" "${signature%.asc}"
+            checked=$((checked + 1))
+          done
+          [ "$checked" -ge 3 ] || { echo "::error::Only $checked signatures were made."; exit 1; }
+          {
+            echo "### Signed with"
+            echo ""
+            echo '```'
+            gpg --show-keys --with-fingerprint "$ASSETS/specwithcode-release-key.asc"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The release is public: no text asset may carry a private value (the built-in patterns of
       # release-windows-linux.ts publicLeaks).
@@ -998,6 +1060,28 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Provenance for exactly the files this run uploads (a catch-up run another run beat uploads
+      # none). Attestations need a public repository; a private one skips with a notice.
+      - name: Check the repository is public
+        id: visibility
+        if: needs.plan.outputs.dry_run != 'true' && steps.releases.outputs.already != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          private="$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)"
+          if [ "$private" != false ]; then
+            echo "::notice::$GITHUB_REPOSITORY is private; build provenance attestations are skipped."
+          fi
+          echo "public=$([ "$private" = false ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        if: steps.visibility.outputs.public == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assets/*
+
       - name: Keep the assets (dry run)
         if: needs.plan.outputs.dry_run == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1070,3 +1154,32 @@ jobs:
             echo "Windows and Linux assets of v$VERSION are on $GITHUB_REPOSITORY and $FEED_REPOSITORY." >> "$GITHUB_STEP_SUMMARY"
           fi
           exit "$status"
+
+      # Under the notes' "Verify your download" (release_tools.py VERIFY_NOTES), the SHA-256 of each
+      # download from both checksum files, once per release.
+      - name: Add checksums to the release notes
+        if: needs.plan.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          for repo in $RELEASE_REPOSITORIES; do
+            body="$RUNNER_TEMP/notes-${repo//\//-}.md"
+            gh release view "v$VERSION" -R "$repo" --json body -q .body > "$body"
+            if grep -q '^#### SHA-256$' "$body"; then continue; fi
+            sums="$RUNNER_TEMP/sums-${repo//\//-}"
+            mkdir -p "$sums"
+            gh release download "v$VERSION" -R "$repo" -D "$sums" --clobber -p SHA256SUMS -p SHA256SUMS-windows-linux
+            {
+              echo ""
+              echo "#### SHA-256"
+              echo ""
+              echo "| File | SHA-256 |"
+              echo "| --- | --- |"
+              cat "$sums"/SHA256SUMS "$sums"/SHA256SUMS-windows-linux |
+                awk '$2 ~ /\.(dmg|exe|AppImage|deb)$|-arm64\.zip$|win32-(x64|arm64)\.zip$/ { printf "| `%s` | `%s` |\n", $2, $1 }' |
+                sort -u
+            } >> "$body"
+            gh release edit "v$VERSION" -R "$repo" --notes-file "$body"
+          done

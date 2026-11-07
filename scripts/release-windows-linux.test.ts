@@ -17,6 +17,8 @@ import {
   isReleaseShAssetName,
   isStableVersion,
   isWindowsLinuxAssetName,
+  linuxPackagesToSign,
+  RELEASE_KEY,
   attachState,
   mergeWindowsFeeds,
   parseFeedManifest,
@@ -25,6 +27,7 @@ import {
   requiredAssetNames,
   STAGED_WIN_ARM64_FEED,
   WINDOWS_LINUX_SUMS,
+  WINDOWS_LINUX_SUMS_SIGNATURE,
   windowsCliArchiveName,
 } from "./release-windows-linux.ts";
 
@@ -303,12 +306,57 @@ describe("checksums and the public release", () => {
       replace: [["private-name", "public-name"]] as const,
     };
     const found = publicLeaks(
-      "url: secret-host.internal private-name anton-abyzov/specwithcode",
+      "url: secret-host.internal private-name anton-abyzov/specwithcode-dev",
       rules,
     );
     expect(found).toEqual(["the private repository name", "deny rule 1", "replace rule 1"]);
     expect(found.join(" ")).not.toContain("secret-host");
     expect(publicLeaks(WIN_FEED, rules)).toEqual([]);
+    expect(publicLeaks("https://github.com/anton-abyzov/specwithcode/releases", {})).toEqual([]);
+  });
+});
+
+describe("Linux signatures", () => {
+  it("signs each AppImage and deb, and takes their signatures, the key and the sums signature as ours", () => {
+    const linux = [
+      ...requiredAssetNames("linux", VERSION),
+      ...requiredAssetNames("linux", VERSION, "arm64"),
+    ];
+    expect(linuxPackagesToSign([...OWN_ASSETS, ...ARM64_ASSETS, "notes.txt"], VERSION)).toEqual(
+      linux.filter((name) => !name.endsWith(".yml")).sort(),
+    );
+    for (const name of [
+      `SpecWithCode-${VERSION}-x86_64.AppImage.asc`,
+      `SpecWithCode-${VERSION}-amd64.deb.asc`,
+      `SpecWithCode-${VERSION}-arm64.deb.asc`,
+      WINDOWS_LINUX_SUMS_SIGNATURE,
+      RELEASE_KEY,
+    ]) {
+      expect(isWindowsLinuxAssetName(name, VERSION), name).toBe(true);
+      expect(isReleaseShAssetName(name), name).toBe(false);
+    }
+    expect(isWindowsLinuxAssetName(`SpecWithCode-${VERSION}-x64.exe.asc`, VERSION)).toBe(false);
+    expect(isWindowsLinuxAssetName("SHA256SUMS.asc", VERSION)).toBe(false);
+  });
+
+  it("accepts a signed attach: signatures and the key in the sums, the sums signature beside it", () => {
+    const files = attach("first");
+    const sums = files.get(WINDOWS_LINUX_SUMS)!;
+    files.delete(WINDOWS_LINUX_SUMS);
+    for (const name of linuxPackagesToSign([...files.keys()], VERSION))
+      files.set(`${name}.asc`, `signature of ${name}`);
+    files.set(RELEASE_KEY, "public key");
+    files.set(
+      WINDOWS_LINUX_SUMS,
+      formatSums(
+        [...files].map(([name, content]) => ({ name, sha256: sha("sha256", content, "hex") })),
+      ),
+    );
+    files.set(WINDOWS_LINUX_SUMS_SIGNATURE, `signature of ${sums}`);
+    const result = attachState({ version: VERSION, assets: listed(files), texts: texts(files) });
+    expect(result).toEqual({ state: "complete", problems: [] });
+    expect(files.get(WINDOWS_LINUX_SUMS)).toContain(RELEASE_KEY);
+    expect(files.get(WINDOWS_LINUX_SUMS)).not.toContain(WINDOWS_LINUX_SUMS_SIGNATURE);
   });
 });
 

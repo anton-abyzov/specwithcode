@@ -33,12 +33,9 @@ installs for your user only, so it needs no administrator, into
 `%LOCALAPPDATA%\Programs\studio`, and adds Start menu and desktop shortcuts. It runs on
 64-bit Windows 10 and 11. For a silent install, run it with `/S`.
 
-Signed releases carry an Azure Trusted Signing signature: the installer's **Properties** >
-**Digital Signatures** tab names the publisher, and later updates must carry the same one. An
-unsigned release makes Microsoft Defender SmartScreen show **Windows protected your PC** the first
-time; choose **More info**, then **Run anyway**. Releases list each file's SHA-256 in
-`SHA256SUMS-windows-linux`; check a download with `Get-FileHash .\SpecWithCode-<version>-x64.exe`
-before you run it.
+Releases are signed by **EasyChamp, Inc.** with Azure Trusted Signing: the installer's
+**Properties** > **Digital Signatures** tab names the publisher, and later updates must carry the
+same one. To check a download, see [Verify a download](#verify-a-download).
 
 ### Linux
 
@@ -56,6 +53,43 @@ were built on Ubuntu 24.04 and need glibc 2.39 (Ubuntu 24.04, Debian 13 or later
 releases, two parts that come prebuilt from third-party packages need glibc 2.39 and do not load on
 Ubuntu 22.04 or Debian 12: the accessibility tree behind snap-shots, and, on arm64, the Cursor
 provider's sandbox. Ubuntu 24.04 and Debian 13 have neither limit.
+
+### Verify a download
+
+Every release lists the SHA-256 of each download in its notes, in `SHA256SUMS` (macOS app, CLI)
+and in `SHA256SUMS-windows-linux` (Windows and Linux apps). While the repository is public, every
+file also has a build provenance attestation that ties it to the GitHub Actions run that built it.
+
+macOS: the app is signed with an Apple Developer ID and notarized.
+
+```sh
+spctl -a -vv /Applications/SpecWithCode.app   # source=Notarized Developer ID
+shasum -a 256 SpecWithCode-arm64.dmg          # compare with SHA256SUMS
+```
+
+Windows (PowerShell): the status must be `Valid` and the signer `EasyChamp, Inc.`.
+
+```powershell
+Get-AuthenticodeSignature .\SpecWithCode-<version>-x64.exe | Format-List Status, SignerCertificate
+Get-FileHash .\SpecWithCode-<version>-x64.exe   # compare with SHA256SUMS-windows-linux
+```
+
+Linux: each AppImage and `.deb`, and `SHA256SUMS-windows-linux`, has a detached GPG signature
+(`.asc`) beside it. Download `specwithcode-release-key.asc` from the same release, check its
+fingerprint is `B10C BBD0 F489 3ACD 3FF6  F256 563A 3A09 8EE4 C0D7`, then:
+
+```sh
+gpg --import specwithcode-release-key.asc
+gpg --verify SpecWithCode-<version>-amd64.deb.asc SpecWithCode-<version>-amd64.deb
+gpg --verify SHA256SUMS-windows-linux.asc SHA256SUMS-windows-linux
+sha256sum --check --ignore-missing SHA256SUMS-windows-linux
+```
+
+Any platform, with the [GitHub CLI](https://cli.github.com):
+
+```sh
+gh attestation verify SpecWithCode-<version>-amd64.deb --repo anton-abyzov/specwithcode
+```
 
 ### What differs on Windows and Linux
 

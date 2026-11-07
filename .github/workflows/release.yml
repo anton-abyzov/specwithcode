@@ -291,3 +291,15 @@ jobs:
       previous: ${{ inputs.previous }}
       ci: ${{ inputs.ci }}
       dry_run: ${{ inputs.dry_run }}
+
+  # Provenance for the published macOS files, while the repository is public.
+  attest_macos:
+    needs: [verify_release]
+    if: ${{ !inputs.dry_run }}
+    uses: ./.github/workflows/attest-macos.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      version: ${{ inputs.version }}

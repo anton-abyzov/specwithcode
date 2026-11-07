@@ -12,6 +12,7 @@
  *   node release-windows-linux.ts merge-feeds --dir DIR
  *   node release-windows-linux.ts check-feed --repo OWNER/REPO FILE...
  *   node release-windows-linux.ts sums --dir DIR
+ *   node release-windows-linux.ts signed-names --version X.Y.Z --dir DIR
  *   node release-windows-linux.ts check-public [--rules FILE] --dir DIR
  *   node release-windows-linux.ts plan-upload --version X.Y.Z --dir DIR --existing FILE [--replace]
  *   node release-windows-linux.ts release-state --version X.Y.Z --repo OWNER/REPO
@@ -36,6 +37,22 @@ export const FEED_REPOSITORY = "anton-abyzov/specwithcode";
  * plan and the next release's prev stage read it, so this workflow never rewrites it.
  */
 export const WINDOWS_LINUX_SUMS = "SHA256SUMS-windows-linux";
+/** Its detached GPG signature: it cannot list itself in the file it signs. */
+export const WINDOWS_LINUX_SUMS_SIGNATURE = `${WINDOWS_LINUX_SUMS}.asc`;
+/** The public half of the key that signs the Linux packages and the checksum file. */
+export const RELEASE_KEY = "specwithcode-release-key.asc";
+
+/** Whether a name is one of the two checksum files, which no checksum file lists. */
+function isSumsFile(name: string): boolean {
+  return name === WINDOWS_LINUX_SUMS || name === WINDOWS_LINUX_SUMS_SIGNATURE;
+}
+
+/** The Linux packages in a directory that get a detached `.asc` signature beside them. */
+export function linuxPackagesToSign(names: ReadonlyArray<string>, version: string): string[] {
+  const v = escapeRegExp(version);
+  const pattern = new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64|amd64)\\.(?:AppImage|deb)$`);
+  return names.filter((name) => pattern.test(name)).sort();
+}
 
 export function isStableVersion(version: string): boolean {
   return /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version);
@@ -121,12 +138,13 @@ export function isWindowsLinuxAssetName(name: string, version: string): boolean 
   const v = escapeRegExp(version);
   return [
     new RegExp(`^SpecWithCode-${v}-(?:x64|arm64)\\.exe(?:\\.blockmap)?$`),
-    new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64)\\.AppImage(?:\\.blockmap)?$`),
-    new RegExp(`^SpecWithCode-${v}-(?:amd64|arm64)\\.deb$`),
+    new RegExp(`^SpecWithCode-${v}-(?:x86_64|arm64)\\.AppImage(?:\\.blockmap|\\.asc)?$`),
+    new RegExp(`^SpecWithCode-${v}-(?:amd64|arm64)\\.deb(?:\\.asc)?$`),
     new RegExp(`^studio-${v}-win32-(?:x64|arm64)\\.zip$`),
     /^latest\.yml$/,
     /^latest-linux(?:-arm64)?\.yml$/,
-    new RegExp(`^${escapeRegExp(WINDOWS_LINUX_SUMS)}$`),
+    new RegExp(`^${escapeRegExp(WINDOWS_LINUX_SUMS)}(?:\\.asc)?$`),
+    new RegExp(`^${escapeRegExp(RELEASE_KEY)}$`),
   ].some((pattern) => pattern.test(name));
 }
 
@@ -335,7 +353,7 @@ export interface PublicRules {
  */
 export function publicLeaks(text: string, rules: PublicRules): string[] {
   const found: string[] = [];
-  if (text.includes("anton-abyzov/specwithcode")) found.push("the private repository name");
+  if (text.includes("anton-abyzov/specwithcode-dev")) found.push("the private repository name");
   (rules.deny ?? []).forEach((value, index) => {
     if (value && text.includes(value)) found.push(`deny rule ${index + 1}`);
   });
@@ -432,8 +450,7 @@ export function attachState(input: {
       problems: ["stable release must be published, not draft or prerelease"],
     };
   const ours = input.assets.filter(
-    (asset) =>
-      asset.name === WINDOWS_LINUX_SUMS || isWindowsLinuxAssetName(asset.name, input.version),
+    (asset) => isSumsFile(asset.name) || isWindowsLinuxAssetName(asset.name, input.version),
   );
   if (ours.length === 0) return { state: "absent", problems: [] };
   const byName = new Map(ours.map((asset) => [asset.name, asset]));
@@ -453,7 +470,7 @@ export function attachState(input: {
       problems.push(error instanceof Error ? error.message : String(error));
     }
     for (const asset of ours) {
-      if (asset.name === WINDOWS_LINUX_SUMS) continue;
+      if (isSumsFile(asset.name)) continue;
       const want = sums.get(asset.name);
       if (want === undefined) problems.push(`${asset.name} is not in ${WINDOWS_LINUX_SUMS}`);
       else if (asset.digest !== `sha256:${want}`) {
@@ -683,10 +700,16 @@ function main(argv: ReadonlyArray<string>): void {
     case "sums": {
       const dir = args.one("dir");
       const entries = listFiles(dir)
-        .filter((name) => name !== WINDOWS_LINUX_SUMS)
+        .filter((name) => !isSumsFile(name))
         .map((name) => ({ name, sha256: hashFile(NodePath.join(dir, name), "sha256", "hex") }));
       NodeFS.writeFileSync(NodePath.join(dir, WINDOWS_LINUX_SUMS), formatSums(entries));
       process.stdout.write(formatSums(entries));
+      return;
+    }
+    case "signed-names": {
+      const names = linuxPackagesToSign(listFiles(args.one("dir")), args.one("version"));
+      if (names.length === 0) throw new Error("no Linux package to sign");
+      process.stdout.write(names.map((name) => `${name}\n`).join(""));
       return;
     }
     case "check-public": {

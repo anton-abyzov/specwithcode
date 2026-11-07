@@ -243,3 +243,16 @@ jobs:
         if: always()
         shell: bash
         run: rm -rf "$RUNNER_TEMP/release-settings"
+
+  # Provenance for the published macOS files, while the repository is public.
+  attest_macos:
+    needs: [release]
+    # A run stopped before publishing (stop_after) has nothing published to attest.
+    if: ${{ inputs.stop_after == '' }}
+    uses: ./.github/workflows/attest-macos.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      version: ${{ inputs.version }}
