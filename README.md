@@ -1,42 +1,50 @@
 <p align="center">
-  <img src="assets/prod/black-macos-1024.png" width="96" height="96" alt="SpecWithCode app icon" />
+  <img src="assets/prod/black-macos-1024.png" width="88" height="88" alt="SpecWithCode app icon" />
 </p>
 
 <h1 align="center">SpecWithCode</h1>
 
-<p align="center"><b>One desktop app for all your coding agents. Claude Code, Codex, Copilot, Cursor and more, side by side, with the spec in git.</b></p>
+<p align="center"><b>Run Claude Code, Codex and your other coding agents side by side, on all your machines.<br/>When one hits its limit, another picks up the thread.</b></p>
+
+<p align="center">
+  <a href="https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=for-the-badge" /></a>
+  <a href="https://github.com/anton-abyzov/specwithcode/releases/latest"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?logo=windows&logoColor=white&style=for-the-badge" /></a>
+  <a href="https://github.com/anton-abyzov/specwithcode/releases/latest"><img alt="Download for Linux" src="https://img.shields.io/badge/Download-Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" /></a>
+</p>
 
 <p align="center">
   <a href="https://github.com/anton-abyzov/specwithcode/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/anton-abyzov/specwithcode?style=social" /></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
   <a href="https://github.com/anton-abyzov/specwithcode/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/anton-abyzov/specwithcode" /></a>
+  <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26"><img alt="Website" src="https://img.shields.io/badge/specwithcode.com-7C3AED" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=for-the-badge" /></a>
-  <a href="https://spec-weave.com/code/download/"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?logo=windows&logoColor=white&style=for-the-badge" /></a>
-  <a href="https://spec-weave.com/code/download/"><img alt="Download for Linux" src="https://img.shields.io/badge/Download-Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" /></a>
+  <img src="assets/readme/hero-loop.gif" width="800" alt="A coordinator splits a goal into three tasks. Claude Code, DeepSeek and GitHub Copilot work on a Mac, a Windows PC and a Linux server. At 98% of its limit, Claude Code hands its thread to Codex on a free ChatGPT account with its history kept." />
+  <br/><sub>Illustration of the flow, 25 s loop (<a href="assets/readme/hero-loop.mp4">MP4</a>). <a href="assets/readme/app-window.webp">Screenshot of the real app</a> · <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26">longer demo on the site</a></sub>
 </p>
 
-<p align="center">
-  <img src="assets/readme/demo.gif" width="880" alt="A Claude Code thread hits its usage limit and SpecWithCode hands the same turn to Codex" />
-</p>
+## Why
 
-If SpecWithCode saves you time, a star helps other developers find it.
+You already pay for Claude Code, Codex or Copilot. SpecWithCode is one free, open-source (MIT) window that runs them together:
 
-SpecWithCode is a free desktop workspace for the coding agents you already pay for. Run Claude Code, Codex, Grok Build, Cursor, OpenCode, Copilot, Antigravity and Pi side by side on your own machines. Every change an agent makes lands with its spec: what was asked, what counts as done and the proof, in the same repo as the code, so any agent on any machine can pick it up.
+- **Parallel agents, one conversation.** Give a goal to a coordinator. It splits the work into worker threads, each on its own provider, model and git worktree, and reports back. You review pull requests, not chat logs.
+- **Never stuck on a limit.** Every account's usage on one screen. When a provider runs out, a per-project rule moves the thread to another provider with its recent history, waits for the reset, or asks you.
+- **All your machines.** Pair a Linux box or a Windows PC over your network, SSH or Tailscale. Workers run where the code and the sign-ins already are.
+- **The spec lives in git.** What was asked, what counts as done and the proof are files in your repo ([SpecWeave](https://github.com/anton-abyzov/specweave), MIT), so any agent can continue the work.
 
-It is built on [SpecWeave](https://github.com/anton-abyzov/specweave), the open-source CLI (`npm install -g specweave`) that keeps that record in git. Website: [specwithcode.com](https://specwithcode.com).
+Free, no account, bring your own subscriptions or API keys. SpecWithCode sells no inference and adds no markup. If it saves you time, a ⭐ helps other developers find it.
 
-Built for teams of 2–10 people. Free, no account. You bring your own provider subscriptions or API keys; SpecWithCode supplies no inference, resells no tokens and charges no seat fee to run agents on your team's machines. What is free today stays free; teams can pay for hosted private skills and support ([pricing](https://spec-weave.com/pricing)).
+## Compared with what you use today
 
-Automatic fallback requires an explicit configured choice before selecting ACP agents whose billing is unknown. See [when a provider runs out](docs/user/usage.md#when-a-provider-runs-out).
-
-HTML reports open from a compact preview into a focused reader. The conversation stays available through Show thread. See the [report experience](docs/reports/report-experience.md) for behavior and compatibility limits.
-
-## Skills
-
-Settings > Skills manages versions and agent visibility. Claude plugin skills use the whole-plugin control; disabled plugins stay visible so you can turn them back on or Undo. Version updates require a fresh preview if the registry changes before confirmation.
+| | One agent's own app | tmux and worktrees by hand | Cloud agents | **SpecWithCode** |
+|---|---|---|---|---|
+| Claude Code, Codex, Copilot and more in one window | One vendor | Yes, many terminals | One vendor | **Yes** |
+| A coordinator splits one goal into parallel tasks | Within one vendor | You do it | Within one vendor | **Yes, across vendors** |
+| Continues on another provider when one hits its limit | No | You re-explain the task | No | **Yes, history kept** |
+| Runs on your own machines and sign-ins | Yes, one machine | Yes | No, vendor cloud | **Yes, Mac, Linux and Windows** |
+| Plan and evidence saved in your repo | No | Only if you write it | No | **Yes, spec in git** |
+| Price | Your plan | Free | Your plan | **Free, MIT** |
 
 ## What it does
 
@@ -51,13 +59,18 @@ Settings > Skills manages versions and agent visibility. Claude plugin skills us
 
 SpecWithCode is not a cloud service: work runs on the machine you choose and stops when it sleeps.
 
-## Built with SpecWithCode
+## Built with itself
 
-SpecWithCode · free, early access. It is built with itself: a coordinator in the app keeps each project's brief, and worker threads on Claude Code, Codex and other agents write the changes and open the pull requests in this repository. From 15 to 29 October 2026, 367 of those pull requests were opened by 167 worker threads and merged (100 threads on Claude Code, 65 on Codex, the rest on Gemini CLI and Copilot), counted from the app's own thread records. The work runs across a Mac and a Linux worker joined over SpecWithCode Connect; the [handoff end-to-end test](https://spec-weave.com/code/#built-with-itself) shows a coordinator on the Mac starting a worker on the Linux machine.
+SpecWithCode is developed in SpecWithCode. A coordinator thread holds each feature's brief, worker threads on Claude Code, Codex and Copilot write the change in their own worktrees and open the pull request, and the spec, acceptance criteria and task evidence are committed as SpecWeave increments. The numbers, from October 9 to November 7, 2026:
 
-**Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside SpecWithCode-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
+| | Count | Where to check |
+|---|---|---|
+| SpecWithCode increments (spec.md, numbered acceptance criteria, task ledger) | **302**, 215 completed | [`.specweave/increments`](https://github.com/anton-abyzov/specweave-umb/tree/main/.specweave/increments) in the public planning repo, e.g. [thread handoff mode](https://github.com/anton-abyzov/specweave-umb/tree/main/.specweave/increments/0967-thread-handoff-mode) and [subscription change recovery](https://github.com/anton-abyzov/specweave-umb/tree/main/.specweave/increments/1071-same-cli-subscription-change-recovery) |
+| Pull requests merged into the app | **1,393**, including 169 release PRs | the development repository, private until the MIT switch on November 7; new work lands as public pull requests [here](https://github.com/anton-abyzov/specwithcode/pulls) |
+| Of those, linked in the app's own records to a SpecWithCode worker thread on the main Mac | **at least 418**, from 204 threads: 278 Claude Code, 127 Codex, 13 GitHub Copilot | thread records on that machine |
+| Machines | a Mac and a Linux server, paired over SpecWithCode Connect | [handoff end-to-end test](https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26#built-with-itself) |
 
-The model picker distinguishes the coding harness from the model and its billing source. See the [harness integration guide](docs/providers/harnesses.md) for OpenCode, Pi, native adapters and verification limits.
+The 418 is a floor, not the total: PRs from threads on the Linux worker, threads deleted since, and release automation are not in that count, and some changes were made outside the app.
 
 ## Install
 
@@ -92,6 +105,18 @@ The local service listens on `http://127.0.0.1:8319/` and keeps its data in `~/.
 Projects keep their coordinator in the main pane, with workers beside it. For short replies, use **Settings → Agents → Response style → Concise**. If the coordinator's model is unavailable, open its model picker to **Check again**, choose another model, or open setup for that machine; checking availability does not resend your message.
 
 The unreleased [project handoff model](docs/studio/logical-projects.md) keeps one named project and coordinator window across explicitly linked machines. Threads retain their execution machine and recorded model; earlier coordinator segments remain readable. Handoffs start a fresh provider session, and unreachable machines can have history that is temporarily unavailable. Existing independent projects require explicit association.
+
+## Details
+
+Automatic fallback requires an explicit configured choice before selecting ACP agents whose billing is unknown. See [when a provider runs out](docs/user/usage.md#when-a-provider-runs-out).
+
+HTML reports open from a compact preview into a focused reader. The conversation stays available through Show thread. See the [report experience](docs/reports/report-experience.md) for behavior and compatibility limits.
+
+Settings > Skills manages versions and agent visibility. Claude plugin skills use the whole-plugin control; disabled plugins stay visible so you can turn them back on or Undo. Version updates require a fresh preview if the registry changes before confirmation.
+
+**Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside SpecWithCode-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
+
+The model picker distinguishes the coding harness from the model and its billing source. See the [harness integration guide](docs/providers/harnesses.md) for OpenCode, Pi, native adapters and verification limits.
 
 ## Privacy
 
