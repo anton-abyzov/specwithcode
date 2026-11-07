@@ -19,6 +19,12 @@
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+import { worktreeSetManifestPath } from "../worktreeSet.ts";
+
+/** Why a thread in a worktree set stays on its machine. */
+export const WORKTREE_SET_HANDOFF_MESSAGE =
+  "This thread works in a worktree set across several repositories, and a handoff carries one repository. Finish it on this machine, or push each repository's branch and continue on the other machine from there.";
 
 import {
   CommandId,
@@ -245,6 +251,18 @@ export const make = Effect.gen(function* () {
         return yield* failed("invalid", PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
       }
       const cwd = shell.worktreePath ?? project.workspaceRoot;
+      // A checkpoint carries one repository; a set's other members would be left behind.
+      if (
+        shell.worktreePath !== null &&
+        (yield* Effect.promise(() =>
+          NodeFSP.access(worktreeSetManifestPath(shell.worktreePath!, NodePath)).then(
+            () => true,
+            () => false,
+          ),
+        ))
+      ) {
+        return yield* failed("invalid", WORKTREE_SET_HANDOFF_MESSAGE);
+      }
       const repositoryPath = yield* Effect.tryPromise({
         try: () => repositoryPathFor(project.workspaceRoot, cwd),
         catch: (cause) =>

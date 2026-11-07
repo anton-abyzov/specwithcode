@@ -10,17 +10,23 @@ How checkouts sit on disk is a local arrangement, never a structure SpecWithCode
 - **Several checkouts, wherever they live.** Sibling folders, service clones in different places, checkouts other tools made. The project lists its repositories by path or URL, and existing checkouts are matched where they are.
 - **An umbrella folder.** One folder holding clones of several repositories, for example under `repositories/<owner>/<repo>`. This is the layout SpecWithCode uses when it prepares a new checkout for you, and how multi-repository products such as EasyChamp (its service repositories behind one product) and SpecWeave itself (the framework and this app) sit on our machines. It is a working example, not a requirement: renaming the folder, nesting differently, or not nesting at all changes nothing about how threads run.
 
-SpecWithCode only *detects* the layout, to give advice. What matters to behavior is whether the folder holds clones of other repositories — anywhere inside it, not only under a `repositories/` folder — because a worktree of such a folder would hold none of their code.
+SpecWithCode only _detects_ the layout, to give advice. What matters to behavior is whether the folder holds clones of other repositories — anywhere inside it, not only under a `repositories/` folder — because a worktree of such a folder would hold none of their code.
 
 ## Where new threads start
 
-Worktrees are optional, and the choice belongs to each project. New threads start in the project's current checkout. Turn on **Settings → Project → New threads → Use worktrees** for a project to give its new threads their own worktree instead. There is no machine-wide workspace default above the project. A repository can check the same preference in for everyone who opens it:
+Worktrees are optional, and the choice belongs to each project. New threads start in the project's current checkout. Turn on **Use worktrees** for a project, on its General tab or in **Settings → Projects → New threads** (the same setting), to give its new threads their own worktree instead. There is no machine-wide workspace default above the project. A repository can check the same preference in for everyone who opens it:
 
 ```json
 { "defaultThreadEnvMode": "worktree" }
 ```
 
-The project's own setting wins over `specweave-studio.json`. An explicit choice for one thread — the composer's **Use worktree** tick, starting from a branch, a launch's `workspaceStrategy`, a scheduled task's stored strategy — wins over both. An agent that needs an isolated copy of another repository can clone it into a sibling folder itself; the platform does not pre-create worktrees for every repository a project touches.
+The project's own setting wins over `specweave-studio.json`. An explicit choice for one thread — the composer's **Use worktree** tick, starting from a branch, a launch's `workspaceStrategy`, a scheduled task's stored strategy — wins over both. The platform does not pre-create worktrees for every repository a project touches.
+
+### Worktree sets for an increment
+
+With Use worktrees on, a thread launched for a SpecWeave increment gets a worktree of exactly the repositories that increment changes: its `metadata.json` `repositories` (paths relative to the project folder, or a project environment repository id), else the repositories that own its task `Files`. When that is more than the project folder's own repository, or the project folder is an umbrella holding other clones, the thread gets one folder holding one worktree per repository, all on the same branch, each at the repository's path relative to the project folder (`repositories/acme/api` sits at `<thread folder>/repositories/acme/api`; a repository outside the project folder sits at `<thread folder>/<its folder name>`). The members are listed in `.<thread folder>.worktree-set.json` beside the folder. SpecWeave planning stays in the project folder.
+
+Restore recreates every missing member from its own repository, and deleting a project's worktrees inspects and removes the set as one entry. A handoff to another machine carries one repository, so a thread in a set stays on its machine. With Use worktrees off, or without an increment, a launch behaves as before.
 
 Use the current checkout for one writer working sequentially. Use separate worktrees for simultaneous code-writing threads on different branches. Two local threads see the same files, index and checked-out branch; selecting Local does not isolate their edits. Reusing an existing worktree avoids another checkout but also shares its files with any thread still using it.
 

@@ -201,6 +201,49 @@ it.effect("a coordinator's launch follows the project's Use worktrees switch", (
       workspaceNotice: expect.stringContaining("holds separate clones"),
     });
     expect(statusReads).toHaveLength(1);
+
+    // An increment that changes the umbrella's child gets a worktree set of it.
+    const incrementFolder = NodePath.join(workspaceRoot, ".specweave/increments/0007-multi");
+    NodeFS.mkdirSync(incrementFolder, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(incrementFolder, "metadata.json"),
+      JSON.stringify({
+        id: "0007-multi",
+        status: "active",
+        repositories: ["repositories/acme/api"],
+      }),
+    );
+    NodeFS.writeFileSync(NodePath.join(incrementFolder, "spec.md"), "# Multi\n");
+    const set = yield* handle({ ...base, increment: "0007" });
+    expect(launched[4]?.workspaceStrategy).toEqual({
+      type: "worktree",
+      baseRef: "feature/base",
+      startFromOrigin: true,
+      repositories: ["repositories/acme/api"],
+    });
+    expect(set.at(-1)?.result).toMatchObject({
+      workspaceNotice: expect.stringContaining("one folder with a worktree of each"),
+    });
+    expect(launched[4]?.initialMessage?.text).toContain("SpecWeave planning stays");
+
+    // With task files and no declaration, their owners make the set.
+    NodeFS.writeFileSync(
+      NodePath.join(incrementFolder, "metadata.json"),
+      JSON.stringify({ id: "0007-multi", status: "active" }),
+    );
+    NodeFS.writeFileSync(
+      NodePath.join(incrementFolder, "spec.md"),
+      "# Multi\n\n### T-01 One\n- AC: AC-01 | Files: repositories/acme/api/src/a.ts | Test: x\n",
+    );
+    yield* handle({ ...base, increment: "0007" });
+    expect(launched[5]?.workspaceStrategy).toMatchObject({
+      repositories: ["repositories/acme/api"],
+    });
+
+    // Use worktrees off: the same launch stays in the project folder.
+    settings = withProjectMode("local");
+    yield* handle({ ...base, increment: "0007" });
+    expect(launched[6]?.workspaceStrategy).toEqual({ type: "root" });
   }),
 );
 

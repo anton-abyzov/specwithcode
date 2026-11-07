@@ -9,7 +9,9 @@
  * inside the managed worktree folders. Removal goes through the same guard as
  * `vcs.removeWorktree`, so ownership, symlink and linked-worktree checks always
  * apply; the person's confirmation only lifts the uncommitted-files refusal for
- * the paths they named. Branches are never deleted.
+ * the paths they named. Branches are never deleted. A worktree set (one
+ * thread folder holding a worktree of several repositories) is one candidate:
+ * inspected across its members and removed member by member.
  */
 import {
   staysWithProjectCoordinator,
@@ -40,6 +42,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as Settings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
+import { removeWorktreeSetMembers } from "../git/worktreeSetGit.ts";
+import { readWorktreeSet, worktreeSetMemberPath } from "../worktreeSet.ts";
 
 const ThreadWorktree = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
@@ -202,6 +206,57 @@ export const make = Effect.gen(function* () {
   const gitLines = (cwd: string, operation: string, args: ReadonlyArray<string>) =>
     git.execute({ operation, cwd, args: [...args], maxOutputBytes: 64 * 1024 });
 
+  /**
+   * One checkout's branch, whether removing it loses files, and its commits on
+   * no remote; null without a branch. `nested` are folders of other set members
+   * inside it, which do not count as its own files.
+   */
+  const checkoutState = Effect.fn("ProjectWorktreeCleanup.checkoutState")(function* (
+    checkout: string,
+    nested: ReadonlySet<string>,
+  ) {
+    const status = yield* git.statusDetailsLocal(checkout);
+    if (!status.isRepo || status.branch === null) return null;
+    const ignored = yield* gitLines(checkout, "ProjectWorktreeCleanup.ignoredFiles", [
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    ]);
+    const untracked = yield* gitLines(checkout, "ProjectWorktreeCleanup.untrackedFiles", [
+      "ls-files",
+      "--others",
+      "--exclude-standard",
+      "--directory",
+      "-z",
+    ]);
+    const withoutNested = (output: string) =>
+      output
+        .split("\0")
+        .filter((entry) => !nested.has(entry.replace(/\/$/u, "").split("/").join(path.sep)))
+        .join("\0");
+    const hasLocalChanges =
+      status.hasWorkingTreeChanges ||
+      untracked.stdoutTruncated ||
+      !onlyRebuildableUntracked(withoutNested(untracked.stdout)) ||
+      ignored.stdoutTruncated ||
+      !onlyDependencyIgnores(withoutNested(ignored.stdout));
+    const ahead = yield* git
+      .execute({
+        operation: "ProjectWorktreeCleanup.localCommits",
+        cwd: checkout,
+        args: ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+        allowNonZeroExit: true,
+        maxOutputBytes: 1024,
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    const localCommits =
+      ahead === null || ahead.exitCode !== 0 ? null : Number.parseInt(ahead.stdout.trim(), 10) || 0;
+    return { branch: status.branch, hasLocalChanges, localCommits };
+  });
+
   const inspect = Effect.fn("ProjectWorktreeCleanup.inspect")(function* (
     candidate: Candidate,
     roots: ReadonlyArray<string>,
@@ -232,8 +287,21 @@ export const make = Effect.gen(function* () {
         "not_removable",
         "It is outside the worktrees folder, so it is kept. Remove it yourself if you no longer need it.",
       );
-    if ((yield* fs.stat(path.join(realPath, ".git"))).type !== "File")
-      return keep("not_removable", "It is a main checkout, not a worktree, so it is kept.");
+    const set = yield* readWorktreeSet(candidate.path).pipe(Effect.provideContext(services));
+    const checkouts =
+      set === null
+        ? [realPath]
+        : set.members.map((member) => worktreeSetMemberPath(realPath, member, path));
+    for (const checkout of checkouts) {
+      const gitLink = yield* fs.stat(path.join(checkout, ".git")).pipe(
+        Effect.map((info) => info.type),
+        Effect.orElseSucceed(() => null),
+      );
+      // A set member that is gone has nothing left to lose.
+      if (gitLink === null && set !== null) continue;
+      if (gitLink !== "File")
+        return keep("not_removable", "It is a main checkout, not a worktree, so it is kept.");
+    }
 
     const own = new Set(candidate.threadIds);
     const owners = yield* worktreeOwnersOf(bindings, realPath, { match: "within" }).pipe(
@@ -252,48 +320,38 @@ export const make = Effect.gen(function* () {
     if (owners.sessions.some((session) => session.threadId === null || !own.has(session.threadId)))
       return keep("in_use", "An agent session outside this project uses it, so it is kept.");
 
-    const status = yield* git.statusDetailsLocal(realPath);
-    if (!status.isRepo || status.branch === null)
-      return keep(
-        "not_removable",
-        "No branch is checked out, so removing it could lose commits. It is kept.",
+    let branch: string | null = null;
+    let hasLocalChanges = false;
+    let localCommits: number | null = 0;
+    // Nested set members sit inside the root member, which ignores them locally.
+    const memberFolders = new Set(
+      checkouts
+        .filter((checkout) => checkout !== realPath)
+        .map((checkout) => path.relative(realPath, checkout)),
+    );
+    for (const checkout of checkouts) {
+      if (set !== null && !(yield* fs.exists(checkout).pipe(Effect.orElseSucceed(() => false))))
+        continue;
+      const state = yield* checkoutState(
+        checkout,
+        checkout === realPath ? memberFolders : new Set<string>(),
       );
-    const ignored = yield* gitLines(realPath, "ProjectWorktreeCleanup.ignoredFiles", [
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--directory",
-      "-z",
-    ]);
-    const untracked = yield* gitLines(realPath, "ProjectWorktreeCleanup.untrackedFiles", [
-      "ls-files",
-      "--others",
-      "--exclude-standard",
-      "--directory",
-      "-z",
-    ]);
-    const hasLocalChanges =
-      status.hasWorkingTreeChanges ||
-      untracked.stdoutTruncated ||
-      !onlyRebuildableUntracked(untracked.stdout) ||
-      ignored.stdoutTruncated ||
-      !onlyDependencyIgnores(ignored.stdout);
-    const ahead = yield* git
-      .execute({
-        operation: "ProjectWorktreeCleanup.localCommits",
-        cwd: realPath,
-        args: ["rev-list", "--count", "HEAD", "--not", "--remotes"],
-        allowNonZeroExit: true,
-        maxOutputBytes: 1024,
-      })
-      .pipe(Effect.orElseSucceed(() => null));
-    const localCommits =
-      ahead === null || ahead.exitCode !== 0 ? null : Number.parseInt(ahead.stdout.trim(), 10) || 0;
+      if (state === null)
+        return keep(
+          "not_removable",
+          "No branch is checked out, so removing it could lose commits. It is kept.",
+        );
+      branch ??= state.branch;
+      hasLocalChanges ||= state.hasLocalChanges;
+      localCommits =
+        localCommits === null || state.localCommits === null
+          ? null
+          : localCommits + state.localCommits;
+    }
     const sizeBytes = yield* measureDirectoryBytes(runner, realPath);
     return {
       ...base,
-      branch: status.branch,
+      branch,
       sizeBytes,
       localCommits,
       status: hasLocalChanges ? "local_changes" : "removable",
@@ -384,6 +442,26 @@ export const make = Effect.gen(function* () {
       }
       if (holdsProjectFolder(projectRoot, realPath)) {
         kept.push({ path: requested, reason: "It holds the project folder." });
+        continue;
+      }
+      const set = yield* readWorktreeSet(requested).pipe(Effect.provideContext(services));
+      if (set !== null) {
+        const keptMembers = yield* removeWorktreeSetMembers({
+          folder: requested,
+          members: set.members,
+          context: { confirmedDeletion: { discardLocalChanges: discard.has(requested) } },
+        }).pipe(
+          Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+          Effect.provideContext(services),
+        );
+        if (keptMembers.length === 0) removed.push(requested);
+        else
+          kept.push({
+            path: requested,
+            reason: keptMembers
+              .map((entry) => `${path.basename(entry.member.repository)}: ${entry.reason}`)
+              .join(" "),
+          });
         continue;
       }
       const outcome = yield* gitWorkflow

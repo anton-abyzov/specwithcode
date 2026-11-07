@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
+import { resolveWorktreesDirectory } from "./worktreesDirectory.ts";
+
 /** Resolve existing ancestors so a missing custom folder cannot hide a symlink escape. */
 function canonicalFuturePath(directory: string, fs: FileSystem.FileSystem, path: Path.Path) {
   return Effect.gen(function* () {
@@ -62,9 +64,52 @@ export function ignoreProjectWorktrees(
   fs: FileSystem.FileSystem,
   path: Path.Path,
 ) {
+  return appendExcludeRule(excludeFile, "/.specwithcode/worktrees/", fs, path);
+}
+
+/**
+ * The folder a worktree set (worktreeSet.ts) is created in:
+ * `<worktrees>/<project folder name>/<branch folder>`, under the same
+ * location the project's single worktrees use. Null when that location is
+ * not usable on this machine.
+ */
+export function worktreeSetFolder(input: {
+  readonly setting: string;
+  readonly mode?: WorktreeLocationMode | undefined;
+  /** `<SpecWithCode home>/worktrees`. */
+  readonly defaultDir: string;
+  readonly projectRoot: string;
+  readonly branch: string;
+  readonly path: Path.Path;
+}): string | null {
+  const { path } = input;
+  const parent = resolveWorktreesDirectory(
+    input.setting,
+    input.defaultDir,
+    path,
+    input.mode,
+    input.projectRoot,
+  );
+  if (parent === null) return null;
+  return path.join(parent, path.basename(input.projectRoot), worktreeFolderName(input.branch));
+}
+
+/** A branch's folder name, named as single worktrees are: short enough for Windows. */
+export function worktreeFolderName(branch: string): string {
+  const name = branch.replace(/\//g, "-");
+  if (name.length <= 40) return name;
+  return `${name.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "")}-${fnv1a64(branch)}`;
+}
+
+/** Append one line to a git exclude file unless it is already there. */
+export function appendExcludeRule(
+  excludeFile: string,
+  rule: string,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+) {
   return Effect.gen(function* () {
     const contents = (yield* fs.exists(excludeFile)) ? yield* fs.readFileString(excludeFile) : "";
-    const rule = "/.specwithcode/worktrees/";
     if (contents.split(/\r?\n/).includes(rule)) return;
     yield* fs.makeDirectory(path.dirname(excludeFile), { recursive: true });
     yield* fs.writeFileString(
@@ -72,4 +117,14 @@ export function ignoreProjectWorktrees(
       `${contents}${contents && !contents.endsWith("\n") ? "\n" : ""}${rule}\n`,
     );
   });
+}
+
+/** 16 hex characters of a 64-bit FNV-1a hash: a stable short suffix, not a security digest. */
+function fnv1a64(text: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(text)) {
+    hash ^= BigInt(byte);
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
 }

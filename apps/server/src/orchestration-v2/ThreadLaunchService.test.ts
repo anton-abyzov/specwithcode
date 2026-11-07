@@ -120,6 +120,8 @@ interface HarnessOptions {
   readonly generateBranchName?: TextGeneration.TextGeneration["Service"]["generateBranchName"];
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
+  /** The real filesystem and a temporary worktrees folder, for worktree sets. */
+  readonly withFileSystem?: boolean;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -211,6 +213,14 @@ function makeHarness(options: HarnessOptions = {}) {
         namedProjectsRoot: "/projects",
         folderForThread: () => Effect.succeed(Option.none()),
       }),
+    options.withFileSystem === true
+      ? Layer.mergeAll(
+          NodeServices.layer,
+          ServerConfig.layerTest(process.cwd(), { prefix: "studio-launch-set-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        )
+      : Layer.empty,
   );
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
@@ -599,6 +609,85 @@ it.effect("seeds the increment binding once the workspace is recorded, before se
         event: "studio-launch",
       });
       yield* Deferred.succeed(allowSetup, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.scoped),
+);
+
+it.effect("creates a worktree set: one folder, each repository at its path, one branch", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-set-root-"));
+    NodeFS.mkdirSync(NodePath.join(root, ".git"), { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(root, "repositories/acme/api/.git"), { recursive: true });
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const harness = makeHarness({
+      withFileSystem: true,
+      project: { ...project, workspaceRoot: root } as never,
+      localStatus: () => Effect.succeed({ refName: "develop" } as never),
+      createWorktree: (input) =>
+        Effect.sync(() => {
+          NodeFS.mkdirSync(input.path!, { recursive: true });
+          return {
+            worktree: { path: input.path, refName: input.newRefName, headSha: "abc" },
+          } as never;
+        }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const { threadId } = yield* launches.launch(
+        launchInput({
+          command: "command:launch:set",
+          thread: "thread:launch:set",
+          message: "Change both",
+          workspace: {
+            type: "worktree",
+            baseRef: "main",
+            repositories: [".", "repositories/acme/api"],
+          },
+        }),
+      );
+      yield* waitUntil(() =>
+        threads
+          .getThreadProjection(threadId)
+          .pipe(Effect.map((projection) => projection.thread.worktreePath !== null)),
+      );
+      const calls = harness.createWorktree.mock.calls.map(([input]) => input);
+      assert.lengthOf(calls, 2);
+      const folder = calls[0]!.path!;
+      assert.deepEqual(
+        calls.map((input) => [input.cwd, input.path, input.baseRefName]),
+        [
+          [root, folder, "main"],
+          [
+            NodePath.join(root, "repositories/acme/api"),
+            NodePath.join(folder, "repositories/acme/api"),
+            "develop",
+          ],
+        ],
+      );
+      assert.equal(calls[0]!.newRefName, calls[1]!.newRefName);
+      assert.equal(NodePath.basename(NodePath.dirname(folder)), NodePath.basename(root));
+      const projection = yield* threads.getThreadProjection(threadId);
+      assert.equal(projection.thread.worktreePath, folder);
+      assert.isTrue(
+        NodeFS.existsSync(
+          NodePath.join(
+            NodePath.dirname(folder),
+            `.${NodePath.basename(folder)}.worktree-set.json`,
+          ),
+        ),
+      );
+      // The generated name reaches every member.
+      yield* waitUntil(() => Effect.sync(() => harness.renameBranch.mock.calls.length === 2));
+      assert.deepEqual(
+        harness.renameBranch.mock.calls.map(([input]) => [input.cwd, input.newBranch]),
+        [
+          [folder, "generated-branch"],
+          [NodePath.join(folder, "repositories/acme/api"), "generated-branch"],
+        ],
+      );
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.scoped),
 );

@@ -88,6 +88,8 @@ import {
   NO_BRANCH_WORKTREE_NOTICE,
   projectUsesWorktrees,
   UMBRELLA_WORKTREE_NOTICE,
+  incrementWorktreeSetRepositories,
+  worktreeSetNotice,
   WORKTREE_OFF_NOTICE,
 } from "./launchWorkspace.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -194,12 +196,30 @@ const projectWantsWorktrees = Effect.fn("mcp.projectWantsWorktrees")(function* (
   return projectUsesWorktrees(resolveProjectSettings(settings, project.id, project));
 });
 
-/** The workspace a launch naming none starts in; see launchWorkspaceDefault. */
-const projectLaunchWorkspace = Effect.fn("mcp.projectLaunchWorkspace")(function* (project: {
-  readonly id: ProjectId;
-  readonly workspaceRoot: string;
-  readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
-}) {
+/** A worker in a worktree set learns where its planning stays (the launch notice). */
+function withWorktreeSetBrief(
+  prompt: string,
+  strategy: ThreadLaunch.ThreadLaunchWorkspaceStrategy,
+  notice: string | undefined,
+): string {
+  if (strategy.type !== "worktree" || (strategy.repositories?.length ?? 0) === 0) return prompt;
+  if (notice === undefined) return prompt;
+  return prompt.trim() === "" ? notice : `${prompt}\n\n${notice}`;
+}
+
+/**
+ * The workspace a launch naming none starts in; see launchWorkspaceDefault.
+ * With Use worktrees on, a launch for an increment that changes repositories
+ * other than the project root's own (or several) gets a worktree set: one
+ * thread folder with a worktree of each (worktreeSet.ts).
+ */
+const projectLaunchWorkspace = Effect.fn("mcp.projectLaunchWorkspace")(function* (
+  project: Parameters<typeof ThreadLaunch.projectRepositoryCheckouts>[0] & {
+    readonly id: ProjectId;
+    readonly defaultThreadEnvMode?: ThreadEnvMode | null | undefined;
+  },
+  increment?: { readonly root: string; readonly incrementId: string } | undefined,
+) {
   const root = { strategy: { type: "root" as const } };
   const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   if (Option.isNone(settingsService)) return root;
@@ -207,14 +227,47 @@ const projectLaunchWorkspace = Effect.fn("mcp.projectLaunchWorkspace")(function*
   if (settings === null) return root;
   const resolved = resolveProjectSettings(settings, project.id, project);
   if (!projectUsesWorktrees(resolved)) return root;
+  const git = yield* GitVcsDriver.GitVcsDriver;
+  const readStatus = Effect.suspend(() =>
+    git.statusDetailsLocal(project.workspaceRoot, { includeDivergence: false }),
+  ).pipe(Effect.orElseSucceed(() => null));
+  const separateClones = yield* Effect.promise(() => holdsSeparateClones(project.workspaceRoot));
+  const repositories =
+    increment === undefined
+      ? null
+      : yield* Effect.promise(() =>
+          incrementWorktreeSetRepositories({
+            workspaceRoot: project.workspaceRoot,
+            checkouts: ThreadLaunch.projectRepositoryCheckouts(project),
+            increment,
+          }),
+        );
+  // Only the root's own repository, outside an umbrella, is today's single worktree.
+  if (
+    repositories !== null &&
+    increment !== undefined &&
+    (separateClones || repositories.length > 1 || repositories[0] !== ".")
+  ) {
+    const status = yield* readStatus;
+    return {
+      strategy: {
+        type: "worktree" as const,
+        baseRef: status?.isRepo === true && status.branch !== null ? status.branch : "HEAD",
+        startFromOrigin: resolved.settings.newWorktreesStartFromOrigin,
+        repositories,
+      },
+      notice: worktreeSetNotice({
+        incrementId: increment.incrementId,
+        repositories,
+        workspaceRoot: project.workspaceRoot,
+      }),
+    };
+  }
   // An umbrella's own repository leaves its child checkouts out, so a worktree
   // of it would hold none of their code.
-  if (yield* Effect.promise(() => holdsSeparateClones(project.workspaceRoot)))
+  if (separateClones)
     return { strategy: { type: "root" as const }, notice: UMBRELLA_WORKTREE_NOTICE };
-  const git = yield* GitVcsDriver.GitVcsDriver;
-  const status = yield* git
-    .statusDetailsLocal(project.workspaceRoot, { includeDivergence: false })
-    .pipe(Effect.orElseSucceed(() => null));
+  const status = yield* readStatus;
   const strategy = launchWorkspaceDefault({
     resolved,
     currentBranch: status?.isRepo === true ? status.branch : null,
@@ -670,7 +723,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? { strategy: input.workspaceStrategy }
             : project === undefined || scratchProjectId !== undefined
               ? { strategy: { type: "root" as const } }
-              : yield* projectLaunchWorkspace(project);
+              : yield* projectLaunchWorkspace(project, increment.increment);
         const workspaceStrategy = workspace.strategy;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
@@ -700,7 +753,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   messageId,
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                   text: promptWithRoutingNote(
-                    withIncrementBrief(input.message ?? "", increment),
+                    withWorktreeSetBrief(
+                      withIncrementBrief(input.message ?? "", increment),
+                      workspaceStrategy,
+                      "notice" in workspace ? workspace.notice : undefined,
+                    ),
                     routing ?? null,
                   ),
                   attachments,
