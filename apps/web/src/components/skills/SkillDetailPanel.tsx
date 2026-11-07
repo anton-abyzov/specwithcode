@@ -46,7 +46,7 @@ export function SkillDetailPanel({
     [notice, setNotice] = useState<string | null>(null);
   const [instructionId, setInstructionId] = useState("");
   const [receipts, setReceipts] = useState<
-    ReadonlyArray<{ id: string; path: string; status: string; message?: string }>
+    ReadonlyArray<{ id: string; path: string; status: string; message?: string | undefined }>
   >([]);
   const generation = useRef(0);
   const parts = skillDescriptionParts(row.description);
