@@ -5227,7 +5227,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             headRepositoryOwnerLogin: "binbandit",
           },
           repositoryCloneUrls: {
-            "binbandit/specwithcode-dev": {
+            "binbandit/specwithcode": {
               url: forkDir,
               sshUrl: forkDir,
             },

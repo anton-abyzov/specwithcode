@@ -198,7 +198,8 @@ class Rehearsal(unittest.TestCase):
         real_popen, real_remove, seen = subprocess.Popen, rehearse_update.remove, {}
         def popen_then_signal(*args, **kwargs):
             process = real_popen(*args, **kwargs)
-            if 'pid' in seen:  # Only the candidate's Popen; later ones (this test's ps) pass through.
+            # Only the candidate server's Popen; the clone's cp and this test's ps pass through.
+            if 'pid' in seen or '--no-browser' not in (args[0] if args else kwargs.get('args', ())):
                 return process
             seen['pid'] = process.pid
             self.addCleanup(lambda: process.poll() is None and os.killpg(process.pid, signal.SIGKILL))
