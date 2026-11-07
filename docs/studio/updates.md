@@ -21,7 +21,11 @@ The SpecWithCode service row shows the installed version, what the agent is doin
 
 ## Update now
 
-Update now installs a downloaded service release while work is still running. If anything is running it first asks, listing the tasks that will be interrupted, queued messages that will be cancelled, questions that will be closed and terminals that will close. Then:
+Update now installs a downloaded service release while work is still running. If anything is running it first asks, listing the tasks that will be interrupted, queued messages that will be cancelled, questions that will be closed and terminals that will close.
+
+Only work a restart would cut off makes it, or Restart to update, ask. A thread that only waits on you (its turn is paused on approvals or questions, which are closed and asked again after the restart) is not work: with nothing else running the restart goes ahead without a dialog, and "Restart when idle" restarts as soon as only such threads are left. When the dialog does show, it lists only the running threads and adds one line naming the questions and approvals asked again. A sign-in or a tool call the app answers itself still counts as work. The prepare result marks such threads with `waitsOnPerson`; an older service omits it and every thread counts as before.
+
+When it runs:
 
 1. the service holds itself for the update: new messages, scheduled tasks, pull request polling, channel messages and new terminals wait or are refused with "SpecWithCode is installing an update. Send this again after it restarts.";
 2. it cancels queued messages, interrupts running turns (each ends `interrupted`, so you can continue it after the update), releases every agent process, closes questions, cancels background effects that do not settle within 20 seconds and closes terminals, keeping their history;

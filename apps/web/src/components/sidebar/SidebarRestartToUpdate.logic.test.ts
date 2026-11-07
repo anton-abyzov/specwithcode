@@ -13,6 +13,9 @@ import {
   describeServiceUpdateBlockers,
   describeAppRestartWarning,
   describeServiceUpdateStop,
+  describeReaskedRequests,
+  interruptedWork,
+  restartWhenIdleNote,
   isStaleServiceAnswer,
   retryServiceUpdateProgress,
   SERVICE_UPDATE_NOW_DESCRIPTION,
@@ -1493,14 +1496,20 @@ describe("describeAppRestartWarning", () => {
       questions: 1,
       approvals: 1,
     } as ServiceUpdateBlocker;
+    expect(describeAppRestartWarning({ blockers: [request] }, { version: "1.0.70" })).toContain(
+      '1 question and 1 approval will be closed and asked again after the update, in "Fix login".',
+    );
+    // A listed dialog keeps one summary line and notes them under the list (1259).
     expect(
       describeAppRestartWarning({ blockers: [request] }, { version: "1.0.70", listed: true }),
     ).toBe(
       [
         "Restart to install SpecWithCode 1.0.70?",
         "2 questions waiting in 1 thread. Restarting interrupts this work.",
-        '1 question and 1 approval will be closed and asked again after the update, in "Fix login".',
       ].join("\n"),
+    );
+    expect(describeReaskedRequests([request])).toBe(
+      "1 question and 1 approval waiting for you are asked again after the restart.",
     );
     // An older service does not split them: no line it cannot back.
     expect(
@@ -1528,5 +1537,48 @@ describe("describeAppRestartWarning", () => {
         "1 running, 2 queued in 2 threads. Restarting interrupts this work.",
       ].join("\n"),
     );
+  });
+
+  // 1259: a question or approval is asked again after the restart, so a
+  // thread that only waits on the person is no reason to warn or to wait.
+  const paused = (title: string): ReadonlyArray<ServiceUpdateBlocker> => [
+    { ...blocker("run", 1, title), waitsOnPerson: true },
+    { ...blocker("request", 1, title), questions: 1, approvals: 0, waitsOnPerson: true },
+  ];
+
+  it("restarts without asking when threads only wait on the person (1259)", () => {
+    const check = { blockers: [...paused("Proactive briefing"), ...paused("Sidebar fixes")] };
+    expect(describeAppRestartWarning(check, { version: "1.0.207" })).toBeNull();
+    expect(describeServiceUpdateStop(check)).toBeNull();
+  });
+
+  it("lists only running work, and says which questions are asked again (1259)", () => {
+    const check = { blockers: [blocker("run", 1, "Fix login"), ...paused("Proactive briefing")] };
+    expect(describeAppRestartWarning(check, { version: "1.0.207", listed: true })).toBe(
+      [
+        "Restart to install SpecWithCode 1.0.207?",
+        "1 running in 1 thread. Restarting interrupts this work.",
+      ].join("\n"),
+    );
+    expect(describeReaskedRequests(check.blockers)).toBe(
+      "1 question waiting for you is asked again after the restart.",
+    );
+    expect(restartWhenIdleNote(2)).toBe(
+      "Restart when idle lets it finish first, for up to 2 minutes.",
+    );
+    expect(describeServiceUpdateStop(check)).toBe(
+      [
+        "Stop running work and update now?",
+        "1 task will be interrupted. You can continue it after the update.",
+        '1 question will be closed and asked again after the update, in "Proactive briefing".',
+      ].join("\n"),
+    );
+    expect(interruptedWork(check.blockers).map((item) => item.threadTitle)).toEqual(["Fix login"]);
+  });
+
+  it("still warns for a folder copy beside threads that only wait (1259)", () => {
+    expect(
+      describeAppRestartWarning({ blockers: paused("Proactive briefing"), folderCopies: 1 }),
+    ).toContain("1 folder copy to or from another machine is in progress.");
   });
 });

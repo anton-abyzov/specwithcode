@@ -51,6 +51,12 @@ export const ServiceUpdateBlocker = Schema.Struct({
    */
   questions: Schema.optional(NonNegativeInt),
   approvals: Schema.optional(NonNegativeInt),
+  /**
+   * The thread only waits on a person: its runs and sessions are paused on
+   * approvals or questions that are asked again after the update, so a restart
+   * interrupts no work there. Older services omit it.
+   */
+  waitsOnPerson: Schema.optional(Schema.Boolean),
 });
 export type ServiceUpdateBlocker = typeof ServiceUpdateBlocker.Type;
 

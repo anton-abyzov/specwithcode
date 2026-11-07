@@ -12,6 +12,7 @@ import { markRestartStep } from "./restartTrace";
 import {
   APP_RESTART_UNKNOWN,
   describeAppRestartWarning,
+  interruptedWork,
 } from "./sidebar/SidebarRestartToUpdate.logic";
 
 /**
@@ -138,20 +139,24 @@ export async function withdrawRequest(): Promise<{
 /**
  * Asks before an app restart installs an update while work runs. Resolves true
  * when the restart may go ahead: nothing runs, or the user chose to restart
- * anyway. Nothing runs and no question is asked when the service says so.
+ * anyway. Nothing runs and no question is asked when the service says so, or
+ * when its threads only wait on a person: their questions are asked again.
  */
 export async function confirmAppRestartForUpdate(
   options: {
     readonly version?: string | null;
     /** The running work as the dialog shows it, under the summary. */
-    readonly renderDetails?: (blockers: ReadonlyArray<ServiceUpdateBlocker>) => ReactNode;
+    readonly renderDetails?: (
+      working: ReadonlyArray<ServiceUpdateBlocker>,
+      all: ReadonlyArray<ServiceUpdateBlocker>,
+    ) => ReactNode;
   } = {},
 ): Promise<AppRestartChoice> {
   const lookAt = Date.now();
   const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
-  // Only copies run: there is no work to list under the summary.
-  const listed =
-    checked !== null && checked.blockers.length > 0 && options.renderDetails !== undefined;
+  // Only copies run, or threads that only wait on a person: no work to list.
+  const working = checked === null ? [] : interruptedWork(checked.blockers);
+  const listed = working.length > 0 && options.renderDetails !== undefined;
   const question =
     checked === null
       ? APP_RESTART_UNKNOWN
@@ -166,7 +171,9 @@ export async function confirmAppRestartForUpdate(
     confirmLabel: "Restart when idle",
     alternateLabel: "Restart now",
     cancelLabel: "Cancel",
-    ...(listed && checked !== null ? { details: options.renderDetails!(checked.blockers) } : {}),
+    ...(listed && checked !== null
+      ? { details: options.renderDetails!(working, checked.blockers) }
+      : {}),
   });
   if (choice === undefined) {
     const text =

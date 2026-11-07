@@ -948,6 +948,16 @@ function describeClosedQuestions(
 }
 
 /**
+ * The work a restart cuts off: everything but the threads that only wait on a
+ * person, whose approvals and questions are closed and asked again after it.
+ */
+export function interruptedWork(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+): ReadonlyArray<ServiceUpdateBlocker> {
+  return blockers.filter((blocker) => blocker.waitsOnPerson !== true);
+}
+
+/**
  * The question asked before "Update now" stops work, one line per kind of
  * work it ends. Null when nothing runs, so the update starts without asking.
  */
@@ -955,16 +965,20 @@ export function describeServiceUpdateStop(
   check: Pick<ServerPrepareServiceUpdateResult, "blockers" | "openTerminals" | "folderCopies">,
 ): string | null {
   // A project that continues threads after restarts gets its work back on its own.
-  const continuing = check.blockers.filter((blocker) => blocker.continuesAfterRestart === true);
-  const stopping = check.blockers.filter((blocker) => blocker.continuesAfterRestart !== true);
+  // A turn paused on a question is not cut off: the question is asked again.
+  const working = interruptedWork(check.blockers);
+  const continuing = working.filter((blocker) => blocker.continuesAfterRestart === true);
+  const stopping = working.filter((blocker) => blocker.continuesAfterRestart !== true);
   const tasks = blockerCount(stopping, ["run"]);
   const queued = blockerCount(stopping, ["queued"]);
   const continuedTasks = blockerCount(continuing, ["run"]);
   const requeued = blockerCount(continuing, ["queued"]);
   const questions = blockerCount(check.blockers, ["request"]);
-  const steps = blockerCount(check.blockers, ["effect", "session"]);
+  const steps = blockerCount(working, ["effect", "session"]);
   const terminals = check.openTerminals ?? 0;
   const copies = check.folderCopies ?? 0;
+  // Questions and approvals alone are no reason to ask: they are asked again.
+  if (working.length === 0 && terminals === 0 && copies === 0) return null;
   const lines = [
     tasks > 0
       ? `${plural(tasks, "task", "tasks")} will be interrupted. You can continue ${tasks === 1 ? "it" : "them"} after the update.`
@@ -1001,7 +1015,9 @@ export function describeAppRestartWarning(
     readonly listed?: boolean;
   } = {},
 ): string | null {
-  const groups = groupRunningWork(check.blockers);
+  // A thread that only waits on a person loses nothing: its questions are asked again.
+  const working = interruptedWork(check.blockers);
+  const groups = groupRunningWork(working);
   // The app restart takes its bundled service down, and a folder copy it serves or pulls with it.
   const copies = check.folderCopies ?? 0;
   if (groups.length === 0 && copies === 0) return null;
@@ -1015,17 +1031,18 @@ export function describeAppRestartWarning(
     groups.length === 0
       ? null
       : `${summarizeRunningWork(groups)}. ${
-          check.blockers.every((blocker) => blocker.continuesAfterRestart === true)
+          working.every((blocker) => blocker.continuesAfterRestart === true)
             ? "Restarting interrupts this work; it continues after the restart."
             : "Restarting interrupts this work."
         }`,
     copies > 0
       ? `${plural(copies, "folder copy", "folder copies")} to or from another machine ${copies === 1 ? "is" : "are"} in progress. Restarting cuts ${copies === 1 ? "it" : "them"} off, and ${copies === 1 ? "it" : "they"} may need Retry.`
       : null,
-    ...(questions > 0
+    // A listed dialog notes them under the list instead, as secondary.
+    ...(questions > 0 && !options.listed
       ? describeClosedQuestions(check.blockers, questions, { withoutSplit: false })
       : []),
-    options.listed ? null : describeServiceUpdateBlockers(check.blockers),
+    options.listed ? null : describeServiceUpdateBlockers(working),
     options.listed ? null : RESTART_WHEN_IDLE_NOTE,
   ]
     .filter((line): line is string => line !== null && line !== "")
@@ -1035,6 +1052,31 @@ export function describeAppRestartWarning(
 /** Under the restart warning: what "Restart when idle" does. */
 export const RESTART_WHEN_IDLE_NOTE =
   "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.";
+
+/** Under the listed restart warning: what "Restart when idle" waits for, and how long. */
+export function restartWhenIdleNote(holdMinutes: number): string {
+  return `Restart when idle lets it finish first, for up to ${plural(holdMinutes, "minute", "minutes")}.`;
+}
+
+/**
+ * Under the listed restart warning: the questions and approvals the restart
+ * closes, which are asked again after it. Null when there are none, or when an
+ * older service does not say which are asked again.
+ */
+export function describeReaskedRequests(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+): string | null {
+  const requests = blockers.filter((blocker) => blocker.kind === "request" && blocker.count > 0);
+  if (
+    requests.some((blocker) => blocker.questions === undefined && blocker.approvals === undefined)
+  )
+    return null;
+  const counts = countPersonRequests(requests);
+  const what = describePersonRequests(counts);
+  if (what === null) return null;
+  const many = counts.questions + counts.approvals > 1;
+  return `${what} waiting for you ${many ? "are" : "is"} asked again after the restart.`;
+}
 
 /** What the restart warning asks when the service cannot say what runs. */
 export const APP_RESTART_UNKNOWN =

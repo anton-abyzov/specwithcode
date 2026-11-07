@@ -415,6 +415,36 @@ describe("SidebarRestartToUpdate", () => {
     expect(label()).toBe("Restarting…");
   });
 
+  // 1259: questions and approvals are asked again after the restart.
+  const waitingOn = (title: string) => [
+    { ...blocker("run", 1, title), waitsOnPerson: true },
+    { ...blocker("request", 1, title), questions: 1, approvals: 0, waitsOnPerson: true },
+  ];
+
+  it("restarts without a dialog when threads only wait on the person (1259)", async () => {
+    checked = { idle: false, stoppedThreads: 0, blockers: waitingOn("Proactive briefing") };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    expect(readConfirmDialogState()).toMatchObject({ status: "idle" });
+    expect(calls).toEqual(["prepare:false", "prepare:true+hold", "installUpdate:0.2.5"]);
+  });
+
+  it("restarts when idle once only waits on the person are left (1259)", async () => {
+    checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
+    registerConfirmDialogHost();
+    render();
+    await click();
+    await act(async () => {
+      respondToConfirmDialog(true);
+    });
+    expect(label()).toBe("Restarts when idle, or in 2:00");
+    checked = { idle: false, stoppedThreads: 0, blockers: waitingOn("Proactive briefing") };
+    await advance(15_000);
+    expect(calls.slice(-2)).toEqual(["prepare:true+hold", "installUpdate:0.2.5"]);
+    expect(label()).toBe("Restarting…");
+  });
+
   it("restarts at once when the work ended while the question was open", async () => {
     checked = { idle: false, stoppedThreads: 0, blockers: [blocker("run", 1, "Fix login")] };
     registerConfirmDialogHost();
