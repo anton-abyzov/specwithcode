@@ -398,22 +398,29 @@ run_job() {  # run_job OUT NAME|DIR|KIND: one stage-1 job, leaving OUT/NAME.exit
   IFS='|' read -r name dir kind << EOF
 $2
 EOF
+  # Worker caps keep nested parallelism inside the pool's budget: the pool runs $JOBS jobs at
+  # once next to the server shards, so an uncapped vitest job (one worker per core)
+  # oversubscribes the runner and every suite slows down (apps_web 328s next to the server
+  # shards on the 10-core M1, release 1.0.139, against 129s alone on an idle 16-core M4;
+  # capped at 4 workers it takes 158s alone). Fleet keeps its own default: its tests mostly
+  # wait on subprocesses, so its 4 jobs cost little CPU. Retries run alone and keep the same
+  # caps, so a retry sees the same load.
   if [ "$MODE" = dry ]; then
     case "$kind" in
-      pkg) x "test:$dir" -C "$TEST/$dir" -- "${NO_GH_TOKEN[@]}" CI=1 node --run test ;;
+      pkg) x "test:$dir" -C "$TEST/$dir" -- "${NO_GH_TOKEN[@]}" CI=1 VITEST_MAX_WORKERS=4 node --run test ;;
       typecheck) x typecheck-gate -C "$TEST" -- "${NO_GH_TOKEN[@]}" bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" ;;
       fleet) x fleet-tests -C "$TEST" -- "${NO_GH_TOKEN[@]}" bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" --history "<the last fleet results>" ;;
-      contrast) x contrast -C "$TEST/apps/web" -- "${NO_GH_TOKEN[@]}" CI=1 node --run test -- $CONTRAST_TESTS ;;
+      contrast) x contrast -C "$TEST/apps/web" -- "${NO_GH_TOKEN[@]}" CI=1 VITEST_MAX_WORKERS=4 node --run test -- $CONTRAST_TESTS ;;
     esac
     return 0
   fi
   started=$(date +%s)
   set +e
   case "$kind" in
-    pkg) x "test:$dir" -C "$TEST/$dir" -- "${NO_GH_TOKEN[@]}" CI=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 node --run test > "$out/$name.log" 2>&1 ;;
+    pkg) x "test:$dir" -C "$TEST/$dir" -- "${NO_GH_TOKEN[@]}" CI=1 VITEST_MAX_WORKERS=4 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 node --run test > "$out/$name.log" 2>&1 ;;
     typecheck) x typecheck-gate -C "$TEST" -- "${NO_GH_TOKEN[@]}" CI=1 bash scripts/studio-verify/typecheck-gate.sh --jobs 3 --out "$out/typecheck" > "$out/$name.log" 2>&1 ;;
     fleet) x fleet-tests -C "$TEST" -- "${NO_GH_TOKEN[@]}" bash scripts/studio-fleet/run-tests.sh --out "$out/fleet" ${FLEET_HISTORY[@]+"${FLEET_HISTORY[@]}"} > "$out/$name.log" 2>&1 ;;
-    contrast) x contrast -C "$TEST/apps/web" -- "${NO_GH_TOKEN[@]}" CI=1 node --run test -- $CONTRAST_TESTS > "$out/$name.log" 2>&1 ;;
+    contrast) x contrast -C "$TEST/apps/web" -- "${NO_GH_TOKEN[@]}" CI=1 VITEST_MAX_WORKERS=4 node --run test -- $CONTRAST_TESTS > "$out/$name.log" 2>&1 ;;
   esac
   code=$?
   set -e
