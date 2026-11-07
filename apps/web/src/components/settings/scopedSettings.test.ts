@@ -12,13 +12,16 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   listProjectOverrides,
   persistScopedSettingsPatch,
+  planProjectOverrideEdits,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   resolveScopedSettingsTargets,
+  restrictPlanToEnvironments,
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
+  undoProjectOverrideEdits,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
 
@@ -745,5 +748,84 @@ describe("partial object patches at project scope", () => {
         },
       },
     });
+  });
+});
+
+describe("project override edits and undo", () => {
+  const project = ProjectId.make("p1");
+  const m4 = environment("M4", {
+    projectOverrides: true,
+    overrideChanges: true,
+    settings: { projectSettingsOverrides: { [project]: { defaultRuntimeMode: "full-access" } } },
+  });
+  const storm = environment("Ministorm", {
+    projectOverrides: true,
+    overrideChanges: true,
+    settings: {
+      projectSettingsOverrides: { [project]: { defaultRuntimeMode: "auto-accept-edits" } },
+    },
+  });
+  const offline = environment("M1", { connected: false, projectOverrides: true });
+
+  it("restores each machine's own previous value", () => {
+    const edits = undoProjectOverrideEdits("defaultRuntimeMode", [
+      { environmentId: m4.environmentId, projectId: project, rawValue: "full-access" },
+      { environmentId: storm.environmentId, projectId: project, rawValue: "auto-accept-edits" },
+    ]);
+    const plan = planProjectOverrideEdits([m4, storm], edits);
+    expect(plan.unavailableReason).toBeNull();
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      {
+        projectSettingsOverrideChanges: {
+          [project]: { set: { defaultRuntimeMode: "full-access" } },
+        },
+      },
+      {
+        projectSettingsOverrideChanges: {
+          [project]: { set: { defaultRuntimeMode: "auto-accept-edits" } },
+        },
+      },
+    ]);
+  });
+
+  it("clears a key that had no override before", () => {
+    const [edit] = undoProjectOverrideEdits("threadFinishAction", [
+      { environmentId: m4.environmentId, projectId: project, rawValue: undefined },
+    ]);
+    expect(edit).toEqual({
+      environmentId: m4.environmentId,
+      projectId: project,
+      clear: ["threadFinishAction"],
+    });
+  });
+
+  it("sets a new value on every machine of a line and skips offline ones", () => {
+    const plan = planProjectOverrideEdits(
+      [m4, storm, offline],
+      [m4, storm, offline].map((environment) => ({
+        environmentId: environment.environmentId,
+        projectId: project,
+        set: { defaultRuntimeMode: "approval-required" as const },
+      })),
+    );
+    expect(plan.serverWrites.map((write) => write.environmentId)).toEqual([
+      m4.environmentId,
+      storm.environmentId,
+    ]);
+  });
+
+  it("undo covers only the machines that saved", () => {
+    const plan = planProjectOverrideEdits(
+      [m4, storm],
+      [m4, storm].map((environment) => ({
+        environmentId: environment.environmentId,
+        projectId: project,
+        clear: ["defaultRuntimeMode" as const],
+      })),
+    );
+    const restricted = restrictPlanToEnvironments(plan, new Set([storm.environmentId]));
+    expect(restricted.serverWrites.map((write) => write.environmentId)).toEqual([
+      storm.environmentId,
+    ]);
   });
 });

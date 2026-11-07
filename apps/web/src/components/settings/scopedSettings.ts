@@ -178,7 +178,11 @@ interface ScopedServerWrite {
 function projectOverrideChangeWrites(
   environments: readonly ScopedSettingsEnvironment[],
   targets: readonly { readonly environmentId: EnvironmentId; readonly projectId: ProjectId }[],
-  change: (settings: ServerSettings, projectId: ProjectId) => ProjectSettingsOverrideChange,
+  change: (
+    settings: ServerSettings,
+    projectId: ProjectId,
+    environmentId: EnvironmentId,
+  ) => ProjectSettingsOverrideChange,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
   const changes = new Map<EnvironmentId, Record<ProjectId, ProjectSettingsOverrideChange>>();
@@ -186,7 +190,7 @@ function projectOverrideChangeWrites(
     const settings = byId.get(environmentId)?.serverConfig?.settings;
     if (!settings) continue;
     const entries = changes.get(environmentId) ?? {};
-    entries[projectId] = change(settings, projectId);
+    entries[projectId] = change(settings, projectId, environmentId);
     changes.set(environmentId, entries);
   }
   return [...changes].flatMap(([environmentId, entries]) => {
@@ -399,6 +403,68 @@ export function planProjectOverridesClear(
     serverWrites,
     unavailableReason:
       serverWrites.length > 0 ? null : "Connect the environments to reset these overrides.",
+  };
+}
+
+/** One project's override change on one machine: values to set, keys to clear, or both. */
+export interface ProjectOverrideEdit extends ProjectOverrideEntry {
+  readonly set?: ProjectSettingsOverrides;
+  readonly clear?: readonly ProjectScopedServerSettingKey[];
+}
+
+/**
+ * Apply per-entry override edits. Undo uses it too: each machine gets back
+ * its own previous value, which can differ from the others'.
+ */
+export function planProjectOverrideEdits(
+  environments: readonly ScopedSettingsEnvironment[],
+  edits: readonly ProjectOverrideEdit[],
+) {
+  const connected = new Set(
+    environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+  );
+  const byEntry = new Map(edits.map((edit) => [`${edit.environmentId}\n${edit.projectId}`, edit]));
+  const serverWrites = projectOverrideChangeWrites(
+    environments,
+    edits.filter((edit) => connected.has(edit.environmentId)),
+    (_settings, projectId, environmentId) => {
+      const edit = byEntry.get(`${environmentId}\n${projectId}`);
+      return {
+        ...(edit?.set ? { set: edit.set } : {}),
+        ...(edit?.clear && edit.clear.length > 0 ? { clear: [...edit.clear] } : {}),
+      };
+    },
+  );
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites,
+    unavailableReason:
+      serverWrites.length > 0 ? null : "Connect the environments to change these overrides.",
+  };
+}
+
+/** Edits that put back each entry's stored value for `key` (undefined: it had no override). */
+export function undoProjectOverrideEdits(
+  key: ProjectScopedServerSettingKey,
+  previous: readonly (ProjectOverrideEntry & { readonly rawValue: unknown })[],
+): ProjectOverrideEdit[] {
+  return previous.map(({ environmentId, projectId, rawValue }) =>
+    rawValue === undefined
+      ? { environmentId, projectId, clear: [key] }
+      : { environmentId, projectId, set: { [key]: rawValue } as ProjectSettingsOverrides },
+  );
+}
+
+/** The part of a plan that writes only to `environmentIds`, for undoing what actually saved. */
+export function restrictPlanToEnvironments<
+  T extends { readonly serverWrites: readonly ScopedServerWrite[] },
+>(plan: T, environmentIds: ReadonlySet<EnvironmentId>): T {
+  return {
+    ...plan,
+    serverWrites: plan.serverWrites.filter((write) => environmentIds.has(write.environmentId)),
   };
 }
 
