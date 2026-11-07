@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   BearerConnectionTarget,
+  RelayConnectionTarget,
   type PreparedConnection,
 } from "@specweave-studio/client-runtime/connection";
 import { layerRemoteHttpClient } from "@specweave-studio/client-runtime/rpc";
-import { AuthOrchestrationReadScope, EnvironmentId } from "@specweave-studio/contracts";
+import { AuthOrchestrationReadScope, EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { ManagedRelay } from "@specweave-studio/client-runtime/relay";
+import { RemoteEnvironmentAuthorization } from "@specweave-studio/client-runtime/studio";
+import { normalizeDpopHtu } from "@specweave-studio/shared/dpopCommon";
 import * as Effect from "effect/Effect";
-import { requestFleet, requestFleetPairing } from "./fleetRequest";
+import { requestFleet, requestFleetPairing, requestRemoteWorkers } from "./fleetRequest";
 const environmentId = EnvironmentId.make("env-m4");
 const prepared: PreparedConnection = {
   environmentId,
@@ -33,6 +37,53 @@ describe("browser fleet requests", () => {
     expect(seen?.url).toBe("http://localhost:8319/api/studio/fleet");
     expect(seen?.init.credentials).toBe("include");
   });
+  it("signs the remote worker path sent by the HTTP client without encoding its query into the path", async () => {
+    const proofs: string[] = [];
+    const requests: string[] = [];
+    const relayPrepared: PreparedConnection = {
+      ...prepared,
+      httpBaseUrl: "https://m4.example.test",
+      target: new RelayConnectionTarget({ environmentId, label: "M4" }),
+      httpAuthorization: { _tag: "Dpop", accessToken: "fixture", expiresAtEpochMs: 9999999999999 },
+    };
+    const layer = layerRemoteHttpClient(async (url) => {
+      requests.push(String(url));
+      expect(normalizeDpopHtu(proofs.at(-1)!)).toBe(normalizeDpopHtu(String(url)));
+      expect(new URL(String(url)).searchParams.get("projectId")).toBe("project:linux/m4");
+      return Response.json({ workers: [] });
+    });
+    await Effect.runPromise(
+      requestRemoteWorkers(relayPrepared, ProjectId.make("project:linux/m4")).pipe(
+        Effect.provide(layer),
+        Effect.provideService(ManagedRelay.ManagedRelayDpopSigner, {
+          thumbprint: Effect.succeed("fixture"),
+          createProof: ({ url }) =>
+            Effect.sync(() => {
+              proofs.push(url);
+              return "proof";
+            }),
+        }),
+        Effect.provideService(RemoteEnvironmentAuthorization, {
+          authorizeBearer: () => Effect.die("Unexpected bearer"),
+          authorizeDpop: () => Effect.die("Unexpected socket"),
+          authorizeDpopHttp: () =>
+            Effect.succeed({
+              environmentId,
+              label: "M4",
+              httpBaseUrl: relayPrepared.httpBaseUrl,
+              httpAuthorization: {
+                _tag: "Dpop",
+                accessToken: "fixture",
+                expiresAtEpochMs: 9999999999999,
+              },
+            }),
+        }),
+      ),
+    );
+    expect(requests).toHaveLength(1);
+    expect(proofs).toHaveLength(1);
+  });
+
   it("posts only an allowlisted machine ID and preserves the pinned destination for ordinary onboarding", async () => {
     let seen: RequestInit | undefined;
     const layer = layerRemoteHttpClient(async (_url, init) => {

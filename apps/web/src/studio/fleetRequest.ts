@@ -183,11 +183,8 @@ export function requestRemoteWorkers(prepared: PreparedConnection, projectId: Pr
       remoteAuthorization,
       group: "studioFleet",
       method: "GET",
-      url: (base) =>
-        environmentEndpointUrl(
-          base,
-          `/api/studio/fleet/remote-workers?projectId=${encodeURIComponent(projectId)}`,
-        ),
+      // DPoP binds the path, not the query. The HTTP client adds projectId below.
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/remote-workers"),
       timeoutMs: 10000,
       request: ({ client, headers }) => client.remoteWorkers({ headers, query: { projectId } }),
     });
