@@ -604,6 +604,30 @@ it("asks a coordinator for an increment on every launch only in a SpecWeave proj
   // One line on top of the plain role's budget.
   assert.isAtMost(text(true).length - text(false).length, 300);
 });
+it("tells the personal assistant its memory is about one person and threads are topics", () => {
+  const context = (kind: "code" | "personal") =>
+    Workspace.projectContextText({
+      projectId: "p",
+      threadId: "c",
+      settings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorThreadId: ThreadId.make("c"),
+        kind,
+      },
+      files: [],
+      index: "",
+    });
+  const assistant = context("personal");
+  assert.include(assistant, "Its memory is about them");
+  assert.include(assistant, "`user_<subject>.md`");
+  assert.include(assistant, "say topic to them");
+  assert.include(assistant, "Pin one they call ongoing");
+  assert.include(assistant, "studio_project_connections_list");
+  assert.include(assistant, "only the user connects a service");
+  const project = context("code");
+  for (const line of ["Its memory is about them", "say topic", "Services in this assistant"])
+    assert.notInclude(project, line);
+});
 it("keeps the worker and personal coordinator roles within their budgets", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -619,9 +643,9 @@ it("keeps the worker and personal coordinator roles within their budgets", () =>
     }).split("\nGoal:\n")[0]!;
   // About 210 tokens on every worker turn (October 26, 2026).
   assert.isAtMost(role("w", "code").length, 900);
-  // About 1,870 tokens for a personal project's coordinator, with the proactive
-  // briefing line (October 29, 2026).
-  assert.isAtMost(role("c", "personal").length, 7_500);
+  // About 2,060 tokens for a personal project's coordinator, with the person's
+  // memory, topics and services lines (November 3, 2026).
+  assert.isAtMost(role("c", "personal").length, 8_300);
 });
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {
   const settings = {

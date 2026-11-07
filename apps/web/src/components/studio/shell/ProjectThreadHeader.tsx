@@ -51,6 +51,7 @@ import { ThreadOriginBadge } from "../../chat/ThreadOriginBadge";
 import { SubagentsChip } from "./SubagentsChip";
 import { Tip } from "./Tip";
 import { HandoffThreadHeaderBadge } from "../../handoff/HandoffBadge";
+import { paneWords } from "../../../studio/assistantTerms";
 import { useOpenThread } from "../../../hooks/useOpenThread";
 import { usePrimaryEnvironmentId } from "../../../state/environments";
 
@@ -93,6 +94,8 @@ export function foldedHeaderControls(slot: HTMLElement | null): ThreadMenuOverfl
 
 export function ProjectThreadHeader(props: {
   thread: EnvironmentThreadShell;
+  /** The personal assistant says topics where a project says threads. */
+  personal?: boolean;
   /** Subagents this thread started, for the chip and popover beside the title. */
   subagents: readonly SubagentEntry[];
   /** Opens a subagent's read-only transcript over this thread. */
@@ -200,18 +203,19 @@ export function ProjectThreadHeader(props: {
     });
   };
 
+  const say = paneWords(props.personal);
   return (
     <div className={cn("sws-pane-head sws-thread-head", isElectron && "drag-region")}>
-      <Tip label="Back to threads (Esc)">
+      <Tip label={say("Back to threads (Esc)")}>
         <button
           type="button"
           className="sws-thread-crumb"
-          aria-label="Back to project threads"
+          aria-label={props.personal ? "Back to topics" : "Back to project threads"}
           onClick={props.onBack}
         >
           <ArrowLeftIcon aria-hidden className="sws-thread-crumb-back" />
           <span aria-hidden className="sws-thread-crumb-label">
-            Threads
+            {say("Threads")}
           </span>
         </button>
       </Tip>

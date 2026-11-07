@@ -36,6 +36,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useEnvironmentQuery } from "../../../state/query";
+import { ASSISTANT_COMPOSER_PLACEHOLDER } from "../../../studio/assistantTerms";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 
 const TOPIC_ICONS: Record<ProjectStarterSuggestion["topic"], LucideIcon> = {
@@ -88,6 +89,7 @@ export function coordinatorPlaceholder(input: {
 export function useCoordinatorPlaceholder(
   hasThreads: boolean,
   suggestions: readonly ProjectStarterSuggestion[],
+  personal = false,
 ): string {
   // Read during render, advanced once per view in an effect: StrictMode runs
   // initializers and effects twice, and the ref keeps the second run from counting.
@@ -98,6 +100,7 @@ export function useCoordinatorPlaceholder(
     counted.current = true;
     placeholderTurns++;
   }, []);
+  if (personal && hasThreads) return ASSISTANT_COMPOSER_PLACEHOLDER;
   return coordinatorPlaceholder({
     hasThreads,
     hint: hasThreads ? null : starterComposerHint(suggestions),

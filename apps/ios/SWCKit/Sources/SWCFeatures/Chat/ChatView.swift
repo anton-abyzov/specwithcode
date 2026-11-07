@@ -475,6 +475,8 @@ private struct ChatScreen: View {
         switch target {
         case let .aide(project), let .project(project):
           let needsYou = model.threads(in: project).contains { $0.needsAttention }
+          // The personal assistant says topics; a project says threads.
+          let listName = model.project(project)?.kind == .personal ? "Topics" : "Threads"
           // One glass capsule: the machine this coordinator runs on, a
           // hairline, then the project's threads, which the list beside it
           // already shows on a wide screen.
@@ -498,7 +500,7 @@ private struct ChatScreen: View {
                 Button {
                   showThreads(of: project)
                 } label: {
-                  Label("Threads", systemImage: "bubble.left.and.bubble.right")
+                  Label(listName, systemImage: "bubble.left.and.bubble.right")
                     .labelStyle(ThreadsLabelStyle(showsTitle: threadsLabel))
                     .font(.weave(.callout, weight: .semibold))
                     .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
@@ -507,7 +509,7 @@ private struct ChatScreen: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(PressableStyle())
-                .accessibilityLabel("Threads")
+                .accessibilityLabel(listName)
                 .accessibilityIdentifier("chat.threads")
               }
             }
