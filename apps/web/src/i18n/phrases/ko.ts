@@ -316,8 +316,9 @@ export const ko: PhraseCatalog = {
   "WSL only": "WSL만",
   "Warn when the app folder is large": "앱 폴더가 클 때 경고",
   "When a thread finishes": "스레드가 끝나면",
-  "When this Mac sleeps, move running threads": "이 Mac이 잠자기 상태가 되면 실행 중인 스레드 이동",
-  "When this Mac sleeps, move running threads to":
+  "When this machine sleeps, move running threads":
+    "이 Mac이 잠자기 상태가 되면 실행 중인 스레드 이동",
+  "When this machine sleeps, move running threads to":
     "이 Mac이 잠자기 상태가 되면 실행 중인 스레드를 이동할 곳",
   "Who can run work here": "여기서 작업을 실행할 수 있는 사람",
   "Word wrap": "자동 줄바꿈",
@@ -435,7 +436,7 @@ export const ko: PhraseCatalog = {
     "새 녹화에서 마우스 클릭과 누르고 있는 버튼을 강조 표시합니다.",
   "Hold mode also quits on two quick presses.":
     "누르고 있기 모드에서도 빠르게 두 번 누르면 종료됩니다.",
-  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
+  "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "세션이 작업하는 동안 유휴 잠자기를 막아 이 Mac의 턴이 계속 실행되게 합니다. 덮개를 닫으면 여전히 잠자기 상태가 됩니다.",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "SpecWithCode 서비스 자동 업데이트가 실행 중인 작업을 기다리는 시간입니다. 그 후 실행 중인 턴이 일시 중지되고, 서비스가 업데이트된 다음 중단한 곳에서 이어집니다. 사이드바의 나중에는 한 시간을 더 기다립니다.",
@@ -577,7 +578,7 @@ export const ko: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "자동 선택은 기본적으로 구독 사용량을 씁니다. 토큰당 과금되는 제공업체(API 크레딧)는 여기서 허용하지 않으면 사용하지 않으며, 허용해도 선택한 등급까지만 사용합니다. 자동 선택은 키를 추가하거나, 로그인하거나, 크레딧을 구매하지 않습니다.",
   "Switches the hosted app release channel.": "호스팅 앱의 릴리스 채널을 전환합니다.",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
     "같은 프로젝트가 있는 다른 컴퓨터에 각 턴을 동기화해 어느 컴퓨터에서든 이어갈 수 있게 합니다. 이 Mac의 스레드에 적용되며 기존 스레드도 포함됩니다. 토큰을 조금 더 사용합니다.",
   "System default follows your browser or OS clock preference.":
     "시스템 기본값은 브라우저나 OS의 시계 설정을 따릅니다.",
@@ -1446,7 +1447,7 @@ export const ko: PhraseCatalog = {
   "Jev answers once a key is saved. Create one at {a}. It stays in this machine's secret store and is only sent to {label}.":
     "키를 저장하면 Jev가 응답합니다. {a}에서 만드세요. 키는 이 컴퓨터의 비밀 저장소에 보관되며 {label}에만 전송됩니다.",
   Saved: "저장됨",
-  "Connect to this Mac to see design systems.": "디자인 시스템을 보려면 이 Mac에 연결하세요.",
+  "Connect to this machine to see design systems.": "디자인 시스템을 보려면 이 Mac에 연결하세요.",
   "This window may not read design systems.": "이 창에서는 디자인 시스템을 읽을 수 없습니다.",
   "Open {title}": "{title} 열기",
   "Add device host": "기기 호스트 추가",
@@ -1705,7 +1706,7 @@ export const ko: PhraseCatalog = {
   "Projects set differently": "설정이 다른 프로젝트",
   "A removed project": "제거된 프로젝트",
   "Use default": "기본값 사용",
-  "Machine to move running threads to when this Mac sleeps":
+  "Machine to move running threads to when this machine sleeps":
     "이 Mac이 잠자기 상태가 될 때 실행 중인 스레드를 옮길 컴퓨터",
   "A removed machine": "제거된 컴퓨터",
   "More options": "추가 옵션",
@@ -1914,7 +1915,7 @@ export const ko: PhraseCatalog = {
     "이 컴퓨터에는 관리형 서비스 설치가 없습니다.",
   "Managed updates are unavailable on this installation.":
     "이 설치에서는 관리형 업데이트를 사용할 수 없습니다.",
-  "Managed by this Mac's updater.": "이 Mac의 업데이트 프로그램이 관리합니다.",
+  "Managed by this machine's updater.": "이 Mac의 업데이트 프로그램이 관리합니다.",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "{label}의 자동 업데이트: {value}. 권한을 바꿔도 이 설정은 유지됩니다.",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1926,7 +1927,7 @@ export const ko: PhraseCatalog = {
   "Revoke update permission": "업데이트 권한 취소",
   "Grant update permission": "업데이트 권한 부여",
   "Check for updates": "업데이트 확인",
-  " Use the installed app on this Mac.": " 이 Mac에 설치된 앱을 사용하세요.",
+  " Use the installed app on this machine.": " 이 Mac에 설치된 앱을 사용하세요.",
   " Being connected does not grant update permission.":
     " 연결되어 있다고 업데이트 권한이 부여되지는 않습니다.",
   "Checking for updates requires permission for this connection.":

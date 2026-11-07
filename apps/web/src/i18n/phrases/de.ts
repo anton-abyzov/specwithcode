@@ -318,9 +318,9 @@ export const de: PhraseCatalog = {
   "WSL only": "Nur WSL",
   "Warn when the app folder is large": "Warnen, wenn der App-Ordner groß ist",
   "When a thread finishes": "Wenn ein Thread fertig ist",
-  "When this Mac sleeps, move running threads":
+  "When this machine sleeps, move running threads":
     "Wenn dieser Mac schläft, laufende Threads verschieben",
-  "When this Mac sleeps, move running threads to":
+  "When this machine sleeps, move running threads to":
     "Wenn dieser Mac schläft, laufende Threads verschieben nach",
   "Who can run work here": "Wer hier Arbeit ausführen darf",
   "Word wrap": "Zeilenumbruch",
@@ -441,7 +441,7 @@ export const de: PhraseCatalog = {
     "Mausklicks und gehaltene Tasten in neuen Aufnahmen hervorheben.",
   "Hold mode also quits on two quick presses.":
     "Im Haltemodus beendet auch zweimaliges schnelles Drücken.",
-  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
+  "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "Ruhezustand im Leerlauf verhindern, solange eine Sitzung arbeitet, damit Turns auf diesem Mac weiterlaufen. Beim Zuklappen geht er trotzdem in den Ruhezustand.",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "Wie lange ein automatisches Update des SpecWithCode-Dienstes auf laufende Arbeit wartet. Danach pausieren die laufenden Turns, der Dienst wird aktualisiert, und sie machen dort weiter, wo sie aufgehört haben. „Später“ in der Seitenleiste wartet eine weitere Stunde.",
@@ -586,7 +586,7 @@ export const de: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "Die automatische Wahl verbraucht standardmäßig Abo-Nutzung. Anbieter mit Abrechnung pro Token (API-Guthaben) bleiben außen vor, sofern sie hier nicht erlaubt sind, und dann nur bis zur gewählten Stufe. Sie fügt nie einen Schlüssel hinzu, meldet sich nie an und kauft nie Guthaben.",
   "Switches the hosted app release channel.": "Wechselt den Release-Kanal der gehosteten App.",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
     "Synchronisiert jeden Turn mit den anderen Rechnern, die dasselbe Projekt haben, damit jeder von ihnen weitermachen kann. Gilt für die Threads dieses Mac, auch bestehende. Verbraucht etwas mehr Tokens.",
   "System default follows your browser or OS clock preference.":
     "Systemstandard folgt der Uhrzeiteinstellung von Browser oder Betriebssystem.",
@@ -1469,7 +1469,7 @@ export const de: PhraseCatalog = {
   "Jev answers once a key is saved. Create one at {a}. It stays in this machine's secret store and is only sent to {label}.":
     "Jev antwortet, sobald ein Schlüssel gespeichert ist. Erstelle einen unter {a}. Er bleibt im Geheimnisspeicher dieses Rechners und wird nur an {label} gesendet.",
   Saved: "Gespeichert",
-  "Connect to this Mac to see design systems.":
+  "Connect to this machine to see design systems.":
     "Verbinde dich mit diesem Mac, um Designsysteme zu sehen.",
   "This window may not read design systems.": "Dieses Fenster kann keine Designsysteme lesen.",
   "Open {title}": "{title} öffnen",
@@ -1733,7 +1733,7 @@ export const de: PhraseCatalog = {
   "Projects set differently": "Anders eingestellte Projekte",
   "A removed project": "Ein entferntes Projekt",
   "Use default": "Standard nutzen",
-  "Machine to move running threads to when this Mac sleeps":
+  "Machine to move running threads to when this machine sleeps":
     "Rechner, auf den laufende Threads verschoben werden, wenn dieser Mac schläft",
   "A removed machine": "Ein entfernter Rechner",
   "More options": "Weitere Optionen",
@@ -1947,7 +1947,7 @@ export const de: PhraseCatalog = {
     "Dieser Rechner hat keine verwaltete Dienstinstallation.",
   "Managed updates are unavailable on this installation.":
     "Verwaltete Updates sind bei dieser Installation nicht verfügbar.",
-  "Managed by this Mac's updater.": "Wird vom Updater dieses Mac verwaltet.",
+  "Managed by this machine's updater.": "Wird vom Updater dieses Mac verwaltet.",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "Automatische Updates auf {label}: {value}. Änderungen an Berechtigungen behalten diese Einstellung bei.",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1959,7 +1959,7 @@ export const de: PhraseCatalog = {
   "Revoke update permission": "Update-Berechtigung widerrufen",
   "Grant update permission": "Update-Berechtigung erteilen",
   "Check for updates": "Nach Updates suchen",
-  " Use the installed app on this Mac.": " Nutze die installierte App auf diesem Mac.",
+  " Use the installed app on this machine.": " Nutze die installierte App auf diesem Mac.",
   " Being connected does not grant update permission.":
     " Verbunden zu sein erteilt keine Update-Berechtigung.",
   "Checking for updates requires permission for this connection.":

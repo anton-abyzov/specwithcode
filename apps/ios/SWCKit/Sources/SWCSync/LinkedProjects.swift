@@ -371,7 +371,7 @@ public enum LinkedProjectResolver {
   public static func rearmReasonText(_ reason: String, machine: String) -> String {
     switch reason {
     case "unreachable": "\(machine) did not answer."
-    case "needs_grant": "This Mac needs access to \(machine). Prepare machines again."
+    case "needs_grant": "This machine needs access to \(machine). Prepare machines again."
     case "needs_update": "\(machine) needs an update."
     case "not_member": "\(machine) still runs its own coordinator."
     case "no_consent": "\(machine) is not on your current list. Save the list again."

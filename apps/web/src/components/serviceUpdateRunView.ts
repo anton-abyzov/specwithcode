@@ -264,7 +264,7 @@ export const RUN_NOT_APPLIED_LINE =
 const ROLLBACK_STEP = "rollback";
 
 export const RUN_LONG_READ_LINE =
-  "Checking every row of this Mac's history, which takes minutes on a large database.";
+  "Checking every row of this machine's history, which takes minutes on a large database.";
 export const RUN_LONG_STEP_LINE = "This is taking longer than usual.";
 
 /** The app half after the service is verified: its download is staged, then it relaunches. */

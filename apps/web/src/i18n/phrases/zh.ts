@@ -315,8 +315,8 @@ export const zh: PhraseCatalog = {
   "WSL only": "仅 WSL",
   "Warn when the app folder is large": "应用文件夹过大时提醒",
   "When a thread finishes": "会话完成时",
-  "When this Mac sleeps, move running threads": "这台 Mac 休眠时迁移运行中的会话",
-  "When this Mac sleeps, move running threads to": "这台 Mac 休眠时将运行中的会话迁移到",
+  "When this machine sleeps, move running threads": "这台 Mac 休眠时迁移运行中的会话",
+  "When this machine sleeps, move running threads to": "这台 Mac 休眠时将运行中的会话迁移到",
   "Who can run work here": "谁可以在这里运行工作",
   "Word wrap": "自动换行",
   "Working section (beta)": "进行中分区（测试版）",
@@ -423,7 +423,7 @@ export const zh: PhraseCatalog = {
   "Highlight mouse presses and held buttons in new recordings.":
     "在新录制中突出显示鼠标点击和按住的按钮。",
   "Hold mode also quits on two quick presses.": "按住模式下，快速按两次也会退出。",
-  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
+  "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
     "会话运行时阻止空闲休眠，让这台 Mac 上的轮次继续运行。合上盖子仍会休眠。",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "SpecWithCode 服务自动更新时等待运行中工作的时长。之后运行中的轮次会暂停，服务更新，然后从中断处继续。侧边栏中的“稍后”会再等一小时。",
@@ -560,7 +560,7 @@ export const zh: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "自动模式默认消耗订阅用量。按 token 计费的提供方（API 额度）不会使用，除非在此允许，并且只到你选择的档位为止。自动模式绝不会添加密钥、登录或购买额度。",
   "Switches the hosted app release channel.": "切换托管应用的发布通道。",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
     "将每一轮同步到拥有同一项目的其他电脑，使任意一台都能继续。适用于这台 Mac 的会话，包括已有会话。会多用一些 token。",
   "System default follows your browser or OS clock preference.":
     "“系统默认”跟随浏览器或操作系统的时钟偏好。",
@@ -1406,7 +1406,7 @@ export const zh: PhraseCatalog = {
   "Jev answers once a key is saved. Create one at {a}. It stays in this machine's secret store and is only sent to {label}.":
     "保存密钥后 Jev 即可回答。请在 {a} 创建密钥。它保存在此电脑的密钥库中，只会发送给 {label}。",
   Saved: "已保存",
-  "Connect to this Mac to see design systems.": "连接到这台 Mac 以查看设计系统。",
+  "Connect to this machine to see design systems.": "连接到这台 Mac 以查看设计系统。",
   "This window may not read design systems.": "此窗口无法读取设计系统。",
   "Open {title}": "打开 {title}",
   "Add device host": "添加设备主机",
@@ -1660,7 +1660,7 @@ export const zh: PhraseCatalog = {
   "Projects set differently": "设置不同的项目",
   "A removed project": "已移除的项目",
   "Use default": "使用默认值",
-  "Machine to move running threads to when this Mac sleeps":
+  "Machine to move running threads to when this machine sleeps":
     "这台 Mac 睡眠时，将正在运行的会话转移到的电脑",
   "A removed machine": "已移除的电脑",
   "More options": "更多选项",
@@ -1861,7 +1861,7 @@ export const zh: PhraseCatalog = {
   "Reading update status…": "正在读取更新状态…",
   "This machine does not have a managed service installation.": "这台电脑没有托管的服务安装。",
   "Managed updates are unavailable on this installation.": "此安装不支持托管更新。",
-  "Managed by this Mac's updater.": "由这台 Mac 的更新程序管理。",
+  "Managed by this machine's updater.": "由这台 Mac 的更新程序管理。",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "{label} 上的自动更新：{value}。更改权限会保留此设置。",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1873,7 +1873,7 @@ export const zh: PhraseCatalog = {
   "Revoke update permission": "撤销更新权限",
   "Grant update permission": "授予更新权限",
   "Check for updates": "检查更新",
-  " Use the installed app on this Mac.": " 请使用这台 Mac 上已安装的应用。",
+  " Use the installed app on this machine.": " 请使用这台 Mac 上已安装的应用。",
   " Being connected does not grant update permission.": " 已连接并不代表拥有更新权限。",
   "Checking for updates requires permission for this connection.": "检查更新需要此连接拥有权限。",
   "This connection does not have maintenance access to check for updates.":

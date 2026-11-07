@@ -226,7 +226,9 @@ describe("CoordinatorStandbyView", () => {
     expect(text()).toContain("15 minutes");
     expect(text()).toContain("Not ready. M3 has not allowed M1 yet.");
     expect(text()).toContain("Wait a minute before allowing workers on this machine again.");
-    expect(text()).toContain("M1 must stay awake. If it is off, this machine pauses its coordinator.");
+    expect(text()).toContain(
+      "M1 must stay awake. If it is off, this machine pauses its coordinator.",
+    );
     await click(button("Allow"));
     expect(calls).toEqual(["allow"]);
   });
@@ -332,7 +334,9 @@ describe("CoordinatorStandbySettings", () => {
     );
     expect(text()).toMatch(/M1 took over from M4 at .+\. M4 went quiet\./);
     expect(text()).toContain("3 workers on M3 report here now.");
-    expect(text()).toContain("M1 took over while this machine was away. This machine now runs workers.");
+    expect(text()).toContain(
+      "M1 took over while this machine was away. This machine now runs workers.",
+    );
     await click(button("Make this machine the coordinator again"));
     expect(state.handoff).toMatchObject({ requestedTarget: "m4:p4" });
   });
@@ -397,7 +401,7 @@ describe("re-arm after a takeover", () => {
       "No standby armed yet: M3 did not answer. Trying again.",
     );
     expect(rearmStatusText(run({ reason: "needs_grant" }), label)).toBe(
-      "No standby armed yet: This Mac needs access to M3. Prepare machines again. Waiting for you.",
+      "No standby armed yet: This machine needs access to M3. Prepare machines again. Waiting for you.",
     );
     expect(rearmStatusText(run({ state: "verifying", standby: ref("m3", "p3") }), label)).toBe(
       "Checking M3.",

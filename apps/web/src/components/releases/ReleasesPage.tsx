@@ -58,7 +58,9 @@ export function ReleasesPage() {
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
             {environmentId === null ? (
-              <p className="text-muted-foreground text-sm">Connect to this Mac to see releases.</p>
+              <p className="text-muted-foreground text-sm">
+                Connect to this machine to see releases.
+              </p>
             ) : !canRead ? (
               <p className="text-muted-foreground text-sm">
                 This window may not read this machine's release runs.
