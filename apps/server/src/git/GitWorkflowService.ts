@@ -64,6 +64,7 @@ export class GitWorkflowService extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    readonly editPullRequestBody: GitManager.GitManager["Service"]["editPullRequestBody"];
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -353,6 +354,10 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
+    editPullRequestBody: routeGitManager(
+      "GitWorkflowService.editPullRequestBody",
+      gitManager.editPullRequestBody,
+    ),
     resolvePullRequest: routeGitManager(
       "GitWorkflowService.resolvePullRequest",
       gitManager.resolvePullRequest,

@@ -83,6 +83,8 @@ export interface GitActionProgressReporter {
 export interface GitRunStackedActionOptions {
   readonly actionId?: string;
   readonly progressReporter?: GitActionProgressReporter;
+  /** Appended to the description of a pull request this action creates. */
+  readonly pullRequestNote?: string;
 }
 
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
@@ -130,6 +132,15 @@ export class GitManager extends Context.Service<
     readonly resolvePullRequest: (
       input: GitPullRequestRefInput,
     ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+    /**
+     * Rewrites a pull request's description from its current text. False when
+     * the repository's host cannot edit one yet.
+     */
+    readonly editPullRequestBody: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      readonly edit: (body: string) => string;
+    }) => Effect.Effect<boolean, GitManagerServiceError>;
     readonly preparePullRequestThread: (
       input: GitPreparePullRequestThreadInput,
     ) => Effect.Effect<GitPreparePullRequestThreadResult, GitManagerServiceError>;
@@ -2056,6 +2067,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     fallbackBranch: string | null,
     emit: GitActionProgressEmitter,
+    note?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = getChangeRequestTerminologyForKind(provider.kind);
@@ -2130,7 +2142,8 @@ export const make = Effect.gen(function* () {
       tempDir,
       `studio-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
     );
-    yield* fileSystem.writeFileString(bodyFile, generated.body).pipe(
+    const body = note === undefined ? generated.body : `${generated.body.trimEnd()}\n\n${note}`;
+    yield* fileSystem.writeFileString(bodyFile, body).pipe(
       Effect.mapError(
         (cause) =>
           new GitManagerError({
@@ -2370,6 +2383,15 @@ export const make = Effect.gen(function* () {
       yield* bumpPrLookupEpoch(cwd);
     },
   );
+
+  const editPullRequestBody: GitManager["Service"]["editPullRequestBody"] = Effect.fn(
+    "editPullRequestBody",
+  )(function* (input) {
+    const provider = yield* sourceControlProvider(input.cwd);
+    if (provider.editChangeRequestBody === undefined) return false;
+    yield* provider.editChangeRequestBody(input);
+    return true;
+  });
 
   const resolvePullRequest: GitManager["Service"]["resolvePullRequest"] = Effect.fn(
     "resolvePullRequest",
@@ -2873,7 +2895,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    progress.emit,
+                    options?.pullRequestNote,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };
@@ -2926,6 +2954,7 @@ export const make = Effect.gen(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    editPullRequestBody,
     preparePullRequestThread,
     runStackedAction,
   });

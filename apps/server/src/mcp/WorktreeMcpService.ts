@@ -8,22 +8,28 @@ import {
   type WorktreeMcpHandoffResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
+  type WorktreeMcpAddRepositoryInput,
+  type WorktreeMcpAddRepositoryResult,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { addWorktreeSetMember } from "../git/worktreeSetGit.ts";
+import { projectRepositoryCheckouts } from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
+import { readWorktreeSet, worktreeSetMemberPath } from "../worktreeSet.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 import { projectUsesWorktrees } from "./toolkits/project/launchWorkspace.ts";
 
@@ -37,6 +43,10 @@ export class WorktreeMcpService extends Context.Service<
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
+    readonly addRepository: (
+      scope: McpInvocationScope,
+      input: WorktreeMcpAddRepositoryInput,
+    ) => Effect.Effect<WorktreeMcpAddRepositoryResult, WorktreeMcpFailure>;
   }
 >()("specweave-studio/mcp/WorktreeMcpService") {}
 
@@ -66,6 +76,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
 
   // Serializes handoffs per thread: two concurrent calls could otherwise both
   // pass the worktreePath === null check and each create a worktree, leaving
@@ -506,7 +517,95 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return WorktreeMcpService.of({ handoff, status });
+  const performAddRepository = Effect.fn("WorktreeMcpService.performAddRepository")(function* (
+    scope: McpThreadInvocationScope,
+    input: WorktreeMcpAddRepositoryInput,
+  ) {
+    const projection = yield* loadThread(scope);
+    const { worktreePath, branch } = projection.thread;
+    if (worktreePath === null || branch === null)
+      return yield* failure(
+        "not_in_worktree",
+        `Thread '${scope.thread.threadId}' works in the project folder, not its own worktree, so there is no thread folder to add a repository to. Use studio_worktree_handoff first.`,
+      );
+    const project = yield* loadProject(scope, projection.thread.projectId);
+    const settings = yield* serverSettings.getSettings.pipe(
+      asOperationFailed("Unable to read server settings"),
+    );
+    const resolved = resolveProjectSettings(settings, project.id, project);
+    if (!projectUsesWorktrees(resolved))
+      return yield* failure(
+        "invalid_request",
+        "Use worktrees is off for this project, so a thread cannot add worktrees. The user can turn on Use worktrees in the project's settings.",
+      );
+    if (Option.isNone(fileSystem))
+      return yield* failure("operation_failed", "This server cannot reach its file system.");
+    const withServices = <A, E>(
+      effect: Effect.Effect<
+        A,
+        E,
+        FileSystem.FileSystem | Path.Path | GitWorkflowService.GitWorkflowService
+      >,
+    ) =>
+      effect.pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem.value),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(GitWorkflowService.GitWorkflowService, gitWorkflow),
+      );
+    const existing = yield* withServices(readWorktreeSet(worktreePath));
+    const members = yield* withServices(
+      addWorktreeSetMember({
+        folder: worktreePath,
+        existing: existing?.members ?? [],
+        entry: input.repository,
+        checkouts: projectRepositoryCheckouts(project),
+        projectRoot: project.workspaceRoot,
+        branch,
+        startFromOrigin: settings.newWorktreesStartFromOrigin,
+        submodules: resolved.settings.worktreeSubmodules,
+      }),
+    ).pipe(Effect.mapError((message) => failure("invalid_request", message)));
+    const added = members.at(-1)!;
+    const repositoryPath = worktreeSetMemberPath(worktreePath, added, path);
+    yield* vcsStatusBroadcaster
+      .refreshStatus(repositoryPath)
+      .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach);
+    const result: WorktreeMcpAddRepositoryResult = {
+      worktreePath,
+      repositoryPath,
+      branch,
+      members: members.map((member) => ({
+        repository: member.repository,
+        path: worktreeSetMemberPath(worktreePath, member, path),
+      })),
+    };
+    return result;
+  });
+
+  // Shares the handoff guard: both change what the thread's folder holds.
+  const addRepository: WorktreeMcpService["Service"]["addRepository"] = Effect.fn(
+    "WorktreeMcpService.addRepository",
+  )(function* (callerScope, input) {
+    yield* requireCapability(callerScope);
+    const scope = yield* requireThreadScope(callerScope);
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.suspend(() => {
+        if (handoffThreadsInFlight.has(scope.thread.threadId))
+          return Effect.fail(
+            failure(
+              "handoff_in_progress",
+              `A worktree change is already in progress for thread '${scope.thread.threadId}'.`,
+            ),
+          );
+        handoffThreadsInFlight.add(scope.thread.threadId);
+        return restore(performAddRepository(scope, input)).pipe(
+          Effect.ensuring(Effect.sync(() => handoffThreadsInFlight.delete(scope.thread.threadId))),
+        );
+      }),
+    );
+  });
+
+  return WorktreeMcpService.of({ handoff, status, addRepository });
 });
 
 export const layer: Layer.Layer<

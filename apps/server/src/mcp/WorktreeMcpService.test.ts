@@ -1087,3 +1087,44 @@ describe("WorktreeMcpHandoffInput schema", () => {
     }),
   );
 });
+
+const runAddRepository = (harness: ReturnType<typeof makeHarness>, repository: string) =>
+  Effect.gen(function* () {
+    const service = yield* WorktreeMcpService.WorktreeMcpService;
+    return yield* service.addRepository(harness.scope, { repository });
+  }).pipe(Effect.provide(harness.layer));
+
+describe("studio_worktree_add_repository", () => {
+  it.effect("refuses a thread that works in the project folder", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runAddRepository(harness, "repositories/acme/api"));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "not_in_worktree" });
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+    });
+  });
+
+  it.effect("refuses when the project's Use worktrees switch is off", () => {
+    const harness = makeHarness({
+      useWorktrees: false,
+      thread: { branch: "feature/set", worktreePath: "/worktrees/project/set" },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runAddRepository(harness, "repositories/acme/api"));
+      expectTypedFailure(exit, {
+        _tag: "WorktreeMcpFailure",
+        code: "invalid_request",
+        message: expect.stringContaining("Use worktrees is off"),
+      });
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+    });
+  });
+
+  it.effect("fails when the worktree capability is missing", () => {
+    const harness = makeHarness({ capabilities: new Set(["preview"]) });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runAddRepository(harness, "api"));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "capability_denied" });
+    });
+  });
+});

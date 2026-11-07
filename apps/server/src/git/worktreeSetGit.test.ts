@@ -16,6 +16,7 @@ import { readWorktreeSet, worktreeSetManifestPath } from "../worktreeSet.ts";
 import * as GitManager from "./GitManager.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
 import {
+  addWorktreeSetMember,
   createWorktreeSet,
   removeWorktreeSetMembers,
   resolveWorktreeSetRepositories,
@@ -169,6 +170,74 @@ describe("worktree sets", () => {
         );
         expect(kept).toEqual([]);
         expect(yield* fs.readFileString(exclude)).not.toContain(folder);
+      }),
+    );
+
+    it.effect("adds a repository to a plain worktree, then to the set it became", () =>
+      Effect.gen(function* () {
+        const { fs, path, run, base, project, api, web } = yield* fixture;
+        const folder = path.join(base, "worktrees", "project", "feature-add");
+        yield* run(project, ["worktree", "add", "-b", "feature/add", folder, "main"]);
+        const add = (
+          entry: string,
+          existing: ReadonlyArray<{ repository: string; relativePath: string }>,
+        ) =>
+          addWorktreeSetMember({
+            folder,
+            existing,
+            entry,
+            checkouts: [{ id: "web", path: web }],
+            projectRoot: project,
+            branch: "feature/add",
+            startFromOrigin: false,
+            submodules: null,
+          });
+        const first = yield* add("repositories/acme/api", []);
+        expect(first.map((member) => member.relativePath)).toEqual([
+          "",
+          path.join("repositories", "acme", "api"),
+        ]);
+        // The web repository already has the branch: it is checked out, not made.
+        yield* run(web, ["branch", "feature/add"]);
+        const second = yield* add("web", first);
+        expect(second.at(-1)).toMatchObject({ id: "web", relativePath: "web" });
+        for (const checkout of [
+          path.join(folder, "repositories", "acme", "api"),
+          path.join(folder, "web"),
+        ]) {
+          const head = yield* run(checkout, ["symbolic-ref", "--short", "HEAD"]);
+          expect(head.stdout.trim()).toBe("feature/add");
+        }
+        expect((yield* readWorktreeSet(folder))?.members).toHaveLength(3);
+        expect((yield* run(folder, ["status", "--porcelain"])).stdout.trim()).toBe("");
+        const again = yield* add("web", second).pipe(Effect.flip);
+        expect(again).toContain("already in this thread's worktree");
+        expect((yield* readWorktreeSet(folder))?.members).toHaveLength(3);
+        void api;
+        void fs;
+      }),
+    );
+
+    it.effect("leaves a plain worktree plain when the repository cannot be added", () =>
+      Effect.gen(function* () {
+        const { fs, path, run, base, project, web } = yield* fixture;
+        const folder = path.join(base, "worktrees", "project", "feature-busy");
+        yield* run(project, ["worktree", "add", "-b", "feature/busy", folder, "main"]);
+        // The branch is already checked out in another worktree of web.
+        yield* run(web, ["branch", "feature/busy"]);
+        yield* run(web, ["worktree", "add", path.join(base, "busy"), "feature/busy"]);
+        const error = yield* addWorktreeSetMember({
+          folder,
+          existing: [],
+          entry: "web",
+          checkouts: [{ id: "web", path: web }],
+          projectRoot: project,
+          branch: "feature/busy",
+          startFromOrigin: false,
+          submodules: null,
+        }).pipe(Effect.flip);
+        expect(String(error)).toContain("Could not create the worktree");
+        expect(yield* fs.exists(worktreeSetManifestPath(folder, path))).toBe(false);
       }),
     );
 

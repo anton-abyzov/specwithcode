@@ -437,6 +437,21 @@ export const make = Effect.gen(function* () {
               }),
           ),
         ),
+    editChangeRequestBody: (input) =>
+      github.editPullRequestBody(input).pipe(
+        Effect.mapError(
+          (error) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "editChangeRequestBody",
+              command: error.command,
+              cwd: input.cwd,
+              reference: `#${input.number}`,
+              detail: error.message,
+              cause: error,
+            }),
+        ),
+      ),
     getRepositoryCloneUrls: (input) =>
       github.getRepositoryCloneUrls(input).pipe(
         Effect.mapError(
