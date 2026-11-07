@@ -72,7 +72,8 @@ export function planWorktreeSet(
 ): ReadonlyArray<WorktreeSetMember> {
   const root = path.resolve(projectRoot);
   const seen = new Set<string>();
-  const taken = new Set<string>(reserved);
+  // Case-insensitive: macOS and Windows folders are.
+  const taken = new Set<string>(reserved.map((name) => name.toLowerCase()));
   const inside: Array<WorktreeSetMember> = [];
   const outside: Array<{ repository: string; id?: string | undefined }> = [];
   for (const entry of repositories) {
@@ -82,7 +83,7 @@ export function planWorktreeSet(
     const relative = path.relative(root, repository);
     if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
       inside.push({ repository, relativePath: relative, ...(entry.id ? { id: entry.id } : {}) });
-      taken.add(relative.split(path.sep)[0] ?? relative);
+      taken.add((relative.split(path.sep)[0] ?? relative).toLowerCase());
     } else {
       outside.push({ repository, ...(entry.id ? { id: entry.id } : {}) });
     }
@@ -97,8 +98,8 @@ export function planWorktreeSet(
   for (const entry of outside) {
     const base = path.basename(entry.repository);
     let name = base;
-    for (let index = 2; taken.has(name); index += 1) name = `${base}-${index}`;
-    taken.add(name);
+    for (let index = 2; taken.has(name.toLowerCase()); index += 1) name = `${base}-${index}`;
+    taken.add(name.toLowerCase());
     members.push({
       repository: entry.repository,
       relativePath: name,

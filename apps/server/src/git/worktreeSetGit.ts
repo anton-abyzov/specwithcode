@@ -78,7 +78,9 @@ export const resolveWorktreeSetRepositories = Effect.fn("worktreeSet.resolveRepo
     const rootEntries = yield* fs
       .readDirectory(root)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    return planWorktreeSet(root, resolved, path, rootEntries);
+    // Only a root member puts the project folder's own files in the thread folder.
+    const hasRoot = resolved.some((entry) => path.resolve(entry.path) === root);
+    return planWorktreeSet(root, resolved, path, hasRoot ? rootEntries : []);
   },
 );
 
@@ -162,7 +164,7 @@ const excludeNestedMembers = Effect.fn("worktreeSet.excludeNested")(function* (
     const lines = members
       .filter((member) => member.relativePath !== "")
       .map((member) => `${excludeTag(folder)}\n/${member.relativePath.split(path.sep).join("/")}/`)
-      .filter((pair) => !`\n${contents}`.includes(`\n${pair}\n`));
+      .filter((pair) => !`\n${contents.replace(/\r\n/g, "\n")}\n`.includes(`\n${pair}\n`));
     if (lines.length === 0) return;
     yield* fs.makeDirectory(path.dirname(exclude), { recursive: true });
     const prefix = contents === "" || contents.endsWith("\n") ? contents : `${contents}\n`;
@@ -180,11 +182,11 @@ const removeNestedExcludes = Effect.fn("worktreeSet.removeExcludes")(function* (
   if (exclude === null) return;
   yield* Effect.gen(function* () {
     if (!(yield* fs.exists(exclude))) return;
-    const lines = (yield* fs.readFileString(exclude)).split("\n");
+    const lines = (yield* fs.readFileString(exclude)).split(/\r?\n/);
     const tag = excludeTag(folder);
     const kept: Array<string> = [];
     for (let index = 0; index < lines.length; index += 1) {
-      if (lines[index] === tag) {
+      if (lines[index]!.trimEnd() === tag) {
         index += 1;
         continue;
       }
