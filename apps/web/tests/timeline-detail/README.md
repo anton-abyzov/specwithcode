@@ -1,6 +1,6 @@
 # Timeline detail fixture
 
-This renders the production `MessagesTimeline` under the production `ChatHeader` (which holds the `TimelineDetailMenu`), laid out as the browser build's thread header, and the app's compiled CSS, inside a one-route router and the real toast providers. The thread has one finished turn (a note, a failing test run, a thought, an edit, a passing run and the answer) and one running turn (a note, a finished command, a thought, a later note and a command still running). Callbacks are no-ops; nothing reaches a server or provider. The level is the real client setting, saved in the page's `localStorage`.
+This renders the production `MessagesTimeline` under the production `ChatHeader` (which holds the `TimelineDetailMenu`), laid out as the browser build's thread header, and the app's compiled CSS, inside a one-route router and the real toast providers. The thread has one finished turn (a note, a failing test run, a thought, an edit, a passing run and the answer) and one running turn (a note, a finished command, a thought, a later note and a command still running). Callbacks are no-ops; nothing reaches a server or provider. The level is the real client setting, saved in the page's `localStorage`. `?scenario=duo` swaps in the running turn from the November 7, 2026 iPhone report (a long command, a thought and four MCP calls, no reply yet) for before/after captures of `docs/transcript-detail.md`.
 
 `verify.mjs` checks each level at 1280 px and 390 px, in light and dark:
 

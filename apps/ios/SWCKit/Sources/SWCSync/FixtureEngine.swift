@@ -335,6 +335,14 @@ public final class FixtureEngine: AppEngine {
       running.insert(target)
       queued[target] = 1
       if !(transcripts[target]?.last.map(Self.isRunningTool) ?? false) {
+        // The running turn from the November 7, 2026 Duo report: a command, a
+        // thought and four MCP calls before the call still in flight.
+        transcripts[target, default: []].append(row("t", .tool(title: "Ran cd ~/scratch/ig-reel-replies && ls -t | head -2", detail: nil, symbol: "terminal", status: .completed)))
+        transcripts[target, default: []].append(row("t", .reasoning(text: "Check the newest comments next.", streaming: false, seconds: 2)))
+        for name in ["chrome_tabs", "chrome_navigate", "chrome_snapshot", "chrome_evaluate"] {
+          let title = ToolPresentation(name: "mcp__studio-code__\(name)", output: nil).title
+          transcripts[target, default: []].append(row("t", .tool(title: title, detail: nil, symbol: "wrench.and.screwdriver", status: .completed)))
+        }
         transcripts[target, default: []].append(row("t", .tool(title: "Running npm test", detail: "vitest run --reporter dot", symbol: "terminal", status: .running)))
       }
     }

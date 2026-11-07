@@ -1,0 +1,210 @@
+{
+  "$comment": "What each timeline detail level shows. The rule is docs/transcript-detail.md; web (apps/web/src/components/chat/transcriptDetailCases.test.ts) and iOS (apps/ios/SWCKit/Tests/SWCSyncTests/TranscriptDetailCasesTests.swift) run every case. Row kinds: user, note (agent text before the turn's reply), reply (the turn's final text), thinking, command, tool, failed (a step that failed), approval (waiting on you). Expected tokens: a row id stays visible on its own (a run of one step shows as that step), \"fold\" is a closed fold row standing for settled steps, \"live\" is the closed fold row of the steps still being worked on. Everything always shows every row.",
+  "cases": [
+    {
+      "name": "running turn with a command, a thought and four tool calls (the Duo report)",
+      "running": true,
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "t1",
+          "kind": "thinking"
+        },
+        {
+          "id": "m1",
+          "kind": "tool"
+        },
+        {
+          "id": "m2",
+          "kind": "tool"
+        },
+        {
+          "id": "m3",
+          "kind": "tool"
+        },
+        {
+          "id": "m4",
+          "kind": "tool"
+        }
+      ],
+      "normal": ["u1", "live"],
+      "concise": ["u1", "live"]
+    },
+    {
+      "name": "running turn with notes between its steps",
+      "running": true,
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "n1",
+          "kind": "note"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "t1",
+          "kind": "thinking"
+        },
+        {
+          "id": "n2",
+          "kind": "note"
+        },
+        {
+          "id": "c2",
+          "kind": "command",
+          "running": true
+        }
+      ],
+      "normal": ["u1", "n1", "fold", "n2", "live"],
+      "concise": ["u1", "n2", "live"]
+    },
+    {
+      "name": "a failed step in a running turn shows on its own in Folded steps and counts on the live row in Results only",
+      "running": true,
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "f1",
+          "kind": "failed"
+        },
+        {
+          "id": "m1",
+          "kind": "tool",
+          "running": true
+        }
+      ],
+      "normal": ["u1", "c1", "f1", "live"],
+      "concise": ["u1", "live"]
+    },
+    {
+      "name": "settled turn folds behind one row before its reply",
+      "running": false,
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "t1",
+          "kind": "thinking"
+        },
+        {
+          "id": "n1",
+          "kind": "note"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "f1",
+          "kind": "failed"
+        },
+        {
+          "id": "m1",
+          "kind": "tool"
+        },
+        {
+          "id": "r1",
+          "kind": "reply"
+        }
+      ],
+      "normal": ["u1", "fold", "r1"],
+      "concise": ["u1", "fold", "r1"]
+    },
+    {
+      "name": "a turn without steps never folds",
+      "running": false,
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "r1",
+          "kind": "reply"
+        }
+      ],
+      "normal": ["u1", "r1"],
+      "concise": ["u1", "r1"]
+    },
+    {
+      "name": "earlier turns fold while the last one runs",
+      "running": true,
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "r1",
+          "kind": "reply"
+        },
+        {
+          "id": "u2",
+          "kind": "user"
+        },
+        {
+          "id": "m1",
+          "kind": "tool"
+        },
+        {
+          "id": "m2",
+          "kind": "tool",
+          "running": true
+        }
+      ],
+      "normal": ["u1", "fold", "r1", "u2", "live"],
+      "concise": ["u1", "fold", "r1", "u2", "live"]
+    },
+    {
+      "name": "a turn waiting on your approval keeps the approval visible",
+      "running": false,
+      "platforms": ["ios"],
+      "$why": "Web and desktop show approvals as a card above the composer, not as a timeline row.",
+      "rows": [
+        {
+          "id": "u1",
+          "kind": "user"
+        },
+        {
+          "id": "c1",
+          "kind": "command"
+        },
+        {
+          "id": "m1",
+          "kind": "tool"
+        },
+        {
+          "id": "a1",
+          "kind": "approval"
+        }
+      ],
+      "normal": ["u1", "fold", "a1"],
+      "concise": ["u1", "a1", "fold"]
+    }
+  ]
+}

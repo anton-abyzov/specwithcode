@@ -163,6 +163,48 @@ const entries: TimelineEntry[] = [
   command("cmd-fmt", liveRun, at(2, 15), "pnpm fmt CHANGELOG.md", "", "inProgress"),
 ];
 
+function mcpTool(id: string, runId: RunId, time: string, name: string): TimelineEntry {
+  return {
+    id,
+    kind: "work",
+    createdAt: time,
+    entry: {
+      id,
+      createdAt: time,
+      runId,
+      label: name,
+      tone: "tool",
+      itemType: "dynamic_tool",
+      toolTitle: name,
+      detail: "ok",
+      toolLifecycleStatus: "completed",
+    },
+  };
+}
+
+// ?scenario=duo: the running routine turn from the November 7, 2026 iPhone report,
+// a long command and four MCP calls with no reply yet.
+const duoEntries: TimelineEntry[] = [
+  user(
+    "ask-cadence",
+    at(2, 0),
+    "LATEST CADENCE: every 15 minutes (900000 ms), supersedes all 30-minute cadence references. Preserve request-only automatic replies and Anton-owned substantive comments, no DMs.",
+  ),
+  command(
+    "cmd-ls",
+    liveRun,
+    at(2, 4),
+    "cd /Users/me/.specwithcode/m4/scratch/ig-reel-replies/ && ls -t | head -2; date -u '+%Y-%m-%d %H:%M:%S UTC'; tail -1 events.jsonl | cut -c1-90",
+    "events.jsonl\n2026-11-07 21:20:04 UTC",
+  ),
+  thought("thought-next", liveRun, at(2, 6), "Check the newest comments next."),
+  mcpTool("mcp-1", liveRun, at(2, 8), "mcp__studio-code__chrome_tabs"),
+  mcpTool("mcp-2", liveRun, at(2, 10), "mcp__studio-code__chrome_navigate"),
+  mcpTool("mcp-3", liveRun, at(2, 12), "mcp__studio-code__chrome_snapshot"),
+  mcpTool("mcp-4", liveRun, at(2, 14), "mcp__studio-code__chrome_evaluate"),
+];
+const shownEntries = params.get("scenario") === "duo" ? duoEntries : entries;
+
 const listRef = createRef<LegendListRef | null>();
 const noop = () => {};
 
@@ -192,7 +234,7 @@ function Fixture() {
           activeTurnInProgress
           activeTurnStartedAt={at(2, 0)}
           listRef={listRef}
-          timelineEntries={entries}
+          timelineEntries={shownEntries}
           latestRun={{ runId: liveRun, status: "running", startedAt: at(2, 0), completedAt: null }}
           runningRunId={liveRun}
           turnDiffSummaries={[]}

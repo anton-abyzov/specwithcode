@@ -603,7 +603,8 @@
     "./coordinatorReplySources": {
       "types": "./src/coordinatorReplySources.ts",
       "import": "./src/coordinatorReplySources.ts"
-    }
+    },
+    "./transcriptDetail.cases.json": "./src/transcriptDetail.cases.json"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
