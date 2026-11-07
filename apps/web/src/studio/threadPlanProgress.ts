@@ -10,6 +10,7 @@ import type {
   ThreadIncrementTaskStatus,
 } from "@specweave-studio/contracts";
 import {
+  planStepTitle,
   summarizePlanSteps,
   type PlanProgressSummary,
   type PlanStepState,
@@ -107,7 +108,11 @@ export function summarizeIncrementSteps(steps: ReadonlyArray<ThreadPlanStep>): P
   if (index === -1) return summary;
   const open = (step: ThreadPlanStep) => step.state === "open";
   const next = steps.slice(index + 1).find(open) ?? steps.find(open) ?? null;
-  return { ...summary, current: steps[index]!.text, next: next?.text ?? null };
+  return {
+    ...summary,
+    current: planStepTitle(steps[index]!.text),
+    next: next ? planStepTitle(next.text) : null,
+  };
 }
 
 export function todoPlanSteps(
