@@ -92,7 +92,7 @@ export function DesignSystemsSettings() {
     <SettingsPageContainer>
       {environmentId === null ? (
         <p className="text-sm text-muted-foreground">
-          {tx("Connect to this Mac to see design systems.")}
+          {tx("Connect to this machine to see design systems.")}
         </p>
       ) : !canRead ? (
         <p className="text-sm text-muted-foreground">

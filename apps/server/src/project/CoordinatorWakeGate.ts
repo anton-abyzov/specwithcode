@@ -51,13 +51,13 @@ const CLOCK_DRIFT_MS = 60_000;
 export const COORDINATOR_FENCE_MARGIN_MS = 2 * STANDBY_TICK_MS + LEASE_TIMEOUT_MS + CLOCK_DRIFT_MS;
 
 export const COORDINATOR_FENCE_REFUSAL =
-  "Checking with the standby Mac before running. It has not answered, so this Mac paused its coordinator. Choose Run here anyway to run it here. This turns off automatic takeover.";
+  "Checking with the standby machine before running. It has not answered, so this machine paused its coordinator. Choose Run here anyway to run it here. This turns off automatic takeover.";
 
 export const COORDINATOR_FENCE_UNREADABLE_REFUSAL =
-  "This Mac could not read its standby records, so it paused its coordinator rather than risk running beside the standby. Restart SpecWithCode; if this stays, turn the standby off in the project's settings.";
+  "This machine could not read its standby records, so it paused its coordinator rather than risk running beside the standby. Restart SpecWithCode; if this stays, turn the standby off in the project's settings.";
 
 export const COORDINATOR_SUPERSEDED_REFUSAL =
-  "Another Mac took over this project's coordinator while this one was away, so this Mac gives way and starts no coordinator turns here. Continue on the Mac that took over.";
+  "Another machine took over this project's coordinator while this one was away, so this machine gives way and starts no coordinator turns here. Continue on the machine that took over.";
 
 const parse = (value: string | null | undefined) =>
   value === null || value === undefined ? Number.NaN : Date.parse(value);
@@ -159,7 +159,7 @@ export const RESUME_PAUSE_MS = 30_000;
 const RESUME_BEAT_MS = 1_000;
 
 export const COORDINATOR_RESUME_REFUSAL =
-  "This Mac just resumed, so it is checking whether another Mac took over this project's coordinator before running. Send again in a few seconds.";
+  "This machine just resumed, so it is checking whether another machine took over this project's coordinator before running. Send again in a few seconds.";
 
 /**
  * Notices this process resuming from a long pause, by the gap between two
@@ -328,7 +328,7 @@ export const makeFenceSweep = (deps: FenceSweepDeps) => {
         if (project !== undefined)
           yield* deps.stopCoordinator(
             project,
-            "The standby Mac has not answered, so this Mac paused its coordinator.",
+            "The standby machine has not answered, so this machine paused its coordinator.",
           );
       }
     }).pipe(

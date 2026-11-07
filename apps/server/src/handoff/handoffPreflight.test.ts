@@ -237,7 +237,7 @@ describe("turnRefusal", () => {
     );
     const refusal = turnRefusal(document, threadId, m4);
     expect(refusal).toContain("lost its network");
-    expect(refusal).toContain("Resume this Mac");
+    expect(refusal).toContain("Resume this machine");
     expect(refusal).not.toContain("woke");
     // Without a pause the same thread starts turns.
     expect(turnRefusal({ ...document, pausedSince: null }, threadId, m4)).toBeNull();

@@ -203,7 +203,7 @@ describe("quick retries", () => {
   const behind = {
     accepted: false,
     failed: false,
-    message: "The app update waits for the service on this Mac.",
+    message: "The app update waits for the service on this machine.",
     reason: "service-behind",
   };
   const input = (own: RunAppRecord, nowMs: number) => ({

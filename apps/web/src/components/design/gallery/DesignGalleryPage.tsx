@@ -150,7 +150,7 @@ export function DesignGalleryPage({
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="expanded">
             {environmentId === null ? (
-              <p className="text-muted-foreground text-sm">Connect to this Mac to see designs.</p>
+              <p className="text-muted-foreground text-sm">Connect to this machine to see designs.</p>
             ) : !canRead ? (
               <p className="text-muted-foreground text-sm">This window may not read designs.</p>
             ) : (

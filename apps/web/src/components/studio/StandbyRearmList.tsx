@@ -17,7 +17,7 @@ export const rearmReasonText = (reason: StandbyRearmReason, machine: string): st
     case "unreachable":
       return `${machine} did not answer.`;
     case "needs_grant":
-      return `This Mac needs access to ${machine}. Prepare machines again.`;
+      return `This machine needs access to ${machine}. Prepare machines again.`;
     case "needs_update":
       return `${machine} needs an update.`;
     case "not_member":

@@ -546,8 +546,19 @@ describe("status catalog", () => {
       (entry) => entry.id === "connect",
     )!;
     expect(down.level).toBe("degraded");
-    expect(down.detail).toBe("Tunnel: Connector is not running; the relay cannot reach this Mac.");
+    expect(down.detail).toBe("Tunnel: Connector is not running; the relay cannot reach this machine.");
     expect(down.tracksIncidents).toBe(true);
+  });
+
+  it("names the host as this machine, not a Mac, for Linux and Windows hosts", () => {
+    const services = buildStatusServices(
+      inputs({ connect: { mode: "managed", tunnel: "down" } }),
+    );
+    const text = services
+      .flatMap((entry) => [entry.source, entry.detail, ...entry.components.map((c) => c.detail)])
+      .join("\n");
+    expect(text).not.toMatch(/\bMac\b/);
+    expect(services.find((entry) => entry.id === "local-service")!.source).toBe("This machine");
   });
 
   it("stays unknown, not failing, when every feed is offline", () => {

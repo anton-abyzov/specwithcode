@@ -86,7 +86,7 @@ export function ManagedUpdatesView(props: {
         <>
           <p className="font-medium">
             {managedHere
-              ? tx("Managed by this Mac's updater.")
+              ? tx("Managed by this machine's updater.")
               : consentLabels[status.remoteConsent]}
           </p>
           <p>
@@ -166,7 +166,7 @@ export function ManagedUpdatesView(props: {
             ? `A machine administrator must change update permission on ${props.label}.`
             : `A machine administrator must approve update permission for this connection on ${props.label}.`}
           {props.local
-            ? tx(" Use the installed app on this Mac.")
+            ? tx(" Use the installed app on this machine.")
             : tx(" Being connected does not grant update permission.")}
         </p>
       )}

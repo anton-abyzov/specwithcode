@@ -89,7 +89,7 @@ const serviceWaiting: StudioServiceUpdateState = {
 
 const FOLLOW_UP_KEY = "specwithcode.serviceUpdate.thenInstallApp";
 const STOP_AND_INSTALL = ["prepare:false", "prepare:true+hold", "installServiceUpdate:force"];
-const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this Mac yet.";
+const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this machine yet.";
 
 const RUNNING: ServerPrepareServiceUpdateResult = {
   idle: false,

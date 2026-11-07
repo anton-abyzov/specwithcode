@@ -452,7 +452,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
             lastSuccessfulLeaseAt: record?.lastSuccessfulLeaseAt ?? null,
           });
           const reason =
-            "Another Mac took over this project's coordinator while this one was quiet.";
+            "Another machine took over this project's coordinator while this one was quiet.";
           yield* deps.stopCoordinator(project, reason);
           const superseded = yield* link.supersede({
             projectId,

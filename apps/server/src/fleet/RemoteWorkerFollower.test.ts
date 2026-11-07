@@ -646,14 +646,14 @@ describe("adopting the replaced coordinator's workers", () => {
       expect(refused.unclaimed).toEqual([]);
       for (const row of yield* rows) {
         expect(row).toMatchObject({ state: "stopped", readOnly: true });
-        expect(row.lastError).toBe("M1 did not let this Mac take over its workers.");
+        expect(row.lastError).toBe("M1 did not let this machine take over its workers.");
       }
       // An older SpecWithCode there has no claim at all.
       delete world.tools.studio_coordinator_claim_epoch;
       // No claim there yet, so a later round asks again.
       expect((yield* adoption.adopt(input)).unclaimed).toEqual(["env-m1"]);
       expect((yield* rows)[0]?.lastError).toBe(
-        "M1 needs an update before this Mac can take over its workers.",
+        "M1 needs an update before this machine can take over its workers.",
       );
       // Read-only rows are never followed or delivered.
       expect(remote.toolCalls.some((call) => call.name === "studio_thread_wait")).toBe(false);

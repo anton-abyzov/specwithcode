@@ -76,7 +76,7 @@ function DesignRoute() {
           again.
         </Message>
       ) : (
-        <Message title="Connecting">Waiting for this Mac to connect.</Message>
+        <Message title="Connecting">Waiting for this machine to connect.</Message>
       );
   else if (loaded.movedTo !== null)
     body = (

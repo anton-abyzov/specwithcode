@@ -85,7 +85,7 @@ describe("queuedRunActionsUnavailableReason", () => {
       isThisMachineCatchingUp: true,
     });
     expect(reason).toBe(
-      "SpecWithCode on this Mac is busy. The queue works again once it catches up.",
+      "SpecWithCode on this machine is busy. The queue works again once it catches up.",
     );
     expect(reason).not.toContain("not connected");
   });

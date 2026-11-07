@@ -78,7 +78,7 @@ describe("machineUnavailableTitle", () => {
   it("never says this machine can't be reached or is offline", () => {
     for (const phase of ["connecting", "reconnecting", "offline", "available"] as const) {
       const title = machineUnavailableTitle("Anton's MacBook M4MAX", { phase, error: "x" }, true);
-      expect(title).toBe("SpecWithCode on this Mac is busy");
+      expect(title).toBe("SpecWithCode on this machine is busy");
     }
     const failed = machineUnavailableTitle("M4", { phase: "error", error: null }, true);
     expect(failed).toMatch(/failed/);
@@ -191,7 +191,7 @@ describe("a send refused while the machine is not connected", () => {
       isThisMachineCatchingUp: true,
       continueOn: null,
     });
-    expect(toast.title).toBe("SpecWithCode on this Mac is busy: not sent yet");
+    expect(toast.title).toBe("SpecWithCode on this machine is busy: not sent yet");
     expect(toast.description).toBe(
       "Your message stays in the composer. Send it once it catches up.",
     );

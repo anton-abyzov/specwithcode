@@ -1180,7 +1180,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "handoff-sleep-target",
-    title: "When this Mac sleeps, move running threads",
+    title: "When this machine sleeps, move running threads",
     to: "/settings/machines",
     searchTerms: ["sleep suspend lid close laptop move hand off running threads machine handoff"],
   },

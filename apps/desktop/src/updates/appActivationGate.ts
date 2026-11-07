@@ -212,13 +212,13 @@ export function describeAppActivation(activation: DesktopAppSwapGate): string | 
   if (activation.gate === "open") return null;
   const target = activation.targetVersion ?? "the update";
   if (activation.reason === "service-unknown") {
-    return `SpecWithCode ${target} waits to install: the version of the SpecWithCode service on this Mac could not be read${
+    return `SpecWithCode ${target} waits to install: the version of the SpecWithCode service on this machine could not be read${
       activation.serviceMessage ? ` (${activation.serviceMessage})` : ""
     }.`;
   }
   const blocked =
     activation.serviceStatus === "error" || activation.serviceStatus === "manual-required";
-  return `SpecWithCode ${target} installs after the SpecWithCode service on this Mac, which runs ${
+  return `SpecWithCode ${target} installs after the SpecWithCode service on this machine, which runs ${
     activation.serviceVersion
   }${blocked && activation.serviceMessage ? ` and cannot update yet: ${withPeriod(activation.serviceMessage)}` : "."}`;
 }

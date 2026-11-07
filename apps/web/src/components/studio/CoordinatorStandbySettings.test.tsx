@@ -165,18 +165,18 @@ describe("copy", () => {
       handBackHint("M1"),
     ];
     expect(lines.slice(0, 6)).toEqual([
-      "If this Mac goes quiet",
+      "If this machine goes quiet",
       "If M4 goes quiet",
       "M3 lets M1 take over.",
       "Ready. M1 can take over.",
       "Not ready. M3 has not allowed M1 yet.",
-      "M1 must stay awake. If it is off, this Mac pauses its coordinator.",
+      "M1 must stay awake. If it is off, this machine pauses its coordinator.",
     ]);
     expect(lines[6]).toMatch(/^M1 took over from M4 at .+\. M4 went quiet\.$/);
     expect(lines.slice(7)).toEqual([
       "3 workers on M3 report here now.",
       "1 worker on M3 reports here now.",
-      "M1 took over while this Mac was away. This Mac now runs workers.",
+      "M1 took over while this machine was away. This machine now runs workers.",
       "Open M1 and hand the coordinator back.",
     ]);
     for (const line of lines) expect(line).not.toMatch(/[—–]/);
@@ -187,7 +187,7 @@ describe("CoordinatorStandbyView", () => {
   const props = (overrides: Partial<CoordinatorStandbyViewProps> = {}) => {
     const calls: string[] = [];
     const value: CoordinatorStandbyViewProps = {
-      title: "If this Mac goes quiet",
+      title: "If this machine goes quiet",
       choices: [
         { environmentId: "m1" as never, label: "M1" },
         { environmentId: "m3" as never, label: "M3" },
@@ -202,7 +202,7 @@ describe("CoordinatorStandbyView", () => {
           error: "Wait a minute before allowing workers on this machine again.",
         },
       ],
-      warning: "M1 must stay awake. If it is off, this Mac pauses its coordinator.",
+      warning: "M1 must stay awake. If it is off, this machine pauses its coordinator.",
       problem: null,
       fenceNote: null,
       pending: false,
@@ -221,12 +221,14 @@ describe("CoordinatorStandbyView", () => {
   it("shows the choice, delay, arming rows with their errors and the warning", async () => {
     const { value, calls } = props();
     await act(async () => root.render(<CoordinatorStandbyView {...value} />));
-    expect(text()).toContain("If this Mac goes quiet");
+    expect(text()).toContain("If this machine goes quiet");
     expect(text()).toContain("M1");
     expect(text()).toContain("15 minutes");
     expect(text()).toContain("Not ready. M3 has not allowed M1 yet.");
     expect(text()).toContain("Wait a minute before allowing workers on this machine again.");
-    expect(text()).toContain("M1 must stay awake. If it is off, this Mac pauses its coordinator.");
+    expect(text()).toContain(
+      "M1 must stay awake. If it is off, this machine pauses its coordinator.",
+    );
     await click(button("Allow"));
     expect(calls).toEqual(["allow"]);
   });
@@ -287,7 +289,7 @@ describe("CoordinatorStandbySettings", () => {
         <CoordinatorStandbySettings coordinator={coordinator as never} shared={shared as never} />,
       ),
     );
-    expect(text()).toContain("If this Mac goes quiet");
+    expect(text()).toContain("If this machine goes quiet");
     expect(text()).toContain("30 minutes");
     expect(text()).toContain("Checking with M1 before running.");
     await click(button("Run here anyway"));
@@ -332,8 +334,10 @@ describe("CoordinatorStandbySettings", () => {
     );
     expect(text()).toMatch(/M1 took over from M4 at .+\. M4 went quiet\./);
     expect(text()).toContain("3 workers on M3 report here now.");
-    expect(text()).toContain("M1 took over while this Mac was away. This Mac now runs workers.");
-    await click(button("Make this Mac the coordinator again"));
+    expect(text()).toContain(
+      "M1 took over while this machine was away. This machine now runs workers.",
+    );
+    await click(button("Make this machine the coordinator again"));
     expect(state.handoff).toMatchObject({ requestedTarget: "m4:p4" });
   });
 
@@ -356,7 +360,7 @@ describe("CoordinatorStandbySettings", () => {
       ),
     );
     expect(text()).toContain("Open M1 and hand the coordinator back.");
-    expect(text()).not.toContain("Make this Mac the coordinator again");
+    expect(text()).not.toContain("Make this machine the coordinator again");
   });
 
   it("says nothing about a takeover the owner made by hand", async () => {
@@ -397,7 +401,7 @@ describe("re-arm after a takeover", () => {
       "No standby armed yet: M3 did not answer. Trying again.",
     );
     expect(rearmStatusText(run({ reason: "needs_grant" }), label)).toBe(
-      "No standby armed yet: This Mac needs access to M3. Prepare machines again. Waiting for you.",
+      "No standby armed yet: This machine needs access to M3. Prepare machines again. Waiting for you.",
     );
     expect(rearmStatusText(run({ state: "verifying", standby: ref("m3", "p3") }), label)).toBe(
       "Checking M3.",

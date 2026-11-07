@@ -15,7 +15,7 @@ export const STATUS_GROUPS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
 }> = [
-  { id: "app", name: "SpecWithCode", description: "This Mac's service, coordinators and updates" },
+  { id: "app", name: "SpecWithCode", description: "This machine's service, coordinators and updates" },
   { id: "machines", name: "Machines", description: "Paired machines and the private network" },
   {
     id: "dependencies",

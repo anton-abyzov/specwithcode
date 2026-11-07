@@ -135,7 +135,7 @@ export function StatusPage() {
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
             {environmentId === null ? (
-              <p className="text-muted-foreground text-sm">Connect to this Mac to see status.</p>
+              <p className="text-muted-foreground text-sm">Connect to this machine to see status.</p>
             ) : !canRead ? (
               <p className="text-muted-foreground text-sm">
                 This window may not read the host's status.

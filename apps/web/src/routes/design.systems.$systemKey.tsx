@@ -60,7 +60,7 @@ function SystemRoute() {
           design system again.
         </SystemMessage>
       ) : (
-        <SystemMessage title="Connecting">Waiting for this Mac to connect.</SystemMessage>
+        <SystemMessage title="Connecting">Waiting for this machine to connect.</SystemMessage>
       );
   else
     body = (

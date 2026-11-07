@@ -796,7 +796,7 @@ export const make = Effect.gen(function* () {
         notice: noticeOf([
           loweredFrom === undefined
             ? null
-            : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this Mac's limits for ${replica.sourceLabel}.`,
+            : `Runs at ${runtimeMode} here (lowered from ${loweredFrom}) under this machine's limits for ${replica.sourceLabel}.`,
           checkpoint.skipped.length > 0
             ? `Not carried over: ${checkpoint.skipped
                 .slice(0, 5)

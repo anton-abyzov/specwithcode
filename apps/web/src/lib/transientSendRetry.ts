@@ -54,10 +54,10 @@ export function isUnsentHostFailure(error: unknown): boolean {
   return matchesFailure(error, UNSENT_TAGS);
 }
 
-/** What a send this Mac never received says: it is busy, never "not connected". */
+/** What a send this machine never received says: it is busy, never "not connected". */
 export const THIS_MACHINE_NOT_SENT = `${THIS_MACHINE_BUSY_TITLE}, so this was not sent. Try again once it catches up.`;
 
-/** What a send says when this Mac's connection dropped under it: it may have landed. */
+/** What a send says when this machine's connection dropped under it: it may have landed. */
 export const THIS_MACHINE_MAYBE_SENT = `${THIS_MACHINE_BUSY_TITLE} and stopped answering, so this may not have gone through. Check before trying again.`;
 
 /**

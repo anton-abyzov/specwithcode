@@ -173,7 +173,7 @@ export function HandoffBadgeActions(props: HandoffBadgeActionsProps) {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Couldn't resume this Mac",
+                title: "Couldn't resume this machine",
                 description: result.error,
               }),
             );
@@ -188,7 +188,7 @@ export function HandoffBadgeActions(props: HandoffBadgeActionsProps) {
             disabled={busy || props.disabled}
             onClick={() => setConfirming(true)}
           >
-            {busy ? "Resuming…" : "Resume this Mac…"}
+            {busy ? "Resuming…" : "Resume this machine…"}
           </Button>
           <ResumeMachineDialogView
             open={confirming}
@@ -216,16 +216,16 @@ export function ResumeMachineDialogView(props: {
     <AlertDialog open={props.open} onOpenChange={props.onOpenChange}>
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Resume all threads on this Mac?</AlertDialogTitle>
+          <AlertDialogTitle>Resume all threads on this machine?</AlertDialogTitle>
           <AlertDialogDescription>
-            This Mac lost its network, so it paused threads that other machines could continue.
+            This machine lost its network, so it paused threads that other machines could continue.
             Resuming lets them run here again, even if another machine already picked them up.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
           <Button variant="default" onClick={props.onConfirm}>
-            Resume this Mac
+            Resume this machine
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
@@ -282,7 +282,7 @@ export function HandoffRowBadge(props: RowProps) {
   return badge ? <HandoffBadgeChip badge={badge} className="sws-thread-handoff-chip" /> : null;
 }
 
-/** The row's one-click action beside its open button: "Continue here" and "Resume this Mac…". */
+/** The row's one-click action beside its open button: "Continue here" and "Resume this machine…". */
 export function HandoffRowAction(
   props: RowProps & {
     onOpenThread: (threadId: ThreadId, environmentId: EnvironmentId) => void;

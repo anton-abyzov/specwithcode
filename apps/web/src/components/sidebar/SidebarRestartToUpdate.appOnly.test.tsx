@@ -98,7 +98,7 @@ const serviceWaiting: StudioServiceUpdateState = {
 const STOP_AND_INSTALL = ["prepare:false", "prepare:true+hold", "installServiceUpdate:force"];
 // What the app's own restart sends: a look, a drain of the service it started, the install.
 const APP_ONLY = ["prepare:false", "prepare:true+hold:app-restart", "installUpdate:0.2.5"];
-const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this Mac yet.";
+const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this machine yet.";
 // Where a window keeps, across a reload, the release the service's agent lacked.
 const LACKED_RELEASE_KEY = "specwithcode.serviceUpdate.lackedRelease";
 
@@ -826,7 +826,7 @@ describe("Update now once the service's agent lacks the release", () => {
       };
       await advance(2_000);
       expect(lastToast().description).toBe(
-        "SpecWithCode 0.2.6 is not available to the service on this Mac yet.",
+        "SpecWithCode 0.2.6 is not available to the service on this machine yet.",
       );
       closeToastWithX();
       await advance(0);

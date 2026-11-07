@@ -176,7 +176,7 @@ describe("handoff badges", () => {
     ).toBeNull();
   });
 
-  it("shows Paused: offline with Resume this Mac… after a network fence", () => {
+  it("shows Paused: offline with Resume this machine… after a network fence", () => {
     const badge = handoffBadgeFor(
       snapshot({
         pausedSince: "2026-10-20T20:00:00.000Z",
@@ -194,11 +194,11 @@ describe("handoff badges", () => {
         onOpenThread={open}
       />,
     );
-    expect(html).toContain("Resume this Mac…");
+    expect(html).toContain("Resume this machine…");
     expect(html).not.toContain("sleep");
     expect(html).not.toContain("woke");
     // The button only asks; the dialog stays closed until it is pressed.
-    expect(html).not.toContain("Resume all threads on this Mac?");
+    expect(html).not.toContain("Resume all threads on this machine?");
   });
 
   it("shows nothing for a thread outside handoff mode", () => {

@@ -318,8 +318,9 @@ export const ru: PhraseCatalog = {
   "WSL only": "Только WSL",
   "Warn when the app folder is large": "Предупреждать, когда папка приложения большая",
   "When a thread finishes": "Когда тред завершается",
-  "When this Mac sleeps, move running threads": "Когда этот Mac засыпает, переносить треды",
-  "When this Mac sleeps, move running threads to": "Когда этот Mac засыпает, переносить треды на",
+  "When this machine sleeps, move running threads": "Когда эта машина засыпает, переносить треды",
+  "When this machine sleeps, move running threads to":
+    "Когда эта машина засыпает, переносить треды на",
   "Who can run work here": "Кто может запускать здесь работу",
   "Word wrap": "Перенос строк",
   "Working section (beta)": "Раздел «В работе» (бета)",
@@ -437,8 +438,8 @@ export const ru: PhraseCatalog = {
     "Подсвечивать клики и зажатые кнопки мыши в новых записях.",
   "Hold mode also quits on two quick presses.":
     "В режиме удержания выход также срабатывает на два быстрых нажатия.",
-  "Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps.":
-    "Не давать уснуть в простое, пока сессия работает, чтобы ходы на этом Mac продолжались. Если закрыть крышку, Mac всё равно уснёт.",
+  "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
+    "Не давать уснуть в простое, пока сессия работает, чтобы ходы на этой машине продолжались. Если закрыть крышку, машина всё равно уснёт.",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "Сколько автоматическое обновление службы SpecWithCode ждёт завершения работы. Затем ходы приостанавливаются, служба обновляется, и они продолжаются с того же места. «Позже» в боковой панели ждёт ещё час.",
   "Include text and controls when the app makes them available.":
@@ -579,8 +580,8 @@ export const ru: PhraseCatalog = {
   "Subscription usage is what Auto spends by default. Providers billed per token (API credits) are left out unless allowed here, and only up to the tier you pick. Auto never adds a key, signs in or buys credits.":
     "По умолчанию автовыбор тратит использование подписки. Провайдеры с оплатой за токены (кредиты API) не используются, если не разрешены здесь, и только до выбранного уровня. Автовыбор никогда не добавляет ключ, не входит в аккаунт и не покупает кредиты.",
   "Switches the hosted app release channel.": "Переключает канал релизов размещённого приложения.",
-  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens.":
-    "Синхронизирует каждый ход с другими машинами, где есть тот же проект, чтобы любая из них могла продолжить. Действует для тредов этого Mac, в том числе существующих. Тратит чуть больше токенов.",
+  "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
+    "Синхронизирует каждый ход с другими машинами, где есть тот же проект, чтобы любая из них могла продолжить. Действует для тредов этой машины, в том числе существующих. Тратит чуть больше токенов.",
   "System default follows your browser or OS clock preference.":
     "«Системный» следует настройке часов браузера или ОС.",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1455,8 +1456,8 @@ export const ru: PhraseCatalog = {
   "Jev answers once a key is saved. Create one at {a}. It stays in this machine's secret store and is only sent to {label}.":
     "Jev отвечает, когда ключ сохранён. Создайте его на {a}. Он хранится в хранилище секретов этой машины и отправляется только в {label}.",
   Saved: "Сохранено",
-  "Connect to this Mac to see design systems.":
-    "Подключитесь к этому Mac, чтобы увидеть дизайн-системы.",
+  "Connect to this machine to see design systems.":
+    "Подключитесь к этой машине, чтобы увидеть дизайн-системы.",
   "This window may not read design systems.": "Это окно не может читать дизайн-системы.",
   "Open {title}": "Открыть {title}",
   "Add device host": "Добавить хост устройств",
@@ -1717,8 +1718,8 @@ export const ru: PhraseCatalog = {
   "Projects set differently": "Проекты с другими настройками",
   "A removed project": "Удалённый проект",
   "Use default": "По умолчанию",
-  "Machine to move running threads to when this Mac sleeps":
-    "Машина, на которую переносить запущенные треды, когда этот Mac засыпает",
+  "Machine to move running threads to when this machine sleeps":
+    "Машина, на которую переносить запущенные треды, когда эта машина засыпает",
   "A removed machine": "Удалённая машина",
   "More options": "Другие параметры",
   "Automatic takeover": "Автоматический перехват",
@@ -1929,7 +1930,7 @@ export const ru: PhraseCatalog = {
     "На этой машине нет управляемой установки сервиса.",
   "Managed updates are unavailable on this installation.":
     "Управляемые обновления недоступны в этой установке.",
-  "Managed by this Mac's updater.": "Управляется программой обновления этого Mac.",
+  "Managed by this machine's updater.": "Управляется программой обновления этой машины.",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "Автоматические обновления на {label}: {value}. Изменение разрешений сохраняет эту настройку.",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1941,7 +1942,8 @@ export const ru: PhraseCatalog = {
   "Revoke update permission": "Отозвать разрешение на обновления",
   "Grant update permission": "Выдать разрешение на обновления",
   "Check for updates": "Проверить обновления",
-  " Use the installed app on this Mac.": " Используйте установленное приложение на этом Mac.",
+  " Use the installed app on this machine.":
+    " Используйте установленное приложение на этой машине.",
   " Being connected does not grant update permission.":
     " Подключение не даёт разрешения на обновления.",
   "Checking for updates requires permission for this connection.":

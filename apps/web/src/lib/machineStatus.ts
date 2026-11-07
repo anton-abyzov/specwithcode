@@ -54,7 +54,7 @@ export function machineStatus(
 /** What the app says about its own machine while its server is slow to answer. */
 export const THIS_MACHINE_CATCHING_UP = "Catching up…";
 /** The banner title for the app's own machine while its server is slow to answer. */
-export const THIS_MACHINE_BUSY_TITLE = "SpecWithCode on this Mac is busy";
+export const THIS_MACHINE_BUSY_TITLE = "SpecWithCode on this machine is busy";
 
 /**
  * The app's own machine is never offline or unreachable: its server shares this
@@ -97,7 +97,7 @@ export function machineUnavailableTitle(
   if (isThisMachine) {
     if (isThisMachineCatchingUp(connection.phase)) return THIS_MACHINE_BUSY_TITLE;
     if (connection.phase === "unsupported") return `${label} needs an app update`;
-    return "Connection to SpecWithCode on this Mac failed";
+    return "Connection to SpecWithCode on this machine failed";
   }
   switch (connection.phase) {
     case "connecting":

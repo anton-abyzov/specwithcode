@@ -575,7 +575,7 @@ describe("takeover under the source's work grant", () => {
       expect(launches[0]?.runtimeMode).toBe("auto-accept-edits");
       expect(launches[0]?.interactionMode).toBe("default");
       expect(response.notice).toBe(
-        "Runs at auto-accept-edits here (lowered from full-access) under this Mac's limits for M4.",
+        "Runs at auto-accept-edits here (lowered from full-access) under this machine's limits for M4.",
       );
     }),
   );

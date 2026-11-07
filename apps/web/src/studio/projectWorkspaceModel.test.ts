@@ -556,7 +556,7 @@ describe("Project admission and retry", () => {
       const reason = projectAdmissionReason(settings, false, true, { phase }, thisDevice);
       // Nothing queues a refused send, so the text must not promise one.
       expect(reason).toBe(
-        "SpecWithCode on this Mac is busy. You can send once it catches up; your draft is kept.",
+        "SpecWithCode on this machine is busy. You can send once it catches up; your draft is kept.",
       );
       expect(reason).not.toMatch(/messages send/i);
       expect(hostDisconnectedLabel({ phase }, thisDevice)).toBe("Catching up");

@@ -199,7 +199,7 @@ const REFUSALS: Record<string, string> = {
   quitting: "SpecWithCode is already quitting.",
   "no-download": "The app update is not downloaded.",
   disabled: "App updates are off in this build.",
-  "service-behind": "The app update waits for the service on this Mac.",
+  "service-behind": "The app update waits for the service on this machine.",
 };
 
 /**

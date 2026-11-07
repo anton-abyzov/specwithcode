@@ -314,7 +314,7 @@ export function getRestartToUpdateView(
   const what =
     app || ready || !serviceState?.installedVersion
       ? `SpecWithCode ${version ?? "update"} is downloaded.`
-      : `The SpecWithCode service on this Mac still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
+      : `The SpecWithCode service on this machine still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
 
   const parts = service
     ? [
@@ -365,7 +365,7 @@ export function describeInstallOutcome(
     case "disabled":
       return "Updates are off in this build.";
     case "service-behind":
-      return `SpecWithCode ${result.state.swapGate?.targetVersion ?? result.state.downloadedVersion ?? "the update"} installs after the SpecWithCode service on this Mac updates to it. You can keep working on the current version.`;
+      return `SpecWithCode ${result.state.swapGate?.targetVersion ?? result.state.downloadedVersion ?? "the update"} installs after the SpecWithCode service on this machine updates to it. You can keep working on the current version.`;
     default:
       return result.state.status === "downloading"
         ? `SpecWithCode is still downloading ${result.state.availableVersion ?? "the update"}${result.state.downloadPercent === null ? "" : ` (${Math.round(result.state.downloadPercent)}%)`}. Restart to update once it finishes.`
@@ -751,7 +751,7 @@ export function advanceServiceUpdateProgress(
         return {
           ...progress,
           phase: "failed",
-          message: `SpecWithCode ${target} is not available to the service on this Mac yet.`,
+          message: `SpecWithCode ${target} is not available to the service on this machine yet.`,
           unavailable: true,
         };
       }
@@ -1101,7 +1101,7 @@ export function serviceUpdateToast(
           : "Waiting for the last work to finish…";
       const running =
         progress.fromVersion && progress.fromVersion !== progress.targetVersion
-          ? `The SpecWithCode service on this Mac still runs ${progress.fromVersion}. `
+          ? `The SpecWithCode service on this machine still runs ${progress.fromVersion}. `
           : "";
       // The work listed was the restarted service's: until the stop that holds
       // the work again says what runs now, the restart is what the toast says.
