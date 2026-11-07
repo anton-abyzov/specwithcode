@@ -1,3 +1,5 @@
+import { teamRulesFilterProviders } from "@specweave-studio/shared/teamRules";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import { automaticFallbackContinuation } from "./automaticFallbackContinuation.ts";
 import {
@@ -1754,7 +1756,11 @@ export const makeSweep = Effect.gen(function* () {
           Effect.gen(function* () {
             const next = providerLimitStep(
               current,
-              providersFor(current, currentProject),
+              // A fallback stays inside the rules of the thread's own folder.
+              teamRulesFilterProviders(
+                yield* teamRulesForFolder(current.worktreePath ?? currentProject.workspaceRoot),
+                providersFor(current, currentProject),
+              ),
               rule,
               DateTime.toEpochMillis(yield* DateTime.now),
               options,
@@ -1840,7 +1846,10 @@ export const makeSweep = Effect.gen(function* () {
         Effect.gen(function* () {
           if (yield* stopHoldsThread(current, true)) return false;
           const at = DateTime.toEpochMillis(yield* DateTime.now);
-          const own = providersFor(current, currentProject);
+          const own = teamRulesFilterProviders(
+            yield* teamRulesForFolder(current.worktreePath ?? currentProject.workspaceRoot),
+            providersFor(current, currentProject),
+          );
           const local = providerLimitStep(current, own, rule, at, options)?.type ?? null;
           return triggerFor(current, own, rule, local, at)?.key === trigger?.key;
         }),

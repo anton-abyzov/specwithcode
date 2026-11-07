@@ -1,4 +1,9 @@
-import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
+import {
+  parseTeamRulesText,
+  TEAM_RULES_NONE,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
+import { ServerSettingsService } from "../serverSettings.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -7,7 +12,11 @@ import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  type ServerSettings,
+} from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
 
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
@@ -65,7 +74,68 @@ const makeStubRegistry = (
   };
 };
 
+const settingsLayer = (settings: ServerSettings = DEFAULT_SERVER_SETTINGS) =>
+  Layer.mock(ServerSettingsService)({ getSettings: Effect.succeed(settings) });
+
 describe("TextGeneration.make", () => {
+  it.effect("refuses an instance with its own launch values under a folder's limit", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("codex");
+      const instance = makeStubInstance(
+        instanceId,
+        makeStubTextGeneration({
+          generateThreadTitle: () => Effect.die("A refused call must not reach the provider"),
+        }),
+      );
+      const generation = yield* TextGeneration.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            settingsLayer({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: {
+                [instanceId]: { driver: "codex", config: { launchArgs: "--profile other" } },
+              },
+            } as unknown as ServerSettings),
+            Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          ),
+        ),
+        Effect.provideService(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          makeStubRegistry([instance]),
+        ),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("Unused"),
+          }),
+        ),
+      );
+      const by = { source: "repository", owner: "Payments" } as const;
+      const refused = yield* generation
+        .generateThreadTitle({
+          cwd: "/limited",
+          message: "Anything",
+          modelSelection: createModelSelection(instanceId, "gpt-5"),
+        })
+        .pipe(
+          Effect.provideService(
+            TeamRules,
+            teamRulesOf(TEAM_RULES_NONE, {
+              "/limited": {
+                status: "active",
+                rules: { version: 1, owner: "Payments" },
+                fingerprint: "machine",
+                warnings: [],
+                sources: [by],
+                modelLists: [{ patterns: ["gpt-*"], by }],
+              },
+            }),
+          ),
+          Effect.flip,
+        );
+      expect(refused.detail).toContain("Payments's repository rules limit this folder");
+    }),
+  );
+
   it.effect("refuses a model outside the rules before any provider call", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
@@ -77,7 +147,10 @@ describe("TextGeneration.make", () => {
       );
       const generation = yield* TextGeneration.make.pipe(
         Effect.provide(
-          Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          Layer.merge(
+            settingsLayer(),
+            Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          ),
         ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -129,7 +202,10 @@ describe("TextGeneration.make", () => {
       );
       const generation = yield* TextGeneration.make.pipe(
         Effect.provide(
-          Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          Layer.merge(
+            settingsLayer(),
+            Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          ),
         ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -176,7 +252,10 @@ describe("TextGeneration.make", () => {
 
       const tg = yield* TextGeneration.make.pipe(
         Effect.provide(
-          Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          Layer.merge(
+            settingsLayer(),
+            Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          ),
         ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
@@ -204,7 +283,10 @@ describe("TextGeneration.make", () => {
     Effect.gen(function* () {
       const tg = yield* TextGeneration.make.pipe(
         Effect.provide(
-          Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          Layer.merge(
+            settingsLayer(),
+            Layer.mock(StudioCapacity.Capacity)({ assertNativeStart: () => Effect.void }),
+          ),
         ),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,

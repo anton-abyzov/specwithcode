@@ -1,5 +1,5 @@
 import { teamRulesClampMode, teamRulesClampToCarried } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   isProjectCoordinatorThreadId,
@@ -129,7 +129,10 @@ const make = Effect.gen(function* () {
     ).settings;
     // A saved default from before the rules lowers to what they allow.
     const targetRuntimeMode = teamRulesClampToCarried(
-      teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
+      teamRulesClampMode(
+        yield* teamRulesForFolder(target.workspaceRoot),
+        defaults.defaultRuntimeMode,
+      ),
       source.origin?.carried,
     );
 

@@ -278,8 +278,8 @@ class AdditiveMigrations(unittest.TestCase):
         self.assertEqual(additive_migrations.full_read_pending(None), [])
 
     def test_undeclared_migration_number_refuses(self):
-        flow = self.flow(*migration(73, ['CREATE TABLE later_feature (id INTEGER PRIMARY KEY)']))
-        with self.assertRaisesRegex(proof.Refused, 'migration-undeclared:73'): self.prove(flow)
+        flow = self.flow(*migration(999, ['CREATE TABLE later_feature (id INTEGER PRIMARY KEY)']))
+        with self.assertRaisesRegex(proof.Refused, 'migration-undeclared:999'): self.prove(flow)
 
     def test_migration_name_mismatch_refuses(self):
         statements = migration(70)

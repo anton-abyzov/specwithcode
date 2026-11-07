@@ -16,7 +16,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { SettingsRow } from "./settingsLayout";
+import { SettingsRow, TeamRulesLabel } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   describeServiceUpdate,
@@ -135,7 +135,8 @@ export function UpdatePreferencesSection() {
   if (!supported || preferences === null) return null;
   // The build keeps self-update off: the switches report what runs (nothing)
   // and cannot be turned on from here.
-  const locked = preferences.automaticUpdatesAllowed === false;
+  const setBy = preferences.automaticUpdatesSetBy;
+  const locked = preferences.automaticUpdatesAllowed === false || setBy !== undefined;
 
   return (
     <>
@@ -149,10 +150,15 @@ export function UpdatePreferencesSection() {
       )}
       <SettingsRow
         {...searchableSetting("app-updates")}
+        {...(setBy === undefined ? {} : { status: <TeamRulesLabel>{setBy}</TeamRulesLabel> })}
         description={
-          locked
-            ? "Automatic updates are off in this build, for this app and the SpecWithCode service on this computer. Check now still works."
-            : "Look for new SpecWithCode releases in the background, for this app (every 10 minutes, with a notification when one is found or downloaded) and the SpecWithCode service on this computer."
+          setBy !== undefined
+            ? preferences.checkAutomatically
+              ? "Your team's rules keep automatic updates on for this app and the SpecWithCode service on this computer."
+              : "Your team's rules turn off automatic updates for this app and the SpecWithCode service on this computer."
+            : locked
+              ? "Automatic updates are off in this build, for this app and the SpecWithCode service on this computer. Check now still works."
+              : "Look for new SpecWithCode releases in the background, for this app (every 10 minutes, with a notification when one is found or downloaded) and the SpecWithCode service on this computer."
         }
         control={
           <Switch

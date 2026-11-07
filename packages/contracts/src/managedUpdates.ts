@@ -110,6 +110,8 @@ export interface DesktopUpdatePreferences {
    * desktop apps from before it was reported.
    */
   automaticUpdatesAllowed?: boolean;
+  /** Team rules decide these switches: "Set by Acme Engineering". Absent with no rule. */
+  automaticUpdatesSetBy?: string;
   /**
    * How long "Restart when idle" waits for running work, in minutes. After
    * it, the work is stopped for the update and resumes after the restart.
@@ -131,6 +133,7 @@ export const DesktopUpdatePreferencesSchema = Schema.Struct({
   installAutomatically: Schema.Boolean,
   restartWhenIdle: Schema.optionalKey(Schema.Boolean),
   automaticUpdatesAllowed: Schema.optionalKey(Schema.Boolean),
+  automaticUpdatesSetBy: Schema.optionalKey(Schema.String),
   forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
   pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
 });

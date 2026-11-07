@@ -2,8 +2,7 @@
  * Team rules: limits a company sets for everyone using the app on a machine.
  *
  * Capabilities, not settings paths, so a rename inside the app never silently
- * unlocks a rule. `connections`, `updates` and `zones` are validated now and
- * enforced by later releases; `rules show` says which.
+ * unlocks a rule. A repository or a zone can only add to these limits.
  */
 import * as Schema from "effect/Schema";
 
@@ -13,6 +12,8 @@ import { RuntimeMode } from "./providerPolicy.ts";
 export const TEAM_RULES_VERSION = 1;
 export const TEAM_RULES_FILE_NAME = "team-rules.json";
 export const TEAM_RULES_MAX_BYTES = 256 * 1024;
+/** Where a repository commits its rules, read from the default branch and never the working tree. */
+export const TEAM_RULES_REPOSITORY_PATH = `.specwithcode/${TEAM_RULES_FILE_NAME}`;
 
 const RuleText = TrimmedNonEmptyString;
 const ProviderName = Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/));
@@ -70,19 +71,34 @@ export const TeamRulesTools = Schema.Struct({
 export type TeamRulesTools = typeof TeamRulesTools.Type;
 
 export const TeamRulesConnections = Schema.Struct({
+  /** Connection names that may be used; `*` matches any text. Absent: any connection. */
   allow: Schema.optionalKey(Schema.Array(RuleText)),
 });
+export type TeamRulesConnections = typeof TeamRulesConnections.Type;
 
 export const TeamRulesUpdates = Schema.Struct({
+  /** False stops automatic checks and downloads; true keeps them on. Either locks the preference. */
   automatic: Schema.optionalKey(Schema.Boolean),
+  /** The company's own feed. The app stops using the public feed and names this one. */
   feed: Schema.optionalKey(RuleText),
 });
+export type TeamRulesUpdates = typeof TeamRulesUpdates.Type;
+
+/** What a zone or repository may limit. No pin: one instance launches for every folder. */
+export const TeamRulesScopedAi = Schema.Struct({
+  providers: Schema.optionalKey(Schema.Array(ProviderName)),
+  models: Schema.optionalKey(Schema.Array(RuleText)),
+});
+export type TeamRulesScopedAi = typeof TeamRulesScopedAi.Type;
 
 export const TeamRulesZone = Schema.Struct({
+  /** A Git remote without its scheme or user, such as `github.com/acme/payments*`. */
   remote: RuleText,
   agents: Schema.optionalKey(TeamRulesAgents),
-  ai: Schema.optionalKey(TeamRulesAi),
+  ai: Schema.optionalKey(TeamRulesScopedAi),
+  connections: Schema.optionalKey(TeamRulesConnections),
 });
+export type TeamRulesZone = typeof TeamRulesZone.Type;
 
 export const TeamRulesFile = Schema.Struct({
   version: Schema.Literal(TEAM_RULES_VERSION),
@@ -99,6 +115,28 @@ export const TeamRulesFile = Schema.Struct({
 });
 export type TeamRulesFile = typeof TeamRulesFile.Type;
 
+/**
+ * A repository's committed rules: a team agreement, not a security boundary, so
+ * it limits work in that repository and nothing about the machine.
+ */
+export const TeamRulesRepositoryFile = Schema.Struct({
+  version: Schema.Literal(TEAM_RULES_VERSION),
+  owner: RuleText,
+  contact: Schema.optionalKey(RuleText),
+  agents: Schema.optionalKey(TeamRulesAgents),
+  ai: Schema.optionalKey(TeamRulesScopedAi),
+  connections: Schema.optionalKey(TeamRulesConnections),
+});
+export type TeamRulesRepositoryFile = typeof TeamRulesRepositoryFile.Type;
+
+/** A source that adds limits for one working folder, as clients name it. */
+export const TeamRulesSource = Schema.Struct({
+  source: Schema.Literals(["zone", "repository"]),
+  owner: Schema.String,
+  contact: Schema.optionalKey(Schema.String),
+});
+export type TeamRulesSource = typeof TeamRulesSource.Type;
+
 /** What clients need to explain and lock a control. Holds no pinned values. */
 export const TeamRulesSummary = Schema.Struct({
   status: Schema.Literals(["active", "hold"]),
@@ -107,6 +145,8 @@ export const TeamRulesSummary = Schema.Struct({
   contact: Schema.optionalKey(Schema.String),
   fingerprint: Schema.optionalKey(Schema.String),
   ceiling: Schema.optionalKey(RuntimeMode),
+  /** The zone or repository that set the ceiling, when the machine's rules did not. */
+  ceilingBy: Schema.optionalKey(TeamRulesSource),
   routinesCeiling: Schema.optionalKey(RuntimeMode),
   providers: Schema.optionalKey(Schema.Array(Schema.String)),
   models: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -116,8 +156,17 @@ export const TeamRulesSummary = Schema.Struct({
   telemetryExport: Schema.optionalKey(Schema.Boolean),
   reach: Schema.optionalKey(TeamRulesReach),
   tools: Schema.optionalKey(TeamRulesTools),
+  connections: Schema.optionalKey(Schema.Array(Schema.String)),
+  updates: Schema.optionalKey(TeamRulesUpdates),
+  /** Further lists a model or connection must also fit, for one working folder. */
+  modelLists: Schema.optionalKey(Schema.Array(Schema.Array(Schema.String))),
+  connectionLists: Schema.optionalKey(Schema.Array(Schema.Array(Schema.String))),
+  /** The zones and repository adding limits for one working folder. */
+  sources: Schema.optionalKey(Schema.Array(TeamRulesSource)),
   /** Why the rules are on hold. */
   issues: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Set when only one working folder is on hold, not the machine. */
+  holdScope: Schema.optionalKey(Schema.Literals(["zone", "repository"])),
 });
 export type TeamRulesSummary = typeof TeamRulesSummary.Type;
 

@@ -50,12 +50,18 @@ import {
   SettingsSection,
   TeamRulesLabel,
 } from "./settingsLayout";
-import { teamRulesClampMode, teamRulesModeAllowed } from "@specweave-studio/shared/teamRules";
+import {
+  teamRulesClampMode,
+  teamRulesModeAllowed,
+  teamRulesSetByLabel,
+} from "@specweave-studio/shared/teamRules";
 import {
   TEAM_RULES_ABOVE_LIMIT,
+  TEAM_RULES_REPOSITORY_LABEL,
   teamRulesFromSummary,
   teamRulesToolLock,
 } from "../../teamRules/teamRulesView";
+import { useFolderTeamRulesSummary } from "../../teamRules/useFolderTeamRules";
 import { TeamRulesInert } from "./TeamRulesLock";
 import { useMemo } from "react";
 import {
@@ -93,7 +99,12 @@ export function ProjectDefaultsSettings({
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
-  const teamRulesSummary = representative?.serverConfig?.teamRules;
+  const teamRulesSummary = useFolderTeamRulesSummary(
+    target?.environmentId,
+    scope.kind === "project" || scope.kind === "checkout" || onProjectPage
+      ? target?.projectId
+      : null,
+  );
   const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
   const computerUseLock = teamRulesToolLock(teamRulesSummary, "computerUse");
   // What a new thread would get: a default from before the rules is lowered at use, never rewritten.
@@ -335,6 +346,20 @@ export function ProjectDefaultsSettings({
     <SettingsSection id={sectionId} title={sectionTitle}>
       {category === "general" || category === "project" ? (
         <>
+          {isProjectScope
+            ? (teamRulesSummary?.sources ?? []).map((source, index) => (
+                <SettingsRow
+                  key={`${source.source}:${index}`}
+                  title={source.source === "repository" ? "Repository rules" : "Zone"}
+                  status={<TeamRulesLabel>{teamRulesSetByLabel(source.owner)}</TeamRulesLabel>}
+                  description={
+                    source.source === "repository"
+                      ? `Committed in this repository and applied on top of this machine's rules. ${TEAM_RULES_REPOSITORY_LABEL}`
+                      : "Limits for this repository, set in this machine's rules."
+                  }
+                />
+              ))
+            : null}
           {modelRow}
           <SettingsRow
             serverScoped

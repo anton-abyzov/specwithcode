@@ -1,5 +1,10 @@
-import { teamRulesInstanceDriver, teamRulesTurnRefusal } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import {
+  teamRulesFolderLaunchRefusal,
+  teamRulesInstanceDriver,
+  teamRulesInstanceHasLaunchValues,
+  teamRulesTurnRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   ModelSelection,
@@ -120,28 +125,6 @@ export const layerFromProjectStore: Layer.Layer<
         );
         const projectOverrides = settings.projectSettingsOverrides[input.thread.projectId];
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
-        // Every provider turn passes here, whichever entry point started it, so
-        // this is where Team rules hold. Refused, never lowered silently: the
-        // message says what to change and the stored mode stays as it was.
-        const teamRulesRefusal = teamRulesTurnRefusal(yield* currentTeamRules, {
-          runtimeMode: input.thread.runtimeMode,
-          driver:
-            instance?.driverKind ??
-            teamRulesInstanceDriver(settings, input.modelSelection.instanceId),
-          model: input.modelSelection.model,
-          carried: input.thread.origin?.carried,
-        });
-        if (teamRulesRefusal !== null) {
-          return yield* new RuntimePolicyResolveError({
-            projectId: input.thread.projectId,
-            providerInstanceId: input.modelSelection.instanceId,
-            cause: teamRulesRefusal.message,
-          });
-        }
-        const supportedRuntimeModes =
-          instance === undefined
-            ? undefined
-            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
         const worktreePath = input.thread.worktreePath;
         const localProject =
           worktreePath === null
@@ -170,6 +153,42 @@ export const layerFromProjectStore: Layer.Layer<
               )
             : null;
         const cwd = localProject === null ? worktreePath! : localProject.workspaceRoot;
+        // Every provider turn passes here, whichever entry point started it, so
+        // this is where Team rules hold. Refused, never lowered silently: the
+        // message says what to change and the stored mode stays as it was.
+        const driver =
+          instance?.driverKind ??
+          teamRulesInstanceDriver(settings, input.modelSelection.instanceId);
+        const folderRules = yield* teamRulesForFolder(cwd);
+        const teamRulesRefusal =
+          teamRulesTurnRefusal(folderRules, {
+            runtimeMode: input.thread.runtimeMode,
+            driver,
+            model: input.modelSelection.model,
+            carried: input.thread.origin?.carried,
+          }) ??
+          teamRulesFolderLaunchRefusal(
+            folderRules,
+            yield* currentTeamRules,
+            driver,
+            teamRulesInstanceHasLaunchValues(
+              settings,
+              input.modelSelection.instanceId,
+              driver,
+              process.env,
+            ),
+          );
+        if (teamRulesRefusal !== null) {
+          return yield* new RuntimePolicyResolveError({
+            projectId: input.thread.projectId,
+            providerInstanceId: input.modelSelection.instanceId,
+            cause: teamRulesRefusal.message,
+          });
+        }
+        const supportedRuntimeModes =
+          instance === undefined
+            ? undefined
+            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
         // A thread in the project's own checkout may not add a worktree while
         // the project's Use worktrees switch is off; with it on (an umbrella
         // folder, a coordinator) the agent may still make one itself.

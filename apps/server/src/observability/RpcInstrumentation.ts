@@ -199,6 +199,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverDisableAcpRegistryProvider]: "server",
   [WS_METHODS.serverLogoutAcpRegistry]: "server",
   [WS_METHODS.serverDiscoverSourceControl]: "server",
+  [WS_METHODS.serverTeamRulesForFolder]: "server",
   [WS_METHODS.serverDetectLocalUsageHubs]: "server",
   [WS_METHODS.serverAdoptLocalUsageHub]: "server",
   [WS_METHODS.serverGetTraceDiagnostics]: "server",

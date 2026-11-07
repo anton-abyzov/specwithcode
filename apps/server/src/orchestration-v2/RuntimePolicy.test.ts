@@ -21,7 +21,11 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
-import { parseTeamRulesText } from "@specweave-studio/shared/teamRules";
+import {
+  parseTeamRulesText,
+  TEAM_RULES_NONE,
+  type TeamRulesState,
+} from "@specweave-studio/shared/teamRules";
 
 const projectId = ProjectId.make("project:runtime-policy");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -156,6 +160,44 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         rules({ agents: { ceiling: "full-access" }, ai: { models: ["gpt-*"] } }),
       );
       assert.equal(allowed.runtimeMode, "full-access");
+    }),
+  );
+
+  it.effect("judges a turn by its own folder, so one repository's rules stay there", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const by = { source: "repository", owner: "Payments" } as const;
+      const limited: TeamRulesState = {
+        status: "active",
+        fingerprint: "machine",
+        warnings: [],
+        rules: { version: 1, owner: "Payments", agents: { ceiling: "approval-required" } },
+        sources: [by],
+        setBy: { ceiling: by },
+      };
+      const rules = teamRulesOf(TEAM_RULES_NONE, {
+        "/limited": limited,
+        "/paused": {
+          status: "hold",
+          issues: ["bad"],
+          owner: "Payments",
+          holdScope: "repository",
+        },
+      });
+      const resolve = (worktreePath: string) =>
+        policy
+          .resolve({
+            thread: makeThread({ now, worktreePath, runtimeMode: "full-access" }),
+            modelSelection,
+          })
+          .pipe(Effect.provideService(TeamRules, rules));
+
+      const refused = yield* resolve("/limited").pipe(Effect.flip);
+      assert.include(String(refused.cause), "Payments's repository rules allow up to Supervised");
+      const paused = yield* resolve("/paused").pipe(Effect.flip);
+      assert.include(String(paused.cause), "paused in this repository");
+      assert.equal((yield* resolve("/elsewhere")).runtimeMode, "full-access");
     }),
   );
 

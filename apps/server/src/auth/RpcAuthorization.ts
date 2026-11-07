@@ -144,6 +144,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverDisableAcpRegistryProvider]: AuthProvidersManageScope,
   [WS_METHODS.serverLogoutAcpRegistry]: AuthProvidersManageScope,
   [WS_METHODS.serverDiscoverSourceControl]: AuthOrchestrationReadScope,
+  [WS_METHODS.serverTeamRulesForFolder]: AuthOrchestrationReadScope,
   // Same scope as editing the hub list: detection names install paths, adoption stores a key.
   [WS_METHODS.serverDetectLocalUsageHubs]: AuthProvidersManageScope,
   [WS_METHODS.serverAdoptLocalUsageHub]: AuthProvidersManageScope,

@@ -25,7 +25,7 @@ import {
   teamRulesAllowsFullAccessApprovals,
   teamRulesCarriedRefusal,
 } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForThread } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   isProviderNativeSubagentThread,
@@ -51,6 +51,7 @@ import * as Stream from "effect/Stream";
 import { forkParked } from "../serverActivation.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
 import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const FULL_ACCESS_PROMPT_KINDS: ReadonlySet<OrchestrationV2RuntimeRequest["kind"]> = new Set([
@@ -152,6 +153,7 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
   Effect.gen(function* () {
     const options = { ...defaultOptions, ...overrides };
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    const projects = yield* ProjectStore.ProjectStoreV2;
     // Command IDs must differ between attempts and between server runs, so a
     // failed answer never blocks the next one.
     const runId = (yield* randomUuidV4).slice(0, 8);
@@ -206,6 +208,10 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
           !records.runtimeRequests.some(
             (candidate) => candidate.id === request.id && isFullAccessPrompt(candidate),
           )
+        )
+          return "done";
+        if (
+          !teamRulesAllowsFullAccessApprovals(yield* teamRulesForThread(projects, records.thread))
         )
           return "done";
         if (!teamRulesAllowsFullAccessApprovals(yield* currentTeamRules)) return "done";
@@ -286,6 +292,11 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
         const candidates = records.runtimeRequests.filter(isFullAccessPrompt);
         if (candidates.length === 0) return;
         if ((runtimeMode ?? (yield* runtimeModeOf(records.thread))) !== "full-access") return;
+        // A zone or repository can limit this thread's folder when the machine does not.
+        if (
+          !teamRulesAllowsFullAccessApprovals(yield* teamRulesForThread(projects, records.thread))
+        )
+          return;
         let prompts = candidates;
         if (candidates.some((request) => request.kind === "mcp-elicitation")) {
           const items = yield* threads.getThreadRecords(threadId, ["turnItems"], {

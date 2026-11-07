@@ -59,14 +59,13 @@ describe("specweave-studio rules", () => {
     }),
   );
 
-  it.effect("show prints the rules, what is not enforced and what they cannot do", () =>
+  it.effect("show prints the rules and what they cannot do", () =>
     withFile(RULES, (path) =>
       Effect.gen(function* () {
         yield* runCli(["rules", "show", "--file", path]);
         const text = yield* output;
         assert.include(text, "Broadest permission: Auto-accept edits");
         assert.include(text, "Broadest for routines: Supervised");
-        assert.include(text, "Declared, not enforced yet: zones");
         assert.include(text, "It is not a sandbox.");
       }),
     ),
@@ -116,6 +115,50 @@ describe("specweave-studio rules", () => {
         assert.include(text, "do not approve the provider codex");
         assert.include(text, "do not approve the model gpt-5.5");
         assert.include(text, "Allowed: claudeAgent is within");
+      }),
+    ),
+  );
+
+  it.effect("check judges a repository candidate and refuses a machine-only key", () =>
+    withFile(
+      JSON.stringify({ version: 1, owner: "Payments", agents: { ceiling: "approval-required" } }),
+      (path) =>
+        Effect.gen(function* () {
+          assert.isTrue(
+            Exit.isSuccess(
+              yield* Effect.exit(runCli(["rules", "check", "--repository-file", path])),
+            ),
+          );
+        }),
+    ).pipe(
+      Effect.andThen(
+        withFile(
+          JSON.stringify({ version: 1, owner: "Payments", reach: { phones: false } }),
+          (path) =>
+            Effect.gen(function* () {
+              assert.isTrue(
+                Exit.isFailure(
+                  yield* Effect.exit(runCli(["rules", "check", "--repository-file", path])),
+                ),
+              );
+            }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("companion prints both files and show names what each source cannot do", () =>
+    withFile(RULES, (path) =>
+      Effect.gen(function* () {
+        yield* runCli(["rules", "companion", "--file", path]);
+        yield* runCli(["rules", "show", "--file", path]);
+        const text = yield* output;
+        assert.include(text, "managed-settings.json");
+        assert.include(text, "requirements.toml");
+        assert.include(text, "disableBypassPermissionsMode");
+        assert.include(text, "a team agreement, not a security boundary");
+        assert.include(text, "updates.feed stops updates from the public feed");
+        assert.include(text, "Records are not tamper evident");
       }),
     ),
   );

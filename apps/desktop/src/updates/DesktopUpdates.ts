@@ -67,6 +67,8 @@ import {
   updaterCacheDir,
 } from "./pendingAppUpdate.ts";
 import { resolveUpdateFeed } from "./platformFeed.ts";
+import { teamRulesUpdateFeedReason } from "@specweave-studio/shared/teamRules";
+import { readTeamRulesUpdatePolicy } from "./teamRulesUpdates.ts";
 import { getAutoUpdateDisabledReason, isUpstreamUpdateFeed } from "./updateFeedGate.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { runningInstallReplaced } from "./replacedInstall.ts";
@@ -434,6 +436,7 @@ export const make = Effect.gen(function* () {
         appImage: Option.getOrUndefined(config.appImagePath),
         isDebPackage,
         disabledByEnv: config.disableAutoUpdate,
+        teamRulesFeedReason: teamRulesUpdateFeedReason(readTeamRulesUpdatePolicy()),
         hasUpdateFeedConfig: hasFeedConfig,
         feedIsUpstream: isUpstreamUpdateFeed(
           Option.getOrUndefined(yield* Ref.get(appUpdateYmlConfigRef)),
@@ -664,7 +667,10 @@ export const make = Effect.gen(function* () {
   // as soon as the check that found it releases the updater.
   const startAutomaticDownload = Effect.gen(function* () {
     const settings = yield* desktopSettings.get;
-    if (!settings.updatePreferences.downloadAutomatically) return;
+    if (
+      !(readTeamRulesUpdatePolicy().automatic ?? settings.updatePreferences.downloadAutomatically)
+    )
+      return;
     const state = yield* Ref.get(updateStateRef);
     if (state.status !== "available") return;
     const scope = yield* Ref.get(backgroundScopeRef);
@@ -679,7 +685,10 @@ export const make = Effect.gen(function* () {
     checkForUpdates(reason).pipe(Effect.tap(() => startAutomaticDownload));
 
   const automaticChecksEnabled = desktopSettings.get.pipe(
-    Effect.map((settings) => settings.updatePreferences.checkAutomatically),
+    Effect.map(
+      (settings) =>
+        readTeamRulesUpdatePolicy().automatic ?? settings.updatePreferences.checkAutomatically,
+    ),
   );
 
   const checkIfStale = Effect.fn("desktop.updates.checkIfStale")(
@@ -716,7 +725,14 @@ export const make = Effect.gen(function* () {
     getState: Ref.get(updateStateRef),
     updateState,
     installAutomatically: desktopSettings.get.pipe(
-      Effect.map((settings) => settings.updatePreferences.installAutomatically),
+      Effect.map((settings) => {
+        const rules = readTeamRulesUpdatePolicy();
+        return (
+          rules.automatic !== false &&
+          rules.feed === undefined &&
+          settings.updatePreferences.installAutomatically
+        );
+      }),
     ),
     holdInstallOnQuit: Effect.sync(() => stagingForInstall),
     setAutoInstallOnAppQuit: electronUpdater.setAutoInstallOnAppQuit,
@@ -1272,12 +1288,13 @@ export const make = Effect.gen(function* () {
     const settings = yield* desktopSettings.get;
     // Notices follow "Check for updates automatically": with it off the
     // person looks for releases from Settings.
-    if (!settings.updatePreferences.checkAutomatically) return;
+    const automatic = readTeamRulesUpdatePolicy().automatic;
+    if (!(automatic ?? settings.updatePreferences.checkAutomatically)) return;
     yield* rememberAnnouncedNotice(notices, key);
     const notice = describeUpdateNotice(
       kind,
       version,
-      settings.updatePreferences.downloadAutomatically,
+      automatic ?? settings.updatePreferences.downloadAutomatically,
     );
     const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
     yield* Effect.try(() =>

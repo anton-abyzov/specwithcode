@@ -450,6 +450,7 @@ import {
 import { cn, randomUUID } from "~/lib/utils";
 import { teamRulesClampMode, teamRulesStateFromSummary } from "@specweave-studio/shared/teamRules";
 import { teamRulesThreadNotice } from "~/teamRules/teamRulesView";
+import { useFolderTeamRulesSummary } from "~/teamRules/useFolderTeamRules";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { resolveDraftDefaultRuntimeMode } from "./chat/draftRuntimeMode";
@@ -2686,7 +2687,11 @@ function useChatViewState(props: ChatViewProps) {
     primaryEnvironment?.environmentId ?? environmentId,
   );
   const teamRulesState = teamRulesStateFromSummary(
-    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.teamRules,
+    useFolderTeamRulesSummary(
+      environmentId,
+      activeThread?.projectId,
+      isServerThread ? activeThread?.id : null,
+    ),
   );
   // A stored default from before the rules lowers at use; nobody asked for it.
   const defaultRuntimeMode = teamRulesClampMode(
@@ -11061,9 +11066,11 @@ export default function ChatView(props: ChatViewProps) {
         }
       : null,
   );
-  const teamRulesSummary = useAtomValue(
-    serverEnvironment.configValueAtom(environmentId),
-  )?.teamRules;
+  const teamRulesSummary = useFolderTeamRulesSummary(
+    environmentId,
+    activeThread?.projectId,
+    isServerThread ? activeThread?.id : null,
+  );
   const carriedTeamRules = activeThreadShell?.source?.origin?.carried;
   const teamRulesNotice = useMemo(
     () => teamRulesThreadNotice(teamRulesSummary, runtimeMode, carriedTeamRules),
@@ -15903,6 +15910,7 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
+                              teamRulesSummary={teamRulesSummary}
                               promptHistoryMessages={timelineMessages}
                               sessionSkillUses={sessionSkillUses}
                               isServerThread={isServerThread}

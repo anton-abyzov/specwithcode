@@ -18,7 +18,7 @@ import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
 import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
-import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForFolder } from "../../../teamRules/TeamRules.ts";
 import type { Caller } from "../../threadAccess.ts";
 import { fleetPrincipalOf } from "../orchestrator/remote.ts";
 import { addToMachineHint, type ExistingCopyOutcome, linkExistingCopy } from "./addToMachine.ts";
@@ -238,7 +238,7 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
     targetEnvironmentId: input.machine.machine.environmentId,
     origin,
     carried: teamRulesOutgoingCarried(
-      yield* currentTeamRules,
+      yield* teamRulesForFolder(caller?.worktreePath ?? project?.workspaceRoot),
       caller?.origin?.carried,
       context.scope.environmentId,
     ),

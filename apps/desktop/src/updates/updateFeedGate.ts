@@ -12,7 +12,10 @@ export function getAutoUpdateDisabledReason(args: {
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
   feedIsUpstream?: boolean;
+  /** Team rules name a company feed, so the public one is off whatever else applies. */
+  teamRulesFeedReason?: string | null;
 }): string | null {
+  if (args.teamRulesFeedReason) return args.teamRulesFeedReason;
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }
@@ -59,9 +62,7 @@ export function isUpstreamUpdateFeed(
     (value) =>
       typeof value === "string" &&
       updateFeedTerms(value).some((term) =>
-        REFUSED_UPDATE_FEED_DIGESTS.has(
-          NodeCrypto.createHash("sha256").update(term).digest("hex"),
-        ),
+        REFUSED_UPDATE_FEED_DIGESTS.has(NodeCrypto.createHash("sha256").update(term).digest("hex")),
       ),
   );
 }

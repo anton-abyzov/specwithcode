@@ -148,6 +148,8 @@ export interface AuthenticatedSession extends PrincipalApproval {
   readonly expiresAt?: DateTime.DateTime;
   /** What the client said it is, for the rule about phones. */
   readonly clientDeviceType?: string;
+  /** What the client calls itself, for `rules records`. Self-reported. */
+  readonly clientLabel?: string;
 }
 
 export * from "./EnvironmentAuthErrors.ts";
@@ -546,6 +548,7 @@ export const make = Effect.gen(function* () {
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
         clientDeviceType: session.client.deviceType,
+        ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
       })),
     );
 
@@ -1356,6 +1359,7 @@ export const make = Effect.gen(function* () {
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
               clientDeviceType: session.client.deviceType,
+              ...(session.client.label === undefined ? {} : { clientLabel: session.client.label }),
             })),
             Effect.flatMap((session) => refuseSessionByTeamRules(session, request)),
           );

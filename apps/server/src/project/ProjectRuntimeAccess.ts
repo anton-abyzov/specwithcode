@@ -4,7 +4,7 @@ import {
   teamRulesClampToCarried,
   teamRulesModeRefusal,
 } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import * as NodeCrypto from "node:crypto";
 import {
   CommandId,
@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 
 type SettingsService = ServerSettings.ServerSettingsService["Service"];
 export class ProjectRuntimeAccess extends Context.Service<
@@ -33,21 +34,34 @@ export class ProjectRuntimeAccess extends Context.Service<
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const projectRoots = projectStore.list().pipe(
+    Effect.orElseSucceed(() => []),
+    Effect.map(
+      (rows) =>
+        new Map<string, string>(rows.map((row) => [row.projectId, row.workspaceRoot] as const)),
+    ),
+  );
   return ProjectRuntimeAccess.of({
     updateSettings: (patch, mutation) =>
       orchestrator.withProjectPermissionUpdate(
         Effect.gen(function* () {
           // A save names a mode even when it is the one already stored, so it is
           // judged here too: the settings check only sees what changed.
-          const rules = yield* currentTeamRules;
-          for (const value of [
-            ...Object.values(patch.projectSettingsOverrides ?? {}),
-            ...Object.values(patch.projectSettingsOverrideChanges ?? {}).map(
-              (change) => change.set,
+          const modes = [
+            ...Object.entries(patch.projectSettingsOverrides ?? {}),
+            ...Object.entries(patch.projectSettingsOverrideChanges ?? {}).map(
+              ([id, change]) => [id, change.set] as const,
             ),
-          ]) {
-            const mode = value?.defaultRuntimeMode;
-            const refused = mode === undefined ? null : teamRulesModeRefusal(rules, mode);
+          ].flatMap(([id, value]) =>
+            value?.defaultRuntimeMode === undefined
+              ? []
+              : [[id, value.defaultRuntimeMode] as const],
+          );
+          // A zone or repository limits only its own project, so each is judged in its own folder.
+          const roots = modes.length === 0 ? new Map<string, string>() : yield* projectRoots;
+          for (const [id, mode] of modes) {
+            const refused = teamRulesModeRefusal(yield* teamRulesForFolder(roots.get(id)), mode);
             if (refused !== null) {
               return yield* new ServerSettingsError({
                 settingsPath: "project chat permissions",
@@ -85,6 +99,7 @@ export const make = Effect.gen(function* () {
               ]),
             );
             const failures: string[] = [];
+            const roots = yield* projectRoots;
             for (const thread of threads.values()) {
               if (
                 !projects.includes(thread.projectId) ||
@@ -94,7 +109,7 @@ export const make = Effect.gen(function* () {
                 continue;
               const runtimeMode = teamRulesClampToCarried(
                 teamRulesClampMode(
-                  rules,
+                  yield* teamRulesForFolder(thread.worktreePath ?? roots.get(thread.projectId)),
                   saved.projectSettingsOverrides[thread.projectId]?.defaultRuntimeMode ??
                     saved.defaultRuntimeMode,
                 ),

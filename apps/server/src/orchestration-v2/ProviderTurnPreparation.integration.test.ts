@@ -447,6 +447,16 @@ it.effect.each([
           ),
         );
         yield* Deferred.await(nextAccepted);
+        // The adapter accepts a turn just before its row is projected.
+        const projectedTurn = (attemptId: string) =>
+          orchestrator.getThreadProjection(threadId).pipe(
+            Effect.map((projection) =>
+              projection.providerTurns.find((t) => t.runAttemptId === attemptId),
+            ),
+            Effect.tap(() => Effect.yieldNow),
+            Effect.repeat({ until: (turn) => turn !== undefined, times: 1_000 }),
+            Effect.map((turn) => turn!),
+          );
         const accepted = starts.at(-1)!;
         assert.equal(accepted.runId, queued.id);
         assert.equal(accepted.message.messageId, queued.userMessageId);
@@ -457,9 +467,7 @@ it.effect.each([
           const third = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (r) => r.status === "queued",
           )!;
-          const secondTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
-            (t) => t.runAttemptId === accepted.attemptId,
-          )!;
+          const secondTurn = yield* projectedTurn(accepted.attemptId);
           const secondWaiting = yield* watch(
             (e) =>
               e.type === "run.updated" &&

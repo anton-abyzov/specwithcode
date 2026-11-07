@@ -6,7 +6,7 @@ import {
   teamRulesOutgoingCarried,
 } from "@specweave-studio/shared/teamRules";
 import { FLEET_ORIGIN_APP_LABEL } from "../mcp/threadOrigin.ts";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { stringifyJson } from "../json.ts";
 import {
   previewMetadata,
@@ -346,7 +346,7 @@ const make = Effect.gen(function* () {
         // the project's saved mode stands in before the coordinator exists.
         const coordinatorThread = candidates.find((t) => t.id === coordinatorId);
         const carried = teamRulesOutgoingCarried(
-          yield* currentTeamRules,
+          yield* teamRulesForFolder(coordinatorThread?.worktreePath ?? current.workspaceRoot),
           coordinatorThread?.origin?.carried,
           originEnvironmentId,
         );
@@ -1382,7 +1382,10 @@ const make = Effect.gen(function* () {
               input.bundle.context.runtimeMode === undefined
                 ? undefined
                 : teamRulesClampToCarried(
-                    teamRulesClampMode(yield* currentTeamRules, input.bundle.context.runtimeMode),
+                    teamRulesClampMode(
+                      yield* teamRulesForFolder(current.workspaceRoot),
+                      input.bundle.context.runtimeMode,
+                    ),
                     arrivingCarried,
                   );
             const patch = {
@@ -1392,7 +1395,10 @@ const make = Effect.gen(function* () {
                   settings.projectSettingsOverrides[projectId],
                   // An older bundle carries no mode, and the write must still fit the rules.
                   carriedMode ??
-                    teamRulesClampMode(yield* currentTeamRules, resolved.defaultRuntimeMode),
+                    teamRulesClampMode(
+                      yield* teamRulesForFolder(current.workspaceRoot),
+                      resolved.defaultRuntimeMode,
+                    ),
                 ),
               },
             };

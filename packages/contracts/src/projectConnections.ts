@@ -73,9 +73,12 @@ export class ProjectConnectionError extends Schema.TaggedError<ProjectConnection
       "outcome_unknown",
       "operation_failed",
     ]),
+    /** Why Team rules refused it, in words that name who set them. */
+    teamRulesMessage: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.teamRulesMessage !== undefined) return this.teamRulesMessage;
     return {
       not_found: "This project or connection no longer exists.",
       conflict: "Connection settings changed. Reload before continuing.",

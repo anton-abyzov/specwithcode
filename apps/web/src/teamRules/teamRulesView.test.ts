@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   TEAM_RULES_ABOVE_LIMIT,
+  TEAM_RULES_REPOSITORY_LABEL,
   teamRulesDecisionModelLock,
   teamRulesMachineLinkLock,
   teamRulesMachineLock,
@@ -230,5 +231,58 @@ describe("team rules view", () => {
     expect(
       teamRulesOwnMachineView({ status: "active", fingerprint: "aaaaaaaaaaaa" }).fingerprint,
     ).toBe("aaaaaaaa");
+  });
+
+  it("names the repository that set a limit and says what it is", () => {
+    const summary: TeamRulesSummary = {
+      status: "active",
+      owner: "Acme",
+      ceiling: "approval-required",
+      ceilingBy: { source: "repository", owner: "Payments" },
+      sources: [{ source: "repository", owner: "Payments" }],
+    };
+    const notice = teamRulesThreadNotice(summary, "full-access");
+    expect(notice?.description).toContain("Payments's repository rules");
+    expect(notice?.description).toContain(TEAM_RULES_REPOSITORY_LABEL);
+    expect(teamRulesRows(summary).at(-1)?.value).toContain(TEAM_RULES_REPOSITORY_LABEL);
+  });
+
+  it("keeps a zone's limit apart from a repository's", () => {
+    const by = { source: "zone", owner: "Acme" } as const;
+    const summary: TeamRulesSummary = {
+      status: "active",
+      owner: "Acme",
+      ceiling: "approval-required",
+      ceilingBy: by,
+      sources: [by],
+    };
+    const notice = teamRulesThreadNotice(summary, "full-access");
+    expect(notice?.description).toContain("Acme's rules for this repository");
+    expect(notice?.description).not.toContain(TEAM_RULES_REPOSITORY_LABEL);
+  });
+
+  it("pauses one repository without saying the machine is broken", () => {
+    const notice = teamRulesThreadNotice(
+      { status: "hold", holdScope: "repository", owner: "Payments", issues: ["bad"] },
+      "approval-required",
+    );
+    expect(notice?.title).toBe("Agents are paused in this repository");
+    expect(notice?.description).toContain(TEAM_RULES_REPOSITORY_LABEL);
+    const zone = teamRulesThreadNotice(
+      { status: "hold", holdScope: "zone", owner: "Acme", issues: ["no remotes"] },
+      "approval-required",
+    );
+    expect(zone?.title).toBe("Agents are paused in this folder");
+  });
+
+  it("lists connections and updates only when the rules set them", () => {
+    const rows = teamRulesRows({
+      status: "active",
+      owner: "Acme",
+      connections: ["github"],
+      updates: { automatic: false, feed: "https://updates.acme.example" },
+    }).map((row) => row.title);
+    expect(rows).toEqual(["Approved connections", "Automatic updates", "Update source"]);
+    expect(teamRulesRows({ status: "active", owner: "Acme" })).toEqual([]);
   });
 });

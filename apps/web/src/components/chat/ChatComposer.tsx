@@ -46,6 +46,7 @@ import type {
   ServerProvider,
   ThreadId,
   SnapShotSource,
+  TeamRulesSummary,
 } from "@specweave-studio/contracts";
 import {
   AuthOrchestrationOperateScope,
@@ -274,7 +275,6 @@ import {
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
-import { useAtomValue } from "@effect/atom-react";
 import { teamRulesThreadModeAllowed } from "@specweave-studio/shared/teamRules";
 import { TEAM_RULES_ABOVE_LIMIT, teamRulesFromSummary } from "~/teamRules/teamRulesView";
 import { useDebouncedValue } from "~/state/queries";
@@ -1607,6 +1607,8 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   /** The routed server thread's shell, present before its detail loads. */
   activeThreadShell: ThreadShell | null;
+  /** The rules for this thread's folder, not only the machine's. */
+  teamRulesSummary: TeamRulesSummary | undefined;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
   /** Skills this thread used, for the footer's Skills popover. */
@@ -2255,10 +2257,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   )
     ? runtimeMode
     : (compatibleRuntimeModeOptions[0]?.mode ?? runtimeMode);
-  const teamRulesSummary = useAtomValue(
-    serverEnvironment.configValueAtom(environmentId),
-  )?.teamRules;
-  const teamRules = useMemo(() => teamRulesFromSummary(teamRulesSummary), [teamRulesSummary]);
+  const teamRules = useMemo(
+    () => teamRulesFromSummary(props.teamRulesSummary),
+    [props.teamRulesSummary],
+  );
   // Work from another machine keeps that machine's ceiling, even with no rules here.
   const carriedTeamRules = props.activeThreadShell?.source?.origin?.carried;
   const runtimeModeMenuOptions = useMemo(

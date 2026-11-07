@@ -17,7 +17,7 @@
  * too, and must not stop the work here (1128).
  */
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { worktreeSetManifestPath } from "../worktreeSet.ts";
@@ -273,7 +273,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(() => failed("failed", "Could not read the thread.")));
       const record = yield* recordOf(shell.id).pipe(Effect.mapError((error) => error));
       const carried = teamRulesOutgoingCarried(
-        yield* currentTeamRules,
+        yield* teamRulesForFolder(cwd),
         shell.origin?.carried,
         self,
       );

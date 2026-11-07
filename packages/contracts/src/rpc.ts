@@ -51,7 +51,8 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { TeamRulesSummary } from "./teamRules.ts";
+import { NonNegativeInt, ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   CodexAuthCallbackInput,
   CodexAuthCallbackState,
@@ -555,6 +556,7 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverTeamRulesForFolder: "server.teamRulesForFolder",
   serverDetectLocalUsageHubs: "server.detectLocalUsageHubs",
   serverAdoptLocalUsageHub: "server.adoptLocalUsageHub",
   serverSearchAcpRegistry: "server.searchAcpRegistry",
@@ -853,6 +855,16 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
 const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+  error: EnvironmentAuthorizationError,
+});
+
+/** One project's or thread's combined Team rules. An older server has no such method. */
+const WsServerTeamRulesForFolderRpc = Rpc.make(WS_METHODS.serverTeamRulesForFolder, {
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    threadId: Schema.optionalKey(ThreadId),
+  }),
+  success: Schema.Struct({ teamRules: Schema.optionalKey(TeamRulesSummary) }),
   error: EnvironmentAuthorizationError,
 });
 
@@ -2094,6 +2106,7 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerTeamRulesForFolderRpc,
   WsServerDetectLocalUsageHubsRpc,
   WsServerAdoptLocalUsageHubRpc,
   WsServerSearchAcpRegistryRpc,

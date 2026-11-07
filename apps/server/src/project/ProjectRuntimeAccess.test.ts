@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Settings from "../serverSettings.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { make } from "./ProjectRuntimeAccess.ts";
 
@@ -26,8 +27,9 @@ function scenario(
     yield* test(service, commands);
   }).pipe(
     Effect.provide(
-      Layer.merge(
+      Layer.mergeAll(
         Settings.layerTest({}),
+        Layer.mock(ProjectStore.ProjectStoreV2)({ list: () => Effect.succeed([]) }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           withProjectPermissionUpdate: (effect) => effect,
           getShellSnapshot: () =>

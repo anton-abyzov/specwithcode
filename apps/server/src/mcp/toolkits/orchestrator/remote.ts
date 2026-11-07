@@ -16,10 +16,12 @@ import {
   parseStudioThreadTarget,
 } from "@specweave-studio/shared/studioThreadLinks";
 import { teamRulesOutgoingCarried } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../../../teamRules/TeamRules.ts";
+import { teamRulesForFolder } from "../../../teamRules/TeamRules.ts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ProjectService from "../../../project/ProjectService.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import type { RemoteTool } from "../../../fleet/RemoteStudioMcpClient.ts";
@@ -200,7 +202,17 @@ const assertGrantMayReach = (
       targetEnvironmentId: machine.environmentId,
       origin: work.origin,
       carried: teamRulesOutgoingCarried(
-        yield* currentTeamRules,
+        // The ceiling a zone or repository sets for this thread's folder leaves with it too.
+        yield* teamRulesForFolder(
+          context.caller?.worktreePath ??
+            (context.caller === undefined
+              ? undefined
+              : Option.getOrUndefined(
+                  yield* (yield* ProjectService.ProjectService)
+                    .getById(context.caller.projectId)
+                    .pipe(Effect.orElseSucceed(() => Option.none())),
+                )?.workspaceRoot),
+        ),
         context.caller?.origin?.carried,
         context.scope.environmentId,
       ),

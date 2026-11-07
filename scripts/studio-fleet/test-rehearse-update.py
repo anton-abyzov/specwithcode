@@ -97,8 +97,9 @@ class Rehearsal(unittest.TestCase):
         self.assertEqual(report['phase'], 'verified')
         self.assertEqual(report['databaseProofMode'], 'stopped-clone-pages-v1')
         self.assertEqual(report['fullReadMigrations'], [])
-        # The candidate server ran 072's rebuild on the clone, and the page proof accepted it.
-        self.assertEqual(report['migrations'], [72])
+        # The candidate server ran 072's rebuild and 073's new tables on the clone, and the page
+        # proof accepted both.
+        self.assertEqual(report['migrations'], [72, 73])
         self.assertEqual(report['problems'], [])
         self.assertGreater(report['protectedTables'], 5)
         self.assertLess(report['seconds'], rehearse_update.PAGE_BUDGET_SECONDS)

@@ -199,6 +199,9 @@ async function harness(
       Effect.provide(
         Layer.mergeAll(
           observedCapacity,
+          Layer.mock(Settings.ServerSettingsService)({
+            getSettings: Effect.succeed(input.config ?? settings),
+          }),
           Layer.succeed(Instances.ProviderInstanceRegistry, {
             getInstance: (id) => {
               calls.resolve++;

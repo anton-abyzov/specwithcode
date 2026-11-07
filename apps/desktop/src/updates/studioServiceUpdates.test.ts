@@ -816,6 +816,36 @@ describe("studioServiceUpdates", () => {
     });
   });
 
+  it("locks the switches to what Team rules set, naming who", () => {
+    const saved = {
+      checkAutomatically: false,
+      downloadAutomatically: false,
+      installAutomatically: false,
+    };
+    expect(
+      effectiveUpdatePreferences(saved, true, { forcedOn: true, setBy: "Set by Acme" }),
+    ).toMatchObject({
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      automaticUpdatesAllowed: true,
+      automaticUpdatesSetBy: "Set by Acme",
+    });
+    expect(
+      effectiveUpdatePreferences({ ...saved, checkAutomatically: true }, false, {
+        forcedOn: false,
+        setBy: "Set by Acme",
+      }),
+    ).toMatchObject({
+      checkAutomatically: false,
+      automaticUpdatesAllowed: false,
+      automaticUpdatesSetBy: "Set by Acme",
+    });
+    expect(effectiveUpdatePreferences(saved, true, { forcedOn: false, setBy: undefined })).toEqual({
+      ...saved,
+      automaticUpdatesAllowed: true,
+    });
+  });
+
   it("reports the agent's write time", () => {
     const installation = { identity: "m4", studioHome: Path.join(ROOT, "m4"), version: "0.1.4" };
     expect(

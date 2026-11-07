@@ -6,6 +6,7 @@
  * @module teamRules
  */
 import {
+  DEFAULT_SERVER_SETTINGS,
   TEAM_RULES_FILE_NAME,
   type ModelSelection,
   type ProviderInstanceConfig,
@@ -14,11 +15,17 @@ import {
   TEAM_RULES_MAX_BYTES,
   type TeamRulesCarried,
   TeamRulesFile,
+  TeamRulesRepositoryFile,
   type TeamRulesMachines,
   type TeamRulesPeerRules,
   type TeamRulesProviderPin,
   type TeamRulesRefusal,
+  type TeamRulesScopedAi,
+  type TeamRulesAgents,
+  type TeamRulesConnections,
+  type TeamRulesSource,
   type TeamRulesSummary,
+  type TeamRulesUpdates,
 } from "@specweave-studio/contracts";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -31,11 +38,49 @@ export type TeamRulesState =
       readonly rules: TeamRulesFile;
       readonly fingerprint: string;
       readonly warnings: ReadonlyArray<string>;
+      /** The zones and repository narrowing this state for one working folder. */
+      readonly sources?: ReadonlyArray<TeamRulesSource>;
+      /** Who set a limit, when it was not the machine's own rules. */
+      readonly setBy?: TeamRulesSetBy;
+      /** The folder's lists, kept so a refusal names the source that left a provider out. */
+      readonly providerLists?: ReadonlyArray<TeamRulesList>;
+      /** Further lists a value must also fit: two glob lists do not intersect into one. */
+      readonly modelLists?: ReadonlyArray<TeamRulesList>;
+      readonly connectionLists?: ReadonlyArray<TeamRulesList>;
     }
   | {
       readonly status: "hold";
       readonly issues: ReadonlyArray<string>;
       /** From a file that parsed far enough to name them. */
+      readonly owner?: string;
+      readonly contact?: string;
+      /** Set when only one working folder is on hold, not the machine. */
+      readonly holdScope?: TeamRulesSource["source"];
+    };
+
+export interface TeamRulesList {
+  readonly patterns: ReadonlyArray<string>;
+  readonly by: TeamRulesSource;
+}
+
+export type TeamRulesSetBy = {
+  readonly ceiling?: TeamRulesSource;
+  readonly routines?: TeamRulesSource;
+};
+
+/** What a zone or repository adds for one working folder. */
+export type TeamRulesLayer =
+  | {
+      readonly status: "active";
+      readonly source: TeamRulesSource;
+      readonly agents?: TeamRulesAgents;
+      readonly ai?: TeamRulesScopedAi;
+      readonly connections?: TeamRulesConnections;
+    }
+  | {
+      readonly status: "hold";
+      readonly source: TeamRulesSource["source"];
+      readonly issues: ReadonlyArray<string>;
       readonly owner?: string;
       readonly contact?: string;
     };
@@ -57,9 +102,6 @@ const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
   "full-access": "Full access",
 };
 export const teamRulesModeLabel = (mode: RuntimeMode) => RUNTIME_MODE_LABELS[mode];
-
-/** Sections this version validates but does not enforce yet. */
-export const TEAM_RULES_DECLARED_ONLY = ["connections", "updates", "zones"] as const;
 
 /** Providers whose agents the app knows how to run, for spotting a typo in `ai.providers`. */
 export const TEAM_RULES_KNOWN_PROVIDERS: ReadonlyArray<string> = [
@@ -177,12 +219,267 @@ export function parseTeamRulesText(text: string): TeamRulesParse {
   }
   if (rules.ai?.providers?.length === 0) warnings.push("ai.providers is empty: no agent can run.");
   if (rules.ai?.models?.length === 0) warnings.push("ai.models is empty: no model can run.");
-  for (const section of TEAM_RULES_DECLARED_ONLY) {
-    if (rules[section] !== undefined) {
-      warnings.push(`${section} is declared, but this version does not enforce it yet.`);
-    }
+  if (rules.updates?.feed !== undefined && !/^https:\/\//iu.test(rules.updates.feed)) {
+    warnings.push("updates.feed is not an https address.");
   }
   return { ok: true, rules, warnings };
+}
+
+const REPOSITORY_FORBIDDEN = ["reach", "tools", "telemetry", "updates", "zones"] as const;
+const REPOSITORY_NAME_LIMIT = 200;
+const CONTROL_CHARACTERS = new RegExp("[\\u0000-\\u001f\\u007f-\\u009f]", "gu");
+
+/** Repository text reaches terminals and screens, and anyone with commit rights wrote it. */
+const withoutControls = (text: string) => text.replace(CONTROL_CHARACTERS, " ");
+
+export type TeamRulesRepositoryParse =
+  | { readonly ok: true; readonly rules: TeamRulesRepositoryFile }
+  | {
+      readonly ok: false;
+      readonly issues: ReadonlyArray<string>;
+      readonly owner?: string;
+      readonly contact?: string;
+    };
+
+/** Parses a repository's file. What only a machine may set is an error, never ignored. */
+export function parseTeamRulesRepositoryText(text: string): TeamRulesRepositoryParse {
+  if (text.length > TEAM_RULES_MAX_BYTES) {
+    return { ok: false, issues: [`The file is larger than ${TEAM_RULES_MAX_BYTES} bytes.`] };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return {
+      ok: false,
+      issues: ["Not valid JSON. Run a JSON validator on the file to find the error."],
+    };
+  }
+  const named = (() => {
+    const owner = objectText(json, "owner");
+    const contact = objectText(json, "contact");
+    const short = (value: string | undefined) =>
+      value === undefined || value.length > REPOSITORY_NAME_LIMIT
+        ? undefined
+        : withoutControls(value);
+    const safeOwner = short(owner);
+    const safeContact = short(contact);
+    return {
+      ...(safeOwner === undefined ? {} : { owner: safeOwner }),
+      ...(safeContact === undefined ? {} : { contact: safeContact }),
+    };
+  })();
+  const record = typeof json === "object" && json !== null ? (json as Record<string, unknown>) : {};
+  const forbidden = [
+    ...REPOSITORY_FORBIDDEN.filter((key) => Object.hasOwn(record, key)).map(
+      (key) => `at ["${key}"]: only a machine's rules can set this, not a repository's.`,
+    ),
+    ...(typeof record.ai === "object" && record.ai !== null && Object.hasOwn(record.ai, "pin")
+      ? [`at ["ai"]["pin"]: only a machine's rules can set this, not a repository's.`]
+      : []),
+  ];
+  if (forbidden.length > 0) return { ok: false, issues: forbidden, ...named };
+  const decoded = Schema.decodeUnknownResult(TeamRulesRepositoryFile)(json, {
+    errors: "all",
+    onExcessProperty: "error",
+  });
+  if (Result.isFailure(decoded)) {
+    return {
+      ok: false,
+      issues: issueLines(decoded.failure.message).map(withoutControls),
+      ...named,
+    };
+  }
+  const rules = decoded.success;
+  const strings = [
+    rules.owner,
+    rules.contact ?? "",
+    ...(rules.ai?.models ?? []),
+    ...(rules.connections?.allow ?? []),
+  ];
+  if (strings.some((value) => withoutControls(value) !== value)) {
+    return { ok: false, issues: ["The file has control characters in its text."], ...named };
+  }
+  if (
+    rules.owner.length > REPOSITORY_NAME_LIMIT ||
+    (rules.contact?.length ?? 0) > REPOSITORY_NAME_LIMIT
+  ) {
+    return {
+      ok: false,
+      issues: [`owner and contact must be at most ${REPOSITORY_NAME_LIMIT} characters.`],
+      ...named,
+    };
+  }
+  return { ok: true, rules };
+}
+
+/** The limits a parsed repository file adds. */
+export function teamRulesRepositoryLayer(parsed: TeamRulesRepositoryParse): TeamRulesLayer {
+  if (!parsed.ok) {
+    return {
+      status: "hold",
+      source: "repository",
+      issues: parsed.issues,
+      ...(parsed.owner === undefined ? {} : { owner: parsed.owner }),
+      ...(parsed.contact === undefined ? {} : { contact: parsed.contact }),
+    };
+  }
+  const { rules } = parsed;
+  return {
+    status: "active",
+    source: {
+      source: "repository",
+      owner: rules.owner,
+      ...(rules.contact === undefined ? {} : { contact: rules.contact }),
+    },
+    ...(rules.agents === undefined ? {} : { agents: rules.agents }),
+    ...(rules.ai === undefined ? {} : { ai: rules.ai }),
+    ...(rules.connections === undefined ? {} : { connections: rules.connections }),
+  };
+}
+
+/**
+ * A Git remote as a zone matches it: `github.com/acme/payments`, whichever of
+ * SSH or HTTPS it uses. The user part is dropped, since it can hold a token.
+ */
+export function teamRulesNormalizeRemote(remote: string): string {
+  const trimmed = remote.trim();
+  // Remotes come from a repository's own config, so nothing here may backtrack.
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//iu.exec(trimmed);
+  if (scheme !== null) {
+    const rest = trimmed.slice(scheme[0].length);
+    const slash = rest.indexOf("/");
+    const authority = slash === -1 ? rest : rest.slice(0, slash);
+    const host = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d+$/u, "");
+    const path = slash === -1 ? "" : rest.slice(slash);
+    if (host.length > 0 && !host.includes(":")) return remoteOf(host, path);
+    if (authority.includes("@")) return withoutGitSuffix(trimSlashes(`${host}${path}`, false));
+  }
+  const scp = /^(?:[^/@]+@)?([^/:]+):(?!\/\/)(.+)$/su.exec(trimmed);
+  if (scp !== null) return remoteOf(scp[1] ?? "", scp[2] ?? "");
+  return withoutGitSuffix(trimSlashes(trimmed, false));
+}
+
+const trimSlashes = (text: string, leading: boolean) => {
+  let start = 0;
+  let end = text.length;
+  while (leading && start < end && text[start] === "/") start += 1;
+  while (end > start && text[end - 1] === "/") end -= 1;
+  return text.slice(start, end);
+};
+
+const withoutGitSuffix = (path: string) =>
+  path.toLowerCase().endsWith(".git") ? path.slice(0, -4) : path;
+
+const remoteOf = (host: string, path: string) =>
+  `${host.toLowerCase()}/${withoutGitSuffix(trimSlashes(path, true))}`;
+
+/** Whether a zone applies. Every remote counts, so adding a remote can only tighten. */
+export function teamRulesZoneLayers(
+  machine: TeamRulesState,
+  remotes: ReadonlyArray<string>,
+): ReadonlyArray<TeamRulesLayer> {
+  if (machine.status !== "active") return [];
+  const normalized = remotes.map(teamRulesNormalizeRemote);
+  return (machine.rules.zones ?? [])
+    .filter((zone) => normalized.some((remote) => patternMatches(zone.remote, remote)))
+    .map((zone) => ({
+      status: "active" as const,
+      source: {
+        source: "zone" as const,
+        owner: machine.rules.owner,
+        ...(machine.rules.contact === undefined ? {} : { contact: machine.rules.contact }),
+      },
+      ...(zone.agents === undefined ? {} : { agents: zone.agents }),
+      ...(zone.ai === undefined ? {} : { ai: zone.ai }),
+      ...(zone.connections === undefined ? {} : { connections: zone.connections }),
+    }));
+}
+
+/** Whether this machine's own file has zones, so a folder's remotes must be known. */
+export const teamRulesHasZones = (machine: TeamRulesState) =>
+  machine.status === "active" && (machine.rules.zones?.length ?? 0) > 0;
+
+/**
+ * The rules for one working folder: the strictest value of every source. A
+ * machine hold wins outright, and the fingerprint stays the machine's, since
+ * `same-rules` compares machines and never one folder's view. With nothing to
+ * add it returns the machine's state as it was.
+ */
+export function teamRulesCombine(
+  machine: TeamRulesState,
+  layers: ReadonlyArray<TeamRulesLayer>,
+): TeamRulesState {
+  if (machine.status === "hold" || layers.length === 0) return machine;
+  const held = layers.find((layer) => layer.status === "hold");
+  if (held !== undefined && held.status === "hold") {
+    return {
+      status: "hold",
+      issues: held.issues,
+      holdScope: held.source,
+      ...(held.owner === undefined ? {} : { owner: held.owner }),
+      ...(held.contact === undefined ? {} : { contact: held.contact }),
+    };
+  }
+  const active = layers.flatMap((layer) => (layer.status === "active" ? [layer] : []));
+  const first = active[0];
+  if (first === undefined) return machine;
+  const base = machine.status === "active" ? machine.rules : undefined;
+  let ceiling = base?.agents?.ceiling;
+  let routines = base?.agents?.routines;
+  let providers = base?.ai?.providers;
+  let setBy: TeamRulesSetBy = {};
+  const providerLists: Array<TeamRulesList> = [];
+  const modelLists: Array<TeamRulesList> = [];
+  const connectionLists: Array<TeamRulesList> = [];
+  for (const { source, agents, ai, connections } of active) {
+    const nextCeiling = teamRulesStricterMode(ceiling, agents?.ceiling);
+    if (nextCeiling !== ceiling) setBy = { ...setBy, ceiling: source };
+    ceiling = nextCeiling;
+    const nextRoutines = teamRulesStricterMode(routines, agents?.routines);
+    if (nextRoutines !== routines) setBy = { ...setBy, routines: source };
+    routines = nextRoutines;
+    if (ai?.providers !== undefined) {
+      const listed = ai.providers;
+      providers =
+        providers === undefined ? listed : providers.filter((name) => listed.includes(name));
+      providerLists.push({ patterns: listed, by: source });
+    }
+    if (ai?.models !== undefined) modelLists.push({ patterns: ai.models, by: source });
+    if (connections?.allow !== undefined) {
+      connectionLists.push({ patterns: connections.allow, by: source });
+    }
+  }
+  const {
+    ai: baseAi,
+    agents: baseAgents,
+    ...restOfBase
+  } = base ?? {
+    version: 1 as const,
+    owner: first.source.owner,
+    ...(first.source.contact === undefined ? {} : { contact: first.source.contact }),
+  };
+  const agentsOut = {
+    ...baseAgents,
+    ...(ceiling === undefined ? {} : { ceiling }),
+    ...(routines === undefined ? {} : { routines }),
+  };
+  const aiOut = { ...baseAi, ...(providers === undefined ? {} : { providers }) };
+  return {
+    status: "active",
+    rules: {
+      ...restOfBase,
+      ...(Object.keys(agentsOut).length === 0 ? {} : { agents: agentsOut }),
+      ...(Object.keys(aiOut).length === 0 ? {} : { ai: aiOut }),
+    } as TeamRulesFile,
+    fingerprint: machine.status === "active" ? machine.fingerprint : "",
+    warnings: machine.status === "active" ? machine.warnings : [],
+    sources: active.map((layer) => layer.source),
+    ...(Object.keys(setBy).length === 0 ? {} : { setBy }),
+    ...(providerLists.length === 0 ? {} : { providerLists }),
+    ...(modelLists.length === 0 ? {} : { modelLists }),
+    ...(connectionLists.length === 0 ? {} : { connectionLists }),
+  };
 }
 
 /** Stable text of the rules, for a fingerprint that ignores key order and spacing. */
@@ -238,8 +535,12 @@ const refusal = (
   reason: TeamRulesRefusal["reason"],
   message: string,
   allowedMode?: RuntimeMode,
+  by?: TeamRulesSource,
 ): TeamRulesRefusal => {
-  const named = signature(state);
+  const named =
+    by === undefined
+      ? signature(state)
+      : { owner: by.owner, ...(by.contact === undefined ? {} : { contact: by.contact }) };
   const contact = named.contact === undefined ? "" : ` See ${named.contact}.`;
   return {
     reason,
@@ -249,15 +550,39 @@ const refusal = (
   };
 };
 
-const setBy = (state: TeamRulesState) => {
+const setBy = (state: TeamRulesState, by?: TeamRulesSource) => {
+  if (by !== undefined) {
+    return by.source === "repository"
+      ? `${by.owner}'s repository rules`
+      : `${by.owner}'s rules for this repository`;
+  }
   const { owner } = signature(state);
   return owner === undefined ? "Your team's rules" : `${owner}'s rules`;
 };
+
+const limitBy = (state: TeamRulesState, limit: keyof TeamRulesSetBy) =>
+  state.status === "active" ? state.setBy?.[limit] : undefined;
 
 /** Refuses every agent turn while the rules file is broken. */
 export function teamRulesHoldRefusal(state: TeamRulesState): TeamRulesRefusal | null {
   if (state.status !== "hold") return null;
   const { owner } = signature(state);
+  if (state.holdScope === "repository") {
+    return refusal(
+      state,
+      "hold",
+      `Agents are paused in this repository because its team rules file has an error${
+        owner === undefined ? "" : `, set by ${owner}`
+      }. Run specweave-studio rules check --repository . to see it.`,
+    );
+  }
+  if (state.holdScope === "zone") {
+    return refusal(
+      state,
+      "hold",
+      `Agents are paused in this folder because its Git remotes could not be read, and ${owner ?? "your team"} limits some repositories. ${state.issues.join(" ")}`,
+    );
+  }
   return refusal(
     state,
     "hold",
@@ -274,11 +599,13 @@ export function teamRulesModeRefusal(
 ): TeamRulesRefusal | null {
   const ceiling = teamRulesCeiling(state);
   if (ceiling === undefined || modeRank(mode) <= modeRank(ceiling)) return null;
+  const by = limitBy(state, "ceiling");
   return refusal(
     state,
     "ceiling",
-    `${setBy(state)} allow up to ${teamRulesModeLabel(ceiling)}, so ${teamRulesModeLabel(mode)} is not available.`,
+    `${setBy(state, by)} allow up to ${teamRulesModeLabel(ceiling)}, so ${teamRulesModeLabel(mode)} is not available.`,
     ceiling,
+    by,
   );
 }
 
@@ -291,21 +618,46 @@ export function teamRulesRoutineRefusal(
   if (hold !== null) return hold;
   const ceiling = teamRulesRoutineCeiling(state);
   if (ceiling === undefined || modeRank(mode) <= modeRank(ceiling)) return null;
+  const routineLimit = state.status === "active" ? state.rules.agents?.routines : undefined;
+  const by = limitBy(state, ceiling === routineLimit ? "routines" : "ceiling");
   return refusal(
     state,
     "routine-ceiling",
-    `${setBy(state)} allow routines up to ${teamRulesModeLabel(ceiling)}, so this routine cannot run in ${teamRulesModeLabel(mode)}.`,
+    `${setBy(state, by)} allow routines up to ${teamRulesModeLabel(ceiling)}, so this routine cannot run in ${teamRulesModeLabel(mode)}.`,
     ceiling,
+    by,
   );
 }
 
-const patternMatches = (pattern: string, model: string) => {
-  const source = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${source}$`, "i").test(model);
-};
+/**
+ * `*` matches any text, ignoring case. A walk and not a regular expression:
+ * a committed pattern comes from anyone with commit rights, and must not be
+ * able to stall the server with backtracking.
+ */
+function patternMatches(pattern: string, text: string): boolean {
+  const wanted = pattern.toLowerCase();
+  const value = text.toLowerCase();
+  let patternAt = 0;
+  let valueAt = 0;
+  let starAt = -1;
+  let resumeAt = 0;
+  while (valueAt < value.length) {
+    if (wanted[patternAt] === "*") {
+      starAt = patternAt++;
+      resumeAt = valueAt;
+    } else if (wanted[patternAt] === value[valueAt]) {
+      patternAt++;
+      valueAt++;
+    } else if (starAt >= 0) {
+      patternAt = starAt + 1;
+      valueAt = ++resumeAt;
+    } else {
+      return false;
+    }
+  }
+  while (wanted[patternAt] === "*") patternAt++;
+  return patternAt === wanted.length;
+}
 
 export function teamRulesProviderAllowed(state: TeamRulesState, driver: string): boolean {
   if (state.status !== "active") return true;
@@ -323,7 +675,10 @@ export function teamRulesModelMatches(
 
 export function teamRulesModelAllowed(state: TeamRulesState, model: string): boolean {
   if (state.status !== "active") return true;
-  return teamRulesModelMatches(state.rules.ai?.models, model);
+  return (
+    teamRulesModelMatches(state.rules.ai?.models, model) &&
+    (state.modelLists ?? []).every(({ patterns }) => teamRulesModelMatches(patterns, model))
+  );
 }
 
 /** Refuses a final provider and model outside the allowlist. */
@@ -332,14 +687,32 @@ export function teamRulesSelectionRefusal(
   selection: { readonly driver: string; readonly model: string },
 ): TeamRulesRefusal | null {
   if (!teamRulesProviderAllowed(state, selection.driver)) {
+    const by =
+      state.status === "active"
+        ? state.providerLists?.find(({ patterns }) => !patterns.includes(selection.driver))?.by
+        : undefined;
     return refusal(
       state,
       "provider",
-      `${setBy(state)} do not approve the provider ${selection.driver}.`,
+      `${setBy(state, by)} do not approve the provider ${selection.driver}.`,
+      undefined,
+      by,
     );
   }
   if (!teamRulesModelAllowed(state, selection.model)) {
-    return refusal(state, "model", `${setBy(state)} do not approve the model ${selection.model}.`);
+    const by =
+      state.status === "active" && teamRulesModelMatches(state.rules.ai?.models, selection.model)
+        ? state.modelLists?.find(
+            ({ patterns }) => !teamRulesModelMatches(patterns, selection.model),
+          )?.by
+        : undefined;
+    return refusal(
+      state,
+      "model",
+      `${setBy(state, by)} do not approve the model ${selection.model}.`,
+      undefined,
+      by,
+    );
   }
   return null;
 }
@@ -410,10 +783,12 @@ export function teamRulesOutgoingCarried(
   const own = teamRulesCeiling(state);
   if (!limits(own) || state.status !== "active") return inherited;
   if (inherited !== undefined && modeRank(inherited.ceiling) <= modeRank(own!)) return inherited;
+  const by = limitBy(state, "ceiling");
+  const contact = by === undefined ? state.rules.contact : by.contact;
   return {
     ceiling: own!,
-    owner: state.rules.owner,
-    ...(state.rules.contact === undefined ? {} : { contact: state.rules.contact }),
+    owner: by?.owner ?? state.rules.owner,
+    ...(contact === undefined ? {} : { contact }),
     from: environmentId,
   };
 }
@@ -598,8 +973,85 @@ export function teamRulesOwnsProviderLaunch(state: TeamRulesState, driver: strin
     limits(state.rules.agents?.ceiling) ||
     state.rules.ai?.providers !== undefined ||
     state.rules.ai?.models !== undefined ||
+    (state.modelLists?.length ?? 0) > 0 ||
     teamRulesPin(state, driver) !== undefined
   );
+}
+
+/** Whether a connection fits every list; no list allows everything. A hold allows nothing new. */
+export function teamRulesConnectionRefusal(
+  state: TeamRulesState,
+  names: ReadonlyArray<string>,
+): TeamRulesRefusal | null {
+  if (state.status === "hold") return { ...teamRulesHoldRefusal(state)!, reason: "tools" };
+  if (state.status !== "active") return null;
+  const fits = (patterns: ReadonlyArray<string>) =>
+    names.some((name) => patterns.some((pattern) => patternMatches(pattern, name)));
+  const label = names.find((name) => name.length > 0) ?? "this connection";
+  const machineList = state.rules.connections?.allow;
+  if (machineList !== undefined && !fits(machineList)) {
+    return refusal(state, "tools", `${setBy(state)} do not approve the connection ${label}.`);
+  }
+  const failed = state.connectionLists?.find(({ patterns }) => !fits(patterns));
+  if (failed === undefined) return null;
+  return refusal(
+    state,
+    "tools",
+    `${setBy(state, failed.by)} do not approve the connection ${label}.`,
+    undefined,
+    failed.by,
+  );
+}
+
+/** Whether no list limits connections, so an action naming none of them is safe. */
+export function teamRulesConnectionAllowsAny(state: TeamRulesState): boolean {
+  if (state.status === "none") return true;
+  return (
+    state.status === "active" &&
+    state.rules.connections?.allow === undefined &&
+    (state.connectionLists?.length ?? 0) === 0
+  );
+}
+
+export interface TeamRulesUpdatePolicy {
+  /** What the rules force; undefined leaves it to the person. */
+  readonly automatic: boolean | undefined;
+  readonly feed: string | undefined;
+  readonly owner: string | undefined;
+}
+
+const NO_UPDATE_POLICY: TeamRulesUpdatePolicy = {
+  automatic: undefined,
+  feed: undefined,
+  owner: undefined,
+};
+
+/** What the rules say about updates. A broken file could be hiding `false`, so a hold turns off automatic ones. */
+export function teamRulesUpdatePolicy(state: TeamRulesState): TeamRulesUpdatePolicy {
+  if (state.status === "none") return NO_UPDATE_POLICY;
+  if (state.status === "hold") {
+    return { automatic: false, feed: undefined, owner: state.owner };
+  }
+  const updates: TeamRulesUpdates | undefined = state.rules.updates;
+  return updates === undefined
+    ? NO_UPDATE_POLICY
+    : { automatic: updates.automatic, feed: updates.feed, owner: state.rules.owner };
+}
+
+/** The same answer from the file's text, for a process with no rules state of its own. */
+export function teamRulesUpdatePolicyByText(text: string): TeamRulesUpdatePolicy {
+  const parsed = parseTeamRulesText(text);
+  if (!parsed.ok) return { automatic: false, feed: undefined, owner: parsed.owner };
+  const updates = parsed.rules.updates;
+  return updates === undefined
+    ? NO_UPDATE_POLICY
+    : { automatic: updates.automatic, feed: updates.feed, owner: parsed.rules.owner };
+}
+
+/** Why the app must not update itself from the public feed, or null when it may. */
+export function teamRulesUpdateFeedReason(policy: TeamRulesUpdatePolicy): string | null {
+  if (policy.feed === undefined) return null;
+  return `${policy.owner ?? "Your team"} delivers updates to this machine from ${policy.feed}, so the app does not use its public feed.`;
 }
 
 /** Instance settings that decide what a provider runs or where it sends work. */
@@ -664,6 +1116,70 @@ export function teamRulesDriverRefusal(
     (teamRulesProviderAllowed(state, driver)
       ? null
       : teamRulesSelectionRefusal(state, { driver, model: "" }))
+  );
+}
+
+/**
+ * Refuses a turn in a folder whose rules own a provider's launch when the
+ * machine's rules do not. The registry starts one instance for every folder, so
+ * it cannot apply a folder's limits; an instance with launch values of its own
+ * could change the mode or the endpoint, so it does not run here.
+ */
+export function teamRulesFolderLaunchRefusal(
+  folder: TeamRulesState,
+  machine: TeamRulesState,
+  driver: string,
+  launchValues: boolean,
+): TeamRulesRefusal | null {
+  if (!launchValues || folder.status !== "active" || folder === machine) return null;
+  if (teamRulesOwnsProviderLaunch(machine, driver)) return null;
+  if (!teamRulesOwnsProviderLaunch(folder, driver)) return null;
+  const by =
+    folder.setBy?.ceiling ??
+    folder.providerLists?.[0]?.by ??
+    folder.modelLists?.[0]?.by ??
+    folder.sources?.[0];
+  return refusal(
+    folder,
+    "provider-launch",
+    `${setBy(folder, by)} limit this folder, and this provider has its own launch arguments, environment or binary path, which could get around them. Use an instance without them here.`,
+    undefined,
+    by,
+  );
+}
+
+/**
+ * Whether an instance launches with values of its own, rather than its driver's
+ * defaults. The settings form fills in the default binary name, so that does
+ * not count. Environment variables, including API keys, always do.
+ */
+export function teamRulesInstanceHasLaunchValues(
+  settings: Pick<ServerSettings, "providerInstances" | "providers">,
+  instanceId: string,
+  driver: string,
+  environment: NodeJS.ProcessEnv | Record<string, string | undefined> = {},
+): boolean {
+  const entry = Object.hasOwn(settings.providerInstances, instanceId)
+    ? settings.providerInstances[instanceId as keyof typeof settings.providerInstances]
+    : undefined;
+  const providers = settings.providers as unknown as Record<string, Record<string, unknown>>;
+  const defaults = (
+    DEFAULT_SERVER_SETTINGS.providers as unknown as Record<string, Record<string, unknown>>
+  )[driver];
+  const stored = (config: unknown) =>
+    typeof config === "object" && config !== null
+      ? TEAM_RULES_LAUNCH_CONFIG_KEYS.some((key) => {
+          const value = (config as Record<string, unknown>)[key];
+          if (value === undefined || value === null || value === "") return false;
+          if (Array.isArray(value) && value.length === 0) return false;
+          return value !== defaults?.[key];
+        })
+      : false;
+  return (
+    (entry?.environment?.length ?? 0) > 0 ||
+    stored(entry?.config) ||
+    (entry === undefined && stored(providers[driver])) ||
+    (driver === "codex" && Boolean(environment.STUDIO_CODEX_LAUNCH_ARGS?.trim()))
   );
 }
 
@@ -823,8 +1339,9 @@ export function teamRulesFilterProviders<
     readonly teamRulesModels?: ReadonlyArray<string>;
   },
 >(state: TeamRulesState, providers: ReadonlyArray<P>): ReadonlyArray<P> {
-  if (state.status !== "active" || state.rules.ai === undefined) return providers;
-  const patterns = state.rules.ai.models;
+  if (state.status !== "active") return providers;
+  if (state.rules.ai === undefined && (state.modelLists?.length ?? 0) === 0) return providers;
+  const patterns = state.rules.ai?.models;
   return providers.map((provider) =>
     teamRulesProviderAllowed(state, provider.driver)
       ? {
@@ -840,7 +1357,14 @@ export function teamRulesFilterProviders<
 export function summarizeTeamRules(state: TeamRulesState): TeamRulesSummary | undefined {
   if (state.status === "none") return undefined;
   const named = signature(state);
-  if (state.status === "hold") return { status: "hold", ...named, issues: state.issues };
+  if (state.status === "hold") {
+    return {
+      status: "hold",
+      ...named,
+      issues: state.issues,
+      ...(state.holdScope === undefined ? {} : { holdScope: state.holdScope }),
+    };
+  }
   const { rules } = state;
   const ceiling = rules.agents?.ceiling;
   const routinesCeiling = teamRulesRoutineCeiling(state);
@@ -850,16 +1374,29 @@ export function summarizeTeamRules(state: TeamRulesState): TeamRulesSummary | un
     ...named,
     fingerprint: state.fingerprint,
     ...(ceiling === undefined ? {} : { ceiling }),
+    ...(state.setBy?.ceiling === undefined ? {} : { ceilingBy: state.setBy.ceiling }),
     ...(routinesCeiling === undefined ? {} : { routinesCeiling }),
     ...(rules.ai?.providers === undefined ? {} : { providers: rules.ai.providers }),
     ...(rules.ai?.models === undefined ? {} : { models: rules.ai.models }),
     ...(pinned.length === 0 ? {} : { pinnedProviders: pinned }),
-    ...(limits(ceiling) || rules.ai?.providers !== undefined || rules.ai?.models !== undefined
+    ...(limits(ceiling) ||
+    rules.ai?.providers !== undefined ||
+    rules.ai?.models !== undefined ||
+    (state.modelLists?.length ?? 0) > 0
       ? { ownsProviderLaunch: true }
       : {}),
     ...(rules.telemetry?.export === undefined ? {} : { telemetryExport: rules.telemetry.export }),
     ...(rules.reach === undefined ? {} : { reach: rules.reach }),
     ...(rules.tools === undefined ? {} : { tools: rules.tools }),
+    ...(rules.connections?.allow === undefined ? {} : { connections: rules.connections.allow }),
+    ...(rules.updates === undefined ? {} : { updates: rules.updates }),
+    ...(state.modelLists === undefined
+      ? {}
+      : { modelLists: state.modelLists.map(({ patterns }) => patterns) }),
+    ...(state.connectionLists === undefined
+      ? {}
+      : { connectionLists: state.connectionLists.map(({ patterns }) => patterns) }),
+    ...(state.sources === undefined ? {} : { sources: state.sources }),
   };
 }
 
@@ -872,12 +1409,22 @@ export function teamRulesStateFromSummary(summary: TeamRulesSummary | undefined)
       issues: summary.issues ?? [],
       ...(summary.owner === undefined ? {} : { owner: summary.owner }),
       ...(summary.contact === undefined ? {} : { contact: summary.contact }),
+      ...(summary.holdScope === undefined ? {} : { holdScope: summary.holdScope }),
     };
   }
+  const by = summary.sources?.[0] ?? { source: "repository" as const, owner: summary.owner ?? "" };
+  const lists = (patterns: ReadonlyArray<ReadonlyArray<string>> | undefined) =>
+    (patterns ?? []).map((list) => ({ patterns: list, by }));
   return {
     status: "active",
     fingerprint: summary.fingerprint ?? "",
     warnings: [],
+    ...(summary.sources === undefined ? {} : { sources: summary.sources }),
+    ...(summary.ceilingBy === undefined ? {} : { setBy: { ceiling: summary.ceilingBy } }),
+    ...(summary.modelLists === undefined ? {} : { modelLists: lists(summary.modelLists) }),
+    ...(summary.connectionLists === undefined
+      ? {}
+      : { connectionLists: lists(summary.connectionLists) }),
     rules: {
       version: 1,
       owner: summary.owner ?? "",
@@ -895,6 +1442,8 @@ export function teamRulesStateFromSummary(summary: TeamRulesSummary | undefined)
         : { telemetry: { export: summary.telemetryExport } }),
       ...(summary.reach === undefined ? {} : { reach: summary.reach }),
       ...(summary.tools === undefined ? {} : { tools: summary.tools }),
+      ...(summary.connections === undefined ? {} : { connections: { allow: summary.connections } }),
+      ...(summary.updates === undefined ? {} : { updates: summary.updates }),
     } as TeamRulesFile,
   };
 }

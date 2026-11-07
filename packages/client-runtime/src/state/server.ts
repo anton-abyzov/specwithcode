@@ -1097,6 +1097,13 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.
+    // Rules for one project change only when someone pushes them or edits a file.
+    teamRulesForFolder: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:team-rules-for-folder",
+      tag: WS_METHODS.serverTeamRulesForFolder,
+      staleTimeMs: 30_000,
+      refreshIntervalMs: 30_000,
+    }),
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,

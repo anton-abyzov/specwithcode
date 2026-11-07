@@ -11,7 +11,11 @@
  * @module ServerSettings
  */
 import { summarizeTeamRules, teamRulesSettingsRefusal } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "./teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForFolder } from "./teamRules/TeamRules.ts";
+import {
+  changedSettingPaths,
+  recordTeamRulesSettingsChange,
+} from "./teamRules/TeamRulesRecords.ts";
 import {
   AcpRegistrySettings,
   AntigravitySettings,
@@ -2405,7 +2409,35 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Every settings write, with a record of its paths while the machine has Team rules. */
   const updateAndPersistSettings = (
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
+    patch: ServerSettingsPatch,
+    mutation?: ProviderInstanceMutation,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.gen(function* () {
+      let written: { readonly before: ServerSettings; readonly after: ServerSettings } | undefined;
+      const saved = yield* persistSettingsWithRetries(
+        (current) =>
+          update(current).pipe(
+            Effect.tap((after) =>
+              Effect.sync(() => {
+                written = { before: current, after };
+              }),
+            ),
+          ),
+        patch,
+        mutation,
+      );
+      if (written !== undefined && (yield* currentTeamRules).status !== "none") {
+        yield* recordTeamRulesSettingsChange(
+          changedSettingPaths(written.before, written.after),
+        ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
+      }
+      return saved;
+    });
+
+  const persistSettingsWithRetries = (
     update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
     patch: ServerSettingsPatch,
     mutation?: ProviderInstanceMutation,
@@ -2660,3 +2692,13 @@ export const layer = Layer.effect(ServerSettingsService, make);
 
 /** The summary clients show, reachable from `ws.ts` without another import there. */
 export const currentTeamRulesSummary = Effect.map(currentTeamRules, summarizeTeamRules);
+
+/** One folder's combined rules, for the chat that works there. Undefined with no rules. */
+export const teamRulesSummaryForFolder = (cwd: string) =>
+  Effect.map(teamRulesForFolder(cwd), summarizeTeamRules);
+
+export {
+  recordTeamRulesCommandActor,
+  TeamRulesActor,
+  teamRulesActorOfSession,
+} from "./teamRules/TeamRulesRecords.ts";
