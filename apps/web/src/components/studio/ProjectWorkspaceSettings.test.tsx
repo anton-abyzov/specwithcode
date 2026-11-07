@@ -1548,9 +1548,9 @@ describe("rename from a double click on the sidebar row", () => {
             localPath: "/scratch/atlas/code",
             status: "mismatch",
             origin: renamed,
-          },
+          } as (typeof observed.repositories)[number],
         ],
-      } as typeof observed;
+      };
       try {
         await render("environment");
         expect(container.textContent).toContain(`This checkout's origin is ${renamed}`);
