@@ -4101,4 +4101,13 @@ export const ja: PhraseCatalog = {
   "{shown} of {total}": "{shown} / {total}",
   "{working} · {chats} in {projects} on {machines}":
     "{working} · {chats} · {projects} · {machines}",
+  "Access requested": "アクセスを依頼",
+  "Answer needed": "回答が必要",
+  "Approval requested": "承認を依頼",
+  "No recent activity": "最近の動きなし",
+  "Plan ready to review": "プランの確認待ち",
+  "Queued messages held": "キューのメッセージを保留中",
+  "Reply needed": "返信が必要",
+  "Sign-in needed": "サインインが必要",
+  "Usage limit reached": "利用上限に到達",
 };

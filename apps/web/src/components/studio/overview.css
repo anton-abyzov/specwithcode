@@ -566,6 +566,9 @@
   min-height: 34px;
   margin-bottom: 8px;
 }
+.studio-section-heading h2:focus {
+  outline: none;
+}
 .studio-section-heading h2 {
   font-family: var(--desk-serif);
   font-size: 21px;

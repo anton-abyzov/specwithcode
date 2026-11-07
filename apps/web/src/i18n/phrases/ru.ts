@@ -4099,4 +4099,13 @@ export const ru: PhraseCatalog = {
   "{shown} of {total}": "{shown} из {total}",
   "{working} · {chats} in {projects} on {machines}":
     "{working} · {chats} · {projects} · {machines}",
+  "Access requested": "Запрошен доступ",
+  "Answer needed": "Нужен ответ",
+  "Approval requested": "Нужно одобрение",
+  "No recent activity": "Нет недавней активности",
+  "Plan ready to review": "План готов к проверке",
+  "Queued messages held": "Очередь сообщений на паузе",
+  "Reply needed": "Ждёт ответа",
+  "Sign-in needed": "Нужен вход",
+  "Usage limit reached": "Лимит использования исчерпан",
 };

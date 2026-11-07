@@ -3950,4 +3950,13 @@ export const zh: PhraseCatalog = {
   "{shown} of {total}": "{shown} / {total}",
   "{working} · {chats} in {projects} on {machines}":
     "{working} · {chats} · {projects} · {machines}",
+  "Access requested": "请求访问",
+  "Answer needed": "需要回答",
+  "Approval requested": "请求审批",
+  "No recent activity": "近期无活动",
+  "Plan ready to review": "计划待审阅",
+  "Queued messages held": "排队消息已暂停",
+  "Reply needed": "需要回复",
+  "Sign-in needed": "需要登录",
+  "Usage limit reached": "已达用量上限",
 };

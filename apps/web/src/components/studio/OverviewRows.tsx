@@ -116,7 +116,7 @@ export function ChatRow({
   });
   const plan = compactThreadPlan(incrementProgress.get(s.thread.id) ?? null, s.thread.planProgress);
   const state = s.attention
-    ? (s.attentionLabel ?? sessionAttentionLabel(s.attention, s.thread))
+    ? tx(s.attentionLabel ?? sessionAttentionLabel(s.attention, s.thread))
     : s.state;
   return (
     <ChatLink
@@ -125,7 +125,7 @@ export function ChatRow({
     >
       <span className={`studio-state-dot ${tone}`} aria-hidden="true" />
       <span className="studio-row-main">
-        <span className="studio-row-title">{s.thread.title || tx("Untitled session")}</span>
+        <span className="studio-row-title">{s.thread.title || tx("Untitled chat")}</span>
         <span className="studio-row-meta" style={{ container: "sessmeta / inline-size" }}>
           <strong className="studio-session-project">
             {s.project?.title ?? tx("Project unavailable")}
@@ -319,6 +319,12 @@ export function useOverviewKeys(
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       if (typing(event.target) || isCommandPaletteOpen()) return;
+      // A picker's own typeahead (the new-chat chooser's project field) keeps its keys.
+      if (
+        event.target instanceof Element &&
+        event.target.closest('[role="combobox"], [role="listbox"], .studio-draft-chooser')
+      )
+        return;
       const element = root.current;
       if (!element) return;
       const active = document.activeElement;
@@ -336,7 +342,7 @@ export function useOverviewKeys(
             : Math.min(rows.length - 1, Math.max(0, index + (key === "j" ? 1 : -1)));
         event.preventDefault();
         rows[next]!.focus();
-        rows[next]!.scrollIntoView({ block: "nearest" });
+        rows[next]!.scrollIntoView?.({ block: "nearest" });
       } else if (key === "n" && !event.shiftKey) {
         event.preventDefault();
         onNewChat();

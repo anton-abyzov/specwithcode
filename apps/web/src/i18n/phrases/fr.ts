@@ -4138,4 +4138,13 @@ export const fr: PhraseCatalog = {
   "{shown} of {total}": "{shown} sur {total}",
   "{working} · {chats} in {projects} on {machines}":
     "{working} · {chats} dans {projects} sur {machines}",
+  "Access requested": "Accès demandé",
+  "Answer needed": "Réponse attendue",
+  "Approval requested": "Approbation demandée",
+  "No recent activity": "Aucune activité récente",
+  "Plan ready to review": "Plan prêt à relire",
+  "Queued messages held": "Messages en file retenus",
+  "Reply needed": "Retour attendu",
+  "Sign-in needed": "Connexion requise",
+  "Usage limit reached": "Limite d’utilisation atteinte",
 };

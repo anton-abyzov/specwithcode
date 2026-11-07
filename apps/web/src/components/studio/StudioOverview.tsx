@@ -175,6 +175,7 @@ export function StudioOverview() {
   const [projectScope, setProjectScope] = useState<string | null>(null);
   const pageRef = useRef<HTMLElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
+  const revealFrom = useRef<number | null>(null);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     // Display age advances locally; this clock never refreshes a provider or session.
@@ -197,7 +198,8 @@ export function StudioOverview() {
     [shells, projects, currentIds, nowMinute],
   );
   const attention = sessions.filter((s) => s.attention !== null);
-  const working = sessions.filter((s) => s.working).length;
+  // Counted as the Working list shows them: a running chat that needs you is listed there.
+  const working = sessions.filter((s) => s.working && s.attention === null).length;
   const connected = connectedIds.size;
   // With no projects, no sessions and every host connected, nothing is left unobserved.
   const observationsComplete =
@@ -218,7 +220,13 @@ export function StudioOverview() {
     draftProjects.find((p) => `${p.environmentId}:${p.id}` === selectedProject) ?? null;
   const projectCards = useMemo(
     () =>
-      summarizeProjects(listedGroups, sessions).map((card) => ({
+      summarizeProjects(
+        listedGroups,
+        // With a machine picked, each project counts only its chats there.
+        machineScope === null
+          ? sessions
+          : sessions.filter((s) => s.thread.environmentId === machineScope),
+      ).map((card) => ({
         ...card,
         complete:
           attentionComplete &&
@@ -232,7 +240,7 @@ export function StudioOverview() {
             ),
           ),
       })),
-    [listedGroups, sessions, attentionMembers, attentionComplete],
+    [listedGroups, sessions, attentionMembers, attentionComplete, machineScope],
   );
   const providerEntries = useProviderEntriesByEnvironment();
   const providersFor = (environmentId: SessionView["thread"]["environmentId"]) =>
@@ -371,14 +379,22 @@ export function StudioOverview() {
   const clearScope = () => {
     setMachineScope(null);
     setProjectScope(null);
+    // The chip leaves with the filter; focus goes to the list it was narrowing.
+    document.getElementById("studio-attention-title")?.focus();
   };
   const jump = (id: string) =>
-    document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    document.getElementById(id)?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   const focusFilter = useCallback(() => {
     filterRef.current?.focus();
-    filterRef.current?.scrollIntoView({ block: "nearest" });
+    filterRef.current?.scrollIntoView?.({ block: "nearest" });
   }, []);
-  const newChat = useCallback(() => openDraftChooserRef.current(), []);
+  // With the chooser already open, N leaves its choice and model alone.
+  const requestOpen = useRef(false);
+  requestOpen.current = request !== null;
+  const newChat = useCallback(() => {
+    if (requestOpen.current) document.getElementById("studio-project")?.focus();
+    else openDraftChooserRef.current();
+  }, []);
   useOverviewKeys(pageRef, { onNewChat: newChat, onFilter: focusFilter });
 
   const headline = !bootstrapped
@@ -434,7 +450,15 @@ export function StudioOverview() {
           })
         : staleMachines.length > 1
           ? tx("{machines} are not current, so their chats may be missing from these counts.", {
-              machines: staleMachines.map((environment) => environment.label).join(", "),
+              machines: staleMachines
+                .map(
+                  (environment) =>
+                    `${environment.label} (${(
+                      machines.find((m) => m.environmentId === environment.environmentId)?.status ??
+                      ""
+                    ).toLowerCase()})`,
+                )
+                .join(", "),
             })
           : tx("Some machines are still reporting, so these counts may be incomplete.")
       : null;
@@ -460,6 +484,12 @@ export function StudioOverview() {
     else recentByDay.push({ day, sessions: [s] });
   }
   const tabs: RecentTab[] = ["open", "done"];
+  useEffect(() => {
+    if (revealFrom.current === null) return;
+    const rows = document.querySelectorAll<HTMLElement>('[role="tabpanel"] [data-overview-row]');
+    rows[revealFrom.current]?.focus();
+    revealFrom.current = null;
+  }, [recentLimit]);
   const onTabKey = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
@@ -674,7 +704,11 @@ export function StudioOverview() {
                       const rows = group.sessions.slice(0, attentionBudget);
                       attentionBudget -= rows.length;
                       return (
-                        <div key={group.kind} role="group" aria-label={attentionLabel(group.kind)}>
+                        <div
+                          key={group.kind}
+                          role="group"
+                          aria-label={tx(attentionLabel(group.kind))}
+                        >
                           <h3 className="studio-group-label">
                             {tx(attentionLabel(group.kind))} · {group.sessions.length}
                           </h3>
@@ -798,7 +832,12 @@ export function StudioOverview() {
                       <button
                         type="button"
                         className="studio-more"
-                        onClick={() => setRecentLimit(recentLimit + RECENT_PAGE)}
+                        onClick={() => {
+                          // Focus moves to the first chat it reveals, so it is not lost
+                          // when the button leaves with the last page.
+                          revealFrom.current = recentShown.length;
+                          setRecentLimit(recentLimit + RECENT_PAGE);
+                        }}
                       >
                         {tx("Show {count} more", {
                           count: Math.min(RECENT_PAGE, recent.length - recentShown.length),
@@ -837,11 +876,16 @@ export function StudioOverview() {
                   <div className="studio-list">
                     {(allProjects ? railProjects : railProjects.slice(0, PROJECT_PAGE)).map(
                       (card) => {
-                        const target = card.group.memberProjectRefs.find(
+                        const startable = card.group.memberProjectRefs.filter(
                           (ref) =>
                             canOperate.has(ref.environmentId) &&
                             connectedIds.has(ref.environmentId),
                         );
+                        // With a machine picked, a new chat starts on that machine.
+                        const target =
+                          machineScope === null
+                            ? startable[0]
+                            : startable.find((ref) => ref.environmentId === machineScope);
                         return (
                           <ProjectRow
                             key={card.group.projectKey}
@@ -1001,7 +1045,9 @@ function SectionHeading({
 }) {
   return (
     <div className="studio-section-heading">
-      <h2 id={id}>{title}</h2>
+      <h2 id={id} tabIndex={-1}>
+        {title}
+      </h2>
       {count !== undefined && (
         <span className={`studio-count${count > 0 && tone !== "plain" ? ` ${tone}` : ""}`}>
           {count}

@@ -595,6 +595,7 @@ describe("deliberate native session entry", () => {
 
     setWorkerConnection("connected");
     await render();
+    // The running chat that also asks for approval is listed under Needs you, not Working.
     expect(summary()).toContain("1 working");
     expect(heading()).toBe("1 chat needs you");
     expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
@@ -798,8 +799,14 @@ describe("deliberate native session entry", () => {
     expect(document.activeElement).toBe(input);
     rows[0]!.focus();
     await press("n", rows[0]);
-    expect(container.querySelector("#studio-project")).not.toBeNull();
+    const picker = container.querySelector<HTMLElement>("#studio-project")!;
+    expect(picker).not.toBeNull();
     expect(state.createDraft).not.toHaveBeenCalled();
+    // The chooser's project field keeps typed letters for its own search.
+    picker.focus();
+    await press("j", picker);
+    await press("n", picker);
+    expect(document.activeElement).toBe(picker);
   });
   it("moves between Open and Done with the arrow keys", async () => {
     await render();

@@ -4060,4 +4060,13 @@ export const ko: PhraseCatalog = {
   "{shown} of {total}": "{shown}/{total}",
   "{working} · {chats} in {projects} on {machines}":
     "{working} · {chats} · {projects} · {machines}",
+  "Access requested": "액세스 요청됨",
+  "Answer needed": "답변 필요",
+  "Approval requested": "승인 요청됨",
+  "No recent activity": "최근 활동 없음",
+  "Plan ready to review": "계획 검토 대기",
+  "Queued messages held": "대기 메시지 보류됨",
+  "Reply needed": "회신 필요",
+  "Sign-in needed": "로그인 필요",
+  "Usage limit reached": "사용 한도 도달",
 };
