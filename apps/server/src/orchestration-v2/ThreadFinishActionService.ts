@@ -13,6 +13,7 @@
  */
 import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
@@ -121,33 +122,28 @@ export function branchReadyForPullRequest(
   return status.pr?.state === "open" || (status.aheadOfDefaultCount ?? 1) > 0;
 }
 
-export type LinkedPullRequestDecision =
-  | { readonly type: "none" }
-  | { readonly type: "landed" }
-  | { readonly type: "open"; readonly link: ThreadPullRequestLink; readonly onBranch: boolean };
-
 /**
- * What the thread's linked pull requests already say about `branch`, in any
- * repository (a moved repository keeps its old links): a pull request open for
- * it is reused, one merged or closed means its work landed, and any other open
- * pull request is the thread's deliverable, so no second one is opened.
+ * Whether the thread's own links say `branch` already landed: a merged or
+ * closed pull request for it, in any repository (a moved repository keeps its
+ * old links), and none still open. Links the user removed do not count.
  */
-export function linkedPullRequestDecision(
-  links: ReadonlyArray<ThreadPullRequestLink>,
-  branch: string,
-): LinkedPullRequestDecision {
-  const latest = [...links].sort((a, b) => b.linkedAt.localeCompare(a.linkedAt));
-  const onBranch = latest.filter((link) => link.snapshot?.headBranch === branch);
-  const openOnBranch = onBranch.find((link) => link.snapshot?.state === "open");
-  if (openOnBranch) return { type: "open", link: openOnBranch, onBranch: true };
-  if (onBranch.some((link) => link.snapshot?.state !== "open")) return { type: "landed" };
-  const open = latest.find((link) => link.snapshot?.state === "open");
-  return open ? { type: "open", link: open, onBranch: false } : { type: "none" };
+export function branchLanded(links: ReadonlyArray<ThreadPullRequestLink>, branch: string): boolean {
+  const onBranch = visibleThreadPullRequests(links).filter(
+    (link) => link.snapshot === null || link.snapshot.headBranch === branch,
+  );
+  return (
+    onBranch.length > 0 &&
+    onBranch.every((link) => link.snapshot !== null && link.snapshot.state !== "open")
+  );
 }
 
+/** A failure with an unchanged checkout is retried this often, for host outages and expired sign-ins. */
+export const FAILURE_RETRY_AFTER_MS = 60 * 60 * 1000;
+
 /**
- * The checkout state a finish step saw. A failure is not retried until it
- * changes: another branch, a push, or a new commit.
+ * The checkout state a finish step saw. A failure is not retried after every
+ * turn: only once it changes (another branch, a push, a new commit) or after
+ * FAILURE_RETRY_AFTER_MS, and the same failure is reported once.
  */
 export function checkoutSignature(
   cwd: string,
@@ -284,8 +280,11 @@ export const make = Effect.gen(function* () {
 
   // Merges handed to the host, retried until they land or are refused.
   const pending = new Map<ThreadId, PendingMerge>();
-  // The last failure reported per thread: the same checkout state is not retried after every turn.
-  const reported = new Map<ThreadId, string>();
+  // The last failure reported per thread, with the checkout state it saw.
+  const reported = new Map<
+    ThreadId,
+    { readonly checkout: string; readonly detail: string; readonly at: number }
+  >();
 
   const projectAction = (projectId: Parameters<typeof resolveProjectSettings>[1]) =>
     settingsService.getSettings.pipe(
@@ -443,7 +442,6 @@ export const make = Effect.gen(function* () {
     if (thread.archivedAt !== null || thread.deletedAt !== null) return;
     // A native subagent works in its parent's checkout; the parent's finish covers it.
     if (thread.forkedFrom?.type === "node") return;
-    // A thread with its own branch and worktree; the checkout's branch now is the one to propose.
     if (thread.branch === null || thread.worktreePath === null) return;
     const action: ThreadFinishAction = (yield* projectAction(thread.projectId)).threadFinishAction;
     if (action === "leave") return;
@@ -453,27 +451,19 @@ export const make = Effect.gen(function* () {
     if (!(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => false)))) return;
     yield* git.invalidateStatus(cwd);
     const status = yield* git.status({ cwd });
-    const branch = status.refName;
-    if (branch === null) return;
-    const linked = linkedPullRequestDecision(thread.pullRequests ?? [], branch);
-    if (linked.type === "landed") return;
-    if (linked.type === "open") {
-      // Merge only the branch this checkout is on; another branch's pull request has its own owner.
-      if (action === "auto_merge" && linked.onBranch)
-        yield* merge(threadId, {
-          ref: {
-            projectId: thread.projectId,
-            host: linked.link.host,
-            repository: linked.link.repository,
-            number: linked.link.number,
-          },
-          baseBranch: linked.link.snapshot?.baseBranch ?? "the default branch",
-        });
-      return;
-    }
+    const branch = thread.branch;
+    // A binding left on a branch whose pull request already landed, here or before a repository move.
+    if (branchLanded(thread.pullRequests ?? [], branch)) return;
     if (!branchReadyForPullRequest(status, branch)) return;
     const checkout = checkoutSignature(cwd, status);
-    if (reported.get(threadId) === checkout) return;
+    const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
+    const previous = reported.get(threadId);
+    if (
+      previous !== undefined &&
+      previous.checkout === checkout &&
+      startedAt - previous.at < FAILURE_RETRY_AFTER_MS
+    )
+      return;
     const project = Option.getOrUndefined(yield* projectStore.getShell(thread.projectId));
     const runId = latestStartedRun(runs)?.id ?? null;
     const createEffect: HandoffMode.SideEffectInput | null =
@@ -496,7 +486,9 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.result);
     if (result._tag === "Failure") {
-      reported.set(threadId, checkout);
+      const detail = errorDetail(result.failure);
+      reported.set(threadId, { checkout, detail, at: startedAt });
+      if (previous?.checkout === checkout && previous.detail === detail) return;
       yield* notice(
         threadId,
         "blocked",

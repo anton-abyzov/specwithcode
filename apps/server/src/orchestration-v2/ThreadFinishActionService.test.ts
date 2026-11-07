@@ -8,10 +8,10 @@ import {
 } from "@specweave-studio/contracts";
 
 import {
+  branchLanded,
   branchReadyForPullRequest,
   checkoutSignature,
   failureNotice,
-  linkedPullRequestDecision,
   latestStartedRun,
   mergeStep,
   threadFinished,
@@ -154,42 +154,33 @@ describe("linked pull requests", () => {
   );
 
   it("treats a branch whose pull request merged in any repository as landed", () => {
-    expect(linkedPullRequestDecision([merged1209, open1248], "feat/1209-skill-authoring")).toEqual({
-      type: "landed",
-    });
+    expect(branchLanded([merged1209, open1248], "feat/1209-skill-authoring")).toBe(true);
     expect(
-      linkedPullRequestDecision(
-        [link(3, "o/r", "feat/x", "closed", "2026-11-01T00:00:00Z")],
+      branchLanded([link(3, "o/r", "feat/x", "closed", "2026-11-01T00:00:00Z")], "feat/x"),
+    ).toBe(true);
+  });
+
+  it("keeps proposing a branch with nothing landed or something still open", () => {
+    expect(branchLanded([], "feat/x")).toBe(false);
+    expect(branchLanded([open1248], "feat/1209-skill-authoring")).toBe(false);
+    expect(
+      branchLanded(
+        [
+          link(3, "o/r", "feat/x", "closed", "2026-11-01T00:00:00Z"),
+          link(9, "o/r", "feat/x", "open", "2026-11-02T00:00:00Z"),
+        ],
         "feat/x",
       ),
-    ).toEqual({ type: "landed" });
-  });
-
-  it("reuses an open pull request instead of opening another", () => {
-    expect(linkedPullRequestDecision([open1248], "feat/1248-skill-management")).toEqual({
-      type: "open",
-      link: open1248,
-      onBranch: true,
-    });
-    expect(linkedPullRequestDecision([open1248], "feat/other")).toEqual({
-      type: "open",
-      link: open1248,
-      onBranch: false,
-    });
-  });
-
-  it("prefers the branch's own open pull request over an older closed one", () => {
-    const reopened = link(9, "o/r", "feat/x", "open", "2026-11-02T00:00:00Z");
+    ).toBe(false);
     expect(
-      linkedPullRequestDecision(
-        [link(3, "o/r", "feat/x", "closed", "2026-11-01T00:00:00Z"), reopened],
-        "feat/x",
-      ),
-    ).toEqual({ type: "open", link: reopened, onBranch: true });
+      branchLanded([merged1209, { ...open1248, snapshot: null }], "feat/1209-skill-authoring"),
+    ).toBe(false);
   });
 
-  it("proceeds only when nothing is linked", () => {
-    expect(linkedPullRequestDecision([], "feat/x")).toEqual({ type: "none" });
+  it("ignores links the user removed", () => {
+    expect(
+      branchLanded([{ ...merged1209, source: "stack-dismissed" }], "feat/1209-skill-authoring"),
+    ).toBe(false);
   });
 });
 
