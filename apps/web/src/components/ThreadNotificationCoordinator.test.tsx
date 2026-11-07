@@ -706,12 +706,25 @@ describe("alerts when a thread needs you", () => {
     expect(showThreadNotification).not.toHaveBeenCalled();
   });
 
-  it("leaves the app quiet while focused when in-app notifications are off", async () => {
+  it("leaves the app quiet while focused when in-app and input alerts are off", async () => {
     useDesktopShell();
+    state.inputAlerts = false;
     await render();
     state.input = true;
     await render();
     expect(state.add).not.toHaveBeenCalled();
+    expect(showThreadNotification).not.toHaveBeenCalled();
+  });
+
+  it("still shows a waiting request while focused elsewhere with in-app news off", async () => {
+    useDesktopShell();
+    state.inputAlerts = true;
+    await render();
+    state.input = true;
+    await render();
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    expect(state.add).toHaveBeenLastCalledWith(expect.objectContaining({ title: "Input needed" }));
     expect(showThreadNotification).not.toHaveBeenCalled();
   });
 

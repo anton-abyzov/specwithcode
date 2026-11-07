@@ -1,5 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_SERVER_SETTINGS, type ModelSelection } from "@specweave-studio/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ModelSelection,
+  ScheduledTaskError,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -7,7 +11,12 @@ import * as Google from "../integrations/google/GoogleAccountService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { type BriefingSetupInput, briefingSetupStep, runOnce } from "./AideBriefingSetup.ts";
+import {
+  type BriefingSetupInput,
+  briefingSetupStep,
+  earlyBriefingReplacement,
+  runOnce,
+} from "./AideBriefingSetup.ts";
 
 const MODEL = { instanceId: "claudeAgent", model: "claude-opus-5-5" } as ModelSelection;
 const aide = {
@@ -94,6 +103,7 @@ describe("briefingSetupStep", () => {
 
 const harness = (tasks: BriefingSetupInput["tasks"], briefingSetUp: string[] = []) => {
   const upserts: unknown[] = [];
+  const deleted: string[] = [];
   const marked: string[] = [];
   const layer = Layer.mergeAll(
     Layer.mock(ServerSettings.ServerSettingsService)({
@@ -116,9 +126,14 @@ const harness = (tasks: BriefingSetupInput["tasks"], briefingSetUp: string[] = [
           upserts.push(input);
           return { task: {} } as never;
         }),
+      delete: (input) =>
+        Effect.sync(() => {
+          deleted.push(input.id);
+          return { id: input.id } as never;
+        }),
     }),
   );
-  return { upserts, marked, layer };
+  return { upserts, deleted, marked, layer };
 };
 
 it.effect("creates one daily 08:00 briefing in its own thread, then never again", () => {
@@ -148,4 +163,94 @@ it.effect("leaves a briefing the person deleted deleted", () => {
     yield* runOnce;
     expect(h.upserts).toEqual([]);
   }).pipe(Effect.provide(h.layer));
+});
+
+const EARLY = {
+  id: "scheduled-task:assistant-setup:4c5387ce",
+  title: "Proactive briefing",
+  prompt: "/proactive-briefing",
+  enabled: true,
+  schedule: { type: "fixed_time", timeOfDay: "08:00" },
+  projectId: "aide",
+  threadId: "thread:project:aide:briefing",
+  workspaceStrategy: { type: "root" },
+  modelSelection: MODEL,
+  runtimeMode: "approval-required",
+  interactionMode: "default",
+  createdBy: "user",
+  creationSource: "web",
+  ownThread: true,
+} as never as Parameters<typeof earlyBriefingReplacement>[0];
+
+describe("earlyBriefingReplacement", () => {
+  it("turns an early approval-mode briefing into today's, keeping its thread", () => {
+    expect(earlyBriefingReplacement(EARLY, [EARLY], "full-access")).toMatchObject({
+      kind: "replace",
+      input: {
+        commandId: "aide-briefing:aide",
+        threadId: "thread:project:aide:briefing",
+        schedule: { type: "fixed_time", timeOfDay: "08:00" },
+        modelSelection: MODEL,
+        runtimeMode: "full-access",
+        ownThread: true,
+      },
+    });
+  });
+
+  it("only drops the early briefing once today's exists", () => {
+    expect(
+      earlyBriefingReplacement(
+        EARLY,
+        [{ id: "scheduled-task:aide-briefing:aide" } as never],
+        "full-access",
+      ),
+    ).toEqual({ kind: "drop" });
+  });
+
+  it("leaves a mode someone chose and other routines alone", () => {
+    expect(
+      earlyBriefingReplacement({ ...EARLY, runtimeMode: "auto-accept-edits" }, [], "full-access"),
+    ).toBeNull();
+    expect(
+      earlyBriefingReplacement({ ...EARLY, id: "scheduled-task:abc" } as never, [], "full-access"),
+    ).toBeNull();
+  });
+});
+
+it.effect("replaces the early briefing once, before anything else", () => {
+  const h = harness([EARLY as never], ["aide"]);
+  return Effect.gen(function* () {
+    yield* runOnce;
+    expect(h.upserts).toEqual([
+      expect.objectContaining({ commandId: "aide-briefing:aide", runtimeMode: "full-access" }),
+    ]);
+    expect(h.deleted).toEqual(["scheduled-task:assistant-setup:4c5387ce"]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.effect("keeps setting up when the early briefing cannot be saved", () => {
+  const h = harness([EARLY as never]);
+  const failing = Layer.mock(ScheduledTaskService)({
+    list: () => Effect.succeed({ tasks: [EARLY] } as never),
+    upsert: (input) =>
+      (input as { commandId?: string }).commandId === "aide-briefing:aide" &&
+      (input as { threadId?: string | null }).threadId !== null &&
+      (input as { threadId?: string | null }).threadId !== undefined
+        ? (Effect.fail(new ScheduledTaskError({ message: "Refused by team rules." })) as never)
+        : Effect.sync(() => {
+            h.upserts.push(input);
+            return { task: {} } as never;
+          }),
+    delete: (input) =>
+      Effect.sync(() => {
+        h.deleted.push(input.id);
+        return { id: input.id } as never;
+      }),
+  });
+  return Effect.gen(function* () {
+    yield* runOnce;
+    // The early row stays, and setup still remembers the existing briefing.
+    expect(h.deleted).toEqual([]);
+    expect(h.marked).toEqual(["aide"]);
+  }).pipe(Effect.provide(Layer.merge(h.layer, failing)));
 });

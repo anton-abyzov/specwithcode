@@ -883,12 +883,14 @@ export const layer = Layer.effect(
         // A check runs a shell command with no approval, so it needs full access
         // whatever mode the thread runs in.
         const finalSelection = boundThread?.modelSelection ?? active.modelSelection;
+        // An own thread is moved to the routine's mode before the turn (syncOwnThreadMode).
+        const runMode =
+          active.ownThread && boundThread !== null
+            ? active.runtimeMode
+            : (boundThread?.runtimeMode ?? firstRunMode);
         const teamRulesRefusal =
-          teamRulesRoutineRefusal(teamRules, boundThread?.runtimeMode ?? firstRunMode) ??
-          teamRulesCarriedRefusal(
-            boundThread?.origin?.carried,
-            boundThread?.runtimeMode ?? firstRunMode,
-          ) ??
+          teamRulesRoutineRefusal(teamRules, runMode) ??
+          teamRulesCarriedRefusal(boundThread?.origin?.carried, runMode) ??
           (active.check === null || active.check === undefined
             ? null
             : teamRulesRoutineRefusal(teamRules, "full-access")) ??
@@ -1015,6 +1017,45 @@ export const layer = Layer.effect(
             dispatchedTo = threadId;
           }).pipe(Effect.andThen(Ref.update(stuckFire, (fire) => ({ ...fire, posted: true }))));
 
+        // A routine's own thread runs in the routine's saved mode, so changing the
+        // routine's mode reaches the thread its later runs continue.
+        const syncOwnThreadMode = (threadId: ThreadId) =>
+          !active.ownThread || active.threadId !== threadId
+            ? Effect.void
+            : threadManagement.getThreadShell(threadId).pipe(
+                Effect.flatMap((shell) =>
+                  shell === null || shell.runtimeMode === active.runtimeMode
+                    ? Effect.void
+                    : threadManagement
+                        .dispatch({
+                          type: "thread.runtime-mode.set",
+                          // The mode is in the id: a retry after a change applies it again, not a stale receipt.
+                          commandId: CommandId.make(
+                            `${commandId}:runtime-mode:${active.runtimeMode}`,
+                          ),
+                          threadId,
+                          runtimeMode: active.runtimeMode,
+                          applyOnNextTurn: true,
+                        })
+                        .pipe(
+                          Effect.andThen(
+                            Effect.logInfo("Routine thread now runs in the routine's mode", {
+                              taskId: active.id,
+                              from: shell.runtimeMode,
+                              to: active.runtimeMode,
+                            }),
+                          ),
+                        ),
+                ),
+                // Team rules judged the routine's mode: a thread left in another must not run.
+                Effect.mapError((cause) =>
+                  taskError("Could not run the routine in its saved mode.", {
+                    taskId: active.id,
+                    cause,
+                  }),
+                ),
+              );
+
         // Post the prompt into a thread of the routine's project, re-checking
         // the destination under the project lock.
         const sendTo = (threadId: ThreadId, text: string) =>
@@ -1024,6 +1065,7 @@ export const layer = Layer.effect(
               withAideSetting,
               Effect.provideService(ProjectStore.ProjectStoreV2, projects),
               Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.andThen(syncOwnThreadMode(threadId)),
               // An unpinned run never moves its thread to another provider by
               // itself: the task's model is only a snapshot of what the thread
               // ran on when the task was made. A coordinator takes the model a

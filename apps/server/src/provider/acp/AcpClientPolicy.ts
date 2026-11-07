@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { isStudioReadOnlyTool } from "../../mcp/studioReadOnlyTools.ts";
 import type { ProviderRequestKind, RuntimeMode } from "@specweave-studio/contracts";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as NodeFS from "node:fs";
@@ -234,6 +235,27 @@ export function acpPermissionDisposition(
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
   });
+}
+
+// A request that edits, deletes, moves or runs something is never a read, whatever its title.
+const CHANGING_KINDS: ReadonlySet<string> = new Set(["edit", "delete", "move", "execute"]);
+
+/**
+ * A provider's permission request: SpecWithCode's own read-only tools run in
+ * every mode; everything else follows the provider's rule.
+ */
+export function acpRequestDisposition<Policy extends AcpRuntimePolicy>(
+  runtimePolicy: Policy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decide: (
+    runtimePolicy: Policy,
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => AcpPermissionDisposition = acpPermissionDisposition,
+): AcpPermissionDisposition {
+  return !CHANGING_KINDS.has(request.toolCall.kind ?? "other") &&
+    isStudioReadOnlyTool(request.toolCall.title)
+    ? "allow"
+    : decide(runtimePolicy, request);
 }
 
 /** Resolve explicitly tagged MCP approvals through the thread's normal policy. */

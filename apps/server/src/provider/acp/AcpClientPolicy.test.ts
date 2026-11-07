@@ -11,6 +11,7 @@ import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
   acpPermissionDisposition,
+  acpRequestDisposition,
   makeAcpClientPolicyGrants,
   type AcpRuntimePolicy,
 } from "./AcpClientPolicy.ts";
@@ -220,6 +221,61 @@ describe("acpPermissionDisposition", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("acpRequestDisposition", () => {
+  const approval: AcpRuntimePolicy = { runtimeMode: "approval-required", cwd: process.cwd() };
+  const titled = (
+    title: string,
+    kind: NonNullable<EffectAcpSchema.RequestPermissionRequest["toolCall"]["kind"]> = "other",
+  ): EffectAcpSchema.RequestPermissionRequest => {
+    const request = permissionRequest(kind);
+    return { ...request, toolCall: { ...request.toolCall, title } };
+  };
+
+  it("runs SpecWithCode's own read-only tools without asking, in any spelling", () => {
+    for (const title of [
+      "mcp__studio_code__studio_google_status",
+      "mcp__studio-code__task_status",
+      "studio-code_studio_thread_list",
+      "studio-code/studio_project_read",
+      "studio_project_memory_read (studio-code MCP Server)",
+    ])
+      assert.equal(acpRequestDisposition(approval, titled(title)), "allow", title);
+  });
+
+  it("keeps writes, private mail, other servers and commands behind approval", () => {
+    for (const title of [
+      "mcp__studio_code__studio_thread_send",
+      "mcp__studio_code__studio_google_gmail_send_draft",
+      "mcp__studio_code__studio_google_gmail_read",
+      "mcp__other_server__studio_google_status",
+      "studio_google_status",
+    ])
+      assert.equal(acpRequestDisposition(approval, titled(title)), "ask", title);
+    for (const kind of ["execute", "edit", "delete", "move"] as const)
+      assert.equal(
+        acpRequestDisposition(approval, titled("studio-code/html_render", kind)),
+        "ask",
+        kind,
+      );
+    assert.equal(
+      acpRequestDisposition(approval, titled("mcp__studio_code__studio_thread_read")),
+      "ask",
+    );
+  });
+
+  it("overrides a provider rule only for SpecWithCode's own read-only tools", () => {
+    const alwaysAsk = () => "ask" as const;
+    assert.equal(
+      acpRequestDisposition(approval, titled("mcp__studio_code__studio_google_status"), alwaysAsk),
+      "allow",
+    );
+    assert.equal(
+      acpRequestDisposition(approval, titled("mcp__studio_code__studio_thread_send"), alwaysAsk),
+      "ask",
+    );
+  });
 });
 
 describe("acpMcpToolApprovalElicitationDisposition", () => {

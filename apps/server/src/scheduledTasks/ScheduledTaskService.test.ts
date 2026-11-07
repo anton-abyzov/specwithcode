@@ -213,7 +213,10 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
-                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  // No thread record: a routine's own thread keeps its mode.
+                  getThreadShell: () => Effect.succeed(null),
+                }),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
@@ -320,7 +323,10 @@ it.effect(
                       Effect.andThen(Effect.die(new Error("test launch failure"))),
                     ),
                 }),
-                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  // No thread record: a routine's own thread keeps its mode.
+                  getThreadShell: () => Effect.succeed(null),
+                }),
                 Layer.mock(SecretRequests.SecretRequests)({}),
                 NodeCrypto.layer,
                 Scheduler.layer,
