@@ -88,6 +88,7 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
           drawer
             .environment(\.isNavigationSidebarVisible, persistent)
             .environment(\.isWideLayout, wide)
+            .environment(\.layoutClass, WeaveLayoutClass(width: width))
             .environment(\.drawerHorizontalInsets, drawerInsets(width: width, scene: proxy.size.width))
             .safeAreaPadding(EdgeInsets(
               top: sceneInsets.top, leading: sceneInsets.leading,
@@ -126,6 +127,7 @@ public struct DrawerContainer<Drawer: View, Content: View>: View {
             .environment(\.isCoveredByDrawer, modalOpen)
             .environment(\.isNavigationSidebarVisible, persistent)
             .environment(\.isWideLayout, wide)
+            .environment(\.layoutClass, WeaveLayoutClass(width: max(0, proxy.size.width - (persistent ? split : 0) - max(0, sceneInsets.leading - (persistent ? split : 0)) - sceneInsets.trailing)))
           // Keep the dismissal control outside the hidden content subtree.
           // Newer SwiftUI versions propagate that hidden state to overlays.
           dim(progress: progress, drawerWidth: width, active: modalOpen)

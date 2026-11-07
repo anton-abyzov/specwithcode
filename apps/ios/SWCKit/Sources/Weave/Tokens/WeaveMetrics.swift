@@ -75,6 +75,8 @@ public nonisolated enum WeaveSize {
   public static let statusRailCenterOffset: CGFloat = 6
   /// Narrower trailing regions are a landscape phone's camera housing, not a rail.
   public static let statusRailMinWidth: CGFloat = 70
+  /// The longest a machine's name runs in a thread header before it ends in an ellipsis.
+  public static let machineNameMaxWidth: CGFloat = 120
 }
 
 public extension EdgeInsets {

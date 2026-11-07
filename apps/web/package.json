@@ -2,6 +2,7 @@
   "name": "@specweave-studio/web",
   "version": "1.0.205",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build:ghostty-wasm": "bash scripts/build-libghostty-wasm.sh",

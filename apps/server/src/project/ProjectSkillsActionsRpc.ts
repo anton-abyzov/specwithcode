@@ -41,6 +41,7 @@ import {
   type SkillTarget,
 } from "./ProjectSkillsActionsCommon.ts";
 import { makeStudioLink, pushSkillToFleet } from "./ProjectSkillsFleet.ts";
+import * as SkillAuthoringService from "./SkillAuthoringService.ts";
 import * as ProjectSkillsService from "./ProjectSkillsService.ts";
 
 const CODEX_START_TIMEOUT = "20 seconds";
@@ -58,12 +59,11 @@ const processAlive = (pid: number): boolean => {
   }
 };
 
-export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
-  RpcInstrumentation,
-)
+const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(RpcInstrumentation)
   .toLayer(
     Effect.gen(function* () {
       const skills = yield* ProjectSkillsService.ProjectSkillsService;
+      const authoring = yield* SkillAuthoringService.SkillAuthoringService;
       const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const registry = yield* ProviderRegistry.ProviderRegistry;
       const fleetTargets = yield* FleetTargets.FleetTargets;
@@ -252,6 +252,7 @@ export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.midd
       };
 
       return {
+        [WS_METHODS.projectsSkillAuthoring]: authoring.execute,
         [WS_METHODS.projectsSkillsVersions]: actions.versions,
         [WS_METHODS.projectsSkillsAction]: actions.action,
         [WS_METHODS.projectsSkillsFleetPush]: (input: ProjectSkillsFleetPushInput) =>
@@ -261,3 +262,12 @@ export const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.midd
     }),
   )
   .pipe(Layer.provide(FleetTargets.layer));
+
+/** Capture the server-owned authoring service before entering a request context. */
+export const makeSkillsActionsRpcHandlers = Effect.map(
+  SkillAuthoringService.SkillAuthoringService,
+  (authoring) =>
+    layerSkillsActionsRpcHandlers.pipe(
+      Layer.provide(Layer.succeed(SkillAuthoringService.SkillAuthoringService, authoring)),
+    ),
+);

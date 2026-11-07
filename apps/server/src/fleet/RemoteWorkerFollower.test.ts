@@ -734,3 +734,16 @@ describe("adopting the replaced coordinator's workers", () => {
     }).pipe(Effect.provide(layer));
   });
 });
+
+it("retains the remote source when its worker waits for the user", () => {
+  const result = RemoteWorkerFollower.remoteWorkerWaitingOnYou({
+    environmentId: "env-remote",
+    remoteThreadId: "worker",
+    title: "Remote task\nPrivate prompt details",
+    threadRef: "studio://thread/env-remote/worker",
+    machineLabel: "Remote Mac",
+  });
+  expect(result.notification.replySources).toEqual([
+    { kind: "thread", environmentId: "env-remote", threadId: "worker", title: "Remote task" },
+  ]);
+});

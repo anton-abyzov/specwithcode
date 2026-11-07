@@ -10,6 +10,7 @@ import { Link } from "@tanstack/react-router";
 import { RefreshCwIcon, SearchIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { TimelineEntry } from "../../session-logic";
 import { useEnvironmentQuery } from "../../state/query";
@@ -71,6 +72,7 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
 ) {
   const tx = useTx();
   const [open, setOpen] = useState(false);
+  const [authoringOpen, setAuthoringOpen] = useState(false);
   const context = `${props.environmentId}:${props.projectId}:${props.cwd}:${props.provider?.instanceId}`;
   const [resolved, setResolved] = useState<{
     context: string;
@@ -87,45 +89,66 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
   );
   const count = catalog.length;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost-muted"
-            className="shrink-0"
-            data-testid="composer-skills-trigger"
-            aria-label={`Skills: ${count} total`}
-          >
-            <SparklesIcon aria-hidden="true" />
-            <span className="hidden sm:inline">{tx("Skills")}</span>
-            <span className="tabular-nums">{count}</span>
-          </Button>
-        }
-      />
-      <PopoverPopup
-        {...composerFloatingLayerProps}
-        side="top"
-        align="end"
-        padding="none"
-        width="md"
-        className="text-left whitespace-normal"
-      >
-        {open ? (
-          <ComposerSkillsPanel
-            key={`${props.environmentId}:${props.projectId}:${props.cwd}:${props.provider?.instanceId}`}
-            {...props}
-            onSnapshot={setSnapshot}
-          />
-        ) : null}
-      </PopoverPopup>
-    </Popover>
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost-muted"
+              className="shrink-0"
+              data-testid="composer-skills-trigger"
+              aria-label={`Skills: ${count} total`}
+            >
+              <SparklesIcon aria-hidden="true" />
+              <span className="hidden sm:inline">{tx("Skills")}</span>
+              <span className="tabular-nums">{count}</span>
+            </Button>
+          }
+        />
+        <PopoverPopup
+          {...composerFloatingLayerProps}
+          side="top"
+          align="end"
+          padding="none"
+          width="md"
+          className="text-left whitespace-normal"
+        >
+          {open ? (
+            <ComposerSkillsPanel
+              key={`${props.environmentId}:${props.projectId}:${props.cwd}:${props.provider?.instanceId}`}
+              {...props}
+              onCreate={() => {
+                setOpen(false);
+                setAuthoringOpen(true);
+              }}
+              onSnapshot={setSnapshot}
+            />
+          ) : null}
+        </PopoverPopup>
+      </Popover>
+      {props.projectId ? (
+        <SkillAuthoringSheet
+          environmentId={props.environmentId}
+          projectId={props.projectId}
+          cwd={props.cwd ?? undefined}
+          threadId={props.threadId ?? undefined}
+          machineLabel={props.machineLabel}
+          initialInstanceId={props.provider?.instanceId}
+          open={authoringOpen}
+          onOpenChange={setAuthoringOpen}
+        />
+      ) : null}
+    </>
   );
 });
 
 function ComposerSkillsPanel(
-  props: ComposerSkillsPopoverProps & { onSnapshot: (snapshot: ProjectSkillsSnapshot) => void },
+  props: ComposerSkillsPopoverProps & {
+    onCreate: () => void;
+    onSnapshot: (snapshot: ProjectSkillsSnapshot) => void;
+  },
 ) {
   const tx = useTx();
   const [rescan, setRescan] = useState(false);
@@ -334,6 +357,11 @@ function ComposerSkillsPanel(
           {busy ? <Spinner className="size-3.5" /> : <RefreshCwIcon aria-hidden="true" />}
           {tx("Rescan")}
         </Button>
+        {props.projectId ? (
+          <Button type="button" size="xs" variant="outline" onClick={props.onCreate}>
+            Create skill
+          </Button>
+        ) : null}
         <Link
           to="/settings/skills"
           search={settingsSearch}

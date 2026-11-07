@@ -1,0 +1,293 @@
+name: Release (staged)
+
+# The staged release: every stage of the release graph (scripts/release/run_record.py GRAPH) is a
+# job, and `needs:` is the graph: a failed stage stops only what depends on it, and the server
+# shards run side by side when runners allow. The other stages take the release lock in turn (a
+# --stage job waits for it, up to RELEASE_STAGE_LOCK_WAIT seconds), as one machine's staging folder
+# allows. Each job is release-stage.yml, which runs
+# `scripts/release/release.sh VERSION --stage ID --resume` on the self-hosted release Mac; every job
+# of a run uses that Mac's one staging folder, and release.sh checks that the stages a job needs are
+# done before it acts. The server suite runs as 8 shards (test.server --shard 1..8) and a merge job
+# (--shard merge) that judges them together. Stages release.sh has no step for yet (the Windows and
+# Linux builds, which desktop-windows-linux.yml makes after publish-public) are recorded as skipped.
+# Every stage writes the run record that the Releases view in SpecWithCode shows. The last job,
+# verify.release, runs the checks `release.sh ship studio` runs once a release ends (v<version>
+# published on both repositories with its feed, sums and dmg, and on main), so this workflow owns
+# the ship from end to end. With `dry_run`, every stage runs release.sh --dry-run instead (no
+# release secrets, nothing run, written, pushed or published).
+#
+# release-macos.yml stays the one-job release, the fallback until this workflow has shipped one;
+# both share one concurrency group, so they never run on the same staging folder at once. Secrets and variables: as in release-macos.yml.
+# With `ci` (the default), release.sh runs with --ci: the canary and fleet stages are recorded as
+# skipped and the machines install the release on their next update check. Run it with `ci` off
+# only from a runner on the fleet's M4, where the canary and fleet rollouts ask the machines.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release (1.x.y)
+        required: true
+        type: string
+      previous:
+        description: Previous release, when it cannot be found on its own (optional)
+        required: false
+        type: string
+      ci:
+        description: Run release.sh with --ci (no canary or fleet rollout from this runner)
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: Dry run (release.sh --dry-run per stage; no release secrets, runs, pushes or publishes nothing)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A dry run writes nothing, takes no release lock and holds no release secret, so it has its own
+# group: it never cancels or is cancelled by a release. Its jobs still queue on the release runner,
+# between a release's jobs when one runs, so dispatch it when no release is running.
+concurrency:
+  group: ${{ inputs.dry_run && format('release-dry-run-{0}', github.run_id) || 'release-macos' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: resolve
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  preflight:
+    needs: [resolve]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: preflight
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_unit:
+    needs: [resolve]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.unit
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_server:
+    needs: [resolve]
+    strategy:
+      fail-fast: false
+      # One per shard of RELEASE_GRAPH_SHARDS, which release-stage.yml sets (8).
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.server
+      shard: ${{ format('{0}', matrix.shard) }}
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_server_merge:
+    needs: [test_server]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.server
+      shard: merge
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_web:
+    needs: [resolve]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.web
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_fleet:
+    needs: [resolve]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.fleet
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_desktop_e2e:
+    needs: [resolve]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.desktop-e2e
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  test_migration:
+    needs: [preflight]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: test.migration
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  build_mac:
+    needs: [preflight]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: build.mac
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  build_windows:
+    needs: [preflight]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: build.windows
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  build_linux:
+    needs: [preflight]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: build.linux
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  verify_mac:
+    needs: [build_mac]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: verify.mac
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  verify_windows:
+    needs: [build_windows]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: verify.windows
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  verify_linux:
+    needs: [build_linux]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: verify.linux
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  publish_candidate:
+    needs:
+      [
+        test_unit,
+        test_server_merge,
+        test_web,
+        test_fleet,
+        test_desktop_e2e,
+        test_migration,
+        verify_mac,
+        verify_windows,
+        verify_linux,
+      ]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: publish.candidate
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  canary:
+    needs: [publish_candidate]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: canary
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  fleet:
+    needs: [canary]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: fleet
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  finalize:
+    needs: [fleet]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: finalize
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}
+
+  verify_release:
+    needs: [finalize]
+    uses: ./.github/workflows/release-stage.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      stage: verify.release
+      previous: ${{ inputs.previous }}
+      ci: ${{ inputs.ci }}
+      dry_run: ${{ inputs.dry_run }}

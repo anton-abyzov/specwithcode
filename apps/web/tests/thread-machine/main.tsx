@@ -7,6 +7,7 @@ import { ChevronDownIcon, ShieldIcon } from "lucide-react";
 import { ComposerControl } from "../../src/components/chat/ComposerControl";
 import { ThreadMachineComposerChip } from "../../src/components/chat/ThreadMachineComposerChip";
 import { ThreadMetaRow } from "../../src/components/chat/ThreadMetaRow";
+import { ProjectEnvironmentBadge } from "../../src/components/ProjectEnvironmentBadge";
 import {
   modelChipShows,
   type ModelChipFit,
@@ -214,4 +215,35 @@ function Fixture() {
     </main>
   );
 }
-createRoot(document.getElementById("root")!).render(<Fixture />);
+// `?projects`: the project picker's rows, where a project on other machines names them.
+const member = (environmentId: string, environmentLabel: string | null) =>
+  ({ environmentId, environmentLabel }) as never;
+function ProjectRows() {
+  const rows = [
+    { name: "specweave", members: [member("here", null), member("m4", "M4")] },
+    { name: "easychamp", members: [member("m1", "m1"), member("minis", "Minis")] },
+    { name: "sketchmate", members: [member("office", "Office Mac Studio")] },
+  ];
+  return (
+    <main className="flex min-h-screen flex-col gap-1 bg-background p-3 text-foreground">
+      {rows.map((row) => (
+        <div
+          key={row.name}
+          className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-accent"
+          data-project-row=""
+        >
+          <span className="min-w-0 truncate">{row.name}</span>
+          <ProjectEnvironmentBadge
+            group={{ memberProjects: row.members }}
+            primaryEnvironmentId={"here" as never}
+            machineByEnvironmentId={new Map()}
+          />
+        </div>
+      ))}
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(
+  params.has("projects") ? <ProjectRows /> : <Fixture />,
+);

@@ -144,6 +144,23 @@ export function backgroundWorkNotification(
   const outcome = combinedOutcome(reports.map((report) => report.outcome));
   return {
     source: reportsSource([first, ...rest]),
+    ...(reports.some((report) => report.kind === "subagent" && report.childThreadId !== undefined)
+      ? {
+          replySources: reports.flatMap((report) =>
+            report.kind === "subagent" && report.childThreadId !== undefined
+              ? [
+                  {
+                    kind: "thread" as const,
+                    threadId: report.childThreadId,
+                    ...(reportLabel(report.label) === undefined
+                      ? {}
+                      : { title: reportLabel(report.label)! }),
+                  },
+                ]
+              : [],
+          ),
+        }
+      : {}),
     outcome,
     summary: reportsSummary([first, ...rest], outcome),
   };
@@ -183,6 +200,19 @@ function delegatedCompletionNotification(
   ).length;
   const outcome = combinedOutcome(reports.map((report) => report.outcome));
   const verb = outcome === "failed" ? "failed" : outcome === "cancelled" ? "stopped" : "finished";
+  const replySources = reports.flatMap((report) =>
+    report.childThreadId === undefined
+      ? []
+      : [
+          {
+            kind: "thread" as const,
+            threadId: report.childThreadId,
+            ...(reportLabel(report.label) === undefined
+              ? {}
+              : { title: reportLabel(report.label)! }),
+          },
+        ],
+  );
   const [only] = reports;
   if (reports.length === 1 && only !== undefined) {
     const label = reportLabel(only.label);
@@ -193,6 +223,7 @@ function delegatedCompletionNotification(
         ...(only.childThreadId === undefined ? {} : { childThreadId: only.childThreadId }),
       },
       outcome,
+      replySources,
       summary: `Delegated task${label === undefined ? "" : ` "${label}"`} ${verb}`,
     };
   }
@@ -203,6 +234,7 @@ function delegatedCompletionNotification(
       : `${taskIds.length}`;
   return {
     source: { kind: "delegated_task", taskIds },
+    replySources,
     outcome,
     summary: `${count} delegated tasks ${verb}${labels.length === 0 ? "" : `: ${labels.join(", ")}`}`,
   };

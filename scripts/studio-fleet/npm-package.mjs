@@ -112,7 +112,7 @@ specwithcode fleet invite --coordinator '<main-machine-environment-id>'  # publi
 On your main machine, paste the line into Settings > Connections > Add a machine, or run
 \`specwithcode fleet add <line>\`. \`specweave-studio\` is the same command under its earlier name.
 
-No new project-wide license is granted. See LICENSE and UPSTREAM.md for required third-party terms; prior grants remain applicable.
+SpecWithCode is open source under the MIT License. Third-party code keeps its own license; see THIRD_PARTY_NOTICES.md.
 `;
 }
 

@@ -49,13 +49,13 @@ final class ThreadUITests: SWCUITestCase {
 
   func testRunningThreadQueuesAndStops() throws {
     launch(fixture: "running", route: "thread")
-    let stop = hittableButton("Stop")
+    let stop = hittableButton("Stop reply")
     waitFor(composer)
     XCTAssertEqual(composer.placeholderValue, "Queue a message…")
     attachScreenshot("Running")
 
     stop.tap()
-    waitForGone(button("Stop"), "Stop should end the run")
+    waitForGone(button("Stop reply"), "Stop should end the run")
     waitFor(element(containing: "Stopped"), "A stop notice should appear")
     XCTAssertTrue(waitUntil { self.composer.placeholderValue == "Message…" }, "The composer should leave queue mode: \(composer.placeholderValue ?? "nil")")
     XCTAssertTrue(button("Send").exists)

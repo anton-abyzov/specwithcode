@@ -18,7 +18,7 @@ import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { MachineNameTag } from "./MachineNameTag";
 import { useProject } from "../state/entities";
 import {
   resolveThreadCurrentPullRequestLink,
@@ -1022,19 +1022,12 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
         </Tooltip>
       ) : null}
       {isRemoteThread ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                aria-label={threadEnvironmentLabel ?? "Remote"}
-                className="inline-flex items-center justify-center"
-              />
-            }
-          >
-            <EnvironmentMachineIcon kind={remoteMachine} className="size-3 text-muted-foreground" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
-        </Tooltip>
+        <MachineNameTag
+          label={threadEnvironmentLabel ?? "Remote"}
+          kind={remoteMachine}
+          withIcon
+          className="text-muted-foreground"
+        />
       ) : null}
     </span>
   );

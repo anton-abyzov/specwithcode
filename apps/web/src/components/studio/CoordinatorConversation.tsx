@@ -1,10 +1,15 @@
+import {
+  coordinatorReplySources,
+  type CoordinatorReplySource,
+} from "@specweave-studio/shared/coordinatorReplySources";
+import { CoordinatorReplySources } from "./CoordinatorReplySources";
 import { isMetadataOnlyAssistantMessage } from "../../studio/messagePresentation";
 import { ArtifactCards } from "../chat/ThreadArtifacts";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { requestExecutionLabel } from "../../studio/projectDomain";
 import { limitContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
-import { useEnvironment } from "../../state/environments";
+import { useEnvironment, useEnvironments } from "../../state/environments";
 import { useProviderEntries } from "./shell/ModelBadge";
 import {
   projectCoordinatorMessageDisplay,
@@ -119,6 +124,7 @@ type CoordinatorMessage = NonNullable<
 const EMPTY_MESSAGES: readonly CoordinatorMessage[] = [];
 const EMPTY_REMOTE_WORKER_THREADS: readonly EnvironmentThreadShell[] = [];
 const EMPTY_IDS: readonly ThreadId[] = [];
+const NO_SOURCES: readonly CoordinatorReplySource[] = [];
 
 /**
  * How many of the latest messages a conversation mounts at first, and how many
@@ -269,6 +275,15 @@ export function CoordinatorConversation({
     [allMessages],
   );
   const executionEnvironment = useEnvironment(project.environmentId);
+  const { environments: sourceEnvironments } = useEnvironments();
+  const canOpenSource = useCallback(
+    (id: string) =>
+      (id === project.environmentId
+        ? executionEnvironment
+        : sourceEnvironments.find((environment) => environment.environmentId === id)
+      )?.connection.phase === "connected",
+    [executionEnvironment, sourceEnvironments, project.environmentId],
+  );
   // A command in the coordinator's reply runs on the project's host, in its folder.
   const coordinatorRuntimeMode = coordinatorShell?.runtimeMode ?? null;
   const shellRunTarget = useMemo<ShellRunTarget>(
@@ -385,6 +400,38 @@ export function CoordinatorConversation({
       }),
     [messages, turnItems, runs, timelineDetail],
   );
+  const replySources = useMemo(
+    () =>
+      coordinatorReplySources(
+        [
+          ...allMessages,
+          ...(turnItems ?? [])
+            .filter((item) => item.type === "notification")
+            .map((item) => ({
+              id: item.id,
+              role: "system",
+              runId: item.runId,
+              notification: item,
+            })),
+        ],
+        project.environmentId,
+        coordinatorId,
+      ),
+    [allMessages, turnItems, project.environmentId, coordinatorId],
+  );
+  const openReplySource = useCallback(
+    (id: string, environmentId: string) =>
+      onOpenThread(id as ThreadId, environmentId as EnvironmentId),
+    [onOpenThread],
+  );
+  const sourceTitleState = useRef({ linkWorkers, environmentId: project.environmentId });
+  sourceTitleState.current = { linkWorkers, environmentId: project.environmentId };
+  const sourceTitle = useCallback((id: string, environmentId: string) => {
+    const current = sourceTitleState.current;
+    return environmentId === current.environmentId
+      ? current.linkWorkers.find((thread) => thread.id === id)?.title
+      : undefined;
+  }, []);
   // Results only: a reply to a worker wake that only says it is still going is one line.
   const checkedWakes = useMemo(
     () =>
@@ -535,6 +582,26 @@ export function CoordinatorConversation({
   }, [placeKey, windowSize]);
   if (findQuery && windowSize < rows.length) setWindowSize(rows.length);
   const firstShown = findQuery ? 0 : Math.max(0, rows.length - windowSize);
+  // Concise mode can retain only the last split reply, so choose among rendered rows.
+  const firstSourceReplyIds = useMemo(() => {
+    const runs = new Set<string>();
+    const ids = new Set<string>();
+    for (const row of rows.slice(firstShown)) {
+      if (
+        row.decision?.folded ||
+        row.message.role !== "assistant" ||
+        !row.message.runId ||
+        isMetadataOnlyAssistantMessage(
+          row.message,
+          Boolean(row.announcedKey) || row.attachments.length > 0,
+        )
+      )
+        continue;
+      if (!runs.has(row.message.runId)) ids.add(row.message.id);
+      runs.add(row.message.runId);
+    }
+    return ids;
+  }, [rows, firstShown]);
   // Checked lines next to each other about one worker read as one line.
   const checkedGroups = useMemo(() => {
     // Find reads every reply, so nothing folds while it is open.
@@ -544,14 +611,36 @@ export function CoordinatorConversation({
     const eligible = new Map<string, CheckedWorker>();
     for (const row of shown) {
       const worker = checkedWakes.get(row.message.id);
-      if (worker !== undefined && !row.announcedKey && row.attachments.length === 0)
-        eligible.set(row.message.id, worker);
+      const sources = replySources.get(row.message.id) ?? NO_SOURCES;
+      // A folded row must not hide additional sources. Group by scoped identity only.
+      if (
+        worker !== undefined &&
+        !row.announcedKey &&
+        row.attachments.length === 0 &&
+        sources.length <= 1
+      ) {
+        const source = sources[0];
+        eligible.set(
+          row.message.id,
+          source?.kind === "thread"
+            ? {
+                threadId: JSON.stringify([source.environmentId, source.threadId]),
+                title:
+                  sourceTitle(source.threadId, source.environmentId) ||
+                  source.title ||
+                  worker.title,
+              }
+            : sources.length === 0
+              ? worker
+              : { ...worker, threadId: null },
+        );
+      }
     }
     return groupCheckedWakes(
       shown.map((row) => row.message.id),
       eligible,
     );
-  }, [rows, firstShown, checkedWakes, findQuery]);
+  }, [rows, firstShown, checkedWakes, findQuery, replySources, sourceTitle]);
   // A card whose turn is not mounted waits for it; an active one shows at the end meanwhile.
   const remotePlacement = useMemo(
     () =>
@@ -729,9 +818,21 @@ export function CoordinatorConversation({
                 rowId={row.message.id}
                 openGroups={openChecked}
                 onToggle={toggleChecked}
+                sources={replySources.get(row.message.id) ?? NO_SOURCES}
+                onOpenSource={openReplySource}
+                resolveTitle={sourceTitle}
+                canOpenSource={canOpenSource}
               >
                 <CoordinatorMessageRow
                   message={row.message}
+                  replySources={
+                    firstSourceReplyIds.has(row.message.id)
+                      ? (replySources.get(row.message.id) ?? NO_SOURCES)
+                      : NO_SOURCES
+                  }
+                  onOpenSource={openReplySource}
+                  resolveSourceTitle={sourceTitle}
+                  canOpenSource={canOpenSource}
                   notice={row.notice}
                   text={row.text}
                   displayText={row.display.text}
@@ -855,12 +956,20 @@ function CheckedWakeLine({
   rowId,
   openGroups,
   onToggle,
+  sources,
+  onOpenSource,
+  resolveTitle,
+  canOpenSource,
   children,
 }: {
   group: CheckedWakeGroup | undefined;
   rowId: string;
   openGroups: ReadonlySet<string>;
   onToggle: (leaderId: string, open: boolean) => void;
+  sources: readonly CoordinatorReplySource[];
+  onOpenSource: (id: string, environmentId: string) => void;
+  resolveTitle: (id: string, environmentId: string) => string | undefined;
+  canOpenSource: (id: string) => boolean;
   children: React.ReactNode;
 }) {
   if (group === undefined) return children;
@@ -875,7 +984,18 @@ function CheckedWakeLine({
       onToggle={(event) => onToggle(group.leaderId, event.currentTarget.open)}
     >
       <summary>
-        Checked {group.worker.title}
+        Checked{" "}
+        {sources[0]?.kind === "thread" ? (
+          <CoordinatorReplySources
+            sources={sources}
+            inline
+            onOpenThread={onOpenSource}
+            resolveTitle={resolveTitle}
+            canOpenThread={canOpenSource}
+          />
+        ) : (
+          group.worker.title
+        )}
         {group.count > 1 ? ` · ${group.count} times` : null}
       </summary>
       {open ? children : null}
@@ -885,6 +1005,10 @@ function CheckedWakeLine({
 
 const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   message,
+  replySources,
+  onOpenSource,
+  resolveSourceTitle,
+  canOpenSource,
   notice,
   text,
   displayText,
@@ -919,6 +1043,10 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   onOpenCoordinatorActivity,
 }: {
   readonly message: CoordinatorMessage;
+  readonly replySources: readonly CoordinatorReplySource[];
+  readonly onOpenSource: (id: string, environmentId: string) => void;
+  readonly resolveSourceTitle: (id: string, environmentId: string) => string | undefined;
+  readonly canOpenSource: (id: string) => boolean;
   /** The one line a resent or system message reads as, instead of its text. */
   readonly notice: string | null;
   readonly text: string;
@@ -1050,6 +1178,14 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
         data-follow-anchor={message.id}
       >
         {relay ? null : <h3>{author}</h3>}
+        {message.role === "assistant" && (
+          <CoordinatorReplySources
+            sources={replySources}
+            onOpenThread={onOpenSource}
+            resolveTitle={resolveSourceTitle}
+            canOpenThread={canOpenSource}
+          />
+        )}
         {turn?.workedFor ? (
           // The turn's tool calls live on the coordinator's page, like a folded turn.
           <button

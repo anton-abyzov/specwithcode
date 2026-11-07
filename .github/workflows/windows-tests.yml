@@ -1,0 +1,92 @@
+# On-demand Windows test lane. Manual only: nothing in the suite passes on
+# Windows yet, so this exists to give contributors (and agents) a cloud Windows
+# box to iterate against. Once the suite is green here, fold it into ci.yml.
+#
+#   gh workflow run windows-tests.yml --ref <branch> -f package=packages/shared
+#   gh workflow run windows-tests.yml --ref <branch> -f package=apps/server \
+#     -f files="src/process/externalLauncher.test.ts src/cli/theme.test.ts"
+#   gh run watch && gh run view --log-failed
+name: Windows Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Workspace directory to test, e.g. apps/server or packages/shared. Empty runs every package except apps/server."
+        type: string
+        default: ""
+      files:
+        description: "Space-separated test files relative to the package directory. Empty runs the package's whole suite. Requires package."
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  PWDEBUG: "0"
+  PLAYWRIGHT_HTML_OPEN: never
+
+jobs:
+  test:
+    name: Test (${{ inputs.package || 'all non-server' }})
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # setup-vp's own cache restores a Linux-shaped store on Windows, which is
+      # slower than no cache (see #7975). Cache pnpm's Windows store directly.
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Resolve package cache path
+        id: package_cache_path
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+
+      - name: Cache packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: windows-tests-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install
+        run: vp install
+
+      - name: Ensure Electron runtime is installed
+        if: inputs.package == '' || inputs.package == 'apps/desktop'
+        run: vp run --filter "@specweave-studio/desktop" ensure:electron
+
+      - name: Install Playwright Chromium headless shell
+        if: inputs.package == 'apps/server' || inputs.package == '' || inputs.package == 'scripts'
+        run: node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+
+      # `vp run ... test -- <files>` does not forward positional args to vitest,
+      # so file-scoped runs call `vp test run` inside the package instead.
+      - name: Test
+        shell: pwsh
+        run: |
+          $package = '${{ inputs.package }}'
+          $files = '${{ inputs.files }}'
+          if ($package -eq '') {
+            vp run --parallel --concurrency-limit 4 --filter '!specweave-studio' --filter '!@specweave-studio/monorepo' test
+          } elseif ($files -eq '') {
+            vp run --filter "./$package" test
+          } else {
+            Set-Location $package
+            vp test run $files.Split(' ')
+          }

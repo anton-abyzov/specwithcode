@@ -3428,6 +3428,7 @@ const inferredWebSocketLayer = Layer.unwrap(
     const sql = yield* SqlClient.SqlClient;
     const browserExtension = yield* BrowserExtension.BrowserExtension;
     const designLayers = yield* ProjectWorkspaceRpc.DesignWsHandlers;
+    const skillsActionsHandlers = yield* ProjectSkillsActionsRpc.makeSkillsActionsRpcHandlers;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3473,7 +3474,7 @@ const inferredWebSocketLayer = Layer.unwrap(
                   ProjectWorkspaceRpc.layerPlanningRpcHandlers,
                   designLayers.layerRpcHandlers(session),
                   UsageLimitHistory.layerRpcHandlers,
-                  ProjectSkillsActionsRpc.layerSkillsActionsRpcHandlers,
+                  skillsActionsHandlers,
                 ),
               ),
               Layer.merge(

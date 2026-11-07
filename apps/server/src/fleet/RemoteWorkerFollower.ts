@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   type OrchestrationV2Notification,
   projectExecutionIsFenced,
@@ -10,6 +11,8 @@ import {
   formatStudioThreadHref,
   studioThreadLinkLabel,
 } from "@specweave-studio/shared/studioThreadLinks";
+import { coordinatorSourceTitle } from "@specweave-studio/shared/coordinatorReplySources";
+import type { RemoteWorkerRef } from "./remoteWorkerMatching.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -106,16 +109,23 @@ export const REMOTE_WORKER_WAITING_ON_YOU = "waiting_on_you";
  * Tells the caller, once per run, that its worker waits on the person. The
  * words are fixed; nothing from the remote agent is quoted.
  */
-export function remoteWorkerWaitingOnYou(input: {
-  readonly title: string;
-  readonly threadRef: string;
-  readonly machineLabel: string;
-}): { readonly text: string; readonly notification: OrchestrationV2Notification } {
+export function remoteWorkerWaitingOnYou(input: RemoteWorkerRef): {
+  readonly text: string;
+  readonly notification: OrchestrationV2Notification;
+} {
   const link = `[${studioThreadLinkLabel(input.title.slice(0, 200), "worker")}](${input.threadRef})`;
   return {
     text: `Remote worker ${link} on ${input.machineLabel} is waiting on the user: its run asked for an answer, a sign-in or an approval there. Tell the user; they answer it in that thread. You are woken again when its run finishes.`,
     notification: {
       source: { kind: "background_task" },
+      replySources: [
+        {
+          kind: "thread",
+          threadId: ThreadId.make(input.remoteThreadId),
+          environmentId: EnvironmentId.make(input.environmentId),
+          title: coordinatorSourceTitle(input.title) ?? "Worker",
+        },
+      ],
       outcome: "unknown",
       summary: `${link} on ${input.machineLabel} needs you.`,
     },
@@ -337,6 +347,8 @@ const make = Effect.gen(function* () {
         row,
         `remote-worker-waiting:${row.id}:${runId ?? "no-run"}`,
         remoteWorkerWaitingOnYou({
+          environmentId: row.environmentId,
+          remoteThreadId: row.remoteThreadId,
           title: row.title,
           threadRef: formatStudioThreadHref(row.remoteThreadId, row.environmentId),
           machineLabel: yield* machineLabel(row.machineId),
@@ -347,6 +359,8 @@ const make = Effect.gen(function* () {
   const wakeMessage = (row: RemoteWorkerStore.RemoteWorkerRecord, status: string) =>
     Effect.map(machineLabel(row.machineId), (label) =>
       remoteWorkerWake({
+        environmentId: row.environmentId,
+        remoteThreadId: row.remoteThreadId ?? "",
         title: row.title,
         threadRef: formatStudioThreadHref(row.remoteThreadId ?? "", row.environmentId),
         machineLabel: label,
@@ -614,6 +628,8 @@ const make = Effect.gen(function* () {
         row,
         `remote-worker-lost:${row.id}:${outage}`,
         remoteWorkerLost({
+          environmentId: row.environmentId,
+          remoteThreadId: row.remoteThreadId,
           title: row.title,
           threadRef: formatStudioThreadHref(row.remoteThreadId, row.environmentId),
           machineLabel: yield* machineLabel(row.machineId),

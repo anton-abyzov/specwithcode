@@ -447,7 +447,16 @@ interface Probe {
   readonly at: number;
   readonly providers: ReadonlyArray<OrchestratorMcpMachineProvider>;
   readonly projects: ReadonlyArray<Project>;
+  /** Which projects the grant there covers; absent from machines older than this field. */
+  readonly projectScope?: GrantProjectScope | undefined;
 }
+
+type GrantProjectScope = "all" | "linked" | "listed";
+
+const readProjectScope = (capabilities: unknown): GrantProjectScope | undefined => {
+  const scope = isRecord(capabilities) ? capabilities.grantProjects : undefined;
+  return scope === "all" || scope === "linked" || scope === "listed" ? scope : undefined;
+};
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/;
 const isoOrNull = (value: unknown) =>
@@ -614,7 +623,12 @@ const make = Effect.gen(function* () {
         cursor =
           isRecord(result) && typeof result.nextCursor === "number" ? result.nextCursor : null;
       }
-      const next: Probe = { at: now, providers: readProviders(capabilities), projects: listed };
+      const next: Probe = {
+        at: now,
+        providers: readProviders(capabilities),
+        projects: listed,
+        projectScope: readProjectScope(capabilities),
+      };
       yield* Ref.update(probes, (current) => new Map(current).set(machine.id, next));
       return next;
     });
@@ -692,6 +706,8 @@ const make = Effect.gen(function* () {
             }
             row.reachable = true;
             row.providers = probed.success.providers;
+            const scope = probed.success.projectScope;
+            if (scope !== undefined) row.projectScope = scope;
             if (project !== undefined) {
               const { reason: _reason, ...match } = matchFor(
                 machine,
@@ -700,6 +716,10 @@ const make = Effect.gen(function* () {
                 undefined,
               );
               row.project = match;
+              // That machine lists only projects its grant covers, so no match there means
+              // the grant leaves this one out: work for it cannot start there yet.
+              if (scope !== undefined && scope !== "all" && match.match === "none")
+                row.status = "project_not_in_grant";
             }
             return row;
           }),

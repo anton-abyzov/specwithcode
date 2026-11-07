@@ -2,6 +2,7 @@
   "name": "@specweave-studio/marketing",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "stage:install-scripts": "node scripts/stage-install-scripts.mjs",

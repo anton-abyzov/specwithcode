@@ -320,6 +320,42 @@ nonisolated final class AdaptiveDrawerTests: XCTestCase {
     XCTAssertLessThanOrEqual(host.sizeThatFits(in: CGSize(width: 358, height: 100)).width, 358)
   }
 
+  /// A thread's header starts its title after the Back button. It may not
+  /// ask for more than it is offered either, however long the controls are.
+  @MainActor func testLeadingHeaderNeverAsksForMoreThanItIsOffered() {
+    let host = UIHostingController(rootView: ScreenHeader(alignment: .leading) {
+      Text("Back and Menu")
+    } center: {
+      Text("A thread title long enough to need truncating on a small phone")
+    } trailing: {
+      Text("Device, machine and thread actions")
+    })
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 100))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true }
+    host.view.layoutIfNeeded()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    XCTAssertLessThanOrEqual(host.sizeThatFits(in: CGSize(width: 320, height: 100)).width, 320)
+  }
+
+  /// A header with nothing beside the title (a thread beside the sidebar on
+  /// the Duo's rail) still shows the title, at its natural width.
+  @MainActor func testHeaderWithEmptySidesStillShowsItsTitle() {
+    for alignment in [ScreenHeader<EmptyView, Text, EmptyView>.TitleAlignment.center, .leading] {
+      let host = UIHostingController(rootView: ScreenHeader(alignment: alignment) {
+        EmptyView()
+      } center: {
+        Text("Release checklist")
+      } trailing: {
+        EmptyView()
+      })
+      let size = host.sizeThatFits(in: CGSize(width: 393, height: 100))
+      XCTAssertGreaterThan(size.height, 20, "\(alignment) header lost its title")
+      XCTAssertLessThanOrEqual(size.width, 393)
+    }
+  }
+
   /// The column's width at a scene width, or 0 below the breakpoint.
   private static func columnWidth(_ width: Double) -> Double {
     width >= Double(WeaveSize.sidebarBreakpoint) ? min(max(width * 0.42, 288), 420) : 0

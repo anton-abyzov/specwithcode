@@ -37,6 +37,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { StarOnGitHubLink } from "../github/StarOnGitHub";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { useStudioConnectAuthPrompt } from "../clerk/useStudioConnectAuthPrompt";
@@ -307,7 +308,10 @@ export function WelcomeWizard({
                   SpecWithCode
                 </span>
               </div>
-              <LanguageSelect showIcon className="w-auto sm:w-auto" />
+              <div className="flex items-center gap-1">
+                <StarOnGitHubLink />
+                <LanguageSelect showIcon className="w-auto sm:w-auto" />
+              </div>
             </div>
           }
         >

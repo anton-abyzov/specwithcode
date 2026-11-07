@@ -45,6 +45,7 @@ const state = vi.hoisted(() => ({
     createdBy: string;
     creationSource?: string;
     senderThreadId?: string;
+    notification?: import("@specweave-studio/contracts").OrchestrationV2Notification;
     delegatedCompletion?: { taskIds: string[] };
     runId?: string | null;
     createdAt?: unknown;

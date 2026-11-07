@@ -39,6 +39,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsSkillsAction]: AuthFilesystemWriteScope,
   // Installs on other machines, like a fleet update.
   [WS_METHODS.projectsSkillsFleetPush]: AuthEnvironmentMaintainScope,
+  [WS_METHODS.projectsSkillAuthoring]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsSkillsStudioLink]: AuthOrchestrationOperateScope,
   [WS_METHODS.managedUpdatesEnroll]: AuthAccessWriteScope,
   [WS_METHODS.managedUpdatesRevoke]: AuthAccessWriteScope,
@@ -365,6 +366,16 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.designWatch) return [AuthFilesystemReadScope];
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
+  if (method === WS_METHODS.projectsSkillAuthoring) {
+    const operation = (input as { operation?: string } | null)?.operation;
+    if (operation === "read") return [AuthFilesystemReadScope];
+    if (operation === "generate") return [AuthFilesystemWriteScope, AuthOrchestrationOperateScope];
+    if (operation === "publish")
+      return [AuthFilesystemWriteScope, AuthSourceControlWriteScope, AuthTerminalOperateScope];
+    if (operation === "apply" || operation === "status" || operation === "previewApply")
+      return [AuthFilesystemWriteScope, AuthTerminalOperateScope];
+    return [AuthFilesystemWriteScope];
+  }
   if (method === WS_METHODS.projectsSkillsAction) return projectSkillsActionScopes(input);
   // Writes another tool's configuration, which that tool then runs as commands.
   if (method === WS_METHODS.nativeConnectionApply)

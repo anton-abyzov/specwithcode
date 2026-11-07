@@ -1,6 +1,7 @@
 {
   "name": "@specweave-studio/client-runtime",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./state/project-picker": {

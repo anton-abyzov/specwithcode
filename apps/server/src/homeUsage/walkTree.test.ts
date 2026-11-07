@@ -140,13 +140,13 @@ describe("walkTreeSync", () => {
   );
 
   it("skips entries on another device", () => {
-    const root = "/home/me/.specwithcode";
+    const root = NodePath.resolve("/home/me/.specwithcode");
     const tree: Record<string, { dev: bigint; children?: Array<string> }> = {
       [root]: { dev: 1n, children: ["m4", "mounted"] },
-      [`${root}/m4`]: { dev: 1n, children: ["file"] },
-      [`${root}/m4/file`]: { dev: 1n },
-      [`${root}/mounted`]: { dev: 2n, children: ["secret"] },
-      [`${root}/mounted/secret`]: { dev: 2n },
+      [NodePath.join(root, "m4")]: { dev: 1n, children: ["file"] },
+      [NodePath.join(root, "m4", "file")]: { dev: 1n },
+      [NodePath.join(root, "mounted")]: { dev: 2n, children: ["secret"] },
+      [NodePath.join(root, "mounted", "secret")]: { dev: 2n },
     };
     const read: Array<string> = [];
     const fake: WalkFs = {
@@ -174,7 +174,7 @@ describe("walkTreeSync", () => {
     const result = run(input(root), fake);
     expect(result.otherDevice).toBe(1);
     expect(result.totalBytes).toBe(3000);
-    expect(read).not.toContain(`${root}/mounted`);
+    expect(read).not.toContain(NodePath.join(root, "mounted"));
   });
 
   it("stops when asked, at the entry limit and reports itself incomplete", () => {

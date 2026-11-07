@@ -7,10 +7,15 @@ development commands, tests, and platform-specific desktop packaging prerequisit
 
 ## Read this first
 
-We are not actively seeking outside contributions and have limited review capacity. Opening a PR does
-not create an obligation to review or merge it. We may close or defer it, ask for a smaller scope, or
-reimplement the idea later. Meeting this guide's requirements makes a PR eligible for deeper review;
-it does not guarantee acceptance.
+SpecWithCode is open source under the [MIT License](LICENSE), and contributions are welcome. The
+easiest way in is an issue labelled
+[good first issue](https://github.com/anton-abyzov/specwithcode/labels/good%20first%20issue): each one
+names the files to change and how to test it. Everyone taking part follows the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+Review capacity is limited, so opening a PR does not create an obligation to review or merge it. We
+may close or defer it, ask for a smaller scope, or reimplement the idea later. Meeting this guide's
+requirements makes a PR eligible for deeper review; it does not guarantee acceptance.
 
 These requirements apply to every open PR, including drafts. Draft status does not postpone triage
 or excuse missing approval, unfocused scope, or inadequate verification. A draft can be closed for

@@ -159,7 +159,8 @@ use_machine() {  # use_machine ROOT VERSION
     RELEASE_ENV="$root/secrets/release.env" NVM_DIR="$root/nvm" STUDIO_FLEET_HOSTS="$root/fleet/hosts.json"
     STUDIO_PUBLIC_RULES="$root/public-rules/rules.json" RELEASE_DESKTOP_APP="$root/Applications/SpecWithCode.app"
     RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE=
-    RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT= RELEASE_JOBS=2 RELEASE_FLEET_SSH=)
+    RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT= RELEASE_JOBS=2 RELEASE_FLEET_SSH=
+    RELEASE_PRIVATE_REPO=anton-abyzov/specwithcode)  # Two repositories, unless a case sets one.
   mkdir -p "$root/home"
 }
 
@@ -240,10 +241,11 @@ dry_ok() {
     has 'test-sharded.mjs --shards 4' && has 'fleet_rollout.py --version 9.9.9 --only m4 --hold-minutes 15' &&
     has 'server-retry: (in ' && has 'runs once more, alone' && has 'typecheck-gate.sh --jobs 3' &&
     has '--arg=--allow-project-migrations --arg=--allow-existing-browser-heartbeat' &&
-    has 'electron-check: (in ' && has 'sums-check: python3 -B' && has 'fetch-sums-private: gh release download v9.9.9' &&
+    has 'electron-check: (in ' && has 'sums-check: python3 -B' &&
+    has 'fetch-sums-public: gh release download v9.9.9 -R anton-abyzov/specwithcode ' &&
     has "verify-sums --dir $DRY_HOME/.specwithcode/release-staging/9.9.9/prev --digests" &&
     has 'fleet-feed: stop unless v9.9.9 is published on anton-abyzov/specwithcode' &&
-    has 'public-identity: (in ' && has 'same-sums-public: stop unless' &&
+    lacks 'public-identity' && lacks 'publish.mjs' && lacks 'draft-private' && has 'same-sums-public: stop unless' &&
     has 'fleet-linux: (in ' && has 'linux_rollout.py --version 9.9.9' &&
     has 'verify-app: (in ' && has 'verify-built-app.mjs --mode all --archive ' &&
     has 'rehearse: (in ' && has 'rehearse_update.py --json --server-entrypoint ' && has '/test/apps/server/src/bin.ts' || return 1
@@ -1376,6 +1378,35 @@ unverified_drafts_refused() {
   has 'drafts: candidate aaaaaaaaaaaa has no passed verify stage'
 }
 check 'drafts refuse a candidate without a verify marker' unverified_drafts_refused
+
+# ---------------------------------------------------------------- one repository (the default)
+
+S="$WORK/s"
+make_machine "$S"
+rm -f "$S/fleet/hosts.json" "$S/fleet/id_ed25519" "$S/fleet/known_hosts" "$S/public-rules/rules.json"
+use_machine "$S" 1.6.2
+stub_set RELEASE_PRIVATE_REPO=anton-abyzov/specwithcode
+single_repo_ok() {
+  run 0 1.6.2 --ci || return 1
+  has 'SpecWithCode 1.6.2 is released.' || return 1
+  [ "$(stages_after 0)" = "prev bump candidate stage1 build bundle sign verify helpers plan drafts publish-private publish-public merge " ] ||
+    return 1
+  local label
+  for label in clone-public public-email public-name public-fetch mirror-check mirror-publish draft-private \
+    upload-private publish-private; do
+    ! awk -F '\t' -v l="$label" '$2 == l' "$STUB_LOG" | grep -q . || return 1
+  done
+  stage_line drafts draft-public | grep -qF -- "-R anton-abyzov/specwithcode --draft --target $SHA_A " &&
+    stage_line drafts draft-public | grep -qF 'notes-public.md' &&
+    stage_line drafts upload-public | grep -qF '/SpecWithCode-arm64.dmg' &&
+    stage_line drafts upload-public | grep -qF 'SpecWithCode-1.6.2-arm64.dmg' &&
+    stage_line publish-private notes-public | grep -qF 'notes-public.md' &&
+    stage_line publish-private publish-public | grep -qF 'v1.6.2 -R anton-abyzov/specwithcode --draft=false' &&
+    case "$(labels_of publish-public)" in *fetch-sums* | *publish-* | *notes*) false ;; esac &&
+    stage_line publish-public dispatch-windows-linux | grep -qF -- '-R anton-abyzov/specwithcode -f version=1.6.2'
+}
+check 'one repository: no public clone or mirror, one draft with the public notes and every asset, one publish' single_repo_ok
+stub_set RELEASE_PRIVATE_REPO=anton-abyzov/specwithcode
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
 # The candidate channel, canary and finalize (release-canary.sh).

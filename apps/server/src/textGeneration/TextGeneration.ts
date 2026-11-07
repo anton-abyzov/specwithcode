@@ -119,6 +119,15 @@ export interface HandoffNoteGenerationResult {
 export class TextGeneration extends Context.Service<
   TextGeneration,
   {
+    /** Generate editable standalone skill content on the explicitly selected provider. */
+    readonly generateSkill?: (input: {
+      cwd: string;
+      prompt: string;
+      modelSelection: ModelSelection;
+    }) => Effect.Effect<
+      { name: string; description: string; instructions: string },
+      TextGenerationError
+    >;
     /**
      * Generate a commit message from staged change context.
      */
@@ -164,6 +173,7 @@ export class TextGeneration extends Context.Service<
 >()("specweave-studio/textGeneration/TextGeneration") {}
 
 type TextGenerationOp =
+  | "generateSkill"
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
@@ -224,6 +234,27 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(() => resolveInstance(registry, operation, input.modelSelection.instanceId)),
     );
   return TextGeneration.of({
+    generateSkill: (input) =>
+      Effect.gen(function* () {
+        const instance = yield* registry.getInstance(input.modelSelection.instanceId);
+        const snapshot = instance ? yield* instance.snapshot.getSnapshot : null;
+        if (
+          !instance?.enabled ||
+          !snapshot?.models.some((model) => model.slug === input.modelSelection.model)
+        ) {
+          return yield* new TextGenerationError({
+            operation: "generateSkill",
+            detail: "Select an available model on an enabled provider.",
+          });
+        }
+        const service = yield* admittedInstance("generateSkill", input);
+        if (!service.generateSkill)
+          return yield* new TextGenerationError({
+            operation: "generateSkill",
+            detail: "This provider cannot generate skills.",
+          });
+        return yield* service.generateSkill(input);
+      }),
     generateCommitMessage: (input) =>
       admittedInstance("generateCommitMessage", input).pipe(
         Effect.flatMap((textGeneration) => textGeneration.generateCommitMessage(input)),

@@ -122,10 +122,14 @@ describe("unsafeSearchRootReasonResolved", () => {
       const project = NodePath.join(home, "code", "app");
       await NodeFSP.mkdir(stateDir, { recursive: true });
       await NodeFSP.mkdir(project, { recursive: true });
-      await NodeFSP.symlink(home, NodePath.join(scratch, "home-link"));
-      await NodeFSP.symlink(NodePath.join(home, ".studio"), NodePath.join(scratch, "studio-link"));
-      await NodeFSP.symlink(project, NodePath.join(scratch, "project-link"));
-      const options = { homeDir: home, stateDir, platform: "linux" as const };
+      await NodeFSP.symlink(home, NodePath.join(scratch, "home-link"), "junction");
+      await NodeFSP.symlink(
+        NodePath.join(home, ".studio"),
+        NodePath.join(scratch, "studio-link"),
+        "junction",
+      );
+      await NodeFSP.symlink(project, NodePath.join(scratch, "project-link"), "junction");
+      const options = { homeDir: home, stateDir, platform: process.platform };
 
       await expect(
         unsafeSearchRootReasonResolved(NodePath.join(scratch, "home-link"), options),

@@ -31,7 +31,6 @@ Stdlib only and Python 3.9 compatible, like the fleet scripts it is called besid
 import argparse
 import contextlib
 import datetime
-import fcntl
 import json
 import os
 import pathlib
@@ -190,6 +189,9 @@ def read(path):
 @contextlib.contextmanager
 def locked(path):
     """An exclusive flock beside the record for one read-modify-write."""
+    # Read-only commands also run on Windows; writers still require POSIX locking.
+    import fcntl
+
     path = pathlib.Path(path)
     fd = os.open(str(path.with_name(path.name + '.lock')), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:

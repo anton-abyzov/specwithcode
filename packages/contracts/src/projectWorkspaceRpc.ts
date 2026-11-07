@@ -1,4 +1,9 @@
 import {
+  SkillAuthoringInput,
+  SkillAuthoringResult,
+  SkillAuthoringError,
+} from "./skillAuthoring.ts";
+import {
   ProjectEnvironmentReadInput,
   ProjectEnvironmentReadResult,
   ProjectEnvironmentPrepareInput,
@@ -131,6 +136,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsSkillsVersions: "projects.skillsVersions",
   projectsSkillsAction: "projects.skillsAction",
   projectsSkillsFleetPush: "projects.skillsFleetPush",
+  projectsSkillAuthoring: "projects.skillAuthoring",
   projectsSkillsStudioLink: "projects.skillsStudioLink",
   projectsWorkspaceRead: "projects.workspaceRead",
   projectsSpecweaveSetUp: "projects.specweaveSetUp",
@@ -401,6 +407,11 @@ export const projectKnowledgeRpcs = [
  */
 const skillsActionError = Schema.Union([ProjectSkillsActionError, EnvironmentAuthorizationError]);
 export const projectSkillsActionRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillAuthoring, {
+    payload: SkillAuthoringInput,
+    success: SkillAuthoringResult,
+    error: Schema.Union([SkillAuthoringError, EnvironmentAuthorizationError]),
+  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillsVersions, {
     payload: ProjectSkillsVersionsInput,
     success: ProjectSkillsVersions,

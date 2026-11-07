@@ -97,6 +97,9 @@ stub_value() {
     tag-sha) printf '%s\n' "$SHA" ;;
     app-version) printf '%s\n' "$VERSION" ;;
     verify-result) printf 'passed\n' ;;
+    release-draft) printf 'false\n' ;;
+    release-assets) printf 'studio-update.json\nSHA256SUMS\nSpecWithCode-%s-arm64.dmg\n' "$VERSION" ;;
+    release-merged) printf 'behind\n' ;;
     pr-required-buckets) printf 'skipping\n' ;;
     pinned-objects) printf '%s\n' "$LAZY_FETCH_PROBE" ;;
     packages) printf 'apps/web\t@specweave-studio/web\npackages/shared\t@specweave-studio/shared\n' ;;

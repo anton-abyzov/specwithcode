@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   MessageId,
+  OrchestrationV2Notification,
   NodeId,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
@@ -9,6 +11,7 @@ import {
   TurnItemId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
 
 import { backgroundWorkNotification, notificationTurnItem } from "./Notification.ts";
 
@@ -31,6 +34,7 @@ describe("backgroundWorkNotification", () => {
       ]),
       {
         source: { kind: "subagent", childThreadId },
+        replySources: [{ kind: "thread", threadId: childThreadId, title: "Review src/math.ts" }],
         outcome: "completed",
         summary: 'Subagent "Review src/math.ts" finished',
       },
@@ -55,6 +59,7 @@ describe("backgroundWorkNotification", () => {
     ]);
     assert.deepEqual(notification, {
       source: { kind: "background_task" },
+      replySources: [{ kind: "thread", threadId: childThreadId, title: "Agent B" }],
       outcome: "cancelled",
       summary: 'Subagent "Agent B" and command "Sleep 60 seconds" were stopped',
     });
@@ -129,10 +134,25 @@ describe("notificationTurnItem", () => {
     assert.equal(item.type, "notification");
     if (item.type !== "notification") return;
     assert.equal(item.summary, "2 of 3 delegated tasks finished: Review src/math.ts, Write tests");
+    assert.deepEqual(item.replySources, [
+      { kind: "thread", threadId: ThreadId.make("thread:a"), title: "Review src/math.ts" },
+      { kind: "thread", threadId: ThreadId.make("thread:b"), title: "Write tests" },
+    ]);
     assert.deepEqual(item.source, {
       kind: "delegated_task",
       taskIds: [NodeId.make("a"), NodeId.make("b")],
     });
+  });
+
+  it("bounds an untitled task prompt before storing it as a source label", () => {
+    const longPrompt = "A".repeat(200) + "\nPrivate task details";
+    const item = notificationTurnItem(userMessage, delivery(["a"]), [
+      { ...tasks[0]!, title: "", prompt: longPrompt },
+    ]);
+    if (item.type !== "notification") throw new Error("Expected notification");
+    assert.deepEqual(item.replySources, [
+      { kind: "thread", threadId: ThreadId.make("thread:a"), title: "A".repeat(79) + "…" },
+    ]);
   });
 
   it("opens the child thread of a single delegated task", () => {
@@ -146,5 +166,28 @@ describe("notificationTurnItem", () => {
         childThreadId: ThreadId.make("thread:a"),
       },
     });
+  });
+});
+
+describe("notification provenance serialization", () => {
+  it("retains remote thread identities and PR URLs through the wire schema", () => {
+    const stored: OrchestrationV2Notification = {
+      source: { kind: "background_task" },
+      outcome: "completed",
+      summary: "Done",
+      replySources: [
+        {
+          kind: "thread",
+          threadId: ThreadId.make("thread:remote"),
+          environmentId: EnvironmentId.make("remote"),
+          title: "Remote worker",
+        },
+        { kind: "pull_request", url: "https://github.com/o/r/pull/1", title: "PR #1" },
+      ],
+    };
+    const decoded = Schema.decodeUnknownSync(OrchestrationV2Notification)(
+      JSON.parse(JSON.stringify(stored)),
+    );
+    assert.deepEqual(decoded.replySources, stored.replySources);
   });
 });

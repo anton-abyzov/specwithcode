@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Reads the workflow files as text and the graph from run_record.py.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import { parse } from "yaml";
 
@@ -42,7 +43,7 @@ const macos = read("release-macos.yml") as { jobs: Record<string, { "runs-on"?: 
 const graph = JSON.parse(
   NodeChildProcess.execFileSync(
     "python3",
-    ["-B", new URL("./release/run_record.py", import.meta.url).pathname, "graph"],
+    ["-B", NodeURL.fileURLToPath(new URL("./release/run_record.py", import.meta.url)), "graph"],
     { encoding: "utf8" },
   ),
 ) as ReadonlyArray<[string, ReadonlyArray<string>]>;
@@ -164,9 +165,26 @@ describe("release.yml", () => {
     );
   });
 
+  it("runs a dry run as release.sh --stage <id> --dry-run, with no release secret", () => {
+    expect(workflow.on.workflow_dispatch.inputs.dry_run).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      expect([name, job.with?.dry_run]).toEqual([name, "${{ inputs.dry_run }}"]);
+    }
+    expect(stageWorkflow.jobs.stage.env.RELEASE_SECRETS).toMatch(/^\$\{\{ !inputs\.dry_run && contains\(/);
+    const run = stageWorkflow.jobs.stage.steps.map((step) => step.run ?? "").join("\n");
+    expect(run).toContain(
+      'if [ "$INPUT_DRY_RUN" = true ]; then args=("$RELEASE_VERSION" --stage "$RELEASE_STAGE" --dry-run); fi',
+    );
+  });
+
   it("is dispatched by hand only and never runs beside release-macos.yml", () => {
     expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
-    expect(workflow.concurrency.group).toBe("release-macos");
+    expect(workflow.concurrency.group).toBe(
+      "${{ inputs.dry_run && format('release-dry-run-{0}', github.run_id) || 'release-macos' }}",
+    );
     expect(stageWorkflow.jobs.stage["runs-on"]).toBe(macos.jobs.release?.["runs-on"]);
     expect(macos.jobs.release?.["runs-on"]).toBe(
       "${{ vars.RELEASE_MACOS_RUNNER || 'swc-release' }}",

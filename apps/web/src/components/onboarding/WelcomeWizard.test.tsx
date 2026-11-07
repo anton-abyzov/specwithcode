@@ -24,6 +24,8 @@ vi.mock("../../state/session", () => ({
     new Set(environments.map((entry) => entry.environmentId)),
   readEnvironmentScope: () => true,
 }));
+// The GitHub star link has its own test.
+vi.mock("../github/StarOnGitHub", () => ({ StarOnGitHubLink: () => null }));
 vi.mock("../../state/agentSessions", () => ({ agentSessionImport: "import" }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { create: "create" } }));
 vi.mock("../../state/use-atom-command", () => ({

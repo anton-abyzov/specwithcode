@@ -703,6 +703,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["about app application studio version build release current installed"],
   },
   {
+    id: "star-on-github",
+    title: "Star on GitHub",
+    to: "/settings/general",
+    searchTerms: ["github star repository source code open source mit license contribute"],
+  },
+  {
     id: "usage-data",
     title: "Usage data",
     to: "/settings/general",

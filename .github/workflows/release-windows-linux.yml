@@ -1,0 +1,1072 @@
+name: Release Windows and Linux
+
+# Adds the Windows and Linux desktop apps (x64 and arm64), their update feeds and the Windows CLI
+# zips to a SpecWithCode release that scripts/release/release.sh (release-macos.yml) already published.
+# release.sh is left alone: it still builds, signs and publishes the macOS app and every asset the
+# fleet reads. This workflow only adds files with names release.sh never uses, and checks after
+# the upload that latest-mac.yml and SHA256SUMS on both releases are unchanged.
+#
+# Where the feeds have to land: every desktop build bakes resources/app-update.yml with
+# provider github, owner anton-abyzov, repo specwithcode (FEED_REPOSITORY, passed to
+# scripts/build-desktop-artifact.ts as STUDIO_DESKTOP_UPDATE_REPOSITORY).
+# electron-updater asks that repository for its Latest release and downloads latest.yml (Windows)
+# or latest-linux.yml / latest-linux-arm64.yml (Linux) from it; macOS reads latest-mac.yml from the same release
+# (apps/desktop/src/updates/). So the assets go to that release, beside release.sh's copies (and,
+# from another repository, to its release too).
+#
+# Assets (X.Y.Z is the version):
+#   SpecWithCode-X.Y.Z-x64.exe, .exe.blockmap                    NSIS installer (signed, see below)
+#   SpecWithCode-X.Y.Z-arm64.exe, .exe.blockmap                  the same for Windows on ARM
+#   latest.yml                                                   one feed for both Windows arches
+#   SpecWithCode-X.Y.Z-x86_64.AppImage, -amd64.deb, latest-linux.yml   Linux x64 app, .deb and feed
+#   SpecWithCode-X.Y.Z-arm64.AppImage, -arm64.deb, latest-linux-arm64.yml   the same for arm64
+#   studio-X.Y.Z-win32-x64.zip, studio-X.Y.Z-win32-arm64.zip     CLI archives scripts/install.ps1 installs
+#   SHA256SUMS-windows-linux                                     sha256 of the above; install.ps1 reads it
+#
+# Each platform builds on hardware of each arch (windows-11-arm, ubuntu-22.04-arm): node-pty and
+# the Rust helpers are native, and the smoke tests run the real binaries. Every leg is required: a
+# release missing arm64 would move native arm64 Windows installs onto the x64 build for good
+# (electron-updater falls back to the first file) and leave arm64 Linux without a feed. A failed
+# leg holds the attach back; the daily catch-up run builds it again. Releases from before arm64
+# count as complete with x64 alone.
+#
+# Linux builds on Ubuntu 22.04 (glibc 2.35), the oldest release docs/user/install.md supports: a
+# native binary built on a newer glibc does not load on an older one. The glibc floor step fails a
+# build when anything this repository compiles needs more.
+#
+# The Linux CLI archives (studio-X.Y.Z-linux-<arch>.tar.gz, the single-executable) are built and
+# smoke-tested on every run but never uploaded: release.sh owns every studio-*.tar.gz name and
+# install.sh installs its Node bundle. A dry run keeps them as cli-linux-<arch>-X.Y.Z artifacts.
+#
+# Runs:
+#   dry run (default): builds everything from the release tag (or `ref`), runs every check that
+#     needs no write access, and keeps the assets as the workflow artifact
+#     windows-linux-release-X.Y.Z. Nothing on any release changes.
+#   real (dry_run false): waits until vX.Y.Z is published on both repositories, then uploads.
+#     `replace` overwrites this workflow's own assets from an earlier run; nothing else is
+#     ever overwritten.
+#   on publish: with the repository variable RELEASE_WINDOWS_LINUX_ON_PUBLISH set to true, a
+#     published X.Y.Z release in this repository starts a real run by itself. Off: the release
+#     tooling dispatches a real run once per release instead.
+#   daily catch-up: once a day a real run attaches the Windows and Linux apps to the newest
+#     published release if it still lacks them (a release whose dispatch failed or never
+#     happened), and stops at Plan within seconds when that release has them already.
+#     RELEASE_WINDOWS_LINUX_CATCH_UP set to false turns it off.
+#
+# Secrets (real runs only, names only), in the `release` environment: RELEASE_GH_TOKEN (the token
+# release-macos.yml uses, with contents write on this repository), STUDIO_GOOGLE_OAUTH_CLIENT_ID
+# and STUDIO_GOOGLE_OAUTH_CLIENT_SECRET (the built-in Google pair, as in the macOS build). Run from
+# a repository other than FEED_REPOSITORY, a run attaches the apps to the release on both.
+#
+# Windows code signing (Azure Trusted Signing), optional: AZURE_TENANT_ID, AZURE_CLIENT_ID,
+# AZURE_CLIENT_SECRET, AZURE_TRUSTED_SIGNING_ENDPOINT, AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
+# AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME and AZURE_TRUSTED_SIGNING_PUBLISHER_NAME. With
+# all seven, electron-builder signs every .exe in the app, the installer and its uninstaller before
+# it writes the blockmap and latest.yml, so the feed hashes are of the signed files, and the CLI
+# zip's specweave-studio.exe and studio-resource-monitor.exe are signed too. With none, the build
+# is unsigned and says so; with only some, Plan fails. Setup: docs/studio/releasing.md.
+#
+# Not yet: the WSL backend, which needs the Linux CLI archive built into the Windows app.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (X.Y.Z); builds the commit tagged vX.Y.Z
+        required: true
+        type: string
+      dry_run:
+        description: Build and check only; keep the assets as a workflow artifact
+        required: false
+        type: boolean
+        default: true
+      ref:
+        description: Build this branch, tag or commit instead of vX.Y.Z (dry runs only)
+        required: false
+        type: string
+      replace:
+        description: Overwrite this workflow's assets already on the release
+        required: false
+        type: boolean
+        default: false
+  release:
+    types: [published]
+  schedule:
+    # Daily catch-up at 07:23 UTC, away from minute zero. Every release dispatches its own run;
+    # this one only builds when the newest release still lacks its Windows and Linux apps.
+    - cron: "23 7 * * *"
+
+permissions:
+  contents: read
+
+# No workflow-wide concurrency group: one let a run that was waiting for its own release (up to an
+# hour) hold back every other version's builds (v1.0.94 waited 8,548 s behind v1.0.93). Only the
+# upload is serialized, per version, in the publish job, where Plan has already normalized the
+# version for every trigger.
+
+env:
+  FEED_REPOSITORY: anton-abyzov/specwithcode
+  # The releases a run attaches to: this repository's and, when it is another one, the feed's.
+  # Labels name them in that order (private, public) for the per-release files of the publish job.
+  RELEASE_REPOSITORIES: ${{ github.repository == 'anton-abyzov/specwithcode' && 'anton-abyzov/specwithcode' || format('{0} anton-abyzov/specwithcode', github.repository) }}
+  RELEASE_LABELS: ${{ github.repository == 'anton-abyzov/specwithcode' && 'public' || 'private public' }}
+  GIT_TERMINAL_PROMPT: "0"
+  # SpecWithCode Connect, as in release-macos.yml and release.sh: the four public identifiers
+  # from repository variables, and hosted services on only when all four are set (an https relay).
+  # Without them the Windows and Linux apps had no Connect section in Settings > Connections.
+  STUDIO_CLERK_PUBLISHABLE_KEY: ${{ vars.STUDIO_CLERK_PUBLISHABLE_KEY }}
+  STUDIO_CLERK_JWT_TEMPLATE: ${{ vars.STUDIO_CLERK_JWT_TEMPLATE }}
+  STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID }}
+  STUDIO_RELAY_URL: ${{ vars.STUDIO_RELAY_URL }}
+  STUDIO_ENABLE_HOSTED_SERVICES: ${{ vars.STUDIO_CLERK_PUBLISHABLE_KEY != '' && vars.STUDIO_CLERK_JWT_TEMPLATE != '' && vars.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID != '' && startsWith(vars.STUDIO_RELAY_URL, 'https://') && 'true' || '' }}
+  VITE_STUDIO_ENABLE_HOSTED_SERVICES: ${{ vars.STUDIO_CLERK_PUBLISHABLE_KEY != '' && vars.STUDIO_CLERK_JWT_TEMPLATE != '' && vars.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID != '' && startsWith(vars.STUDIO_RELAY_URL, 'https://') && 'true' || '' }}
+
+jobs:
+  plan:
+    name: Plan
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && vars.RELEASE_WINDOWS_LINUX_CATCH_UP != 'false') ||
+      (github.event_name == 'release' &&
+        vars.RELEASE_WINDOWS_LINUX_ON_PUBLISH == 'true' && !github.event.release.prerelease)
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      commit: ${{ steps.plan.outputs.commit }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      replace: ${{ steps.plan.outputs.replace }}
+      skip: ${{ steps.plan.outputs.skip }}
+      windows_signing: ${{ steps.plan.outputs.windows_signing }}
+    steps:
+      # A catch-up run first checks what the newest release already has (release-state).
+      - name: Setup Node
+        if: github.event_name == 'schedule'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Fetch release helper
+        if: github.event_name == 'schedule'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tool="$RUNNER_TEMP/release-tools/release-windows-linux.ts"
+          mkdir -p "$(dirname "$tool")"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/release-windows-linux.ts?ref=$GITHUB_SHA" > "$tool"
+          echo "TOOL=$tool" >> "$GITHUB_ENV"
+
+      - name: Resolve version and commit
+        id: plan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_REPLACE: ${{ inputs.replace }}
+          RELEASE_GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN != '' && 'set' || '' }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_ID != '' && 'set' || '' }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_SECRET != '' && 'set' || '' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID != '' && 'set' || '' }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID != '' && 'set' || '' }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET != '' && 'set' || '' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT != '' && 'set' || '' }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME != '' && 'set' || '' }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME != '' && 'set' || '' }}
+          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME != '' && 'set' || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = release ]; then
+            version="${RELEASE_TAG#v}" dry_run=false replace=false ref=""
+          elif [ "$EVENT_NAME" = schedule ]; then
+            # The newest published release; a catch-up run only fills in what it lacks. It skips only
+            # when both releases hold a complete, consistent attach (release-state: every asset
+            # uploaded, digests matching the release's own checksum file, feeds for this version),
+            # builds when neither holds any of it, and fails with how to repair anything between.
+            tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)"
+            version="${tag#v}" dry_run=false replace=false ref=""
+            states=""
+            for repo in $RELEASE_REPOSITORIES; do
+              status=0
+              node "$TOOL" release-state --version "$version" --repo "$repo" || status=$?
+              case "$status" in 0 | 3) states="$states$status" ;; *) exit "$status" ;; esac
+            done
+            if [ -z "${states//0/}" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "### $tag already has its Windows and Linux apps; nothing to build." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [ -n "${states//3/}" ]; then
+              echo "::error::$tag has its Windows and Linux apps on one release only. Repair it: run Release Windows and Linux by hand with version=$version, dry_run=false and replace=true."
+              exit 1
+            fi
+          else
+            version="$(printf '%s' "$INPUT_VERSION" | tr -d '[:space:]')"
+            version="${version#v}" dry_run="$INPUT_DRY_RUN" replace="$INPUT_REPLACE"
+            ref="$(printf '%s' "$INPUT_REF" | tr -d '[:space:]')"
+          fi
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::'$version' is not an X.Y.Z release version; prerelease and preview builds have no Windows or Linux feed here."
+            exit 1
+          fi
+          if [ -n "$ref" ] && [ "$dry_run" != true ]; then
+            echo "::error::ref is for dry runs only; a real run builds the commit tagged v$version."
+            exit 1
+          fi
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          resolve() {  # resolve REF: the commit a branch, tag or full SHA names
+            if [[ "$1" =~ ^[0-9a-f]{40}$ ]]; then printf '%s\n' "$1"; return; fi
+            local refs
+            case "$1" in
+              refs/*) refs=("$1" "$1^{}") ;;
+              *) refs=("refs/tags/$1" "refs/tags/$1^{}" "refs/heads/$1") ;;
+            esac
+            # A peeled tag (^{}) names the commit; otherwise the tag or branch itself does.
+            git -c http.extraheader="$auth" ls-remote origin "${refs[@]}" |
+              awk '{ print ($2 ~ /\^\{\}$/ ? 0 : 1), $1 }' | sort -n | head -n 1 | cut -d' ' -f2
+          }
+          commit="$(resolve "${ref:-refs/tags/v$version}")"
+          if [ -z "$commit" ]; then
+            if [ -n "$ref" ]; then echo "::error::$ref is not a branch, tag or commit of $GITHUB_REPOSITORY."
+            else echo "::error::v$version is not tagged on $GITHUB_REPOSITORY; release.sh tags it when it publishes the release (or pass ref for a dry run)."; fi
+            exit 1
+          fi
+          # A real run needs every secret; find out now rather than after the builds.
+          if [ "$dry_run" != true ]; then
+            missing=()
+            for name in RELEASE_GH_TOKEN STUDIO_GOOGLE_OAUTH_CLIENT_ID STUDIO_GOOGLE_OAUTH_CLIENT_SECRET; do
+              if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+            done
+            if [ ${#missing[@]} -gt 0 ]; then
+              echo "::error::Missing repository secrets for a real run: ${missing[*]}"
+              exit 1
+            fi
+          elif [ -z "${STUDIO_GOOGLE_OAUTH_CLIENT_ID:-}" ]; then
+            echo "::warning::STUDIO_GOOGLE_OAUTH_CLIENT_ID is not set; this dry run builds without the built-in Google sign-in."
+          fi
+          # Windows code signing takes all seven Azure Trusted Signing secrets or none. Some of
+          # them is a setup mistake: fail rather than ship an unsigned build by accident.
+          azure=(AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TRUSTED_SIGNING_ENDPOINT
+            AZURE_TRUSTED_SIGNING_ACCOUNT_NAME AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME
+            AZURE_TRUSTED_SIGNING_PUBLISHER_NAME)
+          absent=()
+          for name in "${azure[@]}"; do
+            if [ -z "${!name:-}" ]; then absent+=("$name"); fi
+          done
+          if [ ${#absent[@]} -eq 0 ]; then
+            windows_signing=true
+          elif [ ${#absent[@]} -eq ${#azure[@]} ]; then
+            windows_signing=false
+            echo "::notice::No Azure Trusted Signing secrets: the Windows installers and CLI executables are built unsigned. Setup: docs/studio/releasing.md (Windows code signing)."
+          else
+            echo "::error::Azure Trusted Signing is only partly set up; missing: ${absent[*]}. Set all seven secrets, or remove them all for an unsigned build."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "dry_run=$dry_run"
+            echo "replace=$replace"
+            echo "windows_signing=$windows_signing"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### SpecWithCode $version for Windows and Linux"
+            echo ""
+            echo "- Source: \`$commit\`${ref:+ ($ref)}"
+            echo "- Mode: $([ "$dry_run" = true ] && echo "dry run, nothing is uploaded" || echo "upload to v$version on $GITHUB_REPOSITORY and $FEED_REPOSITORY")"
+            echo "- Windows: $([ "$windows_signing" = true ] && echo "signed with Azure Trusted Signing" || echo "unsigned")"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            rust_target: x86_64-pc-windows-msvc
+            spectre: Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre
+          - arch: arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            spectre: Microsoft.VisualStudio.Component.VC.Runtimes.ARM64.Spectre
+    env:
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      # True when Plan found all seven Azure Trusted Signing secrets; electron-builder then signs
+      # with azureSignOptions (scripts/build-desktop-artifact.ts). No Apple identity is ever used.
+      STUDIO_DESKTOP_SIGNED: ${{ needs.plan.outputs.windows_signing == 'true' && 'true' || 'false' }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      # windows-11-arm took 5m48s for the dependency install windows-2025 does in 1m30s (v1.0.132),
+      # nearly all of it writing the package store, and 46 s for a depth-1 checkout. Real-time
+      # scanning of the runner's own build folders buys nothing on a throwaway VM. Best effort: the
+      # step logs whether protection was on and never fails the job.
+      - name: Exclude the build folders from Defender scanning
+        shell: pwsh
+        run: |
+          $paths = @(
+            $env:GITHUB_WORKSPACE,
+            $env:RUNNER_TEMP,
+            (Join-Path $env:LOCALAPPDATA "pnpm"),
+            (Join-Path $env:LOCALAPPDATA "vite-plus"),
+            (Join-Path $env:USERPROFILE ".cargo"),
+            (Join-Path $env:USERPROFILE ".rustup")
+          )
+          try {
+            $status = Get-MpComputerStatus -ErrorAction Stop
+            Write-Host "Defender real-time protection was $($status.RealTimeProtectionEnabled)."
+            Add-MpPreference -ExclusionPath $paths -ErrorAction Stop
+            Write-Host "Excluded from scanning: $($paths -join ', ')"
+          } catch {
+            Write-Host "Defender exclusions not applied: $($_.Exception.Message)"
+          }
+
+      # Same hand checkout as desktop-windows-unsigned.yml: .repos holds orphaned gitlinks that
+      # break actions/checkout's cleanup.
+      - name: Checkout
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git -c http.extraheader="$auth" fetch --no-tags --depth=1 origin "$COMMIT"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      # The asset checks come from this workflow's own commit, which may be newer than the tag.
+      - name: Fetch release helper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/release-windows-linux.ts?ref=$GITHUB_SHA" \
+            > "$RUNNER_TEMP/release-tools/release-windows-linux.ts"
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      # Built from the same sources by native-cache.yml on main, for x64 and arm64, under these
+      # keys. On a hit the build reuses the binary, so it needs neither Rust nor the 4-5 minute
+      # Spectre install.
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/studio-resource-monitor.exe
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      # The resource monitor links the Spectre-mitigated MSVC runtime.
+      - name: Install Spectre-mitigated MSVC libs
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          SPECTRE_COMPONENT: ${{ matrix.spectre }}
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            $env:SPECTRE_COMPONENT, "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      # build-cli-archive.ts and the CLI's resource monitor step sign through pwsh. Installing the
+      # module for the current user from pwsh puts it on pwsh's default module path; electron-builder
+      # installs it again for whichever PowerShell it starts.
+      - name: Prepare Azure Trusted Signing
+        if: needs.plan.outputs.windows_signing == 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          try {
+            Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser -ErrorAction Stop
+          } catch {
+            Write-Warning "Could not bootstrap the NuGet package provider; the runner may have one. $($_.Exception.Message)"
+          }
+          Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -AllowClobber `
+            -Repository PSGallery -Scope CurrentUser -ErrorAction Stop
+          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
+          Get-Command Invoke-TrustedSigning -ErrorAction Stop | Out-Null
+
+      # No package store cache on Windows: setup-vp's restores a Linux-shaped store there (#7975),
+      # and a pinned store cached under a Windows key, tried in PR #913, restored in 43 s and then
+      # linked in 53 s, no faster than the 88-91 s uncached download, and cost 95 s to save.
+      - name: Install dependencies
+        run: vp install --filter=@specweave-studio/desktop... --filter=specweave-studio... --filter=@specweave-studio/web... --filter=@specweave-studio/scripts...
+
+      - name: Align package versions to the release
+        shell: bash
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      # With STUDIO_DESKTOP_SIGNED, electron-builder signs SpecWithCode.exe, every other .exe it
+      # packs (the resource monitor included), the uninstaller and the installer, and only then
+      # computes the blockmap and the sha512 in latest.yml.
+      - name: Build installer
+        shell: bash
+        env:
+          STUDIO_DESKTOP_UPDATE_REPOSITORY: ${{ env.FEED_REPOSITORY }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_ID }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_SECRET }}
+          STUDIO_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+        run: |
+          set -euo pipefail
+          node scripts/build-desktop-artifact.ts --platform win --target nsis --arch "$ARCH" \
+            --build-version "$VERSION" --output-dir release
+
+      - name: Smoke test the packaged main process
+        run: node apps/desktop/scripts/smoke-test.mjs
+
+      # The installer must poll the public feed this workflow writes to. Read app-update.yml out
+      # of the installer itself rather than from the build folder.
+      - name: Check the installer's update feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/installer"
+          rm -rf "$dir" && mkdir -p "$dir/app"
+          7z x -y -bso0 -o"$dir/nsis" "release/SpecWithCode-$VERSION-$ARCH.exe"
+          payload="$(find "$dir/nsis" -name '*.7z' | head -n 1)"
+          [ -n "$payload" ] || { echo "::error::No app payload inside the installer"; exit 1; }
+          7z x -y -bso0 -o"$dir/app" "$payload"
+          config="$(find "$dir/app" -path '*resources/app-update.yml' | head -n 1)"
+          [ -n "$config" ] || { echo "::error::The installer has no resources/app-update.yml"; exit 1; }
+          node "$RUNNER_TEMP/release-tools/release-windows-linux.ts" check-feed --repo "$FEED_REPOSITORY" "$config"
+
+      # release.sh's verify stage for macOS, on the app the installer unpacked above: its bundled
+      # server reports $VERSION, and a thread and the project coordinator are answered by an
+      # offline fake agent in a throwaway home, headless (scripts/release/verify-built-app.mjs).
+      # The acceptance proofs wrap the CLI in a shell script, which Windows cannot run.
+      - name: Verify the built app
+        shell: bash
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          set -euo pipefail
+          node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+          node scripts/release/verify-built-app.mjs --mode fresh --no-proofs --app "$RUNNER_TEMP/installer/app/SpecWithCode.exe" \
+            --version "$VERSION" --out "$RUNNER_TEMP/verify-windows"
+
+      # The receipt, verify.log, results.json and screenshots of a failed check: the step log names
+      # only the failed checks.
+      - name: Upload the failed verification
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verify-windows-${{ needs.plan.outputs.version }}-${{ matrix.arch }}-failed
+          path: ${{ runner.temp }}/verify-windows
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The CLI archive scripts/install.ps1 installs: the server as a Node single-executable,
+      # built with the Node apps/server/vite.config.ts pins (SEA_NODE_VERSION).
+      - name: Build CLI single-executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          VP_NODE_VERSION="$(sed -n 's/^const SEA_NODE_VERSION = "\([0-9.]*\)";.*/\1/p' apps/server/vite.config.ts)"
+          [ -n "$VP_NODE_VERSION" ] || { echo "::error::SEA_NODE_VERSION not found in apps/server/vite.config.ts"; exit 1; }
+          export VP_NODE_VERSION
+          node apps/server/scripts/cli.ts build-exe --verbose
+
+      # A copy, so the cached binary itself is never changed.
+      - name: Stage resource monitor for the CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          monitor="$RUNNER_TEMP/cli-resource-monitor/win32-$ARCH"
+          mkdir -p "$monitor"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/studio-resource-monitor.exe" "$monitor/"
+
+      # build-cli-archive.ts signs specweave-studio.exe; the monitor beside it is signed here, with
+      # the same parameters electron-builder uses for the installer.
+      - name: Sign the CLI's resource monitor
+        if: needs.plan.outputs.windows_signing == 'true'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $file = Join-Path $env:RUNNER_TEMP "cli-resource-monitor\win32-$env:ARCH\studio-resource-monitor.exe"
+          Invoke-TrustedSigning `
+            -Endpoint $env:AZURE_TRUSTED_SIGNING_ENDPOINT `
+            -CodeSigningAccountName $env:AZURE_TRUSTED_SIGNING_ACCOUNT_NAME `
+            -CertificateProfileName $env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME `
+            -FileDigest SHA256 -TimestampRfc3161 "http://timestamp.acs.microsoft.com" -TimestampDigest SHA256 `
+            -Files $file
+
+      # build-cli-archive.ts signs specweave-studio.exe when the AZURE_TRUSTED_SIGNING_* values are
+      # set, and skips signing when they are empty (Plan allows all of them or none).
+      - name: Build CLI archive
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          set -euo pipefail
+          node scripts/build-cli-archive.ts --platform win --arch "$ARCH" --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release-cli
+
+      - name: Smoke test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive "release-cli/studio-$VERSION-win32-$ARCH.zip" --expect-version "$VERSION"
+
+      # The installer, the executables at the top of the app (SpecWithCode.exe), its resource
+      # monitor, and the CLI zip's specweave-studio.exe and studio-resource-monitor.exe must carry a
+      # valid signature from the configured publisher; electron-updater checks that name on every
+      # later update. Any other .exe in the app only has to be validly signed, by anyone. The CLI
+      # zip's third-party .exe files (node-pty's OpenConsole.exe, @cursor/sdk's cursorsandbox.exe
+      # and rg.exe) are shipped as their packages publish them and are not checked.
+      - name: Check the Windows signatures
+        if: needs.plan.outputs.windows_signing == 'true'
+        shell: pwsh
+        env:
+          PUBLISHER: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = Join-Path $env:RUNNER_TEMP "installer\app"
+          $cli = Join-Path $env:RUNNER_TEMP "cli-signatures"
+          if (Test-Path $cli) { Remove-Item -Recurse -Force $cli }
+          Expand-Archive -Path "release-cli/studio-$env:VERSION-win32-$env:ARCH.zip" -DestinationPath $cli
+          $ours = @(Get-Item "release/SpecWithCode-$env:VERSION-$env:ARCH.exe")
+          $ours += @(Get-ChildItem -File -Filter *.exe $app)
+          $ours += @(Get-ChildItem -Recurse -File -Filter studio-resource-monitor.exe (Join-Path $app "resources"))
+          $cliOurs = @(Get-ChildItem -Recurse -Depth 1 -File -Filter specweave-studio.exe $cli)
+          $cliOurs += @(Get-ChildItem -Recurse -File -Filter studio-resource-monitor.exe $cli)
+          if ($cliOurs.Count -lt 2) { Write-Host "::error::Expected specweave-studio.exe and studio-resource-monitor.exe in the CLI zip; found $($cliOurs.Count)"; exit 1 }
+          $ours += $cliOurs
+          $others = @(Get-ChildItem -Recurse -File -Filter *.exe $app | Where-Object { $ours.FullName -notcontains $_.FullName })
+          $failed = 0
+          foreach ($file in $ours + $others) {
+            $signature = Get-AuthenticodeSignature -FilePath $file.FullName
+            $signer = if ($signature.SignerCertificate) {
+              $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+            } else { "" }
+            $mustBeOurs = $ours.FullName -contains $file.FullName
+            if ($signature.Status -ne "Valid" -or ($mustBeOurs -and $signer -ne $env:PUBLISHER)) {
+              Write-Host "::error::$($file.Name) is $($signature.Status), signed by '$signer'"
+              $failed++
+            } else {
+              Write-Host "$($file.Name): signed by $signer"
+            }
+          }
+          if ($ours.Count -lt 5) { Write-Host "::error::Expected the installer, the app, its resource monitor and the two CLI executables; found $($ours.Count) files"; $failed++ }
+          if ($failed -gt 0) { exit 1 }
+
+      - name: Collect assets
+        shell: bash
+        run: |
+          node "$RUNNER_TEMP/release-tools/release-windows-linux.ts" collect --platform win --arch "$ARCH" --version "$VERSION" \
+            --from release --from release-cli --out "$RUNNER_TEMP/assets"
+
+      - name: Upload assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-linux-${{ needs.plan.outputs.version }}-win-${{ matrix.arch }}
+          path: ${{ runner.temp }}/assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 (glibc 2.35): see the glibc floor step.
+          - arch: x64
+            runner: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+            appimage: x86_64
+            deb: amd64
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            appimage: arm64
+            deb: arm64
+    env:
+      ARCH: ${{ matrix.arch }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git -c http.extraheader="$auth" fetch --no-tags --depth=1 origin "$COMMIT"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - name: Fetch release helper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/release-windows-linux.ts?ref=$GITHUB_SHA" \
+            > "$RUNNER_TEMP/release-tools/release-windows-linux.ts"
+
+      # setup-vp's Linux store cache, as in ci.yml; checks.yml and the daily desktop run fill it
+      # on main.
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      # See the Windows job. The Linux keys name the glibc floor they were built against
+      # (native-cache.yml builds them on Ubuntu 22.04), so a binary built on a newer runner under
+      # the old keys is never restored here.
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/studio-resource-monitor
+          key: resource-monitor-${{ matrix.rust_target }}-glibc2.35-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Cache Linux capture helpers
+        id: capture_helper_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            native/kde-snap-shot/target/${{ matrix.rust_target }}/release/studio-kde-snap-shot
+            native/hyprland-snap-shot/target/${{ matrix.rust_target }}/release/studio-hyprland-snap-shot
+          key: linux-capture-helpers-${{ matrix.rust_target }}-glibc2.35-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || steps.capture_helper_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      # What preflightLinuxDesktopBuild in scripts/build-desktop-artifact.ts checks for.
+      - name: Install Linux build libraries
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends build-essential cmake libsecret-1-dev pkg-config
+          # The CLI archive ships libatomic.so.1 and points the executable's RUNPATH at it.
+          command -v patchelf > /dev/null 2>&1 || sudo apt-get install -y --no-install-recommends patchelf
+          if ! command -v magick > /dev/null 2>&1 && ! command -v convert > /dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends imagemagick
+          fi
+
+      - name: Install dependencies
+        run: vp install --filter=@specweave-studio/desktop... --filter=specweave-studio... --filter=@specweave-studio/web... --filter=@specweave-studio/scripts...
+
+      - name: Align package versions to the release
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      # The AppImage target also builds the .deb (both listed in latest-linux.yml).
+      - name: Build AppImage and .deb
+        env:
+          STUDIO_DESKTOP_UPDATE_REPOSITORY: ${{ env.FEED_REPOSITORY }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_ID }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_SECRET }}
+          STUDIO_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          STUDIO_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
+        run: |
+          node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch "$ARCH" \
+            --build-version "$VERSION" --output-dir release
+
+      # Both packages must poll the public feed; read app-update.yml out of each.
+      - name: Check the packages' update feed
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/packages"
+          rm -rf "$dir" && mkdir -p "$dir/appimage" "$dir/deb"
+          appimage="$PWD/release/SpecWithCode-$VERSION-${{ matrix.appimage }}.AppImage"
+          chmod +x "$appimage"
+          (cd "$dir/appimage" && "$appimage" --appimage-extract 'resources/app-update.yml' > /dev/null)
+          dpkg-deb -x "release/SpecWithCode-$VERSION-${{ matrix.deb }}.deb" "$dir/deb"
+          configs=("$dir/appimage/squashfs-root/resources/app-update.yml")
+          while IFS= read -r file; do configs+=("$file"); done < <(find "$dir/deb" -path '*resources/app-update.yml')
+          [ "${#configs[@]}" -eq 2 ] || { echo "::error::Expected one app-update.yml in the .deb, found $(( ${#configs[@]} - 1 ))"; exit 1; }
+          node "$RUNNER_TEMP/release-tools/release-windows-linux.ts" check-feed --repo "$FEED_REPOSITORY" "${configs[@]}"
+
+      # release.sh's verify stage for macOS, on the app the .deb unpacked above: its bundled server
+      # reports $VERSION, and a thread and the project coordinator are answered by an offline fake
+      # agent in a throwaway home, headless (scripts/release/verify-built-app.mjs). The update from
+      # the previous release is linux-update-proof's job; the acceptance proofs need the release
+      # Mac's pinned Node.
+      - name: Verify the built app
+        shell: bash
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          set -euo pipefail
+          node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          exe="$(find "$RUNNER_TEMP/packages/deb" -type f -name specweave-studio-desktop -perm -u+x | head -n 1)"
+          [ -n "$exe" ] || { echo "::error::No specweave-studio-desktop in the .deb"; exit 1; }
+          node scripts/release/verify-built-app.mjs --mode fresh --no-proofs --app "$exe" \
+            --version "$VERSION" --out "$RUNNER_TEMP/verify-linux"
+
+      # Ubuntu 22.04 (glibc 2.35) and Debian 12 (2.36) are supported, so nothing this repository
+      # builds may need a newer glibc. Prebuilt binaries that npm packages ship are outside this
+      # build's control; the known ones over the floor only warn (docs/user/install.md says what
+      # they affect). The AppImage holds the same files as the .deb.
+      - name: Check the glibc floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          floor=2.35 status=0
+          root="$RUNNER_TEMP/packages/deb"
+          while IFS= read -r -d '' file; do
+            [ "$(head -c 4 "$file" | od -An -c | tr -d ' \n')" = 177ELF ] || continue
+            need="$(objdump -T "$file" 2> /dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/^GLIBC_//' | sort -uV | tail -n 1 || true)"
+            if [ -z "$need" ] || [ "$(printf '%s\n%s\n' "$floor" "$need" | sort -V | tail -n 1)" = "$floor" ]; then continue; fi
+            name="${file#"$root"/}"
+            case "$name" in
+              */node_modules/@crowecawcaw/xa11y-linux-* | */node_modules/@cursor/sdk-linux-*)
+                echo "::warning::$name (prebuilt by its npm package) needs glibc $need; it does not load on Ubuntu 22.04 or Debian 12." ;;
+              *)
+                echo "::error::$name needs glibc $need, above the $floor floor; build it on Ubuntu 22.04."
+                status=1 ;;
+            esac
+          done < <(find "$root" -type f -print0)
+          exit "$status"
+
+      # Same build as the Windows job's CLI archive, on Linux.
+      - name: Build CLI single-executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          VP_NODE_VERSION="$(sed -n 's/^const SEA_NODE_VERSION = "\([0-9.]*\)";.*/\1/p' apps/server/vite.config.ts)"
+          [ -n "$VP_NODE_VERSION" ] || { echo "::error::SEA_NODE_VERSION not found in apps/server/vite.config.ts"; exit 1; }
+          export VP_NODE_VERSION
+          node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          monitor="$RUNNER_TEMP/cli-resource-monitor/linux-$ARCH"
+          mkdir -p "$monitor"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/studio-resource-monitor" "$monitor/"
+          node scripts/build-cli-archive.ts --platform linux --arch "$ARCH" --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release-cli
+
+      - name: Smoke test CLI archive
+        run: node scripts/smoke-cli-archive.ts --archive "release-cli/studio-$VERSION-linux-$ARCH.tar.gz" --expect-version "$VERSION"
+
+      - name: Keep the Linux CLI archive (not uploaded)
+        if: needs.plan.outputs.dry_run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-linux-${{ matrix.arch }}-${{ needs.plan.outputs.version }}
+          path: release-cli/studio-${{ needs.plan.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Collect assets
+        run: |
+          node "$RUNNER_TEMP/release-tools/release-windows-linux.ts" collect --platform linux --arch "$ARCH" --version "$VERSION" \
+            --from release --out "$RUNNER_TEMP/assets"
+
+      - name: Upload assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-linux-${{ needs.plan.outputs.version }}-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # No Linux feed goes up unless the previous release can really update to this one.
+  linux-update-proof:
+    name: Linux update proof
+    needs: [plan, linux]
+    if: needs.plan.outputs.skip != 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/linux-update-proof.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      artifact: windows-linux-${{ needs.plan.outputs.version }}-linux-x64
+
+  publish:
+    name: ${{ needs.plan.outputs.dry_run == 'true' && 'Check (dry run)' || 'Attach to the release' }}
+    needs: [plan, windows, linux, linux-update-proof]
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 90
+    # Two runs of one version (a release event and a dispatch, say) upload one at a time; the
+    # second one's plan-upload then refuses the names the first attached. A dry run uploads
+    # nothing and takes no lock.
+    concurrency:
+      group: release-windows-linux-${{ needs.plan.outputs.dry_run == 'true' && format('dry-run-{0}', github.run_id) || needs.plan.outputs.version }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      DRY_RUN: ${{ needs.plan.outputs.dry_run }}
+      REPLACE: ${{ needs.plan.outputs.replace }}
+      ASSETS: ${{ github.workspace }}/assets
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Fetch release helper
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tool="$RUNNER_TEMP/release-tools/release-windows-linux.ts"
+          mkdir -p "$(dirname "$tool")"
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/$GITHUB_REPOSITORY/contents/scripts/release-windows-linux.ts?ref=$GITHUB_SHA" > "$tool"
+          echo "TOOL=$tool" >> "$GITHUB_ENV"
+
+      - name: Download assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: windows-linux-${{ needs.plan.outputs.version }}-*
+          path: assets
+          merge-multiple: true
+
+      # The Windows arm64 build left its latest.yml under a staging name; one feed lists both.
+      - name: Merge the Windows feeds
+        shell: bash
+        run: node "$TOOL" merge-feeds --dir "$ASSETS"
+
+      - name: Write checksums
+        shell: bash
+        run: node "$TOOL" sums --dir "$ASSETS"
+
+      # The release is public: no text asset may carry a private value (the built-in patterns of
+      # release-windows-linux.ts publicLeaks).
+      - name: Check for private values
+        shell: bash
+        run: node "$TOOL" check-public --dir "$ASSETS"
+
+      # A dry run reads the releases with this run's own token (published releases only) and
+      # never sees RELEASE_GH_TOKEN. A real run waits for release.sh to publish both releases:
+      # it never adds to a draft, which release.sh may still replace.
+      - name: Read the releases
+        id: releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ needs.plan.outputs.dry_run == 'true' && github.token || secrets.RELEASE_GH_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then echo "::error::RELEASE_GH_TOKEN is not set."; exit 1; fi
+          # Plan's catch-up check ran before the builds. Another run of this version (one publish
+          # job at a time, see concurrency) may have attached both releases since then; this
+          # catch-up run then has nothing to add. As in Plan, only a complete, consistent attach on both
+          # releases counts (release-state), and anything between none and that fails with how to
+          # repair it. Verify still checks the releases on this path.
+          if [ "$EVENT_NAME" = schedule ]; then
+            states=""
+            for repo in $RELEASE_REPOSITORIES; do
+              status=0
+              node "$TOOL" release-state --version "$VERSION" --repo "$repo" || status=$?
+              case "$status" in 0 | 3) states="$states$status" ;; *) exit "$status" ;; esac
+            done
+            if [ -z "${states//0/}" ]; then
+              echo "already=true" >> "$GITHUB_OUTPUT"
+              echo "### v$VERSION got its Windows and Linux apps from another run while this one built; nothing uploaded." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [ -n "${states//3/}" ]; then
+              echo "::error::v$VERSION has its Windows and Linux apps on one release only. Repair it: run Release Windows and Linux by hand with version=$VERSION, dry_run=false and replace=true."
+              exit 1
+            fi
+          fi
+          state() {  # state REPO: published, draft or missing
+            gh release view "v$VERSION" -R "$1" --json isDraft -q 'if .isDraft then "draft" else "published" end' 2> /dev/null ||
+              echo missing
+          }
+          replace_flag=()
+          if [ "$REPLACE" = true ]; then replace_flag=(--replace); fi
+          waited=0
+          for repo in $RELEASE_REPOSITORIES; do
+            while [ "$(state "$repo")" != published ]; do
+              if [ "$DRY_RUN" = true ]; then break; fi
+              if [ "$waited" -ge 3600 ]; then
+                echo "::error::v$VERSION is $(state "$repo") on $repo after an hour; publish it with release.sh, then rerun."
+                exit 1
+              fi
+              echo "v$VERSION is $(state "$repo") on $repo; waiting for release.sh to publish it."
+              sleep 60
+              waited=$((waited + 60))
+            done
+            label="$( [ "$repo" = "$FEED_REPOSITORY" ] && echo public || echo private )"
+            if [ "$(state "$repo")" = published ]; then
+              gh api "repos/$repo/releases/tags/v$VERSION" --jq '[.assets[].name]' > "$RUNNER_TEMP/existing-$label.json"
+              gh api "repos/$repo/releases/tags/v$VERSION" \
+                --jq '[.assets[] | select(.name == "latest-mac.yml" or .name == "SHA256SUMS") | {name, digest}] | sort_by(.name)' \
+                > "$RUNNER_TEMP/kept-$label.json"
+            else
+              echo "::notice::v$VERSION is $(state "$repo") on $repo (as this run's token sees it); a real run would wait for it."
+              echo '[]' > "$RUNNER_TEMP/existing-$label.json"
+              echo '[]' > "$RUNNER_TEMP/kept-$label.json"
+            fi
+            node "$TOOL" plan-upload --version "$VERSION" --dir "$ASSETS" --existing "$RUNNER_TEMP/existing-$label.json" \
+              ${replace_flag[@]+"${replace_flag[@]}"} > "$RUNNER_TEMP/upload-$label.txt"
+          done
+          if [ "$DRY_RUN" != true ]; then
+            latest="$(gh api "repos/$FEED_REPOSITORY/releases/latest" --jq .tag_name 2> /dev/null || true)"
+            if [ "$latest" != "v$VERSION" ]; then
+              echo "::warning::The Latest release on $FEED_REPOSITORY is ${latest:-none}, not v$VERSION; installs only update from the Latest release."
+            fi
+          fi
+          {
+            echo "### Assets"
+            echo ""
+            echo '```'
+            cat "$ASSETS/SHA256SUMS-windows-linux"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the assets (dry run)
+        if: needs.plan.outputs.dry_run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-linux-release-${{ needs.plan.outputs.version }}
+          path: assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+      # Private first, then the public release the installs read. On each, the feeds go last, so
+      # latest.yml and latest-linux.yml never name a file that is not there yet. --clobber only
+      # with replace, and only for names plan-upload accepted.
+      - name: Upload to both releases
+        if: needs.plan.outputs.dry_run != 'true' && steps.releases.outputs.already != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+        run: |
+          set -euo pipefail
+          clobber=()
+          if [ "$REPLACE" = true ]; then clobber=(--clobber); fi
+          for label in $RELEASE_LABELS; do
+            repo="$( [ "$label" = public ] && echo "$FEED_REPOSITORY" || echo "$GITHUB_REPOSITORY" )"
+            files=() feeds=()
+            while IFS= read -r name; do
+              case "$name" in
+                *.yml) feeds+=("$ASSETS/$name") ;;
+                *) files+=("$ASSETS/$name") ;;
+              esac
+            done < "$RUNNER_TEMP/upload-$label.txt"
+            gh release upload "v$VERSION" -R "$repo" ${clobber[@]+"${clobber[@]}"} "${files[@]}"
+            gh release upload "v$VERSION" -R "$repo" ${clobber[@]+"${clobber[@]}"} "${feeds[@]}"
+          done
+
+      - name: Verify both releases
+        if: needs.plan.outputs.dry_run != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          ALREADY: ${{ steps.releases.outputs.already }}
+        run: |
+          set -euo pipefail
+          # Attached by another run: this run uploaded nothing to compare, so each release is
+          # checked against its own checksum file and feeds.
+          if [ "$ALREADY" = true ]; then
+            for repo in $RELEASE_REPOSITORIES; do
+              node "$TOOL" release-state --version "$VERSION" --repo "$repo"
+            done
+            exit 0
+          fi
+          status=0
+          for label in $RELEASE_LABELS; do
+            repo="$( [ "$label" = public ] && echo "$FEED_REPOSITORY" || echo "$GITHUB_REPOSITORY" )"
+            gh api "repos/$repo/releases/tags/v$VERSION" --jq '[.assets[] | {name, digest}]' > "$RUNNER_TEMP/after-$label.json"
+            # latest-mac.yml and SHA256SUMS belong to release.sh; they must be exactly as before.
+            jq -e --slurpfile kept "$RUNNER_TEMP/kept-$label.json" \
+              '[.[] | select(.name == "latest-mac.yml" or .name == "SHA256SUMS")] | sort_by(.name) == $kept[0]' \
+              "$RUNNER_TEMP/after-$label.json" > /dev/null ||
+              { echo "::error::latest-mac.yml or SHA256SUMS changed on $repo"; status=1; }
+            while IFS= read -r name; do
+              want="sha256:$(sha256sum "$ASSETS/$name" | cut -d' ' -f1)"
+              got="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .digest' "$RUNNER_TEMP/after-$label.json")"
+              if [ "$got" != "$want" ]; then
+                echo "::error::$name on $repo is ${got:-missing}, expected $want"
+                status=1
+              fi
+            done < "$RUNNER_TEMP/upload-$label.txt"
+          done
+          if [ "$status" -eq 0 ]; then
+            echo "Windows and Linux assets of v$VERSION are on $GITHUB_REPOSITORY and $FEED_REPOSITORY." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"

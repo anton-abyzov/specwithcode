@@ -107,15 +107,44 @@ stage_graph_runs() {
     and stages['test.web']['state'] == 'skipped' and stages['build.windows']['state'] == 'skipped'
     and 'desktop-windows-linux.yml' in stages['build.windows']['facts']['note']
     and all(stages[s]['state'] == 'passed' for s in ('resolve', 'preflight', 'test.unit', 'test.migration',
-      'build.mac', 'verify.mac', 'publish.candidate', 'canary', 'fleet', 'finalize'))
+      'build.mac', 'verify.mac', 'publish.candidate', 'canary', 'fleet', 'finalize', 'verify.release'))
     and steps['server-wait']['state'] == 'passed' and len(hosts) == 3"
 }
 check '--stage runs one graph stage at a time, refuses one whose needs are not done, and shards merge' stage_graph_runs
+verify_release_refuses() {
+  stub_set RELEASE_STUB_OUTPUT=release-merged=diverged
+  run 1 1.8.2 --stage verify.release --resume && has 'v1.8.2 is not shipped: merged(diverged)' || return 1
+  stub_set RELEASE_STUB_OUTPUT=
+  record_ok 1.8.2 "r['state'] == 'failed' and stages['verify.release']['state'] == 'failed'
+    and 'merged(diverged)' in stages['verify.release']['facts']['missing']" || return 1
+  stub_set RELEASE_STUB_OUTPUT=release-assets=SHA256SUMS
+  run 1 1.8.2 --stage verify.release --resume && has 'v1.8.2 is not shipped: studio-update.json dmg' || return 1
+  stub_set RELEASE_STUB_OUTPUT=release-draft=true
+  run 1 1.8.2 --stage verify.release --resume && has 'private-release(true)' && has 'public-release(true)' || return 1
+  stub_set RELEASE_STUB_OUTPUT=
+  run 0 1.8.2 --stage verify.release --resume || return 1
+  record_ok 1.8.2 "r['state'] == 'done' and stages['verify.release']['state'] == 'passed'"
+}
+check 'verify.release fails the run when v<version> is not published on both repositories and on main, and a passing re-run finishes it done' verify_release_refuses
+verify_release_dry() {
+  local before
+  before="$(find "$STAGING" -type f | wc -l | tr -d ' ')"
+  run 0 1.8.2 --stage verify.release --dry-run && has 'Dry-run done: nothing was run or written.' || return 1
+  [ "$(find "$STAGING" -type f | wc -l | tr -d ' ')" = "$before" ]
+}
+check 'a dry run of verify.release prints its checks and writes nothing' verify_release_dry
 stage_markers_kept() {
   [ -f "$STAGE/markers/server" ] && [ -f "$STAGE/markers/server-wait" ] && [ -f "$STAGE/markers/merge" ] &&
     [ "$(cat "$STAGE/green-server.sha")" = "$SHA_A" ]
 }
 check 'the shard merge marks the server suite and server-wait green for the candidate' stage_markers_kept
+
+verify_release_needs() {
+  use_machine "$R" 1.8.9
+  run 0 1.8.9 --stage resolve --resume || return 1
+  run 1 1.8.9 --stage verify.release --resume && has 'the stages it needs are not done for this candidate'
+}
+check 'verify.release refuses to run before the stages it needs are done' verify_release_needs
 
 # The candidate channel (release-canary.sh): publish.candidate publishes to R2 only, the canary
 # installs and soaks on M4, the fleet follows, and only then does finalize publish to GitHub.
@@ -301,7 +330,7 @@ assert shards['strategy']['matrix']['shard'] == [1, 2, 3, 4, 5, 6, 7, 8], shards
 assert shards['strategy']['fail-fast'] is False
 assert shards['with']['shard'] == "${{ format('{0}', matrix.shard) }}"
 assert jobs['test_server_merge']['with']['shard'] == 'merge'
-assert workflow['concurrency']['group'] == 'release-macos'
+assert workflow['concurrency']['group'] == "${{ inputs.dry_run && format('release-dry-run-{0}', github.run_id) || 'release-macos' }}", workflow['concurrency']
 assert stage_workflow.get('on', stage_workflow.get('true'))['workflow_call']['inputs']['stage']['required'] is True
 run = '\n'.join(step.get('run', '') for step in stage_workflow['jobs']['stage']['steps'])
 assert 'bash scripts/release/release.sh "${args[@]}"' in run, run

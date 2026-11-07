@@ -1,0 +1,428 @@
+name: PR Labels
+
+# Labels only, under pull_request_target with the base branch's workflow; nothing here runs PR
+# code. `size` sets one size:* label from the diff, test files excluded in mixed PRs (the labels
+# already exist in this repository). The vouch jobs set vouch:* for outside contributors' PRs.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+  issue_comment:
+    types: [created]
+  push:
+    branches:
+      - main
+    paths:
+      - .github/VOUCHED.td
+      - .github/workflows/pr-labels.yml
+
+permissions:
+  contents: read
+
+jobs:
+  size:
+    name: Label PR size
+    # Release PRs are opened by release.sh after the release is published and merged at once.
+    if: github.event_name == 'pull_request_target' && !startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-24.04
+    env:
+      PR_SIZE_LABELS_JSON: |
+        [
+          {
+            "name": "size:XS",
+            "color": "0e8a16",
+            "description": "0-9 effective changed lines (test files excluded in mixed PRs)."
+          },
+          {
+            "name": "size:S",
+            "color": "5ebd3e",
+            "description": "10-29 effective changed lines (test files excluded in mixed PRs)."
+          },
+          {
+            "name": "size:M",
+            "color": "fbca04",
+            "description": "30-99 effective changed lines (test files excluded in mixed PRs)."
+          },
+          {
+            "name": "size:L",
+            "color": "fe7d37",
+            "description": "100-499 effective changed lines (test files excluded in mixed PRs)."
+          },
+          {
+            "name": "size:XL",
+            "color": "d93f0b",
+            "description": "500-999 effective changed lines (test files excluded in mixed PRs)."
+          },
+          {
+            "name": "size:XXL",
+            "color": "b60205",
+            "description": "1,000+ effective changed lines (test files excluded in mixed PRs)."
+          }
+        ]
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: write
+    concurrency:
+      group: pr-size-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      # This pull_request_target job may fetch untrusted PR commits only as passive
+      # git data. Do not add dependency installs, build/test scripts, or cache
+      # actions here; use pull_request plus workflow_run for that pattern instead.
+      - name: Checkout base repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Sync PR size label
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { execFileSync } = require("node:child_process");
+
+            const issueNumber = context.payload.pull_request.number;
+            const baseSha = context.payload.pull_request.base.sha;
+            const headSha = context.payload.pull_request.head.sha;
+            const headTrackingRef = `refs/remotes/pr-size/${issueNumber}`;
+            const managedLabels = JSON.parse(process.env.PR_SIZE_LABELS_JSON ?? "[]");
+            const managedLabelNames = new Set(managedLabels.map((label) => label.name));
+            // Keep this aligned with the repo's test entrypoints and test-only support files.
+            const testExcludePathspecs = [
+              ":(glob,exclude)**/__tests__/**",
+              ":(glob,exclude)**/test/**",
+              ":(glob,exclude)**/tests/**",
+              ":(glob,exclude)apps/server/integration/**",
+              ":(glob,exclude)**/*.test.*",
+              ":(glob,exclude)**/*.spec.*",
+              ":(glob,exclude)**/*.browser.*",
+              ":(glob,exclude)**/*.integration.*",
+            ];
+
+            const sumNumstat = (text) =>
+              text
+                .split("\n")
+                .filter(Boolean)
+                .reduce((total, line) => {
+                  const [insertionsRaw = "0", deletionsRaw = "0"] = line.split("\t");
+                  const additions =
+                    insertionsRaw === "-" ? 0 : Number.parseInt(insertionsRaw, 10) || 0;
+                  const deletions =
+                    deletionsRaw === "-" ? 0 : Number.parseInt(deletionsRaw, 10) || 0;
+
+                  return total + additions + deletions;
+                }, 0);
+
+            const resolveSizeLabel = (totalChangedLines) => {
+              if (totalChangedLines < 10) {
+                return "size:XS";
+              }
+
+              if (totalChangedLines < 30) {
+                return "size:S";
+              }
+
+              if (totalChangedLines < 100) {
+                return "size:M";
+              }
+
+              if (totalChangedLines < 500) {
+                return "size:L";
+              }
+
+              if (totalChangedLines < 1000) {
+                return "size:XL";
+              }
+
+              return "size:XXL";
+            };
+
+            execFileSync("git", ["fetch", "--no-tags", "origin", baseSha], {
+              stdio: "inherit",
+            });
+
+            execFileSync(
+              "git",
+              ["fetch", "--no-tags", "origin", `+refs/pull/${issueNumber}/head:${headTrackingRef}`],
+              {
+                stdio: "inherit",
+              },
+            );
+
+            const resolvedHeadSha = execFileSync("git", ["rev-parse", headTrackingRef], {
+              encoding: "utf8",
+            }).trim();
+
+            if (resolvedHeadSha !== headSha) {
+              core.warning(
+                `Fetched head SHA ${resolvedHeadSha} does not match pull request head SHA ${headSha}; using fetched ref for sizing.`,
+              );
+            }
+
+            execFileSync("git", ["cat-file", "-e", `${baseSha}^{commit}`], {
+              stdio: "inherit",
+            });
+
+            const diffArgs = [
+              "diff",
+              "--numstat",
+              "--ignore-all-space",
+              "--ignore-blank-lines",
+              `${baseSha}...${resolvedHeadSha}`,
+            ];
+
+            const totalChangedLines = sumNumstat(
+              execFileSync(
+                "git",
+                diffArgs,
+                { encoding: "utf8" },
+              ),
+            );
+            const nonTestChangedLines = sumNumstat(
+              execFileSync("git", [...diffArgs, "--", ".", ...testExcludePathspecs], {
+                encoding: "utf8",
+              }),
+            );
+            const testChangedLines = Math.max(0, totalChangedLines - nonTestChangedLines);
+
+            const changedLines = nonTestChangedLines === 0 ? testChangedLines : nonTestChangedLines;
+            const nextLabelName = resolveSizeLabel(changedLines);
+
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            for (const label of currentLabels) {
+              if (!managedLabelNames.has(label.name) || label.name === nextLabelName) {
+                continue;
+              }
+
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: label.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            if (!currentLabels.some((label) => label.name === nextLabelName)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [nextLabelName],
+              });
+            }
+
+            const classification =
+              nonTestChangedLines === 0
+                ? testChangedLines > 0
+                  ? "test-only PR"
+                  : "no line changes"
+                : testChangedLines > 0
+                  ? "test lines excluded"
+                  : "all non-test changes";
+
+            core.info(
+              `PR #${issueNumber}: ${nonTestChangedLines} non-test lines, ${testChangedLines} test lines, ${changedLines} effective lines -> ${nextLabelName} (${classification})`,
+            );
+
+  collect-targets:
+    name: Collect PR targets
+    permissions:
+      contents: read
+    # Authors with write access are trusted without the VOUCHED list, and release PRs come from
+    # release.sh, so only outside contributors' PRs need a check.
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      (!startsWith(github.head_ref, 'release/') &&
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association))
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.collect.outputs.targets }}
+    steps:
+      - id: collect
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            if (context.eventName === "pull_request_target") {
+              const pr = context.payload.pull_request;
+              core.setOutput("targets", JSON.stringify([{ number: pr.number, user: pr.user.login }]));
+              return;
+            }
+
+            if (context.eventName === "issue_comment") {
+              const issue = context.payload.issue;
+              const body = context.payload.comment?.body ?? "";
+              if (!issue?.pull_request || !body.includes("/recheck-vouch")) {
+                core.setOutput("targets", "[]");
+                return;
+              }
+
+              core.setOutput(
+                "targets",
+                JSON.stringify([{ number: issue.number, user: issue.user.login }]),
+              );
+              return;
+            }
+
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const targets = pulls.map((pull) => ({
+              number: pull.number,
+              user: pull.user.login,
+            }));
+            core.setOutput("targets", JSON.stringify(targets));
+
+  label:
+    name: Label PR ${{ matrix.target.number }}
+    needs: collect-targets
+    if: ${{ needs.collect-targets.outputs.targets != '[]' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    concurrency:
+      group: pr-vouch-${{ matrix.target.number }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.collect-targets.outputs.targets) }}
+    steps:
+      - id: vouch
+        name: Check PR author trust
+        uses: mitchellh/vouch/action/check-user@d66fa29a64600490892131ad87597c30c91fcac4 # v1.5.0
+        with:
+          user: ${{ matrix.target.user }}
+          allow-fail: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Sync PR labels
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ matrix.target.number }}
+          VOUCH_STATUS: ${{ steps.vouch.outputs.status }}
+        with:
+          script: |
+            const issueNumber = Number(process.env.PR_NUMBER);
+            const status = process.env.VOUCH_STATUS;
+            const managedLabels = [
+              {
+                name: "vouch:trusted",
+                color: "1f883d",
+                description: "PR author is trusted by repo permissions or the VOUCHED list.",
+              },
+              {
+                name: "vouch:unvouched",
+                color: "fbca04",
+                description: "PR author is not yet trusted in the VOUCHED list.",
+              },
+              {
+                name: "vouch:denounced",
+                color: "d1242f",
+                description: "PR author is explicitly blocked by the VOUCHED list.",
+              },
+            ];
+
+            const managedLabelNames = new Set(managedLabels.map((label) => label.name));
+
+            for (const label of managedLabels) {
+              try {
+                const { data: existing } = await github.rest.issues.getLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                });
+
+                if (
+                  existing.color !== label.color ||
+                  (existing.description ?? "") !== label.description
+                ) {
+                  await github.rest.issues.updateLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description,
+                  });
+                }
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                try {
+                  await github.rest.issues.createLabel({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    name: label.name,
+                    color: label.color,
+                    description: label.description,
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) {
+                    throw createError;
+                  }
+                }
+              }
+            }
+
+            const nextLabelName =
+              status === "denounced"
+                ? "vouch:denounced"
+                : ["bot", "collaborator", "vouched"].includes(status)
+                  ? "vouch:trusted"
+                  : "vouch:unvouched";
+
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+
+            for (const label of currentLabels) {
+              if (!managedLabelNames.has(label.name) || label.name === nextLabelName) {
+                continue;
+              }
+
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: label.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            if (!currentLabels.some((label) => label.name === nextLabelName)) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [nextLabelName],
+              });
+            }
+
+            core.info(`PR #${issueNumber}: ${status} -> ${nextLabelName}`);

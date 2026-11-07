@@ -2,6 +2,7 @@
   "name": "@specweave-studio/contracts",
   "version": "1.0.205",
   "private": true,
+  "license": "MIT",
   "files": [
     "dist"
   ],

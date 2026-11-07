@@ -191,6 +191,10 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-workspace:skill-fleet-push",
       tag: WS_METHODS.projectsSkillsFleetPush,
     }),
+    skillAuthoring: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-authoring",
+      tag: WS_METHODS.projectsSkillAuthoring,
+    }),
     skillStudioLink: createEnvironmentRpcCommand(runtime, {
       label: "project-workspace:skill-studio-link",
       tag: WS_METHODS.projectsSkillsStudioLink,

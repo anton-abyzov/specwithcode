@@ -185,6 +185,7 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { LanguageSettingRow } from "./LanguageSettingRow";
+import { StarOnGitHubButton } from "../github/StarOnGitHub";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -3574,6 +3575,11 @@ export function GeneralSettingsPanel() {
             description="Current version of the application."
           />
         )}
+        <SettingsRow
+          {...searchableSetting("star-on-github")}
+          description="SpecWithCode is open source under the MIT License. A star helps other developers find it."
+          control={<StarOnGitHubButton />}
+        />
         <SettingsRow
           {...searchableSetting("usage-data")}
           description="Off by default. The server sends product usage events only when STUDIO_TELEMETRY_ENABLED is set to true in its environment."

@@ -1,0 +1,74 @@
+name: Scripts on macOS
+
+# The release gate runs the scripts package on GitHub's macos-15 runner, whose /bin/sh is bash
+# and whose account differs from a developer Mac (login shell, no Tailscale, fresh HOME). Checks
+# run these tests on Linux only, so a pull request that changes them runs them here too.
+
+on:
+  pull_request:
+    paths:
+      - "scripts/**"
+      - "packages/shared/**"
+      - "packages/tailscale/**"
+      - "vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/scripts-macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PWDEBUG: "0"
+  PLAYWRIGHT_HTML_OPEN: never
+
+concurrency:
+  group: scripts-macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scripts:
+    name: Scripts (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      CI: "1"
+      GIT_CONFIG_NOSYSTEM: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          # The whole workspace, as the release installs it: some scripts tests read other
+          # packages' installed files (apps/mobile's @legendapp/list).
+          run-install: true
+
+      - name: Show the runner shell
+        run: |
+          echo "login shell: $(dscl . -read "/Users/$(id -un)" UserShell)"
+          /bin/sh --version | head -1
+
+      # The package's vitest half, where the installer and other shell tests live. Its node --test
+      # half audits git history and pinned commits, which this read-only shallow checkout lacks;
+      # PR Gate runs it with full history, and the release after fetching those commits.
+      - name: Run scripts tests
+        working-directory: scripts
+        run: vp test run --config ../vite.config.ts --dir . --exclude 'studio-*/**/*.test.mjs' --exclude 'release/verify-built-app.test.mjs'
+
+      # The release verify stage's driver, on a fake app (node:test; needs no git history).
+      - name: Run the verify-built-app tests
+        working-directory: scripts
+        run: node --test release/verify-built-app.test.mjs

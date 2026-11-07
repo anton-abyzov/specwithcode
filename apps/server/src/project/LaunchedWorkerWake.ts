@@ -1,3 +1,4 @@
+import { coordinatorSourceTitle } from "@specweave-studio/shared/coordinatorReplySources";
 /**
  * Wakes the thread that started a top-level worker on this machine
  * (studio_thread_launch, create_threads) when one of the worker's runs ends,
@@ -137,6 +138,13 @@ export function launchedWorkerWake(input: {
     text: `Worker ${link} finished: ${input.status}. Read it with studio_thread_read {threadId:"${input.threadId}"}.`,
     notification: {
       source: { kind: "background_task" },
+      replySources: [
+        {
+          kind: "thread",
+          threadId: input.threadId,
+          title: coordinatorSourceTitle(input.title) ?? "Worker",
+        },
+      ],
       outcome: input.status,
       summary: `${link} reported back.`,
     },

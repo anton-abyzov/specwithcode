@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest an improvement to SpecWithCode.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Larger ideas are easier to shape in [Discussions](https://github.com/anton-abyzov/specwithcode/discussions/categories/ideas). Use this form for a concrete, focused improvement.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should SpecWithCode do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+  - type: input
+    id: version
+    attributes:
+      label: SpecWithCode version and platform
+      placeholder: "1.0.205, macOS 26 (Apple silicon)"

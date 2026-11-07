@@ -1,0 +1,1792 @@
+{
+  "schemaVersion": 1,
+  "upstreamCommit": "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631",
+  "reviewCommits": [
+    "0b3c7c92330742fa17ed4fdfaa211c56df4ef58c",
+    "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+    "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+    "9d03b0c63a2611aaff707d7b55a344de27437387",
+    "f08e451aa562c04b5ef8a36074c7682155d3f67c"
+  ],
+  "reasons": {
+    "product-identity-metadata": "Exact reviewed product identity replacements in provider initialization metadata, repository origin URLs, instruction keys/wrappers and deterministic message IDs; protocol frames, ID suffixes/references and user prose preserved.",
+    "type-import": "Exact @t3tools/contracts to @specweave-studio/contracts type/module import rename; test fixture behavior unchanged.",
+    "strict-regex-product-identity": "Exact /^msg_t3_turn_/ to /^msg_studio_turn_/ expected prefix rename, retaining equally strict protocol assertion.",
+    "product-name-prose": "Original product name replaced by SpecWithCode in comments, assertion messages and the contracts import of fixture helpers; replay behavior unchanged."
+  },
+  "entries": [
+    {
+      "path": "apps/server/integration/fixtures/transferBudget.ts",
+      "upstreamSha256": "587096b295df4d59fae04fdc0a25d834a6e783ffb0b39fc03aeea6d5b3bb8a49",
+      "reviewedSha256": "e5a0e99046d24b30740771b69a65f49ece40630a8824446d352cc67410e66077",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/acp_elicitation/registry_transcript.ndjson",
+      "upstreamSha256": "544a05a240a700ecad527fa785e9b8adf203fc8e93c48e9185e790ba86f103ee",
+      "reviewedSha256": "647216e860f0630bc1f8c1296300f4d717bdd6be91822e83cabe7c712ec8522f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_monitor_wake/output.ts",
+      "upstreamSha256": "ca675a9afbc5655ce94798f43f161e34314a3ebdd211cbd560865a7a9fee04b1",
+      "reviewedSha256": "297bfc2abd87691f6c114df291bd64658e99bcbf43693dc93ab055d450bcc60d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_subagent_after_root/claude_transcript.ndjson",
+      "upstreamSha256": "98a0c0ed452af2c094fab3a92770b49dbac843bb6760f4441438bda6fcb52015",
+      "reviewedSha256": "65ccd22de2500d29cd34bc8a4e0b2488f53f760a9ab81e8b2340d8e23a5ef90a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_subagent_after_root/output.ts",
+      "upstreamSha256": "79de85cae3c5aa51f552e710e0d96fade8ac69924a586fdc36af0bd8ec68beab",
+      "reviewedSha256": "0fdf69fa1ce4b0e9e76a5651fb1605b47a96be50d79eb2a274e10842f99a061b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_subagent_lifecycle/output.ts",
+      "upstreamSha256": "2627e5f4b31f2d75daa62c960193cce7406b06d87bf0085e1a88044a988bf239",
+      "reviewedSha256": "31258d1d2d7d6f704b9b4c325e308d8bf4e12e66c428f8c943899cb2a76e8f58",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_task_after_root/output.ts",
+      "upstreamSha256": "5863d5c6a8d382ca9189104862c9f771f3efc8bd829009bf0455e6ddccdd4842",
+      "reviewedSha256": "338d45d0a1162efa93aa370804cd13ec0caf21680fc89eacdd0862309a59dd65",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_task_interrupt/output.ts",
+      "upstreamSha256": "082a9368ec1c4945a2141edd253174d1412ce6de76690463765abb24eeb8edf7",
+      "reviewedSha256": "db2460230d9573a822a69dbd3d3a609ad3797748b1a750ecf55b9c3944cd9d2d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_task_wake/output.ts",
+      "upstreamSha256": "8d954c9b00c6ee9cc77a41221268051398a7f3307cf7210018b7fca28f785cbc",
+      "reviewedSha256": "dc6cf59c1f869c924d78a2467c0c978e02f220a8eba5006605b59a4a85c717e8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt/output.ts",
+      "upstreamSha256": "b46347ffac31acea1f2aeadccc4da2e27c13adec7f4333a5f4d522c8baa17d32",
+      "reviewedSha256": "b1f043de68e80ca44d40d35631eea8dcfd4646f2ac8b0220323635f2e8629d03",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_background_wake_before_queued_prompt_no_echo/output.ts",
+      "upstreamSha256": "c1e3f58ec44476a2e5fbc102afceb1d35587e96e2be775e7d01b988e99026d23",
+      "reviewedSha256": "efbda2732901b3fdb4e759770efc331e134bf92b8096dfc6913eb2064409d4bb",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_compact_after_peer_turn/output.ts",
+      "upstreamSha256": "dc1c2bcdab241028728c902718c5463ee52e456e5273b6f5f0fe837449131a46",
+      "reviewedSha256": "6fef98974ae1b6c6d0ccff437f9f851f57502969336f5985f49bc13f92f9b65e",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_compact_after_peer_turn_no_echo/output.ts",
+      "upstreamSha256": "a54b7d0823d97115819a827d0592a1fbb8c261f5c8eefa99982124128493d51b",
+      "reviewedSha256": "2e19c2988c21aeacff5a5e9bcea53d9559687be72242695be304970dfb87cb07",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_compact_after_resume_wake/output.ts",
+      "upstreamSha256": "263b26e2cd21b3ad0054a7e0d1aa94cb5c26fe9a48e12cc280656ff3dabcec26",
+      "reviewedSha256": "35da688f9f00b4122214711b6847893a1ad06b36d26dee1e57414d109672df9c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_idle_resume/output.ts",
+      "upstreamSha256": "4cf8c1208bea7e7ba31c9c99b9389e5b698e450f27606e4efc2ed744e31bc732",
+      "reviewedSha256": "486ba1dbc4c85f0220d8ab5deb49643121bec7eebb9afd00254f9d999578a6c1",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_local_bash_task/claude_transcript.ndjson",
+      "upstreamSha256": "edde4ed0805057f90d53f8af1b4d2041b2aa60493aadf6dc9c120a2fbcbc4983",
+      "reviewedSha256": "09476c91ec8dbd72be24cd25b3419a7f80a52f299d93750f28d3441a23a575a5",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_local_bash_task/output.ts",
+      "upstreamSha256": "1d78531a73283fe4fa1bf05a0571f1e42bb354021c3a39e8c0d82bd3202f0d20",
+      "reviewedSha256": "db852f1e426eb3471c9227d7a9deb4c8b54a0d94588fb918566b131df5f085f1",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_mcp_tool_presentation/output.ts",
+      "upstreamSha256": "7b1f7134cd99d790767ff85da528dba72e1c1f76c12e42c3918c8151d24cb5ad",
+      "reviewedSha256": "6b8c87eda40a3fe89897d4bf3fb3ca95af46dfe2178164740c7d76d1619bfe57",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_nested_background_subagent_wake/claude_transcript.ndjson",
+      "upstreamSha256": "2ee8717d6b69acbc24b7f81d3a49183c505cedbc04f4a51cd8cda030842f334a",
+      "reviewedSha256": "efff9b8b888ccfb11ae2bd71a8dc9a9980ca14c9d73d5bc431272321d3b244c4",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_nested_background_subagent_wake/output.ts",
+      "upstreamSha256": "064220cbc01e9baf241b25d6e9f920af71fcfa26ab6ce304711abd568585f549",
+      "reviewedSha256": "8b0c219ae8b0b61e32f4927d5fd60f009cfd922fae248451166429449d076af4",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/claude_transcript.ndjson",
+      "upstreamSha256": "b1d3ef9535e85624968e09747ec64d1f5a2e7f7f77978d7aedc999b654b56305",
+      "reviewedSha256": "38840c5e85e1469decfe061ae0f1dc94107af9684b63d5d3661ac54727f2b93a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_nested_subagent_model/output.ts",
+      "upstreamSha256": "82d61b50ca88ed187190efa0fa732bf06f33d4141af5bf5d454355caebb355ca",
+      "reviewedSha256": "52c2e521a8ef0549bb4979afa1caf69752de1ed576e8f6f10112546bfe073652",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/claude_result_is_error/output.ts",
+      "upstreamSha256": "8f0c9b06ba48fceefd46503e99db8ea1bdb7b91297c3985c439a870a27edf279",
+      "reviewedSha256": "ebbc323d5e2c1e0f3caa3bf65d3d2acda6615cb9655f024e284c815ad703b0c2",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/delegated_task_status/codex_transcript.ndjson",
+      "upstreamSha256": "c53d40949d7b24383eabd12d0328129d587317bb14374c2d4fb0583e56d1365c",
+      "reviewedSha256": "22874e42d1c7e4a7755765c5934f38155a4451d5654c78fce5a9f2492802d219",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_auto_blocked_command/grok_transcript.ndjson",
+      "upstreamSha256": "a1d4d2830e50b7d2a661b62cb23788ea5a6414fcd998c669278a44af843caef2",
+      "reviewedSha256": "aaa608ee36ff5d7509f04a21969b26b9d14fa518b4df7a03f7c390a2852f0f1f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_auto_blocked_command/output.ts",
+      "upstreamSha256": "d8eda60a3b859f098d10b1e4870e71cba1528e1e6d0f447b8bac8108b0098891",
+      "reviewedSha256": "d1e5187412d97801df503fb9e65126e7988f98ef37ea021990130d4a38c58c1d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_background_bash/grok_transcript.ndjson",
+      "upstreamSha256": "536d2bac878e4fa6c4e7a66e17cc59d8f3bfb1db8955c5b2a5102d993669e508",
+      "reviewedSha256": "4725c797463d7d80247bff25b8be673708bb88bad23508dedb124aa1ff20a84a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_background_bash/output.ts",
+      "upstreamSha256": "9ac5195de3f821dd742f8073074b16908641de4a7643a0e6cb94dbdd5c51541d",
+      "reviewedSha256": "226587febe443c21c42ecea6453554d97555dfc028d6ec6931eeabfccd227bb0",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_background_bash_fast_wake/grok_transcript.ndjson",
+      "upstreamSha256": "131af21cf710df5b407b7d0cc7267ad82bb297b9cb66f22d8492bf0964eddc20",
+      "reviewedSha256": "94e1bccdea9fc42eb6769bfd5a48ea47d74d53ce137610b98a3cc7617c8b477f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_background_bash_fast_wake/output.ts",
+      "upstreamSha256": "eac90a977d36ed3d268b6f459bd999940a76b625dcd141f56968c9d44fe52267",
+      "reviewedSha256": "01a40cf026c0fadd44b26c3f6dbe40fb9ab8da5c87f4f5b2067bcd89f717ed7d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_background_subagent/grok_transcript.ndjson",
+      "upstreamSha256": "f1268f3c8221b157ca1d45e3ebb0759886017a35be55a19928b00ba067a4e2ec",
+      "reviewedSha256": "4aceda6ca0d0646ef0de9a20edf1bb7d8d90fa7bf2329c947dd4d12063000d69",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_background_subagent/output.ts",
+      "upstreamSha256": "eabdf9022a24418661734abbfe6a35f53eb6db0c60dd5bfb742f07ad9ae822d8",
+      "reviewedSha256": "e9487fe20ebbd02ddb70f6e6ee0a31c1178f8ff3ea806e743fb662b63d894e29",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_monitor/grok_transcript.ndjson",
+      "upstreamSha256": "3e3a18b363e4f25167ccab1c4d5d39809caef0a448e364324325dcd5b6f18978",
+      "reviewedSha256": "c73e5519d985f90a06accfda63a11fd286d17257702ff5a6fcee93b0ca1476a3",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_monitor/output.ts",
+      "upstreamSha256": "e98749b07e87962fac0b4c2b430c51de79efaf758a77a1b3e70853c7fae6e0b7",
+      "reviewedSha256": "359e3e7ce2b940742df0dabb8e751dc9cf42d293ce397ed8797faab321d11cb9",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_prompt_error/grok_transcript.ndjson",
+      "upstreamSha256": "b46accb1695e211f31ec2e263bb9bb00fca462d75efbeafce5230b6349cdb723",
+      "reviewedSha256": "da34011764b075e83c973f8922ca21151ace76a5d726a4f72a0f0bd8e0957228",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_prompt_error/output.ts",
+      "upstreamSha256": "6a47b8c4af8eed85efb66fa67d797b04f7f46074676afdcbde5614436df708d6",
+      "reviewedSha256": "a3c554d5024a5daa5fc6a6e0f61208db433cfdb38e3e2211ed12dde0a84b6067",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_subagent_lineage/grok_transcript.ndjson",
+      "upstreamSha256": "7b64529a891d503552c9171b23d6788a7616d375bb4803759fba1ced7b20a5d6",
+      "reviewedSha256": "1956d88ce0e55930714bd2b08f0678f21b34a6595411a597cccabcd3758a0565",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/grok_subagent_lineage/output.ts",
+      "upstreamSha256": "43d6076b869352a80ce349a3715045e7dff881adc835aa03f44a2d65f76f390d",
+      "reviewedSha256": "fbb6ebc263f0da776fc86422c371ffa7140934d2efdeb2f9011275391c346959",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/index.ts",
+      "upstreamSha256": "5e29af10831f2eca1ff4e352ce44fcbe34699999316d370c5fc2d16e17238e70",
+      "reviewedSha256": "505e750d9d57cb749d535b9032789e77f68a587b87182f29584e29f2c475547e",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "type-import"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/claude_output.ts",
+      "upstreamSha256": "a6ec4d0b400e36f22cbc5b09192eb780f516edacae1f5ee47e4411825a5215fb",
+      "reviewedSha256": "e02d5558ce36912725bc353d5ed7b94ba46690b5cfa89ac39307b23d034fa32a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_output.ts",
+      "upstreamSha256": "a91acdd5a994ba00df9146269d83efab1fc194194dd1d06367e904907444dbc6",
+      "reviewedSha256": "dbc4921849aa5e907c3c28d4c815e5e8494ec54230404a64102e016d65b6a452",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/codex_transcript.ndjson",
+      "upstreamSha256": "4fa62a6108994d75157a7a41fb32b1c82c08edbb4c56147a9f6d457ab32f77be",
+      "reviewedSha256": "ac49a6e3384247970fee864566a23260650112ad4fbb4aed3a4f27b7e1fb2321",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/cursor_output.ts",
+      "upstreamSha256": "dd2a5399db050ee3faf8da66482751f056e87ef5be83786af0d4c5e9e6242c66",
+      "reviewedSha256": "d2c44850ac04f67f3958e709d1d2fa3fec5042167001f1f5a1f5a54162fa0b50",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/grok_output.ts",
+      "upstreamSha256": "3028b04507071454e5c99e62f383d8a53cfe0783718e529d731d7ae0e887bab7",
+      "reviewedSha256": "18a72728d1f8433435d363a9acf84e69e3ccf1edcd1722603d838a129b3c0da5",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/grok_transcript.ndjson",
+      "upstreamSha256": "d9131aa83b132fdc07e9df955da92a353fdf9bd17ddbc70bcc002424aa4999be",
+      "reviewedSha256": "7c5fa68cc4493632402d9776e12890c614eadd97e48e026b747265265a6929c0",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/pi_output.ts",
+      "upstreamSha256": "c94e22f34bafacda34b81f4ad51ac6a02ac1144d9adff38f729199534f90cbe2",
+      "reviewedSha256": "66c94bb11ab5fcfdb8f2cae4e27a64f7e096d96a02c52f946644e75e5b842fe7",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/pi_transcript.ndjson",
+      "upstreamSha256": "8d6db48c437ca2a329c4a2ea81d1e89927b49fe18e03af41e0ba8005da00590c",
+      "reviewedSha256": "5cd492ed5247ceedec4b2ddc6dd731ada43186c63964a96b1060a3cfa16204fb",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/message_steering/registry_transcript.ndjson",
+      "upstreamSha256": "da0dbe2efc528def643ac03cede1955e8d250bc2796502b85bf8ff10b170cd27",
+      "reviewedSha256": "3e00afc9a9e85291c3633f8aac528ea99ad820ee6efdab18e745304aebd2e840",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/claude_output.ts",
+      "upstreamSha256": "c0165b57316aabaa91ad0169ca67d5725cf95050119cef58252cea9d93c2761e",
+      "reviewedSha256": "6e11120f3c66a38e9f60cb959e0d62a0eb1e98f417008b8015f71a7d059d39d8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_output.ts",
+      "upstreamSha256": "3389957a853f9a86b659aff8863559ef0c876ebba49380c3cdb321bd8c6aac2c",
+      "reviewedSha256": "58811257616f7c1bcc4114f8eeac019a06f274939e76d1e538702e047bdeb6d4",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/codex_transcript.ndjson",
+      "upstreamSha256": "2b5e7af6ddf46855f5da6e4686970c45aa20045443def2d5c777a2ece363a9eb",
+      "reviewedSha256": "58df0e3cc02f0110627a2ad7f1cee4ba3d9fe9bec5e58d2528e6d336f1ec6e94",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/grok_transcript.ndjson",
+      "upstreamSha256": "b96958335f71e078857210edce74b0eeb6fe362810168e4aef46e34f9a6796b6",
+      "reviewedSha256": "37e0bbc725cb02f3476f3b0effc1051436399038c9e97c8bb43e3d7d66bc749c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/pi_output.ts",
+      "upstreamSha256": "78c4f63cc8eeb8397345cfe897a4f48fa541a5d459f7b3e427d18bfb5e79d366",
+      "reviewedSha256": "82ec08966969a492199b11d769b691a2ed51285924eb2432441db745213a1e12",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/pi_transcript.ndjson",
+      "upstreamSha256": "9a2cad82b334aedae842cd99f5c1ad40bc51b593e95505ae864cc483e3de5916",
+      "reviewedSha256": "16f008ba823bfee06ee0cf0c4cfcfe531ccf08f3d0ebad9b83b025dba83caabd",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/multi_turn/registry_transcript.ndjson",
+      "upstreamSha256": "b26c7bb7225d863ac7d14e001464d6e7dc479909136014b854f624f0ab1d21a0",
+      "reviewedSha256": "2fea8aed947272d91332036a9555e9503711d286ac87a0174fb241c95a6a06bf",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_background/input.ts",
+      "upstreamSha256": "aec65e71d9a1b7e3b35aecd3d65baa857e2707369d3c494b01379c9b48459263",
+      "reviewedSha256": "6a4ba55fcb21bb8fcd87a3708f2bf72b70c98f29980d864fe42777e892e7b0c3",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_background/opencode_transcript.ndjson",
+      "upstreamSha256": "b2ec40bd6903cde37453aa536e133723fef23ce67b7be49d2a7a90b7d8ca7629",
+      "reviewedSha256": "6223e0f373eb933e36a55cd904f66bd6fe3b9e2c2fd84543225e5b55d1b383a9",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_background/output.ts",
+      "upstreamSha256": "d7c0fc2bc9dc0d02dff53c96ebba155911bfe4f7ed36e8a255cbbbb5c733b065",
+      "reviewedSha256": "7e27c22cd34df6a81b9cb7019b62cd4baa115de3aab9ddf8774d7d1c79a079c1",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_command/opencode_transcript.ndjson",
+      "upstreamSha256": "b045e22bfcaf818dee88b4701483b96e16591d9c153c97617328ba63b69eb05b",
+      "reviewedSha256": "d3aeb2fc2f96694102a5834632e8308dc2f1cb6a8b920748ee3bd81ea7cb28d7",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_command/output.ts",
+      "upstreamSha256": "50875c9d6ab5d99002aeebe4600f4ae2321f1594415d9513568dc110032dd8b0",
+      "reviewedSha256": "54bdea441791f49939adc1b19ba47372737a86f1577af539005b8b3750721821",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_compaction/opencode_transcript.ndjson",
+      "upstreamSha256": "fa548136d394f4e78f86696d5f897be4d4c213549c9255b562961c937c3fb1ce",
+      "reviewedSha256": "ddcf4fc6f9d087dc017c7c3b93064ccffd6678912f1c350ea57ef1e81c12b1a0",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_compaction/output.ts",
+      "upstreamSha256": "cf6b58f60497d4b9ac207455596bb0ffca0115ae58a33641677dd3347a53c8d7",
+      "reviewedSha256": "10d87379299bca8fba395fdd68e529926801216167998e8225b277d14d98dba6",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_fork/opencode_transcript.ndjson",
+      "upstreamSha256": "0573a06ab137c78f2a129c08288db77276690d5e92665bab68bc7b07a492bc99",
+      "reviewedSha256": "95ea791b81f715af19217228585f2c84ee6bb32fd8e4636587648e5a75421cea",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_inbox/opencode_transcript.ndjson",
+      "upstreamSha256": "0c7546b5d4c35b05397c0b1a2d1eb5a600720e4959a48351729fbe8b1f0f1c77",
+      "reviewedSha256": "b17bc7fe3592b269887a10683cd67e3fdbb82961f42c2e9fc9323a293954324b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_inbox/output.ts",
+      "upstreamSha256": "4a4bfa23282aafdfccba48c7158b0fd434f2b0237e58740bf1d16855c8edd8db",
+      "reviewedSha256": "115b4c9251d6e8685a567b575fe171895d5361c16d2fbb1aad44e152f62e023a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "strict-regex-product-identity"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_interrupt/opencode_transcript.ndjson",
+      "upstreamSha256": "5d1849e69ef3777928501d68c0bd2b6a1a5a186653ee836835e2df5cf34d2859",
+      "reviewedSha256": "25ed721e61f78f334dffcf19f572150a4670d0d0c1d06c29e847b1e29f663f6c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_interrupt/output.ts",
+      "upstreamSha256": "24ccb0bc685a2fa78769d82e6c0f9b05dc02ad797fd7fb71bfc211148b8cdac9",
+      "reviewedSha256": "bebdaee022e2366a67342f291fc3e222e7e351869f023ba88eec99a01d6eeb2b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_nested_background/opencode_transcript.ndjson",
+      "upstreamSha256": "7ebb9cb7a5933f0f2ee2a35f6eb0fa7d769e3c1132c06646e7eefefd1d79ed84",
+      "reviewedSha256": "da129fdb5f615d743247b7521e1f8d4f98a65d7c22730b3a48ef61025d9cb462",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_nested_background/output.ts",
+      "upstreamSha256": "5fd9165b7973e035d22057601eb4a8104031951087ad5ddfebb0a65cbb8545fc",
+      "reviewedSha256": "2d6d0b40497303260634eae9c12047711bce5d28e7f2b815d78c242757e397b8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_permission/opencode_transcript.ndjson",
+      "upstreamSha256": "e748ce89d126bb5e412993c6792e3edd231fc7faf6e33cb92a21e0cdf42c47ca",
+      "reviewedSha256": "f812b9018e1098850fdf66539cc7e5b82bd435aa1f9ed6a16d2ff3864962cbc7",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_permission/output.ts",
+      "upstreamSha256": "f386c16c33d09a759d5b7e57c49e4789978321310102191db407ea3b92dc2726",
+      "reviewedSha256": "aca36399c0ca7cf9199de71b95d78c07b198620eb4cc825df12b167f6045358b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_question/opencode_transcript.ndjson",
+      "upstreamSha256": "5d776beaae7f219ab23871e8eee9d928ddb76c3b21c1cdb6a30a38cb768d41b6",
+      "reviewedSha256": "4eb5026b694cb61c1556c622ba91359d49902ccb7f3e12b946d26a2ab75c197f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_question/output.ts",
+      "upstreamSha256": "4d391953de59f07240c1a4c199f1e0021b0b482333d5e35287607d6aa698f083",
+      "reviewedSha256": "d7ab12e7e492881a148d1a9f0026dc681655a314ac05bf1db33db0489a700e61",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_resume_after_restart/opencode_transcript.ndjson",
+      "upstreamSha256": "c710d9d47a21adf6393b37161a1b1d63a3f1ec8b44ba988bcc3a036bfb321605",
+      "reviewedSha256": "097ff3f89a9a7ddfcc1434648ae55f59b2b82aa38607c6e91a82b853295cd152",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_resume_after_restart/output.ts",
+      "upstreamSha256": "cbded808b579accbac3804cacd016dc5ebc235e4a860c4e9947def9a0ba0f3ec",
+      "reviewedSha256": "9d4f6a86166cec414cf86703e207eeeb07b6d0e825a64247d792ad15cff2b7ca",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_revert/opencode_transcript.ndjson",
+      "upstreamSha256": "a1a78b26fe7da5acec17138cb67850d8e008bc838632b5db18d6b56dbc7afaea",
+      "reviewedSha256": "18bf87bdc43b9b9364740c7b749533ff2b2112ac4065d1151d482cd639b9d725",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_revert/output.ts",
+      "upstreamSha256": "5dcd7dc95bbdc4ff4ac282ca3c4090b41c2087ede076edc5caa43617ac4e9ed8",
+      "reviewedSha256": "e054a62ff61da3f4f7f8c965b88e2345ee7c800572d0a30dd510d8aa7518e751",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_simple/opencode_transcript.ndjson",
+      "upstreamSha256": "a0249e71f064d8dc1ba419853497a670161076ff55b2f2c9f436a6757f111f34",
+      "reviewedSha256": "dd66d045ffa944eef1a8b03c76ef69407e7a0567c0b77cef78f7a3c0f67cef67",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_simple/output.ts",
+      "upstreamSha256": "5ed64d1b8e3c346fc17e9c70ba65080841750d9e679441c1c6546f878f6743a6",
+      "reviewedSha256": "8a263beda5d4b265e0b3679be509426fadac9774fd849088be0a7e915ac3abf7",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_skill/opencode_transcript.ndjson",
+      "upstreamSha256": "b1a1d0abf234e72309a948a08e3fbd05bb5b77350867be8aed6148b8e316a63e",
+      "reviewedSha256": "6391bf6b51fd3618bc3c2162c2c89d7ffe0b861c24ad2377ce306f9b747c87da",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_skill/output.ts",
+      "upstreamSha256": "90688eebc2a7f7574335987bd55014e732a9aa5a3c7607b2a966f6c6ae9de142",
+      "reviewedSha256": "22b466517aeec3c72b97b9a7e7a67e2b47b3146ea494f2a1d5a9d8d5e8eee5cf",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_subagent/opencode_transcript.ndjson",
+      "upstreamSha256": "2c2f5b8eb6cf17f0ec9cd42ec3a29c283926593c7d008a44de832f0ae41a0b8d",
+      "reviewedSha256": "fb389d55cc6260fc8dd6e8de51ba578527722e500fc7f9396c1fbff587a478cb",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_subagent/output.ts",
+      "upstreamSha256": "75c3e10d38302caed06a16a75fe28c48ed7548b53c7633c4ac95b21f6ed6c11b",
+      "reviewedSha256": "d327701bb6637d8b3fae5e0cf0635a683ed3b2bf6c53282d6217de80213a31f2",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_switch/opencode_transcript.ndjson",
+      "upstreamSha256": "b22ae547634427732804d5853f5c453e0ce18b3922d7dd8bff1f670f63b39bbe",
+      "reviewedSha256": "4ecfe5d203f2330623d32499eba2a4109b17dbebf094eb72a26cacebbb39a57a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_tool_call/opencode_transcript.ndjson",
+      "upstreamSha256": "abea282bb36961945cec85fc01bd240cda4787334f2ecdba7395afdd2aa3438c",
+      "reviewedSha256": "fcf9f2764de0d8a10d2a82c338b1591ae7dcb5dc91352d5dec0244f722159b4e",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode2_tool_call/output.ts",
+      "upstreamSha256": "7d9e867554af4bb17e3d0d6a5d8c890c36a8d55fd9d6c0b0c4c631fcf5b2cd38",
+      "reviewedSha256": "1febb516eb7f63fd2ab06739628565a07544d2cebbdc519214b32e5b0b9e854b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode_child_approval/opencode_transcript.ndjson",
+      "upstreamSha256": "65aadc8f24734ce66e88aa8c930836c616d378f19bc2ab844c751919bb827ddf",
+      "reviewedSha256": "6345f992311b1b0f28e1cd110dfcfbe08e5b64070a193bca50215ef3979f87eb",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode_child_approval/output.ts",
+      "upstreamSha256": "446bdc55190c0916407cf17841c12acc775877f91ce5542d049f9ebcd6da9579",
+      "reviewedSha256": "c35663daeddc7cfba00bdea6cdcdd8f76e46f02eab7615db506e4dd3fe57aed8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode_running_child_approval/opencode_transcript.ndjson",
+      "upstreamSha256": "a03cf9a673c61d8e92f7f80c14b58ae244951e3e02f8e9810a277b4940dc4f66",
+      "reviewedSha256": "936e98e01dd51e9a956579e99f5799b36c17af458638289a7ff6978c6b0e34cd",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode_running_child_approval/output.ts",
+      "upstreamSha256": "8416052b23342a5c5aaaf13260307a98e71f430a4fd242de61f5866888c55dad",
+      "reviewedSha256": "89a718a7495a63666201606f63dd9b9d1839494751ae27dff511fe53821ab334",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode_subagent/opencode_transcript.ndjson",
+      "upstreamSha256": "a251583b7d38973d47009ebfc0a29e551c1bd9c9dd0224343ee5eae1e0235cb9",
+      "reviewedSha256": "f993fa1e0185899e003a93ed2f3ec515315cfe1583d07a5ae05f26a64f5e1011",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/opencode_subagent/output.ts",
+      "upstreamSha256": "5e6e0cf0402b607d66f69e11b3ab17154d0e67bd7ff2269513750bd2a6b85fa6",
+      "reviewedSha256": "c1229d51126f4b33bb1cc760d0262dbc981233164308edbb2ef9af246b36e13c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/pi_compaction/output.ts",
+      "upstreamSha256": "fed3d57066284945333f29c329b7f9ea78e979dff40e321a4dcdbdb190319280",
+      "reviewedSha256": "2546b28904743eec148644ef69f6a687cdbb83334145196ecd51d0fefcc16d2d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/pi_compaction/pi_transcript.ndjson",
+      "upstreamSha256": "d8211ba6871252e879364d9876e19ca0b05a076251ed579fc06b32be0404e559",
+      "reviewedSha256": "643c41d64db80a80b3d5922e5e35a7a4f8eae6f3544542aad370124dca4c0951",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_output.ts",
+      "upstreamSha256": "92f812c259c55987d96fc9add289a05ec771dae431de26b176868fdddc3f9f3c",
+      "reviewedSha256": "55e2bc5ac461c1fd92ee66ed8ce6511433d17d3bf67bfbab329362554c7bdb56",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/codex_transcript.ndjson",
+      "upstreamSha256": "05dba29f0e22f9f2a339d55dee03c0cf1b0e22511cf40d6ffed612c86f01a39e",
+      "reviewedSha256": "e9311bfa5396c4fb838a667893f4678ce9551ef0408e9ae29c3e1e905d3b6174",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/grok_transcript.ndjson",
+      "upstreamSha256": "587e660f6f9d514605ea4fcb953260aad6ea6a7a320aede5423e03f34e3f188b",
+      "reviewedSha256": "dc5273ff7411a2c072c331563e076a0d61dfc5df4a917e41fe4c5570236aeb4c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/opencode_output.ts",
+      "upstreamSha256": "3c315f7687364372355898a3ea2bec2827f93bc1f64d16c6a72cf17e88563b55",
+      "reviewedSha256": "fdcc3d058c09563aba9535a39b715bfde4d4de48c26863593d47fd3b1c9c0f93",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/plan_questions/opencode_transcript.ndjson",
+      "upstreamSha256": "2ccf8d6e65fd5d28ba33dce7eab58c0dacdb4a69a66666792d73d7b083d64567",
+      "reviewedSha256": "ecb3427c4404a09faaeb412da416bc730ce332352d7aae26864f47702eb0afc6",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_output.ts",
+      "upstreamSha256": "11806756d31c141f5bb1d3a468768bfa7e38a699d7e85c6a115c74acda7ed588",
+      "reviewedSha256": "e16616cf50710902d89d8d9d8d618e2fb53b5934f38cede33e55394b671c190c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/codex_transcript.ndjson",
+      "upstreamSha256": "9fe7c911501a2c96efe2967520e18ac79d0c2c3d7a3d294a18f993317bebbaec",
+      "reviewedSha256": "4e9ad881e4c7ab9c7d1cdb1b398f31a47415cecffac703f51d6aedde0710ed42",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/cursor_output.ts",
+      "upstreamSha256": "4b5d4dae403ea492ed86ec3816d83efcc99755335297596bd501299636a96dc4",
+      "reviewedSha256": "af8a9ca96f916e64d1f1e8288211446f844421f36599e316a801cdf29727fea6",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/proposed_plan/cursor_transcript.ndjson",
+      "upstreamSha256": "c8e826137aec5c04868760860b61f5cb9d9c874a10aa77a6b8e0b0fbf6717753",
+      "reviewedSha256": "73441391367a866514030c929882ee0c929da9ad3e325db812c37bc5a0e955c0",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/codex_transcript.ndjson",
+      "upstreamSha256": "e4df2b5068fcbf9c48d8ee034fbaf663cc5e9548eafa1aa6e68e4433581dfeda",
+      "reviewedSha256": "f17ad4eb3b3446a5e026abbec95298c24674c8f287b3fc8239e4084b7d7c64a8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/pi_output.ts",
+      "upstreamSha256": "2057c8eeca15b29456f775bb45137be666123d14b32af338d4ff722f967ecd19",
+      "reviewedSha256": "281afb4317c568b18358479360857ca8db821ecd0dcd8ca8a4568a6afd54f956",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/provider_thread_resume/pi_transcript.ndjson",
+      "upstreamSha256": "c8f9af0347100084bd5e37003c8b32f36fe5342c9f30b746d732ad4e81cfc9eb",
+      "reviewedSha256": "3b1082fede6342d698b1f60ac7b87f0dca45f251b67fa3e6b4b88b0f81fa5ea8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/queued_cancelled_while_active/codex_output.ts",
+      "upstreamSha256": "574dbc2c3e40f34d451d2d882a6c56caf4b36815478f287f54931e52aaa2b3b4",
+      "reviewedSha256": "ff28fa9a24e0d8814dadc50017748c69619f1d04a0a32990ad7bbc0359094fc4",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_output.ts",
+      "upstreamSha256": "b9f6203aac31dcbf7a971ba45ac4757c54209c4f9745049cdb1d247ebd621c20",
+      "reviewedSha256": "a3f08af7c2757e9b15498ae4d2d301949dfb359d14c500a5655f60e79fcd131a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/codex_transcript.ndjson",
+      "upstreamSha256": "5bb730a348a7b86949b7031e929e87e01ca56aa52f047c1adcc1124d182fe8e4",
+      "reviewedSha256": "82b3af93f83bb175b3597b1f587fb94aa011aa3b85e8ee09a94fdfb12783f0cc",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/grok_transcript.ndjson",
+      "upstreamSha256": "150d75b5e57843eed6ffbf4a903a3c95ec5fb99aed2de7dd8c4afc96ebafb0e0",
+      "reviewedSha256": "e9b42f416e547a955c075215c08a489310755375b0e162d32025454095b177ed",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/queued_turn/registry_transcript.ndjson",
+      "upstreamSha256": "fd99c35f7b371c348ec83f784632e6d25cafb5362df854cdb2b8841537812cc0",
+      "reviewedSha256": "4f79b447c8b03dcc88e954c0d4842b0b4fb7c07368fe1aa62a2e55188930196f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/shared.ts",
+      "upstreamSha256": "e32bdcc5823d9c8cbc65570f8ad1ab00b67cc3cdd9b2401b25e38bcf59882cc4",
+      "reviewedSha256": "0fe9e524bb621ecf77e330c6c1c9ddb5645663d0e150fad8cbef16fb180c78ac",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
+      "reason": "type-import"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/claude_output.ts",
+      "upstreamSha256": "cc5ecf41e3f0432f66389a3f1fd428f413b45b4e150a457c222cdad111ff7754",
+      "reviewedSha256": "1ed9f246557641ed25081fb5272f02230c38dd1260bc3cf83dbc5664e052e158",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_output.ts",
+      "upstreamSha256": "1bd09b7c095a72f2b886cb1b0eaf97925a6e51dfd95ad9505a99e0e406ec049e",
+      "reviewedSha256": "029c05da72c3f804ae8431456e2033134c06001ace10465b9bbd1aba46ce4f78",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/codex_transcript.ndjson",
+      "upstreamSha256": "f4188c96133d551c5c9f704ae07fc014fd9fa87ceb1eac9a94660e38e70c4dcd",
+      "reviewedSha256": "01e023eb9e56887f3fc2c5a2f929396751b2865529cd3e2895e2c3895b5f1e52",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/grok_transcript.ndjson",
+      "upstreamSha256": "e855740b39a3230336912b1450f7346fd09acbe38023120faca086e70d5ff015",
+      "reviewedSha256": "c5a3e44f646a2f3d3dbf6531ffa2332a29f317d7e513741c9db4ce719c7cd762",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/opencode_transcript.ndjson",
+      "upstreamSha256": "81281400ed48792d1088dd93ea643f8a00ed6fceb7543d628edf09916974d691",
+      "reviewedSha256": "7621b832b6b6272f346da49befebaacd94d1f92d924c25ac6a1e17f6cfddfc30",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/pi_output.ts",
+      "upstreamSha256": "97f0bbea276db30184c8a4406b6de7e49e4286bfe667cabe5657ae940f9706cd",
+      "reviewedSha256": "97169a3f59548fa1ee3f8448e06bedaaef3810dd9cdbea108b126f8e7567223a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/pi_transcript.ndjson",
+      "upstreamSha256": "468ade602fc768d0755322b1a77f677d73a2961fd22bb800e19f7db663dd8ba6",
+      "reviewedSha256": "b978fb5941dbb0f8b78cde17dba0d27c15474ab619499f7525b89ff155c02cb2",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/simple/registry_transcript.ndjson",
+      "upstreamSha256": "14cc0fd3637fccffb0a112654cff7b406a3e55b6340e5122b5f1337f11dab7b3",
+      "reviewedSha256": "985d5fae6272b8c55ad6ddc2720ed2425eafb3d4a4f7186b96a0350715904fae",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/skill_invocation/cursor_output.ts",
+      "upstreamSha256": "479084bccdba6467e734a87711158ba0ca59a44c3bb062779be36288e40d2803",
+      "reviewedSha256": "bd46a685e51a8e13ff99d263a5853bea9e147a3fcbfc841d1fb1b5ae64a4d3dd",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/stop_background_work_after_failed_turn/output.ts",
+      "upstreamSha256": "b9d7f6db3ef5fb9791c2fe2c783cd3891e182ecdc441966f3496982bd08efe34",
+      "reviewedSha256": "bb81736b39acb0fdd7e59f1c617fbe09228f8a573d47b0e65ecd88e8e9150148",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/stop_background_work_after_failed_turn/registry_transcript.ndjson",
+      "upstreamSha256": "d1eddc01944e01fb0252d0a631ff39e4ba95a5d1ef4a27a0a3240f117fbaa4b6",
+      "reviewedSha256": "457ea21ebfebb9791d9bbb9d71c841bad78065d824f69321533b3b1ec8261e09",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/claude_output.ts",
+      "upstreamSha256": "963076679744a6656a2dc3417721f1febb520fad8803dcdd7de0254973cc831f",
+      "reviewedSha256": "949f2f01a81d752f44b79cba05ebd59805b9c3bfb8e5286399e6480c2f1f9cd5",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/claude_transcript.ndjson",
+      "upstreamSha256": "8d0ab6896db2e957cea2077735f742313ce4a747ad087636fda811c60a5cb6a0",
+      "reviewedSha256": "7460da90ec37490247ac87cacae94d8a008e1b93187480548433c7a682dd14d2",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_output.ts",
+      "upstreamSha256": "9c2800e74f87b1846dd11a176002bdc01beca08ef967ab6d0bc0d51c58bea27c",
+      "reviewedSha256": "0d9b4e1276f225961b25b939a3d193d84ce9f87b8dceb5434bea4270df50c424",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/codex_transcript.ndjson",
+      "upstreamSha256": "4554c9dc19357f42707728d43e3a3000251aa3a79901a453a427aae71615cd59",
+      "reviewedSha256": "51cbdf2fc05137789e5aac707a446ca0e8062653bf5cf59d2f04a29ee0612cc6",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent/cursor_output.ts",
+      "upstreamSha256": "fb7f26dd874144776274a6f72058c5bbf2fab1caa466539c41b2b1e189dcb6bb",
+      "reviewedSha256": "79fa0cc7797668b6fdc4620edc04ac16c7c67cb36956262bb6f4f8b156f089fc",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_output.ts",
+      "upstreamSha256": "64cfa87095f43a9575e534c961e3e84cdd27103a0d8167743c3e90abc6467c1e",
+      "reviewedSha256": "926762ede0532ad2c65e6f42e937ef8def01f5dd3b7d9eac8d1ff52afe2fd25b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_continue/codex_transcript.ndjson",
+      "upstreamSha256": "0c3de4e6b631059602bcb9d833fea441eaa3bd62e4d562946ee681dcc04aff9a",
+      "reviewedSha256": "5c23f8c865dfe9174fa99557cc29f177a47c4df980065f79241c091b5ede4599",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_output.ts",
+      "upstreamSha256": "53888a9bb184f35845f2a92fc164c93043bc0d1cc3efa839ab46b7e9f5ad4de9",
+      "reviewedSha256": "fb0a12cbaf983e13d7b487c45fd4369a6149478f043fb92be44c83b4eb597e91",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2/codex_transcript.ndjson",
+      "upstreamSha256": "6f3250e5f6cc3e0cc2edd791faced4fba8007ddbca96c2e86715f514de4188cc",
+      "reviewedSha256": "d8cb1209fee326854289f3acd8bace9034c2a7490567b35cc7f7929f6e1cf04b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_approval/codex_output.ts",
+      "upstreamSha256": "9feb395b80420246f810553c9961c640b3dccc38ed20bd6a07cded8d762d3753",
+      "reviewedSha256": "42a4ef1ef0b0c14b24992fccf272c044a27bef5f360ea9d743364d570d22fa1d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_approval/codex_transcript.ndjson",
+      "upstreamSha256": "16c95c6e81cc2519544a2b8350f184905ec5e42be258ee654e76de1e1ec1b484",
+      "reviewedSha256": "9898bc6eb512afe1739ca17b07fae55937ae28bd3bd87e9a5e73fa6e9f4dda7c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_output.ts",
+      "upstreamSha256": "3d91b62507180b952bd3243938a003a3c549555759f48eeb6ba43dcdba788c6b",
+      "reviewedSha256": "294ea2e7003692eecf7974af7e2c6c27e5023a479d9a7c2f68f35b2729ca4fd9",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested/codex_transcript.ndjson",
+      "upstreamSha256": "985aafd1b41e4bfb651151fd0850cdb1e778a49ad37d6bf43446802062bacd36",
+      "reviewedSha256": "50224ed5f137ca311e26b863500cda8b018bd53532e436ddc1c609ae3e675382",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested_approval/codex_output.ts",
+      "upstreamSha256": "04c6fe15f699c755757628b660911a9c3ba983b0eb17989b8e6a450eefd1f242",
+      "reviewedSha256": "645e894bcff5be5ccfa1a53f0e19d5f393e2b798632e6df97a2492e7e3bc70ee",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/subagent_v2_nested_approval/codex_transcript.ndjson",
+      "upstreamSha256": "abfeeb998c64fe72cced89685a85de371c68417b45245c1a2dadc8d807d29103",
+      "reviewedSha256": "90cdd6dd6ec6731bcf6f85e3292d52da14c631ee1feb0e5f2e4649f3c69b7279",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native/codex_transcript.ndjson",
+      "upstreamSha256": "216f4014036dc7753adf8f0981b433ca8a51dae77df0a97f2f45aa66fd2bcfbf",
+      "reviewedSha256": "094c83fdab1751c537ee4e3612af204e296b77749d93fbfebd3ead5f309c2eac",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_continue/codex_transcript.ndjson",
+      "upstreamSha256": "87b81d487981683e150639925ca47b9304cdaac9b90b52d8b7a358fa72bbe8b4",
+      "reviewedSha256": "083c5e841de52d5b3fdaa7d6c7b5327d054a486c58e0096da019b9f6a31191de",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_fork_local_rollback/claude_transcript.ndjson",
+      "upstreamSha256": "3f7074b8f80112af7681229d50330d2dcf5aa1e35c9514cb129feb3213ae0362",
+      "reviewedSha256": "dc5ce9e8e9658169c11025ba3e3535910f2c9b26a0ab1a67c287218ae74e4805",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_prior_turn/codex_transcript.ndjson",
+      "upstreamSha256": "0fe5a607a1e06531770fac7a30d5a559253ee1756bd5dc390187e8e6e1543d8d",
+      "reviewedSha256": "5ef5c41cc4705fe22c69d6947bc8bb9c03101a1bfee5d94b94058f6133dcc975",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "9d03b0c63a2611aaff707d7b55a344de27437387",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_fork_native_siblings/codex_transcript.ndjson",
+      "upstreamSha256": "264e7198f46687963e17b80c4a394fbe10d0c6cb75764737646e05a91bdad0ff",
+      "reviewedSha256": "5c004f25f49e49631eec4a6a459e745816a749924ec4f12f0351c1035b566f93",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_continue/codex_transcript.ndjson",
+      "upstreamSha256": "1cb19a54430041ef540f536f76658bfb6873c55fe0907af1a5e17a07c2f35b5b",
+      "reviewedSha256": "e3cde66b6ede7b7ec53f645e1d93000453ec585bd925f00aaba79539e71b1b34",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_merge_back_siblings/codex_transcript.ndjson",
+      "upstreamSha256": "f34475131ede5fc0223200b9e608d4d93b82755dc2ed69d6678f47d394cf6d4d",
+      "reviewedSha256": "0536cded4024c81192fc946ce3b0024d398650aa644c0c274a9ff6592bd39494",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/claude_output.ts",
+      "upstreamSha256": "36e554adf1505b3414700193f56cb9b3724708e9955d3c173242b133c737b940",
+      "reviewedSha256": "946e82466d58953e16156455587542558c24c6e1e485ae6d630606a0dbdbead7",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_output.ts",
+      "upstreamSha256": "c5e7cfc35c98c0826852892c903a12668e68bcb9949dd3aeae63939bb2f8e0c4",
+      "reviewedSha256": "1fbda0c9aeddb7cbdde35891af10d73ece58493ffcab7133fef80931a0d474de",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/codex_transcript.ndjson",
+      "upstreamSha256": "ac4b7bfced54918110cc456c00555a03fa38d71b30efb1dc012945325866a161",
+      "reviewedSha256": "93c68d7d7c22a001972b1553a787c16bb519c215b48cd517b36911856c370110",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/pi_output.ts",
+      "upstreamSha256": "f2b9650d1cb14f7981fec0a457f71269f64e01c82e7820d6020f1ed18429e54a",
+      "reviewedSha256": "a9b9ba164072dc81b077576ca3bec6280d086d536f9418a2a37e7b3876047f6e",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback/pi_transcript.ndjson",
+      "upstreamSha256": "8e2406d3ddedeb3374c8978681bd10cfb132b6bfac1a36b973ad2e2ae03b2d6d",
+      "reviewedSha256": "c69c6ffce4ff41bcab5f5b5e2ade78dacb2ce4061a057fe41d61235799dad447",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_after_restart/codex_output.ts",
+      "upstreamSha256": "ba84cdafbb34c864ee02f1c505f921d51ef9058be95be5e29a6aebdd3e7dfeeb",
+      "reviewedSha256": "056287d60e1c6e146bdf9356e4712df646e3fcad493bb14f7c66761a09d2e8d1",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_after_restart/codex_transcript.ndjson",
+      "upstreamSha256": "f3738400345bce331f6c1d48f5bfd62035eed4fc73498da732cf21fae01526c1",
+      "reviewedSha256": "66399c2be1a1402e252c9410352c4685ab1d63a53e421011536e3c5260147bab",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "f08e451aa562c04b5ef8a36074c7682155d3f67c",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_after_stop/pi_output.ts",
+      "upstreamSha256": "d61c8f63aa75abfe039981d623833bb03849bef595dbc89e375c6e43aa7a7e42",
+      "reviewedSha256": "ee903c98d62c4ccb9712eea321fa647d2bfcae06cc797e1d748e714440db8a2b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_after_stop/pi_transcript.ndjson",
+      "upstreamSha256": "30b029e6662f80af12e3859cf4deb7b92a578317deb550c2cad14059ffea819b",
+      "reviewedSha256": "1a0325d24bd8669d23ba7b0604f73545d8128dd0c10f5a5b01d998b5b9e2a383",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_to_stopped_turn/codex_output.ts",
+      "upstreamSha256": "e489a89bb3a1eacf8133919a089544bdfcce088293b22d0293ceb59d330e7697",
+      "reviewedSha256": "10e7e6de773f5ac81e7a6dbd3b2b840abee281a2f24364d70430615e1a6deb5f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/thread_rollback_to_stopped_turn/codex_transcript.ndjson",
+      "upstreamSha256": "a6955741836183081241050dc19be7f9ee34ca0c7e8d38b777636468c0811f30",
+      "reviewedSha256": "28a1b95e5e0ddde0ffe792f9685de03f647e1f6ec2835f4e814951db5a2fdf98",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_output.ts",
+      "upstreamSha256": "61db2467b1a66503e6b441388ac673558ebd5ce3b0a18dc307fe8aa2a4d8695b",
+      "reviewedSha256": "d6cfa114b77bb5f64a7edc0205ebee9bf677e22d93a68550e990764c531a955d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/codex_transcript.ndjson",
+      "upstreamSha256": "bfcf8fcb9a54704d569733f21c875e996677985c0dd28b43ee128deae50856e4",
+      "reviewedSha256": "f7a858c95138c0ef4ecdb8f5f1117cd43dc4c989b34894bd2e25b24f458544cf",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/cursor_output.ts",
+      "upstreamSha256": "c6259f85c8e07f41e7fb26eb14229dfbb21dc212a3aaa0ad71675e31ab0130d7",
+      "reviewedSha256": "d4c8ce3d5d81b8daa772fbe38276c615319a50df2daf8c3843ede050bd556975",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/grok_output.ts",
+      "upstreamSha256": "4dc87be7fedfeee1e676881ab9719685c181e3cb2813c6c49ce786560131574a",
+      "reviewedSha256": "cbc02a8fc3f1fb0cd0163044da08131756c641330e4729d3f34f05f76e478472",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/grok_transcript.ndjson",
+      "upstreamSha256": "b3650a1124673f43039c247fc3a629cb0efa8126f863364059e3f4fa8edbbb8a",
+      "reviewedSha256": "c4df331ff8fa8c3dc9cd90938d8276c0b9bf51c35ef596c575fbd5733738ab4f",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/todo_list/registry_transcript.ndjson",
+      "upstreamSha256": "560623d69777188138a1d9a7fbc0cc994f4067eb2a7d30ae113b0667456ec45e",
+      "reviewedSha256": "56384665eac35a17e0de821d143897446dcd85fbc5989daf65462cd606352e57",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_denied_write/claude_output.ts",
+      "upstreamSha256": "2cad60304a5f98f5984a6937664b728ec4ba23b32fdfaa5acecf7873c7ec071e",
+      "reviewedSha256": "7ce00d78818525766abe7ea124dc673792f46a190ad2b0fcc620241fa786a83b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only/claude_output.ts",
+      "upstreamSha256": "a227a96cef03aaa9a70f5b3630ed752c6c9d7e3fd0d63855c58b2a5d73b5441a",
+      "reviewedSha256": "9f5cfa89f1475201f2c36f6cbced6176466f9af8c25b23945fa99804922c7975",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only/cursor_output.ts",
+      "upstreamSha256": "dbb8f2dbec70a049eefb277e9e8194007a941dfcc8c06e7b12ac4e4f7d235608",
+      "reviewedSha256": "46b10433e98e8306c54ee1e89eeb633ff13d7901871facc1862ef09d48042ac8",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only/grok_transcript.ndjson",
+      "upstreamSha256": "d487d5754660266e1c8b2816b176465f976a02c415b6739dcdc15550948eb040",
+      "reviewedSha256": "1910f79cb1567d00539dc2ef85d10e4299aff3aefc501db8ba13065588c88b31",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only/registry_transcript.ndjson",
+      "upstreamSha256": "4f6f336efb4ec9f3fbd406ce1da8a9c54ceebd46ada431d9e28fd7710de3b843",
+      "reviewedSha256": "cba930398417ce91c5086a9b80784829c656ecddff48c8066842f693780c87fb",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/claude_transcript.ndjson",
+      "upstreamSha256": "4656125ba1ebfc3c54ab7bc6eb6eaa2f66fbf098a9a236c6dacb572903c748dc",
+      "reviewedSha256": "06f0943e4f790188bdab94835566d150b47649aba71c67ab44dcf268d60487ad",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/codex_transcript.ndjson",
+      "upstreamSha256": "5c14852fadb317a42363f0337cbd7891d014caf64d9ebdf60d97c5fee342ef44",
+      "reviewedSha256": "3f3f716c99495eb96d27f7d801f52f6a1b890e59d240b3cd704de277f8bac6d7",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/grok_transcript.ndjson",
+      "upstreamSha256": "565d1ae19efcd9078fb814ea7b8ad4b2a4a579af40f0c9aded887d19416a34e9",
+      "reviewedSha256": "f2b43ba19b4376efc8b7898f94859d9eaf7b0778c0ae606d3fc1563ca32631e2",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/output.ts",
+      "upstreamSha256": "2d2a68b6d090a6ec7a0869ec05c6dbbd4c104d7246d68d526b9d9c8b15df49b5",
+      "reviewedSha256": "563c7c309b8849ed805b70fdf58d4064c857bcd5d196fea2eff6d0f825b2074e",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_read_only_on_request/registry_transcript.ndjson",
+      "upstreamSha256": "f9c09f88e3b8480c44adc62ba30c085a33044a6bfc1611839128c3f80ea5ad81",
+      "reviewedSha256": "c339d1df53ff20428eab2cedad3f876fdb87d02a5b4993125672a6d5899f576a",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/claude_output.ts",
+      "upstreamSha256": "3d64b2b4dab79a64be5b66cb89bbf6da5d484e49872087c59f27e9f557dc02cf",
+      "reviewedSha256": "918ce2e93537422022686eaf7b039972cab95bde7fa00d4412b5dccba70f67d6",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/claude_transcript.ndjson",
+      "upstreamSha256": "249c6eb1b8a69117e19e62a8d7b18dff9fd83371a3635a50977b5bbbb7aba66f",
+      "reviewedSha256": "c784d51d2ce3c88dceac5c4d6b8b9936381acff4bb2a04d9c1e26ad9874e9aae",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_output.ts",
+      "upstreamSha256": "46887cac47b65e3348a28eb24678b4a5074946e31855d0e55be128a55be53356",
+      "reviewedSha256": "e2d1743c10950a366a313e5267e4773be6e45dbc4c615d2e861d85bd85bbd08d",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_restricted_granular/codex_transcript.ndjson",
+      "upstreamSha256": "8b1df55872dc8041b269b2d2e7b6cf7d5f22baa95b0c8efdd2900ca34f6f9540",
+      "reviewedSha256": "8a19de4648a446e56efd118f203434042f5a2b6386a2ab845fa18ecc39550a85",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/claude_output.ts",
+      "upstreamSha256": "5f6e7e46f094842dd77b1948fca912c898d73a1b35eda7789fd4db779025c3bd",
+      "reviewedSha256": "9bde07f8e3e24aa4b6ea198d36c3500d555a7a9317facd08659dc84e2c0525ff",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_output.ts",
+      "upstreamSha256": "634c83c8fc57e3b07ff4b59ebfc043c9b5cdff28af7e2c2faffe237f8e13ade3",
+      "reviewedSha256": "8fbb77551b1344ac03ab2aff074bb7058564a013befe0f385d7261e7355460a1",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/tool_call_workspace_never/codex_transcript.ndjson",
+      "upstreamSha256": "654ad7b2976c235044f343638e802253c5b45eadbf9aa16d23fa27861a0789f0",
+      "reviewedSha256": "87ecc22c3f7dd81334bc552dda18c0b7db76afd31e14bb6acb4d4b03f5cea04b",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/claude_output.ts",
+      "upstreamSha256": "e0658a01e37b7836cbc19d8b3c6c2b2a96a72290827daebaad7c651f2d93f813",
+      "reviewedSha256": "baa4864dfee2de2a0b3c0aa1100664b8f03426e3d46dd1b6c375fb54622a7ef0",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_output.ts",
+      "upstreamSha256": "0d1a2743b75c0f41f12d935556227e8978368a602f9a7678638f3410ffa9ad0b",
+      "reviewedSha256": "9e0e790e965e5c39ba1e0f157a7bb3891e43887fb4781eafa3afaf46bd41c680",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/codex_transcript.ndjson",
+      "upstreamSha256": "36bdf250632fc154cc63033280411c271534f11b84c02f9449f2dc15789d22b5",
+      "reviewedSha256": "eb9a16c8836ba8e09e8b0376eac430da3fad6299ba68511942c180b68f8f17f2",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/grok_transcript.ndjson",
+      "upstreamSha256": "684ef634662c7e095a7eda1465920b19f2129d4cbf42d4d1d1f69c04d65f3463",
+      "reviewedSha256": "9918a9e1291893b7e97ab038f0db1b32924f95eb1df26a971ef088e576161782",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/opencode_transcript.ndjson",
+      "upstreamSha256": "cb666a3d01af0c9a7e0e4af602863a5e8f9c4cc6404ce6c3361fb165d7bd0664",
+      "reviewedSha256": "d7e98e3e9edd94e87b6fabf694b8d54312463003d5e0da9037f413a85aefe012",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt/registry_transcript.ndjson",
+      "upstreamSha256": "d34d2aef0efb5ec8254db28cda85792d34337eabbf7534843c6b790a3fb683e6",
+      "reviewedSha256": "506f69006731f867c050edc4aa2af68ab55259a3eab561ea04ad3701bb6fc4fd",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e400f67aed5d5e34a9010298983e32a0ae2cb157",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/claude_output.ts",
+      "upstreamSha256": "88a0a9e685716b60eb696f3634a76124e8212aec002d7075df484173760d7c5d",
+      "reviewedSha256": "31cdc184198ab8cf2727ed5e34fd87fd7960c1acb2a8efe3c8ff25821de81e24",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_output.ts",
+      "upstreamSha256": "0ca47ceba59345090f3f4ea2c020be43f3c63230581c1d4ddc5c21707c83c92a",
+      "reviewedSha256": "e69243ff9f679875514e2224de7fd787288e77b8dd92a45cf63e959fa3169aaf",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/codex_transcript.ndjson",
+      "upstreamSha256": "72e0e4c50b64189b78eaba8139973954b2dbcecae3c984e92170dc0aceb16b4b",
+      "reviewedSha256": "c12af917e99d85e39a30db14344ab2230290d9d624f8564e44032ffa95bfe789",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/cursor_output.ts",
+      "upstreamSha256": "0fc9e67e162567f7b3226b27dfee1e1bf36ed5ed8c76909acb1d00cfbc9f95c1",
+      "reviewedSha256": "967fc229867f3d3222710fac1ea4dfb50f3f66166ba13b95da46a01705df4dd3",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/pi_output.ts",
+      "upstreamSha256": "d49066cbceed514b7f98f911d5009b2bd5f8c86bdc8a7fbc7b4f3a009703fff8",
+      "reviewedSha256": "094ae9f46492a8ed2fbca71fb57cc3fa702d241f9c78edad8a074167f068a719",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_mid_tool/pi_transcript.ndjson",
+      "upstreamSha256": "21b8c9d1210a1ec1064b82de4f6c73a8f69abd1a776a8de3b87cf1e38a2c14c4",
+      "reviewedSha256": "aa9bc6fb44bb45726713dd08a44f1d997e446ac5d47ab42e074213fa6c5ba483",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/turn_interrupt_restart/claude_output.ts",
+      "upstreamSha256": "97d258df5bedd396d9a2af61f7cfb64979f78634833d2aecb34bc033cee7a0f6",
+      "reviewedSha256": "ab868e652eeb36f6c571baa3e577b7526a5ec622036d66299b26c583477bb02c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/web_search/claude_output.ts",
+      "upstreamSha256": "35e639cfa60f0ef432bcd3b244ccf6e26f1e29dcb09f776e636b0032b7e4f71a",
+      "reviewedSha256": "201abe920486445eb411a74678a1e966b6994b661bf4a9b16e78bb4d7ff82c6c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_output.ts",
+      "upstreamSha256": "a94c0993fa9702a93e30c9ba3690d0b626a933f42ed16cf7ba1c3b678a637f35",
+      "reviewedSha256": "937928a4a48c7d873ffce4c0b9a0750626996f953391a1714e74e8b048a95b52",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/testkit/fixtures/web_search/codex_transcript.ndjson",
+      "upstreamSha256": "dffcf7bb6af67c1b1f4b7ad89ee44c226229c9ce5a029852374424967a92c25b",
+      "reviewedSha256": "b66819d2126edb3149f88734162ae67ce1f3a3f457ff5cffefa334a5c52d1d75",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-identity-metadata"
+    },
+    {
+      "path": "packages/effect-acp/test/fixtures/acp-mock-peer.ts",
+      "upstreamSha256": "4eaa45b8a6a7bac74032be800a0cf0dd0530e12ad7a088fd8a1f82d86d9ae339",
+      "reviewedSha256": "cdb15d7b3da93bf9f50b253330bc7e987383cb33575bff7c47b639660f337b31",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    },
+    {
+      "path": "packages/effect-codex-app-server/test/fixtures/codex-app-server-mock-peer.ts",
+      "upstreamSha256": "714d9c15de3009b7449ea3dd6b7f58aba8fc7e4db960e67a737d3d8bc9d93024",
+      "reviewedSha256": "9184b1247c7cf78767b2dd0300e3eedd93111b5afafee2990d5ca866eba98b3c",
+      "upstreamMode": "100644",
+      "reviewedMode": "100644",
+      "reviewCommit": "e9a3cb08f2a073e594699446e7c28d67b5cb2f2a",
+      "reason": "product-name-prose"
+    }
+  ]
+}

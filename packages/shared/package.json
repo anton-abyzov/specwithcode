@@ -1,6 +1,7 @@
 {
   "name": "@specweave-studio/shared",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "exports": {
     "./threadLifecycleEvidence": {
@@ -598,6 +599,10 @@
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
+    },
+    "./coordinatorReplySources": {
+      "types": "./src/coordinatorReplySources.ts",
+      "import": "./src/coordinatorReplySources.ts"
     }
   },
   "scripts": {

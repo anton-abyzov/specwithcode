@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
@@ -678,6 +679,7 @@ function ScopedProjectSkillsView({
     linked.skillThread
       ? { cwd: linked.skillCwd, threadId: ThreadId.make(linked.skillThread) }
       : {};
+  const [authoringOpen, setAuthoringOpen] = useState(false);
   const [rescan, setRescan] = useState(false);
   const environment = useEnvironment(environmentId);
   const machineOffline =
@@ -787,21 +789,43 @@ function ScopedProjectSkillsView({
     <SettingsSection
       {...searchableSetting("project-skills")}
       headerAction={
-        <Button
-          size="xs"
-          variant="outline"
-          type="button"
-          disabled={query.isPending}
-          onClick={() => {
-            if (rescan) query.refresh();
-            else setRescan(true);
-          }}
-        >
-          {query.isPending ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
-          {tx("Rescan")}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={machineOffline}
+            onClick={() => setAuthoringOpen(true)}
+          >
+            Create skill
+          </Button>
+          <Button
+            size="xs"
+            variant="outline"
+            type="button"
+            disabled={query.isPending}
+            onClick={() => {
+              if (rescan) query.refresh();
+              else setRescan(true);
+            }}
+          >
+            {query.isPending ? <Spinner className="size-3.5" /> : <RefreshCwIcon />}
+            {tx("Rescan")}
+          </Button>
+        </div>
       }
     >
+      <SkillAuthoringSheet
+        environmentId={environmentId}
+        projectId={projectId}
+        cwd={threadFolder.cwd ?? folder}
+        threadId={threadFolder.threadId}
+        userLevel={userLevel}
+        machineLabel={environment?.label ?? environmentId}
+        initialInstanceId={linked.agent}
+        open={authoringOpen}
+        onOpenChange={setAuthoringOpen}
+      />
       <div className="space-y-3 px-3 pt-3 sm:px-4">
         {userLevel ? (
           <p className="text-xs text-muted-foreground" data-testid="skills-user-level">

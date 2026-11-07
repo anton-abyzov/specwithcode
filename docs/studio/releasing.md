@@ -92,6 +92,23 @@ replacement self-hosted Mac, and update this runbook in the same change. On M1, 
 continues a failed run from its surviving staging folder. Logs and timings are kept as a
 workflow artifact.
 
+The **Release (staged)** workflow (`.github/workflows/release.yml`) runs the same release as one
+job per stage of the release graph (`release.sh <v> --stage <id> --resume` on the same runner), and
+owns the ship from end to end: its last job, `verify.release`, runs the checks `release.sh ship
+studio` runs after the release script (`v<v>` published on both repositories, the private one with
+`studio-update.json`, `SHA256SUMS` and the dmg, and the tagged commit on main) and records them in
+the run record. Both workflows share one concurrency group; Release macOS stays the fallback until
+the staged workflow has shipped a release. Check it first with `dry_run`:
+
+```bash
+gh workflow run release.yml -R anton-abyzov/specwithcode --ref main -f version=<v> -f dry_run=true
+```
+
+A dry run passes `--dry-run` to every stage instead of `--resume`, gives no stage a release
+secret, takes no release lock, writes no staging state, run record or log artifact, and has its
+own concurrency group. Its jobs run on the same M1 runner, one at a time, so a release dispatched
+during a dry run waits for the runner between jobs: dispatch a dry run when no release is running.
+
 ### Stages
 
 State for a release lives in `~/.specwithcode/release-staging/<version>/`: `release.json`, a

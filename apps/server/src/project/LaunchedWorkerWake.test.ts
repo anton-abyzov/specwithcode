@@ -163,6 +163,9 @@ it.effect("wakes the coordinator that launched a local worker when its run compl
     assert.include(wake?.text ?? "", "Demo: French");
     assert.include(wake?.text ?? "", "finished: completed");
     assert.equal(wake?.notification?.outcome, "completed");
+    assert.deepEqual(wake?.notification?.replySources, [
+      { kind: "thread", threadId: workerId, title: "Demo: French" },
+    ]);
   }),
 );
 

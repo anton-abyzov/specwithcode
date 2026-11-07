@@ -1331,9 +1331,22 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
 );
 export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
 
+/** Navigation provenance supplied by the event producer, never inferred from prose. */
+export const CoordinatorReplySource = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("thread"),
+    threadId: ThreadId,
+    environmentId: Schema.optional(EnvironmentId),
+    title: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({ kind: Schema.Literal("pull_request"), url: Schema.String, title: Schema.String }),
+  Schema.Struct({ kind: Schema.Literal("event"), title: Schema.String }),
+]);
+
 // A notification records an observed event, not whether its payload has reached the agent.
 // Provider delivery, wake policy, and agent-facing instructions belong to the backend.
 export const OrchestrationV2Notification = Schema.Struct({
+  replySources: Schema.optional(Schema.Array(CoordinatorReplySource)),
   source: OrchestrationV2NotificationSource,
   // Item status describes this timeline record; outcome describes the reported work.
   outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),

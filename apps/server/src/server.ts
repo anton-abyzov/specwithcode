@@ -72,6 +72,7 @@ import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
+import * as SkillAuthoringService from "./project/SkillAuthoringService.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -1025,6 +1026,8 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
   ),
 ).pipe(
+  // Draft revisions and installation writes must serialize across WebSocket clients.
+  Layer.provide(SkillAuthoringService.layer),
   // Every route that checks a presented credential counts its failures here,
   // so a guess at /mcp and a guess at /api share one budget per client.
   Layer.provide(CredentialFailureLimiter.layer),

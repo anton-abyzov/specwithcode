@@ -18,6 +18,9 @@ import * as Option from "effect/Option";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as ServerConfig from "../config.ts";
+import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
+import { unscopedGrant } from "../fleet/workGrantPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkerEpochStore from "../fleet/WorkerEpochStore.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { ProjectLink } from "../project/ProjectLink.ts";
@@ -30,7 +33,9 @@ import {
   assertThreadWritable,
   claimCoordinatorEpoch,
   peerArmCode,
+  COORDINATOR_FALLBACK_LABEL,
   type WorkGrantContext,
+  workGrantOf,
 } from "./workGrantAccess.ts";
 
 /** This machine is the Minis; M4 runs the other coordinator of the same linked project. */
@@ -632,4 +637,47 @@ describe("claimCoordinatorEpoch with a standby registration", () => {
     expect(code("archived")).toBe("refused");
     expect(code("storage_failed")).toBe("refused");
   });
+});
+
+describe("workGrantOf names the coordinator for messages", () => {
+  const coordinator = EnvironmentId.make("4d73e481-1b03-4ee8-b4c1-87a448431538");
+  const labelOf = (input: {
+    readonly fleet: ReadonlyMap<string, string>;
+    readonly nicknames: Record<string, { readonly name: string; readonly updatedAt: string }>;
+  }) =>
+    workGrantOf({
+      scope: { client: { sessionId: "s", label: "worker", access: "full-access" } as never },
+      caller: undefined,
+    }).pipe(
+      Effect.map((work) => work?.coordinatorLabel),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(WorkGrants.WorkGrants, {
+            ...WorkGrants.WorkGrants.defaultValue(),
+            enabled: true,
+            forClient: () => Effect.succeed(unscopedGrant(coordinator)),
+          }),
+          Layer.succeed(RemoteWorkers.RemoteWorkers, {
+            ...RemoteWorkers.RemoteWorkers.defaultValue(),
+            machineLabels: Effect.succeed(input.fleet),
+          }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({ machineNicknames: input.nicknames } as never),
+          }),
+        ),
+      ),
+    );
+
+  it.effect("uses the nickname, then the fleet name, never the environment id", () =>
+    Effect.gen(function* () {
+      const fleet = new Map([[coordinator as string, "Anton's MacBook Pro M4"]]);
+      const nickname = { [coordinator]: { name: " m4 ", updatedAt: "2026-10-30T00:00:00Z" } };
+      expect(yield* labelOf({ fleet, nicknames: nickname })).toBe("m4");
+      expect(yield* labelOf({ fleet, nicknames: {} })).toBe("Anton's MacBook Pro M4");
+      // A worker that does not list the coordinator in its own fleet (Ministorm, bug fleet-04).
+      const unnamed = yield* labelOf({ fleet: new Map(), nicknames: {} });
+      expect(unnamed).toBe(COORDINATOR_FALLBACK_LABEL);
+      expect(unnamed).not.toContain(coordinator);
+    }),
+  );
 });

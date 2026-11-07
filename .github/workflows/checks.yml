@@ -1,0 +1,795 @@
+name: Checks
+
+# Every pull request check in one run. The `changes` job reads the merge result's changed paths
+# and each gate runs only when its inputs changed:
+#   - No assistant attribution: every PR commit and every push to main.
+#   - PR Gate, PR Gate (packages), (server), (web) and (typecheck): scripts/studio-verify/pr-gate.sh,
+#     with the server suite, apps/web's suite and the typecheck gate in jobs of their own, the set
+#     release.sh's stage 1 runs, for anything but docs and Markdown. PR Gate itself only joins the
+#     results of every mandatory job, so its name stays the required check.
+#   - Native fingerprint diff: labels PRs that change the mobile native fingerprint (advisory).
+#   - PR Gate (Google): the headless Google account check, for web, server and package changes.
+#   - PR Gate (fleet) and PR Gate (mobile native): macOS-only suites for their own inputs.
+#   - PR Gate (Linux worker rollout): the rollout's Linux-only cases, with the fleet inputs.
+#   - PR Gate (release): release.sh --self-test, every release stage with stubbed commands, for
+#     changes to the release scripts and what they call.
+#   - Security: security.yml's gitleaks on every PR, osv-scanner when the lockfile changed and
+#     zizmor when .github changed (security.yml keeps its own daily and manual runs).
+# Draft PRs and release PRs skip the gates. workflow_dispatch runs every gate on the chosen ref.
+# The full inherited suite stays available on demand in ci.yml.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      pr: ${{ steps.paths.outputs.pr }}
+      code: ${{ steps.paths.outputs.code }}
+      google: ${{ steps.paths.outputs.google }}
+      fleet: ${{ steps.paths.outputs.fleet }}
+      native: ${{ steps.paths.outputs.native }}
+      release: ${{ steps.paths.outputs.release }}
+      deps: ${{ steps.paths.outputs.deps }}
+      workflows: ${{ steps.paths.outputs.workflows }}
+    steps:
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          sparse-checkout: .github
+      - id: paths
+        name: Decide which checks run
+        env:
+          EVENT: ${{ github.event_name }}
+          SKIP_PR: ${{ github.event.pull_request.draft || startsWith(github.head_ref, 'release/') }}
+        run: |
+          # A dispatch runs every check; a push to main runs only the attribution check. Draft
+          # PRs and release PRs (release.sh opens them after publishing and merges at once) skip
+          # the gates. Otherwise each gate runs when the merge result changes its inputs.
+          set -euo pipefail
+          out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; echo "$1=$2"; }
+          if [ "$EVENT" = workflow_dispatch ]; then
+            for k in pr code google fleet native release deps workflows; do out "$k" true; done; exit 0
+          fi
+          if [ "$EVENT" != pull_request ] || [ "$SKIP_PR" = true ]; then
+            for k in pr code google fleet native release deps workflows; do out "$k" false; done; exit 0
+          fi
+          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
+          wf=.github/workflows/checks.yml
+          any() { grep -qE "$1" <<< "$files" && echo true || echo false; }
+          out pr true
+          out code "$(grep -qvE '(\.md$|^docs/|^\.github/ISSUE_TEMPLATE/)' <<< "$files" && echo true || echo false)"
+          out google "$(any "^(apps/web/|apps/server/|packages/|scripts/studio-google/|pnpm-lock\.yaml$|$wf$)")"
+          out fleet "$(any "^(scripts/studio-fleet/|apps/server/src/persistence/Migrations/|apps/server/src/project/|apps/server/src/serviceUpdate/|packages/contracts/src/settings\.ts$|apps/server/src/serverSettings\.ts$|packages/shared/src/serverSettings\.ts$|$wf$)")"
+          out native "$(any "^(patches/|pnpm-workspace\.yaml$|pnpm-lock\.yaml$|apps/mobile/scripts/|$wf$)")"
+          out deps "$(any '^pnpm-lock\.yaml$')"
+          out workflows "$(any '^\.github/')"
+          out release "$(any "^(scripts/release/|scripts/install\.sh$|scripts/studio-fleet/make_(update_plan|helpers)\.py$|scripts/studio-projects/mac-(signature|upgrade-grant)(\.test)?\.mjs$|\.github/workflows/release-macos\.yml$|$wf$)")"
+
+  attribution:
+    name: No assistant attribution
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          sparse-checkout: scripts/check-commit-attribution.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Check commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # After a force-push the previous head may be gone; check the new head alone.
+          if git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            range="$BASE..$HEAD_SHA"
+          else
+            range="$HEAD_SHA^!"
+          fi
+          bash scripts/check-commit-attribution.sh "$range"
+
+  gate:
+    name: PR Gate (packages)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The coverage guard reads the merge base with main.
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch main
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      # ACP process-tree tests compile a pthread fixture with `cc`; the desktop
+      # tests build the browser secret helper against libsecret.
+      - name: Install native build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libsecret-1-dev pkg-config
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          # release-version.test.mjs pins the exact release Node.
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @specweave-studio/desktop ensure:electron
+
+      - name: Install Playwright Chromium headless shell
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
+      - name: Run the PR gate
+        env:
+          CI: "1"
+          GIT_CONFIG_NOSYSTEM: "1"
+          # Four cores: four suites of four vitest workers each starved the runner, and
+          # timing-sensitive tests timed out. Two suites of two workers each fit.
+          VITEST_MAX_WORKERS: "2"
+          # apps/web alone took about 20 minutes at two workers (1184 s on #434) and now runs in
+          # PR Gate (web); the 1800 s stage limit stays for a busy runner.
+          PR_GATE_TIMEOUT: "1800"
+        # The server suite ran here after stage 1, 1924 s of this job's 2565 s on #1015; it now
+        # runs beside it in PR Gate (server).
+        run: bash scripts/studio-verify/pr-gate.sh --base origin/main --out "$RUNNER_TEMP/pr-gate" --jobs 2 --no-server --skip typecheck --skip apps/web
+
+      - name: Upload gate logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-gate-logs
+          path: ${{ runner.temp }}/pr-gate
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The server suite, files changed since the merge base with main, as six weighted shards: two
+  # per job at two vitest workers each, the load the gate's runner held when it ran them.
+  server:
+    name: PR Gate (server ${{ matrix.job }}/3)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job: 1
+            run: "1,2"
+          - job: 2
+            run: "3,4"
+          - job: 3
+            run: "5,6"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # vitest --changed needs the merge base with main.
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Fetch main
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+
+      # ACP process-tree tests compile a pthread fixture with `cc`.
+      - name: Install native build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Install Playwright Chromium headless shell
+        run: node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+
+      - name: Run server shards ${{ matrix.run }} of 6
+        env:
+          CI: "1"
+          GIT_CONFIG_NOSYSTEM: "1"
+          VITEST_MAX_WORKERS: "2"
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+          RUN: ${{ matrix.run }}
+        # Under the job's 60 minutes, so a hung shard still leaves shards.json and its table.
+        run: |
+          base="$(git merge-base origin/main HEAD)"
+          node scripts/release/test-sharded.mjs --shards 6 --run "$RUN" --out "$RUNNER_TEMP/server" --changed "$base" --timeout-minutes 45
+
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-gate-server-${{ matrix.job }}
+          path: ${{ runner.temp }}/server
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The required check joins every mandatory job; fingerprint is intentionally advisory.
+  # Server artifacts also prove the shards ran what the changes reach.
+  verdict:
+    name: PR Gate
+    needs: [changes, attribution, gate, server, web, typecheck, security, google, release, fleet, fleet-linux, native]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check mandatory job results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node <<'NODE'
+          const jobs = JSON.parse(process.env.NEEDS_JSON);
+          let failed = false;
+          for (const [name, job] of Object.entries(jobs)) {
+            console.log(name + ': ' + job.result);
+            if (job.result !== 'success' && job.result !== 'skipped') failed = true;
+          }
+          if (jobs.changes.result !== 'success') failed = true;
+          process.exitCode = failed ? 1 : 0;
+          NODE
+
+      - name: Checkout
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/release
+
+      - name: Download shard results
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pr-gate-server-*
+          path: ${{ runner.temp }}/server
+
+      - name: Join the results
+        if: needs.changes.outputs.code == 'true'
+        env:
+          PACKAGES: ${{ needs.gate.result }}
+          SERVER: ${{ needs.server.result }}
+        run: |
+          echo "PR Gate (packages): $PACKAGES; PR Gate (server): $SERVER"
+          status=0
+          node scripts/release/test-sharded.mjs --merge "$RUNNER_TEMP"/server/pr-gate-server-* || status=1
+          [ "$PACKAGES" = success ] || status=1
+          [ "$SERVER" = success ] || status=1
+          exit "$status"
+
+  # apps/web's suite took 1562 s of the gate's 1760 s on #789, sharing the runner with every
+  # other package. In its own job it still took about 20 minutes, the longest job of a PR, so
+  # it runs as two vitest shards beside the gate.
+  web:
+    name: PR Gate (web ${{ matrix.shard }}/2)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      # The same command and worker count as the gate's apps/web job, one shard of it.
+      - name: Run apps/web
+        working-directory: apps/web
+        env:
+          CI: "1"
+          GIT_CONFIG_NOSYSTEM: "1"
+          VITEST_MAX_WORKERS: "2"
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: node --run test -- --shard ${{ matrix.shard }}/2
+
+  typecheck:
+    name: PR Gate (typecheck)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # The runner was shut down mid-check and later ran out of disk during setup
+      # (2026-10-28): drop preinstalled SDKs this job never uses before installing.
+      - name: Free disk space
+        run: |
+          df -h / /mnt || true
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      # apps/server's tsc with two checkers peaks near 9 GB, and this runner has
+      # under 8 GB of memory. Swap absorbs the peak.
+      # Keep two checkers: diagnostics depend on how files split between checkers, and
+      # one checker reports TS2589 in ws.ts that the baseline (two checkers) does not.
+      - name: Add swap for tsc
+        run: |
+          sudo fallocate -l 6G /typecheck.swap
+          sudo chmod 600 /typecheck.swap
+          sudo mkswap /typecheck.swap >/dev/null
+          sudo swapon /typecheck.swap
+          free -h
+          df -h /
+
+      # One package at a time, two checkers.
+      - name: Run the typecheck gate
+        env:
+          CI: "1"
+          TYPECHECK_TSC_ARGS: --checkers 2
+        run: bash scripts/studio-verify/typecheck-gate.sh --jobs 1 --out "$RUNNER_TEMP/typecheck"
+
+      - name: Upload typecheck logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-gate-typecheck-logs
+          path: ${{ runner.temp }}/typecheck
+          if-no-files-found: ignore
+          retention-days: 7
+
+  security:
+    name: Security
+    needs: changes
+    if: needs.changes.outputs.pr == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/security.yml
+    with:
+      deps: ${{ needs.changes.outputs.deps == 'true' }}
+      workflows: ${{ needs.changes.outputs.workflows == 'true' }}
+
+  fingerprint:
+    name: Native fingerprint diff
+    needs: changes
+    if: needs.changes.outputs.pr == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The merge ref can advance after the event is queued. Pin its commit
+          # and compare against its first parent, rather than the event's base.
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+
+      - id: changes
+        name: Detect native fingerprint inputs
+        run: |
+          base_sha=$(git rev-parse HEAD^1)
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          paths=$(git diff --no-renames --name-only "$base_sha" HEAD -- \
+            apps/mobile/ packages/client-runtime/ packages/contracts/ packages/shared/ \
+            assets/ scripts/ patches/ package.json pnpm-lock.yaml pnpm-workspace.yaml \
+            .github/workflows/checks.yml)
+          if [[ -n "$paths" ]]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No native fingerprint inputs changed; clearing any stale native change label." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Setup Vite+
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@specweave-studio/mobile...
+
+      - name: Expose pnpm
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          # Vite+ 0.3 keeps its data under XDG_DATA_HOME (~/.local/share); older
+          # releases used ~/.vite-plus. Take whichever holds the pinned pnpm.
+          vp_pnpm_bin=""
+          for vp_data in "${XDG_DATA_HOME:-$HOME/.local/share}/vite-plus" "$HOME/.vite-plus"; do
+            if [ -x "$vp_data/package_manager/pnpm/$pnpm_version/pnpm/bin/pnpm" ]; then
+              vp_pnpm_bin="$vp_data/package_manager/pnpm/$pnpm_version/pnpm/bin"
+              break
+            fi
+          done
+          if [ -z "$vp_pnpm_bin" ]; then
+            echo "::error::pnpm $pnpm_version not found in the Vite+ data directory"
+            exit 1
+          fi
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Fingerprint merge result
+        if: steps.changes.outputs.relevant == 'true'
+        working-directory: apps/mobile
+        run: |
+          mkdir -p "$RUNNER_TEMP/fp/head" "$RUNNER_TEMP/fp/base"
+          for platform in ios android; do
+            npx expo-updates fingerprint:generate --platform "$platform" > "$RUNNER_TEMP/fp/head/$platform.json"
+          done
+
+      - name: Fingerprint base
+        if: steps.changes.outputs.relevant == 'true'
+        env:
+          BASE_SHA: ${{ steps.changes.outputs.base_sha }}
+        run: |
+          git checkout --quiet "$BASE_SHA"
+          # Re-sync node_modules to the base commit's lockfile before
+          # fingerprinting — a dep-changing PR must not fingerprint the base
+          # against head's installed packages.
+          pnpm install --filter=@specweave-studio/mobile...
+          cd apps/mobile
+          for platform in ios android; do
+            npx expo-updates fingerprint:generate --platform "$platform" > "$RUNNER_TEMP/fp/base/$platform.json"
+          done
+
+      - id: compare
+        name: Compare fingerprints
+        if: steps.changes.outputs.relevant == 'true'
+        run: |
+          changed=""
+          {
+            echo "## Native fingerprint diff"
+            echo
+            for platform in ios android; do
+              head_hash="$(jq -r .hash "$RUNNER_TEMP/fp/head/$platform.json")"
+              base_hash="$(jq -r .hash "$RUNNER_TEMP/fp/base/$platform.json")"
+              if [ "$head_hash" = "$base_hash" ]; then
+                echo "- ✅ **$platform**: unchanged (\`$head_hash\`) — OTA-compatible"
+                continue
+              fi
+              changed="$changed $platform"
+              echo "- 📱 **$platform**: \`$base_hash\` → \`$head_hash\` — merging requires a new native build before OTAs work again"
+              jq -r -n \
+                --slurpfile h "$RUNNER_TEMP/fp/head/$platform.json" \
+                --slurpfile b "$RUNNER_TEMP/fp/base/$platform.json" '
+                  ($b[0].sources | map({ (.filePath // .id): .hash }) | add // {}) as $bm
+                  | $h[0].sources[]
+                  | select($bm[(.filePath // .id)] != .hash)
+                  | "  - \(.type): `\(.filePath // .id)`"'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "changed_platforms=${changed# }" >> "$GITHUB_OUTPUT"
+
+      - name: Sync native change label
+        # Fork PRs get a read-only token under pull_request; the check stays
+        # advisory there (summary only). This workflow must not move to
+        # pull_request_target — it installs and runs PR code.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CHANGED_PLATFORMS: ${{ steps.compare.outputs.changed_platforms }}
+        with:
+          script: |
+            const managedLabel = {
+              name: "📱 Native Change",
+              color: "d93f0b",
+              description:
+                "Changes the native fingerprint; merging blocks production OTAs until a new store build ships.",
+            };
+            const nativeChanged = (process.env.CHANGED_PLATFORMS ?? "").trim() !== "";
+            const issueNumber = context.payload.pull_request.number;
+
+            try {
+              const { data: existing } = await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: managedLabel.name,
+              });
+
+              if (
+                existing.color !== managedLabel.color ||
+                (existing.description ?? "") !== managedLabel.description
+              ) {
+                await github.rest.issues.updateLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: managedLabel.name,
+                  color: managedLabel.color,
+                  description: managedLabel.description,
+                });
+              }
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error;
+              }
+
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: managedLabel.name,
+                  color: managedLabel.color,
+                  description: managedLabel.description,
+                });
+              } catch (createError) {
+                if (createError.status !== 422) {
+                  throw createError;
+                }
+              }
+            }
+
+            const { data: currentLabels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              per_page: 100,
+            });
+            const hasLabel = currentLabels.some((label) => label.name === managedLabel.name);
+
+            if (nativeChanged && !hasLabel) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: [managedLabel.name],
+              });
+            } else if (!nativeChanged && hasLabel) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  name: managedLabel.name,
+                });
+              } catch (removeError) {
+                if (removeError.status !== 404) {
+                  throw removeError;
+                }
+              }
+            }
+
+            core.info(
+              `PR #${issueNumber}: native fingerprint ${nativeChanged ? `changed (${process.env.CHANGED_PLATFORMS})` : "unchanged"}`,
+            );
+
+  google:
+    name: PR Gate (Google)
+    needs: changes
+    if: needs.changes.outputs.google == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Build the web app
+        working-directory: apps/web
+        run: node ../../node_modules/vite-plus/bin/vp build
+
+      - name: Build the server
+        run: node apps/server/scripts/cli.ts build
+
+      - name: Install Playwright Chromium headless shell
+        run: npx -y "playwright-core@$(node -p "require('./apps/server/package.json').dependencies['playwright-core']")" install --with-deps --only-shell chromium
+
+      - name: Run the Google check
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: node scripts/studio-google/verify.mjs "$RUNNER_TEMP/google-verify"
+
+      - name: Upload the check's screenshots
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-gate-google
+          path: ${{ runner.temp }}/google-verify
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: PR Gate (release)
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
+    # release.sh uses macOS tools. Its self-test runs every stage with stubbed commands and
+    # refuses a malformed call, so a typo such as `x sums --python3` (which failed 1.0.44 after
+    # signing) fails here instead of in a release.
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Run the release self-test
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+        run: bash scripts/release/release.sh --self-test
+
+  fleet:
+    name: PR Gate (fleet)
+    needs: changes
+    if: needs.changes.outputs.fleet == 'true'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Install the scripts package
+        run: |
+          npm install -g "pnpm@$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\)".*/\1/p' package.json)"
+          # The server and its workspace packages too: test-protected-tables-after-restart.py starts
+          # two servers from apps/server/src/bin.ts.
+          pnpm install --frozen-lockfile --filter @specweave-studio/scripts --filter "specweave-studio..."
+
+      - name: Run the fleet tests
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: bash scripts/studio-fleet/run-tests.sh --out "$RUNNER_TEMP/fleet" --jobs 3
+
+      - name: Upload fleet logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pr-gate-fleet-logs
+          path: ${{ runner.temp }}/fleet
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The Linux worker rollout's remote shell reads systemd and /proc as a worker does; the fleet
+  # job's macOS runner skips those cases.
+  fleet-linux:
+    name: PR Gate (Linux worker rollout)
+    needs: changes
+    if: needs.changes.outputs.fleet == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/studio-fleet
+
+      - name: Run the Linux rollout tests
+        run: python3 -B scripts/studio-fleet/test-linux-rollout.py
+
+  native:
+    name: PR Gate (mobile native)
+    needs: changes
+    if: needs.changes.outputs.native == 'true'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Run the native regressions
+        working-directory: apps/mobile
+        env:
+          CI: "1"
+        run: node ../../node_modules/vite-plus/bin/vp test run --config ../../vite.config.ts --dir . scripts/permissions-service.test.ts scripts/notification-center-manager.test.ts

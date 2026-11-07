@@ -72,7 +72,6 @@ import {
   resourceMonitorExecutableName,
   resolveGitHubPublishConfig,
   parseGitHubRemoteRepository,
-  resolveReleaseFeedRepository,
   MAC_SERVICE_UPDATER_EXTRA_RESOURCES,
   resolveLocalBuildVersion,
   resolveMockUpdateServerPort,
@@ -368,19 +367,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.equal(parseGitHubRemoteRepository("http://127.0.0.1:4242/git/acme/studio"), undefined);
     assert.equal(parseGitHubRemoteRepository(""), undefined);
-  });
-
-  it("reads releases from the public repository when built from the private one", () => {
-    assert.equal(
-      resolveReleaseFeedRepository("anton-abyzov/specwithcode"),
-      "anton-abyzov/specwithcode",
-    );
-    assert.equal(
-      resolveReleaseFeedRepository("anton-abyzov/specwithcode"),
-      "anton-abyzov/specwithcode",
-    );
-    assert.equal(resolveReleaseFeedRepository("acme/studio"), "acme/studio");
-    assert.equal(resolveReleaseFeedRepository(undefined), undefined);
   });
 
   it.effect("falls back to the origin repository and ships the service updater on macOS", () =>

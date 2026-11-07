@@ -291,11 +291,10 @@ describe("scratch retention", () => {
         const proc = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "proc-"));
         try {
           NodeFS.mkdirSync(NodePath.join(proc, "123"));
-          NodeFS.symlinkSync("/work/scratch/probe", NodePath.join(proc, "123", "cwd"));
+          const cwd = NodePath.resolve("/work/scratch/probe");
+          NodeFS.symlinkSync(cwd, NodePath.join(proc, "123", "cwd"));
           NodeFS.mkdirSync(NodePath.join(proc, "self-status"));
-          expect(yield* listProcessCwds("linux", { procRoot: proc })).toEqual([
-            "/work/scratch/probe",
-          ]);
+          expect(yield* listProcessCwds("linux", { procRoot: proc })).toEqual([cwd]);
           expect(yield* listProcessCwds("win32")).toBeNull();
         } finally {
           NodeFS.rmSync(proc, { recursive: true, force: true });
@@ -303,27 +302,33 @@ describe("scratch retention", () => {
       }),
   );
 
-  EffectVitest.it.effect("treats a failed lsof as unknown, even with partial output", () =>
-    Effect.gen(function* () {
-      const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "lsof-"));
-      try {
-        const fake = (name: string, exit: number) => {
-          const file = NodePath.join(bin, name);
-          NodeFS.writeFileSync(file, `#!/bin/sh\nprintf 'p1\\nfcwd\\nn/work/a\\n'\nexit ${exit}\n`);
-          NodeFS.chmodSync(file, 0o755);
-          return file;
-        };
-        expect(yield* listProcessCwds("darwin", { uid: 501, lsofCommand: fake("ok", 0) })).toEqual([
-          "/work/a",
-        ]);
-        expect(
-          yield* listProcessCwds("darwin", { uid: 501, lsofCommand: fake("partial", 1) }),
-        ).toBeNull();
-      } finally {
-        NodeFS.rmSync(bin, { recursive: true, force: true });
-      }
-    }),
-  );
+  // lsof is a macOS adapter; the executable fixture needs POSIX shebang support.
+  describe.skipIf(process.platform === "win32")("POSIX lsof execution", () => {
+    EffectVitest.it.effect("treats a failed lsof as unknown, even with partial output", () =>
+      Effect.gen(function* () {
+        const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "lsof-"));
+        try {
+          const fake = (name: string, exit: number) => {
+            const file = NodePath.join(bin, name);
+            NodeFS.writeFileSync(
+              file,
+              `#!/bin/sh\nprintf 'p1\\nfcwd\\nn/work/a\\n'\nexit ${exit}\n`,
+            );
+            NodeFS.chmodSync(file, 0o755);
+            return file;
+          };
+          expect(
+            yield* listProcessCwds("darwin", { uid: 501, lsofCommand: fake("ok", 0) }),
+          ).toEqual(["/work/a"]);
+          expect(
+            yield* listProcessCwds("darwin", { uid: 501, lsofCommand: fake("partial", 1) }),
+          ).toBeNull();
+        } finally {
+          NodeFS.rmSync(bin, { recursive: true, force: true });
+        }
+      }),
+    );
+  });
 
   it("reads lsof cwd output", () => {
     expect(

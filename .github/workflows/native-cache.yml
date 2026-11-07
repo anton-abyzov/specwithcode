@@ -1,0 +1,153 @@
+name: Native binaries cache
+
+# Builds the Rust helpers the Windows and Linux desktop builds bundle, for x64
+# and arm64, and saves them under the keys release-windows-linux.yml and
+# desktop-windows-linux.yml restore. A pull request or a release run can only
+# restore caches saved on its own ref or on main, so without this run the first
+# build after a change to native/ rebuilt them, and on Windows first installed
+# the Spectre-mitigated MSVC libraries (about 4-5 minutes).
+#
+# The Linux helpers build on Ubuntu 22.04 (glibc 2.35), the oldest Linux the
+# desktop app supports: a binary linked against a newer glibc does not load on
+# an older one. Their keys carry that floor (glibc2.35), so a helper built on a
+# newer runner under the old keys is never restored into a release.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "native/resource-monitor/**"
+      - "native/kde-snap-shot/**"
+      - "native/hyprland-snap-shot/**"
+      - ".github/workflows/native-cache.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }} helpers
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+            rust_target: x86_64-unknown-linux-gnu
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: native
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/studio-resource-monitor
+          key: resource-monitor-${{ matrix.rust_target }}-glibc2.35-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Cache Linux capture helpers
+        id: capture_helper_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            native/kde-snap-shot/target/${{ matrix.rust_target }}/release/studio-kde-snap-shot
+            native/hyprland-snap-shot/target/${{ matrix.rust_target }}/release/studio-hyprland-snap-shot
+          key: linux-capture-helpers-${{ matrix.rust_target }}-glibc2.35-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || steps.capture_helper_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      # The same cargo commands scripts/build-desktop-artifact.ts runs.
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target ${{ matrix.rust_target }}
+
+      - name: Build capture helpers
+        if: steps.capture_helper_cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          for backend in kde hyprland; do
+            cargo build --locked --release --manifest-path "native/$backend-snap-shot/Cargo.toml" --target ${{ matrix.rust_target }}
+          done
+
+  windows:
+    name: Windows ${{ matrix.arch }} resource monitor
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            rust_target: x86_64-pc-windows-msvc
+            spectre: Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre
+          - arch: arm64
+            runner: windows-11-arm
+            rust_target: aarch64-pc-windows-msvc
+            spectre: Microsoft.VisualStudio.Component.VC.Runtimes.ARM64.Spectre
+    steps:
+      - name: Configure Git for Windows checkouts
+        run: git config --global core.longpaths true
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: native
+
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/studio-resource-monitor.exe
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      # The same toolchain the desktop builds use for the monitor.
+      - name: Install Spectre-mitigated MSVC libs
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          SPECTRE_COMPONENT: ${{ matrix.spectre }}
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            $env:SPECTRE_COMPONENT, "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target ${{ matrix.rust_target }}

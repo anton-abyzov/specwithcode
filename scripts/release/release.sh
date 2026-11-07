@@ -60,7 +60,9 @@
 #
 # Environment: RELEASE_ENV (default ~/.config/skill-studio-release/release.env, see
 # release.env.example), RELEASE_STAGING_ROOT, RELEASE_TREES (persistent trees, default
-# ~/.specwithcode/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS,
+# ~/.specwithcode/release.noindex), RELEASE_PRIVATE_REPO and RELEASE_PUBLIC_REPO (both
+# anton-abyzov/specwithcode: one repository, released with the public notes and no mirror; set
+# them apart for the old private-plus-public-mirror flow), RELEASE_JOBS,
 # RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's), RELEASE_SERVER_SHARDS
 # (default 4), RELEASE_RETRY_MAX_JOBS (2), RELEASE_RETRY_MAX_FILES (5), RELEASE_BUILD_HEADROOM_GIB
 # (10: M4's free disk kept for the build by preflight_fleet.py; it never turns that check off).
@@ -81,6 +83,10 @@ FLEET_SSH=""  # --ssh-fallback with RELEASE_FLEET_SSH=1; expanded unquoted, so e
 
 PRIVATE_REPO="${RELEASE_PRIVATE_REPO:-anton-abyzov/specwithcode}"
 PUBLIC_REPO="${RELEASE_PUBLIC_REPO:-anton-abyzov/specwithcode}"
+# One repository is developed and released in public: no public clone, mirror snapshot or second
+# release. Two repositories keep the mirror flow (scripts/public-mirror/publish.mjs).
+SINGLE_REPO=0
+[ "$PRIVATE_REPO" != "$PUBLIC_REPO" ] || SINGLE_REPO=1
 PRIVATE_URL="https://github.com/$PRIVATE_REPO.git"
 RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
@@ -146,7 +152,7 @@ stage_preflight() {
   # Ask GitHub, not `gh auth status`: that exits 1 when any saved account is stale, even with a
   # valid GH_TOKEN, which a self-hosted runner under a person's login can hit.
   t gh-auth -- gh api user --jq .login > /dev/null 2>&1 || check_fail "gh is not signed in (gh auth login, or GH_TOKEN)"
-  [ -e "$PUBLIC_RULES" ] || check_fail "missing $PUBLIC_RULES"
+  [ "$SINGLE_REPO" -eq 1 ] || [ -e "$PUBLIC_RULES" ] || check_fail "missing $PUBLIC_RULES"
   if [ "$CI_MODE" -eq 0 ]; then
     for var in "$FLEET_HOSTS" "$(dirname "$FLEET_HOSTS")/id_ed25519" "$(dirname "$FLEET_HOSTS")/known_hosts"; do
       [ -e "$var" ] || check_fail "missing $var"
@@ -183,6 +189,7 @@ stage_trees() {
   ensure_dir "$TREES"
   ensure_tree "$BUILD"
   ensure_tree "$TEST"
+  [ "$SINGLE_REPO" -eq 0 ] || return 0
   if [ ! -e "$PUBLIC_CLONE/.git" ]; then
     x clone-public -- git clone -q "https://github.com/$PUBLIC_REPO.git" "$PUBLIC_CLONE"
   fi
@@ -922,8 +929,9 @@ replace_draft() {  # replace_draft REPO TARGET NOTES LABEL: a fresh draft for th
 
 # A gate failed after the drafts were made: delete both (drafts only) so nothing half-made is left.
 drop_drafts() {
-  local repo state
-  for repo in "$PRIVATE_REPO" "$PUBLIC_REPO"; do
+  local repo state repos=("$PRIVATE_REPO")
+  [ "$SINGLE_REPO" -eq 1 ] || repos+=("$PUBLIC_REPO")
+  for repo in "${repos[@]}"; do
     state="$(q "draft-state" --may-fail -- gh release view "v$VERSION" -R "$repo" --json isDraft -q .isDraft)"
     if [ "$state" = true ]; then x drop-draft -- gh release delete "v$VERSION" -R "$repo" --yes; fi
   done
@@ -953,6 +961,12 @@ stage_drafts() {
     say "drafts: release notes drafted in $STAGE/notes.md; edit them while the suites run"
   fi
   x public-notes -- python3 -B "$TOOLS" public-notes --in "$STAGE/notes.md" --out "$STAGE/notes-public.md" --rules "$PUBLIC_RULES"
+  if [ "$SINGLE_REPO" -eq 1 ]; then
+    # The one release is the public one: its notes, at the candidate, with every asset.
+    replace_draft "$PRIVATE_REPO" "$SHA" "$STAGE/notes-public.md" public
+    upload_assets "$PRIVATE_REPO" public
+    return 0
+  fi
   replace_draft "$PRIVATE_REPO" "$SHA" "$STAGE/notes.md" private
   # The private upload runs beside the mirror check and the public draft: one after the other,
   # the two uploads of the same ~400 MB were most of the stage's 95 to 167s.
@@ -1032,7 +1046,13 @@ publish() {  # publish REPO NOTES LABEL: flip the draft and check it is public
 }
 
 stage_publish_private() {
-  publish "$PRIVATE_REPO" "$STAGE/notes.md" private
+  if [ "$SINGLE_REPO" -eq 1 ]; then
+    # notes.md may have been edited since the drafts; the one release carries the public notes.
+    x public-notes -- python3 -B "$TOOLS" public-notes --in "$STAGE/notes.md" --out "$STAGE/notes-public.md" --rules "$PUBLIC_RULES"
+    publish "$PRIVATE_REPO" "$STAGE/notes-public.md" public
+  else
+    publish "$PRIVATE_REPO" "$STAGE/notes.md" private
+  fi
   local tagged
   tagged="$(q tag-sha -- gh api "repos/$PRIVATE_REPO/commits/v$VERSION" -q .sha)"
   [ "$tagged" = "$SHA" ] || die "v$VERSION on $PRIVATE_REPO points at $tagged, not the candidate $SHA"
@@ -1070,6 +1090,11 @@ stage_fleet_linux() {
 }
 
 stage_publish_public() {
+  if [ "$SINGLE_REPO" -eq 1 ]; then  # publish-private made the one release.
+    prune_after_publish
+    dispatch_windows_linux
+    return 0
+  fi
   x public-notes -- python3 -B "$TOOLS" public-notes --in "$STAGE/notes.md" --out "$STAGE/notes-public.md" --rules "$PUBLIC_RULES"
   if [ -z "$(q public-tag --may-fail -- git ls-remote --tags "https://github.com/$PUBLIC_REPO.git" "refs/tags/v$VERSION")" ]; then
     reset_public

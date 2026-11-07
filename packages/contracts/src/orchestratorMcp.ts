@@ -965,6 +965,8 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  /** For another machine's work: which of this machine's projects its grant here covers. */
+  grantProjects: Schema.optional(Schema.Literals(["all", "linked", "listed"])),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,
@@ -993,6 +995,8 @@ export const OrchestratorMcpMachineStatus = Schema.Literals([
   "unreachable",
   "identity_mismatch",
   "unsupported",
+  /** The grant there is live but covers only some projects, and not this one. */
+  "project_not_in_grant",
 ]);
 export type OrchestratorMcpMachineStatus = typeof OrchestratorMcpMachineStatus.Type;
 
@@ -1025,6 +1029,11 @@ export const OrchestratorMcpMachine = Schema.Struct({
   status: OrchestratorMcpMachineStatus,
   access: Schema.NullOr(RuntimeMode),
   grantExpiresAt: Schema.NullOr(IsoDateTime),
+  /**
+   * Which of that machine's projects its grant lets this machine use, when it said:
+   * "linked" or "listed" means it refuses clones and new projects from here.
+   */
+  projectScope: Schema.optional(Schema.Literals(["all", "linked", "listed"])),
   project: Schema.optional(OrchestratorMcpMachineProject),
   providers: Schema.optional(Schema.Array(OrchestratorMcpMachineProvider)),
   /** Whether the machine answered just now; absent when it was not asked (no usable grant). */

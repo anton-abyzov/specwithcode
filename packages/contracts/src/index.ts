@@ -99,6 +99,8 @@ export * from "./studio.ts";
 
 export * from "./projectUsage.ts";
 export * from "./projectSkills.ts";
+export * from "./skillAuthoring.ts";
+export * from "./skillPublication.ts";
 export * from "./threadIncrementProgress.ts";
 
 export * from "./machineHandoff.ts";

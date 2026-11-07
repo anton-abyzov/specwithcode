@@ -9,6 +9,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -360,6 +361,7 @@ it.effect("keeps local credentials separate from a matching registry agent ID", 
 
 it.effect("gives each Copilot COPILOT_HOME its own credential binding", () =>
   Effect.gen(function* () {
+    const path = yield* Path.Path;
     const copilot = decodeSettings({ agentId: "github-copilot-cli" });
     const binding = (environment: NodeJS.ProcessEnv) =>
       makeHarness(browserMethod, false, copilot, instanceId, {}, false, { environment }).pipe(
@@ -376,7 +378,7 @@ it.effect("gives each Copilot COPILOT_HOME its own credential binding", () =>
     assert.deepEqual(explicitDefault, defaultStore);
     assert.deepEqual(work, {
       owner: "provider",
-      key: "acp:github-copilot-cli:/home/dev/.copilot-work",
+      key: `acp:github-copilot-cli:${path.resolve("/home/dev/.copilot-work")}`,
     });
     assert.deepEqual(tilde, work);
     // Other agents keep one shared store whatever COPILOT_HOME says.

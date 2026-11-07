@@ -2927,18 +2927,6 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* A narrow pane keeps the icon and the name's first letters; the tooltip has the rest. */
-@container threadlist (width < 360px) {
-  .sws-thread-machine {
-    width: calc(3ch + 16px);
-  }
-  .sws-thread-machine-name {
-    text-overflow: clip;
-  }
-  .sws-thread-machine-arrow {
-    display: none;
-  }
-}
 .sws-thread-machine svg {
   flex: none;
   width: 12px;
@@ -2946,6 +2934,22 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   margin-right: 4px;
   display: inline-block;
   vertical-align: -2px;
+}
+/* A narrower pane drops the laptop icon and gives its room to the name, which tells
+   machines apart; a long name ends in an ellipsis and the tooltip has the rest. */
+@container threadlist (width < 480px) {
+  /* A machine that stopped answering keeps its warning icon. */
+  .sws-thread-machine:not([data-execution="unknown"]) svg {
+    display: none;
+  }
+}
+@container threadlist (width < 360px) {
+  .sws-thread-machine {
+    width: calc(min(var(--sws-machine-col, 6ch), 6ch) + 1ch);
+  }
+  .sws-thread-machine-arrow {
+    display: none;
+  }
 }
 /* Its execution machine stopped answering: the row must not read as live. */
 .sws-thread-machine[data-execution="unknown"] svg {
@@ -3550,4 +3554,47 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   inset: auto;
   height: 4px;
   border-radius: 2px;
+}
+
+/* Reply provenance stays visible even when the triggering message is folded. */
+.sws-reply-sources {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  max-width: 100%;
+  vertical-align: baseline;
+  margin: 2px 0 6px;
+}
+.sws-reply-source,
+.sws-reply-source-label {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.sws-reply-source {
+  border: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: 6px;
+  padding: 1px 7px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.sws-reply-source:hover {
+  color: var(--foreground);
+  border-color: var(--muted-foreground);
+}
+.sws-reply-source:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-checked-wake .sws-reply-sources {
+  margin: 0;
+}
+.sws-reply-source:disabled {
+  cursor: default;
+  opacity: 0.7;
 }

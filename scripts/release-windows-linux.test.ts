@@ -1121,6 +1121,7 @@ describe("release-windows-linux.yml", () => {
       private: ReadonlyMap<string, string> | null;
       public: ReadonlyMap<string, string> | null;
     },
+    repositories = "anton-abyzov/specwithcode anton-abyzov/specwithcode",
   ) => {
     const root = tempRoot("nightly fixture-");
     const bin = stubGh(root, {
@@ -1145,6 +1146,7 @@ describe("release-windows-linux.yml", () => {
           GITHUB_STEP_SUMMARY: NodePath.join(root, "summary"),
           GITHUB_REPOSITORY: "anton-abyzov/specwithcode",
           FEED_REPOSITORY: "anton-abyzov/specwithcode",
+          RELEASE_REPOSITORIES: repositories,
         },
       },
     );
@@ -1187,6 +1189,18 @@ describe("release-windows-linux.yml", () => {
       expect(run.status).toBe(1);
       expect(run.output).toBe("");
       expect(run.stdout).toContain("replace=true");
+    });
+
+    it("checks the one release when this repository is the feed", () => {
+      const one = "anton-abyzov/specwithcode";
+      const done = runNightly(script, { private: null, public: attach("first") }, one);
+      expect(done.status).toBe(0);
+      expect(done.output).toBe(flag);
+      const macOnly = new Map(RELEASE_SH_ASSETS.map((asset) => [asset, asset]));
+      const fresh = runNightly(script, { private: null, public: macOnly }, one);
+      expect(fresh.status).toBe(0);
+      expect(fresh.output).toBe("");
+      expect(fresh.stdout).toContain("fell-through");
     });
   });
 

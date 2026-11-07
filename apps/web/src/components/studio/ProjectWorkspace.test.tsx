@@ -5,7 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import { act } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
+import { DEFAULT_SERVER_SETTINGS, ThreadId } from "@specweave-studio/contracts";
 import { setConversationFindState } from "../find/conversationFindStore";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import {
@@ -1101,6 +1101,120 @@ describe("project coordinator surface", () => {
     await render();
     expect(conversation().querySelector("[data-checked-wake]")).toBeNull();
     expect(conversation().textContent).toContain("No change");
+  });
+  it("carries worker provenance onto the reply and the folded checked line", async () => {
+    state.messages = [
+      {
+        id: "source",
+        runId: "source-run",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: "Worker finished",
+        streaming: false,
+        attachments: [],
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "completed",
+          summary: "[Thread worker](studio://thread/worker) reported back.",
+          replySources: [
+            { kind: "thread", threadId: ThreadId.make("worker"), title: "Thread worker" },
+          ],
+        },
+      },
+      {
+        id: "source-reply",
+        runId: "source-run",
+        role: "assistant",
+        createdBy: "agent",
+        text: "The checks are still running.",
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    state.timelineDetail = "normal";
+    await render();
+    const conversation = () => container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(
+      conversation().querySelector(".project-message-assistant [data-reply-sources]")?.textContent,
+    ).toContain("re: Thread worker");
+    state.timelineDetail = "concise";
+    await render();
+    expect(
+      conversation().querySelector(
+        '[data-checked-wake] button[aria-label="Open source thread Thread worker"]',
+      ),
+    ).not.toBeNull();
+  });
+  it("preserves historical checked grouping without trusting prose links for navigation", async () => {
+    state.messages = [1, 2, 3].flatMap((number) => [
+      {
+        id: `legacy-wake-${number}`,
+        runId: `legacy-run-${number}`,
+        role: "user",
+        createdBy: "agent",
+        text: "Worker finished",
+        streaming: false,
+        attachments: [],
+        notification: {
+          source: { kind: "background_task" },
+          outcome: "completed",
+          summary: "[Legacy worker](studio://thread/legacy-worker) reported back.",
+        },
+      },
+      {
+        id: `legacy-reply-${number}`,
+        runId: `legacy-run-${number}`,
+        role: "assistant",
+        createdBy: "agent",
+        text: "The checks are still running.",
+        streaming: false,
+        attachments: [],
+      },
+    ]);
+    state.timelineDetail = "concise";
+    await render();
+    const lines = container.querySelectorAll("[data-checked-wake]");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.querySelector("summary")?.textContent).toBe("Checked Legacy worker · 3 times");
+    expect(lines[0]!.querySelector("button")).toBeNull();
+  });
+  it("shows sources once for split replies and retains them on the concise visible reply", async () => {
+    state.messages = [
+      {
+        id: "split-trigger",
+        runId: "split-run",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: "Worker finished",
+        streaming: false,
+        attachments: [],
+      },
+      ...[1, 2, 3].map((number) => ({
+        id: `split-reply-${number}`,
+        runId: "split-run",
+        role: "assistant",
+        createdBy: "agent",
+        text: `Result section ${number}.`,
+        streaming: false,
+        attachments: [],
+      })),
+    ];
+    state.timelineDetail = "normal";
+    await render();
+    const sourceRows = () =>
+      container.querySelectorAll(".project-message-assistant [data-reply-sources]");
+    expect(sourceRows()).toHaveLength(1);
+    expect(sourceRows()[0]!.closest("article")?.getAttribute("data-follow-anchor")).toBe(
+      "split-reply-1",
+    );
+    state.timelineDetail = "concise";
+    await render();
+    expect(sourceRows()).toHaveLength(1);
+    expect(sourceRows()[0]!.closest("article")?.getAttribute("data-follow-anchor")).toBe(
+      "split-reply-3",
+    );
   });
   it("keeps a short worker receipt available on request", async () => {
     state.messages = [

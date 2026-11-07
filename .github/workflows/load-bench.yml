@@ -1,0 +1,138 @@
+name: Load benchmark
+
+# A non-blocking load-speed report: apps/web/tests/load-bench/run.mjs on the fast profile with
+# the small fixture, head against base, as a table in the job summary plus the JSON results as
+# an artifact. Opt-in only, on demand or on a pull request labelled `load-bench`, for the reason
+# ci.yml left pull requests in #277: every always-on suite costs runner minutes on this private
+# repository. Shared runners are noisy, so treat timing deltas here as a hint and compare bytes;
+# repeatable timings come from `vp run bench:load` on one quiet machine.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Ref to compare against (empty for head only)
+        required: false
+        default: main
+      runs:
+        description: Measured runs per profile
+        required: false
+        default: "3"
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Load benchmark (report only)
+    # Adding any other label must neither start nor restart the run: a `labeled` event counts
+    # only for the `load-bench` label itself, and concurrency sits on the job, so a skipped
+    # run never cancels a running one.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'load-bench') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'load-bench'))
+    concurrency:
+      group: load-bench-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      PWDEBUG: "0"
+      PLAYWRIGHT_HTML_OPEN: never
+      LOAD_BENCH_PROFILES: fast
+      LOAD_BENCH_SCALE: small
+      LOAD_BENCH_RUNS: ${{ inputs.runs || '3' }}
+      LOAD_BENCH_WARMUP: "1"
+      BASE_REF: ${{ github.event.pull_request.base.sha || inputs.base_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          cache: true
+          run-install: true
+
+      - name: Build head
+        run: |
+          (cd apps/web && node ../../node_modules/vite-plus/bin/vp build)
+          node apps/server/scripts/cli.ts build
+
+      - name: Install Playwright Chromium headless shell
+        run: npx -y "playwright-core@$(node -p "require('./apps/server/package.json').dependencies['playwright-core']")" install --with-deps --only-shell chromium
+
+      - name: Measure head
+        env:
+          STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/apps/server/node_modules/playwright-core
+        run: node apps/web/tests/load-bench/run.mjs --server-entry dist --out "$RUNNER_TEMP/load-bench/head"
+
+      - name: Expose pnpm
+        if: env.BASE_REF != ''
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          for vp_data in "${XDG_DATA_HOME:-$HOME/.local/share}/vite-plus" "$HOME/.vite-plus"; do
+            bin="$vp_data/package_manager/pnpm/$pnpm_version/pnpm/bin"
+            if [ -x "$bin/pnpm" ]; then echo "$bin" >> "$GITHUB_PATH"; exit 0; fi
+          done
+          echo "::error::pnpm $pnpm_version not found in the Vite+ data directory"
+          exit 1
+
+      - name: Build and measure base
+        if: env.BASE_REF != ''
+        continue-on-error: true
+        env:
+          STUDIO_PLAYWRIGHT_MODULE: ${{ github.workspace }}/apps/server/node_modules/playwright-core
+        run: |
+          base="$RUNNER_TEMP/base"
+          # A pull request passes a commit SHA, a dispatch usually a branch name.
+          commit="$(git rev-parse --verify -q "origin/${BASE_REF#origin/}^{commit}" || git rev-parse --verify "$BASE_REF^{commit}")"
+          git worktree add --detach "$base" "$commit"
+          (cd "$base" && pnpm install --frozen-lockfile)
+          (cd "$base/apps/web" && node ../../node_modules/vite-plus/bin/vp build)
+          (cd "$base" && node apps/server/scripts/cli.ts build)
+          # Head's harness measures the base checkout, so both sides use one method.
+          node apps/web/tests/load-bench/run.mjs --app-root "$base" --server-entry dist --out "$RUNNER_TEMP/load-bench/base"
+
+      - name: Report
+        if: always()
+        run: |
+          shopt -s nullglob
+          head=("$RUNNER_TEMP"/load-bench/head/*-fast.json)
+          base=("$RUNNER_TEMP"/load-bench/base/*-fast.json)
+          if [ ${#head[@]} -eq 1 ] && [ ${#base[@]} -eq 1 ]; then
+            node scripts/studio-bench/load-bench-compare.mjs "${base[0]}" "${head[0]}" >> "$GITHUB_STEP_SUMMARY"
+          elif [ ${#head[@]} -eq 1 ]; then
+            if [ -n "$BASE_REF" ]; then
+              echo "**The base ($BASE_REF) could not be measured; see the job log. This is head only, not a comparison.**" >> "$GITHUB_STEP_SUMMARY"
+              echo >> "$GITHUB_STEP_SUMMARY"
+            fi
+            # One file: medians only, with no regression verdict.
+            node scripts/studio-bench/load-bench-compare.mjs "${head[0]}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The load benchmark produced no result; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: load-bench-results
+          path: |
+            ${{ runner.temp }}/load-bench
+            .artifacts/load-bench
+          if-no-files-found: ignore
+          retention-days: 30

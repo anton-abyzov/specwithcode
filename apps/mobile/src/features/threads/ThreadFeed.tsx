@@ -1,3 +1,6 @@
+import { ReplySourceLinks } from "./ReplySourceLinks";
+import { mobileReplySources } from "./replySourceModel";
+import type { CoordinatorReplySource } from "@specweave-studio/shared/coordinatorReplySources";
 import { ThreadContextDivider } from "./thread-context-divider";
 import { ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -1519,6 +1522,7 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
+    readonly replySources: ReadonlyMap<string, readonly CoordinatorReplySource[]>;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1886,6 +1890,7 @@ function renderFeedEntry(
         )}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
+        <ReplySourceLinks sources={props.replySources.get(message.id) ?? []} />
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
@@ -2944,6 +2949,22 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   );
   // HTML render rows' fixed heights follow the width, so a rotation or split
   // resize drops the cached sizes, as a text-size change does.
+  const { selectedThreadProject } = useThreadSelection();
+  const coordinatorThreadId =
+    selectedThreadProject?.environmentId === props.environmentId
+      ? selectedThreadProject.workspaceSettings?.coordinatorThreadId
+      : null;
+  const replySources = useMemo(
+    () =>
+      mobileReplySources(props.feed, props.environmentId, {
+        threadId: props.threadId,
+        coordinatorThreadId,
+        visibleMessageIds: new Set(
+          presentedFeed.flatMap((entry) => (entry.type === "message" ? [entry.message.id] : [])),
+        ),
+      }),
+    [props.feed, props.environmentId, props.threadId, coordinatorThreadId, presentedFeed],
+  );
   const hasHtmlRenders = useMemo(
     () => presentedFeed.some((entry) => entry.type === "html-render"),
     [presentedFeed],
@@ -2974,6 +2995,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             expandedWorkRows,
             workRowSizing,
             workGroupScrollPositions,
+            replySources,
             terminalAssistantMessageIds,
             unsettledTurnId,
             failedRunIds,
@@ -3021,6 +3043,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       expandedWorkRows,
       workRowSizing,
       workGroupScrollPositions,
+      replySources,
       terminalAssistantMessageIds,
       unsettledTurnId,
       failedRunIds,

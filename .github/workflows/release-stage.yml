@@ -1,0 +1,261 @@
+name: Release stage
+
+# One stage of the staged release (release.yml): `scripts/release/release.sh VERSION --stage ID
+# --resume`, on the self-hosted release Mac whose staging folder every stage of the run shares.
+# Called only by release.yml; it is not dispatched on its own. The settings and secrets are the
+# ones release-macos.yml documents, written the same way and removed after the stage. Only the
+# stages in RELEASE_SECRETS get them: the test stages run the repo's own test code, so they get no
+# release secret, and their GitHub token is this run's read-only one.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      stage:
+        description: A stage of the release graph (scripts/release/run_record.py GRAPH)
+        required: true
+        type: string
+      shard:
+        description: test.server only, the shard (1 to 8) or merge
+        required: false
+        type: string
+        default: ""
+      previous:
+        required: false
+        type: string
+        default: ""
+      ci:
+        description: release.sh --ci (a runner that is not the fleet's M4; no canary or fleet rollout)
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: release.sh --dry-run instead of --resume; the stage gets no release secret
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  # The server suite's shard count, set here so a runner's own RELEASE_GRAPH_SHARDS never splits
+  # it differently: release.yml's test_server matrix runs shards 1 to this, and --shard merge
+  # (release.sh) waits for exactly this many.
+  RELEASE_GRAPH_SHARDS: "8"
+
+jobs:
+  stage:
+    name: ${{ inputs.stage }}${{ inputs.shard != '' && format(' {0}', inputs.shard) || '' }}
+    runs-on: ${{ vars.RELEASE_MACOS_RUNNER || 'swc-release' }}
+    environment: release
+    timeout-minutes: 180
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+      PWDEBUG: "0"
+      PLAYWRIGHT_HTML_OPEN: never
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_STAGE: ${{ inputs.stage }}
+      RELEASE_SHARD: ${{ inputs.shard }}
+      # The stages whose steps sign, notarize, push or publish: the only ones given release secrets,
+      # and never in a dry run, which only prints each command.
+      RELEASE_SECRETS: ${{ !inputs.dry_run && contains(fromJSON('["resolve","preflight","build.mac","verify.mac","publish.candidate","canary","fleet","finalize"]'), inputs.stage) }}
+    steps:
+      - name: Check secrets
+        if: env.RELEASE_SECRETS == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_ID }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in GH_TOKEN CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER \
+            STUDIO_GOOGLE_OAUTH_CLIENT_ID STUDIO_GOOGLE_OAUTH_CLIENT_SECRET; do
+            if [ -z "${!name:-}" ]; then missing+=("$name"); fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            printf '::error::Missing repository secrets: %s (GH_TOKEN comes from RELEASE_GH_TOKEN). See the header of release-macos.yml.\n' "${missing[*]}"
+            exit 1
+          fi
+
+      # As in release-macos.yml: fetched by hand, .repos left out, full history; but at the
+      # dispatched commit (GITHUB_SHA), not the branch tip, so every job of a run runs the same code.
+      - name: Checkout
+        shell: bash
+        env:
+          GH_TOKEN: ${{ env.RELEASE_SECRETS == 'true' && secrets.RELEASE_GH_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" 2> /dev/null ||
+            git remote set-url origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git config --local credential.https://github.com.helper '!gh auth git-credential'
+          git fetch -q --no-tags origin "+refs/heads/${GITHUB_REF_NAME}:refs/remotes/origin/${GITHUB_REF_NAME}" "$GITHUB_SHA"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout -q --detach "$GITHUB_SHA"
+
+      - name: Select Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          major() { DEVELOPER_DIR="$1" xcodebuild -version 2> /dev/null | sed -n '1s/^Xcode \([0-9][0-9]*\).*/\1/p' || true; }
+          current="$(major "${DEVELOPER_DIR:-$(xcode-select -p)}")"
+          if [ -n "$current" ] && [ "$current" -ge 26 ]; then
+            xcodebuild -version
+            exit 0
+          fi
+          xcode=""
+          for app in $(ls -d /Applications/Xcode*.app 2> /dev/null | sort -V); do
+            v="$(major "$app/Contents/Developer")"
+            if [ -n "$v" ] && [ "$v" -ge 26 ]; then xcode="$app"; fi
+          done
+          if [ -z "$xcode" ]; then
+            echo "No Xcode 26 or later on this runner" >&2
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Setup pnpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g "pnpm@$(sed -n 's/.*"packageManager": *"pnpm@\([0-9.]*\)".*/\1/p' package.json)"
+          pnpm -v
+
+      - name: Setup Rust
+        if: inputs.stage == 'build.mac' && !inputs.dry_run
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      # The same settings files release-macos.yml writes, mode 600 under the runner's temp folder.
+      - name: Write release settings
+        if: env.RELEASE_SECRETS == 'true'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_ID }}
+          STUDIO_GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.STUDIO_GOOGLE_OAUTH_CLIENT_SECRET }}
+          STUDIO_CLERK_PUBLISHABLE_KEY: ${{ vars.STUDIO_CLERK_PUBLISHABLE_KEY }}
+          STUDIO_CLERK_JWT_TEMPLATE: ${{ vars.STUDIO_CLERK_JWT_TEMPLATE }}
+          STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID }}
+          STUDIO_RELAY_URL: ${{ vars.STUDIO_RELAY_URL }}
+          SETTINGS_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage }}-${{ inputs.shard }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$RUNNER_TEMP/release-settings-$SETTINGS_ID"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          printf '%s' "$CSC_LINK" | base64 -D > "$dir/developerID_application.p12"
+          printf '%s' "$CSC_KEY_PASSWORD" > "$dir/p12.passphrase"
+          printf '%s' "$APPLE_API_KEY" > "$dir/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf 'STUDIO_GOOGLE_OAUTH_CLIENT_ID=%s\nSTUDIO_GOOGLE_OAUTH_CLIENT_SECRET=%s\n' \
+            "$STUDIO_GOOGLE_OAUTH_CLIENT_ID" "$STUDIO_GOOGLE_OAUTH_CLIENT_SECRET" > "$dir/google-oauth.env"
+          printf '[user]\n\tname = Anton Abyzov\n\temail = 979819+anton-abyzov@users.noreply.github.com\n[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n' > "$dir/gitconfig"
+          {
+            printf 'CSC_LINK_PATH="%s"\n' "$dir/developerID_application.p12"
+            printf 'CSC_PASSPHRASE_FILE="%s"\n' "$dir/p12.passphrase"
+            printf 'APPLE_API_KEY_PATH="%s"\n' "$dir/AuthKey_${APPLE_API_KEY_ID}.p8"
+            printf 'APPLE_API_KEY_ID="%s"\n' "$APPLE_API_KEY_ID"
+            printf 'APPLE_API_ISSUER="%s"\n' "$APPLE_API_ISSUER"
+            printf 'GOOGLE_OAUTH_ENV_FILE="%s"\n' "$dir/google-oauth.env"
+            for key in STUDIO_CLERK_PUBLISHABLE_KEY STUDIO_CLERK_JWT_TEMPLATE \
+              STUDIO_CLERK_CLI_OAUTH_CLIENT_ID STUDIO_RELAY_URL; do
+              if [ -n "${!key}" ]; then printf '%s="%s"\n' "$key" "${!key}"; fi
+            done
+            printf 'NODE_VERSION="22.20.0"\n'
+            printf 'SDKROOT="%s"\n' "$(xcrun --sdk macosx --show-sdk-path)"
+          } > "$dir/release.env"
+          chmod 600 "$dir"/*
+          {
+            echo "RELEASE_SETTINGS_DIR=$dir"
+            echo "RELEASE_ENV=$dir/release.env"
+            echo "GIT_CONFIG_GLOBAL=$dir/gitconfig"
+            echo "RELEASE_NODE_BIN=$(dirname "$(command -v node)")"
+          } >> "$GITHUB_ENV"
+
+      # A stage without release secrets: release.env names only the toolchain.
+      - name: Write test settings
+        if: env.RELEASE_SECRETS != 'true'
+        env:
+          SETTINGS_ID: ${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.stage }}-${{ inputs.shard }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$RUNNER_TEMP/release-settings-$SETTINGS_ID"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+          printf '[user]\n\tname = Anton Abyzov\n\temail = 979819+anton-abyzov@users.noreply.github.com\n[credential "https://github.com"]\n\thelper =\n\thelper = !gh auth git-credential\n' > "$dir/gitconfig"
+          {
+            printf 'NODE_VERSION="22.20.0"\n'
+            printf 'SDKROOT="%s"\n' "$(xcrun --sdk macosx --show-sdk-path)"
+          } > "$dir/release.env"
+          chmod 600 "$dir"/*
+          {
+            echo "RELEASE_SETTINGS_DIR=$dir"
+            echo "RELEASE_ENV=$dir/release.env"
+            echo "GIT_CONFIG_GLOBAL=$dir/gitconfig"
+            echo "RELEASE_NODE_BIN=$(dirname "$(command -v node)")"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Playwright Chromium headless shell
+        if: (inputs.stage == 'test.unit' || inputs.stage == 'test.server') && !inputs.dry_run
+        shell: bash
+        run: npx -y "playwright-core@$(node -p "require('./apps/server/package.json').dependencies['playwright-core']")" install --only-shell chromium
+
+      - name: Release stage
+        env:
+          GH_TOKEN: ${{ env.RELEASE_SECRETS == 'true' && secrets.RELEASE_GH_TOKEN || github.token }}
+          INPUT_PREVIOUS: ${{ inputs.previous }}
+          INPUT_CI: ${{ inputs.ci }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=("$RELEASE_VERSION" --stage "$RELEASE_STAGE" --resume)
+          # A dry run prints every command of the stage and writes no state, record or tag.
+          if [ "$INPUT_DRY_RUN" = true ]; then args=("$RELEASE_VERSION" --stage "$RELEASE_STAGE" --dry-run); fi
+          if [ -n "$RELEASE_SHARD" ]; then args+=(--shard "$RELEASE_SHARD"); fi
+          if [ -n "$INPUT_PREVIOUS" ]; then args+=(--previous "$INPUT_PREVIOUS"); fi
+          if [ "$INPUT_CI" = true ]; then args+=(--ci --jobs "$(( $(sysctl -n hw.ncpu) > 4 ? 4 : 2 ))"); fi
+          bash scripts/release/release.sh "${args[@]}"
+
+      # Per attempt: "Re-run failed jobs" uploads again, and a name already taken in the run fails.
+      # Not in a dry run: it writes no logs, and the staging folder may hold a real release's.
+      - name: Upload logs and timings
+        if: always() && !inputs.dry_run
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ inputs.version }}-${{ inputs.stage }}${{ inputs.shard != '' && format('-{0}', inputs.shard) || '' }}-logs-a${{ github.run_attempt }}
+          path: |
+            ~/.specwithcode/release-staging/${{ inputs.version }}/logs
+            ~/.specwithcode/release-staging/${{ inputs.version }}/timings
+            ~/.specwithcode/release-staging/${{ inputs.version }}/release.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Remove release settings
+        if: always()
+        shell: bash
+        run: if [ -n "${RELEASE_SETTINGS_DIR:-}" ]; then rm -rf "$RELEASE_SETTINGS_DIR"; fi

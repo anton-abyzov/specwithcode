@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -226,6 +227,10 @@ class PublicNotes(Temporary):
         rules.write_text(json.dumps({'replace': [['Internal Name', 'Public Name']], 'deny': ['never-ship-this']}))
         text = release_tools.public_notes('See anton-abyzov/specwithcode#12 and Internal Name.\n', str(rules))
         self.assertEqual(text, 'See anton-abyzov/specwithcode#12 and Public Name.\n')
+        # Two repositories (release.sh's mirror flow): the private name becomes the public one.
+        with mock.patch.object(release_tools, 'PRIVATE_REPO', 'acme/product-dev'):
+            text = release_tools.public_notes('See acme/product-dev#12.\n', str(rules))
+        self.assertEqual(text, 'See anton-abyzov/specwithcode#12.\n')
         # The branch shape is assembled so this file passes the public mirror's own deny check.
         for leak in ('never-ship-this', 'a path /Users/someone/x', 'host 192.168.1.20', 'on Pats-MacBook-Pro',
                      'branch ' + 'codex' + '/0912-thing'):

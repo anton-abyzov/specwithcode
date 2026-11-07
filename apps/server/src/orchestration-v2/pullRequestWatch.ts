@@ -1,5 +1,6 @@
 import type {
   OrchestrationV2Notification,
+  ThreadId,
   PullRequestCheck,
   PullRequestComment,
   PullRequestDetail,
@@ -183,6 +184,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
 export function pullRequestWatchMessage(input: {
   readonly number: number;
   readonly url: string;
+  readonly sourceThreadId?: ThreadId;
   readonly baseBranch: string;
   readonly headSha: string | null;
   readonly report: PullRequestWatchReport;
@@ -209,6 +211,12 @@ export function pullRequestWatchMessage(input: {
     text,
     notification: {
       source: { kind: "monitor" },
+      replySources: [
+        ...(input.sourceThreadId === undefined
+          ? []
+          : [{ kind: "thread" as const, threadId: input.sourceThreadId }]),
+        { kind: "pull_request", url: input.url, title: `PR #${input.number}` },
+      ],
       outcome: failed
         ? "failed"
         : changes.every((change) => change.kind === "checks-passed")

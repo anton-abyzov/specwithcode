@@ -209,6 +209,25 @@ const setup = (input: {
       }),
       // A call the guards let through reaches the service, which records it.
       Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+        capabilities: () =>
+          Effect.succeed({
+            parentThreadId: null,
+            inheritedProviderInstanceId: null,
+            inheritedModel: null,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            providers: [],
+            features: {
+              appOwnedSubagents: true,
+              asyncPolling: true,
+              cancellation: true,
+              batchThreadCreation: true,
+              threadManagement: true,
+              incrementalThreadRead: true,
+              scheduledTasks: true,
+              maxBatchThreads: 8,
+            },
+          } as never),
         readThread: (_scope, input) => reach(input.threadId),
         sendToThread: (_scope, input) => reach(input.threadId),
         interruptThread: (_scope, input) => reach(input.threadId),
@@ -542,6 +561,27 @@ describe("work started here by another machine", () => {
         defaultModelSelection: selection(codex),
       });
       expect(wrongAccount).toMatchObject({ code: "account_not_allowed" });
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("tells the coordinator which projects its grant here covers", () => {
+    const world = setup({ prefix: "studio-work-grant-capabilities-" });
+    return Effect.gen(function* () {
+      const scoped = yield* world.callThread(
+        "orchestrator_capabilities" as never,
+        world.clientScope(M4),
+        {},
+      );
+      expect(scoped).toMatchObject({ grantProjects: "linked" });
+      yield* world.workGrants((grants) =>
+        grants.update({ coordinatorEnvironmentId: M4, projects: { kind: "all" } }),
+      );
+      const everything = yield* world.callThread(
+        "orchestrator_capabilities" as never,
+        world.clientScope(M4),
+        {},
+      );
+      expect(everything).toMatchObject({ grantProjects: "all" });
     }).pipe(Effect.provide(world.layer));
   });
 

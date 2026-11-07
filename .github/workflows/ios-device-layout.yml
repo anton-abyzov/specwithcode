@@ -1,0 +1,118 @@
+name: iOS Device Layout
+
+on:
+  pull_request:
+    paths:
+      - apps/ios/**
+      - .github/workflows/ios-device-layout.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-device-layout-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: --max-old-space-size=8192
+
+jobs:
+  matrix:
+    name: iPhone widths (SE, 16, 17, Pro Max, Air, Duo)
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@specweave-studio/mobile...
+              - --filter=@specweave-studio/scripts...
+              - --filter=specweave-studio...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          # Vite+ 0.3 keeps its data under XDG_DATA_HOME (~/.local/share); older
+          # releases used ~/.vite-plus. Take whichever holds the pinned pnpm.
+          vp_pnpm_bin=""
+          for vp_data in "${XDG_DATA_HOME:-$HOME/.local/share}/vite-plus" "$HOME/.vite-plus"; do
+            if [ -x "$vp_data/package_manager/pnpm/$pnpm_version/pnpm/bin/pnpm" ]; then
+              vp_pnpm_bin="$vp_data/package_manager/pnpm/$pnpm_version/pnpm/bin"
+              break
+            fi
+          done
+          if [ -z "$vp_pnpm_bin" ]; then
+            echo "::error::pnpm $pnpm_version not found in the Vite+ data directory"
+            exit 1
+          fi
+          echo "$vp_pnpm_bin" >> "$GITHUB_PATH"
+          "$vp_pnpm_bin/pnpm" --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build for the simulator
+        working-directory: apps/ios
+        run: |
+          node Tools/generate-device-stream.mjs
+          xcodegen generate
+          xcodebuild -project SpecWithCode.xcodeproj -scheme SpecWithCode \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || { grep -E "error:|BUILD FAILED" build.log | tail -40; exit 1; }
+
+      - name: Width class tests
+        working-directory: apps/ios/SWCKit
+        run: swift test --filter LayoutClassTests
+
+      - name: Layout tests at every phone width
+        id: layout
+        continue-on-error: true
+        working-directory: apps/ios
+        run: |
+          runtime=$(xcrun simctl list runtimes -j | python3 -I -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("platform")=="iOS" and x.get("isAvailable")]; r.sort(key=lambda x:[int(p) for p in x["version"].split(".")]); print(r[-1]["identifier"])')
+          udid=$(xcrun simctl create "layout iPhone 16" com.apple.CoreSimulator.SimDeviceType.iPhone-16 "$runtime")
+          xcrun simctl boot "$udid"; xcrun simctl bootstatus "$udid" -b >/dev/null
+          set -o pipefail
+          xcodebuild -project SpecWithCode.xcodeproj -scheme SpecWithCode \
+            -destination "platform=iOS Simulator,id=$udid" -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO -only-testing:SpecWithCodeTests/PhoneWidthLayoutTests -only-testing:SpecWithCodeTests/TranscriptWidthProbeTests \
+            -only-testing:SpecWithCodeTests/AdaptiveDrawerTests/testCenteredHeaderNeverAsksForMoreThanItIsOffered \
+            -only-testing:SpecWithCodeTests/AdaptiveDrawerTests/testLeadingHeaderNeverAsksForMoreThanItIsOffered \
+            -only-testing:SpecWithCodeTests/AdaptiveDrawerTests/testHeaderWithEmptySidesStillShowsItsTitle test 2>&1 \
+            | tee test.log | grep -E "layout |probe |error:|Test Case|failed|passed" | tail -120
+          mkdir -p build/device-matrix && cp -R "$HOME/layout-shots" build/device-matrix/ || true
+
+      - name: Screenshot every width class
+        working-directory: apps/ios
+        run: bash Tools/device-matrix.sh build/device-matrix
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-device-matrix
+          path: |
+            apps/ios/build/device-matrix/
+            apps/ios/build.log
+            apps/ios/test.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail when a layout test failed
+        if: steps.layout.outcome == 'failure'
+        run: exit 1

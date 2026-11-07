@@ -2,6 +2,7 @@
   "name": "@specweave-studio/desktop",
   "version": "1.0.205",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "dist-electron/boot.cjs",
   "scripts": {

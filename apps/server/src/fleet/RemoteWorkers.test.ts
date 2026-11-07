@@ -341,6 +341,40 @@ describe("RemoteWorkers", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("says when that machine's grant covers only some projects, and not this one", () => {
+    const scoped = (grantProjects: string, projects: ReadonlyArray<unknown>) =>
+      setup({
+        orchestrator_capabilities: () => ({ result: { ...capabilities, grantProjects } }),
+        studio_project_list: () => ({ result: { projects, nextCursor: null } }),
+      });
+    const list = RemoteWorkers.RemoteWorkers.pipe(
+      Effect.flatMap((workers) =>
+        workers.listMachines({ projectId: ProjectId.make("local-project"), probe: true }),
+      ),
+      Effect.map((listed) => listed.machines[0]),
+    );
+    return Effect.gen(function* () {
+      // Linked only, and this project is not among the linked ones: not ready for it (m4core-03).
+      const outside = scoped("linked", []);
+      const refused = yield* Effect.gen(function* () {
+        yield* allow();
+        return yield* list;
+      }).pipe(Effect.provide(outside.layer));
+      expect(refused).toMatchObject({
+        status: "project_not_in_grant",
+        projectScope: "linked",
+        project: { match: "none" },
+      });
+      // Every project: ready, and the scope says so.
+      const everything = scoped("all", []);
+      const open = yield* Effect.gen(function* () {
+        yield* allow();
+        return yield* list;
+      }).pipe(Effect.provide(everything.layer));
+      expect(open).toMatchObject({ status: "ready", projectScope: "all" });
+    });
+  });
+
   it.live("carries each provider's shared usage and grant, and drops malformed usage", () => {
     const usage = {
       accountFingerprint: `sha256:${"a".repeat(64)}`,

@@ -155,7 +155,7 @@ describe("SearchFinderWorkerHost", () => {
       await expect(finder.waitForIndexReady(10_000)).resolves.toEqual({ ok: true, value: true });
       const result = await finder.fileSearch("needle", { pageSize: 5 });
       expect(result.ok && result.value.items.map((item) => item.relativePath)).toEqual([
-        "src/needle.ts",
+        NodePath.join("src", "needle.ts"),
       ]);
       // fff ran in the worker, never through this thread's module.
       expect(create).not.toHaveBeenCalled();

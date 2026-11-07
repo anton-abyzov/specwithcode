@@ -37,6 +37,7 @@ private struct ChatScreen: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
   @Environment(\.isWideLayout) private var wide
+  @Environment(\.layoutClass) private var layoutClass
   @Environment(\.isBesideCoordinator) private var isBesideCoordinator
   @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -52,7 +53,6 @@ private struct ChatScreen: View {
   @State private var showingHandoff = false
   @State private var showingIncrement = false
   @State private var deviceViewer: DeviceViewerRoute?
-  @State private var headerWidth: CGFloat = 0
   @State private var railWidth: CGFloat = 0
   /// The chat's height between its safe areas; shrinks while the keyboard is up.
   @State private var availableHeight: CGFloat = 0
@@ -405,10 +405,11 @@ private struct ChatScreen: View {
         }
       }
     } else {
-      // On narrow phones (iPhone SE, mini, the 6.1-inch models) the Threads
+      // Below a Plus or Pro Max (iPhone SE, mini, 16e, 16, 17, Pro) the Threads
       // label gives its width to the title, so the title and subtitle fit.
-      header(threadsLabel: headerWidth >= 380)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { headerWidth = $0 }
+      // Chosen from the column's width class, never by measuring the header:
+      // a label that widened the header it was measured from kept itself on.
+      header(threadsLabel: layoutClass >= .large)
     }
   }
 
@@ -576,13 +577,25 @@ private struct ChatScreen: View {
     let summary = model.thread(ref)
     let machine = model.machine(ref.environmentId)
     let status = machine?.status.weaveStatus ?? (session.machineOnline ? .online : .offline)
+    let name = machine?.displayName ?? session.machineLabel
     deviceButton(ref)
     Button {
       nav.push(.machine(ref.environmentId))
     } label: {
-      MachineBadge(status: status, size: 17)
-        .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
-        .contentShape(Rectangle())
+      // The name says which machine runs the thread; the glyph joins it only where the header
+      // has room. In the narrow status rail the name shrinks to fit the rail's width.
+      MachineBadge(
+        status: status,
+        label: name.isEmpty ? nil : name,
+        size: 17,
+        showsIcon: !usesRail && layoutClass >= .large,
+        lineLimit: 1
+      )
+      .minimumScaleFactor(usesRail ? 0.6 : 1)
+      .frame(maxWidth: usesRail ? WeaveSize.minTap - 4 : WeaveSize.machineNameMaxWidth)
+      .padding(.horizontal, usesRail || name.isEmpty ? 0 : WeaveSpacing.s2)
+      .frame(minWidth: WeaveSize.minTap, minHeight: WeaveSize.minTap)
+      .contentShape(Rectangle())
     }
     .buttonStyle(PressableStyle())
     .accessibilityLabel(session.machineOnline ? "\(session.machineLabel), \(status.label)" : "Connection options")

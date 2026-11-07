@@ -341,6 +341,8 @@ describe("grantMachineStatus", () => {
 describe("remoteWorkerWake", () => {
   it("names the worker by its machine label and link, and keeps the title inside its link", () => {
     const wake = remoteWorkerWake({
+      environmentId: "env-m1",
+      remoteThreadId: "t1",
       title: "Fix [flaky] test",
       threadRef: "studio://thread/env-m1/t1",
       machineLabel: "Studio B",
@@ -352,6 +354,9 @@ describe("remoteWorkerWake", () => {
     // Stored for the model. The coordinator conversation hides a "reported back" summary.
     expect(wake.notification).toEqual({
       source: { kind: "background_task" },
+      replySources: [
+        { kind: "thread", threadId: "t1", environmentId: "env-m1", title: "Fix [flaky] test" },
+      ],
       outcome: "completed",
       summary: "[Fix flaky test](studio://thread/env-m1/t1) on Studio B reported back.",
     });
@@ -359,11 +364,20 @@ describe("remoteWorkerWake", () => {
   });
 
   it("reports a failed or stopped run as such", () => {
-    const base = { title: "T", threadRef: "studio://thread/e/t", machineLabel: "B" };
+    const base = {
+      environmentId: "e",
+      remoteThreadId: "t",
+      title: "T",
+      threadRef: "studio://thread/e/t",
+      machineLabel: "B",
+    };
     expect(remoteWorkerWake({ ...base, status: "failed" }).notification.outcome).toBe("failed");
     expect(remoteWorkerWake({ ...base, status: "interrupted" }).notification.outcome).toBe(
       "cancelled",
     );
+    expect(remoteWorkerLost(base).notification.replySources).toEqual([
+      { kind: "thread", threadId: "t", environmentId: "e", title: "T" },
+    ]);
     expect(remoteWorkerLost(base).notification.summary).toBe(
       "Lost contact with [T](studio://thread/e/t) on B.",
     );

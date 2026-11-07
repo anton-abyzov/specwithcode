@@ -85,3 +85,28 @@ describe("fromRunner output cleanup", () => {
     }),
   );
 });
+
+it.effect("routes skill generation with the exact chosen model and preserves Markdown", () =>
+  Effect.gen(function* () {
+    let captured: Parameters<Runner>[0] | undefined;
+    const body = "## Procedure\n\nKeep `CODE` intact.";
+    const runner: Runner = (request) => {
+      captured = request;
+      return Effect.succeed({
+        name: "sample",
+        description: "Use for sample work",
+        instructions: body,
+      } as never);
+    };
+    const service = fromRunner("Fixture", runner);
+    const result = yield* service.generateSkill!({
+      cwd: "/fixture",
+      prompt: "Create a sample skill",
+      modelSelection,
+    });
+    expect(captured?.modelSelection).toEqual(modelSelection);
+    expect(captured?.operation).toBe("generateSkill");
+    expect(captured?.prompt).toContain("Create a sample skill");
+    expect(result.instructions).toBe(body);
+  }),
+);

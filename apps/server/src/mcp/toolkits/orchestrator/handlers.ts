@@ -116,6 +116,8 @@ const handlers = {
       if (work === undefined) return capabilities;
       return {
         ...capabilities,
+        // A coordinator says up front when this machine refuses clones and other projects.
+        grantProjects: work.grant.projects.kind,
         providers: capabilities.providers.map((provider) => ({
           ...provider,
           allowedByGrant: accountInGrant(work.grant.accounts, provider.providerInstanceId),

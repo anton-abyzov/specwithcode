@@ -17,7 +17,8 @@
 # release.sh's steps to the graph's ids), in their usual order, against this machine's staging
 # folder; other stages' steps are left as they are. --stage resolve may start a release (with
 # --resume too, as every job passes it); any other stage needs one under way. A stage release.sh has
-# no step for yet (Windows and Linux builds run in their own workflow) is recorded as skipped. While
+# no step for (Windows and Linux builds run in their own workflow) is recorded as skipped;
+# verify.release runs the post-release checks (stage_verify_release). While
 # another --stage job holds the release lock, a --stage job waits for it (RELEASE_STAGE_LOCK_WAIT
 # seconds, default 7200) instead of failing. --stage test.server --shard N runs shard N of
 # RELEASE_GRAPH_SHARDS (8) of the server suite in the foreground, and --shard merge judges every
@@ -242,6 +243,7 @@ stage_entry() {
   stage_steps
   if [ -n "$SERVER_SHARD" ]; then server_shard_main; fi
   [ "$STAGE_EMPTY" -eq 1 ] || return 0
+  if [ "$STAGE_ONLY" = verify.release ]; then stage_verify_release; fi
   stage_state_ready
   local note
   note="$(stage_note "$STAGE_ONLY")"
@@ -250,6 +252,57 @@ stage_entry() {
     record_step "$STAGE_ONLY" skipped "" --fact "note=$note"
   fi
   say "= $STAGE_ONLY: skipped; $note"
+  exit 0
+}
+
+# stage_verify_release: --stage verify.release, the last job of release.yml, so the staged workflow
+# owns the whole ship: the checks the umbrella's `release.sh ship studio` runs once the release
+# script ends (its verify_track for the studio track). v$VERSION is published, not a draft, on both
+# repositories, the private one with the update feed, SHA256SUMS and the macOS dmg, and the tagged
+# commit is on main (release/<version> merged). The Windows and Linux apps, which
+# release-windows-linux.yml attaches after publish-public, are counted but not required. Reads only,
+# with the run's read-only token, which cannot see a draft: a draft reads as "absent or draft".
+# Passing finishes the run record as done (a failed check marks it failed; a re-run that passes
+# sets it back). Exits.
+stage_verify_release() {
+  local missing="" assets name state count
+  stage_state_ready
+  record_init
+  if [ "$MODE" = dry ]; then
+    say "> verify.release"
+    say "    private-release: gh release view v$VERSION -R $PRIVATE_REPO: published, with studio-update.json, SHA256SUMS and a .dmg"
+    say "    public-release: gh release view v$VERSION -R $PUBLIC_REPO: published"
+    say "    merged: gh api repos/$PRIVATE_REPO/compare/main...v$VERSION: v$VERSION is on main"
+    say "Dry-run done: nothing was run or written."
+    exit 0
+  fi
+  stage_needs_check
+  record_step verify.release running
+  CURRENT_STAGE=verify.release
+  state="$(q release-draft --may-fail -- gh release view "v$VERSION" -R "$PRIVATE_REPO" --json isDraft --jq .isDraft)"
+  [ "$state" = false ] || missing="$missing private-release(${state:-absent or draft})"
+  assets="$(q release-assets --may-fail -- gh release view "v$VERSION" -R "$PRIVATE_REPO" --json assets --jq '.assets[].name')"
+  for name in studio-update.json SHA256SUMS; do
+    printf '%s\n' "$assets" | grep -qxF "$name" || missing="$missing $name"
+  done
+  printf '%s\n' "$assets" | grep -q '\.dmg$' || missing="$missing dmg"
+  state="$(q release-draft --may-fail -- gh release view "v$VERSION" -R "$PUBLIC_REPO" --json isDraft --jq .isDraft)"
+  [ "$state" = false ] || missing="$missing public-release(${state:-absent or draft})"
+  state="$(q release-merged --may-fail -- gh api "repos/$PRIVATE_REPO/compare/main...v$VERSION" --jq .status)"
+  case "$state" in behind | identical) ;; *) missing="$missing merged(${state:-not found})" ;; esac
+  count="$(printf '%s\n' "$assets" | grep -c -E '\.(exe|AppImage|deb)$' || true)"
+  say "verify.release: Windows and Linux files on v$VERSION: $count (release-windows-linux.yml attaches them; not required here)"
+  if [ -n "$missing" ]; then
+    record_step verify.release failed "" --fact "missing=${missing# }"
+    record_finish 1
+    die "verify.release: v$VERSION is not shipped:$missing"
+  fi
+  record_step verify.release passed "" --fact "windowsLinuxFiles=$count"
+  if [ -n "$RUN_RECORD" ]; then
+    python3 -B "$RUN_RECORD_TOOL" finish --file "$RUN_RECORD" --state done > /dev/null 2>&1 ||
+      say "(run record: not finished)"
+  fi
+  say "Stage verify.release of $VERSION: done."
   exit 0
 }
 

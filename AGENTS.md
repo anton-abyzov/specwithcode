@@ -1,13 +1,13 @@
 # SpecWithCode
 
-SpecWithCode is an independent private workbench for native coding agents. SpecWeave owns portable intent, task claims and handoffs; the app owns environment-local sessions and control. Required third-party notices remain in THIRD_PARTY_NOTICES.md.
+SpecWithCode is an independent, open-source (MIT) workbench for native coding agents. SpecWeave owns portable intent, task claims and handoffs; the app owns environment-local sessions and control. Required third-party notices remain in THIRD_PARTY_NOTICES.md.
 
 ## Product identity and licensing
 
 - Present SpecWithCode as an independent product. Lead with its own settings, provider orchestration, portable specs, handoffs and machine workflows.
 - Preserve required copyright and permission notices in THIRD_PARTY_NOTICES.md and distributed artifacts; product positioning never authorizes removing required attribution.
-- Do not add a blanket MIT badge, project-wide license grant or contributor showcase. Original SpecWithCode material has no new project-wide license grant; prior grants and third-party licenses remain applicable. Settings must still expose required open-source notices.
-- Keep private development history, PRs, active worktrees and handoffs intact. Publish sanitized snapshots through scripts/public-mirror/publish.mjs. A standalone repository does not require an orphan reset or force-push.
+- SpecWithCode is open source under the MIT License (LICENSE, Copyright (c) 2026 Anton Abyzov). Third-party code keeps its own license; never relicense it, and keep THIRD_PARTY_NOTICES.md and the notices in Settings complete.
+- This is a public repository. Never commit secrets, personal paths, machine names, customer data or private reports; keep them under ~/.specwithcode or another folder outside the repository.
 
 ## Naming
 
@@ -31,6 +31,7 @@ All automated browser tests, E2E, screenshots, recordings and scrapers explicitl
 
 - Read the canonical SpecWeave increment, claim only the assigned task under your own identity and edit its files. Work in the existing checkout your thread was given, on your own branch: no `git worktree add` unless the project's Use worktrees switch is on, and no extra clones unless it is on or the user asks (owner's rule, 2026-11-02). While it is off, the `git` SpecWithCode puts on the PATH of a thread in the project's own checkout refuses `git worktree add`; do not work around it. If the user asks for a separate worktree, tell them to turn on Use worktrees in the project's settings first: while it is off, a thread launch asking for one gets the project's checkout. When the switch is on, put the worktree under SpecWithCode's configured worktree root (never a sibling of the checkout in ~/Projects/github) and create it without the vendored `.repos` tree: `git worktree add --no-checkout -b <branch> <path> origin/main`, then in it `git sparse-checkout set --no-cone '/*' '!/.repos/'` and `git checkout <branch>`. Run a normal `pnpm install` there, and never symlink another checkout's node_modules, because workspace packages would resolve to that checkout's source. Remove it (`git worktree remove`) once its PR merges or closes. Before removing any worktree, check no SpecWithCode thread still uses it.
 - Run the smallest focused behavior/contract test and relevant production web/server build. No repo-wide tests, lint or typecheck unless requested.
+- Foundation audit: node scripts/studio-brand-audit.mjs. Preserve the exact third-party MIT license, legal notices, reference trees and cryptographic/replay/binary fixture bytes.
 - Physical-phone availability, restored native continuity and authenticated subscription capacity require actual outcome evidence; viewport fixtures, a fresh session and prepared slots do not prove them.
 
 ## Architecture
@@ -81,6 +82,8 @@ Use Node 22.20.0 explicitly and the isolated pnpm 11.10.0 toolchain. Paths below
 | Headless Status page fixture                        | `node node_modules/vite-plus/bin/vp build --config apps/web/tests/status-page/vite.config.ts`, then `node scripts/studio-verify/status-page.mjs /absolute/owned/report-dir` (Node22; synthetic history through the real catalog, feed parsers and history fold)                                |
 | Headless delivery evidence fixture                  | `node node_modules/vite-plus/bin/vp build --config apps/web/tests/lifecycle-delivery/vite.config.ts`, then `STUDIO_PLAYWRIGHT_MODULE=... node apps/web/tests/lifecycle-delivery/verify.mjs` (Node22; synthetic receipts through the real notice stack; light and dark at 1440 and 390)         |
 | Light/dark text contrast (WCAG AA) headless audit   | `node scripts/studio-verify/theme-contrast.mjs /absolute/owned/report-dir` (build web and server first; optional `STUDIO_TEST_CHROMIUM`, `PLAYWRIGHT_MODULE`, `THEME_CONTRAST_PAGES=/a,/b`; `--baseline` reports without failing)                                                              |
+| Identity and payload preservation                   | `node scripts/studio-brand-audit.mjs`                                                                                                                                                                                                                                                          |
+| Frozen foundation installation/build/native loading | `node scripts/studio-toolchain/verify.mjs`                                                                                                                                                                                                                                                     |
 | Web supported typecheck                             | `node node_modules/typescript/bin/tsc --noEmit --project apps/web/tsconfig.json`                                                                                                                                                                                                               |
 | Server supported typecheck                          | `node node_modules/typescript/bin/tsc --noEmit --project apps/server/tsconfig.json`                                                                                                                                                                                                            |
 | Web production build, working directory `apps/web`  | `node ../../node_modules/vite-plus/bin/vp build`                                                                                                                                                                                                                                               |

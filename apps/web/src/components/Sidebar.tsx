@@ -190,6 +190,7 @@ import type { SidebarThreadSummary } from "../types";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { MachineNameTag } from "./MachineNameTag";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
@@ -2225,13 +2226,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
                 {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground">
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={props.environmentMachine}
-                      className="size-3.5"
-                    />
-                  </span>
+                  <MachineNameTag
+                    label={props.environmentLabel ?? "Remote"}
+                    kind={props.environmentMachine}
+                    className="text-sidebar-muted-foreground"
+                  />
                 ) : null}
                 <SidebarProviderStack
                   thread={thread}

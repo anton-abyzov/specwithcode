@@ -1,0 +1,314 @@
+name: Platform tests
+
+# Runs the whole test suite on real Windows runners, one job per suite so one
+# failing package never hides another's results. On Linux only the full server
+# suite runs here: the PR Gate in checks.yml already runs every other package's
+# suite on the same Linux runner and Node, and the server's changed files. Each
+# job uploads its logs; the summary job lists every failing test file per OS.
+#
+# A pull request runs only when it carries the `windows-tests` label, added once
+# it is ready to merge or when it changes Windows behavior. These runs cost more
+# than half of the Actions bill, and most were cancelled by the next push. Adding
+# the label starts a run, and each later push reruns it.
+#
+# A labeled pull request runs a Windows smoke set: desktop, packages, and the web
+# and server tests that the PR's changes reach (vitest --changed); server uses five
+# weighted shards with exact selected-file coverage receipts. Suites run
+# each only when the PR changes that suite's inputs. The full Windows suite (web
+# in two shards, server in five) and the full Linux server suite run every night
+# on main and on a manual run. A PR's Linux server tests are the PR Gate's (the
+# server files its changes reach), so PRs no longer run the whole Linux suite.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "apps/marketing/**"
+      - "apps/ios/**"
+  schedule:
+    # 06:41 UTC, the full Windows suite against main.
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PWDEBUG: "0"
+  PLAYWRIGHT_HTML_OPEN: never
+
+concurrency:
+  # Adding any other label starts a run that does nothing; its own group keeps it
+  # from cancelling a test run already in progress.
+  group: platform-tests-${{ (github.event.action == 'labeled' && github.event.label.name != 'windows-tests') && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    name: Plan platform tests
+    if: >-
+      ${{ !startsWith(github.head_ref, 'release/') && (github.event_name != 'pull_request' ||
+      github.event.label.name == 'windows-tests' || (github.event.action != 'labeled' &&
+      contains(github.event.pull_request.labels.*.name, 'windows-tests'))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.plan.outputs.include }}
+      base-sha: ${{ github.event.pull_request.base.sha || github.sha }}
+    steps:
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Choose the matrix
+        id: plan
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          w='"os":"windows-2025"' l='"os":"ubuntu-24.04"'
+          rows=()
+          if [ "$EVENT_NAME" = pull_request ]; then
+            # Each suite runs when the merge result changes its inputs. Shared packages,
+            # the lockfile, the root config and this file reach every suite.
+            files=$(git diff --no-renames --name-only HEAD^1 HEAD)
+            shared='^(packages/|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|package\.json$|vite\.config\.ts$|patches/|\.github/workflows/platform-tests\.yml$)'
+            reaches() { grep -qE "$shared|$1" <<< "$files"; }
+            if reaches '^apps/desktop/'; then
+              rows+=("{$w,\"suite\":\"desktop\",\"shard\":1,\"shards\":1,\"changed\":false}")
+            fi
+            if reaches '^(apps/chrome-extension/|apps/mobile/|scripts/)'; then
+              rows+=("{$w,\"suite\":\"packages\",\"shard\":1,\"shards\":1,\"changed\":false}")
+            fi
+            if reaches '^apps/web/'; then
+              rows+=("{$w,\"suite\":\"web\",\"shard\":1,\"shards\":1,\"changed\":true}")
+            fi
+            if reaches '^apps/server/'; then
+              for shard in 1 2 3 4 5; do
+                rows+=("{$w,\"suite\":\"server\",\"shard\":$shard,\"shards\":5,\"changed\":true}")
+              done
+            fi
+          else
+            rows+=(
+              "{$w,\"suite\":\"desktop\",\"shard\":1,\"shards\":1,\"changed\":false}"
+              "{$w,\"suite\":\"packages\",\"shard\":1,\"shards\":1,\"changed\":false}"
+              "{$l,\"suite\":\"server\",\"shard\":1,\"shards\":2,\"changed\":false}"
+              "{$l,\"suite\":\"server\",\"shard\":2,\"shards\":2,\"changed\":false}"
+            )
+            # apps/web takes about 30 minutes on Windows in one job, so it runs as two
+            # vitest shards. apps/server's shards follow its recorded file times; on
+            # Windows four of them took 15-28 minutes (#789), so it runs as five.
+            for shard in 1 2; do
+              rows+=("{$w,\"suite\":\"web\",\"shard\":$shard,\"shards\":2,\"changed\":false}")
+            done
+            for shard in 1 2 3 4 5; do
+              rows+=("{$w,\"suite\":\"server\",\"shard\":$shard,\"shards\":5,\"changed\":false}")
+            done
+          fi
+          include="[$(IFS=,; echo "${rows[*]-}")]"
+          echo "$include" | jq -e 'type == "array"' > /dev/null
+          echo "Platform tests: $(jq length <<< "$include") jobs" >> "$GITHUB_STEP_SUMMARY"
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: ${{ matrix.os == 'windows-2025' && 'Windows' || 'Linux' }} ${{ matrix.suite }}${{ matrix.changed && ' (changed)' || '' }}${{ matrix.shards > 1 && format('-{0}', matrix.shard) || '' }}
+    needs: plan
+    if: needs.plan.outputs.include != '[]'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.include) }}
+    env:
+      CI: "1"
+      GIT_CONFIG_NOSYSTEM: "1"
+      VITEST_MAX_WORKERS: "2"
+    steps:
+      - name: Configure Git for Windows checkouts
+        if: runner.os == 'Windows'
+        run: git config --global core.longpaths true
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Pin the changed-server selection base
+        if: matrix.suite == 'server' && matrix.changed
+        shell: bash
+        env:
+          BASE: ${{ github.base_ref }}
+          BASE_SHA: ${{ needs.plan.outputs.base-sha }}
+        run: |
+          set -euo pipefail
+          # Keep --changed origin/<base>, with the same event base on every runner.
+          git cat-file -e "$BASE_SHA^{commit}"
+          git update-ref "refs/remotes/origin/$BASE" "$BASE_SHA"
+
+      - name: Install native build libraries
+        timeout-minutes: 15
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get install -y --no-install-recommends build-essential libsecret-1-dev pkg-config
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version: 22.20.0
+          # setup-vp's cache restores a Linux-shaped store on Windows (#7975).
+          cache: ${{ runner.os != 'Windows' }}
+          run-install: true
+
+      - name: Ensure Electron runtime is installed
+        if: matrix.suite == 'desktop'
+        run: vp run --filter @specweave-studio/desktop ensure:electron
+
+      # Server browser tests drive Chromium's headless shell.
+      - name: Install Playwright Chromium headless shell
+        if: matrix.suite == 'server' || matrix.suite == 'packages'
+        run: node apps/server/node_modules/playwright-core/cli.js install ${{ runner.os == 'Linux' && '--with-deps' || '' }} --only-shell chromium
+
+      - name: Run ${{ matrix.suite }}
+        shell: bash
+        env:
+          SUITE: ${{ matrix.suite }}
+          SHARD: ${{ matrix.shard }}/${{ matrix.shards }}
+          # The smoke set: only the tests the PR's changes reach.
+          CHANGED: ${{ matrix.changed && format('--changed origin/{0}', github.base_ref) || '' }}
+          BASE: ${{ github.base_ref }}
+          CHANGED_SERVER: ${{ matrix.suite == 'server' && matrix.changed }}
+          BASE_SHA: ${{ needs.plan.outputs.base-sha }}
+          LOGS: ${{ runner.temp }}/platform-tests
+        run: |
+          # GitHub runs bash with -e; keep going so every package reports.
+          set +e -uo pipefail
+          mkdir -p "$LOGS"
+          status=0
+          run_package() {
+            local dir="$1" name="${1//\//-}"
+            echo "::group::$dir"
+            (cd "$dir" && pnpm run test) 2>&1 | tee "$LOGS/$name.log"
+            local code=${PIPESTATUS[0]}
+            echo "::endgroup::"
+            echo "$dir exit $code" | tee -a "$LOGS/exit-codes.txt"
+            [ "$code" -eq 0 ] || status=1
+          }
+          # A changed-only run whose PR touches nothing the suite imports has no
+          # tests to run. Checking first matters: vitest --changed reruns the
+          # whole suite when any vite.config, vitest.config or package.json in
+          # the repository changed, even another app's (#848 timed out on that).
+          reaches() {
+            [ -z "$CHANGED" ] && return 0
+            git diff --name-only "origin/$BASE...HEAD" -- "$@" package.json pnpm-lock.yaml pnpm-workspace.yaml | grep -q .
+          }
+          skip() { echo "$1: the PR changes nothing it imports; skipped" | tee -a "$LOGS/exit-codes.txt"; }
+          case "$SUITE" in
+            desktop) run_package apps/desktop ;;
+            web)
+              if ! reaches apps/web packages; then skip apps/web; exit 0; fi
+              (cd apps/web && vp test run --passWithNoTests --project unit --shard "$SHARD" $CHANGED) 2>&1 | tee "$LOGS/apps-web-${SHARD%/*}.log"
+              code=${PIPESTATUS[0]}
+              echo "apps/web shard $SHARD exit $code" | tee -a "$LOGS/exit-codes.txt"
+              [ "$code" -eq 0 ] || status=1
+              ;;
+            packages)
+              for dir in packages/client-runtime packages/contracts packages/effect-acp \
+                packages/effect-codex-app-server packages/shared packages/ssh packages/tailscale \
+                apps/chrome-extension apps/mobile scripts; do
+                run_package "$dir"
+              done
+              ;;
+            server)
+              if [ "$CHANGED_SERVER" = true ]; then
+                # Enumerate using exactly the same config, base and shard as the run below.
+                # A failure to enumerate must not turn into empty passing coverage.
+                set -e
+                if reaches apps/server packages; then
+                  (cd apps/server && vp test list --passWithNoTests --filesOnly --json $CHANGED) > "$LOGS/selected-server.json"
+                else
+                  printf '[]\n' > "$LOGS/selected-server.json"
+                fi
+                node scripts/studio-verify/platform-shard-coverage.mjs record \
+                  "$LOGS/selected-server.json" "$SHARD" \
+                  "$(git rev-parse HEAD)" "$BASE_SHA" "$LOGS/changed-server-coverage.json"
+                set +e
+              fi
+              if ! reaches apps/server packages; then skip apps/server; exit 0; fi
+              (cd apps/server && vp test run --passWithNoTests --shard "$SHARD" $CHANGED) 2>&1 | tee "$LOGS/apps-server-${SHARD%/*}.log"
+              code=${PIPESTATUS[0]}
+              echo "apps/server shard $SHARD exit $code" | tee -a "$LOGS/exit-codes.txt"
+              [ "$code" -eq 0 ] || status=1
+              ;;
+          esac
+          exit $status
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: platform-tests-${{ runner.os }}-${{ matrix.suite }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/platform-tests
+          if-no-files-found: warn
+          retention-days: 14
+
+  summary:
+    name: Platform tests summary
+    needs: [plan, test]
+    if: ${{ always() && needs.plan.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout coverage verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/studio-verify
+          persist-credentials: false
+
+      - name: Download logs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: platform-tests-*
+          path: logs
+
+      - name: Require exact changed-server shard coverage
+        shell: bash
+        env:
+          PLAN: ${{ needs.plan.outputs.include }}
+          HEAD_SHA: ${{ github.sha }}
+          BASE_SHA: ${{ needs.plan.outputs.base-sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+          node scripts/studio-verify/platform-shard-coverage.mjs verify "$PLAN" logs "$HEAD_SHA" "$BASE_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: List failing test files per OS
+        if: always()
+        shell: bash
+        run: |
+          # grep finds nothing on an OS with no failures; that must not end the step.
+          {
+            echo "## Platform tests"
+            for os in Windows Linux; do
+              echo "### $os"
+              cat logs/platform-tests-$os-*/exit-codes.txt 2>/dev/null | sed 's/^/- /' || true
+              failed=$(grep -h -E "^ ?(FAIL|❯) " logs/platform-tests-$os-*/*.log 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g' | grep -oE "[A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?" | sort -u || true)
+              if [ -n "$failed" ]; then echo "Failing files:"; echo "$failed" | sed 's/^/- `/; s/$/`/'; fi
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "${{ needs.test.result }}" = "success" ] || { [ '${{ needs.plan.outputs.include }}' = '[]' ] && [ "${{ needs.test.result }}" = "skipped" ]; }

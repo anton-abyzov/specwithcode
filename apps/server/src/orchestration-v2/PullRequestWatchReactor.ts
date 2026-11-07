@@ -333,6 +333,9 @@ export const make = Effect.gen(function* () {
       text: `SpecWithCode stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
       notification: {
         source: { kind: "monitor" },
+        replySources: [
+          { kind: "pull_request", url: target.link.url, title: `PR #${target.link.number}` },
+        ],
         outcome: "failed",
         summary: `#${target.link.number}: stopped watching, could not read it`,
       },
@@ -407,6 +410,9 @@ export const make = Effect.gen(function* () {
       text: `Pull request #${target.link.number} (${target.link.url}) was closed, so SpecWithCode stopped watching it. Call watch_pull_request if it reopens.`,
       notification: {
         source: { kind: "monitor" },
+        replySources: [
+          { kind: "pull_request", url: target.link.url, title: `PR #${target.link.number}` },
+        ],
         outcome: "updated",
         summary: `#${target.link.number}: closed, stopped watching`,
       },

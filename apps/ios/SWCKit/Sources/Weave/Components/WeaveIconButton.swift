@@ -111,7 +111,7 @@ private struct WeaveIconButtonPreview: View {
         WeaveIconButton("plus", label: "Attach", style: .sunken, size: WeaveSize.innerControl) {}
         WeaveIconButton("arrow.up", label: "Send", style: .filled, size: WeaveSize.innerControl) {}
         WeaveIconButton("arrow.up", label: "Send", style: .filled, size: WeaveSize.innerControl) {}.disabled(true)
-        WeaveIconButton("stop.fill", label: "Stop", style: .sunken, size: WeaveSize.innerControl, glyphScale: ComposerBar.stopGlyphScale) {}
+        WeaveIconButton("stop.fill", label: "Stop reply", style: .sunken, size: WeaveSize.innerControl, glyphScale: ComposerBar.stopGlyphScale) {}
         WeaveIconButton("ellipsis", label: "More", style: .plain) {}
       }
     }

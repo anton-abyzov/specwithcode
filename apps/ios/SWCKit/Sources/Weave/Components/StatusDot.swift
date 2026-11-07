@@ -63,29 +63,47 @@ public struct MachineBadge: View {
   let label: String?
   let systemName: String
   let size: CGFloat
+  let showsIcon: Bool
+  let lineLimit: Int
 
   /// - Parameter label: The machine name, shown after the glyph when given.
-  public init(status: WeaveStatus, label: String? = nil, systemName: String = "laptopcomputer", size: CGFloat = 16) {
+  /// - Parameter showsIcon: False keeps the name and its status dot and drops the glyph, for a
+  ///   tight header: the name says which machine, the glyph only says it is one.
+  public init(
+    status: WeaveStatus,
+    label: String? = nil,
+    systemName: String = "laptopcomputer",
+    size: CGFloat = 16,
+    showsIcon: Bool = true,
+    lineLimit: Int = 2
+  ) {
     self.status = status
     self.label = label
     self.systemName = systemName
     self.size = size
+    self.showsIcon = showsIcon || label == nil
+    self.lineLimit = lineLimit
   }
 
   public var body: some View {
     HStack(spacing: WeaveSpacing.s1 + 2) {
-      Image(systemName: systemName)
-        .font(.system(size: size, weight: .regular))
-        .foregroundStyle(Color.weave.muted)
-        .overlay(alignment: .bottomTrailing) {
-          StatusDot(status, size: max(5, size * 0.36), ringColor: .weave.canvas)
-            .offset(x: size * 0.2, y: size * 0.12)
-        }
+      if showsIcon {
+        Image(systemName: systemName)
+          .font(.system(size: size, weight: .regular))
+          .foregroundStyle(Color.weave.muted)
+          .overlay(alignment: .bottomTrailing) {
+            StatusDot(status, size: max(5, size * 0.36), ringColor: .weave.canvas)
+              .offset(x: size * 0.2, y: size * 0.12)
+          }
+      } else {
+        StatusDot(status, size: max(6, size * 0.4))
+      }
       if let label {
         Text(label)
           .font(.weave(.callout))
           .foregroundStyle(Color.weave.muted)
-          .lineLimit(2)
+          .lineLimit(lineLimit)
+          .truncationMode(.tail)
       }
     }
     .accessibilityElement(children: .ignore)
@@ -117,6 +135,7 @@ private struct StatusDotPreview: View {
         MachineBadge(status: .offline)
         MachineBadge(status: .online, label: "M4")
         MachineBadge(status: .connecting, label: "Office")
+        MachineBadge(status: .online, label: "M4", showsIcon: false, lineLimit: 1)
       }
     }
   }

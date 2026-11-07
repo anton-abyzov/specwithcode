@@ -120,6 +120,8 @@ export function judgeMachineCandidate(input: {
       return verdict("update_needed", "update SpecWithCode there");
     case "ready":
     case "grant_expiring":
+    // The grant is live but leaves this project out; the project match below says how.
+    case "project_not_in_grant":
       break;
   }
   const project = machine.project;

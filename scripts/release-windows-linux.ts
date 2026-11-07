@@ -12,7 +12,7 @@
  *   node release-windows-linux.ts merge-feeds --dir DIR
  *   node release-windows-linux.ts check-feed --repo OWNER/REPO FILE...
  *   node release-windows-linux.ts sums --dir DIR
- *   node release-windows-linux.ts check-public --rules FILE --dir DIR
+ *   node release-windows-linux.ts check-public [--rules FILE] --dir DIR
  *   node release-windows-linux.ts plan-upload --version X.Y.Z --dir DIR --existing FILE [--replace]
  *   node release-windows-linux.ts release-state --version X.Y.Z --repo OWNER/REPO
  */
@@ -690,7 +690,11 @@ function main(argv: ReadonlyArray<string>): void {
       return;
     }
     case "check-public": {
-      const rules = JSON.parse(NodeFS.readFileSync(args.one("rules"), "utf8")) as PublicRules;
+      // Without --rules, the built-in patterns of publicLeaks only.
+      const rulesFile = args.values.get("rules")?.[0];
+      const rules = (
+        rulesFile ? JSON.parse(NodeFS.readFileSync(rulesFile, "utf8")) : {}
+      ) as PublicRules;
       const dir = args.one("dir");
       const problems = listFiles(dir)
         .filter((name) => /\.(?:yml|ps1)$/.test(name) || name === WINDOWS_LINUX_SUMS)

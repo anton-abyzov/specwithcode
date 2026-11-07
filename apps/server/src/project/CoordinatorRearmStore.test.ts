@@ -49,7 +49,10 @@ describe("CoordinatorRearmStore", () => {
       expect(yield* store.list).toEqual([]);
       expect(yield* store.modify(entry.logicalProjectId, () => entry)).toEqual(entry);
       expect(yield* store.get(entry.logicalProjectId)).toEqual(entry);
-      expect(Number((yield* fileSystem.stat(file)).mode) & 0o777).toBe(0o600);
+      // Windows does not expose POSIX owner-only permission bits.
+      if (process.platform !== "win32") {
+        expect(Number((yield* fileSystem.stat(file)).mode) & 0o777).toBe(0o600);
+      }
       expect(JSON.parse(yield* fileSystem.readFileString(file))).toMatchObject({
         version: 1,
         projects: [{ logicalProjectId: entry.logicalProjectId }],

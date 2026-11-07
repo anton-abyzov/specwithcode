@@ -14,6 +14,7 @@ import {
   type ProviderInstanceId,
   type StandbyRearmReason,
 } from "@specweave-studio/contracts";
+import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
@@ -31,6 +32,7 @@ import {
 import { ProjectLink } from "../project/ProjectLink.ts";
 import { PEER_ARM_NO_CONSENT, STANDBY_CAPABILITY_REFUSAL } from "../project/ProjectLinkStandby.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 import type { Caller } from "./threadAccess.ts";
 
@@ -66,7 +68,32 @@ const storageFailure = () =>
     message: "This machine could not read who may run work on it. Try again.",
   });
 
-const labelsOf = RemoteWorkers.RemoteWorkers.pipe(Effect.flatMap((remote) => remote.machineLabels));
+/**
+ * Machine names for messages: the nickname the user gave a machine (shared
+ * across the fleet), else its name in this machine's fleet list. Read without
+ * adding a requirement, so every tool can name the coordinator.
+ */
+const labelsOf = Effect.gen(function* () {
+  const fleet = yield* RemoteWorkers.RemoteWorkers.pipe(
+    Effect.flatMap((remote) => remote.machineLabels),
+  );
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  if (Option.isNone(settings)) return fleet;
+  const read = yield* settings.value.getSettings.pipe(Effect.option);
+  const nicknames = Option.isSome(read) ? read.value.machineNicknames : {};
+  const labels = new Map(fleet);
+  for (const [environmentId, entry] of Object.entries(nicknames)) {
+    const name = normalizeMachineNickname(entry.name);
+    if (name !== "") labels.set(environmentId, name);
+  }
+  return labels;
+});
+
+/** Never an environment id in a sentence the user reads (bugs fleet-04, m4core-03). */
+export const COORDINATOR_FALLBACK_LABEL = "the coordinating machine";
+
+const coordinatorLabelOf = (labels: ReadonlyMap<string, string>, environmentId: string) =>
+  labels.get(environmentId) ?? COORDINATOR_FALLBACK_LABEL;
 
 /**
  * The grant the caller acts under here, if any: a worker-grant client's own,
@@ -85,8 +112,7 @@ export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Gran
     return {
       grant,
       origin: undefined,
-      coordinatorLabel:
-        labels.get(grant.coordinatorEnvironmentId) ?? grant.coordinatorEnvironmentId,
+      coordinatorLabel: coordinatorLabelOf(labels, grant.coordinatorEnvironmentId),
       coordinatorEpochs: context.scope.client?.coordinatorEpochs,
     } satisfies WorkGrantContext;
   }
@@ -98,7 +124,7 @@ export const workGrantOf = Effect.fn("mcp.workGrantOf")(function* (context: Gran
   return {
     grant,
     origin,
-    coordinatorLabel: labels.get(grant.coordinatorEnvironmentId) ?? grant.coordinatorEnvironmentId,
+    coordinatorLabel: coordinatorLabelOf(labels, grant.coordinatorEnvironmentId),
   } satisfies WorkGrantContext;
 });
 

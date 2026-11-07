@@ -1,0 +1,356 @@
+name: Security
+
+# Recurring supply-chain checks. Each job fails its check on a finding of the kinds below.
+# These checks are not required on main, and a pull request runs its own copy of this file, so a
+# pull request that edits it can change what its own run checks. A failure is a red check, not a
+# merge block: making the three jobs required status checks is a repository setting for the owner.
+#   - osv-scanner: known vulnerabilities in pnpm-lock.yaml. On a pull request the check fails
+#     only on an advisory its lockfile adds; the daily run reports every open advisory.
+#   - gitleaks: secrets in commits, with its built-in rules only (no in-repo .gitleaks.toml,
+#     .gitleaksignore or gitleaks:allow comment is honoured), merge resolutions included. The
+#     check fails on a secret in a pull request's own commits, or in main's commits since the
+#     previous scheduled scan (the last 26 hours without one); a manual run reports the whole
+#     history. Every finding is listed, but generic-api-key (test tokens, keybinding keys,
+#     alphabets and hashes match it) and a .repos/ finding whose line was already in that file
+#     where the scan starts are reported only.
+#   - zizmor: security lint of .github (workflows, composite actions, dependabot.yml). No
+#     zizmor.yml or inline ignore comment is honoured, and a file it cannot parse fails the check.
+#     Every finding is reported. These fail: unpinned-uses, impostor-commit,
+#     known-vulnerable-actions and ref-version-mismatch, except a ref-version-mismatch on a
+#     dtolnay/rust-toolchain uses: line (pinned to a master commit by hand, so its `# master`
+#     comment falls behind); and any hash pin whose version comment is not one word, since zizmor
+#     cannot check that comment.
+# Each tool is a release binary checked against the SHA-256 below before it runs. Update a tool
+# by changing its version and digest together (from the release's checksums file).
+#
+# Pull requests run these jobs inside Checks (checks.yml calls this file), so a PR starts one
+# workflow instead of two. There osv-scanner runs only when the lockfile changed and zizmor only
+# when .github changed: with neither changed the PR cannot add a finding, and the daily run still
+# reports every open one. gitleaks runs on every pull request.
+
+on:
+  workflow_call:
+    inputs:
+      deps:
+        description: The pull request changes pnpm-lock.yaml
+        type: boolean
+        default: true
+      workflows:
+        description: The pull request changes .github
+        type: boolean
+        default: true
+  schedule:
+    # Daily, away from minute zero.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A pull request's newer push replaces its running scan; a daily or manual run is never cancelled.
+  group: security-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  OSV_SCANNER_VERSION: 2.6.0
+  OSV_SCANNER_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  ZIZMOR_VERSION: 1.30.1
+  ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+
+jobs:
+  osv:
+    name: Dependency vulnerabilities (osv-scanner)
+    if: github.event_name != 'pull_request' || inputs.deps
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: pnpm-lock.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Checkout the base lockfile
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+          sparse-checkout: pnpm-lock.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Install osv-scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/tools"
+          mkdir -p "$bin"
+          curl -fsSL --retry 3 -o "$bin/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $bin/osv-scanner" | sha256sum -c -
+          chmod +x "$bin/osv-scanner"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Scan pnpm-lock.yaml
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Exit 1 means vulnerabilities were found; anything else above 0 is a scanner error.
+          scan() {
+            local rc=0
+            osv-scanner scan source --lockfile "$1" --format json > "$2" || rc=$?
+            if [ "$rc" -gt 1 ]; then echo "::error::osv-scanner failed on $1 (exit $rc)"; exit "$rc"; fi
+          }
+          keys() { jq -r '.results[]?.packages[]? | .package.name as $n | .groups[]? | "\($n) \(.ids | join(","))"' "$1" | sort -u; }
+          scan pnpm-lock.yaml "$RUNNER_TEMP/osv-head.json"
+          rows="$(jq -r '.results[]?.packages[]? | .package.name as $n | .package.version as $v | .groups[]? | "| \($n)@\($v) | \(.ids | join(", ")) | \(.max_severity // "?") |"' "$RUNNER_TEMP/osv-head.json" | sort -u)"
+          {
+            echo "### osv-scanner: pnpm-lock.yaml"
+            if [ -z "$rows" ]; then
+              echo "No known vulnerabilities."
+            else
+              echo "| Package | Advisories | Max CVSS |"
+              echo "| --- | --- | --- |"
+              echo "$rows"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$rows" ]; then printf '%s\n' "$rows"; fi
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then exit 0; fi
+          scan base/pnpm-lock.yaml "$RUNNER_TEMP/osv-base.json"
+          added="$(comm -13 <(keys "$RUNNER_TEMP/osv-base.json") <(keys "$RUNNER_TEMP/osv-head.json"))"
+          if [ -n "$added" ]; then
+            {
+              echo
+              echo "**Advisories this pull request adds:**"
+              printf '%s\n' "$added" | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "$added" | sed 's/^/::error::This pull request adds a known vulnerability: /'
+            exit 1
+          fi
+          echo "This pull request adds no known vulnerability."
+
+  gitleaks:
+    name: Secrets in commits (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # the daily run reads where the previous daily scan reached
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/tools"
+          mkdir -p "$bin"
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$bin" gitleaks
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # The daily run scans main from the commit the previous scheduled run scanned, so a push of
+      # old-dated commits is not missed. That commit is the head_sha of the newest completed
+      # scheduled Security run whose "Scan commits" step ran to the end (passed or failed), read
+      # from the Actions API, which no job can rewrite. It is used only when it is an ancestor of
+      # main; otherwise, or without such a run, the scan covers the last 26 hours.
+      - name: Find the last scanned main commit
+        id: last
+        if: github.event_name == 'schedule'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha=""
+          runs="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/security.yml/runs?event=schedule&status=completed&per_page=20" \
+            --jq '.workflow_runs[] | select(.id != '"$GITHUB_RUN_ID"') | "\(.id) \(.head_sha)"' 2> /dev/null || true)"
+          while read -r id head; do
+            [ -n "$id" ] || continue
+            step="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs?per_page=50" \
+              --jq '.jobs[] | select(.name == "Secrets in commits (gitleaks)") | .steps[] | select(.name == "Scan commits") | .conclusion' 2> /dev/null || true)"
+            if [ "$step" = success ] || [ "$step" = failure ]; then sha="$head"; break; fi
+          done <<< "$runs"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Scan commits
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LAST_SCANNED: ${{ steps.last.outputs.sha }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/gitleaks.json"
+          # Only gitleaks' built-in rules: a .gitleaks.toml, .gitleaksignore or gitleaks:allow
+          # comment in the repository is not honoured. gitleaks reads a .gitleaksignore from the
+          # folder it scans whatever --gitleaks-ignore-path says, so it scans .git, which holds
+          # the same history and no such file.
+          config="$RUNNER_TEMP/gitleaks.toml"
+          printf '[extend]\nuseDefault = true\n' > "$config"
+          no_ignore="$RUNNER_TEMP/gitleaks-no-ignore"
+          mkdir -p "$no_ignore"
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              range="$BASE_SHA..$HEAD_SHA"; label="this pull request's commits"; blocking=1
+              start="$BASE_SHA" ;;
+            schedule)
+              last="${LAST_SCANNED:-}"
+              if [[ "$last" =~ ^[0-9a-f]{40}$ ]] && git merge-base --is-ancestor "$last" HEAD 2> /dev/null; then
+                range="$last..HEAD"; label="main's commits since the last scan (${last:0:12})"; start="$last"
+              else
+                range="--since=26.hours.ago HEAD"; label="main's commits from the last day (no earlier scheduled scan found)"
+                start="$(git rev-list -1 --before=26.hours.ago HEAD)"
+              fi
+              blocking=1 ;;
+            *) range="HEAD"; label="the whole history (report only)"; blocking=0; start="" ;;
+          esac
+          # --diff-merges=remerge: a merge commit is scanned for what its resolution adds beyond
+          # a clean remerge of its parents, so a secret typed into a conflict resolution is found.
+          rc=0
+          gitleaks git --redact --no-banner --ignore-gitleaks-allow --config "$config" \
+            --gitleaks-ignore-path "$no_ignore" --log-opts="--diff-merges=remerge $range" \
+            --report-format json --report-path "$report" .git || rc=$?
+          if [ "$rc" -gt 1 ]; then echo "::error::gitleaks failed (exit $rc)"; exit "$rc"; fi
+          count="$(jq 'length' "$report")"
+          # existed_before FILE COMMIT FIRST LAST: every line of the finding (lines FIRST..LAST of
+          # FILE at COMMIT) is already a line of FILE in the start tree. Lines are compared, never
+          # printed.
+          existed_before() {
+            local found before line
+            [ -n "$start" ] || return 1
+            found="$(git show "$2:$1" 2> /dev/null | sed -n "$3,$4p")" && [ -n "$found" ] || return 1
+            before="$(git show "$start:$1" 2> /dev/null)" || return 1
+            while IFS= read -r line; do
+              grep -qxF -- "$line" <<< "$before" || return 1
+            done <<< "$found"
+          }
+          # Reported only, never blocking: generic-api-key (it matches test tokens, keybinding keys,
+          # alphabets and hashes here), and a finding under .repos/ (inherited, read-only reference
+          # trees) whose line was already in that file in the tree the scanned commits start from.
+          blocking_rows=()
+          while IFS="$(printf '\t')" read -r rule file first last_line commit; do
+            [ -n "$rule" ] || continue
+            # gitleaks names a file in a remerge diff "b/<path>"; use the real path.
+            if [[ "$file" == b/* ]] && ! git cat-file -e "$commit:$file" 2> /dev/null &&
+              git cat-file -e "$commit:${file#b/}" 2> /dev/null; then
+              file="${file#b/}"
+            fi
+            if [[ "$file" == .repos/* ]] && existed_before "$file" "$commit" "$first" "$last_line"; then
+              continue
+            fi
+            blocking_rows+=("$rule"$'\t'"$file"$'\t'"$first"$'\t'"${commit:0:12}")
+          done < <(jq -r '.[] | select(.RuleID != "generic-api-key") | [.RuleID, .File, .StartLine, .EndLine, .Commit] | @tsv' "$report")
+          {
+            echo "### gitleaks: $label"
+            if [ "$count" -eq 0 ]; then
+              echo "No secrets found."
+            else
+              echo "$count finding(s), ${#blocking_rows[@]} blocking (not generic-api-key, not a line already in a .repos/ file); secrets redacted, first 200 listed:"
+              echo
+              echo "| Rule | File | Line | Commit |"
+              echo "| --- | --- | --- | --- |"
+              jq -r '.[0:200][] | "| \(.RuleID) | \(.File) | \(.StartLine) | \(.Commit[0:12]) |"' "$report"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${#blocking_rows[@]}" -gt 0 ] && [ "$blocking" -eq 1 ]; then
+            for row in "${blocking_rows[@]}"; do
+              IFS="$(printf '\t')" read -r rule file line commit <<< "$row"
+              echo "::error file=$file,line=$line::gitleaks $rule in commit $commit"
+            done
+            echo "::error::gitleaks found ${#blocking_rows[@]} possible secret(s) in $label; see the job summary."
+            exit 1
+          fi
+
+  zizmor:
+    name: Workflow security (zizmor)
+    if: github.event_name != 'pull_request' || inputs.workflows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
+
+      - name: Install zizmor
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/tools"
+          mkdir -p "$bin"
+          archive="$RUNNER_TEMP/zizmor.tar.gz"
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${ZIZMOR_SHA256}  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$bin" zizmor
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Lint workflows
+        shell: bash
+        env:
+          # Read-only: the online audits look up the actions the workflows use.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/zizmor.json"
+          # The whole .github folder: workflows, composite actions and dependabot.yml.
+          # --no-config and --no-ignores: a zizmor.yml or an inline `# zizmor: ignore[...]` comment
+          # is not honoured. --strict-collection: a workflow zizmor cannot parse or validate fails
+          # here instead of being skipped. --no-exit-codes: exit 0 with findings, so only a tool
+          # failure stops here and the gate below decides.
+          zizmor --no-progress --no-exit-codes --no-config --no-ignores --strict-collection --format json .github > "$report"
+          zizmor --no-progress --no-exit-codes --no-config --no-ignores --strict-collection --format plain .github
+          gate='["unpinned-uses","impostor-commit","known-vulnerable-actions","ref-version-mismatch"]'
+          # Gated findings as: audit, file, line of the primary location, description.
+          jq -r --argjson gate "$gate" '.[] | select(.ident as $i | $gate | index($i))
+            | (first(.locations[] | select(.symbolic.kind == "Primary")) // .locations[0]) as $at
+            | [.ident, ($at.symbolic.key.Local.verbatim_path // "?"), ($at.concrete.location.start_point.row + 1), .desc]
+            | @tsv' "$report" > "$RUNNER_TEMP/gated.tsv"
+          errors=() exempt=0
+          while IFS=$'\t' read -r ident file line desc; do
+            # The one exception: dtolnay/rust-toolchain is pinned to a master commit (`# master`,
+            # bumped by hand), so its pin falls behind master and zizmor reports the comment as
+            # mismatched. Only that audit, and only when the reported line is that action's uses:
+            # line; impostor-commit still requires the commit to be in dtolnay/rust-toolchain.
+            if [ "$ident" = ref-version-mismatch ] && [ -f "$file" ] &&
+              sed -n "${line}p" "$file" | grep -qE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*dtolnay/rust-toolchain@[0-9a-f]{40}[[:space:]]'; then
+              exempt=$((exempt + 1))
+              continue
+            fi
+            errors+=("::error file=${file},line=${line}::${ident}: ${desc}")
+          done < "$RUNNER_TEMP/gated.tsv"
+          # zizmor checks a pin comment only when it is a single word (`# v6.1.0`, `# master`):
+          # with any other text after it, a mismatch is reported as nothing. So every hash pin's
+          # comment must be one word.
+          while IFS= read -r hit; do
+            errors+=("::error file=${hit%%:*},line=$(cut -d: -f2 <<< "$hit")::pin comment: a hash pin needs a one-word version comment, as in '@<sha> # v1.2.3'")
+          done < <(grep -rnE --include='*.yml' --include='*.yaml' '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^.[:space:]#][^[:space:]#]*@' .github |
+            grep -vE '^[^:]+:[0-9]+:[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^[:space:]#]+@[0-9a-f]{40} # [^[:space:]]+[[:space:]]*$' || true)
+          {
+            echo "### zizmor: .github"
+            echo "| Audit | Severity | Findings |"
+            echo "| --- | --- | --- |"
+            jq -r 'group_by([.ident, .determinations.severity])[] | "| \(.[0].ident) | \(.[0].determinations.severity) | \(length) |"' "$report"
+            echo
+            echo "Fails on: $(jq -r 'join(", ")' <<< "$gate"), and on a hash pin without a one-word version comment."
+            echo "Exempt: $exempt ref-version-mismatch finding(s) on dtolnay/rust-toolchain's master pin. Everything else is reported only."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ ${#errors[@]} -gt 0 ]; then
+            printf '%s\n' "${errors[@]}"
+            exit 1
+          fi

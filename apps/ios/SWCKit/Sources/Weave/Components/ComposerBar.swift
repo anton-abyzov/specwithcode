@@ -160,7 +160,11 @@ public struct ComposerBar: View {
 
   @ViewBuilder private var trailingButton: some View {
     if showsStop, let onStop {
-      WeaveIconButton("stop.fill", label: "Stop", style: .sunken, size: WeaveSize.innerControl, glyphScale: Self.stopGlyphScale, action: onStop)
+      // A bare square reads as "stop recording" beside a dictation keyboard;
+      // the turning ring ties it to the agent's reply that is still running.
+      WeaveIconButton("stop.fill", label: "Stop reply", style: .sunken, size: WeaveSize.innerControl, glyphScale: Self.stopGlyphScale, action: onStop)
+        .overlay { RunningRing(diameter: WeaveSize.innerControl) }
+        .accessibilityHint("Stops the agent's current turn")
         .disabled(isBlocked)
         .transition(.scale.combined(with: .opacity))
     } else {
@@ -197,5 +201,25 @@ private struct ComposerBarPreview: View {
       ComposerBar(text: $empty, suggestion: "Run the tests and open a PR", onSend: {}, onAcceptSuggestion: { empty = $0 })
       ComposerBar(text: $empty, blockedReason: "M4 is offline. Messages send when it reconnects.", onSend: {})
     }
+  }
+}
+
+/// A partial iris ring that turns around the stop button while a run is
+/// working; with Reduce Motion it stays still.
+private struct RunningRing: View {
+  let diameter: CGFloat
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var turning = false
+
+  var body: some View {
+    Circle()
+      .trim(from: 0, to: 0.28)
+      .stroke(Color.weave.iris, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+      .frame(width: diameter, height: diameter)
+      .rotationEffect(.degrees(turning ? 360 : 0))
+      .animation(reduceMotion ? nil : .linear(duration: 1.1).repeatForever(autoreverses: false), value: turning)
+      .onAppear { turning = true }
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
   }
 }

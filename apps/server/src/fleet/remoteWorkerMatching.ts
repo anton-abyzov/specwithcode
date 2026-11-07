@@ -2,7 +2,8 @@ import {
   type ModelSelection,
   type LogicalProject,
   type LogicalProjectMember,
-  type EnvironmentId,
+  EnvironmentId,
+  ThreadId,
   type Project,
   type OrchestrationV2Notification,
   type OrchestratorMcpMachineProject,
@@ -14,6 +15,7 @@ import {
   repositoryGroupingKeyOf,
   repositoryRelativePathOf,
 } from "@specweave-studio/contracts";
+import { coordinatorSourceTitle } from "@specweave-studio/shared/coordinatorReplySources";
 import type { StudioFleetWorkers } from "@specweave-studio/contracts/studioFleet";
 import { studioThreadLinkLabel } from "@specweave-studio/shared/studioThreadLinks";
 
@@ -328,7 +330,9 @@ export function grantMachineStatus(workers: StudioFleetWorkers): OrchestratorMcp
 export const isTerminalThreadStatus = (status: string) =>
   ["idle", "completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(status);
 
-interface RemoteWorkerRef {
+export interface RemoteWorkerRef {
+  readonly environmentId: string;
+  readonly remoteThreadId: string;
   readonly title: string;
   /** `studio://thread/<environment>/<thread>`; tools accept it as the thread id. */
   readonly threadRef: string;
@@ -358,6 +362,14 @@ export function remoteWorkerWake(input: RemoteWorkerRef & { readonly status: str
     text: `Remote worker ${link} on ${input.machineLabel} finished: ${input.status}. Read it with studio_thread_read {threadId:"${input.threadRef}"}.`,
     notification: {
       source: { kind: "background_task" },
+      replySources: [
+        {
+          kind: "thread",
+          threadId: ThreadId.make(input.remoteThreadId),
+          environmentId: EnvironmentId.make(input.environmentId),
+          title: coordinatorSourceTitle(input.title) ?? "Worker",
+        },
+      ],
       outcome: outcomeOf(input.status),
       summary: `${link} on ${input.machineLabel} reported back.`,
     },
@@ -373,6 +385,14 @@ export function remoteWorkerLost(input: RemoteWorkerRef): {
     text: `Lost contact with remote worker ${link} on ${input.machineLabel} for 24 hours. Check it with studio_thread_read {threadId:"${input.threadRef}"} once the machine is back.`,
     notification: {
       source: { kind: "background_task" },
+      replySources: [
+        {
+          kind: "thread",
+          threadId: ThreadId.make(input.remoteThreadId),
+          environmentId: EnvironmentId.make(input.environmentId),
+          title: coordinatorSourceTitle(input.title) ?? "Worker",
+        },
+      ],
       outcome: "unknown",
       summary: `Lost contact with ${link} on ${input.machineLabel}.`,
     },

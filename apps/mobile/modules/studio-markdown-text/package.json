@@ -2,6 +2,7 @@
   "name": "@specweave-studio/mobile-markdown-text",
   "version": "0.0.0",
   "private": true,
+  "license": "MIT",
   "source": "./index.ts",
   "files": [
     "android",

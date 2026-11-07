@@ -1,0 +1,105 @@
+name: Deploy Studio Connect relay
+
+on:
+  push:
+    branches:
+      - main
+    # The relay and what it imports: a push that changes none of these has nothing to deploy.
+    paths:
+      - "infra/relay/**"
+      - "packages/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "patches/**"
+      - ".github/workflows/deploy-relay.yml"
+  # Redeploys main after a variable or secret change. Alchemy redeploys the
+  # Worker when a value it reads changes, so force is rarely needed.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Redeploy every resource, including ones with no detected changes.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: none
+  statuses: write
+
+concurrency:
+  group: relay-production
+  cancel-in-progress: false
+
+jobs:
+  deploy_relay:
+    name: Deploy production relay
+    # A manual run from another branch would deploy that branch to production.
+    if: github.ref == 'refs/heads/main'
+    # Blacksmith is not installed on this repository; its label never gets a runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
+      RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
+      RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
+      RELAY_TUNNEL_BASE_DOMAIN: ${{ vars.RELAY_TUNNEL_BASE_DOMAIN }}
+      RELAY_TUNNEL_CLEANUP_MODE: ${{ vars.RELAY_TUNNEL_CLEANUP_MODE }}
+      RELAY_LEGACY_TUNNEL_CLEANUP_MODE: ${{ vars.RELAY_LEGACY_TUNNEL_CLEANUP_MODE }}
+      RELAY_GLOBAL_MANAGED_TUNNEL_CAP: ${{ vars.RELAY_GLOBAL_MANAGED_TUNNEL_CAP }}
+      RELAY_CONNECT_FREE_TUNNEL_LIMIT: ${{ vars.RELAY_CONNECT_FREE_TUNNEL_LIMIT }}
+      CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      CLERK_JWT_KEY: ${{ vars.CLERK_JWT_KEY }}
+      APNS_ENVIRONMENT: ${{ vars.APNS_ENVIRONMENT }}
+      APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
+      APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
+      APNS_BUNDLE_ID: ${{ vars.APNS_BUNDLE_ID }}
+      ALCHEMY_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          # vp run loads every workspace package's vite config to build its task
+          # graph, so a relay-only install fails on apps/server's jsonc-parser.
+          run-install: true
+
+      - name: Deploy production relay stage
+        run: vp run --filter studio-relay deploy --stage prod --yes --no-input ${{ inputs.force && '--force' || '' }}
+        env:
+          # The PublishClientConfig action writes the client env here instead
+          # of the repo-root .env; nothing on the runner reads it.
+          STUDIO_RELAY_CLIENT_CONFIG_ENV: ${{ runner.temp }}/relay-client-config.env
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
+          FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
+
+      - name: Publish relay deploy commit status
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: "success",
+              context: "Relay deploy / production",
+              description: "Relay production deploy completed.",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });

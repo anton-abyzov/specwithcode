@@ -2817,8 +2817,7 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   });
   const rawRepo = (
     Option.getOrUndefined(env.updateRepository)?.trim() ||
-    // A CI run in the private repository still publishes the public feed.
-    resolveReleaseFeedRepository(Option.getOrUndefined(env.githubRepository)?.trim()) ||
+    Option.getOrUndefined(env.githubRepository)?.trim() ||
     fallbackRepository?.trim() ||
     ""
   ).trim();
@@ -2843,22 +2842,6 @@ export function parseGitHubRemoteRepository(remoteUrl: string): string | undefin
       remoteUrl.trim(),
     );
   return match ? `${match[1]}/${match[2]}` : undefined;
-}
-
-// Releases are published from the private development repository to the
-// public one, so builds from either checkout read the public release feed. The
-// private repository was renamed from specweave-studio; old clones keep that origin.
-const RELEASE_FEED_REPOSITORIES: Readonly<Record<string, string>> = {
-  "anton-abyzov/specwithcode": "anton-abyzov/specwithcode",
-  "anton-abyzov/specwithcode": "anton-abyzov/specwithcode",
-};
-
-export function resolveReleaseFeedRepository(
-  originRepository: string | undefined,
-): string | undefined {
-  return originRepository
-    ? (RELEASE_FEED_REPOSITORIES[originRepository] ?? originRepository)
-    : undefined;
 }
 
 /**
@@ -3856,10 +3839,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       date: DateTime.toDateUtc(DateTime.nowUnsafe()),
       commitHash,
     });
-  const originRepository = resolveReleaseFeedRepository(
-    parseGitHubRemoteRepository(
-      (yield* readGitLines(repoRoot, ["remote", "get-url", "origin"]))[0] ?? "",
-    ),
+  const originRepository = parseGitHubRemoteRepository(
+    (yield* readGitLines(repoRoot, ["remote", "get-url", "origin"]))[0] ?? "",
   );
   const iconAssets = resolveDesktopBuildIconAssets(appVersion);
   const mkdir = options.keepStage ? fs.makeTempDirectory : fs.makeTempDirectoryScoped;

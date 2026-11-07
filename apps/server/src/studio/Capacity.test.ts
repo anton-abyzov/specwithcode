@@ -1288,16 +1288,23 @@ describe("native session admission", () => {
     it("relies on the retry's own fresh read for a short while only", async () => {
       const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
       const taken = await Effect.runPromise(
-        Capacity.requestCapacityRecheck(
-          ["fresh-a", "fresh-b", "unread"],
-          new Set(["fresh-a", "fresh-b"]),
-        ).pipe(
-          Effect.andThen(
-            Effect.all([
-              Capacity.takeCapacityRecheck("fresh-a", now),
-              Capacity.takeCapacityRecheck("fresh-b", now + Capacity.FRESH_READ_REUSE_MS),
-              Capacity.takeCapacityRecheck("unread", now),
-            ]),
+        Clock.clockWith((clock) =>
+          Capacity.requestCapacityRecheck(
+            ["fresh-a", "fresh-b", "unread"],
+            new Set(["fresh-a", "fresh-b"]),
+          ).pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              currentTimeMillis: Effect.succeed(now),
+              currentTimeMillisUnsafe: () => now,
+            }),
+            Effect.andThen(
+              Effect.all([
+                Capacity.takeCapacityRecheck("fresh-a", now),
+                Capacity.takeCapacityRecheck("fresh-b", now + Capacity.FRESH_READ_REUSE_MS),
+                Capacity.takeCapacityRecheck("unread", now),
+              ]),
+            ),
           ),
         ),
       );

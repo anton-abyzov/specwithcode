@@ -1,12 +1,12 @@
 import type { EnvironmentId, EnvironmentMachineKind } from "@specweave-studio/contracts";
 
 import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
-import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
+import { MachineNameTag } from "./MachineNameTag";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /**
- * Machine icon for a project picker row whose group has a member on another
- * environment, with the environment names in a tooltip. Projects that only
+ * The machine a project picker row's group also lives on, by name, for a group with a
+ * member on another environment; every name is in the tooltip. Projects that only
  * live on this device render nothing, the rule thread rows use for their
  * machine icon. Callers
  * render it only while the catalog spans environments (see
@@ -31,6 +31,8 @@ export function ProjectEnvironmentBadge(props: {
     .join(", ");
   const alsoHere = remoteMembers.length < props.group.memberProjects.length;
   const description = `${alsoHere ? "Also on" : "On"} ${labels}`;
+  // The first machine's name shows; the rest are in the tooltip as "+1".
+  const more = labels.split(", ").length - 1;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -38,15 +40,16 @@ export function ProjectEnvironmentBadge(props: {
           <span
             role="img"
             aria-label={description}
-            className="ml-auto inline-flex shrink-0 items-center text-muted-foreground"
+            className="ml-auto inline-flex min-w-0 shrink-0 items-center gap-1 text-xs text-muted-foreground"
           />
         }
       >
-        <EnvironmentMachineIcon
-          aria-hidden
+        <MachineNameTag
+          label={first.environmentLabel}
           kind={props.machineByEnvironmentId.get(first.environmentId) ?? "server"}
-          className="size-3.5"
+          withIcon
         />
+        {more > 0 ? <span className="shrink-0">+{more}</span> : null}
       </TooltipTrigger>
       <TooltipPopup side="top">{description}</TooltipPopup>
     </Tooltip>

@@ -370,36 +370,31 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
       </Text>
       {branch || props.environmentLabel ? (
         <View className="mt-1 flex-row items-center gap-1">
-          <Text
-            className={cn(
-              "shrink text-xs text-foreground-muted",
-              sidebarPane && "text-drawer-foreground-muted",
-            )}
-            numberOfLines={1}
-          >
-            {branch ? (
-              <Text
-                className={cn(
-                  "text-xs text-foreground-muted",
-                  sidebarPane && "text-drawer-foreground-muted",
-                )}
-                style={{ fontFamily: MONO_FONT }}
-              >
-                {branch}
-              </Text>
-            ) : null}
-            {branch && props.environmentLabel ? "  ·  " : null}
-            {props.environmentLabel ? (
-              <Text
-                className={cn(
-                  "text-xs text-foreground-tertiary",
-                  sidebarPane && "text-drawer-foreground-muted",
-                )}
-              >
-                {props.environmentLabel}
-              </Text>
-            ) : null}
-          </Text>
+          {branch ? (
+            <Text
+              className={cn(
+                "shrink text-xs text-foreground-muted",
+                sidebarPane && "text-drawer-foreground-muted",
+              )}
+              style={{ fontFamily: MONO_FONT }}
+              numberOfLines={1}
+            >
+              {branch}
+            </Text>
+          ) : null}
+          {/* The machine's name has its own Text so a long branch truncates first. */}
+          {props.environmentLabel ? (
+            <Text
+              className={cn(
+                "max-w-[40%] shrink-0 text-xs text-foreground-tertiary",
+                sidebarPane && "text-drawer-foreground-muted",
+              )}
+              numberOfLines={1}
+            >
+              {branch ? "·  " : null}
+              {props.environmentLabel}
+            </Text>
+          ) : null}
           {props.environmentLabel && props.environmentMachine ? (
             <EnvironmentMachineSymbol
               kind={props.environmentMachine}
@@ -1020,49 +1015,40 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             {thread.runtime.lastError}
           </Text>
         ) : thread.branch || props.environmentLabel ? (
-          /* "branch · machine" share one truncating line. The machine sits
-             last so a tight fit cuts the repetitive label, not the branch —
-             and machine-only fills the row for non-git projects. The glyph
-             hugs the label (it cannot live inside the Text without breaking
-             truncation), and the wrapper takes the slack so the trailers
-             stay pinned right. */
+          /* "branch · machine" on one line. A tight fit truncates the branch: the
+             machine's name says where the thread runs, so it keeps its own Text, and
+             machine-only fills the row for non-git projects. The glyph hugs the
+             label, and the wrapper takes the slack so the trailers stay pinned right. */
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.mutedForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {thread.branch ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.mutedForegroundClassName,
-                  )}
-                  style={{ fontFamily: MONO_FONT }}
-                >
-                  {thread.branch}
-                </Text>
-              ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.tertiaryForegroundClassName,
-                  )}
-                >
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
-            </Text>
+            {thread.branch ? (
+              <Text
+                className={cn(
+                  "shrink text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.mutedForegroundClassName,
+                )}
+                style={{ fontFamily: MONO_FONT }}
+                numberOfLines={1}
+              >
+                {thread.branch}
+              </Text>
+            ) : null}
+            {/* The machine's name has its own Text so a long branch truncates first. */}
+            {props.environmentLabel ? (
+              <Text
+                className={cn(
+                  "max-w-[40%] shrink-0 text-xs",
+                  selected
+                    ? selectedThreadRowColors.mutedForegroundClassName
+                    : rowAppearance.tertiaryForegroundClassName,
+                )}
+                numberOfLines={1}
+              >
+                {thread.branch ? "·  " : null}
+                {props.environmentLabel}
+              </Text>
+            ) : null}
             {props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
                 kind={props.environmentMachine}

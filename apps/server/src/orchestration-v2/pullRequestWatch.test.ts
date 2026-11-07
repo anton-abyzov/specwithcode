@@ -1,3 +1,4 @@
+import { ThreadId } from "@specweave-studio/contracts";
 import type {
   PullRequestCheck,
   PullRequestComment,
@@ -284,8 +285,33 @@ describe("pullRequestWatchMessage", () => {
     assert.include(message.text, "unwatch_pull_request");
     assert.deepEqual(message.notification, {
       source: { kind: "monitor" },
+      replySources: [
+        { kind: "pull_request", url: "https://github.com/o/r/pull/12", title: "PR #12" },
+      ],
       outcome: "failed",
       summary: "#12: checks failed, new comments",
     });
   });
+});
+
+it("names the known originating thread without requiring one for standalone PR events", () => {
+  const base = {
+    number: 12,
+    url: "https://github.com/o/r/pull/12",
+    baseBranch: "main",
+    headSha: null,
+    report: {
+      changes: [{ kind: "checks-passed" as const, count: 1, required: true }],
+      next: watch(),
+      exhausted: false,
+    },
+  };
+  const withThread = pullRequestWatchMessage({ ...base, sourceThreadId: ThreadId.make("worker") });
+  assert.deepEqual(withThread.notification.replySources, [
+    { kind: "thread", threadId: ThreadId.make("worker") },
+    { kind: "pull_request", url: base.url, title: "PR #12" },
+  ]);
+  assert.deepEqual(pullRequestWatchMessage(base).notification.replySources, [
+    { kind: "pull_request", url: base.url, title: "PR #12" },
+  ]);
 });

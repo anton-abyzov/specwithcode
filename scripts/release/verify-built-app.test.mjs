@@ -15,6 +15,8 @@ import { after, before, describe, it } from "node:test";
 
 import { DEFAULT_SCRIPTS, compareVersions, main, parseArgs, runStep, UsageError } from "./verify-built-app.mjs";
 
+const IS_WIN = process.platform === "win32";
+
 const ROOT = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "verify-built-app-test-")));
 // What failed runs keep for inspection (scratch homes) lands here and goes with it.
 const SAVED_TMPDIR = process.env.TMPDIR;
@@ -181,13 +183,13 @@ before(() => {
 describe("parseArgs", () => {
   const base = ["--mode", "fresh", "--app", "/x/SpecWithCode.app", "--version", "1.2.3", "--out", "/tmp/o"];
 
-  it("reads a fresh run with defaults of 120 s and the proofs on", () => {
-    assert.deepEqual(parseArgs(base), {
+  it("reads a fresh run with platform-supported proofs and default timeouts", () => {
+    assert.deepEqual(parseArgs([...base, ...(IS_WIN ? ["--no-proofs"] : [])]), {
       mode: "fresh",
-      app: "/x/SpecWithCode.app",
+      app: NodePath.resolve("/x/SpecWithCode.app"),
       version: "1.2.3",
-      out: "/tmp/o",
-      proofs: true,
+      out: NodePath.resolve("/tmp/o"),
+      proofs: !IS_WIN,
       keep: false,
       timeoutMs: 120_000,
       proofTimeoutMs: 240_000,
@@ -199,7 +201,17 @@ describe("parseArgs", () => {
       () => parseArgs(["--mode", "upgraded", ...base.slice(2)]),
       (error) => error instanceof UsageError && /a skipped verify fails the release/.test(error.message),
     );
-    assert.equal(parseArgs(["--mode", "all", ...base.slice(2), "--fixture", "f.tar.gz"]).fixture, NodePath.resolve("f.tar.gz"));
+    const upgraded = ["--mode", "all", ...base.slice(2), "--fixture", "f.tar.gz"];
+    if (IS_WIN) {
+      assert.throws(() => parseArgs([...upgraded, "--no-proofs"]), /the upgraded mode runs on macOS and Linux/);
+    } else {
+      assert.equal(parseArgs(upgraded).fixture, NodePath.resolve("f.tar.gz"));
+    }
+  });
+
+  it("refuses proofs on Windows", { skip: !IS_WIN }, () => {
+    assert.throws(() => parseArgs(base), (error) =>
+      error instanceof UsageError && error.message === "on Windows give --no-proofs");
   });
 
   it("refuses missing, malformed and conflicting options", () => {
@@ -254,7 +266,7 @@ describe("runStep", () => {
   });
 });
 
-describe("fresh mode", () => {
+describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
   it("passes, runs the startup proof against the bundled server and packs the fixture", async () => {
     const app = makeApp("1.0.1");
     const out = outDir("fresh-ok");
@@ -393,7 +405,7 @@ process.exitCode = await main(process.argv.slice(2), { scripts: ${JSON.stringify
   });
 });
 
-describe("upgraded mode", () => {
+describe("upgraded mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
   let fixture;
   before(async () => {
     fixture = NodePath.join(ROOT, "fixtures", "state-1.0.1-upgraded.tar.gz");

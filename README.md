@@ -1,12 +1,32 @@
-<img src="assets/prod/black-macos-1024.png" width="128" height="128" alt="SpecWithCode app icon" />
+<p align="center">
+  <img src="assets/prod/black-macos-1024.png" width="96" height="96" alt="SpecWithCode app icon" />
+</p>
 
-# SpecWithCode
+<h1 align="center">SpecWithCode</h1>
 
-**Write the spec. Get the code.**
+<p align="center"><b>One desktop app for all your coding agents. Claude Code, Codex, Copilot, Cursor and more, side by side, with the spec in git.</b></p>
+
+<p align="center">
+  <a href="https://github.com/anton-abyzov/specwithcode/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/anton-abyzov/specwithcode?style=social" /></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue" /></a>
+  <a href="https://github.com/anton-abyzov/specwithcode/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/anton-abyzov/specwithcode" /></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=for-the-badge" /></a>
+  <a href="https://spec-weave.com/code/download/"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?logo=windows&logoColor=white&style=for-the-badge" /></a>
+  <a href="https://spec-weave.com/code/download/"><img alt="Download for Linux" src="https://img.shields.io/badge/Download-Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" /></a>
+</p>
+
+<p align="center">
+  <img src="assets/readme/demo.gif" width="880" alt="A Claude Code thread hits its usage limit and SpecWithCode hands the same turn to Codex" />
+</p>
+
+If SpecWithCode saves you time, a star helps other developers find it.
 
 SpecWithCode is a free desktop workspace for the coding agents you already pay for. Run Claude Code, Codex, Grok Build, Cursor, OpenCode, Copilot, Antigravity and Pi side by side on your own machines. Every change an agent makes lands with its spec: what was asked, what counts as done and the proof, in the same repo as the code, so any agent on any machine can pick it up.
 
-It is built on [SpecWeave](https://github.com/anton-abyzov/specweave), the open-source CLI (`npm install -g specweave`) that keeps that record in git. Website: [spec-weave.com/studio](https://spec-weave.com/studio).
+It is built on [SpecWeave](https://github.com/anton-abyzov/specweave), the open-source CLI (`npm install -g specweave`) that keeps that record in git. Website: [specwithcode.com](https://specwithcode.com).
 
 Built for teams of 2–10 people. Free, no account. You bring your own provider subscriptions or API keys; SpecWithCode supplies no inference, resells no tokens and charges no seat fee to run agents on your team's machines. What is free today stays free; teams can pay for hosted private skills and support ([pricing](https://spec-weave.com/pricing)).
 
@@ -33,7 +53,7 @@ SpecWithCode is not a cloud service: work runs on the machine you choose and sto
 
 ## Built with SpecWithCode
 
-SpecWithCode · free, early access. It is built with itself: a coordinator in the app keeps each project's brief, and worker threads on Claude Code, Codex and other agents write the changes and open the pull requests in our development repository, which this source repository mirrors in snapshots. From 15 to 29 October 2026, 367 of those pull requests were opened by 167 worker threads and merged (100 threads on Claude Code, 65 on Codex, the rest on Gemini CLI and Copilot), counted from the app's own thread records. The work runs across a Mac and a Linux worker joined over SpecWithCode Connect; the [handoff end-to-end test](https://spec-weave.com/code/#built-with-itself) shows a coordinator on the Mac starting a worker on the Linux machine.
+SpecWithCode · free, early access. It is built with itself: a coordinator in the app keeps each project's brief, and worker threads on Claude Code, Codex and other agents write the changes and open the pull requests in this repository. From 15 to 29 October 2026, 367 of those pull requests were opened by 167 worker threads and merged (100 threads on Claude Code, 65 on Codex, the rest on Gemini CLI and Copilot), counted from the app's own thread records. The work runs across a Mac and a Linux worker joined over SpecWithCode Connect; the [handoff end-to-end test](https://spec-weave.com/code/#built-with-itself) shows a coordinator on the Mac starting a worker on the Linux machine.
 
 **Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside SpecWithCode-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
 
@@ -99,8 +119,12 @@ Contributor notes, architecture and focused checks are in [AGENTS.md](AGENTS.md)
 
 Early access. Projects, providers, usage limits, machines, routines and the Telegram and Google connections are in the current build and in daily use. Live project runs are recorded with Codex and Claude Code; Grok Build and OpenCode have tutorial runs; Cursor and Antigravity workers have no recorded project run yet. See the [changelog](CHANGELOG.md).
 
-## Source and third-party notices
+## Contributing
 
-Source is available for inspection. No new project-wide license is granted for original SpecWithCode material; previously distributed versions retain their existing grants. Third-party code and assets retain their own licenses and required notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Contributions are welcome. Start with an issue labelled [good first issue](https://github.com/anton-abyzov/specwithcode/labels/good%20first%20issue), read [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md), and share ideas in [Discussions](https://github.com/anton-abyzov/specwithcode/discussions/categories/ideas).
+
+## License
+
+SpecWithCode is open source under the [MIT License](LICENSE). Third-party code and assets keep their own licenses and notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 For umbrella projects with nested repositories, see [project transfer choices](docs/user/add-a-machine.md#projects-in-an-umbrella-folder).

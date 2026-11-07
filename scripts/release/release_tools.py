@@ -35,7 +35,10 @@ import tempfile
 
 SEMVER = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)')
 GOOGLE_KEYS = ('STUDIO_GOOGLE_OAUTH_CLIENT_ID', 'STUDIO_GOOGLE_OAUTH_CLIENT_SECRET')
-PRIVATE_REPO, PUBLIC_REPO = 'anton-abyzov/specwithcode', 'anton-abyzov/specwithcode'
+# One repository, developed and released in public, as release.sh: RELEASE_PRIVATE_REPO and
+# RELEASE_PUBLIC_REPO set apart bring back the mirror's name mapping in the public notes.
+PUBLIC_REPO = os.environ.get('RELEASE_PUBLIC_REPO') or 'anton-abyzov/specwithcode'
+PRIVATE_REPO = os.environ.get('RELEASE_PRIVATE_REPO') or PUBLIC_REPO
 # The shapes scripts/public-mirror/publish.mjs refuses (BUILT_IN_DENY), written generally so
 # this file can itself be mirrored: home folders, private LAN addresses, Mac host names and
 # internal increment branches.
@@ -266,7 +269,7 @@ def notes(repo, to, release, base=None):
 
 
 def public_notes(text, rules=None):
-    replacements = [(PRIVATE_REPO, PUBLIC_REPO), ('anton-abyzov/specwithcode', PUBLIC_REPO)]
+    replacements = [(PRIVATE_REPO, PUBLIC_REPO)] if PRIVATE_REPO.lower() != PUBLIC_REPO.lower() else []
     deny = []
     if rules and pathlib.Path(rules).is_file():
         data = json.loads(pathlib.Path(rules).read_text())

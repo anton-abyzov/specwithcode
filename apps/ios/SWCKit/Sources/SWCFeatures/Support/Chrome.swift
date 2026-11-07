@@ -35,50 +35,73 @@ struct ScreenHeader<Leading: View, Center: View, Trailing: View>: View {
   }
 
   private var centered: some View {
-    CenteredHeaderLayout(spacing: WeaveSpacing.s2) {
-      leading.fixedSize()
-      center
-      trailing.fixedSize()
-    }
+    CenteredHeaderLayout(spacing: WeaveSpacing.s2) { slots }
   }
 
   private var leadingAligned: some View {
-    HStack(spacing: WeaveSpacing.s2) {
-      leading.fixedSize()
-      center.frame(maxWidth: .infinity, alignment: .leading)
-      trailing.fixedSize()
-    }
+    CenteredHeaderLayout(spacing: WeaveSpacing.s2, centersTitle: false) { slots }
+  }
+
+  /// Each slot is tagged rather than counted: a builder that yields nothing
+  /// (no Back button beside a sidebar, no controls in the rail) leaves no
+  /// subview, and the title must still find its place.
+  @ViewBuilder private var slots: some View {
+    leading.fixedSize().layoutValue(key: HeaderSlot.self, value: .leading)
+    center.layoutValue(key: HeaderSlot.self, value: .title)
+    trailing.fixedSize().layoutValue(key: HeaderSlot.self, value: .trailing)
   }
 }
 
-/// Leading control, title, trailing control. The controls keep their natural
-/// widths and the title takes what is left, centered on the header when that
-/// leaves it room. The header never asks for more than it was offered: a wider
-/// answer would widen the whole screen, which then overflows on both sides.
-/// That is what the iPhone Duo's status rail did to the folded display.
+private nonisolated enum HeaderSlot: LayoutValueKey {
+  case leading, title, trailing
+  static let defaultValue = HeaderSlot.title
+}
+
+/// Leading control, title, trailing control, for both title alignments. The
+/// controls keep their natural widths and the title takes what is left,
+/// centered on the header when that leaves it room. The header never asks for
+/// more than it was offered: a wider answer would widen the whole screen,
+/// which then overflows on both sides. That is what the iPhone Duo's status
+/// rail did to the folded display.
 struct CenteredHeaderLayout: Layout {
   var spacing: CGFloat
+  /// False starts the title right after the leading control, for long titles.
+  var centersTitle = true
+
+  private func parts(_ subviews: Subviews) -> (leading: LayoutSubview?, title: LayoutSubview?, trailing: LayoutSubview?) {
+    (subviews.first { $0[HeaderSlot.self] == .leading },
+     subviews.first { $0[HeaderSlot.self] == .title },
+     subviews.first { $0[HeaderSlot.self] == .trailing })
+  }
+
+  /// A side's width, plus the spacing beside the title when the side exists.
+  private func side(_ view: LayoutSubview?) -> CGSize {
+    guard let view else { return .zero }
+    let size = view.sizeThatFits(.unspecified)
+    return CGSize(width: size.width + spacing, height: size.height)
+  }
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    guard subviews.count == 3 else { return .zero }
-    let sides = subviews[0].sizeThatFits(.unspecified).width + subviews[2].sizeThatFits(.unspecified).width + 2 * spacing
-    let title = subviews[1].sizeThatFits(ProposedViewSize(width: proposal.width.map { max(0, $0 - sides) }, height: proposal.height))
-    let height = max(subviews[0].sizeThatFits(.unspecified).height, title.height, subviews[2].sizeThatFits(.unspecified).height)
+    let (leadingView, titleView, trailingView) = parts(subviews)
+    let leading = side(leadingView), trailing = side(trailingView)
+    let sides = leading.width + trailing.width
+    let title = titleView?.sizeThatFits(ProposedViewSize(width: proposal.width.map { max(0, $0 - sides) }, height: proposal.height)) ?? .zero
+    let height = max(leading.height, title.height, trailing.height)
     return CGSize(width: proposal.width ?? (sides + title.width), height: height)
   }
 
   func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-    guard subviews.count == 3 else { return }
-    let leading = subviews[0].sizeThatFits(.unspecified)
-    let trailing = subviews[2].sizeThatFits(.unspecified)
-    let room = max(0, bounds.width - leading.width - trailing.width - 2 * spacing)
-    let title = subviews[1].sizeThatFits(ProposedViewSize(width: room, height: bounds.height))
-    let earliest = bounds.minX + leading.width + spacing
-    let latest = bounds.maxX - trailing.width - spacing - title.width
-    let x = min(max(bounds.midX - title.width / 2, earliest), max(earliest, latest))
-    subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: .unspecified)
-    subviews[1].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: room, height: bounds.height))
-    subviews[2].place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
+    let (leadingView, titleView, trailingView) = parts(subviews)
+    let leading = side(leadingView), trailing = side(trailingView)
+    let room = max(0, bounds.width - leading.width - trailing.width)
+    leadingView?.place(at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+    trailingView?.place(at: CGPoint(x: bounds.maxX, y: bounds.midY), anchor: .trailing, proposal: .unspecified)
+    guard let titleView else { return }
+    let title = titleView.sizeThatFits(ProposedViewSize(width: room, height: bounds.height))
+    let earliest = bounds.minX + leading.width
+    let latest = bounds.maxX - trailing.width - title.width
+    let x = centersTitle ? min(max(bounds.midX - title.width / 2, earliest), max(earliest, latest)) : earliest
+    titleView.place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: ProposedViewSize(width: room, height: bounds.height))
   }
 }
 

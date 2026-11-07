@@ -1,0 +1,685 @@
+name: Desktop Windows and Linux
+
+# Builds the unsigned Windows (NSIS) and Linux (AppImage + .deb) installers on
+# GitHub-hosted runners, installs each one on the runner the way a user would,
+# launches the installed app against a throwaway home and checks that the
+# backend serves the web app and the pairing descriptor. Then, against the
+# installed app: an end-to-end thread and coordinator run, the tray, and the
+# background service installed by the app's bundled CLI. It also builds and
+# smoke-tests the CLI archive the release attaches, with the same commands as
+# release-windows-linux.yml. It needs no secrets and publishes nothing;
+# installers, archives and results are kept as artifacts.
+#
+# A manual run with release_tag (vX.Y.Z) checks a published release instead:
+# it checks out that tag's source, downloads the installers and the Windows CLI
+# archive from the public release, verifies them against
+# SHA256SUMS-windows-linux and runs the same install, end-to-end, service and
+# uninstall steps on those exact files. Linux has no published single-executable
+# CLI archive (release-windows-linux.yml builds and smoke-tests it without
+# uploading it), so the Linux job builds that archive from the tag's source:
+# only the server, the web client and the resource monitor it needs, never the
+# desktop app, whose AppImage and .deb come from the release.
+#
+# A pull request runs it only when it changes the desktop app or the packaging
+# and end-to-end scripts. Server, web and shared package changes are covered by
+# the daily run on main, so a regression they cause surfaces within a day
+# without holding a Windows and a Linux runner for every PR.
+#
+# The macOS job (Apple silicon) builds the unsigned zip, unpacks it as the
+# updater does, launches it offscreen and runs the release's verify stage in
+# its fresh mode on it (scripts/release/verify-built-app.mjs). With release_tag
+# it checks the published zip against SHA256SUMS instead of building.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-windows-linux.yml"
+      - "apps/desktop/**"
+      - "scripts/build-desktop-artifact.ts"
+      - "scripts/build-cli-archive.ts"
+      - "scripts/smoke-cli-archive.ts"
+      - "scripts/desktop-e2e/**"
+      - "scripts/release/verify-built-app.mjs"
+  schedule:
+    # 06:53 UTC daily on main, beside the daily platform tests.
+    - cron: "53 6 * * *"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Published release to install (vX.Y.Z); empty builds from source"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-linux-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  STUDIO_DESKTOP_SIGNED: "false"
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  STUDIO_SMOKE_TIMEOUT_MS: "180000"
+  STUDIO_DESKTOP_TEST_OFFSCREEN: "1"
+  PWDEBUG: "0"
+  PLAYWRIGHT_HTML_OPEN: never
+  RELEASE_TAG: ${{ inputs.release_tag || '' }}
+  PUBLIC_RELEASES: https://github.com/anton-abyzov/specwithcode/releases/download
+
+jobs:
+  linux:
+    name: Linux x64 install and launch
+    # release.sh opens release PRs after publishing and merges them at once.
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag || '' }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # imagemagick is for the desktop build's icons, which a release_tag run skips.
+      - name: Install build and display libraries
+        timeout-minutes: 15
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          packages=(build-essential libsecret-1-dev pkg-config xvfb xauth)
+          if [ -z "$RELEASE_TAG" ]; then packages+=(imagemagick); fi
+          sudo apt-get install -y --no-install-recommends "${packages[@]}"
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      # The same keys as release-windows-linux.yml; native-cache.yml fills them
+      # from main, built on Ubuntu 22.04 (the glibc floor in the keys), so every
+      # pull request can restore them. On a hit the build reuses the binaries
+      # and the Rust toolchain is not needed. Restore only: this job runs on
+      # 24.04, and a helper it built must never be saved under a 22.04 key.
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/studio-resource-monitor
+          key: resource-monitor-x86_64-unknown-linux-gnu-glibc2.35-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      # The capture helpers go into the desktop app only.
+      - name: Cache Linux capture helpers
+        if: env.RELEASE_TAG == ''
+        id: capture_helper_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            native/kde-snap-shot/target/x86_64-unknown-linux-gnu/release/studio-kde-snap-shot
+            native/hyprland-snap-shot/target/x86_64-unknown-linux-gnu/release/studio-hyprland-snap-shot
+          key: linux-capture-helpers-x86_64-unknown-linux-gnu-glibc2.35-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (env.RELEASE_TAG == '' && steps.capture_helper_cache.outputs.cache-hit != 'true')
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@specweave-studio/desktop... --filter=specweave-studio... --filter=@specweave-studio/web... --filter=@specweave-studio/scripts...
+
+      - name: Build AppImage and .deb
+        if: env.RELEASE_TAG == ''
+        env:
+          STUDIO_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          STUDIO_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
+        run: node scripts/build-desktop-artifact.ts --platform linux --target AppImage --arch x64
+
+      # With release_tag, only what the Linux CLI archive needs: the server with
+      # the web client (the task the desktop build runs first), the production
+      # web branding the desktop build applies to it, and the resource monitor.
+      - name: Build the server, web client and resource monitor for the CLI archive
+        if: env.RELEASE_TAG != ''
+        env:
+          REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+        run: |
+          set -euo pipefail
+          vp run --filter specweave-studio build
+          node scripts/apply-web-brand-assets.ts production apps/server/dist/client
+          if [ "$REUSE_RESOURCE_MONITOR" != true ]; then
+            cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+          fi
+          test -x native/resource-monitor/target/x86_64-unknown-linux-gnu/release/studio-resource-monitor
+
+      - name: Download the published AppImage and .deb
+        if: env.RELEASE_TAG != ''
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release_tag must look like v1.2.3"; exit 1; }
+          v="${RELEASE_TAG#v}"
+          [ "$(node -p 'require("./apps/desktop/package.json").version')" = "$v" ] || { echo "::error::checked-out source is not $v"; exit 1; }
+          # A clean folder, so only the downloaded files are checked and installed.
+          rm -rf release && mkdir release && cd release
+          for name in SHA256SUMS-windows-linux "SpecWithCode-$v-x86_64.AppImage" "SpecWithCode-$v-amd64.deb"; do
+            curl -fsSL --retry 3 -o "$name" "$PUBLIC_RELEASES/$RELEASE_TAG/$name"
+          done
+          sha256sum -c --ignore-missing SHA256SUMS-windows-linux
+          grep -q "  SpecWithCode-$v-x86_64.AppImage$" SHA256SUMS-windows-linux
+          grep -q "  SpecWithCode-$v-amd64.deb$" SHA256SUMS-windows-linux
+          [ "$(dpkg-deb -f "SpecWithCode-$v-amd64.deb" Version)" = "$v" ]
+
+      - name: Install the .deb
+        run: |
+          sudo apt-get install -y ./release/*.deb
+          package="$(dpkg-deb -f release/*.deb Package)"
+          echo "DEB_PACKAGE=$package" >> "$GITHUB_ENV"
+          dpkg -L "$package" | grep -E '/specweave-studio-desktop$'
+
+      - name: Launch the installed .deb app
+        run: |
+          exe="$(readlink -f /usr/bin/specweave-studio-desktop)"
+          echo "Installed binary: $exe"
+          STUDIO_SMOKE_EXECUTABLE="$exe" STUDIO_SMOKE_RESULT="$RUNNER_TEMP/linux-deb.json" \
+            xvfb-run -a node apps/desktop/scripts/smoke-test.mjs
+
+      # Pairing link, authenticated web app, a thread and the project
+      # coordinator answered by an offline fake agent, all through the server
+      # bundled in the installed app.
+      - name: End-to-end check of the installed .deb app
+        # Each check runs even when an earlier one failed; the job still fails.
+        if: ${{ success() || failure() }}
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
+          node scripts/desktop-e2e/installed-e2e.mjs --app "$(readlink -f /usr/bin/specweave-studio-desktop)" --out "$RUNNER_TEMP/e2e-linux"
+
+      # A fresh install on a machine without Git: the server offers the Scratch
+      # folder and both New chat controls open a draft. Git is moved away for
+      # real and put back by the trap before any later step needs it.
+      - name: Create a chat without Git on the installed .deb app
+        if: ${{ success() || failure() }}
+        timeout-minutes: 15
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          set -euo pipefail
+          echo "git before hiding: $(command -v -a git | tr '\n' ' ')"
+          hidden=()
+          restore() {
+            for path in "${hidden[@]}"; do sudo mv "$path.hidden" "$path"; done
+            echo "git restored: $(command -v git)"
+          }
+          trap restore EXIT
+          for path in /usr/bin/git /usr/local/bin/git; do
+            if [ -e "$path" ]; then sudo mv "$path" "$path.hidden" && hidden+=("$path"); fi
+          done
+          hash -r
+          if command -v git; then echo "::error::git is still resolvable"; exit 1; fi
+          echo "command -v git: not found (exit 1)"
+          node scripts/desktop-e2e/nogit-chat-e2e.mjs --app "$(readlink -f /usr/bin/specweave-studio-desktop)" --out "$RUNNER_TEMP/e2e-linux-nogit"
+
+      # The trap above does not run if the step is killed at its timeout.
+      - name: Restore Git
+        if: always()
+        run: |
+          for path in /usr/bin/git /usr/local/bin/git; do
+            if [ -e "$path.hidden" ]; then sudo mv "$path.hidden" "$path"; fi
+          done
+          git --version
+
+      - name: Launch the AppImage
+        if: ${{ success() || failure() }}
+        run: |
+          appimage="$(ls release/*.AppImage | head -1)"
+          chmod +x "$appimage"
+          APPIMAGE_EXTRACT_AND_RUN=1 STUDIO_SMOKE_EXECUTABLE="$PWD/$appimage" STUDIO_SMOKE_RESULT="$RUNNER_TEMP/linux-appimage.json" \
+            xvfb-run -a node apps/desktop/scripts/smoke-test.mjs
+
+      # The same end-to-end check on the AppImage's own payload: what
+      # APPIMAGE_EXTRACT_AND_RUN or the FUSE mount runs.
+      - name: End-to-end check of the AppImage
+        if: ${{ success() || failure() }}
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          appimage="$PWD/$(ls release/*.AppImage | head -1)"
+          dir="$RUNNER_TEMP/appimage"
+          rm -rf "$dir" && mkdir -p "$dir"
+          (cd "$dir" && "$appimage" --appimage-extract > /dev/null)
+          node scripts/desktop-e2e/installed-e2e.mjs --app "$dir/squashfs-root/specweave-studio-desktop" --out "$RUNNER_TEMP/e2e-linux-appimage"
+
+      # Same commands as release-windows-linux.yml: the server as a Node
+      # single-executable on the Node vite.config.ts pins, then the archive.
+      - name: Build and smoke-test the CLI archive
+        if: ${{ success() || failure() }}
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p 'require("./apps/server/package.json").version')"
+          echo "CLI_VERSION=$VERSION" >> "$GITHUB_ENV"
+          VP_NODE_VERSION="$(sed -n 's/^const SEA_NODE_VERSION = "\([0-9.]*\)";.*/\1/p' apps/server/vite.config.ts)"
+          [ -n "$VP_NODE_VERSION" ] || { echo "::error::SEA_NODE_VERSION not found in apps/server/vite.config.ts"; exit 1; }
+          VP_NODE_VERSION="$VP_NODE_VERSION" node apps/server/scripts/cli.ts build-exe --verbose
+          monitor="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          mkdir -p "$monitor"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/studio-resource-monitor "$monitor/"
+          node scripts/build-cli-archive.ts --platform linux --arch x64 --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive "release-cli/studio-$VERSION-linux-x64.tar.gz" --expect-version "$VERSION"
+
+      # A desktop user has a login session and with it a systemd user manager;
+      # the runner has none, so lingering stands in for it. The CLI is left to
+      # find the bus itself (no XDG_RUNTIME_DIR or DBUS_SESSION_BUS_ADDRESS).
+      - name: Start a systemd user manager
+        if: ${{ success() || failure() }}
+        run: |
+          sudo loginctl enable-linger "$USER"
+          bus="/run/user/$(id -u)/bus"
+          for _ in $(seq 1 30); do [ -S "$bus" ] && break; sleep 1; done
+          [ -S "$bus" ] || { echo "::error::No user bus at $bus"; exit 1; }
+
+      - name: Tray and background service of the installed .deb app
+        if: ${{ success() || failure() }}
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          xvfb-run -a node scripts/desktop-e2e/service-e2e.mjs --app "$(readlink -f /usr/bin/specweave-studio-desktop)" \
+            --archive "release-cli/studio-$CLI_VERSION-linux-x64.tar.gz" --out "$RUNNER_TEMP/service-linux"
+
+      - name: Remove the .deb
+        if: ${{ success() || failure() }}
+        run: |
+          sudo apt-get remove -y "$DEB_PACKAGE"
+          test ! -e /usr/bin/specweave-studio-desktop
+
+      - name: Upload installers and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: specwithcode-linux-x64
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release-cli/*.tar.gz
+            ${{ runner.temp }}/linux-*.json
+            ${{ runner.temp }}/e2e-linux
+            ${{ runner.temp }}/e2e-linux-nogit
+            ${{ runner.temp }}/e2e-linux-appimage
+            ${{ runner.temp }}/service-linux
+          if-no-files-found: warn
+          retention-days: 14
+
+  macos:
+    name: macOS arm64 unpack and launch
+    # release.sh opens release PRs after publishing and merges them at once.
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      # checkout's credential cleanup runs submodule foreach even with
+      # submodules disabled, which fails on the orphaned gitlinks in the
+      # vendored .repos tree, so fetch by hand and leave .repos out.
+      - name: Checkout
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ inputs.release_tag || github.event.pull_request.head.sha || github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          if [ -n "$RELEASE_TAG" ] && ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_tag must look like v1.2.3"; exit 1
+          fi
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64)"
+          git -c http.extraheader="$auth" fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        if: env.RELEASE_TAG == ''
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@specweave-studio/desktop... --filter=specweave-studio... --filter=@specweave-studio/web... --filter=@specweave-studio/scripts...
+
+      # The desktop app's voice helper (native/voice) uses SpeechAnalyzer from the macOS 26 SDK,
+      # which Xcode 16 lacks. Keep the runner's Xcode when it is already 26 or later, otherwise
+      # point DEVELOPER_DIR at the newest installed Xcode 26 or later. Read xcodebuild's whole
+      # output first: piping it into `head` closes the pipe early, and xcodebuild aborts on the
+      # failed write (seen on a self-hosted Mac with Xcode 27).
+      - name: Select Xcode 26
+        if: env.RELEASE_TAG == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          major() { DEVELOPER_DIR="$1" xcodebuild -version 2> /dev/null | sed -n '1s/^Xcode \([0-9][0-9]*\).*/\1/p' || true; }
+          current="$(major "${DEVELOPER_DIR:-$(xcode-select -p)}")"
+          if [ -n "$current" ] && [ "$current" -ge 26 ]; then
+            xcodebuild -version
+            exit 0
+          fi
+          xcode=""
+          for app in $(ls -d /Applications/Xcode*.app 2> /dev/null | sort -V); do
+            v="$(major "$app/Contents/Developer")"
+            if [ -n "$v" ] && [ "$v" -ge 26 ]; then xcode="$app"; fi
+          done
+          if [ -z "$xcode" ]; then
+            echo "No Xcode 26 or later on this runner; installed:" >&2
+            ls -d /Applications/Xcode*.app >&2 || true
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$xcode/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$xcode/Contents/Developer" xcodebuild -version
+
+      - name: Build the unsigned app
+        if: env.RELEASE_TAG == ''
+        run: node scripts/build-desktop-artifact.ts --platform mac --target zip --arch arm64
+
+      - name: Download the published zip
+        if: env.RELEASE_TAG != ''
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release_tag must look like v1.2.3"; exit 1; }
+          v="${RELEASE_TAG#v}"
+          [ "$(node -p 'require("./apps/desktop/package.json").version')" = "$v" ] || { echo "::error::checked-out source is not $v"; exit 1; }
+          rm -rf release && mkdir release && cd release
+          for name in SHA256SUMS "SpecWithCode-$v-arm64.zip"; do
+            curl -fsSL --retry 3 -o "$name" "$PUBLIC_RELEASES/$RELEASE_TAG/$name"
+          done
+          shasum -a 256 -c --ignore-missing SHA256SUMS
+          grep -q "  SpecWithCode-$v-arm64.zip$" SHA256SUMS
+
+      # The zip as a person (and the updater) gets it, unpacked with ditto into a temporary
+      # folder; the main window is created offscreen against a throwaway home.
+      - name: Launch the unpacked app
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/macos-app"
+          rm -rf "$dir" && mkdir -p "$dir"
+          ditto -x -k "$(ls release/SpecWithCode-*-arm64.zip | head -1)" "$dir"
+          STUDIO_SMOKE_EXECUTABLE="$dir/SpecWithCode.app/Contents/MacOS/SpecWithCode" STUDIO_SMOKE_RESULT="$RUNNER_TEMP/macos-zip.json" \
+            node apps/desktop/scripts/smoke-test.mjs
+
+      # The release's verify stage in its fresh mode (scripts/release/verify-built-app.mjs):
+      # the bundled server reports the version, and a thread and the project coordinator are
+      # answered by an offline fake agent, headless. The acceptance proofs need the release
+      # Mac's pinned Node and run in release.sh's verify stage.
+      - name: Verify the unpacked app
+        if: ${{ success() || failure() }}
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          set -euo pipefail
+          node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+          v="$(node -p 'require("./apps/server/package.json").version')"
+          node scripts/release/verify-built-app.mjs --mode fresh --no-proofs --archive "$(ls release/SpecWithCode-*-arm64.zip | head -1)" \
+            --version "$v" --out "$RUNNER_TEMP/verify-macos"
+
+      - name: Upload the app and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: specwithcode-macos-arm64
+          path: |
+            release/*.zip
+            ${{ runner.temp }}/macos-*.json
+            ${{ runner.temp }}/verify-macos
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows:
+    name: Windows x64 install and launch
+    # release.sh opens release PRs after publishing and merges them at once.
+    if: ${{ !startsWith(github.head_ref, 'release/') }}
+    runs-on: windows-2025
+    timeout-minutes: 75
+    steps:
+      # .repos holds orphaned gitlinks that break actions/checkout's cleanup.
+      - name: Checkout
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ inputs.release_tag || github.event.pull_request.head.sha || github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          if [ -n "$RELEASE_TAG" ] && ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_tag must look like v1.2.3"; exit 1
+          fi
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git -c http.extraheader="$auth" fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git -c checkout.workers=0 checkout --detach FETCH_HEAD
+
+      - name: Setup Vite+
+        env:
+          npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
+        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      # See the Linux job. With a cached monitor the build's preflight skips
+      # its MSVC check, so the 4-5 minute Spectre install below is skipped too.
+      - name: Cache resource monitor
+        if: env.RELEASE_TAG == ''
+        id: resource_monitor_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/studio-resource-monitor.exe
+          key: resource-monitor-x86_64-pc-windows-msvc-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: env.RELEASE_TAG == '' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      # The resource monitor links the Spectre-mitigated MSVC runtime.
+      - name: Install Spectre-mitigated MSVC libs
+        if: env.RELEASE_TAG == '' && steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
+            Write-Error "Visual Studio Installer failed with exit code $code"
+            exit $code
+          }
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@specweave-studio/desktop... --filter=specweave-studio... --filter=@specweave-studio/web... --filter=@specweave-studio/scripts...
+
+      - name: Build NSIS installer
+        if: env.RELEASE_TAG == ''
+        env:
+          STUDIO_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+        run: node scripts/build-desktop-artifact.ts --platform win --target nsis --arch x64
+
+      - name: Download the published installer and CLI archive
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::release_tag must look like v1.2.3"; exit 1; }
+          v="${RELEASE_TAG#v}"
+          [ "$(node -p 'require("./apps/desktop/package.json").version')" = "$v" ] || { echo "::error::checked-out source is not $v"; exit 1; }
+          mkdir -p release release-cli
+          for name in SHA256SUMS-windows-linux "SpecWithCode-$v-x64.exe" "studio-$v-win32-x64.zip"; do
+            curl -fsSL --retry 3 -o "release/$name" "$PUBLIC_RELEASES/$RELEASE_TAG/$name"
+          done
+          (cd release && sha256sum -c --ignore-missing SHA256SUMS-windows-linux)
+          grep -q "  SpecWithCode-$v-x64.exe$" release/SHA256SUMS-windows-linux
+          grep -q "  studio-$v-win32-x64.zip$" release/SHA256SUMS-windows-linux
+          mv "release/studio-$v-win32-x64.zip" release-cli/
+          node scripts/smoke-cli-archive.ts --archive "release-cli/studio-$v-win32-x64.zip" --expect-version "$v"
+          echo "CLI_VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Leave shortcuts from a pre-1.0 install
+        # Published releases before this check do not repair shortcuts.
+        if: env.RELEASE_TAG == ''
+        shell: pwsh
+        run: |
+          # Builds before 1.0 installed "SpecWeave Studio.exe" into the same folder;
+          # the rename deleted it and left these shortcuts pointing at nothing.
+          $shell = New-Object -ComObject WScript.Shell
+          $stale = "$env:LOCALAPPDATA\Programs\studio\SpecWeave Studio.exe"
+          $desktop = [Environment]::GetFolderPath("Desktop")
+          $menu = [Environment]::GetFolderPath("Programs")
+          $pins = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+          New-Item -ItemType Directory -Force -Path $desktop, $menu, $pins | Out-Null
+          foreach ($link in @("$desktop\SpecWeave Studio.lnk", "$menu\SpecWeave Studio.lnk", "$pins\SpecWeave Studio.lnk")) {
+            $s = $shell.CreateShortcut($link); $s.TargetPath = $stale; $s.Save()
+          }
+
+      - name: Install silently
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release\*.exe | Select-Object -First 1
+          Write-Host "Installing $($installer.FullName)"
+          $proc = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { Write-Error "Installer exited with $($proc.ExitCode)"; exit 1 }
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "SpecWithCode*.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike "Uninstall*" } | Select-Object -First 1
+          if (-not $exe) { Write-Error "No installed SpecWithCode executable under $env:LOCALAPPDATA\Programs"; exit 1 }
+          Write-Host "Installed: $($exe.FullName)"
+          "STUDIO_INSTALLED_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+      - name: Shortcuts point at the installed app, also after an in-place update
+        # Published releases before this check do not repair shortcuts.
+        if: env.RELEASE_TAG == ''
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release\*.exe | Select-Object -First 1
+          $shell = New-Object -ComObject WScript.Shell
+          $desktop = [Environment]::GetFolderPath("Desktop")
+          $menu = [Environment]::GetFolderPath("Programs")
+          $pins = "$env:APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+          function Assert-Shortcuts([string]$when) {
+            # The installer creates the current shortcuts, drops the old-named ones
+            # beside them, and repoints the taskbar pin, which it never removes.
+            foreach ($link in @("$desktop\SpecWithCode.lnk", "$menu\SpecWithCode.lnk", "$pins\SpecWeave Studio.lnk")) {
+              if (-not (Test-Path $link)) { Write-Error "$when`: $link is missing"; exit 1 }
+              $target = $shell.CreateShortcut($link).TargetPath
+              if ($target -ne $env:STUDIO_INSTALLED_EXE) { Write-Error "$when`: $link points at $target, not $env:STUDIO_INSTALLED_EXE"; exit 1 }
+            }
+            foreach ($link in @("$desktop\SpecWeave Studio.lnk", "$menu\SpecWeave Studio.lnk")) {
+              if (Test-Path $link) { Write-Error "$when`: $link was left behind"; exit 1 }
+            }
+          }
+          Assert-Shortcuts "after install"
+          # electron-updater runs the new installer with --updated /S over the existing install.
+          $proc = Start-Process -FilePath $installer.FullName -ArgumentList "--updated", "/S" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { Write-Error "In-place update exited with $($proc.ExitCode)"; exit 1 }
+          if (-not (Test-Path $env:STUDIO_INSTALLED_EXE)) { Write-Error "In-place update removed $env:STUDIO_INSTALLED_EXE"; exit 1 }
+          Assert-Shortcuts "after in-place update"
+
+      - name: Launch the installed app
+        shell: pwsh
+        run: |
+          $env:STUDIO_SMOKE_EXECUTABLE = $env:STUDIO_INSTALLED_EXE
+          $env:STUDIO_SMOKE_RESULT = "$env:RUNNER_TEMP\windows-nsis.json"
+          node apps/desktop/scripts/smoke-test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: End-to-end check of the installed app
+        if: ${{ success() || failure() }}
+        shell: pwsh
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          node apps/server/node_modules/playwright-core/cli.js install --only-shell chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/desktop-e2e/installed-e2e.mjs --app "$env:STUDIO_INSTALLED_EXE" --out "$env:RUNNER_TEMP\e2e-windows"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and smoke-test the CLI archive
+        if: ${{ (success() || failure()) && env.RELEASE_TAG == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p 'require("./apps/server/package.json").version')"
+          echo "CLI_VERSION=$VERSION" >> "$GITHUB_ENV"
+          VP_NODE_VERSION="$(sed -n 's/^const SEA_NODE_VERSION = "\([0-9.]*\)";.*/\1/p' apps/server/vite.config.ts)"
+          [ -n "$VP_NODE_VERSION" ] || { echo "::error::SEA_NODE_VERSION not found in apps/server/vite.config.ts"; exit 1; }
+          VP_NODE_VERSION="$VP_NODE_VERSION" node apps/server/scripts/cli.ts build-exe --verbose
+          monitor="$RUNNER_TEMP/cli-resource-monitor/win32-x64"
+          mkdir -p "$monitor"
+          cp native/resource-monitor/target/x86_64-pc-windows-msvc/release/studio-resource-monitor.exe "$monitor/"
+          node scripts/build-cli-archive.ts --platform win --arch x64 --version "$VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive "release-cli/studio-$VERSION-win32-x64.zip" --expect-version "$VERSION"
+
+      - name: Tray and background service of the installed app
+        if: ${{ success() || failure() }}
+        shell: pwsh
+        env:
+          PWDEBUG: "0"
+          PLAYWRIGHT_HTML_OPEN: never
+        run: |
+          node scripts/desktop-e2e/service-e2e.mjs --app "$env:STUDIO_INSTALLED_EXE" `
+            --archive "release-cli\studio-$env:CLI_VERSION-win32-x64.zip" --out "$env:RUNNER_TEMP\service-windows"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Uninstall silently
+        if: ${{ success() || failure() }}
+        shell: pwsh
+        run: |
+          $dir = Split-Path $env:STUDIO_INSTALLED_EXE
+          $uninstaller = Get-ChildItem $dir -Filter "Uninstall*.exe" | Select-Object -First 1
+          if (-not $uninstaller) { Write-Error "No uninstaller in $dir"; exit 1 }
+          $proc = Start-Process -FilePath $uninstaller.FullName -ArgumentList "/S" -Wait -PassThru
+          # The NSIS uninstaller copies itself to %TEMP% and returns early.
+          for ($i = 0; $i -lt 30 -and (Test-Path $env:STUDIO_INSTALLED_EXE); $i++) { Start-Sleep -Seconds 2 }
+          if (Test-Path $env:STUDIO_INSTALLED_EXE) { Write-Error "$env:STUDIO_INSTALLED_EXE is still installed"; exit 1 }
+
+      - name: Upload installer and results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: specwithcode-windows-x64
+          path: |
+            release/*.exe
+            release-cli/*.zip
+            ${{ runner.temp }}/windows-*.json
+            ${{ runner.temp }}/e2e-windows
+            ${{ runner.temp }}/service-windows
+          if-no-files-found: warn
+          retention-days: 14
