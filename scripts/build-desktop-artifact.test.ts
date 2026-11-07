@@ -2684,3 +2684,15 @@ it("pins whisper.cpp to a full commit and never builds for the build machine's C
   assert.ok(args.some((arg) => arg.includes("-static-libstdc++")));
   assert.ok(!linuxWhisperCmakeArgs("arm64").includes("-DGGML_AVX2=ON"));
 });
+
+it("installs the .deb's update helper, key and one polkit action, and no sudoers or rules file", () => {
+  const source = NodeFS.readFileSync(
+    new URL("./build-desktop-artifact.ts", import.meta.url),
+    "utf8",
+  );
+  assert.include(source, 'linux/update-helper")}=/usr/lib/specwithcode/update-helper');
+  assert.include(source, 'linux/update-key.gpg")}=/usr/lib/specwithcode/update-key.gpg');
+  assert.include(source, "=/usr/share/polkit-1/actions/com.specwithcode.studio.update.policy");
+  assert.notMatch(source, /=\/etc\/sudoers|polkit-1\/rules\.d/);
+  assert.include(source, '"gpgv",');
+});
