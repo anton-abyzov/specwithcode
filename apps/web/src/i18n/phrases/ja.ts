@@ -3845,89 +3845,19 @@ export const ja: PhraseCatalog = {
     "このキャパシティの選択は利用できなくなりました。観測を更新するか、ホストの接続と権限を確認してから、もう一度選んでください。",
   "The draft could not be opened. Reconnect the host or check the project, then try again.":
     "下書きを開けませんでした。ホストを再接続するかプロジェクトを確認してから、もう一度お試しください。",
-  "Reading session state from connected hosts…": "接続中のホストからセッションの状態を読み取り中…",
-  "{count} sessions with known actions. Partial observations; some hosts are not current.":
-    "既知の操作があるセッション {count} 件。観測は一部のみで、最新でないホストがあります。",
-  "{count} session needs your decision. {working} working across {projects} projects.":
-    "{count} 件のセッションがあなたの判断を待っています。{projects} 件のプロジェクトで {working} 件が実行中です。",
-  "{count} sessions need your decision. {working} working across {projects} projects.":
-    "{count} 件のセッションがあなたの判断を待っています。{projects} 件のプロジェクトで {working} 件が実行中です。",
-  "Nothing needs you. {working} session is working.":
-    "対応が必要なものはありません。{working} 件のセッションが実行中です。",
-  "Nothing needs you. {working} sessions are working.":
-    "対応が必要なものはありません。{working} 件のセッションが実行中です。",
-  "Nothing needs you right now. Start a session or pick up where you left off.":
-    "今は対応が必要なものはありません。セッションを始めるか、中断したところから再開しましょう。",
   "Private workspace": "プライベートワークスペース",
   Connections: "接続",
-  "Control desk": "コントロールデスク",
-  "Manage projects": "プロジェクトを管理",
   "New session": "新しいセッション",
-  "This device is offline. Saved session state may be incomplete; reconnect before starting work.":
-    "このデバイスはオフラインです。保存されたセッションの状態は不完全な可能性があります。作業を始める前に再接続してください。",
-  "Observed workspace status": "観測されたワークスペースの状態",
-  "Sessions needing action": "対応が必要なセッション",
-  "Partial observations": "観測は一部のみ",
-  "Review now": "今すぐ確認",
-  "All clear": "問題なし",
-  "Sessions working": "実行中のセッション",
-  "{count} sessions in total": "合計 {count} 件のセッション",
-  "Registered projects": "登録済みプロジェクト",
-  "Browse projects": "プロジェクトを見る",
-  "Hosts connected": "接続中のホスト",
-  "Some hosts are offline": "一部のホストがオフラインです",
-  "Manage hosts": "ホストを管理",
-  "Start deliberately": "意図を持って始める",
   "The project’s native provider and permission settings apply.":
     "プロジェクトのネイティブなプロバイダーと権限の設定が適用されます。",
   "No connected project is available with this connection’s operating permission. {link} or {link2}.":
     "この接続の操作権限で利用できる接続済みプロジェクトはありません。{link}または{link2}。",
-  "Project and host": "プロジェクトとホスト",
   "Choose a registered project…": "登録済みプロジェクトを選択…",
   "Opening…": "開いています…",
-  "Reading session state…": "セッションの状態を読み取り中…",
-  "Each connected host reports its native sessions.":
-    "接続中の各ホストがネイティブセッションを報告します。",
   "A clear desk.": "デスクはすっきりしています。",
-  "No approvals, questions or plans reported by connected hosts need a decision.":
-    "接続中のホストから報告された承認、質問、プランで判断が必要なものはありません。",
-  "Disconnected hosts have not reported current attention.":
-    "切断されたホストは現在の要対応事項を報告していません。",
-  "Attention pages": "要対応ページ",
-  Sessions: "セッション",
-  "Filter sessions": "セッションを絞り込む",
-  "Reading sessions…": "セッションを読み取り中…",
-  "The next session starts here.": "次のセッションはここから始まります。",
-  "No sessions match this filter.": "このフィルターに一致するセッションはありません。",
-  "Saved hosts and session shells are synchronizing.":
-    "保存済みのホストとセッションの枠を同期中です。",
-  "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.":
-    "上の「新しいセッション」を選んでください。ネイティブのプラン、承認、チェックポイントは会話とともに残ります。",
-  "Choose another filter to see the rest.": "残りを表示するには別のフィルターを選んでください。",
-  "Session pages": "セッションのページ",
-  "Filter projects": "プロジェクトを絞り込む",
   "Add your first project.": "最初のプロジェクトを追加しましょう。",
-  "Register a folder on a connected host to start sessions in it.":
-    "接続中のホストにフォルダーを登録すると、そこでセッションを開始できます。",
-  "No projects match.": "一致するプロジェクトはありません。",
-  "Try a shorter name.": "短い名前で試してください。",
-  "Project pages": "プロジェクトのページ",
-  "Workspace settings": "ワークスペースの設定",
-  "Add your first project": "最初のプロジェクトを追加",
-  "Register a workspace on a connected host.": "接続中のホストにワークスペースを登録します。",
-  "Native instances, sign-in and model settings.":
-    "ネイティブインスタンス、サインイン、モデルの設定。",
-  "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.":
-    "SpecWithCode Connect、または LAN、SSH、Tailscale で、どこからでもマシンにアクセスできます。",
-  "SpecWeave keeps intent and ownership portable.":
-    "SpecWeave は意図と所有権を持ち運べる形で保ちます。",
-  "SpecWithCode keeps native conversations on their host.":
-    "SpecWithCode はネイティブの会話をそのホストに保ちます。",
-  "{value}–{value2} of {total}": "{value}–{value2} / {total}",
   "Untitled session": "無題のセッション",
   "Project unavailable": "プロジェクトを利用できません",
-  "Working sessions": "実行中のセッション",
-  "No sessions yet": "まだセッションはありません",
   "What you can do": "できること",
   "{done} of {total} done": "{done}/{total} 完了",
   "Dismiss What you can do": "「できること」を閉じる",
@@ -4068,7 +3998,6 @@ export const ja: PhraseCatalog = {
   "{count}h ago": "{count} 時間前",
   "{count}d ago": "{count} 日前",
   "Native instance: {instance} · {model}": "ネイティブインスタンス: {instance} · {model}",
-  "Active {when}": "最終アクティブ: {when}",
   "No project, not available here": "プロジェクトなし、ここでは利用不可",
   "Archived project, not available here": "アーカイブ済みのプロジェクト、ここでは利用不可",
   "Automated project, not available here": "自動化プロジェクト、ここでは利用不可",
@@ -4110,4 +4039,75 @@ export const ja: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines} では何も準備できていないため、そこではチャットは開始されません。",
   "{agent} on {machine}": "{machine} の {agent}",
+  "Can’t connect": "接続できません",
+  "Catching up": "同期中",
+  "Chats that need you": "対応が必要なチャット",
+  "Chats that need you or are working are listed above.":
+    "対応が必要なチャットと作業中のチャットは上に表示されます。",
+  "Chats you start or continue show here while they work.":
+    "開始または再開したチャットは、作業中ここに表示されます。",
+  "Check connection": "接続を確認",
+  "Choose New chat above. Plans, approvals and checkpoints stay with the chat.":
+    "上の「新しいチャット」を選んでください。プラン、承認、チェックポイントはチャットに残ります。",
+  "Connect this machine or another one in Connections.":
+    "「接続」でこのマシンか別のマシンを接続してください。",
+  "Connection settings for {machine}": "{machine} の接続設定",
+  "Each connected machine reports its chats.": "接続済みの各マシンが自分のチャットを報告します。",
+  Earlier: "それ以前",
+  "Filter chats": "チャットを絞り込む",
+  "New chat in {project}": "{project} で新しいチャット",
+  "No approvals, questions or plans reported by connected machines need a decision.":
+    "接続済みマシンから報告された承認、質問、プランで判断が必要なものはありません。",
+  "No chats match.": "一致するチャットはありません。",
+  "No finished chats yet.": "完了したチャットはまだありません。",
+  "No other open chats.": "ほかに未完了のチャットはありません。",
+  "None working": "作業中なし",
+  "Nothing is running.": "実行中のものはありません。",
+  "Nothing needs you": "対応が必要なものはありません",
+  "Project and machine": "プロジェクトとマシン",
+  "Projects and machines": "プロジェクトとマシン",
+  "Reading your chats…": "チャットを読み込み中…",
+  Recent: "最近",
+  Reconnecting: "再接続中",
+  "Register a folder on a connected machine to start chats in it.":
+    "接続済みマシンのフォルダーを登録すると、そこでチャットを開始できます。",
+  "Show all {count}": "すべて表示 ({count})",
+  "Show only chats that need you in {project}": "{project} で対応が必要なチャットのみ表示",
+  "Showing chats in {name}": "{name} のチャットを表示中",
+  "Showing chats on {name}": "{name} のチャットを表示中",
+  "Some machines are still reporting, so these counts may be incomplete.":
+    "まだ報告中のマシンがあるため、件数が不完全な場合があります。",
+  "The next chat starts here.": "次のチャットはここから始まります。",
+  "This device is offline. Saved chats may be out of date; reconnect before starting work.":
+    "このデバイスはオフラインです。保存済みのチャットは古い可能性があります。作業を始める前に再接続してください。",
+  "Try a shorter name, or switch between Open and Done.":
+    "短い名前を試すか、「未完了」と「完了」を切り替えてください。",
+  move: "移動",
+  open: "開く",
+  "this machine": "このマシン",
+  "{count} chat": "チャット {count} 件",
+  "{count} chats": "チャット {count} 件",
+  "{count} machine": "マシン {count} 台",
+  "{count} machines": "マシン {count} 台",
+  "{count} project": "プロジェクト {count} 件",
+  "{count} projects": "プロジェクト {count} 件",
+  "{count} working": "作業中 {count} 件",
+  "{em} need you": "{em}が対応待ちです",
+  "{em} needs you": "{em}が対応待ちです",
+  "{machines} are not current, so their chats may be missing from these counts.":
+    "{machines} は最新ではないため、そのチャットがこの件数に含まれていない可能性があります。",
+  "{machine} is {status}, so its chats may be missing from these counts.":
+    "{machine} は{status}のため、そのチャットがこの件数に含まれていない可能性があります。",
+  "{shown} of {total}": "{shown} / {total}",
+  "{working} · {chats} in {projects} on {machines}":
+    "{working} · {chats} · {projects} · {machines}",
+  "Access requested": "アクセスを依頼",
+  "Answer needed": "回答が必要",
+  "Approval requested": "承認を依頼",
+  "No recent activity": "最近の動きなし",
+  "Plan ready to review": "プランの確認待ち",
+  "Queued messages held": "キューのメッセージを保留中",
+  "Reply needed": "返信が必要",
+  "Sign-in needed": "サインインが必要",
+  "Usage limit reached": "利用上限に到達",
 };

@@ -10,8 +10,10 @@ import type {
 } from "@specweave-studio/contracts";
 import { htmlRenderFileName } from "@specweave-studio/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@specweave-studio/shared/toolOutput";
+import * as Schema from "effect/Schema";
 import {
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
@@ -35,6 +37,7 @@ import { createPortal } from "react-dom";
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { readLocalApi } from "~/localApi";
 import {
@@ -1340,6 +1343,8 @@ export function MessageFileViewer(props: {
   );
 }
 
+const STRIP_OPEN_STORAGE_KEY = "studio:viewer-thread-artifacts-open:v1";
+
 /**
  * The thread's artifacts as a strip of tiles, newest first, above the thread
  * beside the viewer: one press puts another of them on the left.
@@ -1353,15 +1358,34 @@ export function ThreadArtifactStrip(props: {
   readonly onOpen: (key: string) => void;
 }) {
   const tx = useTx();
+  // Folded, the strip gives its height back to the thread; the choice holds on this device.
+  const [open, setOpen] = useLocalStorage<boolean, boolean>(
+    STRIP_OPEN_STORAGE_KEY,
+    true,
+    Schema.Boolean,
+  );
   if (props.artifacts.length === 0) return null;
   return (
-    <section className="viewer-thread-artifacts" aria-label={tx("Artifacts in this thread")}>
+    <section
+      className="viewer-thread-artifacts"
+      data-open={open}
+      aria-label={tx("Artifacts in this thread")}
+    >
       <h3 className="viewer-thread-artifacts-title">
-        {renderRich(tx("Artifacts {span}"), {
-          span: <span className="tabular-nums">{props.artifacts.length}</span>,
-        })}
+        <button
+          type="button"
+          className="viewer-thread-artifacts-toggle"
+          aria-expanded={open}
+          aria-controls="viewer-thread-artifacts-list"
+          onClick={() => setOpen(!open)}
+        >
+          {renderRich(tx("Artifacts {span}"), {
+            span: <span className="tabular-nums">{props.artifacts.length}</span>,
+          })}
+          <ChevronDownIcon aria-hidden className="viewer-thread-artifacts-chevron" />
+        </button>
       </h3>
-      <ul className="viewer-thread-artifacts-list">
+      <ul id="viewer-thread-artifacts-list" className="viewer-thread-artifacts-list" hidden={!open}>
         {props.artifacts.toReversed().map((artifact) => (
           <li key={artifact.key}>
             <button

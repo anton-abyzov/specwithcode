@@ -165,6 +165,7 @@ vi.mock("../../state/environments", () => ({
     isReady: true,
     networkStatus: "online",
   }),
+  usePrimaryEnvironmentId: () => "host-local",
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: () => new Set(["host-local", "host-worker"]),
@@ -190,7 +191,7 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({
     to,
     params,
-    search,
+    search: _search,
     children,
     ...props
   }: {
@@ -279,9 +280,13 @@ async function render() {
   await act(async () => root.render(<StudioOverview />));
 }
 async function click(text: string) {
-  const button = [...container.querySelectorAll("button")].find(
-    (b) => b.textContent?.trim() === text.trim(),
-  );
+  // A shortcut hint inside a button is not part of its name.
+  const name = (b: HTMLButtonElement) => {
+    const copy = b.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll("kbd").forEach((kbd) => kbd.remove());
+    return copy.textContent?.trim();
+  };
+  const button = [...container.querySelectorAll("button")].find((b) => name(b) === text.trim());
   expect(button).toBeDefined();
   await act(async () => button!.click());
 }
@@ -322,7 +327,7 @@ describe("deliberate native session entry", () => {
   it("keeps overview on mount, rerender and reload without creating a draft", async () => {
     await render();
     await render();
-    expect(container.querySelector("h1")?.textContent).toContain("Control desk");
+    expect(container.querySelector("h1")?.textContent).toBe("Nothing needs you");
     expect(state.createDraft).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     root = createRoot(container);
@@ -335,8 +340,8 @@ describe("deliberate native session entry", () => {
     state.shells = [];
     try {
       await render();
-      expect(container.textContent).not.toContain("Partial observations");
-      expect(container.textContent).toContain("Nothing needs you right now.");
+      expect(container.querySelector(".studio-stale-notice")).toBeNull();
+      expect(container.querySelector("h1")?.textContent).toBe("Nothing needs you");
     } finally {
       state.projects = projects;
     }
@@ -351,7 +356,10 @@ describe("deliberate native session entry", () => {
     ];
     try {
       await render();
-      expect(container.textContent).toContain("Partial observations");
+      // The notice names the machine that is behind and links to its connection.
+      const notice = container.querySelector(".studio-stale-notice");
+      expect(notice?.textContent).toContain("Worker Mac is offline");
+      expect(notice?.querySelector('a[href="/settings/connections"]')).not.toBeNull();
     } finally {
       state.projects = projects;
       state.environments = environments;
@@ -360,12 +368,11 @@ describe("deliberate native session entry", () => {
   it("renders actual title-shaped project, session and attention labels", async () => {
     state.shells = [shell("needs-review", { hasPendingApprovals: true })];
     await render();
-    expect([...container.querySelectorAll("h3")].map((node) => node.textContent)).toContain(
-      "Local project",
+    const projectNames = [...container.querySelectorAll(".studio-project .studio-row-title")].map(
+      (node) => node.textContent,
     );
-    expect([...container.querySelectorAll("h3")].map((node) => node.textContent)).toContain(
-      "Worker project",
-    );
+    expect(projectNames).toContain("Local project");
+    expect(projectNames).toContain("Worker project");
     expect(container.querySelector(".studio-session-item")?.textContent).toContain(
       "Worker project",
     );
@@ -375,12 +382,12 @@ describe("deliberate native session entry", () => {
   });
   it("opens chooser from an explicit click and creates only the chosen scoped draft", async () => {
     await render();
-    await click(" New session");
+    await click("New chat");
     expect(state.createDraft).not.toHaveBeenCalled();
     const field = container.querySelector<HTMLElement>("#studio-project")!;
     expect(field.getAttribute("role")).toBe("combobox");
     expect(container.querySelector('label[for="studio-project"]')?.textContent).toBe(
-      "Project and host",
+      "Project and machine",
     );
     expect(document.activeElement).toBe(field);
     expect(field.textContent).toBe("Choose a registered project…");
@@ -412,7 +419,7 @@ describe("deliberate native session entry", () => {
   });
   it("clears the choice when the chosen project is no longer offered", async () => {
     await render();
-    await click(" New session");
+    await click("New chat");
     await select("host-worker:project-worker");
     const open = () =>
       [...container.querySelectorAll("button")].find((b) =>
@@ -570,28 +577,27 @@ describe("deliberate native session entry", () => {
           : environment,
       );
     };
-    const count = (label: string) =>
-      [...container.querySelectorAll(".studio-stat")]
-        .find((stat) => stat.querySelector("span")?.textContent === label)
-        ?.querySelector("strong")?.textContent;
+    const heading = () => container.querySelector("h1")?.textContent;
+    const summary = () => container.querySelector(".studio-intro")?.textContent;
 
     setWorkerConnection("offline");
     await render();
-    expect(count("Sessions working")).toBe("0");
-    expect(count("Sessions needing action")).toBe("0");
+    expect(summary()).toContain("None working");
+    expect(heading()).toBe("Nothing needs you");
     expect(container.textContent).toContain("Disconnected · Last observed: Working");
     expect(container.textContent).toContain("Disconnected · Last observed: Approval requested");
     expect(container.querySelectorAll(".studio-session-item")).toHaveLength(2);
     expect(container.querySelector('a[href="/host-worker/approval"]')).not.toBeNull();
     expect(
-      container.querySelectorAll(".studio-state-dot.working, .studio-state-dot.attention"),
+      container.querySelectorAll(".studio-session-item .studio-state-dot:is(.moss, .amber, .red)"),
     ).toHaveLength(0);
     expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(0);
 
     setWorkerConnection("connected");
     await render();
-    expect(count("Sessions working")).toBe("1");
-    expect(count("Sessions needing action")).toBe("1");
+    // The running chat that also asks for approval is listed under Needs you, not Working.
+    expect(summary()).toContain("1 working");
+    expect(heading()).toBe("1 chat needs you");
     expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
     expect(container.textContent).not.toContain("Disconnected · Last observed:");
     expect(state.createDraft).not.toHaveBeenCalled();
@@ -633,7 +639,7 @@ describe("deliberate native session entry", () => {
     expect(container.textContent).toContain("Cached local-ask");
     expect(container.textContent).not.toContain("Cached aide-ask");
     expect(container.textContent).not.toContain("Worker project");
-    await click(" New session");
+    await click("New chat");
     expect(option("host-local:project-local")).not.toBeNull();
     expect(option("host-worker:project-worker")).toBeNull();
 
@@ -649,45 +655,176 @@ describe("deliberate native session entry", () => {
     state.shells = [shell("saved")];
     const savedShells = state.shells;
     await render();
-    expect(container.querySelector(".studio-session-state time")?.textContent).toBe("Just now");
+    expect(container.querySelector(".studio-row-age")?.textContent).toBe("Just now");
     await act(async () => vi.advanceTimersByTime(60_000));
-    expect(container.querySelector(".studio-session-state time")?.textContent).toBe("1m ago");
+    expect(container.querySelector(".studio-row-age")?.textContent).toBe("1m ago");
     expect(state.shells).toBe(savedShells);
     expect(state.createDraft).not.toHaveBeenCalled();
     expect(state.setModel).not.toHaveBeenCalled();
   });
-  it("pages long session lists and filters to the sessions that need a decision", async () => {
+  it("lists recent chats without repeating the ones that need you, and shows more on request", async () => {
     state.shells = [
-      ...Array.from({ length: 10 }, (_, index) =>
-        shell(`ready-${index}`, { updatedAt: `2026-10-07T17:${String(10 + index)}:00Z` }),
+      ...Array.from({ length: 25 }, (_, index) =>
+        shell(`ready-${index}`, {
+          updatedAt: `2026-10-07T17:${String(10 + index).padStart(2, "0")}:00Z`,
+        }),
       ),
       shell("blocked", { hasPendingApprovals: true }),
+      shell("finished", { settledOverride: "settled" } as Partial<EnvironmentThreadShell>),
     ];
     await render();
-    expect(container.querySelectorAll(".studio-session-item")).toHaveLength(8);
-    expect(container.querySelector('nav[aria-label="Session pages"]')?.textContent).toContain(
-      "1–8 of 11",
-    );
-    const next = container.querySelector<HTMLButtonElement>(
-      'nav[aria-label="Session pages"] button[aria-label="Next page"]',
-    )!;
-    await act(async () => next.click());
-    expect(container.querySelectorAll(".studio-session-item")).toHaveLength(3);
-    const needsYou = [...container.querySelectorAll<HTMLButtonElement>(".studio-filter")].find(
-      (button) => button.textContent?.startsWith("Needs you"),
-    )!;
-    await act(async () => needsYou.click());
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
+    const recent = () =>
+      [...container.querySelectorAll('[role="tabpanel"] .studio-session-item')].map((row) =>
+        row.getAttribute("href"),
+      );
+    expect(recent()).toHaveLength(20);
+    expect(recent()).not.toContain("/host-worker/blocked");
+    await click("Show 5 more20 of 25");
+    expect(recent()).toHaveLength(25);
+    const done = container.querySelector<HTMLButtonElement>("#studio-recent-tab-done")!;
+    expect(done.textContent).toBe("Done1");
+    await act(async () => done.click());
+    expect(recent()).toEqual(["/host-worker/finished"]);
+  });
+  it("filters recent chats by name", async () => {
+    state.shells = [shell("alpha", { title: "Fix login" }), shell("beta", { title: "Ship docs" })];
+    await render();
+    const input = container.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "login");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     expect(container.querySelectorAll(".studio-session-item")).toHaveLength(1);
-    expect(container.querySelector(".studio-session-item")?.getAttribute("href")).toBe(
-      "/host-worker/blocked",
+    expect(container.querySelector(".studio-session-item")?.textContent).toContain("Fix login");
+  });
+  it("groups Needs you by what each chat needs, the most blocking first", async () => {
+    state.shells = [
+      shell("plan", { hasActionableProposedPlan: true, updatedAt: "2026-10-07T17:59:00Z" }),
+      shell("approval", { hasPendingApprovals: true, updatedAt: "2026-10-06T17:00:00Z" }),
+    ];
+    await render();
+    const groups = [...container.querySelectorAll(".studio-attention .studio-group-label")].map(
+      (label) => label.textContent,
     );
-    expect(container.querySelector('nav[aria-label="Session pages"]')).toBeNull();
+    expect(groups).toEqual(["Approval requested · 1", "Plan ready to review · 1"]);
+  });
+  it("shows eight chats that need you, then the rest on request", async () => {
+    state.shells = Array.from({ length: 11 }, (_, index) =>
+      shell(`ask-${index}`, { hasPendingApprovals: true }),
+    );
+    await render();
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(8);
+    await click("Show 3 more");
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(11);
+    await click("Show fewer");
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(8);
+  });
+  it("narrows every list to a machine, and back", async () => {
+    state.shells = [
+      shell("worker-ask", { hasPendingApprovals: true }),
+      shell("local-ask", {
+        environmentId: "host-local" as EnvironmentThreadShell["environmentId"],
+        projectId: "project-local" as EnvironmentThreadShell["projectId"],
+        hasPendingApprovals: true,
+      }),
+    ];
+    await render();
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(2);
+    const machine = [
+      ...container.querySelectorAll<HTMLButtonElement>(".studio-machine button"),
+    ].find((button) => button.textContent?.startsWith("Worker Mac"))!;
+    expect(machine.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => machine.click());
+    expect(machine.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
+    expect(container.querySelector(".studio-attention-item")?.getAttribute("href")).toBe(
+      "/host-worker/worker-ask",
+    );
+    expect(container.querySelector(".studio-scope")?.textContent).toContain(
+      "Showing chats on Worker Mac",
+    );
+    // The rail keeps only that machine's projects.
+    expect(
+      [...container.querySelectorAll(".studio-project .studio-row-title")].map(
+        (n) => n.textContent,
+      ),
+    ).toEqual(["Worker project"]);
+    await click("Show all");
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(2);
+  });
+  it("filters Needs you to a project from its count", async () => {
+    state.shells = [
+      shell("worker-ask", { hasPendingApprovals: true }),
+      shell("local-ask", {
+        environmentId: "host-local" as EnvironmentThreadShell["environmentId"],
+        projectId: "project-local" as EnvironmentThreadShell["projectId"],
+        hasPendingApprovals: true,
+      }),
+    ];
+    await render();
+    const count = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Show only chats that need you in Local project"]',
+    )!;
+    await act(async () => count.click());
+    expect(count.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
+    expect(container.querySelector(".studio-scope")?.textContent).toContain(
+      "Showing chats in Local project",
+    );
+  });
+  it("walks chat rows with J and K and starts a chat with N", async () => {
+    state.shells = [shell("one", { hasPendingApprovals: true }), shell("two")];
+    await render();
+    const press = (key: string, target: EventTarget = document.body) =>
+      act(async () => {
+        target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+    const rows = [...container.querySelectorAll<HTMLElement>("[data-overview-row]")];
+    expect(rows).toHaveLength(2);
+    await press("j");
+    expect(document.activeElement).toBe(rows[0]);
+    await press("j", rows[0]);
+    expect(document.activeElement).toBe(rows[1]);
+    await press("k", rows[1]);
+    expect(document.activeElement).toBe(rows[0]);
+    // Typing in the filter never moves the selection.
+    const input = container.querySelector<HTMLInputElement>('input[type="search"]')!;
+    input.focus();
+    await press("j", input);
+    expect(document.activeElement).toBe(input);
+    rows[0]!.focus();
+    await press("/", rows[0]);
+    expect(document.activeElement).toBe(input);
+    rows[0]!.focus();
+    await press("n", rows[0]);
+    const picker = container.querySelector<HTMLElement>("#studio-project")!;
+    expect(picker).not.toBeNull();
+    expect(state.createDraft).not.toHaveBeenCalled();
+    // The chooser's project field keeps typed letters for its own search.
+    picker.focus();
+    await press("j", picker);
+    await press("n", picker);
+    expect(document.activeElement).toBe(picker);
+  });
+  it("moves between Open and Done with the arrow keys", async () => {
+    await render();
+    const open = container.querySelector<HTMLButtonElement>("#studio-recent-tab-open")!;
+    expect(open.tabIndex).toBe(0);
+    await act(async () => {
+      open.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    const done = container.querySelector<HTMLButtonElement>("#studio-recent-tab-done")!;
+    expect(done.getAttribute("aria-selected")).toBe("true");
+    expect(done.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(done);
   });
   it("orders project cards by what needs attention and links each to its workspace", async () => {
     state.shells = [shell("needs-review", { hasPendingApprovals: true })];
     await render();
     const cards = [...container.querySelectorAll(".studio-project")];
-    expect(cards.map((card) => card.querySelector("h3")?.textContent)).toEqual([
+    expect(cards.map((card) => card.querySelector(".studio-row-title")?.textContent)).toEqual([
       "Worker project",
       "Local project",
     ]);
@@ -706,7 +843,7 @@ describe("deliberate native session entry", () => {
       [...container.querySelectorAll("a")]
         .filter((a) => a.textContent?.includes(title))
         .map((a) => a.getAttribute("href"));
-    expect(href("Cached worker-thread")).toEqual(["/projects/worker", "/projects/worker"]);
+    expect(href("Cached worker-thread")).toEqual(["/projects/worker"]);
     expect(href("Cached coordinator")).toEqual(["/projects/worker"]);
     expect(href("Cached loose")).toEqual(["/host-local/loose"]);
   });
@@ -714,8 +851,8 @@ describe("deliberate native session entry", () => {
     await render();
     const links = [...container.querySelectorAll("a")].map((a) => a.getAttribute("href"));
     expect(links).toContain("/settings/projects");
-    expect(links).toContain("/settings/providers");
     expect(links).toContain("/settings/connections");
+    expect(links).toContain("/projects/worker");
   });
 });
 

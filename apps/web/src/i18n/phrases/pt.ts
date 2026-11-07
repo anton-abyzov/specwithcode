@@ -3855,90 +3855,19 @@ export const pt: PhraseCatalog = {
     "Esta escolha de capacidade não está mais disponível. Atualize as observações ou verifique a conexão do host e as permissões e escolha de novo.",
   "The draft could not be opened. Reconnect the host or check the project, then try again.":
     "Não foi possível abrir o rascunho. Reconecte o host ou verifique o projeto e tente de novo.",
-  "Reading session state from connected hosts…": "Lendo o estado das sessões dos hosts conectados…",
-  "{count} sessions with known actions. Partial observations; some hosts are not current.":
-    "{count} sessões com ações conhecidas. Observações parciais; alguns hosts não estão atualizados.",
-  "{count} session needs your decision. {working} working across {projects} projects.":
-    "{count} sessão precisa da sua decisão. {working} em andamento em {projects} projetos.",
-  "{count} sessions need your decision. {working} working across {projects} projects.":
-    "{count} sessões precisam da sua decisão. {working} em andamento em {projects} projetos.",
-  "Nothing needs you. {working} session is working.":
-    "Nada precisa de você. {working} sessão em andamento.",
-  "Nothing needs you. {working} sessions are working.":
-    "Nada precisa de você. {working} sessões em andamento.",
-  "Nothing needs you right now. Start a session or pick up where you left off.":
-    "Nada precisa de você agora. Inicie uma sessão ou continue de onde parou.",
   "Private workspace": "Espaço de trabalho privado",
   Connections: "Conexões",
-  "Control desk": "Painel de controle",
-  "Manage projects": "Gerenciar projetos",
   "New session": "Nova sessão",
-  "This device is offline. Saved session state may be incomplete; reconnect before starting work.":
-    "Este dispositivo está offline. O estado salvo das sessões pode estar incompleto; reconecte antes de começar a trabalhar.",
-  "Observed workspace status": "Estado observado do espaço de trabalho",
-  "Sessions needing action": "Sessões que precisam de ação",
-  "Partial observations": "Observações parciais",
-  "Review now": "Revisar agora",
-  "All clear": "Tudo certo",
-  "Sessions working": "Sessões em andamento",
-  "{count} sessions in total": "{count} sessões no total",
-  "Registered projects": "Projetos registrados",
-  "Browse projects": "Navegar pelos projetos",
-  "Hosts connected": "Hosts conectados",
-  "Some hosts are offline": "Alguns hosts estão offline",
-  "Manage hosts": "Gerenciar hosts",
-  "Start deliberately": "Comece com intenção",
   "The project’s native provider and permission settings apply.":
     "Valem as configurações nativas de provedor e permissões do projeto.",
   "No connected project is available with this connection’s operating permission. {link} or {link2}.":
     "Nenhum projeto conectado está disponível com a permissão de operação desta conexão. {link} ou {link2}.",
-  "Project and host": "Projeto e host",
   "Choose a registered project…": "Escolha um projeto registrado…",
   "Opening…": "Abrindo…",
-  "Reading session state…": "Lendo o estado das sessões…",
-  "Each connected host reports its native sessions.":
-    "Cada host conectado informa as próprias sessões nativas.",
   "A clear desk.": "Mesa limpa.",
-  "No approvals, questions or plans reported by connected hosts need a decision.":
-    "Nenhuma aprovação, pergunta ou plano informado pelos hosts conectados precisa de decisão.",
-  "Disconnected hosts have not reported current attention.":
-    "Hosts desconectados não informaram pedidos de atenção atuais.",
-  "Attention pages": "Páginas de atenção",
-  Sessions: "Sessões",
-  "Filter sessions": "Filtrar sessões",
-  "Reading sessions…": "Lendo sessões…",
-  "The next session starts here.": "A próxima sessão começa aqui.",
-  "No sessions match this filter.": "Nenhuma sessão corresponde a este filtro.",
-  "Saved hosts and session shells are synchronizing.":
-    "Os hosts salvos e os contêineres de sessão estão sincronizando.",
-  "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.":
-    "Escolha Nova sessão acima. Planos nativos, aprovações e checkpoints ficam com a conversa.",
-  "Choose another filter to see the rest.": "Escolha outro filtro para ver o restante.",
-  "Session pages": "Páginas de sessões",
-  "Filter projects": "Filtrar projetos",
   "Add your first project.": "Adicione seu primeiro projeto.",
-  "Register a folder on a connected host to start sessions in it.":
-    "Registre uma pasta em um host conectado para iniciar sessões nela.",
-  "No projects match.": "Nenhum projeto corresponde.",
-  "Try a shorter name.": "Tente um nome mais curto.",
-  "Project pages": "Páginas de projetos",
-  "Workspace settings": "Configurações do espaço de trabalho",
-  "Add your first project": "Adicione seu primeiro projeto",
-  "Register a workspace on a connected host.":
-    "Registre um espaço de trabalho em um host conectado.",
-  "Native instances, sign-in and model settings.":
-    "Instâncias nativas, login e configurações de modelo.",
-  "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.":
-    "Acesse suas máquinas de qualquer lugar com o SpecWithCode Connect, ou por LAN, SSH ou Tailscale.",
-  "SpecWeave keeps intent and ownership portable.":
-    "O SpecWeave mantém a intenção e a responsabilidade portáteis.",
-  "SpecWithCode keeps native conversations on their host.":
-    "O SpecWithCode mantém as conversas nativas no host delas.",
-  "{value}–{value2} of {total}": "{value}–{value2} de {total}",
   "Untitled session": "Sessão sem título",
   "Project unavailable": "Projeto indisponível",
-  "Working sessions": "Sessões em andamento",
-  "No sessions yet": "Ainda não há sessões",
   "What you can do": "O que você pode fazer",
   "{done} of {total} done": "{done} de {total} concluídos",
   "Dismiss What you can do": "Dispensar O que você pode fazer",
@@ -4080,7 +4009,6 @@ export const pt: PhraseCatalog = {
   "{count}h ago": "há {count} h",
   "{count}d ago": "há {count} d",
   "Native instance: {instance} · {model}": "Instância nativa: {instance} · {model}",
-  "Active {when}": "Ativo: {when}",
   "No project, not available here": "Sem projeto, indisponível aqui",
   "Archived project, not available here": "Projeto arquivado, indisponível aqui",
   "Automated project, not available here": "Projeto automatizado, indisponível aqui",
@@ -4122,4 +4050,76 @@ export const pt: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "Nada está pronto em {machines}, então os chats lá não vão iniciar.",
   "{agent} on {machine}": "{agent} em {machine}",
+  "Can’t connect": "Não foi possível conectar",
+  "Catching up": "Atualizando",
+  "Chats that need you": "Chats que precisam de você",
+  "Chats that need you or are working are listed above.":
+    "Os chats que precisam de você ou estão em andamento aparecem acima.",
+  "Chats you start or continue show here while they work.":
+    "Os chats que você inicia ou continua aparecem aqui enquanto trabalham.",
+  "Check connection": "Verificar conexão",
+  "Choose New chat above. Plans, approvals and checkpoints stay with the chat.":
+    "Escolha Novo chat acima. Planos, aprovações e checkpoints ficam com o chat.",
+  "Connect this machine or another one in Connections.":
+    "Conecte esta máquina ou outra em Conexões.",
+  "Connection settings for {machine}": "Configurações de conexão de {machine}",
+  "Each connected machine reports its chats.": "Cada máquina conectada informa seus chats.",
+  Earlier: "Anteriores",
+  "Filter chats": "Filtrar chats",
+  "New chat in {project}": "Novo chat em {project}",
+  "No approvals, questions or plans reported by connected machines need a decision.":
+    "Nenhuma aprovação, pergunta ou plano informado pelas máquinas conectadas precisa de decisão.",
+  "No chats match.": "Nenhum chat corresponde.",
+  "No finished chats yet.": "Nenhum chat concluído ainda.",
+  "No other open chats.": "Nenhum outro chat aberto.",
+  "None working": "Nenhum em andamento",
+  "Nothing is running.": "Nada em execução.",
+  "Nothing needs you": "Nada precisa de você",
+  "Project and machine": "Projeto e máquina",
+  "Projects and machines": "Projetos e máquinas",
+  "Reading your chats…": "Lendo seus chats…",
+  Recent: "Recentes",
+  Reconnecting: "Reconectando",
+  "Register a folder on a connected machine to start chats in it.":
+    "Registre uma pasta em uma máquina conectada para iniciar chats nela.",
+  "Show all {count}": "Mostrar todos os {count}",
+  "Show only chats that need you in {project}":
+    "Mostrar só os chats que precisam de você em {project}",
+  "Showing chats in {name}": "Chats em {name}",
+  "Showing chats on {name}": "Chats em {name}",
+  "Some machines are still reporting, so these counts may be incomplete.":
+    "Algumas máquinas ainda estão informando, então estas contagens podem estar incompletas.",
+  "The next chat starts here.": "O próximo chat começa aqui.",
+  "This device is offline. Saved chats may be out of date; reconnect before starting work.":
+    "Este dispositivo está offline. Os chats salvos podem estar desatualizados; reconecte antes de começar.",
+  "Try a shorter name, or switch between Open and Done.":
+    "Tente um nome mais curto ou alterne entre Abertos e Concluídos.",
+  move: "mover",
+  open: "abrir",
+  "this machine": "esta máquina",
+  "{count} chat": "{count} chat",
+  "{count} chats": "{count} chats",
+  "{count} machine": "{count} máquina",
+  "{count} machines": "{count} máquinas",
+  "{count} project": "{count} projeto",
+  "{count} projects": "{count} projetos",
+  "{count} working": "{count} em andamento",
+  "{em} need you": "{em} precisam de você",
+  "{em} needs you": "{em} precisa de você",
+  "{machines} are not current, so their chats may be missing from these counts.":
+    "{machines} não estão atualizadas, então os chats delas podem faltar nestas contagens.",
+  "{machine} is {status}, so its chats may be missing from these counts.":
+    "{machine}: {status}, então os chats dela podem faltar nestas contagens.",
+  "{shown} of {total}": "{shown} de {total}",
+  "{working} · {chats} in {projects} on {machines}":
+    "{working} · {chats} em {projects} em {machines}",
+  "Access requested": "Acesso solicitado",
+  "Answer needed": "Resposta necessária",
+  "Approval requested": "Aprovação solicitada",
+  "No recent activity": "Sem atividade recente",
+  "Plan ready to review": "Plano pronto para revisão",
+  "Queued messages held": "Mensagens na fila retidas",
+  "Reply needed": "Retorno necessário",
+  "Sign-in needed": "Login necessário",
+  "Usage limit reached": "Limite de uso atingido",
 };

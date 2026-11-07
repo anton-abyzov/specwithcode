@@ -19,11 +19,21 @@ describe("ThreadBlockerNote", () => {
     expect(html).not.toMatch(/(?:^|\s)bg-(?:card|warning)\/\d+/);
   });
 
-  it("clamps a long blocker to three lines and keeps the full text", () => {
+  it("folds a long blocker to one line and keeps the full text", () => {
     const blocker = "The repo has two stashes I left alone. ".repeat(10);
     const html = renderToStaticMarkup(<ThreadBlockerNote blocker={blocker} />);
-    expect(html).toContain("line-clamp-3");
+    expect(html).toContain("line-clamp-1");
     expect(html).toContain("Show more");
     expect(html).toContain(blocker.trim());
+  });
+
+  it("folds anything longer than about one line", () => {
+    const blocker =
+      "You need to pick an option on the card; I recommend Build as proposed, then I branch.";
+    const longer = `${blocker} After you approve, I ask the holder first.`;
+    expect(renderToStaticMarkup(<ThreadBlockerNote blocker={blocker} />)).not.toContain(
+      "line-clamp-1",
+    );
+    expect(renderToStaticMarkup(<ThreadBlockerNote blocker={longer} />)).toContain("line-clamp-1");
   });
 });
