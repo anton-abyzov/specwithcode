@@ -12,6 +12,7 @@ import { ThreadPlanCriteria, criteriaSummary } from "../../src/components/chat/T
 import { ThreadPlanCard } from "../../src/components/chat/ThreadPlanCard";
 import { TimelineSystemDivider } from "../../src/components/chat/TimelineSystemDivider";
 import { PlanProgressChip } from "../../src/components/studio/PlanProgressChip";
+import { ThreadCardPlanLine } from "../../src/components/studio/ThreadCardPlanLine";
 import {
   Menu,
   MenuCheckboxItem,
@@ -149,6 +150,22 @@ const rows = [
       }),
     ),
   },
+];
+
+// A spec created from the template, before its tasks have real titles.
+const templateIncrement: ThreadIncrementProgress = {
+  ...emptyIncrement,
+  threadId: "thread-3" as never,
+  incrementId: "1249-overview-page-design-review",
+  title: "Overview page design review",
+  tasks: [
+    { id: "T-01", title: "[First task]", status: "planned", criteria: ["AC-01"], note: null },
+    { id: "T-02", title: "[Second task]", status: "planned", criteria: ["AC-02"], note: null },
+  ],
+};
+const workerCards = [
+  { title: "Overview page design review", plan: compactThreadPlan(templateIncrement, null) },
+  { title: "Studio plan and progress card", plan: compactThreadPlan(increment, null) },
 ];
 
 const anotherUnplanned = new URLSearchParams(window.location.search).has("another");
@@ -304,6 +321,22 @@ function Fixture() {
           onUnlinkIncrement={() => undefined}
           defaultExpanded
         />
+      </section>
+      <section data-testid="worker-cards" className="space-y-2">
+        <h2 className="text-sm font-semibold text-muted-foreground">
+          Worker cards in the coordinator chat
+        </h2>
+        {workerCards.map((card) => (
+          <div key={card.title} className="sws-thread-card" role="group">
+            <span className="sws-thread-card-head">
+              <span className="sws-dot" data-tone="working" aria-hidden />
+              <span className="sws-thread-card-title">{card.title}</span>
+              <span className="sws-thread-card-status">Working</span>
+              {card.plan ? <PlanProgressChip plan={card.plan} /> : null}
+            </span>
+            <ThreadCardPlanLine plan={card.plan} />
+          </div>
+        ))}
       </section>
       <section data-testid="rows" className="space-y-2">
         <h2 className="text-sm font-semibold text-muted-foreground">Thread list rows</h2>

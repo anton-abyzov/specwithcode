@@ -52,6 +52,13 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["move path workspace root"],
   },
   {
+    id: "project-use-worktrees",
+    title: "Use worktrees",
+    tab: "general",
+    anchors: ["Workspace"],
+    searchTerms: ["worktree isolated checkout branch new threads"],
+  },
+  {
     id: "project-goal",
     title: "Goal",
     tab: "general",

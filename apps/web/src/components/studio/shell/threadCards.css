@@ -62,6 +62,12 @@
   cursor: default;
   opacity: 0.6;
 }
+/* The progress chip sits above the card's stretched open button, so hovering
+   it shows where the plan stands and what comes next; a click still opens. */
+.sws-thread-card .sws-thread-plan {
+  position: relative;
+  z-index: 1;
+}
 /* A thread whose last turn finished: a ring in the done color, filled once resolved. */
 .sws-thread-card .sws-dot[data-tone="done"],
 .sws-thread-link .sws-dot[data-tone="done"] {
@@ -127,8 +133,8 @@
   color: var(--shell-waiting);
 }
 
-/* Where the thread's plan stands, under its title: the step it runs now and
-   the one after, from its SpecWeave increment or its own todo list. */
+/* The task the thread is on, under its title, from its SpecWeave increment or
+   its own todo list. One line; the next task is in the chip's tooltip. */
 .sws-thread-card-plan {
   flex: 1 0 100%;
   overflow: hidden;
@@ -138,10 +144,6 @@
   color: var(--muted-foreground);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sws-thread-card-plan-label {
-  color: var(--foreground);
-  opacity: 0.7;
 }
 
 /* A thread waiting for the person to allow access: a quiet card with a hand,

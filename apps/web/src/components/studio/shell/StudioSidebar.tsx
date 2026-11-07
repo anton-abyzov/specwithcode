@@ -12,7 +12,12 @@ import {
  * there; a chat row opens that session. Chats group by date unless the filter
  * menu says otherwise, and the menu's choices are remembered per browser.
  */
-import { isExtraAssistant, threadsVisibleWithAide } from "../../../studio/personalAssistant";
+import {
+  isExtraAssistant,
+  machineNeedsAssistantSetup,
+  PERSONAL_ASSISTANT_PER_MACHINE_LINE,
+  threadsVisibleWithAide,
+} from "../../../studio/personalAssistant";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/models";
 import {
@@ -906,7 +911,16 @@ export default function StudioSidebar() {
     }
     saveProjectOrder(next);
   };
-  const hasAssistant = projectGroups.some(isPersonalGroup);
+  // Another machine's assistant never stands in for this machine's own.
+  const offerOwnAssistant =
+    aideEnabled &&
+    machineNeedsAssistantSetup({
+      assistants: projectGroups
+        .filter(isPersonalGroup)
+        .flatMap((group) => group.memberProjects)
+        .filter((member) => member.workspaceSettings?.kind === "personal"),
+      ownEnvironmentId: primaryEnvironmentId,
+    });
   const automatedWaiting = automatedProjects.reduce(
     (sum, group) =>
       projectShowsWaitingCount(notificationsFor(group))
@@ -950,6 +964,27 @@ export default function StudioSidebar() {
               <LayoutGridIcon aria-hidden />
               <span className="sws-side-row-label">{tx("Overview")}</span>
             </Link>
+            {offerOwnAssistant ? (
+              <Tip
+                side="right"
+                label={`${tx(PERSONAL_ASSISTANT_DESCRIPTION)} ${tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE)}`}
+              >
+                <button
+                  type="button"
+                  className="sws-side-row sws-side-row-quiet"
+                  onClick={() => {
+                    closeMobile();
+                    openCommandPalette({ open: "new-assistant" });
+                  }}
+                >
+                  <ConciergeBellIcon aria-hidden />
+                  <span className="sws-side-row-label">{tx(PERSONAL_ASSISTANT_LABEL)}</span>
+                  <span className="sws-side-row-hint">
+                    {environments.length > 1 ? tx("Set up here") : tx("Set up")}
+                  </span>
+                </button>
+              </Tip>
+            ) : null}
             {assistants.length > 0 ? (
               <ul className="sws-side-list" aria-label={tx(PERSONAL_ASSISTANT_LABEL)}>
                 {assistants.map((group) => (
@@ -972,22 +1007,7 @@ export default function StudioSidebar() {
                   />
                 ))}
               </ul>
-            ) : hasAssistant || !aideEnabled ? null : (
-              <Tip side="right" label={PERSONAL_ASSISTANT_DESCRIPTION}>
-                <button
-                  type="button"
-                  className="sws-side-row sws-side-row-quiet"
-                  onClick={() => {
-                    closeMobile();
-                    openCommandPalette({ open: "new-assistant" });
-                  }}
-                >
-                  <ConciergeBellIcon aria-hidden />
-                  <span className="sws-side-row-label">{tx(PERSONAL_ASSISTANT_LABEL)}</span>
-                  <span className="sws-side-row-hint">{tx("Set up")}</span>
-                </button>
-              </Tip>
-            )}
+            ) : null}
             <Link
               to="/design"
               className="sws-side-row"

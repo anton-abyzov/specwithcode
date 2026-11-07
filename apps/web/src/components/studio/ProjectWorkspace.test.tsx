@@ -317,6 +317,25 @@ describe("project coordinator surface", () => {
       Object.assign(state.project, { workspaceSettings: undefined });
     }
   });
+  it("says whose assistant this is on another machine, and points to this machine's own", async () => {
+    Object.assign(state.project, { workspaceSettings: { kind: "personal" } });
+    try {
+      await render();
+      const notice = container.querySelector("[data-other-machine-assistant]");
+      expect(notice?.textContent).toContain("Each machine has its own private assistant.");
+      const opened = vi.fn();
+      window.addEventListener("studio:open-command-palette", opened, { once: true });
+      notice?.querySelector("button")?.click();
+      expect(opened).toHaveBeenCalledOnce();
+      expect((opened.mock.calls[0]?.[0] as CustomEvent).detail).toEqual({ open: "new-assistant" });
+    } finally {
+      Object.assign(state.project, { workspaceSettings: undefined });
+    }
+  });
+  it("does not show the private-assistant notice on a code project", async () => {
+    await render();
+    expect(container.querySelector("[data-other-machine-assistant]")).toBeNull();
+  });
   it("shows the retained coordinator model when its override is cleared", async () => {
     state.coordinatorModel = null;
     await render();

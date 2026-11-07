@@ -275,7 +275,7 @@ describe("app-update.yml", () => {
   it("refuses the private repository, a nightly channel and a generic feed", () => {
     expect(
       appUpdateConfigProblems("owner: anton-abyzov\nrepo: specwithcode-dev\nprovider: github\n"),
-    ).toEqual(["feed is anton-abyzov/specwithcode, not anton-abyzov/specwithcode"]);
+    ).toEqual(["feed is anton-abyzov/specwithcode-dev, not anton-abyzov/specwithcode"]);
     expect(
       appUpdateConfigProblems(
         "owner: anton-abyzov\nrepo: specwithcode\nprovider: github\nchannel: nightly\nreleaseType: prerelease\n",
@@ -609,7 +609,7 @@ describe("release-state", () => {
     flags: { draft?: boolean; prerelease?: boolean } = {},
   ) => {
     const root = tempRoot("release-state fixture-");
-    const bin = stubGh(root, { "specwithcode-dev": files }, flags);
+    const bin = stubGh(root, { specwithcode: files }, flags);
     return NodeChildProcess.spawnSync(
       process.execPath,
       [SCRIPT, "release-state", "--version", VERSION, "--repo", "anton-abyzov/specwithcode"],
@@ -1121,7 +1121,7 @@ describe("release-windows-linux.yml", () => {
       private: ReadonlyMap<string, string> | null;
       public: ReadonlyMap<string, string> | null;
     },
-    repositories = "anton-abyzov/specwithcode anton-abyzov/specwithcode",
+    repositories = "anton-abyzov/specwithcode-dev anton-abyzov/specwithcode",
   ) => {
     const root = tempRoot("nightly fixture-");
     const bin = stubGh(root, {
@@ -1144,7 +1144,7 @@ describe("release-windows-linux.yml", () => {
           TOOL: SCRIPT,
           GITHUB_OUTPUT: output,
           GITHUB_STEP_SUMMARY: NodePath.join(root, "summary"),
-          GITHUB_REPOSITORY: "anton-abyzov/specwithcode",
+          GITHUB_REPOSITORY: "anton-abyzov/specwithcode-dev",
           FEED_REPOSITORY: "anton-abyzov/specwithcode",
           RELEASE_REPOSITORIES: repositories,
         },

@@ -3938,4 +3938,9 @@ export const zh: PhraseCatalog = {
   "Signed in": "已登录",
   "Not reported": "未报告",
   "None reported": "未报告任何内容",
+  "Set up here": "在此设置",
+  "Each machine has its own private assistant. Nothing transfers between them.":
+    "每台机器都有自己的私人助手。它们之间不会传输任何内容。",
+  "This assistant lives on {name}.": "此助手位于 {name}。",
+  "Open this machine's assistant": "打开本机的助手",
 };

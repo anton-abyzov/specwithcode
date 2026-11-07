@@ -5,6 +5,7 @@ import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 import {
   findMachineAssistant,
   machineOffersAssistant,
+  PERSONAL_ASSISTANT_PER_MACHINE_LINE,
   personalAssistantDisabledMessage,
   personalAssistantSetupStep,
   threadsVisibleWithAide,
@@ -259,9 +260,9 @@ import {
   PROJECT_SETTINGS_TABS,
   searchProjectSettings,
 } from "./studio/projectSettingsSearch.logic";
-import { requestProjectSettings } from "../studio/projectSettingsRequests";
-import { useSettingsProjectGroups } from "./settings/useSettingsProjectGroups";
-import { findLogicalProjectKey } from "./chat/TimelineDetailMenu";
+import { openProjectSettings } from "../studio/projectSettingsRequests";
+import { ProjectSettingsShortcut } from "./ProjectSettingsShortcut";
+import { InPlaceProjectSettingsHost } from "./studio/InPlaceProjectSettings";
 import { useProjectFolderCheckCommand } from "../studio/useProjectFolderHealth";
 import { announceWorkspaceGuidance } from "../studio/workspaceGuidanceToast";
 import {
@@ -738,6 +739,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         />
       </CommandDialog>
       <ProjectSettingsShortcut />
+      <InPlaceProjectSettingsHost />
       <FolderLinkSuggestion
         request={folderSuggestion}
         onClose={() => setFolderSuggestion(null)}
@@ -755,50 +757,6 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       )}
     </ComposerHandleContext>
   );
-}
-
-/**
- * Opens Project settings for the project in view: the project page's, else the
- * active thread or draft's. Without one the shortcut does nothing.
- */
-function ProjectSettingsShortcut() {
-  const navigate = useNavigate();
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const routeProjectKey = useParams({
-    strict: false,
-    select: (params) => params.projectKey ?? null,
-  });
-  const { activeDraftThread, activeThread } = useHandleNewThread();
-  const projectGroups = useSettingsProjectGroups();
-  const threadProject = activeThread ?? activeDraftThread;
-  const projectKey =
-    routeProjectKey ??
-    (threadProject
-      ? findLogicalProjectKey(projectGroups, {
-          environmentId: threadProject.environmentId,
-          projectId: threadProject.projectId,
-        })
-      : null);
-
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: { terminalFocus: isTerminalFocused(), previewFocus: isPreviewFocused() },
-      });
-      if (command !== "projectSettings.open" || projectKey === null) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.repeat) return;
-      void navigate({ to: "/projects/$projectKey", params: { projectKey } }).then(() =>
-        requestProjectSettings(projectKey, Date.now(), { tab: "general" }),
-      );
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, navigate, projectKey]);
-
-  return null;
 }
 
 function CommandPaletteDialog(props: {
@@ -2111,12 +2069,13 @@ function OpenCommandPaletteDialog(props: {
   const openNewProjectFlow = (kind: NewProjectKind = "code") => {
     if (kind === "personal" && !aideEnabled) return;
     if (kind === "personal") {
-      // Each machine has its own private assistant: open or make the one on
-      // the machine in context, never another machine's.
+      // Each machine has its own private assistant: open or make this machine's,
+      // even from another machine's project, and only then the one in context.
       const connected = addProjectEnvironmentOptions.filter((option) => option.isConnected);
       const step = personalAssistantSetupStep({
         projects,
         connectedEnvironmentIds: connected.map((option) => option.environmentId),
+        ownEnvironmentId: primaryEnvironmentId,
         preferredEnvironmentId: currentExecutionEnvironmentId,
       });
       if (step.kind === "open") {
@@ -2500,8 +2459,18 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:new-personal-assistant",
-      searchTerms: ["personal assistant", "my assistant", "agent", "personal project", "routines"],
+      searchTerms: [
+        "personal assistant",
+        "my assistant",
+        "agent",
+        "personal project",
+        "routines",
+        "transfer",
+        "move",
+        "another machine",
+      ],
       title: PERSONAL_ASSISTANT_LABEL,
+      description: tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE),
       icon: <ConciergeBellIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
@@ -2837,11 +2806,7 @@ function OpenCommandPaletteDialog(props: {
       icon: <FolderIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "projectSettings.open",
       run: async () => {
-        await navigate({
-          to: "/projects/$projectKey",
-          params: { projectKey: contextualProjectGroup.projectKey },
-        });
-        requestProjectSettings(contextualProjectGroup.projectKey, Date.now(), { tab: "general" });
+        openProjectSettings(routeProjectKey, contextualProjectGroup.projectKey, { tab: "general" });
       },
     });
     // Only desktop builds with project windows offer this.
@@ -2913,8 +2878,7 @@ function OpenCommandPaletteDialog(props: {
   const settingsProject =
     routeProjectKey !== null || contextualProjectRef ? contextualProjectGroup : null;
   const openProjectSettingsAt = async (projectKey: string, tab: string, row?: string) => {
-    await navigate({ to: "/projects/$projectKey", params: { projectKey } });
-    requestProjectSettings(projectKey, Date.now(), row ? { tab, row } : { tab });
+    openProjectSettings(routeProjectKey, projectKey, row ? { tab, row } : { tab });
   };
   if (settingsProject) {
     for (const result of searchProjectSettings(deferredQuery, PROJECT_SETTINGS_TABS)) {

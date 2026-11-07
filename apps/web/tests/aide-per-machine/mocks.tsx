@@ -6,6 +6,7 @@
  * The scenario comes from the query string:
  *   machines=1|2  connected machines (default 2: Studio Mac and Anna's MacBook)
  *   duplicate=1   Studio Mac also keeps a pre-rule personal project, created later
+ *   own=missing   this machine has no assistant yet; only Anna's does
  */
 import type { PropsWithChildren } from "react";
 import { createContext, useSyncExternalStore } from "react";
@@ -13,6 +14,7 @@ import { createContext, useSyncExternalStore } from "react";
 const params = new URLSearchParams(location.search);
 const machineCount = params.get("machines") === "1" ? 1 : 2;
 const withDuplicate = params.get("duplicate") === "1";
+const ownMissing = params.get("own") === "missing";
 
 type Listener = () => void;
 const listeners = new Set<Listener>();
@@ -47,6 +49,7 @@ const nameSources = {
 };
 
 const personal = { kind: "personal" };
+const person = { origin: "user" };
 const project = (
   id: string,
   environmentId: string,
@@ -65,7 +68,7 @@ const project = (
   deletedAt: null,
   workspaceSettings,
   repositoryIdentity:
-    workspaceSettings === null
+    workspaceSettings !== personal
       ? {
           canonicalKey: `example.com/fixtures/${workspaceRoot.split("/").pop()}`,
           rootPath: workspaceRoot,
@@ -83,14 +86,18 @@ const allProjects = [
     "2026-08-20T09:00:00.000Z",
     personal,
   ),
-  project(
-    "aide-m4",
-    "m4",
-    "Aide",
-    "/fixtures/assistants/studio-mac",
-    "2026-09-01T09:00:00.000Z",
-    personal,
-  ),
+  ...(ownMissing
+    ? []
+    : [
+        project(
+          "aide-m4",
+          "m4",
+          "Aide",
+          "/fixtures/assistants/studio-mac",
+          "2026-09-01T09:00:00.000Z",
+          personal,
+        ),
+      ]),
   ...(withDuplicate
     ? [
         // Made before the one-per-machine rule, after m4's own: it keeps its history.
@@ -110,7 +117,7 @@ const allProjects = [
     "Example Household",
     "/fixtures/example-household",
     "2026-07-01T09:00:00.000Z",
-    null,
+    person,
   ),
   project(
     "recipes-anna",
@@ -118,7 +125,7 @@ const allProjects = [
     "Recipe Notes",
     "/fixtures/recipe-notes",
     "2026-07-02T09:00:00.000Z",
-    null,
+    person,
   ),
 ];
 export const projects = allProjects.filter((p) =>
@@ -207,6 +214,7 @@ export const useClientSettings = <T,>(select: (s: typeof settings) => T) => sele
 export const usePrimarySettingsAvailable = () => false;
 export const useUpdatePrimarySettings = () => () => {};
 export const useLegacySidebarEnabled = () => true;
+export const useAideEnabled = () => true;
 export const selectProjectGroupingSettings = () => ({});
 export const deriveLogicalProjectKeyFromSettings = (p: { workspaceRoot: string }) =>
   p.workspaceRoot;
@@ -259,3 +267,15 @@ const NO_ENTRIES = new Map();
 export const useProviderEntriesByEnvironment = () => NO_ENTRIES;
 export const SidebarChromeHeader = () => null;
 export const SidebarChromeFooter = () => null;
+
+// Imported by modules the sidebar pulls in; the fixture never reaches them.
+export const useAllEnvironmentProjectSnapshotsReady = () => true;
+export const waitForThreadMoveOutcome = async () => null;
+export const environmentSession = () => null;
+export const readPreparedConnection = () => null;
+
+// studio/useProjectAttention
+const NO_MEMBERS: never[] = [];
+export const useAttentionMembers = () => NO_MEMBERS;
+export const expandAttentionProjects = (members: readonly unknown[]) => members;
+export const projectAttentionRoots = () => NO_MEMBERS;

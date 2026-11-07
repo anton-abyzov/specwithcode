@@ -140,6 +140,30 @@ describe("compactThreadPlan", () => {
     );
   });
 
+  it("never names a template placeholder as the current or next task", () => {
+    const template = increment({
+      boundTaskId: null,
+      tasks: [
+        { id: "T-01", title: "[First task]", status: "planned", criteria: [], note: null },
+        { id: "T-02", title: "[Second task]", status: "planned", criteria: [], note: null },
+      ],
+    });
+    const compact = compactThreadPlan(template, null)!;
+    expect(compact).toMatchObject({ completed: 0, total: 2, current: null, next: null });
+    expect(describeThreadPlan(compact)).toBe("Increment 0930-studio-plan-card: 0 of 2 tasks done.");
+    const held = increment({
+      boundTaskId: "T-01",
+      tasks: [
+        { id: "T-01", title: "T-01 [First task]", status: "claimed", criteria: [], note: null },
+        { id: "T-02", title: "Write the reader", status: "planned", criteria: [], note: null },
+      ],
+    });
+    expect(compactThreadPlan(held, null)).toMatchObject({
+      current: null,
+      next: "Write the reader",
+    });
+  });
+
   it("uses the shell's todo summary without an increment", () => {
     const shell = summarizeTodoPlanPayload({
       kind: "todo_list",

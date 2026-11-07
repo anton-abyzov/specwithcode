@@ -433,9 +433,7 @@ it.effect("discovers the repository from cwd remotes when the repository is omit
     assert.deepStrictEqual(listRemotes.mock.calls, [["/repo"]]);
     assert.isTrue(
       execute.mock.calls.every(([request]) =>
-        request.url.startsWith(
-          "https://api.test.local/2.0/repositories/anton-abyzov/specwithcode",
-        ),
+        request.url.startsWith("https://api.test.local/2.0/repositories/anton-abyzov/specwithcode"),
       ),
     );
   }).pipe(Effect.provide(layer));
@@ -589,7 +587,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
       description: "PR body",
       source: {
         branch: { name: "feature/provider" },
-        repository: { full_name: "owner/specwithcode-dev" },
+        repository: { full_name: "owner/specwithcode" },
       },
       destination: {
         branch: { name: "main" },

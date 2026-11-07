@@ -179,6 +179,9 @@ vi.mock("../settings/ProjectOverrides", () => ({
     </div>
   ),
 }));
+vi.mock("../settings/ProjectDefaultsSettings", () => ({
+  UseWorktreesSetting: () => <p data-use-worktrees="">Use worktrees</p>,
+}));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
 vi.mock("./ProjectFolderChange", () => ({
   ProjectFolderChange: ({
@@ -421,10 +424,21 @@ describe("project folder placement", () => {
     expect(at("Project folder")).toBeLessThan(at("Goal"));
     expect(at("Project folder")).toBeLessThan(at("Machines for workers"));
   });
+  it("shows the project's Use worktrees switch under Project folder, scoped to this project", async () => {
+    await render("general", true, { kind: "code" });
+    const text = container.textContent ?? "";
+    const row = container.querySelector("[data-use-worktrees]");
+    expect(row?.closest("[data-settings-project]")?.getAttribute("data-settings-project")).toBe(
+      "atlas",
+    );
+    expect(text.indexOf("Project folder")).toBeLessThan(text.indexOf("Use worktrees"));
+    expect(text.indexOf("Use worktrees")).toBeLessThan(text.indexOf("Goal"));
+  });
   it("has no Project folder for a personal project", async () => {
     await render("general", true, { kind: "personal" });
     expect(container.textContent).toContain("Name and icon");
     expect(container.textContent).not.toContain("Project folder");
+    expect(container.querySelector("[data-use-worktrees]")).toBeNull();
   });
   it("lists the General search rows in the order the tab renders them", async () => {
     state.fleet = twoMachineFleet();
