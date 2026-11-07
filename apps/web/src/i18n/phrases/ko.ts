@@ -4048,4 +4048,9 @@ export const ko: PhraseCatalog = {
   "Signed in": "로그인됨",
   "Not reported": "보고되지 않음",
   "None reported": "보고된 항목 없음",
+  "Set up here": "여기에서 설정",
+  "Each machine has its own private assistant. Nothing transfers between them.":
+    "각 컴퓨터에는 고유한 개인 어시스턴트가 있습니다. 서로 간에 아무것도 전송되지 않습니다.",
+  "This assistant lives on {name}.": "이 어시스턴트는 {name}에 있습니다.",
+  "Open this machine's assistant": "이 컴퓨터의 어시스턴트 열기",
 };

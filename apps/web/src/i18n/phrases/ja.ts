@@ -4090,4 +4090,9 @@ export const ja: PhraseCatalog = {
   "Signed in": "サインイン済み",
   "Not reported": "報告なし",
   "None reported": "報告されていません",
+  "Set up here": "ここで設定",
+  "Each machine has its own private assistant. Nothing transfers between them.":
+    "各マシンには専用のプライベートアシスタントがあります。マシン間で何も転送されません。",
+  "This assistant lives on {name}.": "このアシスタントは{name}にあります。",
+  "Open this machine's assistant": "このマシンのアシスタントを開く",
 };

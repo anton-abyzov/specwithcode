@@ -155,6 +155,52 @@ try {
       await page.close();
     }
 
+    // 3b. This machine has none, another machine's is listed: Set up here leads, the other stays named.
+    {
+      const { page, errors } = await open(width, height, "view=sidebar&own=missing");
+      await page.locator(".sws-side-actions .sws-project-row").first().waitFor();
+      const setup = page.locator(".sws-side-actions button.sws-side-row-quiet");
+      assert.equal(await setup.locator(".sws-side-row-hint").textContent(), "Set up here");
+      const rows = await assistantRows(page);
+      assert.deepEqual(rows, [
+        { key: "anna:/fixtures/assistants/annas-macbook", label: "Aide", hint: "Anna's MacBook" },
+      ]);
+      const setupLeads = await setup.evaluate((button, row) => {
+        const other = document.querySelector(row);
+        return Boolean(button.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING);
+      }, ".sws-side-actions .sws-project-row");
+      assert.equal(setupLeads, true, "this machine's Set up comes before another machine's row");
+      const opened = await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            window.addEventListener(
+              "studio:open-command-palette",
+              (event) => resolve(event.detail),
+              { once: true },
+            );
+            document.querySelector(".sws-side-actions button.sws-side-row-quiet").click();
+          }),
+      );
+      assert.deepEqual(opened, { open: "new-assistant" });
+      const path = await shot(page, `${size}-sidebar-own-missing`);
+      record("sidebar-own-missing", size, { assistantRows: rows, setupLeads }, errors, path);
+      await page.close();
+    }
+
+    // 3c. On another machine's assistant: whose it is and why it does not transfer.
+    {
+      const { page, errors } = await open(width, height, "view=notice");
+      const notice = page.locator("[data-other-machine-assistant]");
+      await notice.waitFor();
+      const text = await notice.textContent();
+      assert.match(text, /lives on Anna's MacBook/);
+      assert.match(text, /Each machine has its own private assistant/);
+      await notice.getByRole("button", { name: "Open this machine's assistant" }).waitFor();
+      const path = await shot(page, `${size}-other-machine-notice`);
+      record("other-machine-notice", size, { text }, errors, path);
+      await page.close();
+    }
+
     // 4. Run on for the assistant: only its own machine, nothing to add it to.
     {
       const { page, errors } = await open(width, height, "view=menu&project=personal");
@@ -163,10 +209,13 @@ try {
       await menu.getByText("Machines with Aide").waitFor();
       const machines = await menuMachines(menu);
       assert.deepEqual(machines, ["Studio Mac"]);
-      const addItems = await menu.getByRole("menuitem", { name: "Add to another machine" }).count();
+      const addItems = await menu
+        .getByRole("menuitem", { name: "Prepare project on machine…" })
+        .count();
       assert.equal(addItems, 0);
       const annaMentions = await menu.getByText("Anna's MacBook").count();
       assert.equal(annaMentions, 0);
+      await menu.getByText("Each machine has its own private assistant.").waitFor();
       const path = await shot(page, `${size}-run-on-assistant`);
       record(
         "run-on-assistant",
@@ -187,7 +236,7 @@ try {
       const machines = await menuMachines(menu);
       assert.deepEqual(machines, ["Studio Mac"]);
       const menuPath = await shot(page, `${size}-run-on-code-project`);
-      await menu.getByRole("menuitem", { name: "Add to another machine" }).click();
+      await menu.getByRole("menuitem", { name: "Prepare project on machine…" }).click();
       await menu.getByText("Add Example Household to").waitFor();
       const addable = await menuMachines(menu);
       assert.deepEqual(addable, ["Anna's MacBook"]);

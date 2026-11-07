@@ -25,6 +25,7 @@ import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { FolderCopyBanner } from "./FolderCopyBanner";
+import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
 import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -1664,6 +1665,11 @@ export function ProjectWorkspaceSurface({
             {machinePrivate ? null : (
               <FolderCopyBanner environmentId={project.environmentId} projectId={project.id} />
             )}
+            {machinePrivate &&
+            primaryEnvironmentId !== null &&
+            project.environmentId !== primaryEnvironmentId ? (
+              <OtherMachineAssistantNotice machineName={machineName} />
+            ) : null}
             {coordinatorDetailsOpen && coordinatorId ? (
               <ProjectCoordinatorDetails
                 environmentId={project.environmentId}

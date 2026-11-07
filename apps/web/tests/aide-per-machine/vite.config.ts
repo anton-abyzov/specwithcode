@@ -8,7 +8,7 @@ const { fileURLToPath } = NodeURL;
 // The real StudioSidebar, Run on menu, assistant rules and machine names; only
 // data, routing, settings and RPC hooks are simulated.
 const SIDEBAR_MOCKED =
-  /\/(state\/(entities|environments|projects|server|session|threads|use-atom-command|use-orchestration-command)|hooks\/(useSettings|useScratchProject|useThreadActions)|lib\/chatThreadActions|threadRoutes|settings\/useSettingsProjectGroups|sidebar\/(SidebarPlanProgress|SidebarChrome)|ProjectFavicon|shell\/ModelBadge)$/;
+  /\/(state\/(entities|environments|projects|server|session|threads|use-atom-command|use-orchestration-command)|hooks\/(useSettings|useScratchProject|useThreadActions)|lib\/chatThreadActions|threadRoutes|studio\/useProjectAttention|settings\/useSettingsProjectGroups|sidebar\/(SidebarPlanProgress|SidebarChrome)|ProjectFavicon|shell\/ModelBadge)$/;
 const PICKER_OWNERS = /(DraftMachinePicker|RenameMachineDialog)\.tsx$/;
 const PICKER_MOCKED =
   /(\/hooks\/useProjectCoordinatorHandoff|\/studio\/useRenameMachine|\/AddToMachineDialog|\/studio\/ProjectLinkDialog|\/connection\/catalog|\/connection\/desktopLocal|\/state\/use-atom-command|\/state\/environments|\/state\/entities|\/state\/session|\/hooks\/useSettings|\/logicalProject|\/hooks\/useScratchProject|\/lib\/machineLastSeen)$/;
