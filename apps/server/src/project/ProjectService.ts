@@ -305,6 +305,13 @@ export function projectMutationErrorMessage(cause: unknown): string {
     : "Failed to mutate project.";
 }
 
+/** The folder or repository entry a rejected save names, so Settings can show the error beside it. */
+export function projectMutationErrorEntry(cause: unknown) {
+  return Schema.is(ProjectEnvironmentError)(cause) && cause.entry !== undefined
+    ? { entry: cause.entry }
+    : {};
+}
+
 export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
   {

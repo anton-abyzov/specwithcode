@@ -4,6 +4,7 @@ import {
   ProjectEnvironmentSettings,
   type ProjectId,
   type ProjectRepository,
+  projectRepositoryIdentity,
 } from "@specweave-studio/contracts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOs from "node:os";
@@ -223,6 +224,9 @@ const shown = (path: string) =>
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 
+/** POSIX, drive-letter and UNC roots; the message is for people, so either platform's form counts. */
+const isAbsolutePath = (value: string) => /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(value);
+
 /** One sentence naming the entry and what to do about it. */
 export const describeProjectEnvironmentProblem = (input: ProjectEnvironmentProblem): string => {
   const problem = {
@@ -242,6 +246,11 @@ export const describeProjectEnvironmentProblem = (input: ProjectEnvironmentProbl
     case "duplicate":
       return `${what} ${problem.path} is the same folder as another entry. ${fix}`;
     case "outside":
+      // A URL typed where a folder belongs: say so instead of calling it a checkout.
+      if (problem.kind === "repository" && projectRepositoryIdentity(input.path) !== null)
+        return `The checkout path ${problem.path} is a repository URL, not a folder. Enter the folder that holds the checkout, or leave it empty for a managed checkout.`;
+      if (!isAbsolutePath(input.path))
+        return `${what} ${problem.path} is not an absolute folder path. ${fix}`;
       return `${what} ${problem.path} is outside the project folder and its approved folders. ${fix}`;
   }
 };
@@ -376,6 +385,11 @@ const requireEveryEntry = Effect.fn("requireEveryEntry")(function* (
       projectId,
       code: "path_not_approved",
       detail: describeProjectEnvironmentProblem(problem),
+      entry: {
+        kind: problem.kind,
+        path: problem.path,
+        ...(problem.repositoryId === undefined ? {} : { repositoryId: problem.repositoryId }),
+      },
     });
   return {
     workspaceRoot: inspected.workspaceRoot,
