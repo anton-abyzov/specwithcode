@@ -13,6 +13,7 @@
  */
 import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import {
   CommandId,
   type OrchestrationV2DomainEvent,
@@ -22,6 +23,7 @@ import {
   type PullRequestSummary,
   type ThreadFinishAction,
   type ThreadId,
+  type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@specweave-studio/contracts";
 import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
@@ -125,6 +127,42 @@ export function branchReadyForPullRequest(
   return status.pr?.state === "open" || (status.aheadOfDefaultCount ?? 1) > 0;
 }
 
+/**
+ * Whether the thread's own links say `branch` already landed: a merged or
+ * closed pull request for it, in any repository (a moved repository keeps its
+ * old links), and none still open. Links the user removed do not count.
+ */
+export function branchLanded(links: ReadonlyArray<ThreadPullRequestLink>, branch: string): boolean {
+  const onBranch = visibleThreadPullRequests(links).filter(
+    (link) => link.snapshot === null || link.snapshot.headBranch === branch,
+  );
+  return (
+    onBranch.length > 0 &&
+    onBranch.every((link) => link.snapshot !== null && link.snapshot.state !== "open")
+  );
+}
+
+/** A failure with an unchanged checkout is retried this often, for host outages and expired sign-ins. */
+export const FAILURE_RETRY_AFTER_MS = 60 * 60 * 1000;
+
+/**
+ * The checkout state a finish step saw. A failure is not retried after every
+ * turn: only once it changes (another branch, a push, a new commit) or after
+ * FAILURE_RETRY_AFTER_MS, and the same failure is reported once.
+ */
+export function checkoutSignature(
+  cwd: string,
+  status: Pick<VcsStatusResult, "refName" | "hasUpstream" | "aheadCount" | "aheadOfDefaultCount">,
+): string {
+  return [
+    cwd,
+    status.refName ?? "",
+    String(status.hasUpstream),
+    String(status.aheadCount),
+    String(status.aheadOfDefaultCount ?? ""),
+  ].join("\0");
+}
+
 export type MergeStep =
   | { readonly type: "done"; readonly notice: FinishNoticeKind; readonly message: string }
   | { readonly type: "merge" }
@@ -163,13 +201,24 @@ export function mergeStep(
     : { type: "auto-merge" };
 }
 
+const UNRELATED_HISTORY = /^Branch (\S+) shares no commits with (\S+?),/;
+
+/** The error's own words: a Git manager error without its `failed in <operation>` prefix. */
+function errorText(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+  const fields = error as { _tag?: unknown; detail?: unknown; message?: unknown };
+  if (fields._tag === "GitManagerError" && typeof fields.detail === "string") {
+    const unrelated = UNRELATED_HISTORY.exec(fields.detail);
+    return unrelated
+      ? `${unrelated[1]} has no history in common with ${unrelated[2]}. Rebase it onto ${unrelated[2]}, or link this thread's pull request.`
+      : fields.detail;
+  }
+  return "message" in fields ? String(fields.message) : String(error);
+}
+
 function errorDetail(error: unknown): string {
   // Redact complete credential shapes before truncation can remove their delimiters.
-  const message = scrubLogSecrets(
-    typeof error === "object" && error !== null && "message" in error
-      ? String((error as { message: unknown }).message)
-      : String(error),
-  );
+  const message = scrubLogSecrets(errorText(error));
   const line = message.split("\n").find((part) => part.trim() !== "") ?? message;
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
@@ -240,6 +289,11 @@ export const make = Effect.gen(function* () {
 
   // Merges handed to the host, retried until they land or are refused.
   const pending = new Map<ThreadId, PendingMerge>();
+  // The last failure reported per thread, with the checkout state it saw.
+  const reported = new Map<
+    ThreadId,
+    { readonly checkout: string; readonly detail: string; readonly at: number }
+  >();
 
   const projectAction = (projectId: Parameters<typeof resolveProjectSettings>[1]) =>
     settingsService.getSettings.pipe(
@@ -541,13 +595,23 @@ export const make = Effect.gen(function* () {
     }
     yield* git.invalidateStatus(cwd);
     const status = yield* git.status({ cwd });
-    if (!branchReadyForPullRequest(status, thread.branch)) return;
+    const branch = thread.branch;
+    // A binding left on a branch whose pull request already landed, here or before a repository move.
+    if (branchLanded(thread.pullRequests ?? [], branch)) return;
+    if (!branchReadyForPullRequest(status, branch)) return;
+    const checkout = checkoutSignature(cwd, status);
+    const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
+    const previous = reported.get(threadId);
+    if (
+      previous !== undefined &&
+      previous.checkout === checkout &&
+      startedAt - previous.at < FAILURE_RETRY_AFTER_MS
+    )
+      return;
     const project = Option.getOrUndefined(yield* projectStore.getShell(thread.projectId));
     const runId = latestStartedRun(runs)?.id ?? null;
     const createEffect: HandoffMode.SideEffectInput | null =
-      runId === null
-        ? null
-        : { threadId, runId, kind: "pr-create", target: `branch:${thread.branch}` };
+      runId === null ? null : { threadId, runId, kind: "pr-create", target: `branch:${branch}` };
     if (createEffect !== null) {
       const verdict = yield* sideEffect(createEffect);
       if (verdict.kind === "refuse") {
@@ -566,16 +630,20 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.result);
     if (result._tag === "Failure") {
+      const detail = errorDetail(result.failure);
+      reported.set(threadId, { checkout, detail, at: startedAt });
+      if (previous?.checkout === checkout && previous.detail === detail) return;
       yield* notice(
         threadId,
         "blocked",
         failureNotice("Could not open a pull request", result.failure, {
-          branch: thread.branch,
+          branch,
           worktree: cwd,
         }),
       );
       return;
     }
+    reported.delete(threadId);
     const key = createdPullRequestKey(result.success, project);
     if (key === null) return;
     if (createEffect !== null)
