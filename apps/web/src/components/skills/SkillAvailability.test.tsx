@@ -4,7 +4,9 @@ import type { ProjectSkillsSnapshot } from "@specweave-studio/contracts";
 vi.mock("../../state/environments", () => ({ useEnvironment: vi.fn() }));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: vi.fn() }));
 vi.mock("../../studio/fleet", () => ({ useStudioFleet: vi.fn() }));
-vi.mock("../../studio/projectWorkspace", () => ({ projectWorkspace: {} }));
+vi.mock("../../studio/projectWorkspace", () => ({
+  projectWorkspace: { skills: vi.fn(() => ({})) },
+}));
 vi.mock("../settings/ProjectSkillControls", () => ({ useSkillControls: vi.fn() }));
 import { skillAvailabilityState } from "./SkillAvailability";
 const snapshot = { rows: [], providers: [{ state: "ok" }] } as unknown as ProjectSkillsSnapshot;
@@ -38,7 +40,7 @@ describe("skill availability evidence", () => {
       skillAvailabilityState({ ...input, snapshot: { ...snapshot, providers: [] } }).state,
     ).toBe("unknown");
   });
-  it("matches registry identity instead of a colliding name", () => {
+  it("keeps same-name presence explicit without claiming registry identity", () => {
     const data = {
       ...snapshot,
       rows: [
@@ -50,8 +52,12 @@ describe("skill availability evidence", () => {
       ],
     } as unknown as ProjectSkillsSnapshot;
     expect(skillAvailabilityState({ ...input, skillId: "requested", snapshot: data }).state).toBe(
-      "missing",
+      "unknown",
     );
+    const unlocked = { ...data, rows: data.rows.map((row) => ({ ...row, lock: null })) };
+    expect(
+      skillAvailabilityState({ ...input, skillId: "requested", snapshot: unlocked }).text,
+    ).toBe("Present · registry identity unverified");
     expect(skillAvailabilityState({ ...input, snapshot: data }).text).toBe("v1.0.0");
   });
 });
@@ -139,6 +145,8 @@ describe("fleet installation confirmation", () => {
       }),
     );
     vi.mocked(useAtomCommand).mockReturnValue(run as never);
+    const refreshEvent = vi.fn();
+    window.addEventListener("skill-availability-refresh", refreshEvent);
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -175,10 +183,66 @@ describe("fleet installation confirmation", () => {
       expect(run.mock.calls[2]?.[0].input.targets.map((target) => target.machineId)).toEqual([
         "west",
       ]);
-      expect(host.textContent).toContain("installed 1.2.3");
+      expect(host.textContent).toContain("Installed 1.2.3 · next session");
+      expect(refreshEvent).toHaveBeenCalledTimes(1);
+      run.mockRejectedValueOnce(new Error("Connection lost after confirm"));
+      await click("Confirm installation");
+      expect(host.textContent).toContain("West: Outcome unknown");
+      expect(host.textContent).toContain("East: Installed 1.2.3 · next session");
+      expect(refreshEvent).toHaveBeenCalledTimes(2);
+      await click("Check Available on");
+      expect(refreshEvent).toHaveBeenCalledTimes(3);
+      await click("Preview unconfirmed targets");
+      expect(run.mock.calls.at(-1)?.[0].input.targets.map((target) => target.machineId)).toEqual([
+        "west",
+      ]);
+      window.removeEventListener("skill-availability-refresh", refreshEvent);
     } finally {
       await act(async () => root.unmount());
       host.remove();
     }
   });
+});
+
+import { SkillAvailability, refreshSkillAvailability } from "./SkillAvailability";
+import { useEnvironment } from "../../state/environments";
+import { useEnvironmentQuery } from "../../state/query";
+it("refreshes scoped availability observations after installation receipts", async () => {
+  const refresh = vi.fn();
+  vi.mocked(useEnvironment).mockReturnValue({
+    label: "Local",
+    connection: { phase: "connected" },
+  } as never);
+  vi.mocked(useEnvironmentQuery).mockReturnValue({
+    data: null,
+    error: null,
+    isSuccess: false,
+    isPending: false,
+    refresh,
+  } as never);
+  vi.mocked(useStudioFleet).mockReturnValue({
+    snapshot: { machines: [] },
+    loading: false,
+    failed: false,
+  } as never);
+  vi.mocked(useSkillControls).mockReturnValue({
+    environmentId: "local",
+    projectId: "project",
+    row: { name: "example", lock: { skillId: "example", version: "1.2.3" } },
+    canPush: true,
+    memberProjects: [],
+  } as never);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<SkillAvailability />));
+    await act(async () => refreshSkillAvailability("another-machine", "example"));
+    expect(refresh).not.toHaveBeenCalled();
+    await act(async () => refreshSkillAvailability("local", "example"));
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
 });

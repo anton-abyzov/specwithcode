@@ -69,7 +69,7 @@ export function skillAuthoringSeedFromMarkdown(
       instructions,
       version,
       prompt: "",
-      ...(match ? { sourceFrontmatter: match[1] } : {}),
+      sourceFrontmatter: match?.[1] ?? "",
     },
   };
 }

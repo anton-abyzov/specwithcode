@@ -337,3 +337,24 @@ describe("custom frontmatter resume", () => {
     expect(skillMarkdown(request.mock.calls[1]![0].draft!)).toContain("owner: example");
   });
 });
+
+describe("plain paste replaces custom metadata", () => {
+  it("explicitly clears the saved header before replacing and saving instructions", async () => {
+    const sourceFrontmatter =
+      "name: review-code\ndescription: Review changes\nallowed-tools: Bash\nmetadata:\n  version: 1.0.0\n  custom: old";
+    const request = vi.fn(async (input: AuthoringRequest) => ({
+      draft: { ...fixtureDraft, sourceFrontmatter, ...input.draft },
+    }));
+    await mount(request);
+    await click("1. Describe");
+    await click("Paste SKILL.md");
+    await fill("Paste a skill", "# A new skill\nRead documents.");
+    await click("Review pasted skill");
+    expect(host.textContent).not.toContain("allowed-tools");
+    await click("Close");
+    expect(request.mock.calls.at(-1)?.[0].draft).toMatchObject({
+      sourceFrontmatter: "",
+      instructions: "# A new skill\nRead documents.",
+    });
+  });
+});

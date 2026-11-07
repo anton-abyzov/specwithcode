@@ -5,7 +5,7 @@ import type {
   ProjectSkillsSnapshot,
 } from "@specweave-studio/contracts";
 import { RefreshCwIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useStudioFleet } from "../../studio/fleet";
@@ -31,7 +31,9 @@ export function skillAvailabilityState(input: {
   const row =
     input.snapshot?.rows.find((candidate) =>
       input.skillId ? candidate.lock?.skillId === input.skillId : candidate.name === input.name,
-    ) ?? null;
+    ) ??
+    input.snapshot?.rows.find((candidate) => candidate.name === input.name) ??
+    null;
   if (!input.connected) return { state: "offline", text: "Offline · not checked", row: null };
   if (input.error)
     return {
@@ -47,6 +49,14 @@ export function skillAvailabilityState(input: {
     return { state: "unknown", text: "No supported agent scan", row };
   if (!row || row.providers.length === 0)
     return { state: "missing", text: "Not found in this scope", row };
+  if (input.skillId && row.lock?.skillId !== input.skillId)
+    return {
+      state: "unknown",
+      text: row.lock?.skillId
+        ? "Present · registry identity differs"
+        : "Present · registry identity unverified",
+      row,
+    };
   const versions = [
     ...new Set(row.providers.map((presence) => presence.fileVersion).filter(Boolean)),
   ];
@@ -56,6 +66,13 @@ export function skillAvailabilityState(input: {
     text: `${version ? `v${version}` : "Local copy"}${row.divergent ? " · copies differ" : ""}`,
     row,
   };
+}
+
+const AVAILABILITY_REFRESH = "skill-availability-refresh";
+export function refreshSkillAvailability(sourceEnvironmentId: string, skillId: string) {
+  window.dispatchEvent(
+    new CustomEvent(AVAILABILITY_REFRESH, { detail: { sourceEnvironmentId, skillId } }),
+  );
 }
 
 function AvailabilityMachine({
@@ -90,6 +107,21 @@ function AvailabilityMachine({
         })
       : null,
   );
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceEnvironmentId: string; skillId: string }>)
+        .detail;
+      if (
+        connected &&
+        projectId &&
+        detail?.sourceEnvironmentId === controls.environmentId &&
+        detail.skillId === controls.row.lock?.skillId
+      )
+        query.refresh();
+    };
+    window.addEventListener(AVAILABILITY_REFRESH, refresh);
+    return () => window.removeEventListener(AVAILABILITY_REFRESH, refresh);
+  }, [connected, projectId, controls.environmentId, controls.row.lock?.skillId, query.refresh]);
   const state = skillAvailabilityState({
     connected,
     error: query.error,

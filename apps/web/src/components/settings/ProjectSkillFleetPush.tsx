@@ -16,6 +16,7 @@ import { useMemo, useState } from "react";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useStudioFleet } from "../../studio/fleet";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { refreshSkillAvailability } from "../skills/SkillAvailability";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -99,6 +100,21 @@ export function FleetPushPanel() {
       ? (currentPreview?.targets ?? [])
       : remaining.map((target) => ({ ...target, agents: [...agents] }));
     if (!targets.length) return;
+    const recordUnknown = () => {
+      if (!confirm) return;
+      setResults((previous) => [
+        ...(previous ?? []).filter(
+          (entry) => !targets.some((target) => target.machineId === entry.machineId),
+        ),
+        ...targets.map((target) => ({
+          machineId: target.machineId,
+          ok: false,
+          reason: "outcome_unknown",
+          message: "Outcome unknown · check Available on before retrying.",
+        })),
+      ]);
+      refreshSkillAvailability(controls.environmentId, lock.skillId!);
+    };
     setBusy(true);
     setError(null);
 
@@ -137,7 +153,8 @@ export function FleetPushPanel() {
               result.value.results.find((entry) => entry.machineId === target.machineId) ?? {
                 machineId: target.machineId,
                 ok: false,
-                message: "No installation receipt. Preview again before retrying.",
+                reason: "outcome_unknown",
+                message: "Outcome unknown · check Available on before retrying.",
               },
           );
           setResults((previous) => [
@@ -146,13 +163,16 @@ export function FleetPushPanel() {
             ),
             ...receipts,
           ]);
+          refreshSkillAvailability(controls.environmentId, lock.skillId);
           setPreview(null);
         }
       } else {
+        recordUnknown();
         setError(skillActionErrorText(squashAtomCommandFailure(result)));
         setPreview(null);
       }
     } catch {
+      recordUnknown();
       setError("The machine did not confirm the request. Preview again before retrying.");
       setPreview(null);
     } finally {
@@ -297,7 +317,9 @@ export function FleetPushPanel() {
         <ul className="space-y-1" aria-label={tx("Results")} data-testid="skill-fleet-results">
           {results.map((result) => (
             <li key={result.machineId} className="flex items-start gap-1.5">
-              {result.ok ? (
+              {result.reason === "outcome_unknown" ? (
+                <span aria-label="Unknown outcome">?</span>
+              ) : result.ok ? (
                 <CheckIcon
                   aria-hidden
                   className="mt-px size-3.5 shrink-0 text-success-foreground"
@@ -312,7 +334,7 @@ export function FleetPushPanel() {
                 <span className="text-foreground">{result.label ?? labelOf(result.machineId)}</span>
                 {": "}
                 {result.ok
-                  ? `installed ${result.installedVersion ?? version}${result.pinnedVersion ? `, pinned` : ""}`
+                  ? `Installed ${result.installedVersion ?? version} · next session${result.pinnedVersion ? ` · pinned` : ""}`
                   : (result.message ?? result.reason ?? tx("failed"))}
               </span>
             </li>
@@ -321,6 +343,15 @@ export function FleetPushPanel() {
       ) : null}
       {!verifiedHash ? (
         <p>Verified publication content hash required. Refresh the skill or publish it first.</p>
+      ) : null}
+      {results?.some((result) => result.reason === "outcome_unknown") ? (
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => refreshSkillAvailability(controls.environmentId, lock.skillId!)}
+        >
+          Check Available on
+        </Button>
       ) : null}
       {error ? <p className="text-destructive-foreground">{error}</p> : null}
       <div className="flex items-center justify-end gap-2">
@@ -356,7 +387,11 @@ export function FleetPushPanel() {
             onClick={() => void send()}
           >
             {busy ? <Spinner className="size-3" /> : <SendIcon aria-hidden />}
-            {results?.length ? "Preview failed targets only" : "Preview installation"}
+            {results?.some((result) => result.reason === "outcome_unknown")
+              ? "Preview unconfirmed targets"
+              : results?.length
+                ? "Preview failed targets only"
+                : "Preview installation"}
           </Button>
         </SkillControlReason>
       </div>
