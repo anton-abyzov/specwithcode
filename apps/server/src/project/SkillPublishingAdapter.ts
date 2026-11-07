@@ -262,7 +262,14 @@ const make = Effect.gen(function* () {
           component = path.dirname(component);
         }
         let parent = path.dirname(target);
-        while (!(yield* fs.exists(parent))) parent = path.dirname(parent);
+        while (!(yield* fs.exists(parent))) {
+          const next = path.dirname(parent);
+          if (next === parent)
+            return yield* failure(
+              "The install filesystem root is unavailable. Nothing was installed.",
+            );
+          parent = next;
+        }
         const real = yield* fs
           .realPath(parent)
           .pipe(Effect.mapError(() => failure("Could not verify the install destination.")));

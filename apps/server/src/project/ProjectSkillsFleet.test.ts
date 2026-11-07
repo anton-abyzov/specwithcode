@@ -62,7 +62,7 @@ interface PushCall {
 const pushDeps = (options: {
   readonly machines?: ReadonlyArray<FleetTarget> | null;
   readonly registry?: ReadonlyArray<string> | undefined;
-  readonly locked?: ReadonlyArray<{ skillId: string; version: string }>;
+  readonly locked?: ReadonlyArray<{ skillId: string; version: string; contentHash?: string }>;
   readonly answer?: (target: FleetTarget, ask: FleetSkillAsk) => FleetSkillOutcome;
   readonly calls: Array<PushCall>;
 }): FleetPushDeps => ({
@@ -115,6 +115,55 @@ const inProject = (machineId: string, id: string) =>
   ({ machineId, scope: "project", projectId: id }) as never;
 
 describe("pushSkillToFleet", () => {
+  it.effect("keeps per-machine preview hashes and selected agents separate", () =>
+    Effect.gen(function* () {
+      const calls: Array<PushCall> = [];
+      const hash = "a".repeat(64);
+      const deps = pushDeps({
+        calls,
+        locked: [{ skillId, version: "1.2.0", contentHash: hash }],
+        answer: (target) => ({
+          machine: target.id,
+          result: "preview",
+          expectedHash: target.id + "-state",
+          installedVersion: null,
+        }),
+      });
+      const targets = ["m1", "m3"].map((machineId) => ({
+        machineId,
+        scope: "user" as const,
+        agents: ["codex" as const],
+        expectedHash: machineId + "-state",
+      }));
+      const result = yield* pushSkillToFleet(
+        deps,
+        push(targets, { preview: true, contentHash: hash }),
+      );
+      expect(calls).toHaveLength(2);
+      expect(calls.map((call) => call.ask.expectedHash)).toEqual(["m1-state", "m3-state"]);
+      expect(
+        calls.every((call) => call.ask.contentHash === hash && call.ask.agents?.[0] === "codex"),
+      ).toBe(true);
+      expect(result.results).toMatchObject([
+        { ok: true, preview: true, expectedHash: "m1-state" },
+        { ok: true, preview: true, expectedHash: "m3-state" },
+      ]);
+    }),
+  );
+  it.effect("refuses an unverified content hash before contacting machines", () =>
+    Effect.gen(function* () {
+      const calls: Array<PushCall> = [];
+      const result = yield* pushSkillToFleet(
+        pushDeps({ calls, registry: ["1.2.0"] }),
+        push([{ machineId: "m1", scope: "user", agents: ["codex"] }], {
+          preview: true,
+          contentHash: "a".repeat(64),
+        }),
+      ).pipe(Effect.flip);
+      expect(result.reason).toBe("version_not_found");
+      expect(calls).toHaveLength(0);
+    }),
+  );
   it.effect("asks once per scope, naming each project by its id, and answers in order", () =>
     Effect.gen(function* () {
       const calls: Array<PushCall> = [];
@@ -350,7 +399,7 @@ describe("Skill Studio link", () => {
   );
 
   it("derives Studio's port from the root the way vskill does", () => {
-    expect(vskillStudioPort("/Users/you/Projects/experiments/swc-demo-skills")).toBe(3086);
+    expect(vskillStudioPort("/Users/you/Projects/experiments/swc-demo-skills")).toBe(3077);
     expect(vskillStudioPort("/work/project-a")).toBeGreaterThanOrEqual(3077);
     expect(vskillStudioPort("/work/project-a")).toBeLessThanOrEqual(3177);
   });

@@ -730,6 +730,15 @@ export const StudioFleetSkillInput = Schema.Union([
     version: StudioFleetUpdateVersion,
     scope: Schema.Literal("user"),
     pin: Schema.Boolean,
+    agents: Schema.optionalKey(
+      Schema.Array(Schema.Literals(["codex", "claude-code", "cursor"])).check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(3),
+      ),
+    ),
+    preview: Schema.optionalKey(Schema.Boolean),
+    expectedHash: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
+    contentHash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
   }),
   exactStruct({
     coordinatorEnvironmentId: EnvironmentId,
@@ -738,6 +747,15 @@ export const StudioFleetSkillInput = Schema.Union([
     scope: Schema.Literal("project"),
     projectId: ProjectId.check(Schema.isMaxLength(128)),
     pin: Schema.Boolean,
+    agents: Schema.optionalKey(
+      Schema.Array(Schema.Literals(["codex", "claude-code", "cursor"])).check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(3),
+      ),
+    ),
+    preview: Schema.optionalKey(Schema.Boolean),
+    expectedHash: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
+    contentHash: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
   }),
 ]);
 export type StudioFleetSkillInput = typeof StudioFleetSkillInput.Type;
@@ -763,12 +781,16 @@ export const StudioFleetSkillRefusal = Schema.Literals([
   "vskill-missing",
   "invalid-skill",
   "unknown-project",
+  "stale",
   "install-failed",
   "busy",
 ]);
 export type StudioFleetSkillRefusal = typeof StudioFleetSkillRefusal.Type;
 
 export const StudioFleetSkillResult = Schema.Struct({
+  preview: Schema.optionalKey(Schema.Boolean),
+  expectedHash: Schema.optionalKey(Schema.String),
+  installedVersion: Schema.optionalKey(Schema.NullOr(Schema.String)),
   result: Schema.Literal("accepted"),
   /** Names this install in the status call, so the primary reads its own. */
   requestId: Schema.String,

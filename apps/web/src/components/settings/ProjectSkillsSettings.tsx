@@ -20,6 +20,12 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { SkillDetailPanel } from "../skills/SkillDetailPanel";
+import { groupSkillPresences } from "../skills/SkillDetail.logic";
+import {
+  skillAuthoringSeedFromMarkdown,
+  type SkillAuthoringSeed,
+} from "../skills/skillAuthoringSeed";
 import { SkillAuthoringSheet } from "../skills/SkillAuthoringSheet";
 import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -445,9 +451,17 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
   const tx = useTx();
   const problems = [...new Set([...row.issues, ...row.doctor])];
   return (
-    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6 text-sm">
+    <div className="space-y-5 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <StatusBadge row={row} />
+        <Badge variant="outline">
+          {row.status === "ok"
+            ? row.divergent
+              ? "Copies differ"
+              : "Discovered"
+            : row.status === "missing"
+              ? "Missing on disk"
+              : "Needs attention"}
+        </Badge>
         {row.lock?.tier ? <TierCell row={row} /> : null}
         {projectSkillLevels(row).map((level) => (
           <Badge key={level} size="sm" variant="outline">
@@ -462,6 +476,14 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
       ) : null}
       <ProjectSkillLinkButtons row={row} />
       <ProjectSkillVersionSection />
+      {!row.lock?.skillId ? (
+        <p className="text-xs text-muted-foreground">
+          File version:{" "}
+          {[...new Set(row.providers.map((p) => p.fileVersion).filter(Boolean))].join(" / ") ||
+            "Not declared"}
+          . Publish a version to enable registry updates and distribution.
+        </p>
+      ) : null}
       {problems.length > 0 ? (
         <section aria-label={tx("Problems")} className="space-y-1">
           <h3 className="font-medium text-foreground">{tx("Needs attention")}</h3>
@@ -478,41 +500,45 @@ function SkillDetails({ row, entries }: { row: ProjectSkillRow; entries: Provide
           <p className="text-muted-foreground">{tx("No agent loads this skill in this folder.")}</p>
         ) : (
           <ul className="space-y-2">
-            {row.providers.map((presence) => (
-              <li key={`${presence.instanceId}:${presence.path}`} className="space-y-0.5">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <SkillProviderMark presence={presence} entries={entries} />
-                  <span className="font-medium text-foreground">{presence.label}</span>
-                  <Badge size="sm" variant="outline">
-                    {projectSkillLevelLabel(projectSkillLevel(presence.scope, presence.path))}
-                  </Badge>
-                  {(presence.pluginVersion ?? presence.fileVersion) ? (
-                    <Badge size="sm" variant="outline">
-                      {presence.pluginVersion ? tx("plugin ") : ""}
-                      {presence.pluginVersion ?? presence.fileVersion}
-                    </Badge>
-                  ) : null}
-                  {presence.name ? (
-                    <span className="text-muted-foreground">
-                      {renderRich(tx("as {name}"), { name: presence.name })}
-                    </span>
-                  ) : null}
-                  {presence.enabled ? null : (
-                    <Badge size="sm" variant="secondary">
-                      {tx("off")}
-                    </Badge>
-                  )}
-                  {presence.userInvocable === false ? (
-                    <Badge size="sm" variant="secondary">
-                      {tx("agent only")}
-                    </Badge>
-                  ) : null}
-                  <ProjectSkillAgentToggle presence={presence} />
-                </div>
+            {groupSkillPresences(row.providers).map((group) => (
+              <li key={`${group.scope}:${group.path}`} className="space-y-2 rounded-md border p-3">
                 <div className="break-all font-mono text-xs text-muted-foreground">
-                  {presence.path}
+                  {group.path}
                 </div>
-                <ProjectSkillPluginToggle presence={presence} />
+                {group.presences.map((presence) => (
+                  <div key={presence.instanceId} className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <SkillProviderMark presence={presence} entries={entries} />
+                      <span className="font-medium text-foreground">{presence.label}</span>
+                      <Badge size="sm" variant="outline">
+                        {projectSkillLevelLabel(projectSkillLevel(presence.scope, presence.path))}
+                      </Badge>
+                      {(presence.pluginVersion ?? presence.fileVersion) ? (
+                        <Badge size="sm" variant="outline">
+                          {presence.pluginVersion ? tx("plugin ") : ""}
+                          {presence.pluginVersion ?? presence.fileVersion}
+                        </Badge>
+                      ) : null}
+                      {presence.name ? (
+                        <span className="text-muted-foreground">
+                          {renderRich(tx("as {name}"), { name: presence.name })}
+                        </span>
+                      ) : null}
+                      {presence.enabled ? null : (
+                        <Badge size="sm" variant="secondary">
+                          {tx("off")}
+                        </Badge>
+                      )}
+                      {presence.userInvocable === false ? (
+                        <Badge size="sm" variant="secondary">
+                          {tx("agent only")}
+                        </Badge>
+                      ) : null}
+                      <ProjectSkillAgentToggle presence={presence} />
+                    </div>
+                    <ProjectSkillPluginToggle presence={presence} />
+                  </div>
+                ))}
               </li>
             ))}
           </ul>
@@ -633,10 +659,23 @@ const NO_MEMBERS: ReadonlyArray<SkillMemberProject> = [];
 
 export function ProjectSkillsView(props: Parameters<typeof ScopedProjectSkillsView>[0]) {
   const linked = useSearch({ strict: false }) as {
+    skill?: string;
     skillContext?: string;
     skillCwd?: string;
     skillThread?: string;
   };
+  if (
+    linked.skill &&
+    linked.skillContext &&
+    (linked.skillContext !== `${props.environmentId}:${props.projectId}` || props.userLevel)
+  ) {
+    return (
+      <p role="alert" className="p-4 text-sm text-muted-foreground">
+        This skill’s original project or machine is unavailable. Return to the conversation,
+        reconnect that machine and open the skill again.
+      </p>
+    );
+  }
   const threadFolder =
     !props.userLevel && linked.skillContext === `${props.environmentId}:${props.projectId}`
       ? `${linked.skillCwd ?? ""}:${linked.skillThread ?? ""}`
@@ -667,6 +706,7 @@ function ScopedProjectSkillsView({
   const tx = useTx();
   const linked = useSearch({ strict: false }) as {
     readonly skill?: unknown;
+    readonly skillView?: string;
     readonly agent?: string;
     readonly skillCwd?: string;
     readonly skillThread?: string;
@@ -680,6 +720,8 @@ function ScopedProjectSkillsView({
       ? { cwd: linked.skillCwd, threadId: ThreadId.make(linked.skillThread) }
       : {};
   const [authoringOpen, setAuthoringOpen] = useState(false);
+  const [authoringSeed, setAuthoringSeed] = useState<SkillAuthoringSeed | undefined>();
+  const [editError, setEditError] = useState<string | null>(null);
   const [rescan, setRescan] = useState(false);
   const environment = useEnvironment(environmentId);
   const machineOffline =
@@ -722,17 +764,22 @@ function ScopedProjectSkillsView({
   const [linkedName, setLinkedName] = useState<string | null>(linkedSkill);
   useEffect(() => {
     if (linkedSkill === null) return;
+    setEditError(null);
     setOpenSkill(linkedSkill);
     setLinkedName(linkedSkill);
+    setSheetFocus(linked.skillView === "compare" ? "compare" : null);
     void navigate({
       to: ".",
-      search: ({ skill: _skill, ...rest }: Record<string, unknown>) => rest,
+      search: ({ skill: _skill, skillView: _view, ...rest }: Record<string, unknown>) => rest,
       replace: true,
     });
-  }, [linkedSkill, navigate]);
-  const [sheetFocus, setSheetFocus] = useState<SkillSheetFocus | null>(null);
+  }, [linkedSkill, linked.skillView, navigate]);
+  const [sheetFocus, setSheetFocus] = useState<SkillSheetFocus | "compare" | null>(
+    linked.skillView === "compare" ? "compare" : null,
+  );
   const [updates, setUpdates] = useState<Readonly<Record<string, string | null>>>({});
   const openWith = useCallback((name: string, focus?: SkillSheetFocus) => {
+    setEditError(null);
     setOpenSkill(name);
     setSheetFocus(focus ?? null);
   }, []);
@@ -795,9 +842,12 @@ function ScopedProjectSkillsView({
             size="xs"
             variant="outline"
             disabled={machineOffline}
-            onClick={() => setAuthoringOpen(true)}
+            onClick={() => {
+              setAuthoringSeed(undefined);
+              setAuthoringOpen(true);
+            }}
           >
-            Create skill
+            New skill
           </Button>
           <Button
             size="xs"
@@ -825,6 +875,7 @@ function ScopedProjectSkillsView({
         initialInstanceId={linked.agent}
         open={authoringOpen}
         onOpenChange={setAuthoringOpen}
+        seed={authoringSeed}
       />
       <div className="space-y-3 px-3 pt-3 sm:px-4">
         {userLevel ? (
@@ -1034,7 +1085,7 @@ function ScopedProjectSkillsView({
             }}
           >
             {/* The page also renders inside the Settings dialog; the sheet must cover it. */}
-            <SheetPopup className="max-w-lg" layer="dialog" data-testid="skill-details">
+            <SheetPopup className="max-w-2xl" layer="dialog" data-testid="skill-details">
               {detailRow ? (
                 <SkillControlsProvider
                   key={`${detailRow.name}:${threadFolder.cwd ?? ""}:${threadFolder.threadId ?? ""}`}
@@ -1050,11 +1101,32 @@ function ScopedProjectSkillsView({
                 >
                   <SheetHeader>
                     <SheetTitle className="me-8 break-all">{detailRow.name}</SheetTitle>
-                    {detailRow.description ? (
-                      <SheetDescription>{detailRow.description}</SheetDescription>
-                    ) : null}
+                    <SheetDescription>Read, compare and manage this skill.</SheetDescription>
                   </SheetHeader>
-                  <SkillDetails row={detailRow} entries={entries} />
+                  <SkillDetailPanel
+                    key={`${detailRow.name}:${sheetFocus ?? "overview"}`}
+                    row={detailRow}
+                    machineLabel={environment?.label ?? "This machine"}
+                    initialView={sheetFocus === "compare" ? "compare" : "overview"}
+                    editError={editError}
+                    onChanged={query.refresh}
+                    onEdit={(copy) => {
+                      const parsed = skillAuthoringSeedFromMarkdown(copy.content, detailRow.name);
+                      if ("error" in parsed) {
+                        setEditError(parsed.error);
+                        return;
+                      }
+                      setEditError(null);
+                      setAuthoringSeed({
+                        key: `${copy.id}:${copy.hash}`,
+                        label: detailRow.name,
+                        content: parsed.content,
+                      });
+                      setAuthoringOpen(true);
+                    }}
+                  >
+                    <SkillDetails row={detailRow} entries={entries} />
+                  </SkillDetailPanel>
                   <ProjectSkillSheetFooter />
                 </SkillControlsProvider>
               ) : null}

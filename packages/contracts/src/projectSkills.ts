@@ -225,6 +225,58 @@ const projectSkillTarget = {
 export const ProjectSkillsVersionsInput = Schema.Struct(projectSkillTarget);
 export type ProjectSkillsVersionsInput = typeof ProjectSkillsVersionsInput.Type;
 
+/** Inventory-selected copies; paths are output only, never accepted as read targets. */
+export const ProjectSkillCopy = Schema.Struct({
+  id: Schema.String,
+  path: Schema.String,
+  scope: Schema.NullOr(Schema.String),
+  agents: Schema.Array(
+    Schema.Struct({
+      instanceId: ProviderInstanceId,
+      label: Schema.String,
+      provider: ProviderDriverKind,
+    }),
+  ),
+  version: Schema.NullOr(Schema.String),
+  hash: Schema.String,
+  content: Schema.String,
+  writable: Schema.Boolean,
+  reason: Schema.optional(Schema.String),
+});
+export type ProjectSkillCopy = typeof ProjectSkillCopy.Type;
+export const ProjectSkillCopiesExpected = Schema.Struct({
+  sourceHash: Schema.String,
+  targets: Schema.Array(Schema.Struct({ id: Schema.String, hash: Schema.String })),
+});
+export const ProjectSkillCopiesInput = Schema.Struct({
+  ...projectSkillTarget,
+  operation: Schema.Literals(["read", "preview", "apply"]),
+  sourceId: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
+  targetIds: Schema.optional(
+    Schema.Array(Schema.String.check(Schema.isMaxLength(128))).check(Schema.isMaxLength(32)),
+  ),
+  expected: Schema.optional(ProjectSkillCopiesExpected),
+});
+export type ProjectSkillCopiesInput = typeof ProjectSkillCopiesInput.Type;
+export const ProjectSkillCopiesResult = Schema.Struct({
+  _tag: Schema.Literals(["read", "preview", "applied", "partial"]),
+  message: Schema.optional(Schema.String),
+  receipts: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        status: Schema.Literals(["applied", "failed", "not_applied"]),
+        message: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  copies: Schema.Array(ProjectSkillCopy),
+  sourceId: Schema.optional(Schema.String),
+  targetIds: Schema.optional(Schema.Array(Schema.String)),
+  expected: Schema.optional(ProjectSkillCopiesExpected),
+});
+export type ProjectSkillCopiesResult = typeof ProjectSkillCopiesResult.Type;
+
 export const ProjectSkillVersion = Schema.Struct({
   version: Schema.String,
   certTier: Schema.NullOr(Schema.String),
@@ -352,17 +404,36 @@ export const ProjectSkillsActionResult = Schema.Union([
 export type ProjectSkillsActionResult = typeof ProjectSkillsActionResult.Type;
 
 export const ProjectSkillsFleetTarget = Schema.Union([
-  Schema.Struct({ machineId: StudioFleetMachineId, scope: Schema.Literal("user") }),
+  Schema.Struct({
+    machineId: StudioFleetMachineId,
+    scope: Schema.Literal("user"),
+    agents: Schema.optional(
+      Schema.Array(Schema.Literals(["codex", "claude-code", "cursor"])).check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(3),
+      ),
+    ),
+    expectedHash: Schema.optional(Schema.String),
+  }),
   /** `projectId` is the project's id on the target machine. */
   Schema.Struct({
     machineId: StudioFleetMachineId,
     scope: Schema.Literal("project"),
     projectId: ProjectId.check(Schema.isMaxLength(128)),
+    agents: Schema.optional(
+      Schema.Array(Schema.Literals(["codex", "claude-code", "cursor"])).check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(3),
+      ),
+    ),
+    expectedHash: Schema.optional(Schema.String),
   }),
 ]);
 export type ProjectSkillsFleetTarget = typeof ProjectSkillsFleetTarget.Type;
 
 export const ProjectSkillsFleetPushInput = Schema.Struct({
+  contentHash: Schema.optional(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
+  preview: Schema.optional(Schema.Boolean),
   projectId: ProjectId,
   skillId: StudioFleetSkillName,
   version: StudioFleetUpdateVersion,
@@ -375,9 +446,13 @@ export const ProjectSkillsFleetPushInput = Schema.Struct({
 export type ProjectSkillsFleetPushInput = typeof ProjectSkillsFleetPushInput.Type;
 
 export const ProjectSkillsFleetPushResult = Schema.Struct({
+  contentHash: Schema.optional(Schema.String),
+  preview: Schema.optional(Schema.Boolean),
   results: Schema.Array(
     Schema.Struct({
       machineId: Schema.String,
+      expectedHash: Schema.optional(Schema.String),
+      preview: Schema.optional(Schema.Boolean),
       label: Schema.optional(Schema.String),
       ok: Schema.Boolean,
       reason: Schema.optional(Schema.String),

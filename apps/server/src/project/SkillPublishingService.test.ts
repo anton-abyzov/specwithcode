@@ -5,6 +5,8 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import type { SkillPublication } from "@specweave-studio/contracts";
 import {
+  parseSkillFrontmatter,
+  renderPublishedSkill,
   SkillPublishingAdapter,
   SkillPublishingError,
   SkillPublishingService,
@@ -180,5 +182,77 @@ describe("skill publication", () => {
     expect(recovered.state).toBe("blocked");
     expect(recovered.submissionId).toBeUndefined();
     expect(recovered.detail).toContain("Archive");
+  });
+});
+
+const importedHeader = `name: original
+allowed-tools: [Read, Bash]
+disable-model-invocation: true
+custom:
+  environments: [development, production]
+  limit: 3
+metadata:
+  version: 0.9.0
+  author: Example
+  nested: { enabled: true, tags: [one, two] }
+`;
+describe("preserved skill frontmatter", () => {
+  it("publishes edited core fields while preserving custom nested values", async () => {
+    let uploaded = "";
+    const f = fixture({
+      upload: (_publication, text) =>
+        Effect.sync(() => {
+          uploaded = text;
+        }),
+    });
+    await f.run((service) =>
+      service.publish({
+        draft: { ...draft, sourceFrontmatter: importedHeader },
+        destination,
+        persist: f.persist,
+      }),
+    );
+    const header = parseSkillFrontmatter(uploaded.split("---\n")[1]);
+    expect(header).toEqual({
+      name: draft.name,
+      description: draft.description,
+      "allowed-tools": ["Read", "Bash"],
+      "disable-model-invocation": true,
+      custom: { environments: ["development", "production"], limit: 3 },
+      metadata: {
+        version: draft.version,
+        author: "Example",
+        nested: { enabled: true, tags: ["one", "two"] },
+      },
+    });
+    expect(uploaded).toContain(draft.instructions);
+  });
+  it.each([
+    "name: a\nname: b",
+    "metadata: { version: 1, version: 2 }",
+    "metadata: []",
+    "custom: { __proto__: { polluted: true } }",
+    "x: &x { loop: *x }",
+    "x: .inf",
+    "? [a,b]\n: value",
+    "x: [",
+    "x: !unknown value",
+  ])("rejects unsafe YAML before external calls: %s", async (sourceFrontmatter) => {
+    const f = fixture();
+    await expect(
+      f.run((service) =>
+        service.publish({
+          draft: { ...draft, sourceFrontmatter },
+          destination,
+          persist: f.persist,
+        }),
+      ),
+    ).rejects.toThrow("frontmatter");
+    expect(f.events).toEqual([]);
+  });
+  it("changes publication bytes when only custom fields change", () => {
+    expect(renderPublishedSkill({ ...draft, sourceFrontmatter: "custom: first" })).not.toBe(
+      renderPublishedSkill({ ...draft, sourceFrontmatter: "custom: second" }),
+    );
   });
 });

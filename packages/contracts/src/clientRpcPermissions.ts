@@ -37,6 +37,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Skills control center. Writes widen per action kind in `projectSkillsActionScopes`.
   [WS_METHODS.projectsSkillsVersions]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsSkillsAction]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsSkillCopies]: AuthFilesystemReadScope,
   // Installs on other machines, like a fleet update.
   [WS_METHODS.projectsSkillsFleetPush]: AuthEnvironmentMaintainScope,
   [WS_METHODS.projectsSkillAuthoring]: AuthFilesystemWriteScope,
@@ -375,6 +376,12 @@ export function clientRpcRequiredScopes(
     if (operation === "apply" || operation === "status" || operation === "previewApply")
       return [AuthFilesystemWriteScope, AuthTerminalOperateScope];
     return [AuthFilesystemWriteScope];
+  }
+  if (method === WS_METHODS.projectsSkillCopies) {
+    const operation = (input as { operation?: unknown } | undefined)?.operation;
+    return operation === "read" || operation === "preview"
+      ? [AuthFilesystemReadScope]
+      : [AuthFilesystemReadScope, AuthFilesystemWriteScope];
   }
   if (method === WS_METHODS.projectsSkillsAction) return projectSkillsActionScopes(input);
   // Writes another tool's configuration, which that tool then runs as commands.

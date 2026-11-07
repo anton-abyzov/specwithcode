@@ -57,9 +57,13 @@ export interface FleetPushDeps {
   /** Versions the registry lists for the skill; undefined when they could not be read. */
   readonly registryVersions: (skillId: string) => Effect.Effect<ReadonlyArray<string> | undefined>;
   /** `owner/repo/name@version` pairs the project's locks here record. */
-  readonly lockedVersions: (
-    projectId: ProjectId,
-  ) => Effect.Effect<ReadonlyArray<{ readonly skillId: string; readonly version: string }>>;
+  readonly lockedVersions: (projectId: ProjectId) => Effect.Effect<
+    ReadonlyArray<{
+      readonly skillId: string;
+      readonly version: string;
+      readonly contentHash?: string | null;
+    }>
+  >;
 }
 
 const outcomeRecord = (value: unknown): value is Record<string, unknown> =>
@@ -73,6 +77,15 @@ export function fleetPushResultOf(machineId: string, outcome: FleetSkillOutcome 
   if (!outcomeRecord(outcome))
     return { machineId, ok: false, reason: "unreachable", message: "No answer from this machine." };
   const label = stringOr(outcome.label);
+  if (outcome.result === "preview" && typeof outcome.expectedHash === "string")
+    return {
+      machineId,
+      ...(label ? { label } : {}),
+      ok: true,
+      preview: true,
+      expectedHash: outcome.expectedHash,
+      installedVersion: versionOr(outcome.installedVersion) ?? null,
+    };
   if (outcome.result === "installed")
     return {
       machineId,
@@ -120,6 +133,21 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
     chosen.push({ target, machine });
   }
   const locked = yield* deps.lockedVersions(input.projectId);
+  if (
+    input.targets.some((target) => target.agents) &&
+    (!input.contentHash ||
+      !locked.some(
+        (entry) =>
+          entry.skillId === input.skillId &&
+          entry.version === input.version &&
+          entry.contentHash === input.contentHash,
+      ))
+  )
+    return yield* actionError(
+      input.projectId,
+      "version_not_found",
+      "Install and verify this exact registry version locally before distributing it. Its content hash must match the local registry lock.",
+    );
   const known =
     locked.some((entry) => entry.skillId === input.skillId && entry.version === input.version) ||
     ((yield* deps.registryVersions(input.skillId)) ?? []).includes(input.version);
@@ -133,16 +161,36 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
   // One ask per scope: the user lock, or one project (named by its id on that machine).
   const groups = new Map<string, { ask: FleetSkillAsk; entries: typeof chosen }>();
   for (const entry of chosen) {
-    const key = entry.target.scope === "user" ? "user" : `project:${entry.target.projectId}`;
+    const key = [
+      entry.target.scope,
+      entry.target.scope === "project" ? entry.target.projectId : "",
+      (entry.target.agents ?? []).join(","),
+      entry.target.expectedHash ?? "",
+    ]
+      .map((part) => `${part.length}:${part}`)
+      .join("|");
+    const reviewed = {
+      ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+      ...(entry.target.agents ? { agents: entry.target.agents } : {}),
+      ...(input.preview !== undefined ? { preview: input.preview } : {}),
+      ...(entry.target.expectedHash ? { expectedHash: entry.target.expectedHash } : {}),
+    };
     const ask: FleetSkillAsk =
       entry.target.scope === "user"
-        ? { skill: input.skillId, version: input.version, pin: input.pin, scope: "user" }
+        ? {
+            skill: input.skillId,
+            version: input.version,
+            pin: input.pin,
+            scope: "user",
+            ...reviewed,
+          }
         : {
             skill: input.skillId,
             version: input.version,
             pin: input.pin,
             scope: "project",
             projectId: entry.target.projectId,
+            ...reviewed,
           };
     const group = groups.get(key) ?? { ask, entries: [] };
     group.entries.push(entry);
@@ -172,6 +220,8 @@ export const pushSkillToFleet = Effect.fn("projectSkills.pushSkillToFleet")(func
     { concurrency: 4, discard: true },
   );
   return {
+    ...(input.preview !== undefined ? { preview: input.preview } : {}),
+    ...(input.contentHash ? { contentHash: input.contentHash } : {}),
     results: input.targets.map((target) =>
       fleetPushResultOf(target.machineId, answered.get(target.machineId)),
     ),

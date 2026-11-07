@@ -15,6 +15,8 @@ export const SkillAuthoringContent = Schema.Struct({
   instructions: boundedText(100_000),
   version: boundedText(100),
   prompt: boundedText(20_000),
+  /** Original YAML mapping, retained while the editable core fields change. */
+  sourceFrontmatter: Schema.optional(boundedText(20_000)),
   modelSelection: Schema.optional(ModelSelection),
 });
 export type SkillAuthoringContent = typeof SkillAuthoringContent.Type;

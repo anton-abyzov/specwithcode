@@ -29,6 +29,7 @@ import { writeFakeCli } from "../testUtils/fakeCli.ts";
 
 import { fleetSkillAskOfFlags, fleetSkillTargetsOf } from "../cli/fleet.ts";
 import { dirname, join } from "../nodePath.ts";
+import { sha256 } from "../nodeCrypto.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -46,6 +47,7 @@ import {
   lockEntryOf,
   lockWithoutPin,
   makeFleetSkillWorker,
+  matchesFleetSkillContent,
   runFleetSkillInstall,
   runFleetSkillInstalls,
   vskillSearchDirs,
@@ -354,6 +356,8 @@ function worker(
     readonly lockAfterUnpin?: FleetSkillLockEntry | null;
     readonly installDelayMs?: number;
     readonly prepareDelayMs?: number;
+    readonly fingerprint?: () => string;
+    readonly verifyFiles?: boolean;
   } = {},
 ) {
   const calls: RunCall[] = [];
@@ -361,6 +365,10 @@ function worker(
   const pinDrops: Array<{ readonly dir: string; readonly name: string }> = [];
   let unpinned = false;
   const deps: FleetSkillWorkerDeps = {
+    ...(options.fingerprint ? { fingerprint: () => Effect.sync(options.fingerprint!) } : {}),
+    ...(options.verifyFiles !== undefined
+      ? { verifyFiles: () => Effect.succeed(options.verifyFiles!) }
+      : {}),
     resolveVskill: Effect.succeed(
       options.vskill === undefined ? "/opt/homebrew/bin/vskill" : options.vskill,
     ),
@@ -429,6 +437,63 @@ const settled = (service: FleetSkillWorker["Service"]) =>
   });
 
 describe("a fleet machine taking its primary's skill install", () => {
+  it.live("previews selected agents without writes and rejects a changed destination", () =>
+    Effect.gen(function* () {
+      let fingerprint = "before";
+      const { service, calls } = yield* worker({
+        fingerprint: () => fingerprint,
+        verifyFiles: true,
+      });
+      const ask = { ...userAsk, agents: ["codex"] as const, contentHash: "a".repeat(64) };
+      const preview = yield* service.request({ ...ask, preview: true });
+      expect(preview).toMatchObject({ preview: true, expectedHash: "before", phase: "idle" });
+      expect(calls).toHaveLength(0);
+      fingerprint = "after";
+      const refusal = yield* service.request({ ...ask, expectedHash: "before" }).pipe(Effect.flip);
+      expect(refusal.reason).toBe("stale");
+      expect(calls).toHaveLength(0);
+    }),
+  );
+  it.live("verifies selected agent files and reuses a completed retry receipt", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* worker({ fingerprint: () => "same", verifyFiles: true });
+      const ask = {
+        ...userAsk,
+        agents: ["codex", "claude-code"] as const,
+        contentHash: "a".repeat(64),
+        expectedHash: "same",
+      };
+      const first = yield* service.request(ask);
+      expect((yield* settled(service)).phase).toBe("installed");
+      const retry = yield* service.request(ask);
+      expect(retry).toMatchObject({ requestId: first.requestId, phase: "installed" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args).toEqual([
+        "install",
+        userAsk.skill + "@1.2.3",
+        "-y",
+        "--global",
+        "--copy",
+        "--agent",
+        "codex",
+        "--agent",
+        "claude-code",
+      ]);
+    }),
+  );
+  it.live("does not report installed when selected agent file readback fails", () =>
+    Effect.gen(function* () {
+      const { service } = yield* worker({ fingerprint: () => "same", verifyFiles: false });
+      yield* service.request({
+        ...userAsk,
+        agents: ["codex"],
+        contentHash: "a".repeat(64),
+        expectedHash: "same",
+      });
+      expect((yield* settled(service)).phase).toBe("failed");
+    }),
+  );
+
   it.live(
     "answers first, installs for the user with --global and reads the pinned version back",
     () =>
@@ -731,6 +796,89 @@ describe("the live fleet skill worker", () => {
       });
       expect(calls.at(-1)?.env?.PATH?.split(";")[0]).toBe(fallback ? prefix : bin);
     }),
+  );
+
+  it.live(
+    "verifies a Claude-only install from actual destination files without a shared copy",
+    () =>
+      Effect.gen(function* () {
+        const bin = yield* Effect.promise(() => tempDir("fleet-claude-bin-"));
+        const project = yield* Effect.promise(() => tempDir("fleet-claude-project-"));
+        const content =
+          "---\nname: sw-do\ndescription: Fixture\nallowed-tools: Read\n---\nFixture body\n";
+        const contentHash = sha256([content], "hex");
+        yield* Effect.sync(() =>
+          writeFakeCli({
+            directory: bin,
+            name: "vskill",
+            source: [
+              'import { mkdirSync, writeFileSync } from "node:fs";',
+              'mkdirSync(".claude/skills/sw-do", {recursive:true});',
+              `writeFileSync(".claude/skills/sw-do/SKILL.md", ${JSON.stringify(content)});`,
+              `writeFileSync("vskill.lock", JSON.stringify({skills:{"sw-do":{version:"1.2.3",pinnedVersion:"1.2.3",sha:${JSON.stringify(contentHash)}}}}));`,
+            ].join("\n"),
+          }),
+        );
+        const projects = Layer.mock(ProjectStore.ProjectStoreV2)({
+          get: () => Effect.succeed(Option.some({ workspaceRoot: project } as never)),
+        });
+        const live = fleetSkillsLayer.pipe(
+          Layer.provide(ProcessRunner.layer),
+          Layer.provide(projects),
+          Layer.provide(NodeServices.layer),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: {
+                  PATH: [
+                    bin,
+                    dirname(process.execPath),
+                    ...(process.platform === "win32" ? [] : ["/usr/bin", "/bin"]),
+                  ].join(process.platform === "win32" ? ";" : ":"),
+                },
+              }),
+            ),
+          ),
+        );
+        const service = yield* Effect.provide(FleetSkillWorker, live);
+        const ask = {
+          ...userAsk,
+          scope: "project" as const,
+          projectId: "fixture",
+          agents: ["claude-code"] as const,
+          contentHash,
+        };
+        const preview = yield* service.request({ ...ask, preview: true });
+        expect(yield* Effect.promise(() => NodeFSP.readdir(project))).toEqual([]);
+        if (process.platform !== "win32") {
+          const outside = yield* Effect.promise(() => tempDir("fleet-claude-outside-"));
+          yield* Effect.promise(() => NodeFSP.symlink(outside, join(project, ".claude"), "dir"));
+          expect(yield* service.request({ ...ask, preview: true }).pipe(Effect.flip)).toMatchObject(
+            { reason: "unsupported" },
+          );
+          expect(yield* Effect.promise(() => NodeFSP.readdir(outside))).toEqual([]);
+          yield* Effect.promise(() => NodeFSP.unlink(join(project, ".claude")));
+        }
+        yield* service.request({ ...ask, expectedHash: preview.expectedHash! });
+        const status = yield* settled(service);
+        expect(status, status.lastError).toMatchObject({
+          phase: "installed",
+          installedVersion: "1.2.3",
+        });
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.readFile(join(project, ".claude/skills/sw-do/SKILL.md"), "utf8"),
+          ),
+        ).toBe(content);
+        expect(
+          yield* Effect.promise(() =>
+            NodeFSP.access(join(project, ".agents/skills/sw-do/SKILL.md")).then(
+              () => true,
+              () => false,
+            ),
+          ),
+        ).toBe(false);
+      }),
   );
 
   it.live(
@@ -1138,7 +1286,20 @@ describe("the primary asking fleet machines to install a skill", () => {
     for (const outcome of outcomes) expect(JSON.parse(JSON.stringify(outcome))).toEqual(outcome);
   });
 
-  it("stops waiting with busy when the install outlives the wait", async () => {
+  it("reports unknown when status transport fails after acceptance", async () => {
+    const { link, targets } = await primary([{
+      id: "m1", up: [CONNECT], capabilities: { fleetSkillUpdate: true },
+      answer: ({ method }) => {
+        if (method === "POST") return installing({ phase: "installing" })({ method, path: "", body: undefined });
+        throw new TypeError("connection lost");
+      },
+    }]);
+    await expect(runFleetSkillInstall({
+      link, target: targets[0]!, coordinatorEnvironmentId: PRIMARY, ask: userAsk, ...fast,
+    })).rejects.toMatchObject({ reason: "outcome_unknown" });
+  });
+
+  it("reports unknown when the accepted install outlives the wait", async () => {
     let clock = 0;
     const { link, targets } = await primary([
       {
@@ -1161,6 +1322,21 @@ describe("the primary asking fleet machines to install a skill", () => {
         },
         now: () => clock,
       }),
-    ).rejects.toMatchObject({ reason: "busy" });
+    ).rejects.toMatchObject({ reason: "outcome_unknown" });
+  });
+});
+
+describe("transformed agent content proof", () => {
+  it("accepts only exact supported stripping backed by a hash-verified full copy", () => {
+    const full =
+      "---\nname: notes\ndescription: Notes\nallowed-tools: Read\nmodel: chosen\n---\nSame body\n";
+    const stripped = "---\nname: notes\ndescription: Notes\n---\nSame body\n";
+    const hash = sha256([full], "hex");
+    expect(matchesFleetSkillContent(stripped, hash, full)).toBe(true);
+    expect(matchesFleetSkillContent(stripped, hash)).toBe(false);
+    expect(
+      matchesFleetSkillContent(stripped.replace("Same body", "Different body"), hash, full),
+    ).toBe(false);
+    expect(matchesFleetSkillContent(stripped, hash, full + "changed")).toBe(false);
   });
 });

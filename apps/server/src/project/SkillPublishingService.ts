@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { parseDocument, isScalar, visit, stringify } from "yaml";
 
 export class SkillPublishingError extends Schema.TaggedError<SkillPublishingError>()(
   "SkillPublishingError",
@@ -27,10 +28,87 @@ export interface PublishingDraft {
   readonly instructions: string;
   readonly version: string;
   readonly publication?: SkillPublication | undefined;
+  readonly sourceFrontmatter?: string | undefined;
 }
 export const skillContentHash = (text: string) => createHash("sha256").update(text).digest("hex");
-export const renderPublishedSkill = (draft: PublishingDraft) =>
-  `---\nname: ${JSON.stringify(draft.name)}\ndescription: ${JSON.stringify(draft.description)}\nmetadata:\n  version: ${JSON.stringify(draft.version)}\n---\n\n${draft.instructions.trim()}\n`;
+/** Accept a plain, bounded YAML mapping. Reject structures that cannot round-trip safely. */
+export function parseSkillFrontmatter(source: string | undefined): Record<string, unknown> {
+  if (!source?.trim()) return {};
+  const invalid = () =>
+    new SkillPublishingError({
+      detail:
+        "Skill frontmatter must be valid, unique-key YAML with plain field values and mapping metadata.",
+    });
+  if (source.length > 20_000) throw invalid();
+  const document = parseDocument(source, {
+    uniqueKeys: true,
+    strict: true,
+    schema: "core",
+    version: "1.2",
+  });
+  if (document.errors.length || document.warnings.length) throw invalid();
+  visit(document, {
+    Alias() {
+      throw invalid();
+    },
+    Pair(_key, pair) {
+      if (!isScalar(pair.key) || typeof pair.key.value !== "string") throw invalid();
+    },
+  });
+  const value: unknown = document.toJS({ maxAliasCount: 0 });
+  const plain = (item: unknown): item is Record<string, unknown> =>
+    typeof item === "object" &&
+    item !== null &&
+    !Array.isArray(item) &&
+    [Object.prototype, null].includes(Object.getPrototypeOf(item));
+  if (!plain(value) || (value.metadata !== undefined && !plain(value.metadata))) throw invalid();
+  const seen = new WeakSet<object>();
+  let count = 0;
+  const check = (item: unknown, depth: number): void => {
+    if (++count > 5000 || depth > 20) throw invalid();
+    if (
+      item === null ||
+      typeof item === "string" ||
+      typeof item === "boolean" ||
+      (typeof item === "number" && Number.isFinite(item))
+    )
+      return;
+    if (typeof item !== "object" || (!Array.isArray(item) && !plain(item)) || seen.has(item))
+      throw invalid();
+    seen.add(item);
+    for (const [key, child] of Object.entries(item)) {
+      if (["__proto__", "prototype", "constructor"].includes(key)) throw invalid();
+      check(child, depth + 1);
+    }
+  };
+  check(value, 0);
+  return value;
+}
+export const renderPublishedSkill = (draft: PublishingDraft) => {
+  // Keep existing publication hashes stable for drafts made before import support.
+  if (draft.sourceFrontmatter === undefined)
+    return `---\nname: ${JSON.stringify(draft.name)}\ndescription: ${JSON.stringify(draft.description)}\nmetadata:\n  version: ${JSON.stringify(draft.version)}\n---\n\n${draft.instructions.trim()}\n`;
+  const header = parseSkillFrontmatter(draft.sourceFrontmatter);
+  const metadata = (header.metadata ?? {}) as Record<string, unknown>;
+  const yaml = stringify(
+    {
+      ...header,
+      name: draft.name,
+      description: draft.description,
+      metadata: { ...metadata, version: draft.version },
+    },
+    { aliasDuplicateObjects: false },
+  );
+  return `---\n${yaml}---\n\n${draft.instructions.trim()}\n`;
+};
+const renderChecked = (draft: PublishingDraft) =>
+  Effect.try({
+    try: () => renderPublishedSkill(draft),
+    catch: () =>
+      new SkillPublishingError({
+        detail: "The skill frontmatter is invalid. Correct it before publishing.",
+      }),
+  });
 
 /** External boundaries only. Tests replace this service, never publication logic. */
 export class SkillPublishingAdapter extends Context.Service<
@@ -98,9 +176,10 @@ const make = Effect.gen(function* () {
   const checked = (draft: PublishingDraft) =>
     Effect.gen(function* () {
       const publication = draft.publication;
+      const content = yield* renderChecked(draft);
       if (
         !publication ||
-        publication.contentHash !== skillContentHash(renderPublishedSkill(draft)) ||
+        publication.contentHash !== skillContentHash(content) ||
         publication.version !== draft.version
       )
         return yield* Effect.fail(
@@ -154,8 +233,8 @@ const make = Effect.gen(function* () {
           // A response lost after submit must never turn into an automatic second POST.
           return yield* reconcile(input, previous);
         }
+        const content = yield* renderChecked(draft);
         const account = yield* adapter.prepare(destination);
-        const content = renderPublishedSkill(draft);
         const publication: SkillPublication = {
           ...destination,
           ...account,

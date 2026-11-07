@@ -114,6 +114,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsSkillsAction]: "projects",
   [WS_METHODS.projectsSkillsFleetPush]: "projects",
   [WS_METHODS.projectsSkillAuthoring]: "projects",
+  [WS_METHODS.projectsSkillCopies]: "projects",
   [WS_METHODS.projectsSkillsStudioLink]: "projects",
   [WS_METHODS.projectsPlanRead]: "projects",
   [WS_METHODS.projectsPlanAuthorityRead]: "projects",

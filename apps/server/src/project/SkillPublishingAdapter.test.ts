@@ -28,6 +28,7 @@ function harness(
   existingDirectory = false,
   files: Record<string, string> = {},
   linkPath?: string,
+  rootExists = true,
 ) {
   const requests: string[] = [];
   const commands: string[] = [];
@@ -48,7 +49,7 @@ function harness(
     exists: (file) =>
       Effect.succeed(
         file in files ||
-          file === "/scratch" ||
+          (rootExists && file === "/scratch") ||
           (existingDirectory && file.endsWith("weekly-notes")),
       ),
     realPath: (file) => Effect.succeed(file),
@@ -146,6 +147,20 @@ describe("publishing external boundaries", () => {
     await expect(
       f.run((a) => a.apply(publication, "/scratch", { ...request, expectedHash: "stale" }, false)),
     ).rejects.toThrow("stale");
+    expect(f.commands).toEqual([]);
+  });
+  it("refuses an unavailable filesystem root without looping or running an installer", async () => {
+    const f = harness(() => Response.json({}), false, {}, undefined, false);
+    await expect(
+      f.run((a) =>
+        a.apply(
+          publication,
+          "/scratch",
+          { scope: "project", agents: ["codex"], instanceIds: [] },
+          true,
+        ),
+      ),
+    ).rejects.toThrow("filesystem root is unavailable");
     expect(f.commands).toEqual([]);
   });
   it("refuses same-name directories before an install can overwrite files", async () => {

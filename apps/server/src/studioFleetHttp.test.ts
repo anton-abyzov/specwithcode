@@ -1400,6 +1400,46 @@ describe("a fleet primary asking this machine to install a skill", () => {
     }
   });
 
+  it("preserves preview hashes and agents and rejects an ungranted preview", async () => {
+    const granted = await api(
+      [AuthFleetSkillsScope],
+      false,
+      undefined,
+      PRIMARY,
+      undefined,
+      fakeWorker,
+    );
+    const denied = await api(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      PRIMARY,
+      undefined,
+      fakeWorker,
+    );
+    const preview = {
+      ...install,
+      preview: true,
+      agents: ["codex"],
+      contentHash: "a".repeat(64),
+      expectedHash: "reviewed",
+    };
+    try {
+      expect((await denied.skills(preview)).status).toBe(403);
+      expect(asked).toHaveLength(0);
+      expect((await granted.skills(preview)).status).toBe(200);
+      expect(asked[0]).toMatchObject({
+        preview: true,
+        agents: ["codex"],
+        contentHash: "a".repeat(64),
+        expectedHash: "reviewed",
+      });
+    } finally {
+      await granted.dispose();
+      await denied.dispose();
+    }
+  });
+
   it("accepts a token issued before fleet:skills through environment:maintain", async () => {
     const service = await api(
       [...AuthStandardClientScopes, AuthAccessWriteScope, AuthFleetUpdateScope],

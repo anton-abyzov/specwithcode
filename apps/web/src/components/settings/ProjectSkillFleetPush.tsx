@@ -5,7 +5,10 @@ import { useTx } from "../../i18n";
  * (install this version on other fleet machines over Connect) and the
  * hand-off to Skill Studio for releasing a new version.
  */
-import type { ProjectSkillsFleetPushResult } from "@specweave-studio/contracts";
+import type {
+  ProjectSkillsFleetPushResult,
+  ProjectSkillsFleetTarget,
+} from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { CheckIcon, ExternalLinkIcon, SendIcon, XIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -13,6 +16,7 @@ import { useMemo, useState } from "react";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useStudioFleet } from "../../studio/fleet";
 import { projectWorkspace } from "../../studio/projectWorkspace";
+import { refreshSkillAvailability } from "../skills/SkillAvailability";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -31,7 +35,7 @@ import { openSkillLink } from "./ProjectSkillRowMenu";
 
 type PushResults = ProjectSkillsFleetPushResult["results"];
 
-function FleetPushPanel() {
+export function FleetPushPanel() {
   const tx = useTx();
   const controls = useSkillControls()!;
   const fleet = useStudioFleet(controls.environmentId);
@@ -47,22 +51,73 @@ function FleetPushPanel() {
       ),
     [controls.environmentId, controls.memberProjects, fleet.snapshot],
   );
-  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
+  const [selection, setChecked] = useState<ReadonlySet<string> | null>(null);
+  const checked =
+    selection ??
+    new Set(
+      machines
+        .filter((machine) => machine.reachable)
+        .slice(0, 32)
+        .map((machine) => machine.machineId),
+    );
   const [scope, setScope] = useState<"user" | "project">(
     controls.row.lock?.lockScope === "user" ? "user" : "project",
   );
-  const [pin, setPin] = useState(true);
+  const pin = true;
+  const [agents, setAgents] = useState<ReadonlySet<"codex" | "claude-code" | "cursor">>(
+    new Set(["codex"]),
+  );
+  const [preview, setPreview] = useState<{
+    key: string;
+    targets: readonly ProjectSkillsFleetTarget[];
+    results: PushResults;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [results, setResults] = useState<PushResults | null>(null);
   const [error, setError] = useState<string | null>(null);
   const plan = fleetPushTargets(machines, checked, scope);
+  const contentHash = controls.row.lock?.sha;
+  const verifiedHash = typeof contentHash === "string" && /^[a-f0-9]{64}$/i.test(contentHash);
   const exact = version !== null && /^\d+\.\d+\.\d+$/.test(version);
 
-  async function send() {
-    if (!lock.skillId || !exact || plan.targets.length === 0) return;
+  const key = JSON.stringify([
+    lock.skillId,
+    version,
+    contentHash,
+    scope,
+    [...agents].sort(),
+    [...checked].sort(),
+  ]);
+  const currentPreview = preview?.key === key ? preview : null;
+  const successes = new Set(
+    results?.filter((result) => result.ok).map((result) => result.machineId),
+  );
+  const remaining = plan.targets.filter((target) => !successes.has(target.machineId));
+  async function send(confirm = false) {
+    if (!controls.canPush || busy || !lock.skillId || !exact || !verifiedHash || !agents.size)
+      return;
+    const targets = confirm
+      ? (currentPreview?.targets ?? [])
+      : remaining.map((target) => ({ ...target, agents: [...agents] }));
+    if (!targets.length) return;
+    const recordUnknown = () => {
+      if (!confirm) return;
+      setResults((previous) => [
+        ...(previous ?? []).filter(
+          (entry) => !targets.some((target) => target.machineId === entry.machineId),
+        ),
+        ...targets.map((target) => ({
+          machineId: target.machineId,
+          ok: false,
+          reason: "outcome_unknown",
+          message: "Outcome unknown · check Available on before retrying.",
+        })),
+      ]);
+      refreshSkillAvailability(controls.environmentId, lock.skillId!);
+    };
     setBusy(true);
     setError(null);
-    setResults(null);
+
     try {
       const result = await push({
         environmentId: controls.environmentId,
@@ -71,13 +126,55 @@ function FleetPushPanel() {
           skillId: lock.skillId,
           version: version!,
           pin,
-          targets: plan.targets,
+          preview: !confirm,
+          contentHash,
+          targets,
         },
       });
-      if (result._tag === "Success") setResults(result.value.results);
-      else setError(skillActionErrorText(squashAtomCommandFailure(result)));
+      if (result._tag === "Success") {
+        if (!confirm) {
+          if (result.value.preview !== true) {
+            setError("Update this machine to support safe installation previews.");
+            setPreview(null);
+            return;
+          }
+          const ready = targets.flatMap((target) => {
+            const receipt = result.value.results.find(
+              (entry) => entry.machineId === target.machineId,
+            );
+            return receipt?.ok && receipt.preview === true && receipt.expectedHash
+              ? [{ ...target, expectedHash: receipt.expectedHash }]
+              : [];
+          });
+          setPreview({ key, targets: ready, results: result.value.results });
+        } else {
+          const receipts = targets.map(
+            (target) =>
+              result.value.results.find((entry) => entry.machineId === target.machineId) ?? {
+                machineId: target.machineId,
+                ok: false,
+                reason: "outcome_unknown",
+                message: "Outcome unknown · check Available on before retrying.",
+              },
+          );
+          setResults((previous) => [
+            ...(previous ?? []).filter(
+              (entry) => !targets.some((target) => target.machineId === entry.machineId),
+            ),
+            ...receipts,
+          ]);
+          refreshSkillAvailability(controls.environmentId, lock.skillId);
+          setPreview(null);
+        }
+      } else {
+        recordUnknown();
+        setError(skillActionErrorText(squashAtomCommandFailure(result)));
+        setPreview(null);
+      }
     } catch {
-      setError("The machine did not confirm the push.");
+      recordUnknown();
+      setError("The machine did not confirm the request. Preview again before retrying.");
+      setPreview(null);
     } finally {
       setBusy(false);
     }
@@ -93,6 +190,25 @@ function FleetPushPanel() {
           span2: <span className="font-mono text-foreground">{version ?? "—"}</span>,
         })}
       </p>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={busy || fleet.failed}
+        onClick={() =>
+          setChecked(
+            new Set(
+              machines
+                .filter((machine) => machine.reachable)
+                .slice(0, 32)
+                .map((machine) => machine.machineId),
+            ),
+          )
+        }
+      >
+        Select all reachable
+      </Button>
+      {fleet.failed ? <p role="alert">Fleet unavailable. Reconnect before previewing.</p> : null}
+      {machines.length > 32 ? <p>Preview up to 32 machines at a time.</p> : null}
       {fleet.loading && !fleet.snapshot ? (
         <p className="flex items-center gap-1.5 text-muted-foreground">
           <Spinner className="size-3" /> {tx("Reading the fleet…")}
@@ -111,7 +227,7 @@ function FleetPushPanel() {
               >
                 <Checkbox
                   checked={checked.has(machine.machineId)}
-                  disabled={!machine.reachable || busy}
+                  disabled={!machine.reachable || busy || successes.has(machine.machineId)}
                   onCheckedChange={(next) => {
                     const updated = new Set(checked);
                     if (next) updated.add(machine.machineId);
@@ -138,30 +254,72 @@ function FleetPushPanel() {
       >
         <label className="flex items-center gap-1.5">
           {renderRich(tx("{radio} This project"), {
-            radio: <Radio value="project" disabled={busy} />,
+            radio: <Radio value="project" disabled={busy || Boolean(results?.length)} />,
           })}
         </label>
         <label className="flex items-center gap-1.5">
-          {renderRich(tx("{radio} User"), { radio: <Radio value="user" disabled={busy} /> })}
+          {renderRich(tx("{radio} User"), {
+            radio: <Radio value="user" disabled={busy || Boolean(results?.length)} />,
+          })}
         </label>
       </RadioGroup>
-      <label className="flex items-center gap-2">
-        {renderRich(tx("{checkbox}Pin {value}"), {
-          checkbox: (
-            <Checkbox
-              checked={pin}
-              disabled={busy}
-              onCheckedChange={(next) => setPin(next === true)}
-            />
-          ),
-          value: version ?? tx("this version"),
-        })}
-      </label>
+      <fieldset disabled={busy || Boolean(results?.length)} className="space-y-2">
+        <legend>Agents</legend>
+        <div className="flex flex-wrap gap-3">
+          {(["codex", "claude-code", "cursor"] as const).map((agent) => (
+            <label key={agent} className="flex items-center gap-1.5">
+              <Checkbox
+                checked={agents.has(agent)}
+                onCheckedChange={(next) => {
+                  const updated = new Set(agents);
+                  if (next) updated.add(agent);
+                  else updated.delete(agent);
+                  setAgents(updated);
+                }}
+              />
+              {agent === "claude-code" ? "Claude Code" : agent === "codex" ? "Codex" : "Cursor"}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <p className="text-muted-foreground">
+        Pinned to {version}. Installed files are available to new sessions; running sessions are not
+        restarted.
+      </p>
+      {currentPreview ? (
+        <div role="status" className="space-y-2 rounded-lg border p-3">
+          <p className="font-medium">Review installation</p>
+          <p className="break-all font-mono">SHA-256: {contentHash}</p>
+          <p>
+            {currentPreview.targets.length} machines · {[...agents].join(", ")} · {scope} scope ·{" "}
+            {version}
+          </p>
+          <ul>
+            {currentPreview.results.map((entry) => (
+              <li key={entry.machineId}>
+                {labelOf(entry.machineId)}:{" "}
+                {entry.ok && entry.expectedHash
+                  ? "Ready to install"
+                  : (entry.message ?? entry.reason ?? "Not eligible")}
+              </li>
+            ))}
+          </ul>
+          <Button
+            size="xs"
+            disabled={busy || !controls.canPush || !currentPreview.targets.length}
+            onClick={() => void send(true)}
+          >
+            Confirm installation
+          </Button>
+        </div>
+      ) : null}
       {results ? (
         <ul className="space-y-1" aria-label={tx("Results")} data-testid="skill-fleet-results">
           {results.map((result) => (
             <li key={result.machineId} className="flex items-start gap-1.5">
-              {result.ok ? (
+              {result.reason === "outcome_unknown" ? (
+                <span aria-label="Unknown outcome">?</span>
+              ) : result.ok ? (
                 <CheckIcon
                   aria-hidden
                   className="mt-px size-3.5 shrink-0 text-success-foreground"
@@ -176,12 +334,24 @@ function FleetPushPanel() {
                 <span className="text-foreground">{result.label ?? labelOf(result.machineId)}</span>
                 {": "}
                 {result.ok
-                  ? `installed ${result.installedVersion ?? version}${result.pinnedVersion ? `, pinned` : ""}`
+                  ? `Installed ${result.installedVersion ?? version} · next session${result.pinnedVersion ? ` · pinned` : ""}`
                   : (result.message ?? result.reason ?? tx("failed"))}
               </span>
             </li>
           ))}
         </ul>
+      ) : null}
+      {!verifiedHash ? (
+        <p>Verified publication content hash required. Refresh the skill or publish it first.</p>
+      ) : null}
+      {results?.some((result) => result.reason === "outcome_unknown") ? (
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => refreshSkillAvailability(controls.environmentId, lock.skillId!)}
+        >
+          Check Available on
+        </Button>
       ) : null}
       {error ? <p className="text-destructive-foreground">{error}</p> : null}
       <div className="flex items-center justify-end gap-2">
@@ -205,16 +375,23 @@ function FleetPushPanel() {
           <Button
             size="xs"
             type="button"
-            disabled={!controls.canPush || busy || !exact || plan.targets.length === 0}
+            disabled={
+              !controls.canPush ||
+              busy ||
+              fleet.failed ||
+              !exact ||
+              !verifiedHash ||
+              !agents.size ||
+              !remaining.length
+            }
             onClick={() => void send()}
           >
             {busy ? <Spinner className="size-3" /> : <SendIcon aria-hidden />}
-            {tx(
-              plan.targets.length === 1
-                ? "Install on {length} machine"
-                : "Install on {length} machines",
-              { length: plan.targets.length },
-            )}
+            {results?.some((result) => result.reason === "outcome_unknown")
+              ? "Preview unconfirmed targets"
+              : results?.length
+                ? "Preview failed targets only"
+                : "Preview installation"}
           </Button>
         </SkillControlReason>
       </div>
@@ -246,7 +423,9 @@ function StudioLinkButton() {
         },
       });
       if (result._tag === "Success") await openSkillLink(result.value.url);
-      else setError(skillActionErrorText(squashAtomCommandFailure(result)));
+      else {
+        setError(skillActionErrorText(squashAtomCommandFailure(result)));
+      }
     } catch {
       setError("Skill Studio could not be opened.");
     } finally {

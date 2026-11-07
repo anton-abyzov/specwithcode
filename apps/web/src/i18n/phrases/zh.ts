@@ -2095,7 +2095,6 @@ export const zh: PhraseCatalog = {
   "Install for": "安装给",
   "{radio} This project": "{radio} 此项目",
   "{radio} User": "{radio} 用户",
-  "{checkbox}Pin {value}": "{checkbox}固定 {value}",
   Results: "结果",
   failed: "失败",
   "Needs permission to maintain machines.": "需要维护电脑的权限。",
@@ -2818,9 +2817,6 @@ export const zh: PhraseCatalog = {
   "Connected. Let all {length} active projects read {value2}?":
     "已连接。允许全部 {length} 个活跃项目读取{value2}吗？",
   "Reset it": "重置",
-  "this version": "此版本",
-  "Install on {length} machine": "安装到 {length} 台电脑",
-  "Install on {length} machines": "安装到 {length} 台电脑",
   " · {version} available": " · {version} 可用",
   never: "从未",
   " through @{bot}": "，通过 @{bot}",
