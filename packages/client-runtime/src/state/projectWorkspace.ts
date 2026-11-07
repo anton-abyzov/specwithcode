@@ -183,6 +183,10 @@ export function createProjectWorkspaceAtoms<R, E>(
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
+    skillCopies: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:skill-copies",
+      tag: WS_METHODS.projectsSkillCopies,
+    }),
     skillAction: createEnvironmentRpcCommand(runtime, {
       label: "project-workspace:skill-action",
       tag: WS_METHODS.projectsSkillsAction,

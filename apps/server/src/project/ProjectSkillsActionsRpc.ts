@@ -34,6 +34,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { withCodexAppServerClient } from "../provider/CodexProvider.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { makeProjectSkillCopies } from "./ProjectSkillCopies.ts";
 import { makeProjectSkillsActions } from "./ProjectSkillsActions.ts";
 import {
   findVskillBinary,
@@ -157,6 +158,8 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
 
+      const copies = yield* makeProjectSkillCopies(deps);
+
       const studio = yield* makeStudioLink({
         home,
         resolveCwd: (input: ProjectSkillsStudioLinkInput) =>
@@ -243,7 +246,13 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
             Effect.map((snapshot) =>
               snapshot.rows.flatMap((row) =>
                 row.lock?.skillId && row.lock.version
-                  ? [{ skillId: row.lock.skillId, version: row.lock.version }]
+                  ? [
+                      {
+                        skillId: row.lock.skillId,
+                        version: row.lock.version,
+                        contentHash: row.lock.sha,
+                      },
+                    ]
                   : [],
               ),
             ),
@@ -253,6 +262,7 @@ const layerSkillsActionsRpcHandlers = WsProjectSkillsActionsRpcGroup.middleware(
 
       return {
         [WS_METHODS.projectsSkillAuthoring]: authoring.execute,
+        [WS_METHODS.projectsSkillCopies]: copies.execute,
         [WS_METHODS.projectsSkillsVersions]: actions.versions,
         [WS_METHODS.projectsSkillsAction]: actions.action,
         [WS_METHODS.projectsSkillsFleetPush]: (input: ProjectSkillsFleetPushInput) =>

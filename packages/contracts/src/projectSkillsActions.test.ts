@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   AuthEnvironmentMaintainScope,
   AuthFilesystemWriteScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthTerminalOperateScope,
@@ -133,6 +134,15 @@ describe("skills control center contracts", () => {
     ]);
   });
 
+  it("requires filesystem write only when applying copy reconciliation", () => {
+    for (const operation of ["read", "preview"])
+      expect(clientRpcRequiredScopes(WS_METHODS.projectsSkillCopies, { operation })).toEqual([
+        AuthFilesystemReadScope,
+      ]);
+    expect(clientRpcRequiredScopes(WS_METHODS.projectsSkillCopies, { operation: "apply" })).toEqual(
+      [AuthFilesystemReadScope, AuthFilesystemWriteScope],
+    );
+  });
   it("names each refusal in plain words, a detail winning over the generic one", () => {
     expect(
       new ProjectSkillsActionError({ projectId: "p" as never, reason: "stale" }).message,

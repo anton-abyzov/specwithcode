@@ -99,6 +99,8 @@ import {
 } from "./threadIncrementProgress.ts";
 import {
   ProjectSkillsActionError,
+  ProjectSkillCopiesInput,
+  ProjectSkillCopiesResult,
   ProjectSkillsActionInput,
   ProjectSkillsActionResult,
   ProjectSkillsFleetPushInput,
@@ -135,6 +137,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsSkillsRead: "projects.skillsRead",
   projectsSkillsVersions: "projects.skillsVersions",
   projectsSkillsAction: "projects.skillsAction",
+  projectsSkillCopies: "projects.skillCopies",
   projectsSkillsFleetPush: "projects.skillsFleetPush",
   projectsSkillAuthoring: "projects.skillAuthoring",
   projectsSkillsStudioLink: "projects.skillsStudioLink",
@@ -407,6 +410,11 @@ export const projectKnowledgeRpcs = [
  */
 const skillsActionError = Schema.Union([ProjectSkillsActionError, EnvironmentAuthorizationError]);
 export const projectSkillsActionRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillCopies, {
+    payload: ProjectSkillCopiesInput,
+    success: ProjectSkillCopiesResult,
+    error: skillsActionError,
+  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsSkillAuthoring, {
     payload: SkillAuthoringInput,
     success: SkillAuthoringResult,

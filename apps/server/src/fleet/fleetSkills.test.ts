@@ -354,6 +354,8 @@ function worker(
     readonly lockAfterUnpin?: FleetSkillLockEntry | null;
     readonly installDelayMs?: number;
     readonly prepareDelayMs?: number;
+    readonly fingerprint?: () => string;
+    readonly verifyFiles?: boolean;
   } = {},
 ) {
   const calls: RunCall[] = [];
@@ -361,6 +363,10 @@ function worker(
   const pinDrops: Array<{ readonly dir: string; readonly name: string }> = [];
   let unpinned = false;
   const deps: FleetSkillWorkerDeps = {
+    ...(options.fingerprint ? { fingerprint: () => Effect.sync(options.fingerprint!) } : {}),
+    ...(options.verifyFiles !== undefined
+      ? { verifyFiles: () => Effect.succeed(options.verifyFiles!) }
+      : {}),
     resolveVskill: Effect.succeed(
       options.vskill === undefined ? "/opt/homebrew/bin/vskill" : options.vskill,
     ),
@@ -429,6 +435,63 @@ const settled = (service: FleetSkillWorker["Service"]) =>
   });
 
 describe("a fleet machine taking its primary's skill install", () => {
+  it.live("previews selected agents without writes and rejects a changed destination", () =>
+    Effect.gen(function* () {
+      let fingerprint = "before";
+      const { service, calls } = yield* worker({
+        fingerprint: () => fingerprint,
+        verifyFiles: true,
+      });
+      const ask = { ...userAsk, agents: ["codex"] as const, contentHash: "a".repeat(64) };
+      const preview = yield* service.request({ ...ask, preview: true });
+      expect(preview).toMatchObject({ preview: true, expectedHash: "before", phase: "idle" });
+      expect(calls).toHaveLength(0);
+      fingerprint = "after";
+      const refusal = yield* service.request({ ...ask, expectedHash: "before" }).pipe(Effect.flip);
+      expect(refusal.reason).toBe("stale");
+      expect(calls).toHaveLength(0);
+    }),
+  );
+  it.live("verifies selected agent files and reuses a completed retry receipt", () =>
+    Effect.gen(function* () {
+      const { service, calls } = yield* worker({ fingerprint: () => "same", verifyFiles: true });
+      const ask = {
+        ...userAsk,
+        agents: ["codex", "claude-code"] as const,
+        contentHash: "a".repeat(64),
+        expectedHash: "same",
+      };
+      const first = yield* service.request(ask);
+      expect((yield* settled(service)).phase).toBe("installed");
+      const retry = yield* service.request(ask);
+      expect(retry).toMatchObject({ requestId: first.requestId, phase: "installed" });
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args).toEqual([
+        "install",
+        userAsk.skill + "@1.2.3",
+        "-y",
+        "--global",
+        "--copy",
+        "--agent",
+        "codex",
+        "--agent",
+        "claude-code",
+      ]);
+    }),
+  );
+  it.live("does not report installed when selected agent file readback fails", () =>
+    Effect.gen(function* () {
+      const { service } = yield* worker({ fingerprint: () => "same", verifyFiles: false });
+      yield* service.request({
+        ...userAsk,
+        agents: ["codex"],
+        contentHash: "a".repeat(64),
+        expectedHash: "same",
+      });
+      expect((yield* settled(service)).phase).toBe("failed");
+    }),
+  );
+
   it.live(
     "answers first, installs for the user with --global and reads the pinned version back",
     () =>

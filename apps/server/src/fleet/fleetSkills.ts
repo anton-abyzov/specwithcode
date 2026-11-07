@@ -50,6 +50,7 @@ import * as Config from "effect/Config";
 import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { resolveCommandPath } from "@specweave-studio/shared/shell";
 
+import { sha256 } from "../nodeCrypto.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { expandHomePath } from "../pathExpansion.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -97,6 +98,10 @@ export type FleetSkillAsk = {
   readonly skill: string;
   readonly version: string;
   readonly pin: boolean;
+  readonly agents?: ReadonlyArray<"codex" | "claude-code" | "cursor">;
+  readonly preview?: boolean;
+  readonly contentHash?: string;
+  readonly expectedHash?: string;
 } & ({ readonly scope: "user" } | { readonly scope: "project"; readonly projectId: string });
 
 export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
@@ -105,10 +110,23 @@ export const fleetSkillAskOf = (input: StudioFleetSkillInput): FleetSkillAsk =>
         skill: input.skill,
         version: input.version,
         pin: input.pin,
+        ...(input.agents ? { agents: input.agents } : {}),
+        ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+        ...(input.preview !== undefined ? { preview: input.preview } : {}),
+        ...(input.expectedHash ? { expectedHash: input.expectedHash } : {}),
         scope: "project",
         projectId: input.projectId,
       }
-    : { skill: input.skill, version: input.version, pin: input.pin, scope: "user" };
+    : {
+        skill: input.skill,
+        version: input.version,
+        pin: input.pin,
+        scope: "user",
+        ...(input.agents ? { agents: input.agents } : {}),
+        ...(input.contentHash ? { contentHash: input.contentHash } : {}),
+        ...(input.preview !== undefined ? { preview: input.preview } : {}),
+        ...(input.expectedHash ? { expectedHash: input.expectedHash } : {}),
+      };
 
 /** The name vskill keys the skill by in its lock: the last segment of `owner/repo/name`. */
 export const skillLockName = (skill: string): string => skill.split("/").at(-1) ?? skill;
@@ -119,6 +137,7 @@ export const fleetSkillInstallArgs = (ask: FleetSkillAsk): ReadonlyArray<string>
   `${ask.skill}@${ask.version}`,
   "-y",
   ...(ask.scope === "user" ? ["--global"] : []),
+  ...(ask.agents ? ["--copy", ...ask.agents.flatMap((agent) => ["--agent", agent])] : []),
 ];
 
 /**
@@ -170,6 +189,16 @@ export interface FleetSkillLockEntry {
 }
 
 export interface FleetSkillWorkerDeps {
+  /** Destination-owned fingerprint and path safety check for the reviewed agent destinations. */
+  readonly fingerprint?: (
+    ask: FleetSkillAsk,
+    root: string,
+  ) => Effect.Effect<string, StudioFleetSkillError>;
+  /** Verify the selected agents have regular skill files after installation. */
+  readonly verifyFiles?: (
+    ask: FleetSkillAsk,
+    root: string,
+  ) => Effect.Effect<boolean, StudioFleetSkillError>;
   /** The vskill binary's absolute path, or null when none is installed. */
   readonly resolveVskill: Effect.Effect<string | null>;
   /**
@@ -237,6 +266,9 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
     /** One install at a time: claimed before the first await and held until it ends. */
     const claimed = yield* Ref.make(false);
     const counter = yield* Ref.make(0);
+    // Bounded process-local receipts make a lost apply response safe to retry.
+    const receipts = new Map<string, { status: StudioFleetSkillStatus; fingerprint: string }>();
+    const receiptKey = (ask: FleetSkillAsk) => JSON.stringify({ ...ask, preview: false });
 
     const prepare = (ask: FleetSkillAsk) =>
       Effect.gen(function* () {
@@ -244,6 +276,22 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
           return yield* refuse(
             "invalid-skill",
             "Name the skill as owner/repo/name and its version as X.Y.Z.",
+          );
+        if (
+          ask.agents &&
+          (!ask.agents.length ||
+            ask.agents.length > 3 ||
+            new Set(ask.agents).size !== ask.agents.length ||
+            ask.agents.some((agent) => !["codex", "claude-code", "cursor"].includes(agent)))
+        )
+          return yield* refuse(
+            "unsupported",
+            "Choose supported agents: Codex, Claude Code or Cursor.",
+          );
+        if (ask.agents && (!ask.contentHash || !/^[a-f0-9]{64}$/.test(ask.contentHash)))
+          return yield* refuse(
+            "unsupported",
+            "A verified registry content hash is required for the selected agents.",
           );
         let root: string;
         if (ask.scope === "project") {
@@ -334,7 +382,21 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
             `vskill installed ${entry.version}, but its lock still pins ${entry.pinnedVersion}.`,
             readFields,
           );
-        yield* set({ ...base, ...readFields, phase: "installed" });
+        if (
+          ask.agents &&
+          (!deps.verifyFiles || !(yield* deps.verifyFiles(ask, prepared.installCwd)))
+        )
+          return yield* failed(
+            "The selected agents' skill files could not be verified after installation.",
+            readFields,
+          );
+        const complete: StudioFleetSkillStatus = { ...base, ...readFields, phase: "installed" };
+        if (ask.expectedHash && deps.fingerprint) {
+          const fingerprint = yield* deps.fingerprint(ask, prepared.installCwd);
+          receipts.set(receiptKey(ask), { status: complete, fingerprint });
+          if (receipts.size > 32) receipts.delete(receipts.keys().next().value!);
+        }
+        yield* set(complete);
       }).pipe(
         Effect.catchCause(() =>
           set({
@@ -359,6 +421,60 @@ export const makeFleetSkillWorker = (deps: FleetSkillWorkerDeps) =>
             );
           const release = Ref.set(claimed, false);
           const prepared = yield* restore(prepare(ask)).pipe(Effect.onError(() => release));
+          if (ask.preview || ask.agents || ask.expectedHash) {
+            const checked = yield* restore(
+              Effect.gen(function* () {
+                if (!deps.fingerprint)
+                  return yield* refuse(
+                    "unsupported",
+                    "This machine cannot preview scoped skill installs. Update it first.",
+                  );
+                const expectedHash = yield* deps.fingerprint(ask, prepared.installCwd);
+                if (ask.preview) {
+                  const found = yield* readBack(prepared, skillLockName(ask.skill));
+                  return {
+                    preview: true,
+                    result: "accepted" as const,
+                    requestId: `preview:${expectedHash}`,
+                    phase: "idle" as const,
+                    skill: ask.skill,
+                    version: ask.version,
+                    scope: ask.scope,
+                    expectedHash,
+                    installedVersion: found?.entry.version ?? null,
+                  };
+                }
+                const receipt = receipts.get(receiptKey(ask));
+                if (
+                  receipt &&
+                  receipt.fingerprint === expectedHash &&
+                  deps.verifyFiles &&
+                  (yield* deps.verifyFiles(ask, prepared.installCwd))
+                ) {
+                  yield* set(receipt.status);
+                  return {
+                    result: "accepted" as const,
+                    requestId: receipt.status.requestId!,
+                    phase: "installed" as const,
+                    skill: ask.skill,
+                    version: ask.version,
+                    scope: ask.scope,
+                    installedVersion: receipt.status.installedVersion ?? null,
+                  };
+                }
+                if (!ask.expectedHash || ask.expectedHash !== expectedHash)
+                  return yield* refuse(
+                    "stale",
+                    "The skill destinations changed since preview. Review them again.",
+                  );
+                return null;
+              }),
+            ).pipe(Effect.onError(() => release));
+            if (checked) {
+              yield* release;
+              return checked;
+            }
+          }
           const sequence = yield* Ref.updateAndGet(counter, (value) => value + 1);
           const requestId = `${DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis))}#${sequence}`;
           const base: StudioFleetSkillStatus = {
@@ -566,7 +682,137 @@ export const layer = Layer.effect(
         return true;
       }).pipe(Effect.orElseSucceed(() => false));
 
+    const agentDirs: Record<string, string> = {
+      codex: ".agents/skills",
+      "claude-code": ".claude/skills",
+      cursor: ".agents/skills",
+    };
+    const checkedFiles = (ask: FleetSkillAsk, root: string) =>
+      Effect.gen(function* () {
+        const files = [
+          ...new Set([
+            path.join(root, ".agents", "skills", skillLockName(ask.skill), "SKILL.md"),
+            ...(ask.agents ?? []).map((agent) =>
+              path.join(root, agentDirs[agent]!, skillLockName(ask.skill), "SKILL.md"),
+            ),
+            path.join(ask.scope === "user" ? path.join(root, ".agents") : root, "vskill.lock"),
+          ]),
+        ];
+        const canonicalRoot = yield* fs
+          .realPath(root)
+          .pipe(
+            Effect.mapError(() => refuse("unsupported", "The selected scope root is unavailable.")),
+          );
+        const snapshots: Array<{ file: string; text: string | null }> = [];
+        for (const file of files) {
+          let component = file;
+          while (component !== root && component !== path.dirname(component)) {
+            if ((yield* fs.readLink(component).pipe(Effect.option))._tag === "Some")
+              return yield* refuse(
+                "unsupported",
+                "A skill destination contains a symbolic link. Nothing was installed.",
+              );
+            component = path.dirname(component);
+          }
+          let parent = path.dirname(file);
+          while (
+            !(yield* fs
+              .exists(parent)
+              .pipe(
+                Effect.mapError(() =>
+                  refuse("unsupported", "Could not inspect the skill destination."),
+                ),
+              ))
+          ) {
+            const next = path.dirname(parent);
+            if (parent === next)
+              return yield* refuse("unsupported", "The selected filesystem root is unavailable.");
+            parent = next;
+          }
+          const real = yield* fs
+            .realPath(parent)
+            .pipe(
+              Effect.mapError(() =>
+                refuse("unsupported", "Could not verify the skill destination."),
+              ),
+            );
+          if (real !== canonicalRoot && !real.startsWith(`${canonicalRoot}${path.sep}`))
+            return yield* refuse(
+              "unsupported",
+              "The skill destination is outside its selected scope.",
+            );
+          if (
+            !(yield* fs
+              .exists(file)
+              .pipe(
+                Effect.mapError(() =>
+                  refuse("unsupported", "Could not inspect the skill destination."),
+                ),
+              ))
+          ) {
+            snapshots.push({ file, text: null });
+            continue;
+          }
+          const info = yield* fs
+            .stat(file)
+            .pipe(
+              Effect.mapError(() =>
+                refuse("unsupported", "Could not inspect the skill destination."),
+              ),
+            );
+          if (info.type !== "File" || info.size > BigInt(MAX_LOCK_BYTES))
+            return yield* refuse(
+              "unsupported",
+              "The skill destination is not a supported regular file.",
+            );
+          const text = yield* fs
+            .readFileString(file)
+            .pipe(
+              Effect.mapError(() => refuse("unsupported", "Could not read the skill destination.")),
+            );
+          if (Buffer.byteLength(text, "utf8") > MAX_LOCK_BYTES)
+            return yield* refuse("unsupported", "The skill destination is too large.");
+          snapshots.push({ file, text });
+        }
+        return snapshots;
+      });
+    const fingerprint: NonNullable<FleetSkillWorkerDeps["fingerprint"]> = (ask, root) =>
+      checkedFiles(ask, root).pipe(
+        Effect.map((files) =>
+          sha256(
+            [
+              JSON.stringify({
+                skill: ask.skill,
+                version: ask.version,
+                pin: ask.pin,
+                contentHash: ask.contentHash,
+                scope: ask.scope,
+                root,
+                agents: ask.agents ?? [],
+                files,
+              }),
+            ],
+            "hex",
+          ),
+        ),
+      );
+    const verifyFiles: NonNullable<FleetSkillWorkerDeps["verifyFiles"]> = (ask, root) =>
+      checkedFiles(ask, root).pipe(
+        Effect.map((files) =>
+          files
+            .filter((file) => path.basename(file.file) === "SKILL.md")
+            .every(
+              (file) =>
+                file.text !== null &&
+                file.text.length > 0 &&
+                (!ask.contentHash || sha256([file.text], "hex") === ask.contentHash),
+            ),
+        ),
+      );
+
     return yield* makeFleetSkillWorker({
+      fingerprint,
+      verifyFiles,
       resolveVskill,
       resolveNpx,
       home,
@@ -648,6 +894,7 @@ const REFUSALS: ReadonlySet<string> = new Set<StudioFleetSkillRefusal>([
   "vskill-missing",
   "invalid-skill",
   "unknown-project",
+  "stale",
   "install-failed",
   "busy",
 ]);
@@ -720,6 +967,10 @@ export async function runFleetSkillInstall(
     scope: ask.scope,
     ...(ask.scope === "project" ? { projectId: ask.projectId } : {}),
     pin: ask.pin,
+    ...(ask.agents ? { agents: ask.agents } : {}),
+    ...(ask.contentHash ? { contentHash: ask.contentHash } : {}),
+    ...(ask.preview !== undefined ? { preview: ask.preview } : {}),
+    ...(ask.expectedHash ? { expectedHash: ask.expectedHash } : {}),
   };
   let response: Response;
   let address;
@@ -741,6 +992,20 @@ export async function runFleetSkillInstall(
       "install-failed",
       "The machine gave no answer to the skill install.",
     );
+  if (ask.preview) {
+    if (accepted.preview !== true || typeof accepted.expectedHash !== "string")
+      throw new FleetSkillFailure(
+        "unsupported",
+        "This machine did not return an install preview. Update it before trying again.",
+      );
+    return {
+      machine: target.id,
+      label: target.label,
+      result: "preview",
+      expectedHash: accepted.expectedHash,
+      installedVersion: accepted.installedVersion ?? null,
+    };
+  }
   const requestId = accepted.requestId;
   const common = {
     machine: target.id,
