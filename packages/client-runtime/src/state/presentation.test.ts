@@ -1,9 +1,15 @@
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import { EnvironmentId, type ServerConfig } from "@specweave-studio/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
-import { AVAILABLE_CONNECTION_STATE, PrimaryConnectionTarget } from "../connection/model.ts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  ConnectionTransientError,
+  PrimaryConnectionTarget,
+  type SupervisorConnectionState,
+} from "../connection/model.ts";
+import { CONNECTION_WARNING_GRACE_MS } from "../connection/presentation.ts";
 import {
   createEnvironmentPresentationAtoms,
   createEnvironmentSummaryAtoms,
@@ -195,6 +201,118 @@ describe("environment summary subscriptions", () => {
     } finally {
       stop();
       h.registry.dispose();
+    }
+  });
+});
+
+describe("startup connection grace", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function graceHarness(enabled = true) {
+    const catalog = Atom.make<EnvironmentCatalogState>({
+      isReady: true,
+      entries: new Map([[FIRST, { ...entry(FIRST), enabled }]]),
+    });
+    const state = Atom.make(
+      AsyncResult.success<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE),
+    );
+    const atoms = createEnvironmentPresentationAtoms({
+      catalogValueAtom: catalog,
+      stateAtom: () => state,
+      serverConfigValueAtom: () => Atom.make<ServerConfig | null>(null),
+    });
+    const registry = AtomRegistry.make();
+    const presentation = atoms.presentationAtom(FIRST);
+    const stop = registry.subscribe(presentation, () => {});
+    const phase = () => registry.get(presentation)?.connection;
+    const setState = (next: Partial<SupervisorConnectionState>) =>
+      registry.set(state, AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, ...next }));
+    // The app first reads the machine as it opens; the grace starts there.
+    phase();
+    return {
+      catalog,
+      registry,
+      phase,
+      setState,
+      dispose: () => {
+        stop();
+        registry.dispose();
+      },
+    };
+  }
+
+  const failure = new ConnectionTransientError({ reason: "network", detail: "connection refused" });
+
+  it("reads connecting, not 'not connected', before the first attempt starts", () => {
+    const h = graceHarness();
+    try {
+      expect(h.phase()).toEqual({ phase: "connecting", error: null, traceId: null });
+      h.setState({ phase: "connecting", desired: true, attempt: 1, stage: "opening" });
+      expect(h.phase()?.phase).toBe("connecting");
+      h.setState({ phase: "connected", desired: true, attempt: 1, generation: 1 });
+      expect(h.phase()?.phase).toBe("connected");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("shows the real state once the grace passes without a connection", () => {
+    const h = graceHarness();
+    try {
+      vi.advanceTimersByTime(CONNECTION_WARNING_GRACE_MS - 1);
+      expect(h.phase()?.phase).toBe("connecting");
+      vi.advanceTimersByTime(1);
+      expect(h.phase()?.phase).toBe("available");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("shows a failed attempt at once, inside the grace", () => {
+    const h = graceHarness();
+    try {
+      h.setState({ phase: "backoff", desired: true, attempt: 1, lastFailure: failure });
+      expect(h.phase()).toMatchObject({ phase: "reconnecting", error: "connection refused" });
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("shows a device with no network at once", () => {
+    const h = graceHarness();
+    try {
+      h.setState({ phase: "offline", desired: true, network: "offline" });
+      expect(h.phase()?.phase).toBe("offline");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("keeps a turned-off machine as available", () => {
+    const h = graceHarness(false);
+    try {
+      expect(h.phase()?.phase).toBe("available");
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it("settles again after a connection drops, then shows the outage", () => {
+    const h = graceHarness();
+    try {
+      h.setState({ phase: "connected", desired: true, attempt: 1, generation: 1 });
+      vi.advanceTimersByTime(CONNECTION_WARNING_GRACE_MS * 5);
+      h.setState({ phase: "connecting", desired: true, attempt: 2, generation: 1 });
+      expect(h.phase()?.phase).toBe("connecting");
+      vi.advanceTimersByTime(CONNECTION_WARNING_GRACE_MS);
+      expect(h.phase()?.phase).toBe("reconnecting");
+    } finally {
+      h.dispose();
     }
   });
 });

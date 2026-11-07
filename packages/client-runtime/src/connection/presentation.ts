@@ -73,6 +73,33 @@ export function presentConnectionState(
   }
 }
 
+/**
+ * How long a machine that is not connected yet reads "connecting" before the
+ * app says it is not connected or can't be reached. It covers the first attempt
+ * at app start, which takes a second or two, and a brief reconnect.
+ */
+export const CONNECTION_WARNING_GRACE_MS = 3_000;
+
+/**
+ * A machine that is still settling (inside {@link CONNECTION_WARNING_GRACE_MS}
+ * of app start or of losing its connection) reads "connecting" instead of
+ * "available" or "reconnecting", so it does not look offline while its first
+ * attempt runs. A real failure shows at once: an attempt that failed (an
+ * error), a refused or stopped connection, or a device with no network.
+ */
+export function settlingConnectionPresentation(
+  connection: EnvironmentConnectionPresentation,
+): EnvironmentConnectionPresentation {
+  if (connection.error !== null) return connection;
+  switch (connection.phase) {
+    case "available":
+    case "reconnecting":
+      return { phase: "connecting", error: null, traceId: null };
+    default:
+      return connection;
+  }
+}
+
 export function connectionStatusText(connection: EnvironmentConnectionPresentation): string {
   switch (connection.phase) {
     case "available":
