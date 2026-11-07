@@ -45,7 +45,7 @@ nonisolated struct ThreadGroups: Equatable {
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }
     for thread in threads.sorted(by: order) where needle.isEmpty || thread.matches(needle) {
-      if !thread.machineOnline {
+      if thread.showsMachineOffline {
         if thread.isResolved { resolved.append(thread) } else { offline.append(thread) }
       }
       else if thread.isUnknown {

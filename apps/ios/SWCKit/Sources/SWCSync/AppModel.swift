@@ -87,6 +87,10 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   public var hasDirectPairing: Bool
   /// This phone has paused the connection without forgetting its credentials.
   public var isDisconnected: Bool = false
+  /// Not connected yet, but its first attempt since the app opened or came
+  /// back to the front is still inside the connecting grace (3 seconds), so
+  /// it reads "Connecting" instead of offline. A failed attempt ends it at once.
+  public var isSettling: Bool = false
   /// The computer is refusing sign-ins from this network for a while after
   /// too many failed attempts, usually from another device on the same Wi-Fi.
   public var isRefusingSignIns: Bool = false
@@ -134,6 +138,8 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   public var kind: ProjectKind
   public var machineLabel: String
   public var machineOnline: Bool
+  /// The machine is still on its first attempt; see `MachineSummary.isSettling`.
+  public var machineSettling: Bool = false
   public var isPinned: Bool
   public var paused: Bool
   public var archived: Bool
@@ -162,6 +168,9 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
     self.members = members
   }
 
+  /// Its machine is unreachable and past its first attempt, so rows say offline.
+  public var showsMachineOffline: Bool { !machineOnline && !machineSettling }
+
   /// True for this project's row or any machine's copy of it.
   public func contains(_ ref: ProjectRef) -> Bool {
     self.ref == ref || members.contains { $0.ref == ref }
@@ -176,6 +185,8 @@ public struct ProjectMember: Identifiable, Hashable, Sendable {
   /// The machine's nickname.
   public var machineLabel: String
   public var machineOnline: Bool
+  /// The machine is still on its first attempt; see `MachineSummary.isSettling`.
+  public var machineSettling: Bool = false
   /// When the phone last had the machine connected.
   public var lastSeenAt: Date?
   /// This copy's coordinator is the project's active coordinator.
@@ -197,6 +208,9 @@ public struct ProjectMember: Identifiable, Hashable, Sendable {
     self.lastSeenAt = lastSeenAt
     self.isCoordinator = isCoordinator
   }
+
+  /// Its machine is unreachable and past its first attempt, so it reads offline.
+  public var showsMachineOffline: Bool { !machineOnline && !machineSettling }
 }
 
 // MARK: - Threads
@@ -235,6 +249,8 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var isUnread: Bool
   public var machineLabel: String
   public var machineOnline: Bool
+  /// The machine is still on its first attempt; see `MachineSummary.isSettling`.
+  public var machineSettling: Bool = false
   public var planProgress: PlanProgress?
   /// Where the thread lives and runs, by machine nickname, and whether its
   /// state is unknown because that machine is unreachable.
@@ -263,6 +279,9 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
 
   /// Its machine is unreachable, so its activity is the last known one.
   public var isUnknown: Bool { placement.unknown != nil }
+
+  /// Its machine is unreachable and past its first attempt, so rows say offline.
+  public var showsMachineOffline: Bool { !machineOnline && !machineSettling }
 }
 
 public struct PlanProgress: Hashable, Sendable {
@@ -466,6 +485,8 @@ public final class ChatSession: Identifiable {
   public var plan: PlanProgress?
   public var machineLabel: String
   public var machineOnline: Bool
+  /// The machine is still on its first attempt; see `MachineSummary.isSettling`.
+  public var machineSettling = false
   /// When set, the composer is disabled and shows this reason.
   public var sendBlockedReason: String?
   /// Team rules pause this chat's machine, or it runs above a limit.
@@ -489,6 +510,9 @@ public final class ChatSession: Identifiable {
     self.machineLabel = machineLabel
     self.machineOnline = machineOnline
   }
+
+  /// The machine is unreachable and past its first attempt, so the chat says offline.
+  public var showsMachineOffline: Bool { !machineOnline && !machineSettling }
 }
 
 // MARK: - Settings

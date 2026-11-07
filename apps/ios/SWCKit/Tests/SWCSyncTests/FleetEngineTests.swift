@@ -201,7 +201,8 @@ final class SwitchedConnector: WebSocketConnector {
       await cache.saveSnapshot(try TestData.shell(), for: FakeMachine.environmentId)
       await cache.setLastSeen(seen, for: FakeMachine.environmentId)
     }, startOn: false)
-    #expect(await until { rows(h).count == 1 })
+    // Unknown once the first attempt fails; until then the machine is connecting.
+    #expect(await until { rows(h).count == 1 && rows(h).first?.isUnknown == true })
     let row = try #require(rows(h).first)
     #expect(row.isUnknown)
     #expect(row.placement.unknown?.lastSeenAt == seen)

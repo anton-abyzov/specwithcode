@@ -30,6 +30,7 @@ extension LiveEngine: LinkedProjectEngine {
     let refs = (summary.map { [$0.ref] + $0.members.map(\.ref) } ?? [project])
     var seen = Set<ProjectRef>()
     let nicknames = fleetNicknames
+    let now = options.now()
     return refs.compactMap { ref in
       guard seen.insert(ref).inserted, let entry = machines[ref.environmentId],
             let shell = (entry.snapshot ?? entry.cachedSnapshot)?.projects.first(where: { $0.id == ref.projectId }),
@@ -44,8 +45,8 @@ extension LiveEngine: LinkedProjectEngine {
         machineSwitchedOff: !entry.record.enabled,
         // A cold start shows the last-seen time from before the app closed;
         // the machine is unreachable only once this launch's attempt failed
-        // or the loading wait ran out.
-        machineSettled: entry.isOnline || entry.answered || loadingDeadlinePassed,
+        // or the loading wait ran out, and never inside the connecting grace.
+        machineSettled: entry.isOnline || (!entry.isSettling(at: now) && (entry.answered || loadingDeadlinePassed)),
         lastSeenAt: entry.lastSeenAt,
         logicalProjectId: logical.id,
         listedMembers: logical.members,

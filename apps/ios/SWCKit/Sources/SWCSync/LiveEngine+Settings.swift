@@ -110,6 +110,10 @@ extension LiveEngine {
     entry.record.enabled = enabled
     entry.answered = true
     entry.isSynchronized = false
+    // Turned back on, it reads "Connecting" through its first attempt; turned
+    // off, it has no grace.
+    if active { startConnectingGrace(entry) } else { entry.settlingUntil = nil }
+    scheduleGraceExpiry()
     publishNow()
     await entry.connection.update(entry.record)
     if enabled { await entry.connection.reconnect() }

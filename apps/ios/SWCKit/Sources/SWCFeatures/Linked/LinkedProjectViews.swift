@@ -91,7 +91,7 @@ private struct LinkedProjectMachinesCardContent: View {
     VStack(alignment: .leading, spacing: 0) {
       WeaveRow(title, subtitle: subtitle, symbol: row.role == .coordinator ? "star.circle" : "laptopcomputer",
                symbolTint: row.copy.machineOnline ? Color.weave.pass : Color.weave.muted,
-               trailingText: row.copy.machineSwitchedOff ? "Off" : row.copy.machineOnline ? "Online" : "Offline")
+               trailingText: row.copy.machineSwitchedOff ? "Off" : row.copy.machineOnline ? "Online" : row.copy.machineSettled ? "Offline" : "Connecting")
       if row.takeover != .hidden {
         VStack(alignment: .leading, spacing: WeaveSpacing.s2) {
           WeaveButton("Take over coordinator here", systemImage: "arrow.triangle.swap", kind: .secondary, isLoading: state.busy) {

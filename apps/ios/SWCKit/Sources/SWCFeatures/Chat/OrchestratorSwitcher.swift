@@ -37,7 +37,7 @@ struct OrchestratorSwitcher: View {
       } label: {
         HStack(spacing: 6) {
           Circle()
-            .fill(viewing?.machineOnline == false ? Color.weave.muted : Color.weave.pass)
+            .fill(viewing?.showsMachineOffline == true ? Color.weave.muted : Color.weave.pass)
             .frame(width: 7, height: 7)
             .accessibilityHidden(true)
           // Long machine names keep both ends ("coordinator…M1").
@@ -52,7 +52,7 @@ struct OrchestratorSwitcher: View {
             .foregroundStyle(Color.weave.muted)
             .accessibilityHidden(true)
         }
-        .foregroundStyle(viewing?.machineOnline == false ? Color.weave.muted : Color.weave.ink)
+        .foregroundStyle(viewing?.showsMachineOffline == true ? Color.weave.muted : Color.weave.ink)
         .padding(.leading, WeaveSpacing.s3)
         .padding(.trailing, WeaveSpacing.s2)
         .frame(height: WeaveSize.minTap)
@@ -103,6 +103,8 @@ struct OrchestratorSwitcher: View {
     if member.isCoordinator { parts.append("Coordinator") }
     if member.machineOnline {
       if parts.isEmpty { parts.append("Online") }
+    } else if member.machineSettling {
+      parts.append("Connecting")
     } else if let seen = member.lastSeenAt {
       parts.append("Offline · last seen \(ThreadPlacement.seenTime(seen, now: now, calendar: .current, locale: .current))")
     } else {

@@ -56,7 +56,8 @@ struct ThreadStatusMark: View {
 
   static func state(of thread: ThreadSummary) -> State {
     // An offline machine's run state is out of date, so nothing else is claimed.
-    if !thread.machineOnline { return .offline }
+    // One still on its first attempt shows the saved state until it answers.
+    if thread.showsMachineOffline { return .offline }
     if thread.isUnknown { return .unknown }
     switch thread.activity {
     case .needsYou: return .needsYou

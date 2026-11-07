@@ -390,7 +390,7 @@ private struct ChatScreen: View {
           OrchestratorSwitcher(current: project)
             .weaveGlass(in: Capsule(), interactive: true)
         }
-        if !session.machineOnline {
+        if session.showsMachineOffline {
           WeaveIconButton("laptopcomputer", label: "Connection options") {
             nav.push(.machine(target.environmentId))
           }
@@ -448,7 +448,7 @@ private struct ChatScreen: View {
     } center: {
       titleCapsule
     } trailing: {
-      if !session.machineOnline && target.threadRef == nil {
+      if session.showsMachineOffline && target.threadRef == nil {
         WeaveIconButton("laptopcomputer", label: "Connection options") {
           nav.push(.machine(target.environmentId))
         }
@@ -789,7 +789,7 @@ private struct ChatScreen: View {
         text: draft,
         isRunning: session.isRunning && !session.isStale,
         placeholder: session.isRunning ? nil : placeholder,
-        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : "Machine unavailable. Your draft is kept.",
+        blockedReason: session.machineOnline ? (session.sendBlockedReason ?? (photosPending ? "Preparing photos…" : nil)) : session.machineSettling ? "Connecting…" : "Machine unavailable. Your draft is kept.",
         hasAttachments: !pendingImages.isEmpty,
         // Set only from a thread's runs, so chats without runs offer none.
         suggestion: session.isStale ? nil : session.promptSuggestion,
@@ -854,6 +854,8 @@ private struct ChatScreen: View {
   private var connectionNotice: ConnectionNotice? {
     let label = machineLabel
     let machineId = target.environmentId
+    // Still on its first attempt: the machine badge says "Connecting"; no warning yet.
+    if session.machineSettling { return nil }
     if !session.machineOnline {
       // The transcript itself says the machine is offline and offers Reconnect.
       if showsOfflineTranscript { return nil }
