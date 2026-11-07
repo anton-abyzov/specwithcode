@@ -7,3 +7,5 @@ The fixture renders the production detail panel, Markdown, copy comparison, avai
 Capture `?theme=light` and `?theme=dark` at 1440×900 and 390×900. Add `&view=compare` to open comparison. Check no horizontal page overflow, inline code/link semantics, two path groups retaining four agents, Instructions headings, and the preview/confirm/cancel boundary. The initial implementation captured the prior production detail component before editing it; retained screenshots belong in the external increment evidence directory, not this public repository.
 
 This fixture does not establish installed acceptance, real provider discovery, authenticated registry publication or machine-to-machine installation.
+
+To reproduce the checks from the repository root, run `node apps/web/tests/skill-management/verify.mjs /absolute/external/evidence-directory`. Set `STUDIO_CHROMIUM_EXECUTABLE` to an existing headless Chromium executable if the package’s default browser is not installed. The runner explicitly launches headlessly, blocks non-fixture requests and closes only its own browser/server.
