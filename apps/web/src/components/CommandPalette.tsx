@@ -5,6 +5,7 @@ import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 import {
   findMachineAssistant,
   machineOffersAssistant,
+  PERSONAL_ASSISTANT_PER_MACHINE_LINE,
   personalAssistantDisabledMessage,
   personalAssistantSetupStep,
   threadsVisibleWithAide,
@@ -2111,12 +2112,13 @@ function OpenCommandPaletteDialog(props: {
   const openNewProjectFlow = (kind: NewProjectKind = "code") => {
     if (kind === "personal" && !aideEnabled) return;
     if (kind === "personal") {
-      // Each machine has its own private assistant: open or make the one on
-      // the machine in context, never another machine's.
+      // Each machine has its own private assistant: open or make this machine's,
+      // even from another machine's project, and only then the one in context.
       const connected = addProjectEnvironmentOptions.filter((option) => option.isConnected);
       const step = personalAssistantSetupStep({
         projects,
         connectedEnvironmentIds: connected.map((option) => option.environmentId),
+        ownEnvironmentId: primaryEnvironmentId,
         preferredEnvironmentId: currentExecutionEnvironmentId,
       });
       if (step.kind === "open") {
@@ -2500,8 +2502,18 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:new-personal-assistant",
-      searchTerms: ["personal assistant", "my assistant", "agent", "personal project", "routines"],
+      searchTerms: [
+        "personal assistant",
+        "my assistant",
+        "agent",
+        "personal project",
+        "routines",
+        "transfer",
+        "move",
+        "another machine",
+      ],
       title: PERSONAL_ASSISTANT_LABEL,
+      description: tx(PERSONAL_ASSISTANT_PER_MACHINE_LINE),
       icon: <ConciergeBellIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {

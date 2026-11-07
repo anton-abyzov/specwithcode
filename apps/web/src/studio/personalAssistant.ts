@@ -13,6 +13,10 @@ interface AssistantCandidate {
     | undefined;
 }
 
+/** The one line for anyone looking to move or transfer an assistant to another machine. */
+export const PERSONAL_ASSISTANT_PER_MACHINE_LINE =
+  "Each machine has its own private assistant. Nothing transfers between them.";
+
 /**
  * One machine's personal assistant. Each machine has its own, private to it:
  * another machine's assistant is never opened, reused or merged in its place.
@@ -47,22 +51,41 @@ export function isExtraAssistant<T extends AssistantCandidate>(
   return own !== undefined && own.id !== project.id;
 }
 
+/**
+ * Whether this machine still lacks its assistant, so Set up stays offered even
+ * while another machine's is listed. A client with no machine of its own only
+ * sees other machines, so any assistant counts.
+ */
+export function machineNeedsAssistantSetup<T extends AssistantCandidate>(input: {
+  readonly assistants: readonly T[];
+  readonly ownEnvironmentId: string | null;
+}): boolean {
+  return input.ownEnvironmentId === null
+    ? input.assistants.length === 0
+    : findMachineAssistant(input.assistants, input.ownEnvironmentId) === undefined;
+}
+
 export type PersonalAssistantSetupStep<T> =
   | { readonly kind: "open"; readonly assistant: T }
   | { readonly kind: "create"; readonly environmentId: string }
   | { readonly kind: "choose-machine" };
 
 /**
- * What Set up does: on the machine in context (or the only connected one),
- * open its assistant or make it one. With several machines and none in
- * context, the user picks the machine; nothing crosses between them.
+ * What Set up does: on this window's own machine, or without one the machine
+ * in context (or the only connected one), open its assistant or make it one.
+ * Looking at another machine's project never turns Aide into that machine's.
+ * Otherwise the user picks the machine; nothing crosses between them.
  */
 export function personalAssistantSetupStep<T extends AssistantCandidate>(input: {
   readonly projects: readonly T[];
   readonly connectedEnvironmentIds: readonly string[];
+  readonly ownEnvironmentId?: string | null | undefined;
   readonly preferredEnvironmentId?: string | null | undefined;
 }): PersonalAssistantSetupStep<T> {
-  const { connectedEnvironmentIds: connected, preferredEnvironmentId: preferred } = input;
+  const { connectedEnvironmentIds: connected, ownEnvironmentId: own } = input;
+  // This machine unreachable: ask, so "Set up here" never lands on another machine.
+  if (own != null && !connected.includes(own)) return { kind: "choose-machine" };
+  const preferred = own ?? input.preferredEnvironmentId;
   const target =
     preferred != null && connected.includes(preferred)
       ? preferred

@@ -3,6 +3,7 @@ import {
   assistantDisplayTitle,
   findMachineAssistant,
   isExtraAssistant,
+  machineNeedsAssistantSetup,
   personalAssistantSetupStep,
   threadsVisibleWithAide,
   visibleWithAide,
@@ -66,6 +67,46 @@ describe("Set up", () => {
         preferredEnvironmentId: "m4",
       }),
     ).toEqual({ kind: "create", environmentId: "m4" });
+  });
+
+  it("creates this machine's assistant even while looking at another machine's project", () => {
+    expect(
+      personalAssistantSetupStep({
+        projects: [ownM4],
+        connectedEnvironmentIds: ["ministorm", "m4"],
+        ownEnvironmentId: "ministorm",
+        preferredEnvironmentId: "m4",
+      }),
+    ).toEqual({ kind: "create", environmentId: "ministorm" });
+  });
+
+  it("asks which machine when this machine is not connected, never another machine by default", () => {
+    expect(
+      personalAssistantSetupStep({
+        projects: [ownM4],
+        connectedEnvironmentIds: ["m4"],
+        ownEnvironmentId: "ministorm",
+        preferredEnvironmentId: "m4",
+      }),
+    ).toEqual({ kind: "choose-machine" });
+  });
+
+  it("still offers Set up when only another machine has an assistant", () => {
+    expect(machineNeedsAssistantSetup({ assistants: [ownM4], ownEnvironmentId: "ministorm" })).toBe(
+      true,
+    );
+    expect(machineNeedsAssistantSetup({ assistants: [ownM4], ownEnvironmentId: "m4" })).toBe(false);
+    expect(
+      machineNeedsAssistantSetup({
+        assistants: [personal("old", "m4", "2026-01-01T00:00:00.000Z", true)],
+        ownEnvironmentId: "m4",
+      }),
+    ).toBe(false);
+  });
+
+  it("a client with no machine of its own needs Set up only when no assistant is listed", () => {
+    expect(machineNeedsAssistantSetup({ assistants: [], ownEnvironmentId: null })).toBe(true);
+    expect(machineNeedsAssistantSetup({ assistants: [ownM4], ownEnvironmentId: null })).toBe(false);
   });
 
   it("uses the only connected machine, and asks which machine when several are and none is in context", () => {

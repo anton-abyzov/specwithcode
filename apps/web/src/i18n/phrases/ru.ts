@@ -4087,4 +4087,9 @@ export const ru: PhraseCatalog = {
   "Signed in": "Вход выполнен",
   "Not reported": "Не сообщается",
   "None reported": "Не сообщено",
+  "Set up here": "Настроить здесь",
+  "Each machine has its own private assistant. Nothing transfers between them.":
+    "У каждой машины свой личный ассистент. Между ними ничего не переносится.",
+  "This assistant lives on {name}.": "Этот ассистент находится на {name}.",
+  "Open this machine's assistant": "Открыть ассистента этой машины",
 };

@@ -4117,4 +4117,9 @@ export const es: PhraseCatalog = {
   "Signed in": "Sesión iniciada",
   "Not reported": "No informado",
   "None reported": "Ninguno informado",
+  "Set up here": "Configurar aquí",
+  "Each machine has its own private assistant. Nothing transfers between them.":
+    "Cada máquina tiene su propio asistente privado. No se transfiere nada entre ellos.",
+  "This assistant lives on {name}.": "Este asistente vive en {name}.",
+  "Open this machine's assistant": "Abrir el asistente de esta máquina",
 };
