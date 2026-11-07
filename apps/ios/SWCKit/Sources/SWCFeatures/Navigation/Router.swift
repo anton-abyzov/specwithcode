@@ -255,6 +255,37 @@ final class AppRouter {
     return .project(projectRef)
   }
 
+  /// The coordinator a thread's "Thread in …" line goes back to: the one the
+  /// walk from the open thread finds, which is the one beside it on a wide
+  /// screen; otherwise the project's coordinator by the rules above, so a
+  /// linked project opens its active copy even on another machine.
+  func coordinator(returningFrom ref: ThreadRef, in model: AppModel) -> ChatTarget? {
+    if sidebarSelection(in: model) == .chat(.thread(ref)), let open = openThreadCoordinator(in: model) { return open }
+    return coordinator(ofThread: ref, in: model)
+  }
+
+  /// Shows the coordinator a thread came from. On a wide screen it is
+  /// already in the column beside the thread: the column comes back if hidden
+  /// and its composer takes focus. Otherwise the stack goes back to it if it is underneath, or
+  /// it opens at the root.
+  func returnToCoordinator(from ref: ThreadRef, on nav: StackNavigator, wide: Bool, in model: AppModel) {
+    guard let coordinator = coordinator(returningFrom: ref, in: model) else { return }
+    if wide, nav === main, besideCoordinator(in: model) == coordinator {
+      if widePanes == .detail { choosePanes(.both, in: model) }
+      pendingComposerFocus = coordinator
+      return
+    }
+    if let index = nav.path.lastIndex(of: .chat(coordinator)) {
+      nav.path.removeSubrange((index + 1)...)
+      return
+    }
+    if nav === main, !main.path.isEmpty, (root ?? landing(in: model)) == coordinator {
+      main.path = []
+      return
+    }
+    open(coordinator)
+  }
+
   /// Opens a thread from a chat, unless it is already the one on screen: a
   /// coordinator's transcript now sits beside the threads it links to.
   func pushThread(_ ref: ThreadRef, on nav: StackNavigator, in model: AppModel) {

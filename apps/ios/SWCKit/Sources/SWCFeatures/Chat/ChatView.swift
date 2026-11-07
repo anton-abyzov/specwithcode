@@ -557,13 +557,39 @@ private struct ChatScreen: View {
     switch target {
     case let .aide(ref), let .project(ref):
       let project = model.project(ref)
-      TitleCapsule(title: project?.title ?? session.title, subtitle: session.subtitle, action: { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }) {
+      let kind = ChatKindLine.make(for: target, machine: session.machineLabel, in: model)
+      TitleCapsule(
+        title: project?.title ?? session.title,
+        subtitle: kind?.text ?? session.subtitle,
+        compactSubtitle: kind?.shortText,
+        subtitleSymbol: kind?.symbol,
+        hint: "Opens project settings",
+        action: { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }
+      ) {
         ProjectAvatar(icon: project?.icon.avatarIcon ?? .none, title: project?.title ?? session.title, size: WeaveSize.titleTile)
       }
-      .accessibilityHint("Opens project settings")
     case let .thread(ref):
-      TitleCapsule(title: model.thread(ref)?.title ?? session.title, subtitle: session.subtitle, isPlain: sidebarVisible, action: { router.sheet = .threadInfo(ref) })
-        .accessibilityHint("Shows thread details")
+      let coordinator = router.coordinator(returningFrom: ref, in: model)
+      let kind = ChatKindLine.make(for: target, machine: session.machineLabel, projectTitle: session.projectTitle, coordinator: coordinator, in: model)
+      TitleCapsule(
+        title: model.thread(ref)?.title ?? session.title,
+        subtitle: kind?.text ?? session.subtitle,
+        compactSubtitle: kind?.shortText,
+        subtitleSymbol: kind?.symbol,
+        subtitleLink: coordinatorLink(from: ref, hint: kind?.coordinatorHint),
+        isPlain: sidebarVisible,
+        hint: "Shows thread details",
+        action: { router.sheet = .threadInfo(ref) }
+      )
+    }
+  }
+
+  /// "Thread in specweave" opens the project's coordinator, when it has one;
+  /// the hint is only set then.
+  private func coordinatorLink(from ref: ThreadRef, hint: String?) -> TitleCapsuleLink? {
+    guard let hint else { return nil }
+    return TitleCapsuleLink(hint: hint, identifier: "chat.kind") {
+      withAnimation(.snappy) { router.returnToCoordinator(from: ref, on: nav, wide: wide, in: model) }
     }
   }
 

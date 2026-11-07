@@ -479,6 +479,9 @@ public final class ChatSession: Identifiable {
   public var title: String
   /// e.g. "Coordinator · M4" or "Thread · 2 artifacts"
   public var subtitle: String
+  /// A thread's project, as the engine knows it: set even for a subagent's
+  /// child or an archived thread, which are in no project list.
+  public var projectTitle: String?
   public var rows: [TranscriptRow] = []
   /// True from the moment the first cached or live data arrives.
   public var isLoaded = false
@@ -813,6 +816,7 @@ public final class AppModel {
       let summary = thread(t)
       let machine = machine(t.environmentId)
       s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: ChatSession.threadSubtitle(summary?.projectTitle ?? "Thread", machine: machine?.displayName ?? "", isPersonal: summary?.projectRef.flatMap { project($0) }?.kind == .personal), machineLabel: machine?.displayName ?? "", machineOnline: machine?.status.isOnline ?? false)
+      s.projectTitle = summary?.projectTitle
     }
     sessions[target] = s
     return s
