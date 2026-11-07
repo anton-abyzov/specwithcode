@@ -19,7 +19,8 @@ import {
 describe("planWorktreeSet", () => {
   it.effect("mirrors paths under the project root, root first, outside repositories by name", () =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
+      // POSIX inputs and outputs, so the case reads the same on Windows.
+      const path = NodePath.posix;
       const members = planWorktreeSet(
         "/work/umbrella",
         [
@@ -50,7 +51,7 @@ describe("planWorktreeSet", () => {
     const members = planWorktreeSet(
       "/work/root",
       [{ path: "tools/cli" }, { path: "/elsewhere/tools" }],
-      NodePath,
+      NodePath.posix,
     );
     expect(members.map((member) => member.relativePath)).toEqual(["tools/cli", "tools-2"]);
   });
@@ -68,7 +69,7 @@ describe("worktree set folder", () => {
           branch: "feat/multi-repo",
           path,
         }),
-      ).toBe("/home/me/.specwithcode/worktrees/umbrella/feat-multi-repo");
+      ).toBe(path.join("/home/me/.specwithcode/worktrees", "umbrella", "feat-multi-repo"));
       expect(worktreeFolderName("feat/" + "x".repeat(60))).toMatch(/^feat-x{18}-[0-9a-f]{16}$/u);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
