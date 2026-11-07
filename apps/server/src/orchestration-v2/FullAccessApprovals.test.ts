@@ -548,10 +548,12 @@ describe("FullAccessApprovals", () => {
               assert.equal(fake.runtimeRequests[0]?.status, "pending");
             }),
           ),
-        ).pipe(Effect.provideService(TeamRules, {
-          current: Effect.sync(() => rules),
-          forFolder: () => Effect.sync(() => rules),
-        }));
+        ).pipe(
+          Effect.provideService(TeamRules, {
+            current: Effect.sync(() => rules),
+            forFolder: () => Effect.sync(() => rules),
+          }),
+        );
       }),
   );
 
