@@ -151,6 +151,12 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   /// Each machine's copy of a project linked across machines, coordinator
   /// first. Empty for a project on one machine.
   public var members: [ProjectMember]
+  /// The other machines the row's copy is linked with, by environment id, as
+  /// its linked project lists them, so a machine this phone never loaded counts.
+  public var linkedMachineIds: [String] = []
+  /// The machine running the coordinator when the row's copy only runs
+  /// workers, followed along later moves; nil when it runs its own.
+  public var coordinatorElsewhereId: String?
 
   public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, isAutomated: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
     self.ref = ref

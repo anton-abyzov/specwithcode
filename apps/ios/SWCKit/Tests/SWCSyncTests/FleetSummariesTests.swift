@@ -180,6 +180,32 @@ import SWCWire
     #expect(both.projects.first?.ref.environmentId == "minis")
   }
 
+  @Test func rowCarriesTheLinkedProjectsOtherMachinesWithOneMachinePaired() throws {
+    var copy = try linked("p4", epoch: 1)
+    copy.workspaceSettings?.logicalProject?.members = [
+      LogicalProjectMember(environmentId: "m4", projectId: "p4", coordinatorThreadId: "c4"),
+      LogicalProjectMember(environmentId: "minis", projectId: "pm", coordinatorThreadId: "cm"),
+    ]
+    let output = ShellSummaries.build([machine("m4", label: "M4", threads: [], projects: [copy])])
+    let project = try #require(output.projects.first)
+    #expect(project.linkedMachineIds == ["minis"])
+    #expect(project.coordinatorElsewhereId == nil)
+  }
+
+  @Test func workersOnlyCopyFollowsItsCoordinatorAlongLaterMoves() throws {
+    var handed = try linked("p4", epoch: 1, state: .transferred)
+    handed.workspaceSettings?.coordinatorBinding?.successor = LogicalProjectMember(environmentId: "minis", projectId: "pm", coordinatorThreadId: "cm")
+    var moved = try linked("pm", epoch: 2, state: .transferred)
+    moved.workspaceSettings?.coordinatorBinding?.successor = LogicalProjectMember(environmentId: "studio", projectId: "ps", coordinatorThreadId: "cs")
+    let output = ShellSummaries.build([
+      machine("m4", label: "M4", threads: [], projects: [handed]),
+      machine("minis", label: "Minis", online: false, threads: [], projects: [moved]),
+    ])
+    let project = try #require(output.projects.first)
+    #expect(project.ref.environmentId == "m4")
+    #expect(project.coordinatorElsewhereId == "studio")
+  }
+
   @Test func withoutAnActiveCoordinatorTheRowOpensAReachableMachine() throws {
     let output = ShellSummaries.build([
       machine("a-m4", label: "M4", online: false, threads: [], projects: [try linked("p4")]),
