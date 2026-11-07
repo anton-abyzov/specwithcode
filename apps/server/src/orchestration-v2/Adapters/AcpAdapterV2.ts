@@ -90,7 +90,7 @@ import { withTrackedPermissionToolCall } from "./acpTrackedPermission.ts";
 import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
-  acpPermissionDisposition,
+  acpRequestDisposition,
   type AcpPermissionDisposition,
   makeAcpClientPolicyGrants,
   unknownRecord,
@@ -6136,9 +6136,10 @@ export function makeAcpAdapterV2(
                 handlerGeneration,
                 Effect.gen(function* () {
                   const context = yield* activeContext;
-                  const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
+                  const disposition = acpRequestDisposition(
                     context.input.runtimePolicy,
                     params,
+                    flavor.permissionDisposition,
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);

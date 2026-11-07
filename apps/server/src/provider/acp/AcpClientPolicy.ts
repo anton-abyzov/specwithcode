@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import { isStudioReadOnlyTool } from "../../mcp/studioReadOnlyTools.ts";
 import type { ProviderRequestKind, RuntimeMode } from "@specweave-studio/contracts";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as NodeFS from "node:fs";
@@ -234,6 +235,23 @@ export function acpPermissionDisposition(
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
   });
+}
+
+/**
+ * A provider's permission request: SpecWithCode's own read-only tools run in
+ * every mode; everything else follows the provider's rule.
+ */
+export function acpRequestDisposition(
+  runtimePolicy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decide: (
+    runtimePolicy: AcpRuntimePolicy,
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => AcpPermissionDisposition = acpPermissionDisposition,
+): AcpPermissionDisposition {
+  return request.toolCall.kind !== "execute" && isStudioReadOnlyTool(request.toolCall.title)
+    ? "allow"
+    : decide(runtimePolicy, request);
 }
 
 /** Resolve explicitly tagged MCP approvals through the thread's normal policy. */
