@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { beforeEach } from "vite-plus/test";
 import {
   EnvironmentId,
+  ThreadId,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ProjectId,
@@ -11,6 +12,7 @@ import {
   OrchestrationV2ThreadBoundedSnapshot,
   type OrchestrationV2ThreadHistoryPage,
 } from "@specweave-studio/contracts";
+import { normalizeDpopHtu } from "@specweave-studio/shared/dpopCommon";
 import { RelayClientTracer } from "@specweave-studio/shared/relayTracing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -294,6 +296,44 @@ describe("authenticated environment HTTP requests", () => {
         expect(url.searchParams.get("cursor")).toBe("older-page");
       }
       expect(PREPARED.httpAuthorization).toMatchObject({ accessToken: "expired-token" });
+    }),
+  );
+
+  it.effect.each([
+    "thread:provider:codex:native-thread:abc",
+    "thread:delegated-task:command%3Amcp%3Aabc/task?part#name",
+  ])("binds thread read proofs to the encoded HTTP path for %s", (id) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make(id);
+      for (const kind of ["full", "bounded", "history"] as const) {
+        const response =
+          kind === "full"
+            ? encodeThreadSnapshot(THREAD)
+            : kind === "bounded"
+              ? encodeBoundedSnapshot(BOUNDED_THREAD)
+              : THREAD_HISTORY;
+        const harness = makeHarness(() => Response.json(response));
+        const input = { ...harness.input, threadId };
+        if (kind === "full") {
+          yield* ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot(input).pipe(
+            Effect.provide(harness.httpLayer),
+          );
+        } else if (kind === "bounded") {
+          yield* fetchEnvironmentBoundedThreadSnapshot({ ...input, boundLongTurns: true }).pipe(
+            Effect.provide(harness.httpLayer),
+          );
+        } else {
+          yield* fetchEnvironmentThreadHistoryPage({ ...input, cursor: "older/page?x=1" }).pipe(
+            Effect.provide(harness.httpLayer),
+          );
+        }
+        expect(harness.calls).toHaveLength(1);
+        expect(harness.authorizations).toHaveLength(1);
+        expect(normalizeDpopHtu(harness.proofs[0]!.url)).toBe(
+          normalizeDpopHtu(harness.calls[0]!.url),
+        );
+        expect(new URL(harness.calls[0]!.url).pathname).toContain(encodeURIComponent(id));
+      }
     }),
   );
 
