@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { beforeEach, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import {
   dismissLinkSuggestion,
   duplicateLinkSuggestions,
@@ -9,6 +9,8 @@ import {
   linkDialogTarget,
   type SuggestionGroup,
 } from "./duplicateProjectLink";
+import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
+import type { Project } from "../types";
 
 const M4 = "env-m4" as EnvironmentId;
 const M3 = "env-m3" as EnvironmentId;
@@ -240,4 +242,95 @@ it("offers a copy to join a shared project whose Linux member sits behind a home
   const suggestion = duplicateLinkSuggestions([shared, single], options).get("b");
   expect(suggestion?.candidate.id).toBe("p-m1");
   expect(suggestion?.anchorTitle).toBe("specweave");
+});
+
+describe("one row that repository grouping merged across machines", () => {
+  const EASYCHAMP = "github.com/anton-abyzov/sw-easychamp";
+  const copyOf = (
+    environmentId: EnvironmentId,
+    id: string,
+    extra: Partial<EnvironmentProject> = {},
+  ) => project(environmentId, id, EASYCHAMP, { title: "EasyChamp", ...extra });
+  /** The sidebar's own rows, as `buildSidebarProjectSnapshots` makes them by default. */
+  const rows = (...projects: EnvironmentProject[]) =>
+    buildSidebarProjectSnapshots({
+      projects: projects as unknown as Project[],
+      settings: { sidebarProjectGroupingMode: "repository", sidebarProjectGroupingOverrides: {} },
+      primaryEnvironmentId: M4,
+      resolveEnvironmentLabel: (id) => id,
+    });
+  const handoffCopies = [
+    copyOf(M1, "machine-handoff:a"),
+    copyOf(M1, "machine-handoff:b", {
+      workspaceRoot: "/Users/a/.specwithcode/machine-handoffs/git/sw-easychamp",
+    }),
+    copyOf(M4, "proof", {
+      workspaceRoot: "/Users/a/fleet/handoff-proof-20261013/source-checkouts/sw-easychamp",
+    }),
+  ];
+
+  it("offers the other machine's copy, anchored on this machine's, ignoring staging copies", () => {
+    const groups = rows(copyOf(M4, "p-m4"), copyOf(M1, "p-m1"), ...handoffCopies);
+    // Repository grouping makes them one row, which the two-row pass never saw.
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.memberProjects.length).toBeGreaterThan(2);
+    const suggestions = duplicateLinkSuggestions(groups, options);
+    const suggestion = suggestions.get(groups[0]!.projectKey)!;
+    expect(suggestion.anchor.id).toBe("p-m4");
+    expect(suggestion.candidate.id).toBe("p-m1");
+    expect(suggestion.anchorTitle).toBe("EasyChamp");
+    expect(suggestion.repository).toBe("anton-abyzov/sw-easychamp");
+    expect(linkDialogTarget(suggestion)).toMatchObject({
+      project: { environmentId: M4, id: "p-m4" },
+      candidate: { environmentId: M1, projectId: "p-m1" },
+    });
+  });
+
+  it("keeps every safety condition for the merged row", () => {
+    const none = (...projects: EnvironmentProject[]) =>
+      expect(duplicateLinkSuggestions(rows(...projects), options).size).toBe(0);
+    // Different places inside the repository.
+    none(
+      copyOf(M4, "p-m4"),
+      copyOf(M1, "p-m1", {
+        workspaceRoot: "/Users/a/p-m1/apps/web",
+        repositoryIdentity: identity(EASYCHAMP, "/Users/a/p-m1"),
+      } as Partial<EnvironmentProject>),
+    );
+    // Both copies on one machine, and neither copy on this machine.
+    none(copyOf(M4, "p-a"), copyOf(M4, "p-b"));
+    none(copyOf(M3, "p-m3"), copyOf(M1, "p-m1"));
+    // Three plain copies.
+    none(copyOf(M4, "p-m4"), copyOf(M1, "p-m1"), copyOf(M3, "p-m3"));
+    // A copy that already lists another machine's copy is linked.
+    none(
+      copyOf(M4, "p-m4"),
+      copyOf(M1, "p-m1", {
+        workspaceSettings: {
+          logicalProject: {
+            id: "logical:elsewhere",
+            title: "EasyChamp",
+            members: [
+              { environmentId: M1, projectId: "p-m1", workspaceRoot: "/Users/a/p-m1" },
+              { environmentId: M3, projectId: "p-m3", workspaceRoot: "/Users/a/p-m3" },
+            ],
+          },
+        },
+      } as unknown as Partial<EnvironmentProject>),
+    );
+    // Ineligible copies, and a copy the person said is different.
+    expect(
+      duplicateLinkSuggestions(rows(copyOf(M4, "p-m4"), copyOf(M1, "p-m1")), {
+        ...options,
+        eligible: (candidate) => candidate.id !== "p-m1",
+      }).size,
+    ).toBe(0);
+    dismissLinkSuggestion({ environmentId: M1, id: "p-m1" as ProjectId });
+    expect(
+      duplicateLinkSuggestions(rows(copyOf(M4, "p-m4"), copyOf(M1, "p-m1"), ...handoffCopies), {
+        ...options,
+        dismissed: isLinkSuggestionDismissed,
+      }).size,
+    ).toBe(0);
+  });
 });

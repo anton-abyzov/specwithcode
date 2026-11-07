@@ -919,7 +919,12 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 
 /* A project shared with or handed off from another machine. */
 .sws-side-row > .sws-side-row-shared {
+  display: inline-flex;
   color: var(--primary);
+}
+.sws-side-row > .sws-side-row-shared > svg {
+  width: 12px;
+  height: 12px;
 }
 /* The same repository on another machine, not linked yet: a link offer. */
 .sws-side-row > .sws-side-row-link-suggestion {

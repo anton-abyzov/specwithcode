@@ -49,10 +49,10 @@ export function repositoryRelativePath(
   return repositoryRelativePathOf(project.workspaceRoot, project.repositoryIdentity?.rootPath);
 }
 
-/** The one repository, and place in it, that every copy in the group is; null otherwise. */
-function soleRepositoryKey(group: SuggestionGroup): string | null {
+/** The one repository, and place in it, that every copy is; null otherwise. */
+function soleRepositoryKey(members: ReadonlyArray<EnvironmentProject>): string | null {
   let key: string | null = null;
-  for (const member of group.memberProjects) {
+  for (const member of members) {
     if (!member.repositoryIdentity) return null;
     const inside = repositoryRelativePath(member);
     if (inside === null) return null;
@@ -103,7 +103,8 @@ function anchorOf(
  * - exactly one other row matches, so the suggestion never has to guess which;
  * - the person has not said they are different projects.
  * When both rows hold a single copy, the copy on another machine is the one offered,
- * so this machine's project stays the established one.
+ * so this machine's project stays the established one. A row that merged exactly two
+ * unlinked copies on two machines, one of them this machine's, is suggested the same way.
  */
 export function duplicateLinkSuggestions(
   groups: ReadonlyArray<SuggestionGroup>,
@@ -114,15 +115,15 @@ export function duplicateLinkSuggestions(
     readonly dismissed?: (candidate: EnvironmentProject) => boolean;
   },
 ): Map<string, DuplicateLinkSuggestion> {
+  const plain = (member: EnvironmentProject) =>
+    typeof member.workspaceRoot === "string" &&
+    isProjectFolder(member.workspaceRoot, member.id) &&
+    options.eligible(member);
   const byRepository = new Map<string, SuggestionGroup[]>();
   for (const group of groups) {
     if (group.memberProjects.length === 0) continue;
-    const key = soleRepositoryKey(group);
+    const key = soleRepositoryKey(group.memberProjects);
     if (key === null) continue;
-    const plain = (member: EnvironmentProject) =>
-      typeof member.workspaceRoot === "string" &&
-      isProjectFolder(member.workspaceRoot, member.id) &&
-      options.eligible(member);
     if (!group.memberProjects.every(plain)) continue;
     byRepository.set(key, [...(byRepository.get(key) ?? []), group]);
   }
@@ -165,6 +166,32 @@ export function duplicateLinkSuggestions(
       anchor,
       candidate,
       anchorTitle: established.displayName,
+      repository: candidate.repositoryIdentity
+        ? (repositoryGroupingDisplayNameOf(candidate.repositoryIdentity) ?? null)
+        : null,
+    });
+  }
+  // Grouped by repository, two unlinked copies on two machines share one row: the
+  // copy elsewhere joins this machine's. Staging copies in the row are not projects.
+  const plainByRepository = new Map<string, SuggestionGroup[]>();
+  for (const group of groups) {
+    const key = soleRepositoryKey(group.memberProjects.filter(plain));
+    if (key !== null) plainByRepository.set(key, [...(plainByRepository.get(key) ?? []), group]);
+  }
+  for (const same of plainByRepository.values()) {
+    if (same.length !== 1) continue;
+    const group = same[0]!;
+    if (suggestions.has(group.projectKey)) continue;
+    const copies = group.memberProjects.filter(plain);
+    if (copies.length !== 2 || copies.some(isLinked)) continue;
+    const anchor = copies.find((copy) => copy.environmentId === options.primaryEnvironmentId);
+    const candidate = copies.find((copy) => copy.environmentId !== options.primaryEnvironmentId);
+    if (!anchor || !candidate) continue;
+    if (options.dismissed?.(candidate)) continue;
+    suggestions.set(group.projectKey, {
+      anchor,
+      candidate,
+      anchorTitle: anchor.title,
       repository: candidate.repositoryIdentity
         ? (repositoryGroupingDisplayNameOf(candidate.repositoryIdentity) ?? null)
         : null,
