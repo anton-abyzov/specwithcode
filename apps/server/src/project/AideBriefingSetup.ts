@@ -120,6 +120,11 @@ export function briefingRoutine(
   };
 }
 
+/** Save today's briefing in place of the early one, or only drop the early one once it exists. */
+export type EarlyBriefingStep =
+  | { readonly kind: "replace"; readonly input: ScheduledTaskUpsertInput }
+  | { readonly kind: "drop" };
+
 /** Early setups saved the briefing under this id, in the app's built-in approval mode. */
 const EARLY_BRIEFING_ID = "scheduled-task:assistant-setup:";
 
@@ -129,11 +134,6 @@ const EARLY_BRIEFING_ID = "scheduled-task:assistant-setup:";
  * schedule and model. Only the early id matches, so this happens once and a
  * mode the person sets later stays.
  */
-/** Save today's briefing in place of the early one, or only drop the early one once it exists. */
-export type EarlyBriefingStep =
-  | { readonly kind: "replace"; readonly input: ScheduledTaskUpsertInput }
-  | { readonly kind: "drop" };
-
 export function earlyBriefingReplacement(
   task: ScheduledTask,
   tasks: ReadonlyArray<Pick<ScheduledTask, "id">>,
@@ -141,6 +141,7 @@ export function earlyBriefingReplacement(
 ): EarlyBriefingStep | null {
   if (
     !task.id.startsWith(EARLY_BRIEFING_ID) ||
+    !isBriefing(task) ||
     task.runtimeMode !== "approval-required" ||
     task.schedule.type === "webhook"
   )

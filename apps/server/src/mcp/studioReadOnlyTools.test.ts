@@ -16,7 +16,11 @@ import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import { ProjectPlanToolkit } from "./toolkits/projectPlan/tools.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
-import { STUDIO_READ_ONLY_TOOLS, studioToolName } from "./studioReadOnlyTools.ts";
+import {
+  STUDIO_READ_ONLY_TOOLS,
+  THREAD_CONTENT_TOOLS,
+  studioToolName,
+} from "./studioReadOnlyTools.ts";
 
 const TOOLS = [
   OrchestratorToolkit,
@@ -61,7 +65,8 @@ describe("STUDIO_READ_ONLY_TOOLS", () => {
   });
 
   it("keeps other threads' transcripts behind approval", () => {
-    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("studio_thread_read"));
+    for (const name of ["studio_thread_read", ...THREAD_CONTENT_TOOLS])
+      assert.isFalse(STUDIO_READ_ONLY_TOOLS.has(name), name);
   });
 
   it("needs the server in the title", () => {

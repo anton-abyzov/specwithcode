@@ -1029,7 +1029,10 @@ export const layer = Layer.effect(
                     : threadManagement
                         .dispatch({
                           type: "thread.runtime-mode.set",
-                          commandId: CommandId.make(`${commandId}:runtime-mode`),
+                          // The mode is in the id: a retry after a change applies it again, not a stale receipt.
+                          commandId: CommandId.make(
+                            `${commandId}:runtime-mode:${active.runtimeMode}`,
+                          ),
                           threadId,
                           runtimeMode: active.runtimeMode,
                           applyOnNextTurn: true,

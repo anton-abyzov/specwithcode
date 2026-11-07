@@ -7,10 +7,19 @@ import { CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS } from "../orchestration-v2/A
  * own delegated tasks. Gmail, Drive and Calendar content, and other threads'
  * transcripts, stay behind approval.
  */
+// Read-only, but they return what other threads said: excerpts, snippets or queued text.
+export const THREAD_CONTENT_TOOLS: ReadonlySet<string> = new Set([
+  "studio_thread_wait",
+  "studio_threads_wait",
+  "studio_thread_search",
+  "studio_queue_read",
+  "studio_pending_request_read",
+]);
+
 export const STUDIO_READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   ...CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS.map((name) =>
     name.replace(/^mcp__studio-code__/, ""),
-  ),
+  ).filter((name) => !THREAD_CONTENT_TOOLS.has(name)),
   "studio_google_status",
   "task_status",
 ]);
