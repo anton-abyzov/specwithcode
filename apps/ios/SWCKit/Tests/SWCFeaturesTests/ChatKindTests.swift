@@ -132,6 +132,16 @@ struct ChatKindTests {
     #expect(router.root == .project(project.ref))
   }
 
+  @Test func aThreadWhoseMachineControlIsInTheRailNamesItsMachine() throws {
+    let model = model()
+    let project = try #require(model.projects.first { $0.kind != .personal && !model.threads(in: $0.ref).isEmpty })
+    let thread = try #require(model.threads(in: project.ref).first)
+    let line = try #require(ChatKindLine.make(for: .thread(thread.ref), machine: "m4", namesMachine: true, in: model))
+    #expect(line.text == "Thread in \(project.title) · m4")
+    #expect(line.shortText == "In \(project.title) · m4")
+    #expect(ChatKindLine.make(for: .thread(thread.ref), machine: "m4", in: model)?.text == "Thread in \(project.title)")
+  }
+
   @Test func aPersonalProjectsThreadNamesItsMachine() throws {
     let model = model()
     let aide = try #require(model.aide)

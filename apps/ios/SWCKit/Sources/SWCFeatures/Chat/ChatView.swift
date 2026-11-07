@@ -570,7 +570,9 @@ private struct ChatScreen: View {
       }
     case let .thread(ref):
       let coordinator = router.coordinator(returningFrom: ref, in: model)
-      let kind = ChatKindLine.make(for: target, machine: session.machineLabel, projectTitle: session.projectTitle, coordinator: coordinator, in: model)
+      // Beside the list the machine control moves to the Duo's status rail,
+      // under the system's own indicators, so the line names the machine.
+      let kind = ChatKindLine.make(for: target, machine: session.machineLabel, projectTitle: session.projectTitle, coordinator: coordinator, namesMachine: usesRail, in: model)
       TitleCapsule(
         title: model.thread(ref)?.title ?? session.title,
         subtitle: kind?.text ?? session.subtitle,
@@ -865,7 +867,13 @@ private struct ChatScreen: View {
   private var placeholder: String {
     switch target {
     case .aide: "Ask Aide anything…"
-    case .project: "Message the coordinator…"
+    case let .project(project):
+      // With a thread from another machine beside it, say whose coordinator this is.
+      if isBesideCoordinator, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1, !session.machineLabel.isEmpty {
+        "Message the coordinator on \(session.machineLabel)…"
+      } else {
+        "Message the coordinator…"
+      }
     case .thread: sidebarVisible && !session.machineLabel.isEmpty ? "Work on \(session.machineLabel)" : "Message…"
     }
   }

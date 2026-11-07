@@ -36,11 +36,14 @@ struct ChatKindLine: Equatable {
   /// machine. `projectTitle` is the session's own record of a thread's
   /// project, for a subagent's child or an archived thread that no project
   /// list holds. `coordinator` is where the line goes back to, if anywhere.
+  /// `namesMachine` makes any thread name its machine, for a header whose
+  /// machine control is not in the header row (the Duo's status rail).
   static func make(
     for target: ChatTarget,
     machine: String,
     projectTitle sessionProjectTitle: String? = nil,
     coordinator: ChatTarget? = nil,
+    namesMachine: Bool = false,
     in model: AppModel
   ) -> ChatKindLine? {
     switch target {
@@ -61,7 +64,7 @@ struct ChatKindLine: Equatable {
         if case .aide = $0 { return "Opens \(title)" }
         return "Opens the \(title) coordinator"
       }
-      let personal = project?.kind == .personal
+      let personal = project?.kind == .personal || namesMachine
       return ChatKindLine(
         kind: .thread,
         text: personal ? joined("Thread in \(title)", machine) : "Thread in \(title)",
