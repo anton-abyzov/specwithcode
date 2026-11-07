@@ -314,13 +314,19 @@ describe("authenticated environment HTTP requests", () => {
               : THREAD_HISTORY;
         const harness = makeHarness(() => Response.json(response));
         const input = { ...harness.input, threadId };
-        const request =
-          kind === "full"
-            ? ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot(input)
-            : kind === "bounded"
-              ? fetchEnvironmentBoundedThreadSnapshot({ ...input, boundLongTurns: true })
-              : fetchEnvironmentThreadHistoryPage({ ...input, cursor: "older/page?x=1" });
-        yield* request.pipe(Effect.provide(harness.httpLayer));
+        if (kind === "full") {
+          yield* ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot(input).pipe(
+            Effect.provide(harness.httpLayer),
+          );
+        } else if (kind === "bounded") {
+          yield* fetchEnvironmentBoundedThreadSnapshot({ ...input, boundLongTurns: true }).pipe(
+            Effect.provide(harness.httpLayer),
+          );
+        } else {
+          yield* fetchEnvironmentThreadHistoryPage({ ...input, cursor: "older/page?x=1" }).pipe(
+            Effect.provide(harness.httpLayer),
+          );
+        }
         expect(harness.calls).toHaveLength(1);
         expect(harness.authorizations).toHaveLength(1);
         expect(normalizeDpopHtu(harness.proofs[0]!.url)).toBe(
