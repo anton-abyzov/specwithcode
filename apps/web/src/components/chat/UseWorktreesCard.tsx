@@ -87,7 +87,11 @@ export function UseWorktreesCard({
                   "The agent kept working in this checkout. Turn it on to let threads in this project use their own git worktree.",
                 )}
           </p>
-          {error ? <p className="text-destructive">{error}</p> : null}
+          {error ? (
+            <p role="alert" className="text-destructive-foreground">
+              {error}
+            </p>
+          ) : null}
         </div>
       </div>
       {on ? null : (
