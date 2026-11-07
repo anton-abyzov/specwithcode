@@ -285,7 +285,9 @@ public struct ServerError: Error, Sendable, Hashable, CustomStringConvertible {
           return ServerError(kind: .dispatch(commandType: error["commandType"]?.stringValue), message: message ?? "The machine rejected the command.", raw: error)
         case "ProjectWorkspaceError":
           let code = error["code"]?.stringValue ?? "unknown"
-          return ServerError(kind: .projectWorkspace(code: code), message: ProjectWorkspaceErrorText.message(for: code), raw: error)
+          // `provider_unavailable` may name the provider and why; older servers send only the code.
+          let text = error["detail"]?.stringValue ?? ProjectWorkspaceErrorText.message(for: code)
+          return ServerError(kind: .projectWorkspace(code: code), message: text, raw: error)
         case "ProjectMutationError":
           return ServerError(kind: .projectMutation, message: message ?? "The project could not be saved.", raw: error)
         case "ServerSettingsError":
@@ -306,7 +308,7 @@ public struct ServerError: Error, Sendable, Hashable, CustomStringConvertible {
   }
 }
 
-/// User-facing text for `ProjectWorkspaceError.code`. The server sends only the code.
+/// User-facing text for `ProjectWorkspaceError.code`, used when the server sends no `detail`.
 public enum ProjectWorkspaceErrorText {
   public static func message(for code: String) -> String {
     switch code {
@@ -320,6 +322,16 @@ public enum ProjectWorkspaceErrorText {
     case "transferred": "This project moved to another machine."
     case "update_in_progress": "That machine is updating. Try again shortly."
     case "invalid_coordinator": "The coordinator thread is in a bad state on that machine."
+    case "invalid": "The project memory name or content is invalid, or the project is at its memory limit."
+    case "empty_message": "Enter a message or attach a file first."
+    case "invalid_attachments": "These attachments cannot be sent. Attach the files again and retry."
+    case "attachment_unavailable": "These uploaded files have expired. Attach them again and retry."
+    case "attachment_limit": "The attachments exceed the message limits. Send fewer or smaller files."
+    case "invalid_source_thread": "The selected worker is no longer in this project. Choose a current thread."
+    case "provider_unavailable": "The coordinator's model can't run on that machine. Choose another coordinator model, or set up its provider there in Settings > Providers."
+    case "coordinator_tools_required": "This model can't call tools to coordinate work. Choose a coordinator model with tool support."
+    case "operation_failed": "That didn't work on the machine. Reload and try again."
+    case "moving": "This project is moving to another machine. Try again when the move finishes."
     default: "The project could not do that (\(code))."
     }
   }
