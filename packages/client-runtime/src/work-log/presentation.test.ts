@@ -40,6 +40,7 @@ import {
   workEntryIndicatesToolSuccess,
   workEntryComputerUsePermission,
   workEntryReportsChromeDisconnected,
+  workEntryReportsWorktreesOff,
 } from "./presentation.js";
 
 function commandItem(
@@ -1033,6 +1034,48 @@ describe("workEntryReportsChromeDisconnected", () => {
   it("ignores other failures", () => {
     expect(workEntryReportsChromeDisconnected({ detail: "Navigation timed out" })).toBe(false);
     expect(workEntryReportsChromeDisconnected({})).toBe(false);
+  });
+});
+
+describe("workEntryReportsWorktreesOff", () => {
+  const refusal =
+    "fatal: Use worktrees is off for this project, so this checkout cannot add a worktree. Do not stop for this.";
+
+  it("reads the git shim's refusal in command output, the detail and tool output", () => {
+    expect(
+      workEntryReportsWorktreesOff({
+        structuredPayload: {
+          type: "command_execution",
+          output: `Preparing worktree\n${refusal}\n`,
+        } as never,
+      }),
+    ).toBe(true);
+    expect(workEntryReportsWorktreesOff({ detail: refusal })).toBe(true);
+    expect(
+      workEntryReportsWorktreesOff({
+        toolData: {
+          content: [
+            {
+              type: "text",
+              text: "Use worktrees is off for this project, so a thread cannot add worktrees.",
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores the launch notice and other failures", () => {
+    expect(
+      workEntryReportsWorktreesOff({
+        toolData: {
+          output:
+            "Use worktrees is off for this project, so the thread works in the project folder on whatever branch is checked out there.",
+        },
+      }),
+    ).toBe(false);
+    expect(workEntryReportsWorktreesOff({ detail: "fatal: not a git repository" })).toBe(false);
+    expect(workEntryReportsWorktreesOff({})).toBe(false);
   });
 });
 

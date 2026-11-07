@@ -102,6 +102,7 @@ import {
   subagentDiffTarget,
   workEntryComputerUsePermission,
   workEntryReportsChromeDisconnected,
+  workEntryReportsWorktreesOff,
   workEntryViewedImagePath,
 } from "@specweave-studio/client-runtime/work-log/presentation";
 import { resolveProviderInstanceDisplayName } from "@specweave-studio/client-runtime/state/provider-instance-display";
@@ -351,6 +352,7 @@ import { ContextChip, ContextChipLabel, type ContextChipKind } from "../ContextC
 import { createContextPresentationRegistry } from "../contextPresentationRegistry";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { ChromeConnectCard } from "./ChromeConnectCard";
+import { UseWorktreesCard } from "./UseWorktreesCard";
 import { ComputerUsePermissionCard } from "../computerUse/ComputerUsePermissions";
 import { useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
@@ -6636,6 +6638,14 @@ type WorkEntryRowProps = {
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 };
 
+/** The one-click Use worktrees card for this thread's own project. */
+function WorktreesOffCard() {
+  const ctx = use(TimelineRowCtx);
+  const shell = useThreadShell(ctx.threadRef);
+  if (!shell) return null;
+  return <UseWorktreesCard environmentId={shell.environmentId} projectId={shell.projectId} />;
+}
+
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
@@ -6647,6 +6657,14 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
         <>
           <WorkEntryLogRow {...props} />
           <ChromeConnectCard environmentId={ctx.activeThreadEnvironmentId} />
+        </>
+      );
+    }
+    if (workEntryReportsWorktreesOff(props.workEntry)) {
+      return (
+        <>
+          <WorkEntryLogRow {...props} />
+          <WorktreesOffCard />
         </>
       );
     }

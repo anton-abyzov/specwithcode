@@ -13,7 +13,7 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 
 export const MANUAL_WORKTREE_REFUSAL =
-  "Use worktrees is off for this project; work in the checkout this thread was given. If the user wants a separate worktree, start a SpecWithCode thread with its own worktree, or turn on Use worktrees in project settings for new threads.";
+  "Use worktrees is off for this project, so this checkout cannot add a worktree. Do not stop for this: keep working in the checkout this thread was given. The thread now shows the user a one-click Turn on Use worktrees for this project button; once they turn it on, a later turn may create the worktree.";
 
 /** Global options that take their value as the next argument (`-C <dir>`). */
 export const GIT_GLOBAL_OPTIONS_WITH_VALUE = [
@@ -264,7 +264,11 @@ export function installManualWorktreeGuard(input: {
   });
   if (realGit === null) return null;
   NodeFS.mkdirSync(directory, { recursive: true });
-  for (const [name, content] of manualWorktreeGuardFiles(platform, realGit, NodeFS.realpathSync(NodeOS.tmpdir()))) {
+  for (const [name, content] of manualWorktreeGuardFiles(
+    platform,
+    realGit,
+    NodeFS.realpathSync(NodeOS.tmpdir()),
+  )) {
     const target = NodePath.join(directory, name);
     const temporary = `${target}.tmp`;
     NodeFS.writeFileSync(temporary, content, { mode: 0o755 });
