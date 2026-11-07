@@ -435,6 +435,8 @@ struct SidebarView: View {
     let waiting = ThreadGroups(model.threads(in: project.ref).filter { !$0.isResolved }).needsYou.count
     // With more than one machine, every row says which ones it is on.
     let machines = model.machines.count > 1 ? model.machines(of: project) : []
+    // A linked project says so even with one machine paired.
+    let badge = model.sharedProjectBadge(project)
     return Button {
       withAnimation(.snappy) { router.showProject(project.ref, in: model) }
     } label: {
@@ -450,6 +452,7 @@ struct SidebarView: View {
             .foregroundStyle(Color.weave.warn)
             .accessibilityHidden(true)
           }
+          if let badge { SharedProjectGlyph(badge: badge) }
           ProjectStatusGlyphs(project: project)
           Image(systemName: "chevron.right")
             .font(.system(size: 11, weight: .semibold))
@@ -459,7 +462,7 @@ struct SidebarView: View {
       }
     }
     .buttonStyle(.plain)
-    .accessibilityValue(([machines.spoken, waiting > 0 ? needsYouLabel(waiting) : nil, ProjectStatusGlyphs.spoken(project)] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
+    .accessibilityValue(([machines.spoken, badge?.label, waiting > 0 ? needsYouLabel(waiting) : nil, ProjectStatusGlyphs.spoken(project)] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
     .accessibilityAddTraits(selected ? .isSelected : [])
     .accessibilityHint("Opens it and shows its threads")
     .sidebarRowStyle(selected: selected)
