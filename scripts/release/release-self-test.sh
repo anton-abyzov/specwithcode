@@ -160,7 +160,7 @@ use_machine() {  # use_machine ROOT VERSION
     STUDIO_PUBLIC_RULES="$root/public-rules/rules.json" RELEASE_DESKTOP_APP="$root/Applications/SpecWithCode.app"
     RELEASE_STUB_PREVIOUS=1.1.0 RELEASE_STUB_SHA="$SHA_A" RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE=
     RELEASE_STUB_STATUS= RELEASE_STUB_OUTPUT= RELEASE_JOBS=2 RELEASE_FLEET_SSH=
-    RELEASE_PRIVATE_REPO=anton-abyzov/specwithcode)  # Two repositories, unless a case sets one.
+    RELEASE_PRIVATE_REPO=example/specwithcode-private)  # Two repositories, unless a case sets one.
   mkdir -p "$root/home"
 }
 
@@ -628,7 +628,7 @@ check 'an Electron runtime still missing after install.js stops the candidate st
 stub_set RELEASE_STUB_STATUS=same-sums-private=1
 draft_sums_refused() {
   run 1 1.4.1 --resume || return 1
-  has 'SHA256SUMS on anton-abyzov/specwithcode is not' || return 1
+  has 'SHA256SUMS on example/specwithcode-private is not' || return 1
   case "$(labels_of publish-private)" in *publish-private*) return 1 ;; esac
   [ ! -f "$STAGE/published.sha" ] && [ ! -f "$STAGE/markers/publish-private" ]
 }
@@ -1406,7 +1406,25 @@ single_repo_ok() {
     stage_line publish-public dispatch-windows-linux | grep -qF -- '-R anton-abyzov/specwithcode -f version=1.6.2'
 }
 check 'one repository: no public clone or mirror, one draft with the public notes and every asset, one publish' single_repo_ok
-stub_set RELEASE_PRIVATE_REPO=anton-abyzov/specwithcode
+
+# The one release's draft gets the same SHA256SUMS checks before it is published.
+single_sums_refused() {  # single_sums_refused DIR VERSION STUB_PAIR
+  make_machine "$1"
+  rm -f "$1/fleet/hosts.json" "$1/fleet/id_ed25519" "$1/fleet/known_hosts" "$1/public-rules/rules.json"
+  use_machine "$1" "$2"
+  stub_set RELEASE_PRIVATE_REPO=anton-abyzov/specwithcode "$3"
+  run 1 "$2" --ci || return 1
+  case "$(labels_of publish-private)" in *publish-public*) return 1 ;; esac
+  [ ! -f "$STAGE/published.sha" ] && [ ! -f "$STAGE/markers/publish-private" ] && [ -z "$(labels_of publish-public)" ]
+}
+single_wrong_sums() {
+  single_sums_refused "$WORK/s2" 1.6.3 RELEASE_STUB_STATUS=same-sums-public=1 &&
+    has 'SHA256SUMS on anton-abyzov/specwithcode is not'
+}
+check 'one repository: a draft whose SHA256SUMS is not the built one is never published' single_wrong_sums
+single_planless_sums() { single_sums_refused "$WORK/s3" 1.6.4 RELEASE_STUB_FAIL=publish-private:check-sums-public; }
+check 'one repository: a draft whose SHA256SUMS leaves out the plan is never published' single_planless_sums
+stub_set RELEASE_PRIVATE_REPO=example/specwithcode-private RELEASE_STUB_STATUS= RELEASE_STUB_FAIL=
 
 tools_ok() { python3 -B "$HERE/test-release-tools.py" > "$LAST_OUT" 2>&1; }
 # The candidate channel, canary and finalize (release-canary.sh).
