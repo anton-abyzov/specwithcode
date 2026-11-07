@@ -58,18 +58,28 @@ const freePort = () =>
     });
   });
 
+// The load benchmark's seeder, then one agent-started worker the project page opens
+// in its right panel. Loading the auth module first settles an import cycle the
+// seeders alone trip on.
 function seed(baseDir) {
-  const seeder = NodePath.join(root, "apps/server/integration/loadBenchSeed.ts");
-  // Loading the auth module first settles an import cycle the seeder alone trips on.
-  const auth = NodePath.join(root, "apps/server/src/auth/EnvironmentAuth.ts");
-  const args = ["--import", NodeURL.pathToFileURL(auth).href, seeder, baseDir, "small"];
-  const output = NodeChildProcess.execFileSync(process.execPath, args, {
-    cwd: NodePath.dirname(seeder),
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 64 << 20,
-  });
-  return JSON.parse(output.trim().split("\n").at(-1));
+  const auth = NodeURL.pathToFileURL(
+    NodePath.join(root, "apps/server/src/auth/EnvironmentAuth.ts"),
+  );
+  const run = (script, ...args) => {
+    const seeder = NodePath.join(root, "apps/server/integration", script);
+    const output = NodeChildProcess.execFileSync(
+      process.execPath,
+      ["--import", auth.href, seeder, baseDir, ...args],
+      {
+        cwd: NodePath.dirname(seeder),
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: 64 << 20,
+      },
+    );
+    return JSON.parse(output.trim().split("\n").at(-1));
+  };
+  return { ...run("loadBenchSeed.ts", "small"), worker: run("projectSettingsShortcutSeed.ts") };
 }
 
 async function startServer(baseDir, port) {
@@ -125,10 +135,9 @@ async function startServer(baseDir, port) {
   return { child, credential };
 }
 
-// The newest seeded chat, "Bench thread 2.40" in project load-bench-2. The seeded big
-// thread is not used: its project's threads do not reach the client.
-const THREAD_ID = "load-bench-thread-1-39";
-const MARKER = "Finished load bench turn 1.";
+// The seeded worker in project load-bench-2.
+const THREAD_ID = "settings-shortcut-worker";
+const MARKER = "Finished load bench turn 2.";
 
 const failures = [];
 function check(condition, message) {
