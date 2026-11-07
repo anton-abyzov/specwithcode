@@ -2850,6 +2850,7 @@ const layerWsRpc = (
                 new ProjectMutationError({
                   commandId: mutation.commandId,
                   message: ProjectService.projectMutationErrorMessage(cause),
+                  ...ProjectService.projectMutationErrorEntry(cause),
                   cause,
                 }),
             ),

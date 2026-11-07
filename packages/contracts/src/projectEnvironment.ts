@@ -147,6 +147,11 @@ export const ProjectEnvironmentReadResult = Schema.Struct({
     Schema.Struct({
       ...ProjectRepository.fields,
       status: Schema.Literals(["unprepared", "ready", "missing", "mismatch"]),
+      /**
+       * For a mismatch: the checkout's own origin, when it is a valid credential-free
+       * repository URL (the repository was renamed or moved). Older servers omit it.
+       */
+      origin: Schema.optionalKey(Schema.String),
     }),
   ),
   /** Entries left out above because they cannot be used as saved. Older servers omit it. */
@@ -191,6 +196,13 @@ export const ProjectEnvironmentImportInput = Schema.Struct({
   commandId: CommandId,
 });
 export type ProjectEnvironmentImportInput = typeof ProjectEnvironmentImportInput.Type;
+/** One approved folder or repository entry, named so Settings can show its error beside it. */
+export const ProjectEnvironmentEntryRef = Schema.Struct({
+  kind: Schema.Literals(["folder", "repository"]),
+  path: Schema.String,
+  repositoryId: Schema.optionalKey(ProjectRepositoryId),
+});
+export type ProjectEnvironmentEntryRef = typeof ProjectEnvironmentEntryRef.Type;
 export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironmentError>()(
   "ProjectEnvironmentError",
   {
@@ -212,6 +224,8 @@ export class ProjectEnvironmentError extends Schema.TaggedError<ProjectEnvironme
     ]),
     /** Which entry failed and how to fix it, when one entry is to blame. */
     detail: Schema.optional(Schema.String),
+    /** The entry to blame, so Settings can show the error beside it. Older servers omit it. */
+    entry: Schema.optional(ProjectEnvironmentEntryRef),
   },
 ) {
   override get message(): string {

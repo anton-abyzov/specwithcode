@@ -302,6 +302,8 @@ function settleFixture(ref, settledOverride) {
 }
 // `?machines`: the project is also checked out on a second machine, so the coordinator machine is a choice.
 const machineLabels = { host: "M4 Max", m1: "M1" };
+// `?overrides`: the project overrides app settings on two machines and its repository was renamed.
+const overridesFixture = new URLSearchParams(window.location.search).has("overrides");
 const otherMachineProject = { ...project, id: "project-m1", environmentId: "m1" };
 // `?rows&remote`: one logical project on two machines, so another machine's thread opens here.
 if (rowsFixture && new URLSearchParams(window.location.search).has("remote")) {
@@ -320,7 +322,7 @@ if (rowsFixture && new URLSearchParams(window.location.search).has("remote")) {
 }
 const memberProjects = rowsFixture
   ? [project, otherMachineProject]
-  : new URLSearchParams(window.location.search).has("machines")
+  : new URLSearchParams(window.location.search).has("machines") || overridesFixture
     ? [otherMachineProject, project]
     : [project];
 // `?switch`: a second project, so the check can leave Atlas for it and come back.
@@ -550,7 +552,15 @@ export const useEnvironmentQuery = (q) => ({
           revision: settings.revision,
           workspaceRoot: project.workspaceRoot,
           ...settings.environment,
-          repositories: settings.environment.repositories.map((r) => ({ ...r, status: "missing" })),
+          repositories: settings.environment.repositories.map((r) =>
+            overridesFixture
+              ? {
+                  ...r,
+                  status: "mismatch",
+                  origin: "https://github.com/example/atlas-platform.git",
+                }
+              : { ...r, status: "missing" },
+          ),
         }
       : q?.kind === "connections"
         ? { connections }
@@ -1299,11 +1309,58 @@ export const useAllEnvironmentShellsBootstrapped = () => true;
 // Every fixture host is reachable.
 const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
 export const useUnreachableEnvironmentIds = () => NO_UNREACHABLE_ENVIRONMENTS;
+const overridesEnvironment = (environmentId, projectId, overrides, app) => ({
+  environmentId,
+  label: machineLabels[environmentId],
+  connection: { phase: "connected" },
+  serverConfig: {
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      ...app,
+      projectSettingsOverrides: { [projectId]: overrides },
+    },
+    environment: {
+      platform: { os: "darwin", arch: "arm64", machine: "laptop" },
+      capabilities: { projectSettingsOverrides: true, projectSettingsOverrideChanges: true },
+    },
+    providers: [
+      fixtureProvider("claudeAgent", { displayName: "Claude" }),
+      fixtureProvider("codex", { displayName: "Codex" }),
+      fixtureProvider("acpRegistry", { instanceId: "github-copilot-cli", displayName: "Copilot" }),
+    ],
+  },
+});
+const OVERRIDES_ENVIRONMENTS = [
+  overridesEnvironment(
+    "host",
+    "project",
+    {
+      defaultModelProviders: ["github-copilot-cli", "codex", "claudeAgent"],
+      providerLimitFallbackModels: [
+        { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+        { instanceId: "codex", model: "gpt-6.1-sol" },
+      ],
+    },
+    { defaultRuntimeMode: "approval-required" },
+  ),
+  overridesEnvironment(
+    "m1",
+    "project-m1",
+    {
+      defaultModelProviders: ["github-copilot-cli", "codex", "claudeAgent"],
+      threadFinishAction: "auto_merge",
+      defaultRuntimeMode: "full-access",
+    },
+    { threadFinishAction: "pull_request", defaultRuntimeMode: "approval-required" },
+  ),
+];
 export const useEnvironments = () => ({
   isReady: true,
-  environments: new URLSearchParams(location.search).has("attention")
-    ? [{ environmentId: "host", label: "Fixture host", connection: { phase: "connected" } }]
-    : [],
+  environments: overridesFixture
+    ? OVERRIDES_ENVIRONMENTS
+    : new URLSearchParams(location.search).has("attention")
+      ? [{ environmentId: "host", label: "Fixture host", connection: { phase: "connected" } }]
+      : [],
   presentationById: new Map(),
 });
 export const usePrimaryEnvironmentId = () => (fallbackFixture ? "this-mac" : "host");

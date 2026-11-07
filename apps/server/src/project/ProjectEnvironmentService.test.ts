@@ -19,6 +19,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as Environment from "./ProjectEnvironmentService.ts";
+import { projectMutationErrorEntry } from "./ProjectService.ts";
 import {
   describeProjectEnvironmentProblem,
   normalizeProjectEnvironment,
@@ -602,6 +603,65 @@ it.layer(layer, { excludeTestServices: true })("project environment real Git", (
         yield* x.fs.readFileString(`${x.root}/retained-main/README.md`),
         "synthetic retained file\n",
       );
+    }),
+  );
+  it.effect("reports a renamed repository's origin so Settings can update the URL", () =>
+    Effect.gen(function* () {
+      const x = yield* setup;
+      yield* x.seed({
+        additionalFolders: [],
+        repositories: [
+          { id: "main", url: "https://github.com/synthetic/old-name.git", localPath: x.main },
+        ],
+      });
+      const renamed = yield* x.service.read({ projectId: x.projectId });
+      assert.equal(renamed.repositories[0]?.status, "mismatch");
+      assert.equal(renamed.repositories[0]?.origin, url);
+      // An origin carrying credentials never leaves the server.
+      yield* x.fixture([
+        "remote",
+        "set-url",
+        "origin",
+        "https://user:secret@github.com/synthetic/project.git",
+      ]);
+      const credentialed = yield* x.service.read({ projectId: x.projectId });
+      assert.equal(credentialed.repositories[0]?.status, "mismatch");
+      assert.isUndefined(credentialed.repositories[0]?.origin);
+      // A matching checkout reports no origin at all.
+      yield* x.fixture([
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.com/synthetic/old-name.git",
+      ]);
+      const ready = yield* x.service.read({ projectId: x.projectId });
+      assert.equal(ready.repositories[0]?.status, "ready");
+      assert.isUndefined(ready.repositories[0]?.origin);
+    }),
+  );
+  it.effect("a URL saved as a checkout path names its entry and says it is not a folder", () =>
+    Effect.gen(function* () {
+      const x = yield* setup;
+      const error = yield* normalizeProjectEnvironment(x.projectId, x.main, {
+        additionalFolders: [],
+        repositories: [
+          { id: "code", url, localPath: "https://github.com/synthetic/project-renamed.git" },
+        ],
+      }).pipe(Effect.flip);
+      assert.equal(error.code, "path_not_approved");
+      assert.deepEqual(error.entry, {
+        kind: "repository",
+        path: "https://github.com/synthetic/project-renamed.git",
+        repositoryId: "code",
+      });
+      assert.include(error.message, "is a repository URL, not a folder");
+      // A rejected save carries the entry to the client, not only the sentence.
+      assert.deepEqual(projectMutationErrorEntry(error), { entry: error.entry! });
+      const relative = yield* normalizeProjectEnvironment(x.projectId, x.main, {
+        additionalFolders: [],
+        repositories: [{ id: "code", url, localPath: "checkouts/code" }],
+      }).pipe(Effect.flip);
+      assert.include(relative.message, "is not an absolute folder path");
     }),
   );
 });

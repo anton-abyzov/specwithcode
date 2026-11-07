@@ -6,7 +6,6 @@ import {
   type ProjectFileBackedSettingKey,
   resolveEnvironmentMachineKind,
   type ServerSettings,
-  type WorktreeSubmodules,
 } from "@specweave-studio/contracts";
 import { CheckIcon, LayersIcon } from "lucide-react";
 import * as Equal from "effect/Equal";
@@ -14,9 +13,7 @@ import * as Equal from "effect/Equal";
 import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
-import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
-import { THREAD_FINISH_ACTION_LABELS } from "./threadFinishAction";
+import { formatSettingValueFor } from "./settingValueLabels";
 import { Button, InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -30,69 +27,6 @@ interface InheritanceLayer {
   readonly value: string;
   readonly effective: boolean;
   readonly set: boolean;
-}
-
-const WRITING_STYLE_LABELS: Record<string, string> = {
-  repo_conventions: "Repository conventions",
-  conventional_commits: "Conventional Commits",
-  custom: "Custom instructions",
-};
-
-/** Human labels for the values the chain can show; falls back to a type summary. */
-function formatValue(key: keyof ServerSettings, value: unknown): string {
-  if (value === null || value === undefined) {
-    return key === "pullRequestMergeMethod"
-      ? "Last selected"
-      : key === "sidebarAutoSettleAfterDays"
-        ? "Never"
-        : key === "defaultModelSelection"
-          ? "Automatic"
-          : key === "sourceControlWriterModelSelection"
-            ? "Text generation model"
-            : key === "defaultThreadEnvMode" || key === "worktreeSubmodules"
-              ? "Inherit"
-              : "Not set";
-  }
-  if (typeof value === "boolean") return value ? "On" : "Off";
-  if (typeof value === "number") {
-    return key === "sidebarAutoSettleAfterDays"
-      ? `${value} ${value === 1 ? "day" : "days"}`
-      : String(value);
-  }
-  if (typeof value === "string") {
-    if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
-      return resolveEnvModeLabel(value);
-    }
-    if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
-      return WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules];
-    }
-    if (key === "worktreeLocationMode")
-      return (
-        (
-          { managed: "App-managed", project: "Inside project", custom: "Custom folder" } as Record<
-            string,
-            string
-          >
-        )[value] ?? value
-      );
-    if (key === "threadFinishAction" && value in THREAD_FINISH_ACTION_LABELS) {
-      return THREAD_FINISH_ACTION_LABELS[value as keyof typeof THREAD_FINISH_ACTION_LABELS];
-    }
-    if (key === "pullRequestMergeMethod" && value in PULL_REQUEST_MERGE_METHOD_LABELS) {
-      return PULL_REQUEST_MERGE_METHOD_LABELS[
-        value as keyof typeof PULL_REQUEST_MERGE_METHOD_LABELS
-      ];
-    }
-    return value === "" ? "Empty" : value;
-  }
-  if (Array.isArray(value)) return `${value.length} ${value.length === 1 ? "item" : "items"}`;
-  if (typeof value === "object") {
-    if ("model" in value && typeof value.model === "string") return value.model;
-    if ("mode" in value && typeof value.mode === "string") {
-      return WRITING_STYLE_LABELS[value.mode] ?? value.mode;
-    }
-  }
-  return "Custom";
 }
 
 /**
@@ -118,7 +52,7 @@ export function settingInheritanceLayers(
     layers.push({
       key: "project",
       label: "Project",
-      value: source === "project" ? formatValue(key, target.settings[key]) : "Inherits",
+      value: source === "project" ? formatSettingValueFor(key, target.settings[key]) : "Inherits",
       effective: source === "project",
       set: source === "project",
     });
@@ -126,7 +60,7 @@ export function settingInheritanceLayers(
   layers.push({
     key: "environment",
     label: target.label,
-    value: environmentSet ? formatValue(key, environmentValue) : "Inherits",
+    value: environmentSet ? formatSettingValueFor(key, environmentValue) : "Inherits",
     effective: source === "environment" && environmentSet,
     set: environmentSet,
   });
@@ -135,7 +69,9 @@ export function settingInheritanceLayers(
       key: "specweave-studio.json",
       label: "specweave-studio.json",
       value:
-        source === "specweave-studio.json" ? formatValue(key, target.settings[key]) : "Inherits",
+        source === "specweave-studio.json"
+          ? formatSettingValueFor(key, target.settings[key])
+          : "Inherits",
       effective: source === "specweave-studio.json",
       set: source === "specweave-studio.json",
     });
@@ -148,7 +84,7 @@ export function settingInheritanceLayers(
   layers.push({
     key: "built-in",
     label: "Default",
-    value: formatValue(key, builtIn),
+    value: formatSettingValueFor(key, builtIn),
     effective: source === "environment" && !environmentSet,
     set: true,
   });
@@ -328,7 +264,7 @@ export function SettingInheritance({
                           </InlineButton>
                           <span className="max-w-32 truncate text-muted-foreground tabular-nums">
                             {isProjectScopedSettingKey(key)
-                              ? formatValue(key, overrides[project.projectId]?.[key])
+                              ? formatSettingValueFor(key, overrides[project.projectId]?.[key])
                               : null}
                           </span>
                         </li>

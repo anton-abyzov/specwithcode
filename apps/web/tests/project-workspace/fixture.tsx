@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionsFixture } from "./connections-fixture";
 import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import { ProjectOverrides } from "../../src/components/settings/ProjectOverrides";
 import { ProjectUsage } from "../../src/components/studio/ProjectUsage";
+import { ToastProvider } from "../../src/components/ui/toast";
 import { ProjectWorkspace } from "../../src/components/studio/ProjectWorkspace";
 import {
   projectReturnSearch,
@@ -268,6 +270,20 @@ createRoot(document.getElementById("root")!).render(
         onOpenThread={() => {}}
       />
     </main>
+  ) : search.has("overrides-panel") ? (
+    // `?overrides&overrides-panel`: Settings > Project > Overrides on its own, for overrides-check.mjs.
+    <ToastProvider>
+      <main className="min-h-screen bg-background px-4 py-6 sm:px-10">
+        <div className="mx-auto max-w-3xl">
+          <ProjectOverrides
+            checkouts={[
+              { environmentId: EnvironmentId.make("host"), id: ProjectId.make("project") },
+              { environmentId: EnvironmentId.make("m1"), id: ProjectId.make("project-m1") },
+            ]}
+          />
+        </div>
+      </main>
+    </ToastProvider>
   ) : search.has("report") ? (
     <SidebarLayout>
       <ProjectWorkspace projectKey="atlas" />

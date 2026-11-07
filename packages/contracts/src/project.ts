@@ -1,5 +1,5 @@
 import { ProjectWorkspaceSettings, ProjectWorkspacePatch } from "./projectWorkspace.ts";
-import { ProjectOrigin } from "./projectEnvironment.ts";
+import { ProjectEnvironmentEntryRef, ProjectOrigin } from "./projectEnvironment.ts";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
@@ -483,6 +483,8 @@ export class ProjectMutationError extends Schema.TaggedError<ProjectMutationErro
   {
     commandId: CommandId,
     message: Schema.String,
+    /** The folder or repository entry that failed a save. Older servers omit it. */
+    entry: Schema.optional(ProjectEnvironmentEntryRef),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

@@ -554,7 +554,11 @@ export function SettingsRow({
         {...(canWriteSettings
           ? {
               onClearOverrides: (entries: readonly ProjectOverrideEntry[]) =>
-                clearProjectOverrides(entries, scopedKeys),
+                void clearProjectOverrides(
+                  entries,
+                  scopedKeys,
+                  typeof shownTitle === "string" ? shownTitle : tx("This setting"),
+                ),
             }
           : {})}
       />
@@ -567,6 +571,7 @@ export function SettingsRow({
       ref={targetRef}
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       data-slot="settings-row"
+      data-setting-keys={settingKeys.length > 0 ? settingKeys.join(" ") : undefined}
       className={cn(
         "@container/settings-row min-w-0 [overflow-wrap:anywhere] rounded-xl px-3 sm:px-4 aria-disabled:opacity-(--disabled-opacity) aria-disabled:[&_*]:text-muted-foreground",
         children ? "pt-3 pb-1" : "py-3",

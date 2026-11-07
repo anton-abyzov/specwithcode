@@ -91,7 +91,12 @@ export const make = Effect.gen(function* () {
       return yield* fail(projectId, "preparation_failed");
     return output.stdout.trim();
   });
-  const status = Effect.fn(function* (
+  /**
+   * Whether the saved path is a checkout of the entry's repository. A checkout
+   * whose own origin is another valid credential-free URL reports that origin,
+   * so Settings can offer to update the entry after a repository rename.
+   */
+  const inspectCheckout = Effect.fn(function* (
     projectId: ProjectId,
     repo: { url: string; localPath: string },
   ) {
@@ -100,24 +105,31 @@ export const make = Effect.gen(function* () {
         .exists(repo.localPath)
         .pipe(Effect.mapError(() => fail(projectId, "path_not_approved"))))
     )
-      return "missing" as const;
-    const match = yield* Effect.gen(function* () {
+      return { status: "missing" as const };
+    return yield* Effect.gen(function* () {
       // Git prints C:/ paths on Windows; resolve both sides to the native form.
       const top = yield* fs.realPath(
         yield* git(projectId, repo.localPath, ["rev-parse", "--show-toplevel"]),
       );
       const canonical = yield* fs.realPath(repo.localPath);
-      if (top !== canonical) return false;
+      if (top !== canonical) return { status: "mismatch" as const };
       const remote = yield* git(projectId, repo.localPath, [
         "config",
         "--local",
         "--get",
         "remote.origin.url",
       ]);
-      return projectRepositoryIdentity(remote) === projectRepositoryIdentity(repo.url);
-    }).pipe(Effect.catch(() => Effect.succeed(false)));
-    return match ? ("ready" as const) : ("mismatch" as const);
+      const identity = projectRepositoryIdentity(remote);
+      if (identity !== null && identity === projectRepositoryIdentity(repo.url))
+        return { status: "ready" as const };
+      // Only a URL that would itself be accepted as an entry leaves the server.
+      return identity === null
+        ? { status: "mismatch" as const }
+        : { status: "mismatch" as const, origin: remote };
+    }).pipe(Effect.orElseSucceed(() => ({ status: "mismatch" as const })));
   });
+  const status = (projectId: ProjectId, repo: { url: string; localPath: string }) =>
+    inspectCheckout(projectId, repo).pipe(Effect.map((checkout) => checkout.status));
   const inside = (root: string, value: string) => {
     const relative = path.relative(root, value);
     return (
@@ -202,7 +214,7 @@ export const make = Effect.gen(function* () {
       workspaceRoot: resolved.workspaceRoot,
       additionalFolders: resolved.additionalFolders,
       repositories: yield* Effect.forEach(resolved.repositories, (repo) =>
-        status(projectId, repo).pipe(Effect.map((value) => ({ ...repo, status: value }))),
+        inspectCheckout(projectId, repo).pipe(Effect.map((checkout) => ({ ...repo, ...checkout }))),
       ),
       problems: yield* Effect.forEach(problems, ({ problem, updatePath }) =>
         Effect.gen(function* () {
