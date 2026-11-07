@@ -2,7 +2,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixture writes independently exercise the fleet HTTP reader.
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "./nodePath.ts";
 import { decodeFleetJoinCode, encodeFleetJoinCode } from "./studioFleetJoin.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -23,6 +23,7 @@ import {
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -38,6 +39,11 @@ import * as AuthHttp from "./auth/http.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as Config from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import {
+  CLOUD_ENDPOINT_PUBLIC_ORIGIN,
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINKED_USER_ID,
+} from "./cloud/config.ts";
 import { fakeMachine, ORIGIN } from "./fleet/fleetMachine.testkit.ts";
 import * as FleetTargets from "./fleet/FleetTargets.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
@@ -81,6 +87,7 @@ const phoneAuth = {
     subject?: string;
   }>,
   revoked: [] as string[],
+  revokedPairingLinks: [] as string[],
 };
 const clientSession = (sessionId: string, subject: string, deviceType: string) => ({
   sessionId: AuthSessionId.make(sessionId),
@@ -138,11 +145,35 @@ async function api(
   fleetUpdateWorker?: FleetUpdate.FleetUpdateWorker["Service"],
   fleetSkillWorker?: FleetSkills.FleetSkillWorker["Service"],
   fleetDiskRoom?: FleetDiskRoom.FleetDiskRoom["Service"],
+  options: {
+    /** The fleet line for m1 has no management token. */
+    readonly noManagementToken?: boolean;
+    /** This machine's SpecWithCode Connect origin, as a linked machine stores it. */
+    readonly connectOrigin?: string;
+  } = {},
 ) {
+  const secrets: Record<string, string> =
+    options.connectOrigin === undefined
+      ? {}
+      : {
+          [CLOUD_ENDPOINT_RUNTIME_CONFIG]: JSON.stringify({
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "synthetic-connector",
+            tunnelId: "synthetic-tunnel",
+          }),
+          [CLOUD_LINKED_USER_ID]: "synthetic-user",
+          [CLOUD_ENDPOINT_PUBLIC_ORIGIN]: JSON.stringify({
+            origin: options.connectOrigin,
+            source: "link",
+            recordedAt: "2026-10-18T00:00:00.000Z",
+          }),
+        };
+  let baseDir = "";
   const config = Layer.effect(
     Config.ServerConfig,
     Effect.gen(function* () {
       const config = yield* Config.ServerConfig;
+      baseDir = config.baseDir;
       yield* Effect.promise(() =>
         writeFile(
           join(config.baseDir, "studio-fleet.json"),
@@ -155,7 +186,12 @@ async function api(
                 label: "Mac M1",
                 environmentId: "env-m1",
                 url,
-                managementToken: url === ORIGIN ? "management-secret" : "synthetic-private-secret",
+                ...(options.noManagementToken
+                  ? {}
+                  : {
+                      managementToken:
+                        url === ORIGIN ? "management-secret" : "synthetic-private-secret",
+                    }),
                 ...(url === ORIGIN
                   ? {
                       scopes: [
@@ -194,6 +230,18 @@ async function api(
           }),
         ),
         Layer.provide(fakeTailscale),
+        Layer.provide(
+          options.connectOrigin === undefined
+            ? Layer.empty
+            : Layer.mock(ServerSecretStore.ServerSecretStore)({
+                get: (name) =>
+                  Effect.succeed(
+                    secrets[name] === undefined
+                      ? Option.none()
+                      : Option.some(new TextEncoder().encode(secrets[name])),
+                  ),
+              }),
+        ),
         Layer.provide(
           fleetUpdateWorker === undefined
             ? Layer.empty
@@ -273,9 +321,15 @@ async function api(
           return Effect.succeed({
             id: "pairing-phone",
             credential: "PHONECODE",
+            createdAt: DateTime.makeUnsafe(Date.parse("2026-10-20T18:00:00.000Z")),
             expiresAt: DateTime.makeUnsafe(Date.parse("2026-10-20T18:10:00.000Z")),
           } as never);
         },
+        revokePairingLink: (id) =>
+          Effect.sync(() => {
+            phoneAuth.revokedPairingLinks.push(id);
+            return true;
+          }),
         revokeSession: (sessionId) =>
           Effect.sync(() => {
             phoneAuth.revoked.push(sessionId);
@@ -305,7 +359,11 @@ async function api(
     Layer.provide(NodeServices.layer),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
-  const workers = (path: "allow" | "stop", body: object, headers?: Record<string, string>) =>
+  const workers = (
+    path: "allow" | "stop" | "self-allow" | "incoming",
+    body: object,
+    headers?: Record<string, string>,
+  ) =>
     handler(
       new Request(`http://localhost:8319/api/studio/fleet/workers/${path}`, {
         method: "POST",
@@ -435,11 +493,22 @@ async function api(
         headers: { host: "localhost:8319", authorization: "Bearer synthetic-session" },
       }),
     );
+  /** Takes a machine out of the fleet file here, as an edit by hand would. */
+  const forget = async (id: string) => {
+    const file = join(baseDir, "studio-fleet.json");
+    const fleet = JSON.parse(await readFile(file, "utf8")) as { machines: Array<{ id: string }> };
+    await writeFile(
+      file,
+      JSON.stringify({ ...fleet, machines: fleet.machines.filter((entry) => entry.id !== id) }),
+      { mode: 0o600 },
+    );
+  };
   return {
     request,
     diskRoom,
     workers,
     add,
+    forget,
     invite,
     tailscaleStatus,
     signIn,
@@ -459,6 +528,7 @@ afterEach(() => {
   phoneAuth.otherSessions = [];
   phoneAuth.pairingLinks.length = 0;
   phoneAuth.revoked.length = 0;
+  phoneAuth.revokedPairingLinks.length = 0;
 });
 describe("adding a machine over HTTP", () => {
   const invitation = encodeFleetJoinCode({
@@ -695,6 +765,263 @@ describe("fleet authenticated HTTP", () => {
     } finally {
       await app.dispose();
       await reader.dispose();
+    }
+  });
+});
+describe("allowing a main machine's workers from that machine", () => {
+  const OWNER_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope];
+  const M1 = EnvironmentId.make("env-m1");
+  /** The line m1 made for itself, as its server sends it with its management token. */
+  const ownLine = encodeFleetJoinCode({
+    url: ORIGIN,
+    environmentId: "env-m1",
+    label: "M1",
+    managementToken: "management-secret",
+  });
+  it("lets a coordinator's management token add and allow only its own machine", async () => {
+    const machine = fakeMachine();
+    vi.stubGlobal("fetch", machine.fetcher);
+    const coordinator = await api(OWNER_SCOPES, false, ORIGIN, M1);
+    try {
+      const response = await coordinator.workers("self-allow", {
+        invitation: ownLine,
+        access: "auto",
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.text();
+      expect(body).not.toContain("management-secret");
+      expect(JSON.parse(body)).toMatchObject({
+        id: "m1",
+        workers: { status: "allowed", access: "auto" },
+      });
+    } finally {
+      await coordinator.dispose();
+    }
+  });
+  it("takes back a machine it just added when allowing its workers fails", async () => {
+    const M2_ORIGIN = "https://m2.example.ts.net";
+    const machine = fakeMachine({ environmentId: "env-m2", origins: [M2_ORIGIN] });
+    vi.stubGlobal("fetch", machine.fetcher);
+    const m2Line = encodeFleetJoinCode({
+      url: M2_ORIGIN,
+      environmentId: "env-m2",
+      label: "M2",
+      managementToken: "management-secret",
+    });
+    const coordinator = await api(OWNER_SCOPES, false, ORIGIN, EnvironmentId.make("env-m2"));
+    try {
+      const self = { invitation: m2Line, access: "auto" };
+      expect((await coordinator.workers("self-allow", self)).status).toBe(200);
+      await coordinator.forget("m2");
+      // Within a minute allowing is refused, after the line was spent adding m2 again.
+      const retried = await coordinator.workers("self-allow", self);
+      expect(retried.status).toBe(400);
+      const fleet = (await (await coordinator.request()).json()) as {
+        machines: Array<{ id: string }>;
+      };
+      expect(fleet.machines.map((entry) => entry.id)).not.toContain("m2");
+      // Its management token there was given up on the way out.
+      expect(
+        machine.calls.some((call) => call.method === "POST" && call.url.includes("revoke")),
+      ).toBe(true);
+    } finally {
+      await coordinator.dispose();
+    }
+  });
+  it("refuses a line naming another machine before anything is sent", async () => {
+    const outbound = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", outbound);
+    const coordinator = await api(OWNER_SCOPES, false, ORIGIN, EnvironmentId.make("env-m2"));
+    try {
+      const response = await coordinator.workers("self-allow", {
+        invitation: ownLine,
+        access: "auto",
+      });
+      expect(response.status).toBe(403);
+      expect(await response.text()).toContain("only itself");
+      expect(outbound).not.toHaveBeenCalled();
+    } finally {
+      await coordinator.dispose();
+    }
+  });
+  it("needs a coordinator with access:write, and leaves the owner's routes as they were", async () => {
+    const outbound = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", outbound);
+    const limited = await api(
+      [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      false,
+      ORIGIN,
+      M1,
+    );
+    const coordinator = await api(OWNER_SCOPES, false, ORIGIN, M1);
+    const owner = await api(OWNER_SCOPES, false, ORIGIN);
+    try {
+      const self = { invitation: ownLine, access: "auto" };
+      expect((await limited.workers("self-allow", self)).status).toBe(403);
+      // An owner's sign-in is not a coordinator: it uses Add a machine and Allow workers.
+      expect((await owner.workers("self-allow", self)).status).toBe(403);
+      // The owner-only routes still refuse a coordinator's token.
+      expect((await coordinator.workers("allow", { id: "m1", access: "auto" })).status).toBe(403);
+      expect((await coordinator.add({ invitation: ownLine })).status).toBe(403);
+      expect((await coordinator.workers("incoming", { id: "m1", access: "auto" })).status).toBe(
+        403,
+      );
+      expect(outbound).not.toHaveBeenCalled();
+    } finally {
+      await limited.dispose();
+      await coordinator.dispose();
+      await owner.dispose();
+    }
+  });
+});
+describe("letting a fleet machine run workers here, from here", () => {
+  const OWNER_SCOPES = [...AuthStandardClientScopes, AuthAccessWriteScope];
+  const HERE_CONNECT = "https://prod-fedcba9876543210.spec-weave.com";
+  /** m1 at the tailnet origin, answering with `capabilities`, and its self-allow answer. */
+  const m1 = (
+    capabilities: Record<string, boolean>,
+    answer: () => Response = () => Response.json({}),
+  ) => {
+    const selfAllow: Array<{ authorization: string | null; body: string }> = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      if (url.origin === HERE_CONNECT) return Response.json(descriptor("env-m4"));
+      if (url.origin !== ORIGIN) return Promise.reject(new TypeError("unreachable"));
+      if (url.pathname === "/.well-known/studio/environment")
+        return Response.json({ ...descriptor("env-m1"), capabilities });
+      if (url.pathname === "/api/studio/fleet/workers/self-allow") {
+        selfAllow.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+          body: String(init?.body),
+        });
+        return answer();
+      }
+      return Response.json({}, { status: 404 });
+    });
+    return { fetcher, selfAllow };
+  };
+  it("sends m1 a line for this machine and revokes it when m1 refuses", async () => {
+    const machine = m1({ fleetSelfAllowWorkers: true }, () =>
+      Response.json(
+        { _tag: "EnvironmentHttpForbiddenError", message: "Team rules here refuse it." },
+        { status: 403 },
+      ),
+    );
+    vi.stubGlobal("fetch", machine.fetcher);
+    const owner = await api(
+      OWNER_SCOPES,
+      false,
+      ORIGIN,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        connectOrigin: HERE_CONNECT,
+      },
+    );
+    try {
+      const response = await owner.workers("incoming", { id: "m1", access: "auto" });
+      expect(response.status).toBe(403);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.text()).toContain("Team rules here refuse it.");
+      expect(machine.selfAllow).toHaveLength(1);
+      expect(machine.selfAllow[0]!.authorization).toBe("Bearer management-secret");
+      const sent = JSON.parse(machine.selfAllow[0]!.body) as {
+        invitation: string;
+        access: string;
+      };
+      expect(sent.access).toBe("auto");
+      expect(decodeFleetJoinCode(sent.invitation)).toMatchObject({
+        environmentId: "env-m4",
+        url: HERE_CONNECT,
+        redeem: "PHONECODE",
+      });
+      // The one-time credential was for m1 only, and is gone now.
+      expect(phoneAuth.pairingLinks.at(-1)).toMatchObject({
+        principal: { kind: "coordinator", environmentId: "env-m1" },
+      });
+      expect(phoneAuth.revokedPairingLinks).toEqual(["pairing-phone"]);
+    } finally {
+      await owner.dispose();
+    }
+  });
+  it("passes m1's grant through when it adds and allows this machine", async () => {
+    const workers = {
+      id: "m4",
+      workers: {
+        status: "allowed",
+        access: "auto",
+        expiresAt: "2027-10-18T00:00:00.000Z",
+        renewable: true,
+        problem: null,
+      },
+    };
+    const machine = m1({ fleetSelfAllowWorkers: true }, () => Response.json(workers));
+    vi.stubGlobal("fetch", machine.fetcher);
+    const owner = await api(
+      OWNER_SCOPES,
+      false,
+      ORIGIN,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        connectOrigin: HERE_CONNECT,
+      },
+    );
+    try {
+      const response = await owner.workers("incoming", { id: "m1", access: "auto" });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(workers);
+      expect(phoneAuth.revokedPairingLinks).toEqual([]);
+    } finally {
+      await owner.dispose();
+    }
+  });
+  it("refuses before minting when m1 has no management token here or runs an older server", async () => {
+    const older = m1({ fleetSkillUpdate: true });
+    vi.stubGlobal("fetch", older.fetcher);
+    const tokenless = await api(
+      OWNER_SCOPES,
+      false,
+      ORIGIN,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { noManagementToken: true, connectOrigin: HERE_CONNECT },
+    );
+    const owner = await api(
+      OWNER_SCOPES,
+      false,
+      ORIGIN,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        connectOrigin: HERE_CONNECT,
+      },
+    );
+    try {
+      const missing = await tokenless.workers("incoming", { id: "m1", access: "auto" });
+      expect(missing.status).toBe(400);
+      expect(await missing.text()).toContain("Join a main machine");
+      expect(older.fetcher).not.toHaveBeenCalled();
+
+      const outdated = await owner.workers("incoming", { id: "m1", access: "auto" });
+      expect(outdated.status).toBe(400);
+      expect(await outdated.text()).toContain(
+        "Mac M1 runs an older SpecWithCode; update it, then try again.",
+      );
+      expect(older.selfAllow).toEqual([]);
+      expect(phoneAuth.pairingLinks).toEqual([]);
+    } finally {
+      await tokenless.dispose();
+      await owner.dispose();
     }
   });
 });

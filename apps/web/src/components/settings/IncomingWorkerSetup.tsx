@@ -12,6 +12,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   addVisibleMachineToStudioFleet,
+  allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
@@ -242,6 +243,7 @@ export function IncomingWorkerAction({
   hereLabel,
   coordinatorLabel,
   connected,
+  coordinatorFleetId,
   actionLabel,
   onGranted,
 }: {
@@ -250,6 +252,12 @@ export function IncomingWorkerAction({
   hereLabel: string;
   coordinatorLabel: string;
   connected: boolean;
+  /**
+   * The coordinator's id in this machine's own fleet list. With it this
+   * machine's server asks the coordinator to add and allow it, so no sign-in
+   * with Manage access is needed there.
+   */
+  coordinatorFleetId?: string | undefined;
   /** The button's words where the card already names the direction; "Allow <machine>" otherwise. */
   actionLabel?: string;
   onGranted: (grant: { access: StudioFleetWorkerAccess; expiresAt: string | null }) => void;
@@ -260,16 +268,28 @@ export function IncomingWorkerAction({
   const [access, setAccess] = useState<StudioFleetWorkerAccess>(DEFAULT_FLEET_WORKER_ACCESS);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Without a sign-in there, this machine's server asks the coordinator itself.
+  const fromHere = !manageThere && coordinatorFleetId !== undefined;
   const unavailable = !isElectron
     ? tx("Open the installed desktop app to set this up.")
     : !connected
       ? tx("Connect to {coordinatorLabel} first.", { coordinatorLabel })
-      : !manageHere || !manageThere
-        ? tx("Manage access is needed on both {hereLabel} and {coordinatorLabel}.", {
-            hereLabel,
-            coordinatorLabel,
-          })
-        : null;
+      : !manageHere
+        ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
+        : !manageThere && coordinatorFleetId === undefined
+          ? tx(
+              "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.",
+              { hereLabel, coordinatorLabel },
+            )
+          : null;
+  async function allowIncomingFromHere(fleetId: string) {
+    const result = await allowIncomingStudioFleetWorkers(here, fleetId, access);
+    if (result.workers.status !== "allowed" && result.workers.status !== "expiring")
+      throw new Error(
+        `${coordinatorLabel} added ${hereLabel}, but worker access was not confirmed. Refresh, then retry.`,
+      );
+    return result;
+  }
   async function allow() {
     if (pending || unavailable) return;
     setPending(true);
@@ -279,7 +299,10 @@ export function IncomingWorkerAction({
         `Allow ${coordinatorLabel} to run work on ${hereLabel}?\n${coordinatorLabel} receives a management key to ${hereLabel} for a year, including access, update and skill management, plus worker access capped at ${FLEET_WORKER_ACCESS_CHOICES.find((choice) => choice.value === access)?.label ?? access}. Existing project and sign-in limits stay in force. Each secret transfer still needs your approval.`,
       );
       if (confirmed !== true) return;
-      const result = await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
+      const result =
+        fromHere && coordinatorFleetId !== undefined
+          ? await allowIncomingFromHere(coordinatorFleetId)
+          : await setUpIncomingWorkers({ here, coordinator, hereLabel, access });
       onGranted({ access, expiresAt: result.workers.expiresAt });
     } catch (failure) {
       setError(
@@ -328,14 +351,6 @@ export function IncomingWorkerAction({
           </p>
         ) : null}
       </div>
-      {unavailable ? (
-        <p className="text-xs text-muted-foreground">
-          {tx(
-            "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.",
-            { coordinatorLabel, hereLabel },
-          )}
-        </p>
-      ) : null}
       {error ? (
         <p role="alert" className="text-xs text-destructive-foreground">
           {error}

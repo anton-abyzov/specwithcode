@@ -10,6 +10,7 @@ import type {
   StudioFleetAddInput,
   StudioFleetInviteInput,
   StudioFleetWorkersAllowInput,
+  StudioFleetWorkersIncomingInput,
   StudioWorkGrantUpdateInput,
 } from "@specweave-studio/contracts/studioFleet";
 import * as Effect from "effect/Effect";
@@ -153,6 +154,31 @@ export function requestFleetWorkersAllow(
       url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/workers/allow"),
       timeoutMs: 30000,
       request: ({ client, headers }) => client.allowFleetWorkers({ headers, payload: input }),
+    });
+  });
+}
+/**
+ * Lets a fleet machine run workers on this server: this server invites it and
+ * asks it to add and allow this one, with the management token it holds there.
+ */
+export function requestFleetWorkersIncoming(
+  prepared: PreparedConnection,
+  input: StudioFleetWorkersIncomingInput,
+) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/workers/incoming"),
+      // The other machine checks this one's address and redeems the line first.
+      timeoutMs: 90000,
+      request: ({ client, headers }) =>
+        client.allowIncomingFleetWorkers({ headers, payload: input }),
     });
   });
 }

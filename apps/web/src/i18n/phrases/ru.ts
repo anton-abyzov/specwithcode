@@ -1743,8 +1743,8 @@ export const ru: PhraseCatalog = {
   "Let {coordinatorLabel} use this machine too":
     "Разрешить {coordinatorLabel} тоже использовать эту машину",
   "On {coordinatorLabel}: done": "На {coordinatorLabel}: готово",
-  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "На {coordinatorLabel}: ещё не настроено. Откройте «Настройки» > «Машины», разверните «Доступ, маршруты и права исполнителей» в карточке {hereLabel} и выберите «Разрешить исполнителей».",
+  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
+    "На {hereLabel} откройте «Настройки» > «Подключения» > «Присоединиться к главной машине», выберите {coordinatorLabel} и скопируйте строку. На {coordinatorLabel} откройте «Настройки» > «Машины» > «Добавить машину», вставьте её и выберите «Разрешить исполнителей» в карточке {hereLabel}.",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} может запускать работу здесь · {access} · до {date}",
   "{coordinatorLabel} can run work here · {access}":
@@ -1752,8 +1752,7 @@ export const ru: PhraseCatalog = {
   "Open the installed desktop app to set this up.":
     "Откройте установленное приложение для компьютера, чтобы настроить это.",
   "Connect to {coordinatorLabel} first.": "Сначала подключитесь к {coordinatorLabel}.",
-  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
-    "Нужно право управления доступом на {hereLabel} и на {coordinatorLabel}.",
+  "Manage access is needed on {hereLabel}.": "Нужно право управления доступом на {hereLabel}.",
   "default browser viewport": "окно браузера по умолчанию",
   "Fill panel": "Заполнить панель",
   Responsive: "Адаптивно",

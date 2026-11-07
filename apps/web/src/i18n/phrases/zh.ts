@@ -1683,16 +1683,15 @@ export const zh: PhraseCatalog = {
   "{coordinatorLabel} cannot run work here yet.": "{coordinatorLabel} 还不能在这里运行工作。",
   "Let {coordinatorLabel} use this machine too": "也让 {coordinatorLabel} 使用这台电脑",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 上：已完成",
-  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{coordinatorLabel} 上：尚未设置。打开“设置 > 电脑”，展开 {hereLabel} 卡片上的“访问、路由和工作者权限”，然后选择“允许工作者”。",
+  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
+    "在 {hereLabel} 上打开“设置 > 连接 > 加入主电脑”，选择 {coordinatorLabel} 并复制这一行。在 {coordinatorLabel} 上打开“设置 > 电脑 > 添加电脑”，粘贴后在 {hereLabel} 卡片上选择“允许工作节点”。",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} 可以在这里运行工作 · {access} · 有效期至 {date}",
   "{coordinatorLabel} can run work here · {access}":
     "{coordinatorLabel} 可以在这里运行工作 · {access}",
   "Open the installed desktop app to set this up.": "请打开已安装的桌面应用来设置。",
   "Connect to {coordinatorLabel} first.": "请先连接到 {coordinatorLabel}。",
-  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
-    "{hereLabel} 和 {coordinatorLabel} 上都需要管理访问权限。",
+  "Manage access is needed on {hereLabel}.": "{hereLabel} 上需要管理访问权限。",
   "default browser viewport": "默认浏览器视口",
   "Fill panel": "填满面板",
   Responsive: "自适应",

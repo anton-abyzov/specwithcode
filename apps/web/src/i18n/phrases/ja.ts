@@ -1743,8 +1743,8 @@ export const ja: PhraseCatalog = {
     "{coordinatorLabel} はまだここで作業を実行できません。",
   "Let {coordinatorLabel} use this machine too": "{coordinatorLabel} にもこのマシンを使わせる",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 側: 完了",
-  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "{coordinatorLabel} 側: まだ設定されていません。「設定」>「マシン」を開き、{hereLabel} のカードで「アクセス、ルート、ワーカーの権限」を展開して「ワーカーを許可」を選んでください。",
+  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
+    "{hereLabel} で「設定」>「接続」>「メインマシンに参加」を開き、{coordinatorLabel} を選んで行をコピーしてください。{coordinatorLabel} で「設定」>「マシン」>「マシンを追加」を開いて貼り付け、{hereLabel} のカードで「ワーカーを許可」を選んでください。",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} はここで作業を実行できます · {access} · {date} まで",
   "{coordinatorLabel} can run work here · {access}":
@@ -1752,8 +1752,7 @@ export const ja: PhraseCatalog = {
   "Open the installed desktop app to set this up.":
     "設定するには、インストール済みのデスクトップアプリを開いてください。",
   "Connect to {coordinatorLabel} first.": "先に {coordinatorLabel} に接続してください。",
-  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
-    "{hereLabel} と {coordinatorLabel} の両方でアクセス管理の権限が必要です。",
+  "Manage access is needed on {hereLabel}.": "{hereLabel} でアクセス管理の権限が必要です。",
   "default browser viewport": "既定のブラウザーのビューポート",
   "Fill panel": "パネルに合わせる",
   Responsive: "レスポンシブ",

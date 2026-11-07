@@ -9,6 +9,7 @@ import type {
 } from "@specweave-studio/contracts/studioFleet";
 vi.mock("../../studio/fleet", () => ({
   addVisibleMachineToStudioFleet: vi.fn(),
+  allowIncomingStudioFleetWorkers: vi.fn(),
   allowStudioFleetWorkers: vi.fn(),
   readStudioFleetMachines: vi.fn(),
 }));
@@ -21,6 +22,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { useEnvironmentScope } from "../../state/session";
 import {
   addVisibleMachineToStudioFleet,
+  allowIncomingStudioFleetWorkers,
   allowStudioFleetWorkers,
   readStudioFleetMachines,
 } from "../../studio/fleet";
@@ -193,7 +195,7 @@ describe("incoming worker setup", () => {
 });
 
 describe("incoming worker setup view", () => {
-  const action = (connected = true) =>
+  const action = (connected = true, coordinatorFleetId?: string) =>
     renderToStaticMarkup(
       <IncomingWorkerAction
         here={here}
@@ -201,15 +203,32 @@ describe("incoming worker setup view", () => {
         hereLabel="m4"
         coordinatorLabel="m1"
         connected={connected}
+        coordinatorFleetId={coordinatorFleetId}
         onGranted={vi.fn()}
       />,
     );
-  it("keeps a disabled Allow button with the reason when manage access is missing there", () => {
+  it("says the one manual path when m1 is neither managed here nor in this machine's list", () => {
     vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
     const html = action();
     expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
-    expect(html).toContain("Manage access is needed on both m4 and m1.");
-    expect(html).toContain("On m1: not set up yet. Open Settings &gt; Machines");
+    expect(html).toContain(
+      "On m4, open Settings &gt; Connections &gt; Join a main machine, pick m1 and copy the line. On m1, open Settings &gt; Machines &gt; Add a machine, paste it, then choose Allow workers on m4&#x27;s card.",
+    );
+    // One plain step: no second hint pointing at a card m1 does not have.
+    expect(html).not.toContain("not set up yet");
+    expect(html).not.toContain("Manage access is needed");
+  });
+  it("enables the Allow button from this machine alone when it lists m1", () => {
+    vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
+    const html = action(true, "m1");
+    expect(html).toMatch(/<button(?![^>]* disabled="")[^>]*>Allow m1<\/button>/);
+    expect(html).not.toContain("Join a main machine");
+  });
+  it("stays disabled without manage access here, even when it lists m1", () => {
+    vi.mocked(useEnvironmentScope).mockReturnValue(false);
+    const html = action(true, "m1");
+    expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
+    expect(html).toContain("Manage access is needed on m4.");
   });
   it("enables the Allow button when both machines can be managed", () => {
     vi.mocked(useEnvironmentScope).mockReturnValue(true);
@@ -253,6 +272,40 @@ describe("incoming worker setup view", () => {
       id: "m4",
       access: "full-access",
     });
+    expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
+    await act(async () => renderer!.unmount());
+  });
+  it("asks this machine's server to have m1 add and allow it when m1 cannot be managed here", async () => {
+    vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    vi.mocked(addVisibleMachineToStudioFleet).mockClear();
+    vi.mocked(allowStudioFleetWorkers).mockClear();
+    vi.mocked(allowIncomingStudioFleetWorkers).mockResolvedValue(allowed);
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          coordinatorFleetId="m1-line"
+          actionLabel="Let m1 use this machine too"
+          onGranted={onGranted}
+        />,
+      );
+    });
+    await act(async () => renderer!.root.findByType("button").props.onClick());
+    expect(requestConfirmDialog).toHaveBeenCalled();
+    expect(allowIncomingStudioFleetWorkers).toHaveBeenCalledExactlyOnceWith(
+      here,
+      "m1-line",
+      "full-access",
+    );
+    expect(addVisibleMachineToStudioFleet).not.toHaveBeenCalled();
+    expect(allowStudioFleetWorkers).not.toHaveBeenCalled();
     expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
     await act(async () => renderer!.unmount());
   });

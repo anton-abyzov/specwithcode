@@ -40,6 +40,7 @@ import {
   requestFleetPairing,
   requestFleetRemove,
   requestFleetWorkersAllow,
+  requestFleetWorkersIncoming,
   requestFleetWorkersStop,
   requestRemoteWorkers,
   requestWorkGrantChange,
@@ -293,6 +294,38 @@ export async function allowStudioFleetWorkers(
   appAtomRegistry.refresh(fleetAtom(environmentId));
   if (result._tag === "Failure")
     throw new Error("Could not allow workers on this machine. Refresh, then retry.");
+  return result.value;
+}
+
+/**
+ * Lets the fleet machine `machineId` run workers on `here`, from `here` alone:
+ * its server asks that machine, with the management token it holds there, to
+ * add and allow this one. The answer is that machine's grant.
+ */
+export async function allowIncomingStudioFleetWorkers(
+  here: EnvironmentId,
+  machineId: string,
+  access: StudioFleetWorkerAccess,
+): Promise<StudioFleetWorkersResult> {
+  const prepared = preparedForWorkers(here);
+  const action = connectionAtomRuntime.atom(
+    requestFleetWorkersIncoming(prepared, { id: machineId, access }),
+  );
+  const result = await executeAtomQuery(appAtomRegistry, action, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  appAtomRegistry.refresh(fleetAtom(here));
+  if (result._tag === "Failure")
+    // The server words what to do, such as updating the other machine.
+    throw new Error(
+      messageOfDeclared(result.cause, [
+        "EnvironmentHttpBadRequestError",
+        "EnvironmentHttpForbiddenError",
+        "EnvironmentHttpInternalServerError",
+        "StudioFleetInviteError",
+      ]) ?? "Could not let that machine run work here. Refresh, then retry.",
+    );
   return result.value;
 }
 

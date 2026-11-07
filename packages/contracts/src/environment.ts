@@ -201,6 +201,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server takes its fleet primary's skill installs at `/api/studio/fleet/skills`.
       Absent on older servers: the primary reports `unsupported` for them. */
   fleetSkillUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server lets a coordinator's management token add and allow that coordinator at
+      `/api/studio/fleet/workers/self-allow`. Absent on older servers: the
+      coordinator asks the owner to add it there by hand. */
+  fleetSelfAllowWorkers: Schema.optionalKey(Schema.Boolean),
   /** Server reports its disk room for a release at `/api/studio/fleet/disk-room`.
       Absent on older servers: the primary reports `unsupported`. */
   fleetDiskRoom: Schema.optionalKey(Schema.Boolean),

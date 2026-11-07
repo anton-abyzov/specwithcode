@@ -1759,8 +1759,8 @@ export const de: PhraseCatalog = {
   "Let {coordinatorLabel} use this machine too":
     "{coordinatorLabel} diesen Rechner auch nutzen lassen",
   "On {coordinatorLabel}: done": "Auf {coordinatorLabel}: erledigt",
-  "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
-    "Auf {coordinatorLabel}: noch nicht eingerichtet. Öffne Einstellungen > Rechner, klappe auf der Karte von {hereLabel} Zugriff, Routen und Worker-Berechtigungen auf und wähle Worker erlauben.",
+  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
+    "Öffne auf {hereLabel} Einstellungen > Verbindungen > Einem Hauptrechner beitreten, wähle {coordinatorLabel} und kopiere die Zeile. Öffne auf {coordinatorLabel} Einstellungen > Rechner > Rechner hinzufügen, füge sie ein und wähle dann auf der Karte von {hereLabel} Worker erlauben.",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} darf hier Arbeit ausführen · {access} · bis {date}",
   "{coordinatorLabel} can run work here · {access}":
@@ -1768,8 +1768,7 @@ export const de: PhraseCatalog = {
   "Open the installed desktop app to set this up.":
     "Öffne die installierte Desktop-App, um das einzurichten.",
   "Connect to {coordinatorLabel} first.": "Verbinde dich zuerst mit {coordinatorLabel}.",
-  "Manage access is needed on both {hereLabel} and {coordinatorLabel}.":
-    "Zugriffsverwaltung wird auf {hereLabel} und {coordinatorLabel} benötigt.",
+  "Manage access is needed on {hereLabel}.": "Zugriffsverwaltung wird auf {hereLabel} benötigt.",
   "default browser viewport": "Standard-Viewport des Browsers",
   "Fill panel": "Panel füllen",
   Responsive: "Responsiv",
