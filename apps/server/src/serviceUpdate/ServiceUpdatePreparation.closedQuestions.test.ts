@@ -19,7 +19,8 @@ const schema = [
   `CREATE TABLE orchestration_v2_projection_provider_sessions (thread_id TEXT, status TEXT)`,
   `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT)`,
   `CREATE TABLE projection_projects (project_id TEXT, title TEXT)`,
-  `CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, provider_session_id TEXT)`,
+  `CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, provider_session_id TEXT, thread_id TEXT, payload_json TEXT)`,
+  `CREATE TABLE orchestration_v2_projection_nodes (node_id TEXT, thread_id TEXT, run_id TEXT, kind TEXT, status TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER, run_attempt_id TEXT)`,
 ];
 
@@ -187,6 +188,31 @@ it.live("names the questions and approvals a forced update closes, by thread", (
     );
     // Looking closes nothing and records nothing.
     assert.deepEqual(steps, []);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
+it.live("marks threads that only wait on a person, unless work runs in the background (1259)", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const preparation = yield* harness([], []);
+    const marked = Effect.map(preparation.prepare({ stopWork: false }), (preview) =>
+      [
+        ...new Set(
+          preview.blockers
+            .filter((blocker) => blocker.waitsOnPerson === true)
+            .map((blocker) => blocker.threadTitle),
+        ),
+      ].toSorted(),
+    );
+    // t1's turn is paused on its question and approval; t2 only holds a question.
+    assert.deepEqual(yield* marked, ["Docs", "Fix login"]);
+    // A subagent of t1's turn still runs: the restart would cut it off.
+    yield* sql`INSERT INTO orchestration_v2_projection_nodes VALUES ('s1', 't1', 'r1', 'subagent', 'running')`;
+    assert.deepEqual(yield* marked, ["Docs"]);
+    // A background shell the provider reports pending counts the same way.
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES
+      ('pt2', NULL, 't2', '{"pendingBackgroundTasks":[{"kind":"command"}]}')`;
+    assert.deepEqual(yield* marked, []);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
 

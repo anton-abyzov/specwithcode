@@ -389,6 +389,22 @@ export const makePartsWithTimings = (
       }));
     });
 
+    /**
+     * Threads whose active run still works in the background: a subagent, or a
+     * background task the provider reports pending. Neither has a blocker row,
+     * so a thread asking a question meanwhile is still at work.
+     */
+    const readBackgroundBusy = sql<{ readonly thread_id: string }>`
+      SELECT n.thread_id AS thread_id FROM orchestration_v2_projection_nodes n
+        JOIN orchestration_v2_projection_runs r ON r.run_id = n.run_id
+       WHERE n.kind = 'subagent' AND n.status IN ('pending', 'running', 'waiting')
+         AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+      UNION
+      SELECT thread_id FROM orchestration_v2_projection_provider_threads
+       WHERE thread_id IS NOT NULL
+         AND json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+    `.pipe(Effect.map((found) => new Set(found.map((row) => row.thread_id))));
+
     const readActiveRuns = sql<{
       readonly run_id: string;
       readonly status: string;
@@ -899,7 +915,18 @@ export const makePartsWithTimings = (
       leftover: Option.Option<number> = Option.none(),
     ) =>
       Effect.gen(function* () {
-        const summarized = summarizeBlockers(rows);
+        // Unreadable background work counts every thread as busy: none is marked.
+        const summarized = summarizeBlockers(
+          rows,
+          rows.some((row) => row.kind === "request")
+            ? yield* readBackgroundBusy.pipe(
+                Effect.orElseSucceed(
+                  () =>
+                    new Set(rows.flatMap((row) => (row.threadId === null ? [] : [row.threadId]))),
+                ),
+              )
+            : new Set(),
+        );
         const current = Option.isSome(settings)
           ? yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => null))
           : null;

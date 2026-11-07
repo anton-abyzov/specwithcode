@@ -141,7 +141,7 @@ function WorkCounts({
   readonly work: { readonly running: number; readonly queued: number; readonly questions: number };
 }) {
   return (
-    <span className="w-32 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+    <span className="min-w-24 shrink-0 text-right text-xs whitespace-nowrap text-muted-foreground tabular-nums">
       {runningWorkCounts(work)}
     </span>
   );

@@ -48,12 +48,17 @@ const PERSON_WAIT_KINDS: ReadonlySet<ServiceUpdateBlockerKind> = new Set([
 
 /**
  * The threads that only wait on a person: their rows are runs, sessions and at
- * least one request, and every request is an approval or a question that is
- * asked again after the restart. A restart interrupts no work there.
+ * least one request, every request is an approval or a question that is asked
+ * again after the restart, and nothing runs in the background meanwhile (a
+ * subagent or a background shell, which have no rows: `backgroundBusy`). A
+ * restart interrupts no work there.
  */
-export function personWaitThreads(rows: ReadonlyArray<BlockerRow>): ReadonlySet<string> {
+export function personWaitThreads(
+  rows: ReadonlyArray<BlockerRow>,
+  backgroundBusy: ReadonlySet<string> = new Set(),
+): ReadonlySet<string> {
   const waiting = new Set<string>();
-  const working = new Set<string>();
+  const working = new Set<string>(backgroundBusy);
   for (const row of rows) {
     if (row.threadId === null) continue;
     const reasked =
@@ -76,7 +81,10 @@ const KIND_ORDER: Record<ServiceUpdateBlockerKind, number> = {
 };
 
 /** One entry per thread and kind, running work first, then by project and thread. */
-export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<ServiceUpdateBlocker> {
+export function summarizeBlockers(
+  rows: ReadonlyArray<BlockerRow>,
+  backgroundBusy: ReadonlySet<string> = new Set(),
+): Array<ServiceUpdateBlocker> {
   const grouped = new Map<string, ServiceUpdateBlocker>();
   for (const row of rows) {
     const key = `${row.kind}\u0000${row.threadId ?? ""}`;
@@ -108,7 +116,7 @@ export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<Servic
       approvals: (blocker.approvals ?? 0) + (ClosedQuestions.APPROVAL_KINDS.has(kind) ? 1 : 0),
     });
   }
-  const waitsOnPerson = personWaitThreads(rows);
+  const waitsOnPerson = personWaitThreads(rows, backgroundBusy);
   return [...grouped.values()]
     .map((blocker) =>
       blocker.threadId !== null && waitsOnPerson.has(blocker.threadId)
