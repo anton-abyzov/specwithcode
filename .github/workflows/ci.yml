@@ -42,7 +42,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -89,7 +89,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -125,7 +125,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -165,7 +165,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -234,7 +234,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           # release-version.test.mjs pins the exact release Node.
           node-version: 22.20.0
@@ -281,7 +281,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -316,7 +316,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -512,7 +512,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
@@ -544,7 +544,7 @@ jobs:
       - name: Setup Vite+
         env:
           npm_config_global_pnpmfile: ${{ github.workspace }}/scripts/studio-toolchain/bootstrap-pnpmfile.cjs
-        uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
+        uses: voidzero-dev/setup-vp@cab1ab9eaff52d4857875f4f2c016e36af8f2c76 # v1.22.0
         with:
           node-version-file: package.json
           cache: true
