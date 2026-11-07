@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
   LOCK_REVIEW_SHA256,
   LOCK_UPSTREAM,
@@ -20,9 +20,29 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const git = (args) =>
   execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 const upstream = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
-const original = git(["show", `${upstream}:pnpm-lock.yaml`]);
 // The reviewed lock just before the SDK promotion; its registry data is the identity-mapped upstream's.
-const prior = git(["show", "f0b6d13fb273ae3285861878c43b822731926023:pnpm-lock.yaml"]);
+const priorCommit = "f0b6d13fb273ae3285861878c43b822731926023";
+const hasCommit = (commit) => {
+  try {
+    execFileSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: root, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+// Both baselines are outside the public history (the upstream repository and the archived
+// development repository, anton-abyzov/specwithcode-dev); a clone without them skips this audit.
+const missing = [upstream, priorCommit].filter((commit) => !hasCommit(commit));
+const test = (name, ...rest) =>
+  missing.length === 0
+    ? nodeTest(name, ...rest)
+    : nodeTest(
+        name,
+        { skip: `baseline commits not in this clone: ${missing.join(", ")}` },
+        () => {},
+      );
+const original = missing.length === 0 ? git(["show", `${upstream}:pnpm-lock.yaml`]) : "";
+const prior = missing.length === 0 ? git(["show", `${priorCommit}:pnpm-lock.yaml`]) : "";
 const registry = ["packages:", "snapshots:"];
 const current = readFileSync(resolve(root, "pnpm-lock.yaml"), "utf8");
 const manifest = JSON.parse(readFileSync(resolve(root, "apps/server/package.json"), "utf8"));
@@ -270,17 +290,55 @@ test("the reviewed record is pinned by digest and bound to the upstream baseline
 // A depth-1 checkout (the platform test runners) has no history to walk; ci.yml checks out all of it.
 const shallow = git(["rev-parse", "--is-shallow-repository"]).trim() === "true";
 
+// Changes reviewed before the public history began name commits of the archived development
+// repository, anton-abyzov/specwithcode-dev. They are outside this history, and a clone has them
+// only when it fetched that repository too, so only what it holds is checked against its commit.
+// A change reviewed from now on names a commit of this history.
+const DEVELOPMENT_COMMITS = new Set([
+  "168cbd47aecc359eefe47fb6f36f95cbd96900d9",
+  "209ffb29ba2112dc68ff007198a07a396c7062d3",
+  "32a51ee859475bf355785a028766ff6551f64a18",
+  "4cb13e1c74540ff17abda8ea023c1f19cba731c2",
+  "518b2844dc986efd81feb027093418fbd16f0edd",
+  "64316bf4f428ad3bd20682c13449f05e163bf025",
+  "7cc4119124c4f195556cede29c9889963afb5f3c",
+  "88218f891bb650cc56304bb675112cb0dfb62756",
+  "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+  "a5bc1179ab7a14ec697af126525c9a62707eff8c",
+  "b9313e8c63bcc3c82f47bd76b545db262955ce58",
+  "c43122baf030e06e39eea71e3eb8b72e47982776",
+  "dd3426484f69f0e472dbc6dd2e30413b6297adbf",
+  "dd8d2f1a0db62540e17014ebb95afdf746832949",
+  "ed675af1ba58ef49a8136dfd82cfc0e9267fa1d3",
+  "f3071151947cc4e80740cd534631bfd41dcb41ff",
+  "f6c38688e03c4257580057d3c0d182b936dce96b",
+]);
+const present = (commit) => {
+  try {
+    git(["cat-file", "-e", `${commit}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const reviewedHere = reviewed.filter(
+  (c) => !DEVELOPMENT_COMMITS.has(c.commit) || present(c.commit),
+);
+
 test(
   "every reviewed change names a commit merged into this branch",
   { skip: shallow && "shallow checkout has no history to walk" },
   () => {
-    for (const c of reviewed) git(["merge-base", "--is-ancestor", c.commit, "HEAD"]);
+    for (const c of reviewed) {
+      if (!DEVELOPMENT_COMMITS.has(c.commit))
+        git(["merge-base", "--is-ancestor", c.commit, "HEAD"]);
+    }
   },
 );
 
 test("every reviewed change was written by the merged commit it names", () => {
   const diffs = new Map();
-  for (const c of reviewed) {
+  for (const c of reviewedHere) {
     if (!diffs.has(c.commit))
       diffs.set(c.commit, git(["show", "--format=", "-U0", c.commit, "--", "pnpm-lock.yaml"]));
     const indent = "  ".repeat(c.parent.length);
