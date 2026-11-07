@@ -447,6 +447,7 @@ extension LiveEngine {
     let session = controller.session
     guard let entry = machines[controller.environmentId] else {
       assign(session, \.machineOnline, false)
+      assign(session, \.machineSettling, false)
       assign(session, \.sendBlockedReason, SyncError.unknownMachine.localizedDescription)
       assign(session, \.teamRulesNotice, nil)
       assign(session, \.isStale, controller.projection != nil)
@@ -456,6 +457,7 @@ extension LiveEngine {
     let name = displayName(entry)
     assign(session, \.machineLabel, name)
     assign(session, \.machineOnline, online)
+    assign(session, \.machineSettling, entry.isSettling(at: options.now()))
     assign(session, \.isStale, controller.projection != nil && (!online || !controller.isSynchronized))
 
     let shell = controller.threadId.flatMap(entry.thread)

@@ -230,7 +230,7 @@ struct MachineDetailView: View {
   }
 
   @ViewBuilder private func notice(_ machine: MachineSummary) -> some View {
-    if machine.isDisconnected || !machine.status.isOnline {
+    if machine.isDisconnected || (!machine.status.isOnline && !machine.isSettling) {
       Banner(machine.recoveryMessage, title: machine.recoveryTitle, kind: .info)
     } else if machine.needsSignIn {
       Banner("You signed out, so this phone can't reach \(machine.displayName). Sign in again in Settings.", title: "Sign in again", kind: .fail)

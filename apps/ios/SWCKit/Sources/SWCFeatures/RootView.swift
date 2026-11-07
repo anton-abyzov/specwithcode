@@ -160,7 +160,8 @@ private struct RootContent: View {
         .environment(\.isThreadsPane, true)
     } else if let target = router.landing(in: model) {
       ChatView(target: target)
-    } else if model.isLoading {
+    } else if model.isLoading || model.machines.contains(where: \.isSettling) {
+      // A machine still on its first attempt is connecting, not offline.
       LoadingView()
     } else if !model.allMachinesLoaded {
       // An offline machine may hold Aide and the projects.

@@ -359,7 +359,7 @@ struct ProjectStatusGlyphs: View {
           .accessibilityHidden(true)
       }
       if project.hasUnread { UnreadDot() }
-      if !project.machineOnline {
+      if project.showsMachineOffline {
         StatusDot(.offline)
           .accessibilityHidden(true)
       }
@@ -371,7 +371,7 @@ struct ProjectStatusGlyphs: View {
     if project.workingCount > 0 { parts.append("\(project.workingCount) working") }
     if project.hasUnread { parts.append("Unread") }
     if project.paused { parts.append("Paused") }
-    if !project.machineOnline { parts.append("\(project.machineLabel) offline") }
+    if project.showsMachineOffline { parts.append("\(project.machineLabel) offline") }
     return parts.joined(separator: ", ")
   }
 }

@@ -37,6 +37,12 @@ public final class LiveEngine: AppEngine {
     public var staleThreadGrace: Duration
     /// Minimum time between two catch-ups of every live stream on foreground.
     public var resyncInterval: Duration
+    /// How long a machine that has not connected yet reads "Connecting" after
+    /// the app opens or comes back to the front, before it says offline. It
+    /// covers the first attempt; a failed attempt shows at once.
+    public var connectingGrace: Duration
+    /// The engine's clock, for the connecting grace.
+    public var now: @Sendable () -> ContinuousClock.Instant
 
     public init(
       clientLabel: @escaping @Sendable @MainActor () -> String = { "iPhone" },
@@ -52,7 +58,9 @@ public final class LiveEngine: AppEngine {
       fleetLinkInterval: Duration = .seconds(600),
       shellSaveInterval: Duration = .seconds(30),
       staleThreadGrace: Duration = .seconds(3),
-      resyncInterval: Duration = .seconds(10)
+      resyncInterval: Duration = .seconds(10),
+      connectingGrace: Duration = .seconds(3),
+      now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
     ) {
       self.clientLabel = clientLabel
       self.publishInterval = publishInterval
@@ -68,6 +76,8 @@ public final class LiveEngine: AppEngine {
       self.shellSaveInterval = shellSaveInterval
       self.staleThreadGrace = staleThreadGrace
       self.resyncInterval = resyncInterval
+      self.connectingGrace = connectingGrace
+      self.now = now
     }
   }
 
@@ -114,6 +124,8 @@ public final class LiveEngine: AppEngine {
   var fleetLinking = false
   var connectionChanges: Set<String> = []
   private var publishTask: Task<Void, Never>?
+  /// Publishes again when the earliest connecting grace runs out.
+  private var graceTask: Task<Void, Never>?
   private var pathMonitor: NWPathMonitor?
   private var lastPathSatisfied: Bool?
 
@@ -196,6 +208,15 @@ public final class LiveEngine: AppEngine {
     active = value
     if !value { saveFleetCache() }
     if value { refreshConnectIfStale() }
+    // Back in front, every connection starts again: each machine not yet
+    // connected reads "Connecting" through its first attempt.
+    if value, !wasActive {
+      for entry in machines.values { startConnectingGrace(entry) }
+      scheduleGraceExpiry()
+    } else if !value {
+      for entry in machines.values { entry.settlingUntil = nil }
+      scheduleGraceExpiry()
+    }
     for entry in machines.values {
       let connection = entry.connection
       // Tasks may run out of order; each applies the latest flag.
@@ -257,19 +278,57 @@ public final class LiveEngine: AppEngine {
       }
     })
     if active {
+      startConnectingGrace(entry)
+      scheduleGraceExpiry()
       Task { await connection.setActive(true) }
     }
     return entry
   }
 
+  // MARK: - Connecting grace
+
+  /// Starts the window in which `entry`, until it connects, reads "Connecting".
+  /// A status that still says connected may be from before the app went to
+  /// the background, so the window starts anyway; connecting ends it.
+  func startConnectingGrace(_ entry: MachineEntry) {
+    entry.settlingUntil = entry.record.enabled ? options.now() + options.connectingGrace : nil
+  }
+
+  /// Publishes when the earliest running grace ends, so a machine that never
+  /// answered turns offline on screen without waiting for another event.
+  func scheduleGraceExpiry() {
+    graceTask?.cancel()
+    graceTask = nil
+    let now = options.now()
+    guard let deadline = machines.values.filter({ $0.isSettling(at: now) }).compactMap(\.settlingUntil).min() else { return }
+    let delay = deadline - now
+    graceTask = Task { [weak self] in
+      try? await Task.sleep(for: delay)
+      guard !Task.isCancelled, let self else { return }
+      self.graceTask = nil
+      self.publishNow()
+      self.scheduleGraceExpiry()
+    }
+  }
+
   func statusChanged(_ env: String, _ status: MachineConnection.Status) {
     guard let entry = machines[env] else { return }
-    if entry.status.state == .connected, status.state != .connected { markSeen(entry) }
+    let dropped = entry.status.state == .connected && status.state != .connected
+    if dropped { markSeen(entry) }
     entry.status = status
     if case let .connect(error)? = status.lastError, error.isDeviceRemoved {
       Task { await connectHandleRemoval(error) }
     }
     if let days = status.tokenDaysLeft { entry.tokenDaysLeft = days }
+    // Connected, or the attempt really failed: the grace is over for good.
+    if status.state == .connected || MachineEntry.isFailure(status) {
+      entry.settlingUntil = nil
+    } else if dropped, active {
+      // A dropped connection that is reconnecting reads "Connecting" through
+      // the grace, as at launch, so a short Wi-Fi blip never says offline.
+      startConnectingGrace(entry)
+      scheduleGraceExpiry()
+    }
     switch status.state {
     case .connected:
       break
@@ -457,14 +516,15 @@ public final class LiveEngine: AppEngine {
     guard let model else { return }
     let entries = machineOrder.compactMap { machines[$0] }
     let nicknames = fleetNicknames
-    assign(model, \.machines, entries.map { summary($0, nicknames: nicknames) })
+    let now = options.now()
+    assign(model, \.machines, entries.map { summary($0, nicknames: nicknames, now: now) })
     // Aide is a switch in the desktop's settings; any machine saying so shows it.
     let aideEnabled = AideSetting.visible(entries.map { aideMachine($0, nicknames: nicknames) }, previous: model.aideEnabled)
     assign(model, \.aideEnabled, aideEnabled)
 
     let output = ShellSummaries.build(entries.map { entry in
       // A live list replaces the saved one wholesale, so a reconnect never doubles rows.
-      ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
+      ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, settling: entry.isSettling(at: now), snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
     }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled, cache: summaryCache)
     assign(model, \.aide, output.aide)
     assign(model, \.projects, output.projects)
@@ -483,6 +543,8 @@ public final class LiveEngine: AppEngine {
     for controller in controllers.values {
       if controller.threadId == nil {
         pump(controller)
+        // Without a socket `pump` does nothing, so the machine state is set here.
+        refreshMeta(controller)
       } else {
         retryMissingCoordinator(controller)
         followCoordinator(controller)
@@ -513,8 +575,12 @@ public final class LiveEngine: AppEngine {
     AideSetting.Machine(environmentId: entry.environmentId, displayName: displayName(entry, nicknames: nicknames), enabled: entry.record.enabled, aideEnabled: entry.settings?.aideEnabled, cachedAideEnabled: entry.cachedAideEnabled, canOperate: entry.canOperate, listed: entry.isOnline || entry.cachedSnapshot != nil)
   }
 
-  func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> MachineSummary {
-    let status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
+  func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil, now: ContinuousClock.Instant? = nil) -> MachineSummary {
+    let settling = entry.isSettling(at: now ?? options.now())
+    var status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
+    // No attempt has answered yet: offline here only means "no socket yet",
+    // and a dropped connection reads "Connecting" as at launch.
+    if settling, status == .offline || status == .reconnecting { status = .connecting }
     var result = MachineSummary(
       id: entry.environmentId,
       label: entry.label,
@@ -531,6 +597,7 @@ public final class LiveEngine: AppEngine {
       hasDirectPairing: !entry.record.routes.isEmpty
     )
     result.isDisconnected = !entry.record.enabled
+    result.isSettling = settling
     if case .http(status: 429, code: _)? = entry.status.lastError { result.isRefusingSignIns = true }
     if case let .teamRules(message)? = entry.status.lastError { result.teamRulesRefusal = message }
     result.teamRules = entry.teamRules.map(TeamRulesInfo.init)
@@ -599,6 +666,9 @@ final class MachineEntry {
   var isSynchronized = false
   /// The machine answered once, or failed; `isLoading` waits for this.
   var answered = false
+  /// Until then the machine, not connected yet, reads "Connecting" while its
+  /// first attempt runs. Cleared once it connects or an attempt fails.
+  var settlingUntil: ContinuousClock.Instant?
   var socket: RpcSocket?
   var permissions: [String]?
   var tokenDaysLeft: Int?
@@ -618,6 +688,18 @@ final class MachineEntry {
 
   var label: String { record.label }
   var isOnline: Bool { record.enabled && status.state == .connected }
+
+  /// Not connected yet and its first attempt has neither failed nor run past
+  /// the connecting grace.
+  func isSettling(at now: ContinuousClock.Instant) -> Bool {
+    guard let settlingUntil, record.enabled, status.state != .connected, !Self.isFailure(status) else { return false }
+    return now < settlingUntil
+  }
+
+  /// An attempt finished with an error, or the pairing needs the person.
+  nonisolated static func isFailure(_ status: MachineConnection.Status) -> Bool {
+    status.lastError != nil || status.state == .needsRepair || status.state == .unsupported
+  }
 
   /// False when the pairing is known to lack `orchestration:operate`.
   var canOperate: Bool {

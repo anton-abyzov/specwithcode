@@ -141,7 +141,7 @@ struct ProjectOverviewView: View {
             .accessibilityHidden(true)
         }
         // Offline when the machine that answers for the thread is out, even if it lives elsewhere.
-        MachineBadge(status: thread.machineOnline && !thread.isUnknown ? .online : .offline)
+        MachineBadge(status: thread.machineOnline && !thread.isUnknown ? .online : thread.machineSettling ? .connecting : .offline)
           .accessibilityHidden(true)
       }
     }
@@ -213,7 +213,7 @@ struct ProjectOverviewView: View {
     }
     if thread.isUnread { parts.append("Unread") }
     if thread.isPinned { parts.append("Pinned") }
-    parts.append(Self.spokenPlacement(thread.placement) + (thread.machineOnline ? " online" : " offline"))
+    parts.append(Self.spokenPlacement(thread.placement) + (thread.machineOnline ? " online" : thread.machineSettling ? " connecting" : " offline"))
     return parts.joined(separator: ", ")
   }
 

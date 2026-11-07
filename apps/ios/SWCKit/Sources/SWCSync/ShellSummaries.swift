@@ -9,6 +9,9 @@ public enum ShellSummaries {
     public var environmentId: String
     public var label: String
     public var online: Bool
+    /// Not online yet, but still on its first attempt inside the connecting
+    /// grace: rows read "connecting", not offline or unknown.
+    public var settling: Bool
     /// The live thread list, or the last one saved while the machine is unreachable.
     public var snapshot: ShellSnapshot?
     /// The machine's saved sidebar order, from its server settings.
@@ -21,10 +24,11 @@ public enum ShellSummaries {
     public var lastSeenAt: Date?
     public var providers: [ServerProviderSummary]
 
-    public init(environmentId: String, label: String, online: Bool, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
+    public init(environmentId: String, label: String, online: Bool, settling: Bool = false, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
       self.environmentId = environmentId
       self.label = label
       self.online = online
+      self.settling = !online && settling
       self.snapshot = snapshot
       self.projectOrder = projectOrder
       self.scratchWorkspaceRoot = scratchWorkspaceRoot
@@ -93,7 +97,7 @@ public enum ShellSummaries {
         if project.isPersonal && !includeAide { continue }
         let threads = sortThreads(byProject[project.id] ?? [])
         threadsByProject[ref] = threads
-        var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, threads: threads)
+        var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads)
         if project.isPersonal {
           aides.append(summary)
         } else if isScratch(project, scratchWorkspaceRoot: machine.scratchWorkspaceRoot) {
@@ -123,7 +127,7 @@ public enum ShellSummaries {
           let ref = ProjectRef(environmentId: machine.environmentId, projectId: project.id)
           let threads = sortThreads(byProject[project.id] ?? [])
           otherThreads[ref] = threads
-          others.append(projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, threads: threads))
+          others.append(projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, threads: threads))
         }
       }
     }
@@ -280,7 +284,7 @@ public enum ShellSummaries {
     for thread in snapshot.threads where include(thread.projectId) && isTopLevel(thread, coordinatorIds: coordinatorIds) {
       // A handed-off copy is listed through its continuation when that is known.
       if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
-      var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: machine.displayName, machineOnline: machine.online, providers: machine.providers)
+      var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, providers: machine.providers)
       summary.placement = placement(thread, on: machine, directory: directory)
       byProject[thread.projectId, default: []].append(summary)
     }
@@ -293,6 +297,8 @@ public enum ShellSummaries {
     /// machine's new thread list leaves the others' rows as they were.
     struct Peer: Equatable {
       var displayName: String
+      /// Online, or still on its first attempt: a settling peer does not make
+      /// the threads it runs unknown.
       var online: Bool
       /// Only while the peer is unreachable: an online peer's moves every
       /// heartbeat, and keeping it would rebuild every machine's rows.
@@ -304,7 +310,7 @@ public enum ShellSummaries {
     var nicknames: [String: String]
 
     init(machines: [Machine], names: [String: String], nicknames: [String: String] = [:]) {
-      self.machines = Dictionary(machines.map { ($0.environmentId, Peer(displayName: $0.displayName, online: $0.online, lastSeenAt: $0.online ? nil : $0.lastSeenAt)) }, uniquingKeysWith: { first, _ in first })
+      self.machines = Dictionary(machines.map { ($0.environmentId, Peer(displayName: $0.displayName, online: $0.online || $0.settling, lastSeenAt: $0.online ? nil : $0.lastSeenAt)) }, uniquingKeysWith: { first, _ in first })
       self.names = names
       self.nicknames = nicknames
     }
@@ -329,7 +335,7 @@ public enum ShellSummaries {
     let execution = thread.executionMachineId ?? handoff?.environmentId ?? owner
     let executionName = directory.name(execution, reported: thread.executionMachineLabel ?? handoff?.machineLabel)
     var placement = ThreadPlacement(owner: directory.name(owner), runsOn: execution == owner ? nil : executionName)
-    if !machine.online {
+    if !machine.online && !machine.settling {
       placement.unknown = .init(machine: machine.displayName, lastSeenAt: machine.lastSeenAt)
     } else if thread.executionState == .unknown || (execution != machine.environmentId && directory.isOnline(execution) == false) {
       // The machine that runs it is unreachable: from its server, or from the phone.
@@ -447,7 +453,9 @@ public enum ShellSummaries {
     let busiest = online.max { latest($0) < latest($1) }
     let primary = coordinator ?? busiest ?? candidates.first ?? live.first ?? copies[0]
     let members = ([primary] + copies.filter { $0.summary.ref != primary.summary.ref }).map { copy in
-      ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref, isLinked: logicalId != nil && copy.project.workspaceSettings?.logicalProject?.id == logicalId, folder: ProjectPinning.normalizePath(copy.project.workspaceRoot))
+      var member = ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref, isLinked: logicalId != nil && copy.project.workspaceSettings?.logicalProject?.id == logicalId, folder: ProjectPinning.normalizePath(copy.project.workspaceRoot))
+      member.machineSettling = copy.summary.machineSettling
+      return member
     }
     let threads = sortThreads(copies.flatMap(\.threads))
     var summary = primary.summary
@@ -556,7 +564,7 @@ public enum ShellSummaries {
     return nil
   }
 
-  public static func threadSummary(_ thread: ThreadShell, environmentId: String, projectTitle: String?, machineLabel: String, machineOnline: Bool, providers: [ServerProviderSummary] = []) -> ThreadSummary {
+  public static func threadSummary(_ thread: ThreadShell, environmentId: String, projectTitle: String?, machineLabel: String, machineOnline: Bool, machineSettling: Bool = false, providers: [ServerProviderSummary] = []) -> ThreadSummary {
     let activity = activity(thread)
     let attention = ThreadAttention.attention(thread)
     let working = activity == .working || activity == .needsYou
@@ -580,6 +588,7 @@ public enum ShellSummaries {
       identity: ThreadIdentity(selection: thread.modelIdentity?.current ?? thread.modelSelection, providers: providers),
       waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || attention.needsReply
     )
+    summary.machineSettling = machineSettling
     summary.isDone = thread.status == .completed
     summary.waitReason = attention.dependencyWait
     summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true
@@ -588,10 +597,10 @@ public enum ShellSummaries {
 
   // MARK: - Projects
 
-  public static func projectSummary(_ project: ProjectShell, environmentId: String, machineLabel: String, machineOnline: Bool, threads: [ThreadSummary]) -> ProjectSummary {
+  public static func projectSummary(_ project: ProjectShell, environmentId: String, machineLabel: String, machineOnline: Bool, machineSettling: Bool = false, threads: [ThreadSummary]) -> ProjectSummary {
     let personal = project.isPersonal
     let title = project.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-    return ProjectSummary(
+    var summary = ProjectSummary(
       ref: ProjectRef(environmentId: environmentId, projectId: project.id),
       title: title.isEmpty ? (personal ? "Aide" : "Project") : title,
       icon: icon(project.projectIcon ?? (personal ? .personalAssistant : nil)),
@@ -605,6 +614,8 @@ public enum ShellSummaries {
       workingCount: threads.filter { !$0.isUnknown && ($0.activity == .working || $0.activity == .needsYou || $0.waitReason != nil) }.count,
       hasUnread: threads.contains { $0.isUnread }
     )
+    summary.machineSettling = machineSettling
+    return summary
   }
 
   public static func icon(_ icon: ProjectIconOverride?) -> ProjectIcon {
