@@ -289,7 +289,7 @@ export function ProjectWorkspaceSettings({
     );
   }
   async function save(): Promise<boolean> {
-    if (disabled) return false;
+    if (disabled || environmentBlocked) return false;
     if (titleEdited && title.trim() !== projectTitle && !ownsName) {
       setError(
         "Open the active coordinator to rename this project. This checkout does not own its name.",
