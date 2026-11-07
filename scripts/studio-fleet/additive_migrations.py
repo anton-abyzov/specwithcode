@@ -94,6 +94,16 @@ DECLARED = {
          "CREATE INDEX orchestration_v2_projection_nodes_active_root_idx ON orchestration_v2_projection_nodes(thread_id, run_id) "
          "WHERE kind = 'root_turn' AND status IN ('pending', 'running', 'waiting')"),
     )),
+    # 073_TeamRulesRecords.ts
+    73: ('TeamRulesRecords', (
+        ('table', 'team_rules_command_actors', 'team_rules_command_actors',
+         "CREATE TABLE team_rules_command_actors ( command_id TEXT PRIMARY KEY, person TEXT NOT NULL, "
+         "os_user TEXT, device_json TEXT NOT NULL )"),
+        ('index', 'sqlite_autoindex_team_rules_command_actors_1', 'team_rules_command_actors', None),
+        ('table', 'team_rules_settings_changes', 'team_rules_settings_changes',
+         "CREATE TABLE team_rules_settings_changes ( sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+         "occurred_at TEXT NOT NULL, paths_json TEXT NOT NULL, person TEXT, os_user TEXT, device_json TEXT )"),
+    )),
 }
 
 # Server migrations the page proof refuses (a rebuild, alter, drop or rename): an update that runs
