@@ -198,15 +198,17 @@ const assertGrantMayReach = (
     yield* refuseRevoked(work);
     if (work.grant.legacy === true && access === "observe") return;
     const workers = yield* RemoteWorkers.RemoteWorkers;
+    // Back on the machine that sent the work, it reaches only the threads it launched there.
+    const returning = mayReturnToOrigin({
+      grant: work.grant,
+      origin: work.origin,
+      targetEnvironmentId: machine.environmentId,
+    });
     const outgoing = outgoingDelegation({
       localEnvironmentId: context.scope.environmentId,
       targetEnvironmentId: machine.environmentId,
       origin: work.origin,
-      returnToOrigin: mayReturnToOrigin({
-        grant: work.grant,
-        origin: work.origin,
-        targetEnvironmentId: machine.environmentId,
-      }),
+      returnToOrigin: returning,
       carried: teamRulesOutgoingCarried(
         // The ceiling a zone or repository sets for this thread's folder leaves with it too.
         yield* teamRulesForFolder(
@@ -235,7 +237,7 @@ const assertGrantMayReach = (
         ),
       });
     // A legacy grant (the owner's own machines) reaches their threads as before.
-    if (work.grant.legacy === true) return;
+    if (work.grant.legacy === true && !returning) return;
     const launched =
       remoteThreadId !== undefined &&
       (yield* workers.launchedBy({

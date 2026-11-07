@@ -613,9 +613,7 @@ const make = Effect.gen(function* () {
       if (others.length === 0) return yield* noMachines(wanted);
       return yield* failure(
         "unknown_machine",
-        `No machine named "${wanted}". studio_machine_list shows the machines this one can use. ${others
-          .map((machine) => reverseGrantMessage(hereLabel, machine.label))
-          .join(" ")}`,
+        `No machine named "${wanted}". studio_machine_list shows the machines this one can use, and under incoming the ones that run work here with the step that lets this machine use them.`,
       );
     });
 

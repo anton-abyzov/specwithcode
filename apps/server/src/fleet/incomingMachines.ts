@@ -15,7 +15,7 @@ export const UNNAMED_INCOMING_LABEL = "the machine that sends work here";
 
 /** The one step on `there` that lets `here` use it, as the user sees it. */
 export const reverseGrantStep = (here: string, there: string) =>
-  `On ${there}, open Settings > Machines, find ${here} and choose "Let ${here} use this machine too".`;
+  `On ${there}, open Settings > Machines, find ${here} and choose "Let ${here} use this machine too" (if ${there} lists ${here} as revoked or expired under Who can run work here, allow it again there).`;
 
 /** Why a thread here cannot reach `there` yet, and what to do meanwhile. */
 export const reverseGrantMessage = (here: string, there: string) =>
@@ -39,7 +39,9 @@ export const incomingMachines = (input: {
     const seen = new Set<string>();
     return policies.flatMap((policy): ReadonlyArray<OrchestratorMcpIncomingMachine> => {
       const id = policy.coordinatorEnvironmentId;
-      if (policy.revokedAt !== null || id === input.ownEnvironmentId) return [];
+      // Only the owner's own machines: another person's is never told to ask for this one.
+      if (policy.revokedAt !== null || policy.owner !== "self" || id === input.ownEnvironmentId)
+        return [];
       if (input.configured.has(id) || seen.has(id)) return [];
       seen.add(id);
       const label = input.labels.get(id) ?? UNNAMED_INCOMING_LABEL;

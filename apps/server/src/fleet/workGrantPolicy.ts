@@ -159,8 +159,10 @@ export function outgoingDelegation(input: {
 /**
  * Whether work another machine started here may reach that same machine
  * again: launch there, move a file with it or move a thread back. Only the
- * owner's own machine, only the one that sent the work, and only through the
- * grant the user gave this machine there, which the call itself must present.
+ * owner's own machine, only work that machine started itself (one hop, so
+ * neither another person's work relayed through it nor work that already came
+ * back qualifies), and only through the grant the user gave this machine
+ * there, which the call itself must present.
  */
 export const mayReturnToOrigin = (input: {
   readonly grant: Pick<EffectiveWorkGrant, "owner" | "revoked">;
@@ -169,7 +171,9 @@ export const mayReturnToOrigin = (input: {
 }) =>
   input.grant.owner === "self" &&
   !input.grant.revoked &&
-  input.origin?.path?.at(-1) === input.targetEnvironmentId;
+  input.origin?.hops === 1 &&
+  input.origin.path?.length === 1 &&
+  input.origin.path[0] === input.targetEnvironmentId;
 
 /** The message a refused launch carries, naming the path. */
 export function delegationRefusal(

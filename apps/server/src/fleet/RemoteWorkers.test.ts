@@ -329,8 +329,11 @@ describe("RemoteWorkers", () => {
   });
 
   it.live("names the one click that lets this machine use a machine that runs work here", () => {
-    const policy = (coordinatorEnvironmentId: string, revokedAt: string | null = null) =>
-      ({ coordinatorEnvironmentId, revokedAt }) as never;
+    const policy = (
+      coordinatorEnvironmentId: string,
+      revokedAt: string | null = null,
+      owner: "self" | "other" = "self",
+    ) => ({ coordinatorEnvironmentId, revokedAt, owner }) as never;
     const { layer } = setup(
       {},
       {},
@@ -342,6 +345,8 @@ describe("RemoteWorkers", () => {
             policy("env-m1"),
             policy("env-m3"),
             policy("env-mini", "2026-11-01T00:00:00.000Z"),
+            // Another person's machine is never told to ask for this one.
+            policy("env-anna", null, "other"),
           ]),
         },
       },
@@ -355,7 +360,7 @@ describe("RemoteWorkers", () => {
           environmentId: "env-m3",
           status: "needs_reverse_grant",
           allow:
-            'On the machine that sends work here, open Settings > Machines, find M4 and choose "Let M4 use this machine too".',
+            'On the machine that sends work here, open Settings > Machines, find M4 and choose "Let M4 use this machine too" (if the machine that sends work here lists M4 as revoked or expired under Who can run work here, allow it again there).',
         },
       ]);
       const asked = yield* workers.resolveMachine("env-m3").pipe(Effect.flip);
@@ -363,7 +368,8 @@ describe("RemoteWorkers", () => {
       expect(asked.message).toContain("Let M4 use this machine too");
       const unknown = yield* workers.resolveMachine("laptop").pipe(Effect.flip);
       expect(unknown.code).toBe("unknown_machine");
-      expect(unknown.message).toContain("Let M4 use this machine too");
+      expect(unknown.message).toContain("under incoming");
+      expect(unknown.message).not.toContain("env-m3");
     }).pipe(Effect.provide(layer));
   });
 

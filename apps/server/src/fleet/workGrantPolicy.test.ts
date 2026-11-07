@@ -136,6 +136,15 @@ describe("work grant policy", () => {
     expect(mayReturnToOrigin({ grant: self, origin: relayed, targetEnvironmentId: M4 })).toBe(
       false,
     );
+    // Another person's work relayed through M3 never returns to M3 as the owner's.
+    expect(mayReturnToOrigin({ grant: self, origin: relayed, targetEnvironmentId: M3 })).toBe(
+      false,
+    );
+    // Work that already came back does not go back again.
+    const returned = { coordinatorEnvironmentId: M1, path: [M1], hops: 2 };
+    expect(mayReturnToOrigin({ grant: self, origin: returned, targetEnvironmentId: M1 })).toBe(
+      false,
+    );
     // Back to M4: the path starts on M1, and the hop count carries on.
     const back = outgoingDelegation({
       localEnvironmentId: M1,

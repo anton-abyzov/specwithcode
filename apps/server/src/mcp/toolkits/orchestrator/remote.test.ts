@@ -89,6 +89,8 @@ const setup = (
     readonly launched?: ReadonlyArray<string>;
     /** That work's grant was kept from before grants were scoped (the owner's own machine). */
     readonly legacy?: boolean;
+    /** Whose machine sent that work (default the owner's own). */
+    readonly owner?: "self" | "other";
   } = {},
 ) => {
   const caller = {
@@ -217,7 +219,7 @@ const setup = (
       Effect.succeed(
         options.legacy === true
           ? { ...unscopedGrant(environmentId), legacy: true }
-          : unscopedGrant(environmentId),
+          : { ...unscopedGrant(environmentId), owner: options.owner ?? "self" },
       ),
   };
   const layerDependencies = Layer.mergeAll(
@@ -587,8 +589,12 @@ it.effect("keeps another machine's work off threads elsewhere it did not launch"
   });
 });
 
-it.effect("never lets another machine's work steer a thread back on the path it came by", () => {
-  const { call, proxied } = setup({ grantPath: ["env-m1"], launched: ["b-thread"] });
+it.effect("never lets another person's work steer a thread back on the path it came by", () => {
+  const { call, proxied } = setup({
+    grantPath: ["env-m1"],
+    launched: ["b-thread"],
+    owner: "other",
+  });
   return Effect.gen(function* () {
     for (const [tool, params] of [
       ["studio_thread_read", { machine: "m1", threadId: "b-thread" }],
@@ -600,6 +606,31 @@ it.effect("never lets another machine's work steer a thread back on the path it 
     expect(proxied).toEqual([]);
   });
 });
+
+it.effect(
+  "lets the owner's work follow the threads it launched back on the machine that sent it",
+  () => {
+    const { call, proxied } = setup({ grantPath: ["env-m1"], launched: ["b-thread"] });
+    return Effect.gen(function* () {
+      for (const [tool, params] of [
+        ["studio_thread_read", { machine: "m1", threadId: "b-thread" }],
+        ["studio_thread_wait", { machine: "m1", threadId: "b-thread" }],
+        ["studio_thread_send", { machine: "m1", threadId: "b-thread", message: "More" }],
+      ] as const)
+        expect(yield* call(tool, params), tool).not.toHaveProperty("code");
+      // Any other thread there stays out of reach.
+      expect(
+        yield* call("studio_thread_send", {
+          machine: "m1",
+          threadId: "other-thread",
+          message: "x",
+        }),
+      ).toMatchObject({ code: "outside_grant_scope" });
+      expect(proxied.map((entry) => entry.tool)).toContain("studio_thread_send");
+      expect(proxied.every((entry) => entry.arguments.threadId === "b-thread")).toBe(true);
+    });
+  },
+);
 
 // Review round 3: this machine's own threads record no origin, so steering one
 // would run work outside the grant's routines, sign-ins and revocation.
@@ -642,7 +673,8 @@ it.effect("lets a legacy grant's work read its origin but not steer back along t
       ["studio_thread_send", { machine: "m1", threadId: "other-thread", message: "Loop" }],
       ["studio_thread_interrupt", { machine: "m1", threadId: "other-thread" }],
     ] as const)
-      expect(yield* call(tool, params), tool).toMatchObject({ code: "delegation_cycle" });
+      // Back on the machine that sent the work, it acts only on threads it launched there.
+      expect(yield* call(tool, params), tool).toMatchObject({ code: "outside_grant_scope" });
     expect(proxied).toEqual([]);
     for (const [tool, params] of [
       ["studio_thread_read", { machine: "m1", threadId: "other-thread" }],
