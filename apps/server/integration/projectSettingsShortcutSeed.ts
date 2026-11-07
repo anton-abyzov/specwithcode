@@ -44,6 +44,7 @@ const turns = [0, 1].map((turn) =>
 
 const program = Effect.gen(function* () {
   const sink = yield* EventSink.EventSinkV2;
+  if (created.type !== "thread.created") throw new Error("threadCreated made another event");
   yield* sink.write({
     events: [{ ...created, payload: { ...created.payload, createdBy: "agent" } }],
   });
