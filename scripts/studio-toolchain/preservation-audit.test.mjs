@@ -270,17 +270,29 @@ test("the reviewed record is pinned by digest and bound to the upstream baseline
 // A depth-1 checkout (the platform test runners) has no history to walk; ci.yml checks out all of it.
 const shallow = git(["rev-parse", "--is-shallow-repository"]).trim() === "true";
 
+// The public repository's history starts at its first release commit; changes reviewed before
+// that name commits of the archived development repository, which only a clone holding both has.
+const present = (commit) => {
+  try {
+    git(["cat-file", "-e", `${commit}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const reviewedHere = reviewed.filter((c) => present(c.commit));
+
 test(
   "every reviewed change names a commit merged into this branch",
   { skip: shallow && "shallow checkout has no history to walk" },
   () => {
-    for (const c of reviewed) git(["merge-base", "--is-ancestor", c.commit, "HEAD"]);
+    for (const c of reviewedHere) git(["merge-base", "--is-ancestor", c.commit, "HEAD"]);
   },
 );
 
 test("every reviewed change was written by the merged commit it names", () => {
   const diffs = new Map();
-  for (const c of reviewed) {
+  for (const c of reviewedHere) {
     if (!diffs.has(c.commit))
       diffs.set(c.commit, git(["show", "--format=", "-U0", c.commit, "--", "pnpm-lock.yaml"]));
     const indent = "  ".repeat(c.parent.length);

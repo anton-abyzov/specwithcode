@@ -140,8 +140,8 @@ test('the repository rename approvals cover only the Codex replay origin URLs', 
   const previousByPath = new Map(previous.entries.map(entry => [entry.path, entry]));
   for (const entry of entries) Object.assign(expected.entries.find(old => old.path === entry.path), { reviewedSha256: entry.reviewedSha256, reviewCommit: rename });
   assert.deepEqual(pinnedManifest, expected, 'The rename review changed more than its seven entries');
-  const oldUrl = '"originUrl":"https://github.com/anton-abyzov/specwithcode.git"';
-  const newUrl = '"originUrl":"https://github.com/anton-abyzov/specwithcode.git"';
+  const oldUrl = '"originUrl":"https://github.com/anton-abyzov/specweave-studio.git"';
+  const newUrl = '"originUrl":"https://github.com/anton-abyzov/specwithcode-dev.git"';
   for (const entry of entries) {
     const old = previousByPath.get(entry.path);
     assert.ok(old.reviewCommit !== rename && FIXTURE_REVIEW_COMMITS.includes(old.reviewCommit), `No earlier review: ${entry.path}`);
