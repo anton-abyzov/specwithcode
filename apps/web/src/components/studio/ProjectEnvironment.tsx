@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import {
   CommandId,
   projectRepositoryIdentity,
+  type ProjectEnvironmentEntryRef,
   type ProjectWorkspaceReadResult,
 } from "@specweave-studio/contracts";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
@@ -14,6 +15,15 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
 import { CharacterCount } from "../ui/character-count";
 import { ProjectEnvironmentImport } from "./ProjectEnvironmentImport";
+import {
+  checkoutPathError,
+  entryMatchesFolder,
+  entryMatchesRepository,
+  environmentFieldErrorCount,
+  originUpdateFor,
+  repositoryShortName,
+  repositoryUrlError,
+} from "./projectEnvironmentDraft";
 
 type EnvironmentDraft = ProjectWorkspaceReadResult["settings"]["environment"];
 export function ProjectEnvironment({
@@ -30,6 +40,8 @@ export function ProjectEnvironment({
   onPrepared,
   onDraftChange,
   onBusyChange,
+  entryError = null,
+  onFieldErrorsChange,
 }: {
   project: EnvironmentProject;
   projectKey: string;
@@ -44,6 +56,10 @@ export function ProjectEnvironment({
   onPrepared: (revision: number, value: EnvironmentDraft) => void;
   onDraftChange: (dirty: boolean) => void;
   onBusyChange: (busy: boolean) => void;
+  /** A rejected save that named one entry: shown beside that entry. */
+  entryError?: { readonly entry: ProjectEnvironmentEntryRef; readonly message: string } | null;
+  /** How many entries have a field that cannot be saved as typed. */
+  onFieldErrorsChange?: (count: number) => void;
 }) {
   const countId = useId();
   const query = useEnvironmentQuery(
@@ -64,11 +80,59 @@ export function ProjectEnvironment({
   const [error, setError] = useState<string | null>(null);
   const [uncertainKey, setUncertainKey] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // URL edits in progress and what each entry held before, for Cancel and "was".
+  const [editingUrl, setEditingUrl] = useState<{ id: string; value: string } | null>(null);
+  const [urlBefore, setUrlBefore] = useState<ReadonlyMap<string, string>>(new Map());
+  const [pathBefore, setPathBefore] = useState<ReadonlyMap<string, string | null>>(new Map());
+  const sectionRef = useRef<HTMLElement>(null);
   const inFlight = useRef(false);
   const requests = useRef(new Map<string, string>());
   useEffect(() => {
     query.refresh();
   }, [revision, query.refresh]);
+  // A save or Discard starts a new baseline.
+  useEffect(() => {
+    setEditingUrl(null);
+    setUrlBefore(new Map());
+    setPathBefore(new Map());
+  }, [revision]);
+  const fieldErrors = environmentFieldErrorCount(value);
+  useEffect(() => {
+    onFieldErrorsChange?.(fieldErrors);
+  }, [fieldErrors, onFieldErrorsChange]);
+  // Bring the entry a save rejected into view, with its field focused.
+  useEffect(() => {
+    if (!entryError) return;
+    const key =
+      entryError.entry.kind === "repository"
+        ? `repository:${entryError.entry.repositoryId ?? ""}`
+        : `folder:${entryError.entry.path}`;
+    const target = [
+      ...(sectionRef.current?.querySelectorAll<HTMLElement>("[data-entry-key]") ?? []),
+    ].find((element) => element.dataset.entryKey === key);
+    target?.scrollIntoView?.({ block: "center" });
+    target?.querySelector<HTMLElement>("input, button")?.focus({ preventScroll: true });
+  }, [entryError]);
+  const setRepository = (
+    id: string,
+    update: (
+      repository: EnvironmentDraft["repositories"][number],
+    ) => Partial<EnvironmentDraft["repositories"][number]>,
+  ) => {
+    const current = value.repositories.find((repository) => repository.id === id);
+    if (!current) return;
+    const next = update(current);
+    if (next.url !== undefined && next.url !== current.url && !urlBefore.has(id))
+      setUrlBefore((map) => new Map(map).set(id, current.url));
+    if (next.localPath !== undefined && next.localPath !== current.localPath && !pathBefore.has(id))
+      setPathBefore((map) => new Map(map).set(id, current.localPath));
+    onChange({
+      ...value,
+      repositories: value.repositories.map((repository) =>
+        repository.id === id ? { ...repository, ...next } : repository,
+      ),
+    });
+  };
   useEffect(() => {
     onDraftChange(Boolean(url || folder));
   }, [url, folder, onDraftChange]);
@@ -155,7 +219,7 @@ export function ProjectEnvironment({
     }
   }
   return (
-    <section className="project-settings-section">
+    <section className="project-settings-section" ref={sectionRef}>
       <h2>Environment</h2>
       <p className="project-muted">
         {kind === "personal"
@@ -209,8 +273,9 @@ export function ProjectEnvironment({
         </p>
         {value.additionalFolders.map((path) => {
           const problem = folderProblem(path);
+          const saveError = entryMatchesFolder(entryError?.entry, path) ? entryError : null;
           return (
-            <div key={path}>
+            <div key={path} data-entry-key={`folder:${path}`}>
               <div className="project-environment-entry">
                 <ProjectLocation path={path} />
                 {problem?.updatePath !== undefined && (
@@ -242,6 +307,11 @@ export function ProjectEnvironment({
                   {problem.message}
                   {problem.updatePath !== undefined &&
                     " It is a checkout of the same repository, so Update path can point the entry there."}
+                </p>
+              )}
+              {saveError && (
+                <p className="project-field-error" role="alert">
+                  {saveError.message}
                 </p>
               )}
             </div>
@@ -289,30 +359,122 @@ export function ProjectEnvironment({
               item.url === repository.url &&
               item.localPath === repository.localPath,
           );
+          // The saved checkout, even after its URL was edited here, for the origin check.
+          const savedCheckout = query.data?.repositories.find(
+            (item) => item.id === repository.id && item.localPath === repository.localPath,
+          );
           const problem = problems.find(
             (item) =>
               item.kind === "repository" &&
               item.repositoryId === repository.id &&
               (item.path === repository.localPath || (repository.localPath === null && !dirty)),
           );
+          const pathError = checkoutPathError(repository.localPath);
+          const origin = originUpdateFor(repository, savedCheckout);
+          const previousUrl = urlBefore.get(repository.id);
+          const editing = editingUrl?.id === repository.id ? editingUrl : null;
+          const editError = editing
+            ? repositoryUrlError(editing.value, value.repositories, repository.id)
+            : null;
+          const saveError = entryMatchesRepository(entryError?.entry, repository.id)
+            ? entryError
+            : null;
+          const pathId = `checkout-path-${repository.id}`;
           return (
-            <article className="project-repository-entry" key={repository.id}>
-              <div className="project-environment-entry">
-                <code>{repository.url}</code>
-                <button
-                  className="project-control"
-                  disabled={blocked}
-                  aria-label={`Remove repository ${repository.url}`}
-                  onClick={() =>
-                    onChange({
-                      ...value,
-                      repositories: value.repositories.filter((r) => r.id !== repository.id),
-                    })
-                  }
-                >
-                  Remove
-                </button>
-              </div>
+            <article
+              className="project-repository-entry"
+              key={repository.id}
+              data-entry-key={`repository:${repository.id}`}
+            >
+              {editing ? (
+                <div className="project-environment-entry">
+                  <input
+                    aria-label={`Repository URL for ${repository.url}`}
+                    aria-invalid={editError !== null}
+                    value={editing.value}
+                    maxLength={2048}
+                    autoComplete="off"
+                    autoFocus
+                    onChange={(e) => setEditingUrl({ id: repository.id, value: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") setEditingUrl(null);
+                      if (e.key === "Enter" && editError === null) {
+                        setRepository(repository.id, () => ({ url: editing.value.trim() }));
+                        setEditingUrl(null);
+                      }
+                    }}
+                  />
+                  <button className="project-control" onClick={() => setEditingUrl(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    className="project-control"
+                    disabled={editError !== null}
+                    onClick={() => {
+                      setRepository(repository.id, () => ({ url: editing.value.trim() }));
+                      setEditingUrl(null);
+                    }}
+                  >
+                    Done
+                  </button>
+                </div>
+              ) : (
+                <div className="project-environment-entry">
+                  <code>{repository.url}</code>
+                  <button
+                    className="project-control"
+                    disabled={blocked}
+                    aria-label={`Edit URL ${repository.url}`}
+                    onClick={() => setEditingUrl({ id: repository.id, value: repository.url })}
+                  >
+                    Edit URL
+                  </button>
+                  <button
+                    className="project-control"
+                    disabled={blocked}
+                    aria-label={`Remove repository ${repository.url}`}
+                    onClick={() =>
+                      onChange({
+                        ...value,
+                        repositories: value.repositories.filter((r) => r.id !== repository.id),
+                      })
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+              {editing && editError && (
+                <p className="project-field-error" role="alert">
+                  {editError}
+                </p>
+              )}
+              {previousUrl !== undefined && previousUrl !== repository.url && (
+                <p className="project-muted" role="status">
+                  URL changed, unsaved. Was <code>{previousUrl}</code>; the checkout path is kept.{" "}
+                  <button
+                    className="project-text-link"
+                    disabled={blocked}
+                    onClick={() => setRepository(repository.id, () => ({ url: previousUrl }))}
+                  >
+                    Undo
+                  </button>
+                </p>
+              )}
+              {origin && previousUrl === undefined && (
+                <div className="project-notice" role="status">
+                  <p>
+                    This checkout&apos;s origin is <code>{origin}</code>.
+                  </p>
+                  <button
+                    className="project-control"
+                    disabled={blocked}
+                    onClick={() => setRepository(repository.id, () => ({ url: origin }))}
+                  >
+                    Update URL to {repositoryShortName(origin)}
+                  </button>
+                </div>
+              )}
               <p className="project-muted" role="status">
                 {busy === repository.id
                   ? "Checking on this machine…"
@@ -329,36 +491,62 @@ export function ProjectEnvironment({
               <label>
                 Checkout path
                 <input
+                  id={pathId}
                   aria-label={`Checkout path for ${repository.url}`}
+                  aria-invalid={pathError !== null}
+                  aria-describedby={pathError ? `${pathId}-error` : undefined}
                   value={repository.localPath ?? ""}
                   disabled={blocked}
                   placeholder="Leave empty for a managed checkout"
                   onChange={(e) =>
-                    onChange({
-                      ...value,
-                      repositories: value.repositories.map((r) =>
-                        r.id === repository.id ? { ...r, localPath: e.target.value || null } : r,
-                      ),
-                    })
+                    setRepository(repository.id, () => ({ localPath: e.target.value || null }))
                   }
                 />
               </label>
-              <p className="project-muted">
-                Use an existing checkout, or a new destination inside the execution folder or an
-                approved folder.
-              </p>
+              {pathError ? (
+                <p className="project-field-error" id={`${pathId}-error`} role="alert">
+                  {pathError.message}
+                  {pathError.url !== undefined &&
+                    projectRepositoryIdentity(pathError.url) !==
+                      projectRepositoryIdentity(repository.url) &&
+                    repositoryUrlError(pathError.url, value.repositories, repository.id) ===
+                      null && (
+                      <>
+                        {" "}
+                        <button
+                          className="project-text-link"
+                          disabled={blocked}
+                          onClick={() => {
+                            const before = pathBefore.get(repository.id);
+                            setRepository(repository.id, () => ({
+                              url: pathError.url!,
+                              localPath: before === undefined ? null : before,
+                            }));
+                          }}
+                        >
+                          Use as repository URL
+                        </button>
+                      </>
+                    )}
+                </p>
+              ) : (
+                <p className="project-muted">
+                  Use an existing checkout, or a new destination inside the execution folder or an
+                  approved folder.
+                </p>
+              )}
+              {saveError && (
+                <p className="project-field-error" role="alert">
+                  {saveError.message}
+                </p>
+              )}
               <div className="project-actions">
                 {problem?.updatePath !== undefined && (
                   <button
                     className="project-control"
                     disabled={blocked}
                     onClick={() =>
-                      onChange({
-                        ...value,
-                        repositories: value.repositories.map((r) =>
-                          r.id === repository.id ? { ...r, localPath: problem.updatePath! } : r,
-                        ),
-                      })
+                      setRepository(repository.id, () => ({ localPath: problem.updatePath! }))
                     }
                   >
                     Update path

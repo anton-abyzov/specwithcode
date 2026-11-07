@@ -1495,4 +1495,95 @@ describe("rename from a double click on the sidebar row", () => {
     await pressEnter();
     expect(state.update).not.toHaveBeenCalled();
   });
+  describe("repository entries", () => {
+    const atlas = "https://github.com/example/atlas.git";
+    const renamed = "https://github.com/example/atlas-renamed.git";
+    const pathField = `input[aria-label="Checkout path for ${atlas}"]`;
+    const savedRepositories = () =>
+      state.update.mock.calls.at(-1)![0].input.workspaceSettings.environment.repositories;
+    const saveButton = () =>
+      [...container.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Save changes",
+      )!;
+
+    it("flags a URL typed as a checkout path and moves it to the entry's URL", async () => {
+      await render("environment");
+      await input(pathField, renamed);
+      expect(container.textContent).toContain("This is a folder path, not a URL.");
+      expect(saveButton().disabled).toBe(true);
+      expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
+        "Fix the highlighted Environment entry before saving.",
+      );
+      await click("Use as repository URL");
+      expect(container.textContent).not.toContain("This is a folder path, not a URL.");
+      expect(container.textContent).toContain("URL changed, unsaved");
+      await click("Save changes");
+      expect(savedRepositories()).toEqual([
+        { id: "repo-one", url: renamed, localPath: "/scratch/atlas/code" },
+      ]);
+    });
+
+    it("edits a URL in place and keeps the entry's checkout", async () => {
+      await render("environment");
+      await press(`Edit URL ${atlas}`);
+      await input(`input[aria-label="Repository URL for ${atlas}"]`, "not a url");
+      expect(container.textContent).toContain("credential-free");
+      await input(`input[aria-label="Repository URL for ${atlas}"]`, renamed);
+      await click("Done");
+      expect(container.textContent).toContain("URL changed, unsaved");
+      await click("Save changes");
+      expect(savedRepositories()).toEqual([
+        { id: "repo-one", url: renamed, localPath: "/scratch/atlas/code" },
+      ]);
+    });
+
+    it("offers Update URL when the checkout's origin was renamed", async () => {
+      const observed = state.environment;
+      state.environment = {
+        ...observed,
+        repositories: [
+          {
+            id: "repo-one",
+            url: atlas,
+            localPath: "/scratch/atlas/code",
+            status: "mismatch",
+            origin: renamed,
+          },
+        ],
+      } as typeof observed;
+      try {
+        await render("environment");
+        expect(container.textContent).toContain(`This checkout's origin is ${renamed}`);
+        await click("Update URL to atlas-renamed.git");
+        await click("Save changes");
+        expect(savedRepositories()).toEqual([
+          { id: "repo-one", url: renamed, localPath: "/scratch/atlas/code" },
+        ]);
+      } finally {
+        state.environment = observed;
+      }
+    });
+
+    it("shows a rejected save beside the entry that caused it", async () => {
+      const message =
+        "Repository checkout /scratch/elsewhere is outside the project folder and its approved folders.";
+      state.update.mockResolvedValueOnce({
+        _tag: "Failure",
+        error: Object.assign(new Error(message), {
+          entry: { kind: "repository", path: "/scratch/elsewhere", repositoryId: "repo-one" },
+        }),
+      });
+      await render("environment");
+      await input(pathField, "/scratch/elsewhere");
+      await click("Save changes");
+      const entry = container.querySelector('[data-entry-key="repository:repo-one"]')!;
+      expect(entry.textContent).toContain(message);
+      expect(container.querySelector(".project-settings-footer")?.textContent).toContain(
+        "An Environment entry needs attention",
+      );
+      expect(container.querySelector(".project-settings-footer")?.textContent).not.toContain(
+        message,
+      );
+    });
+  });
 });

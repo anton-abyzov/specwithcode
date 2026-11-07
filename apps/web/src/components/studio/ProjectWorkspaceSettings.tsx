@@ -10,18 +10,21 @@ import {
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import type {
   ModelSelection,
+  ProjectEnvironmentEntryRef,
   ProjectWorkerMachine,
   ProjectWorkspaceReadResult,
   ThreadId,
 } from "@specweave-studio/contracts";
 import {
   PERSONAL_ASSISTANT_LABEL,
+  ProjectEnvironmentEntryRef as ProjectEnvironmentEntryRefSchema,
   projectWorkerMachineOrder,
   PROJECT_GOAL_MAX_LENGTH,
   PROJECT_INSTRUCTIONS_MAX_LENGTH,
   logicalProjectTitle,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import * as Schema from "effect/Schema";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { useEnvironment } from "../../state/environments";
@@ -125,6 +128,8 @@ function useSettingsRowJump(body: RefObject<HTMLElement | null>, tab: ProjectSet
 }
 // The usage limit rows edit this project's overrides only; there is no scope picker here.
 const keepProjectScope = () => {};
+const isEnvironmentEntryRef = Schema.is(ProjectEnvironmentEntryRefSchema);
+
 export function ProjectWorkspaceSettings({
   project,
   coordinatorThreadModel = null,
@@ -208,6 +213,12 @@ export function ProjectWorkspaceSettings({
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A rejected save that named one folder or repository: shown beside that entry.
+  const [environmentEntryError, setEnvironmentEntryError] = useState<{
+    readonly entry: ProjectEnvironmentEntryRef;
+    readonly message: string;
+  } | null>(null);
+  const [environmentFieldErrors, setEnvironmentFieldErrors] = useState(0);
   const [confirmation, setConfirmation] = useState("");
   const [closeWarning, setCloseWarning] = useState(false);
   const hostConfig = useEnvironment(project.environmentId)?.serverConfig;
@@ -251,6 +262,16 @@ export function ProjectWorkspaceSettings({
   };
   function failure(result: Parameters<typeof squashAtomCommandFailure>[0]) {
     const e = squashAtomCommandFailure(result);
+    const entry =
+      e && typeof e === "object" && "entry" in e && isEnvironmentEntryRef(e.entry)
+        ? e.entry
+        : undefined;
+    if (entry !== undefined && e instanceof Error) {
+      setEnvironmentEntryError({ entry, message: e.message });
+      setTab("environment");
+      setError("An Environment entry needs attention. The reason is shown beside it.");
+      return;
+    }
     setError(
       e instanceof Error
         ? e.message
@@ -267,6 +288,7 @@ export function ProjectWorkspaceSettings({
     }
     setBusy(true);
     setError(null);
+    setEnvironmentEntryError(null);
     const result = await update({
       environmentId: project.environmentId,
       input: {
@@ -697,6 +719,8 @@ export function ProjectWorkspaceSettings({
                   }}
                   onDraftChange={setEnvironmentDraftDirty}
                   onBusyChange={setEnvironmentBusy}
+                  entryError={environmentEntryError}
+                  onFieldErrorsChange={setEnvironmentFieldErrors}
                 />
                 <ProjectConnections
                   environmentId={project.environmentId}
@@ -745,6 +769,12 @@ export function ProjectWorkspaceSettings({
               {/* The tab can be long; repeat a refusal where Save was pressed. */}
               {error ? (
                 <span className="project-settings-footer-error">{error}</span>
+              ) : environmentFieldErrors > 0 ? (
+                <span className="project-settings-footer-error">
+                  {environmentFieldErrors === 1
+                    ? "Fix the highlighted Environment entry before saving."
+                    : `Fix the ${environmentFieldErrors} highlighted Environment entries before saving.`}
+                </span>
               ) : (
                 <span>Unsaved project settings</span>
               )}
@@ -766,13 +796,14 @@ export function ProjectWorkspaceSettings({
                   setBaseRevision(snapshot.settings.revision);
                   setDirty(false);
                   setError(null);
+                  setEnvironmentEntryError(null);
                 }}
               >
                 Discard
               </button>
               <button
                 className="project-control project-primary"
-                disabled={disabled || !title.trim()}
+                disabled={disabled || !title.trim() || environmentFieldErrors > 0}
                 onClick={() => void save()}
               >
                 Save changes

@@ -186,6 +186,16 @@
   line-height: 1.6;
 }
 
+/* A field that cannot be saved as typed, said right under the field. */
+@utility project-field-error {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--destructive-foreground);
+  & .project-text-link {
+    margin-left: 4px;
+  }
+}
+
 @utility project-conversation {
   padding: 24px clamp(20px, 4vw, 60px);
   overflow-y: auto;
@@ -1713,6 +1723,10 @@
   justify-content: space-between;
   gap: 12px;
   margin: 10px 0;
+  /* Name or field first; its buttons stay together at the end. */
+  & > :first-child {
+    margin-right: auto;
+  }
   & code {
     overflow-wrap: anywhere;
     min-width: 0;
@@ -1735,6 +1749,13 @@
     flex-direction: column;
     gap: 7px;
     margin: 12px 0 6px;
+  }
+  & input[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+  & .project-environment-entry > input {
+    flex: 1;
+    min-width: 0;
   }
   & .project-actions {
     flex-wrap: wrap;
