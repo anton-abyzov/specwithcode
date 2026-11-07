@@ -152,7 +152,7 @@ private struct ChatScreen: View {
 
   /// Beside a thread, another machine's coordinator replaces only this column.
   private func showOrchestrator(_ ref: ProjectRef) {
-    if isBesideCoordinator { router.chosenCoordinator = ref } else { router.open(.project(ref)) }
+    router.chooseCoordinator(ref, besideThread: isBesideCoordinator, in: model)
   }
 
   // MARK: Transcript
@@ -760,8 +760,8 @@ private struct ChatScreen: View {
         .accessibilityLabel(workingAgents == 1 ? "1 agent working" : "\(workingAgents) agents working")
         .accessibilityIdentifier("chat.agents")
       }
-      // Only a chat with a bound SpecWeave increment shows it; a coordinator
-      // or Aide chat without one shows nothing here.
+      // Only a worker thread with a bound SpecWeave increment shows it; a
+      // coordinator or Aide chat never does.
       if !(isShort && composerFocused), increment != nil || session.plan != nil {
         HStack {
           if let increment {
@@ -853,6 +853,7 @@ private struct ChatScreen: View {
   private var incrementKey: String { "\(target)-\(session.isRunning)-\(session.machineOnline)" }
 
   private func loadIncrement() async {
+    guard ChatKindLine.showsIncrement(target) else { increment = nil; return }
     guard session.machineOnline, !session.isRunning || increment == nil else { return }
     // A failed read keeps what is shown; a read that finds no binding clears it.
     switch try? await model.engine.incrementProgress(for: target) {

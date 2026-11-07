@@ -157,6 +157,8 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   /// The machine running the coordinator when the row's copy only runs
   /// workers, followed along later moves; nil when it runs its own.
   public var coordinatorElsewhereId: String?
+  /// The linked project its copies share; nil for an unlinked project.
+  public var logicalProjectId: String?
 
   public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, isAutomated: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
     self.ref = ref
