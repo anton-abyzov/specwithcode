@@ -270,8 +270,29 @@ test("the reviewed record is pinned by digest and bound to the upstream baseline
 // A depth-1 checkout (the platform test runners) has no history to walk; ci.yml checks out all of it.
 const shallow = git(["rev-parse", "--is-shallow-repository"]).trim() === "true";
 
-// The public repository's history starts at its first release commit; changes reviewed before
-// that name commits of the archived development repository, which only a clone holding both has.
+// Changes reviewed before the public history began name commits of the archived development
+// repository, anton-abyzov/specwithcode-dev. They are outside this history, and a clone has them
+// only when it fetched that repository too, so only what it holds is checked against its commit.
+// A change reviewed from now on names a commit of this history.
+const DEVELOPMENT_COMMITS = new Set([
+  "168cbd47aecc359eefe47fb6f36f95cbd96900d9",
+  "209ffb29ba2112dc68ff007198a07a396c7062d3",
+  "32a51ee859475bf355785a028766ff6551f64a18",
+  "4cb13e1c74540ff17abda8ea023c1f19cba731c2",
+  "518b2844dc986efd81feb027093418fbd16f0edd",
+  "64316bf4f428ad3bd20682c13449f05e163bf025",
+  "7cc4119124c4f195556cede29c9889963afb5f3c",
+  "88218f891bb650cc56304bb675112cb0dfb62756",
+  "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
+  "a5bc1179ab7a14ec697af126525c9a62707eff8c",
+  "b9313e8c63bcc3c82f47bd76b545db262955ce58",
+  "c43122baf030e06e39eea71e3eb8b72e47982776",
+  "dd3426484f69f0e472dbc6dd2e30413b6297adbf",
+  "dd8d2f1a0db62540e17014ebb95afdf746832949",
+  "ed675af1ba58ef49a8136dfd82cfc0e9267fa1d3",
+  "f3071151947cc4e80740cd534631bfd41dcb41ff",
+  "f6c38688e03c4257580057d3c0d182b936dce96b",
+]);
 const present = (commit) => {
   try {
     git(["cat-file", "-e", `${commit}^{commit}`]);
@@ -280,13 +301,18 @@ const present = (commit) => {
     return false;
   }
 };
-const reviewedHere = reviewed.filter((c) => present(c.commit));
+const reviewedHere = reviewed.filter(
+  (c) => !DEVELOPMENT_COMMITS.has(c.commit) || present(c.commit),
+);
 
 test(
   "every reviewed change names a commit merged into this branch",
   { skip: shallow && "shallow checkout has no history to walk" },
   () => {
-    for (const c of reviewedHere) git(["merge-base", "--is-ancestor", c.commit, "HEAD"]);
+    for (const c of reviewed) {
+      if (!DEVELOPMENT_COMMITS.has(c.commit))
+        git(["merge-base", "--is-ancestor", c.commit, "HEAD"]);
+    }
   },
 );
 
