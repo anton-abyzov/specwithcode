@@ -114,6 +114,8 @@ export const readWorktreeSet = Effect.fn("worktreeSet.read")(function* (threadFo
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const file = worktreeSetManifestPath(threadFolder, path);
+  // Most thread folders are plain worktrees: look before reading.
+  if (!(yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false)))) return null;
   return yield* fs.readFileString(file).pipe(
     Effect.flatMap((text) => decodeManifest(text)),
     Effect.orElseSucceed(() => null),
