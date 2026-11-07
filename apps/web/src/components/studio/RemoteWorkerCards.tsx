@@ -9,8 +9,9 @@ import { ExternalLinkIcon, LaptopIcon } from "lucide-react";
 
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { useOpenThread } from "../../hooks/useOpenThread";
-import { useThreadShells } from "../../state/entities";
+import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../../state/entities";
 import { REMOTE_WORKERS_REFRESH_MS, useProjectRemoteWorkers } from "../../studio/fleet";
+import { useMachineStillChecking } from "../../studio/machineChecking";
 import { useMachineNicknames } from "../../studio/machineNickname";
 import { remoteWorkerCardStatus, visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
 import { Tip } from "./shell/Tip";
@@ -44,7 +45,9 @@ export function RemoteWorkerCardList({
   onOpenThread?: (threadId: ThreadId, environmentId: EnvironmentId) => void;
 }) {
   const threads = useThreadShells();
+  const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { openThread } = useOpenThread();
+  const stillChecking = useMachineStillChecking();
   const nickname = useMachineNicknames();
   const named = workers.map((worker) => {
     const machineLabel = nickname(worker.environmentId, worker.machineLabel);
@@ -64,6 +67,8 @@ export function RemoteWorkerCardList({
           <li key={worker.id}>
             <RemoteWorkerCard
               worker={worker}
+              // A connected machine whose threads have not loaded yet is still being checked too.
+              checking={!reachableHere && (!bootstrapped || stillChecking(worker.environmentId))}
               onOpen={
                 reachableHere
                   ? () =>
@@ -86,10 +91,13 @@ export function RemoteWorkerCardList({
 export function RemoteWorkerCard({
   worker,
   onOpen,
+  checking = false,
 }: {
   worker: StudioFleetRemoteWorker;
   /** Null when this browser has no connection to that machine's thread. */
   onOpen: (() => void) | null;
+  /** The app is still finding out whether it reaches that machine. */
+  checking?: boolean;
 }) {
   const status = remoteWorkerCardStatus(worker);
   const title = worker.title.trim() || "Untitled thread";
@@ -128,6 +136,10 @@ export function RemoteWorkerCard({
               <span className="min-w-0 truncate">Open on {worker.machineLabel}</span>
             </button>
           </Tip>
+        ) : checking ? (
+          <span className="sws-thread-card-status" role="status">
+            Checking {worker.machineLabel}…
+          </span>
         ) : (
           <span className="sws-thread-card-status">
             Connect {worker.machineLabel} in Settings &gt; Connections to open it here.

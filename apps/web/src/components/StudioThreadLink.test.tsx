@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   bootstrapped: true,
+  checking: false,
   shells: [] as Array<{
     id: string;
     environmentId: string;
@@ -38,6 +39,9 @@ vi.mock("@tanstack/react-router", () => ({
       }}
     />
   ),
+}));
+vi.mock("../studio/machineChecking", () => ({
+  useMachineStillChecking: () => () => state.checking,
 }));
 vi.mock("~/state/entities", () => ({
   useThreadShells: () => state.shells,
@@ -331,6 +335,28 @@ describe("StudioThreadLink", () => {
       }),
     );
     add.mockRestore();
+  });
+  it("reads as its label while that machine is still being checked, never as connect it", async () => {
+    state.checking = true;
+    try {
+      const target = parseStudioThreadTarget(
+        "studio://thread/5b0c3c1e-8d4f-4a52-9f3e-2b7d6c1a9e40/b-thread",
+      )!;
+      await act(async () =>
+        root.render(
+          <StudioThreadLink
+            environmentId={target.environmentId as EnvironmentId}
+            candidates={target.candidates}
+            label="Fix CI"
+            linkedEnvironment
+          />,
+        ),
+      );
+      expect(container.querySelector('[role="link"]')).toBeNull();
+      expect(container.textContent).toBe("Fix CI");
+    } finally {
+      state.checking = false;
+    }
   });
   it("reads only a server UUID before the thread as another machine", () => {
     expect(looksLikeEnvironmentId("5b0c3c1e-8d4f-4a52-9f3e-2b7d6c1a9e40")).toBe(true);

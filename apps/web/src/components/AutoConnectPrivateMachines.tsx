@@ -8,6 +8,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments"
 import { useEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { pairStudioFleet, useStudioFleet } from "../studio/fleet";
+import { markFleetAutoConnectSettled } from "../studio/machineChecking";
 import {
   fleetAttemptsAwaitingRetry,
   fleetMachinesAwaitingReach,
@@ -103,6 +104,8 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
               reapprovalFailed.current.add(machine.environmentId);
             failed = true;
           }
+          // Until now the page reads this machine as being checked, not offline.
+          markFleetAutoConnectSettled(machine.environmentId);
         }
       } finally {
         running.current = false;

@@ -7,11 +7,18 @@ vi.mock("./shell/Tip", () => ({
   Tip: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock("../../studio/fleet", () => ({ REMOTE_WORKERS_REFRESH_MS: 10_000 }));
-vi.mock("../../state/entities", () => ({ useThreadShells: () => [] }));
+const state = vi.hoisted(() => ({ bootstrapped: true, checking: false }));
+vi.mock("../../state/entities", () => ({
+  useThreadShells: () => [],
+  useAllEnvironmentShellsBootstrapped: () => state.bootstrapped,
+}));
 vi.mock("../../hooks/useOpenThread", () => ({ useOpenThread: () => ({}) }));
 vi.mock("../../hooks/useLiveRefresh", () => ({ useLiveRefresh: () => {} }));
+vi.mock("../../studio/machineChecking", () => ({
+  useMachineStillChecking: () => () => state.checking,
+}));
 
-import { RemoteWorkerCard } from "./RemoteWorkerCards";
+import { RemoteWorkerCard, RemoteWorkerCardList } from "./RemoteWorkerCards";
 
 const worker: StudioFleetRemoteWorker = {
   id: "rwt:1",
@@ -40,5 +47,30 @@ describe("remote worker card", () => {
     const html = renderToStaticMarkup(<RemoteWorkerCard worker={worker} onOpen={null} />);
     expect(html).not.toContain("<button");
     expect(html).toContain("Connect M1 in Settings &gt; Connections");
+  });
+
+  it("says Checking, never Connect it, while that machine is still being checked", () => {
+    const html = renderToStaticMarkup(<RemoteWorkerCard worker={worker} onOpen={null} checking />);
+    expect(html).not.toContain("<button");
+    expect(html).toContain("Checking M1…");
+    expect(html).not.toContain("Settings &gt; Connections");
+  });
+
+  it("the list says Checking while that machine connects or its threads still load", () => {
+    const list = () => renderToStaticMarkup(<RemoteWorkerCardList workers={[worker]} />);
+    expect(list()).toContain("Connect M1 in Settings &gt; Connections");
+    state.checking = true;
+    try {
+      expect(list()).toContain("Checking M1…");
+    } finally {
+      state.checking = false;
+    }
+    state.bootstrapped = false;
+    try {
+      expect(list()).toContain("Checking M1…");
+      expect(list()).not.toContain("Settings &gt; Connections");
+    } finally {
+      state.bootstrapped = true;
+    }
   });
 });

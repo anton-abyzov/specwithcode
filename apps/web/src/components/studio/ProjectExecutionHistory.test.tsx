@@ -13,6 +13,10 @@ const state = vi.hoisted(() => ({
   historyListeners: new Set<() => void>(),
   missingHistory: false,
   olderLoaded: false,
+  checking: new Set<string>(),
+}));
+vi.mock("../../studio/machineChecking", () => ({
+  useMachineStillChecking: () => (environmentId: string) => state.checking.has(environmentId),
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironment: (id: string) =>
@@ -192,6 +196,20 @@ it("names an unavailable predecessor without presenting missing history as an em
   expect(container.textContent).toContain(
     "This app is not connected to m3 — the thread list may be incomplete",
   );
+});
+
+it("says Checking, not not-connected, while a machine is still being checked on load", async () => {
+  state.checking = new Set(["m3"]);
+  try {
+    await act(async () =>
+      root.render(<ProjectThreadAvailability scopes={[scopes[0]!, scopes[2]!]} />),
+    );
+    expect(container.textContent).toContain("Checking m3…");
+    expect(container.textContent).not.toContain("not connected");
+    expect(container.textContent).not.toContain("may be incomplete");
+  } finally {
+    state.checking = new Set();
+  }
 });
 
 it("does not invent handoff history for an unlinked legacy project", async () => {

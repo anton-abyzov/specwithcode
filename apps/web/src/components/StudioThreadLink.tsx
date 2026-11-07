@@ -2,6 +2,7 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 
 import { useOpenThread } from "../hooks/useOpenThread";
 import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../state/entities";
+import { useMachineStillChecking } from "../studio/machineChecking";
 import { formatStudioThreadLink, resolveStudioThreadLink } from "../studio/studioThreadLinks";
 import { DeadThreadLinkChip, ThreadLinkChipLink } from "./ThreadLinkChip";
 
@@ -57,15 +58,24 @@ export function StudioThreadLink(props: {
     const elsewhere =
       props.linkedEnvironment === true &&
       !threads.some((thread) => thread.environmentId === props.environmentId);
+    const copyMarkdown = formatStudioThreadLink(
+      props.candidates[0] ?? props.label,
+      props.label,
+      linkEnvironment,
+    );
+    if (elsewhere && resolved.kind !== "deleted")
+      return (
+        <ElsewhereThreadLink
+          environmentId={props.environmentId}
+          label={props.label}
+          copyMarkdown={copyMarkdown}
+        />
+      );
     return (
       <DeadThreadLinkChip
         label={props.label}
-        reason={resolved.kind === "deleted" ? "deleted" : elsewhere ? "elsewhere" : "missing"}
-        copyMarkdown={formatStudioThreadLink(
-          props.candidates[0] ?? props.label,
-          props.label,
-          linkEnvironment,
-        )}
+        reason={resolved.kind === "deleted" ? "deleted" : "missing"}
+        copyMarkdown={copyMarkdown}
       />
     );
   }
@@ -85,5 +95,23 @@ export function StudioThreadLink(props: {
           (thread.environmentId !== props.environmentId ? thread.environmentId : undefined),
       )}
     />
+  );
+}
+
+/**
+ * A link to a thread on a machine this window has no threads from. Its machine
+ * may still be connecting: no "connect it" claim until that is known. Only
+ * these links read the machine checks, so ordinary links do not re-render on
+ * every connection and fleet update.
+ */
+function ElsewhereThreadLink(props: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly copyMarkdown: string;
+}) {
+  const stillChecking = useMachineStillChecking();
+  if (stillChecking(props.environmentId)) return <span>{props.label}</span>;
+  return (
+    <DeadThreadLinkChip label={props.label} reason="elsewhere" copyMarkdown={props.copyMarkdown} />
   );
 }
