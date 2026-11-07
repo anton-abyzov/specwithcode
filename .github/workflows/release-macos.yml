@@ -14,7 +14,8 @@ name: Release macOS
 # Secrets (names only; values never leave the `release` environment's secret store):
 #   RELEASE_GH_TOKEN   fine-grained token with contents, pull requests and workflows write on
 #                      this repository (the run pushes release/<version>, makes the release
-#                      and tags it)
+#                      and tags it); without Actions write, the windows_linux job starts the
+#                      Windows and Linux build with the run's own token
 #   CSC_LINK, CSC_KEY_PASSWORD                       Developer ID Application .p12 (base64) and passphrase
 #   APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER  App Store Connect key (.p8 text) for notarization
 #   STUDIO_GOOGLE_OAUTH_CLIENT_ID, STUDIO_GOOGLE_OAUTH_CLIENT_SECRET  the built-in Google pair
@@ -249,6 +250,37 @@ jobs:
         if: always()
         shell: bash
         run: rm -rf "$RUNNER_TEMP/release-settings"
+
+  # release.sh dispatches the Windows and Linux build with RELEASE_GH_TOKEN, which may lack
+  # Actions write (v1.0.207: HTTP 403). This run's own token may dispatch it, so start it here
+  # unless release.sh already did.
+  windows_linux:
+    needs: [release]
+    if: ${{ inputs.stop_after == '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Start the Windows and Linux build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          since="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)"
+          started="$(gh run list -R "$GITHUB_REPOSITORY" --workflow release-windows-linux.yml \
+            --event workflow_dispatch --limit 20 --json createdAt \
+            --jq "[.[] | select(.createdAt >= \"$since\")] | length")"
+          if [ "$started" -gt 0 ]; then
+            echo "release.sh already started the Windows and Linux build for $VERSION"
+            exit 0
+          fi
+          gh workflow run release-windows-linux.yml -R "$GITHUB_REPOSITORY" \
+            -f version="$VERSION" -f dry_run=false
+          echo "Started the Windows and Linux build for $VERSION"
 
   # Provenance for the published macOS files, while the repository is public.
   attest_macos:
