@@ -6,6 +6,7 @@ import { useNamedEnvironments } from "../settings/useNamedEnvironments";
 import { useThreadHistory, useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { threadEnvironment } from "../../state/threads";
+import { useMachineStillChecking } from "../../studio/machineChecking";
 import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { routedThreadReplyDisplayText } from "@specweave-studio/shared/routedMessage";
 import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/projectDomain";
@@ -148,6 +149,7 @@ export function ProjectThreadAvailability({
 }) {
   const { environments } = useNamedEnvironments();
   const nickname = useMachineNicknames();
+  const stillChecking = useMachineStillChecking();
   return (
     <>
       {[...new Set(scopes.map((scope) => scope.environmentId))].map((environmentId) => {
@@ -157,7 +159,20 @@ export function ProjectThreadAvailability({
         const name =
           environment?.label ??
           (known === environmentId && RAW_ID.test(known) ? "another machine" : known);
-        return environment?.connection.phase === "connected" ? null : (
+        if (environment?.connection.phase === "connected") return null;
+        // While the page is still finding out, it says so instead of "not connected".
+        if (stillChecking(environmentId))
+          return (
+            <p
+              key={environmentId}
+              className="project-notice"
+              role="status"
+              data-checking-thread-host={environmentId}
+            >
+              Checking {name}…
+            </p>
+          );
+        return (
           <p
             key={environmentId}
             className="project-notice"
