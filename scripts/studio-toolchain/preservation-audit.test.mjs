@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import nodeTest from "node:test";
 import {
   LOCK_REVIEW_SHA256,
   LOCK_UPSTREAM,
@@ -20,9 +20,29 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const git = (args) =>
   execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 const upstream = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
-const original = git(["show", `${upstream}:pnpm-lock.yaml`]);
 // The reviewed lock just before the SDK promotion; its registry data is the identity-mapped upstream's.
-const prior = git(["show", "f0b6d13fb273ae3285861878c43b822731926023:pnpm-lock.yaml"]);
+const priorCommit = "f0b6d13fb273ae3285861878c43b822731926023";
+const hasCommit = (commit) => {
+  try {
+    execFileSync("git", ["cat-file", "-e", `${commit}^{commit}`], { cwd: root, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+};
+// Both baselines are outside the public history (the upstream repository and the archived
+// development repository, anton-abyzov/specwithcode-dev); a clone without them skips this audit.
+const missing = [upstream, priorCommit].filter((commit) => !hasCommit(commit));
+const test = (name, ...rest) =>
+  missing.length === 0
+    ? nodeTest(name, ...rest)
+    : nodeTest(
+        name,
+        { skip: `baseline commits not in this clone: ${missing.join(", ")}` },
+        () => {},
+      );
+const original = missing.length === 0 ? git(["show", `${upstream}:pnpm-lock.yaml`]) : "";
+const prior = missing.length === 0 ? git(["show", `${priorCommit}:pnpm-lock.yaml`]) : "";
 const registry = ["packages:", "snapshots:"];
 const current = readFileSync(resolve(root, "pnpm-lock.yaml"), "utf8");
 const manifest = JSON.parse(readFileSync(resolve(root, "apps/server/package.json"), "utf8"));
