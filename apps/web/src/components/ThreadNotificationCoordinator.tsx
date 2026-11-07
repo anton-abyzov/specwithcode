@@ -467,8 +467,10 @@ function EnvironmentNotifications({
               );
             }
             const inApp = document.visibilityState === "visible" && document.hasFocus();
+            // A thread stopped on the person still gets a toast with in-app news off:
+            // focused on another thread, nothing else would show it.
             if (
-              inAppNotificationsEnabled &&
+              (inAppNotificationsEnabled || needsUser) &&
               inApp &&
               (latestActiveThread.current?.environmentId !== environmentId ||
                 latestActiveThread.current?.threadId !== thread.id)
