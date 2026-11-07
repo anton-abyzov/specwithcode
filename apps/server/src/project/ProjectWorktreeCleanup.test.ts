@@ -14,6 +14,7 @@ import { makeWorktreeRemovalGuard } from "../git/worktreeRemovalSafety.ts";
 import * as Settings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { worktreeSetManifestPath, writeWorktreeSet } from "../worktreeSet.ts";
 import * as ProjectWorktreeCleanup from "./ProjectWorktreeCleanup.ts";
 
 const project = ProjectId.make("project-atlas");
@@ -120,11 +121,31 @@ const fixture = Effect.gen(function* () {
   const deleteThreads = sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-10-28T00:00:00Z' WHERE project_id = ${project} AND thread_id NOT IN ('t-coordinator', 't-helper')`;
   const useAsProjectFolder = (folder: string) =>
     sql`UPDATE projection_projects SET workspace_root = ${folder} WHERE project_id = ${project}`;
+  // A worktree set: the project's repository at the folder, a second repository nested in it.
+  const lib = path.join(root, "lib");
+  yield* fs.makeDirectory(lib);
+  yield* run(lib, ["init", "-b", "main"]);
+  yield* run(lib, ["config", "user.name", "Project worktree test"]);
+  yield* run(lib, ["config", "user.email", "test@example.invalid"]);
+  yield* fs.writeFileString(path.join(lib, "lib.txt"), "lib\n");
+  yield* run(lib, ["add", "."]);
+  yield* run(lib, ["commit", "-m", "fixture"]);
+  const set = path.join(managed, "repo", "feature-set");
+  yield* run(repo, ["worktree", "add", "-b", "feature/set", set]);
+  yield* run(lib, ["worktree", "add", "-b", "feature/set", path.join(set, "lib")]);
+  yield* fs.writeFileString(path.join(repo, ".git", "info", "exclude"), "/lib/\n");
+  yield* writeWorktreeSet(set, [
+    { repository: repo, relativePath: "" },
+    { repository: lib, relativePath: "lib" },
+  ]);
+  yield* thread("t-set", project, set, "feature/set");
   return {
     fs,
     path,
     run,
     repo,
+    lib,
+    set,
     clean,
     dirty,
     shared,
@@ -139,12 +160,44 @@ const fixture = Effect.gen(function* () {
 });
 
 describe("project worktree cleanup with real Git", () => {
+  it.effect("lists a worktree set once and removes every member, branches kept", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.deleteProject;
+      const listed = yield* f.cleanup.read({ projectId: project });
+      const entry = listed.worktrees.find((worktree) => worktree.path === f.set);
+      // No remote: each repository's fixture commit counts once.
+      expect(entry).toMatchObject({ status: "removable", branch: "feature/set", localCommits: 2 });
+      yield* f.fs.writeFileString(f.path.join(f.set, "lib", "draft.txt"), "uncommitted\n");
+      const dirty = yield* f.cleanup.read({ projectId: project });
+      expect(dirty.worktrees.find((worktree) => worktree.path === f.set)?.status).toBe(
+        "local_changes",
+      );
+      const kept = yield* f.cleanup.remove({
+        projectId: project,
+        paths: [f.set],
+        discardLocalChanges: [],
+      });
+      expect(kept.kept.map((item) => item.path)).toEqual([f.set]);
+      expect(yield* f.fs.exists(f.path.join(f.set, "lib"))).toBe(true);
+      const result = yield* f.cleanup.remove({
+        projectId: project,
+        paths: [f.set],
+        discardLocalChanges: [f.set],
+      });
+      expect(result.removed).toEqual([f.set]);
+      expect(yield* f.fs.exists(f.set)).toBe(false);
+      expect(yield* f.fs.exists(worktreeSetManifestPath(f.set, f.path))).toBe(false);
+      expect((yield* f.run(f.lib, ["rev-parse", "--verify", "feature/set"])).exitCode).toBe(0);
+    }).pipe(Effect.provide(baseLayer)),
+  );
+
   it.effect("lists each recorded worktree once with its size, local commits and risk", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
       const { worktrees } = yield* f.cleanup.read({ projectId: project });
       const byPath = new Map(worktrees.map((entry) => [entry.path, entry]));
-      expect(worktrees).toHaveLength(6);
+      expect(worktrees).toHaveLength(7);
       expect(byPath.get(f.clean)).toMatchObject({
         status: "removable",
         branch: "clean",

@@ -7,7 +7,8 @@
  * sibling checkout keeps its worktree under `<worktrees>/<repo>/<slug>`. The
  * owning repository is found from the folders next to it, then the project
  * folder, then a sibling of the project folder named like the parent folder.
- * The folder is never recreated from another branch.
+ * The folder is never recreated from another branch. A worktree set
+ * (worktreeSet.ts) recreates each missing member from its own repository.
  *
  * @module ThreadWorkspaceRestore
  */
@@ -28,6 +29,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import { restoreWorktreeSet } from "../git/worktreeSetGit.ts";
+import { readWorktreeSet } from "../worktreeSet.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -199,6 +202,29 @@ export const restoreMissingWorktree = Effect.fn("ThreadWorkspaceRestore.restoreM
   > {
     const git = yield* GitWorkflowService.GitWorkflowService;
     const path = yield* Path.Path;
+    const set = yield* readWorktreeSet(input.worktreePath);
+    if (set !== null && set.members.length > 0) {
+      const outcome = yield* restoreWorktreeSet({
+        folder: input.worktreePath,
+        members: set.members,
+        branch: input.branch,
+      });
+      if (outcome._tag === "Restored") {
+        yield* Effect.logInfo("recreated missing worktree set members", {
+          threadId: input.threadId,
+          worktreePath: input.worktreePath,
+          recreated: outcome.recreated.map((member) => member.repository),
+        });
+        return { _tag: "Restored", repository: set.members[0]!.repository };
+      }
+      if (outcome._tag === "BranchMissing")
+        return {
+          _tag: "BranchMissing",
+          checkedRepositories: [outcome.member.repository],
+          ownedFolder: false,
+        };
+      return { _tag: "Failed", repository: outcome.member.repository, error: outcome.error };
+    }
     const candidates = yield* worktreeRepositoryCandidates(input);
     const checkedRepositories: Array<string> = [];
     for (const repository of candidates) {
@@ -259,6 +285,28 @@ function failureMessage(error: unknown): string {
   return `Could not recreate the folder. ${clipped}`;
 }
 
+/** Every member of the set has its folder with its git link. */
+const setComplete = (
+  folder: string,
+  set: { readonly members: ReadonlyArray<{ readonly relativePath: string }> },
+) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const member of set.members) {
+      const memberPath =
+        member.relativePath === "" ? folder : path.join(folder, member.relativePath);
+      if (
+        !(yield* attemptOr(
+          () => fileSystem.exists(path.join(memberPath, ".git")),
+          () => false,
+        ))
+      )
+        return false;
+    }
+    return true;
+  });
+
 export class ThreadWorkspaceRestore extends Context.Service<
   ThreadWorkspaceRestore,
   {
@@ -314,8 +362,17 @@ const make = Effect.gen(function* () {
       () => fileSystem.stat(worktreePath).pipe(Effect.map((info) => info.type)),
       () => undefined,
     );
-    if (pathType === "Directory") return alreadyPresent;
-    if (pathType !== undefined) {
+    // A set's folder can be there with a member gone; restore recreates the member.
+    const set =
+      pathType === "Directory"
+        ? yield* readWorktreeSet(worktreePath).pipe(Effect.provide(context))
+        : null;
+    if (
+      pathType === "Directory" &&
+      (set === null || (yield* setComplete(worktreePath, set).pipe(Effect.provide(context))))
+    )
+      return alreadyPresent;
+    if (pathType !== undefined && pathType !== "Directory") {
       return {
         status: "not-restorable",
         worktreePath,
@@ -365,7 +422,7 @@ const make = Effect.gen(function* () {
           () => fileSystem.stat(worktreePath).pipe(Effect.map((info) => info.type === "Directory")),
           () => false,
         );
-        if (restoredMeanwhile) return alreadyPresent;
+        if (restoredMeanwhile && set === null) return alreadyPresent;
         return {
           status: "failed",
           repository: outcome.repository,

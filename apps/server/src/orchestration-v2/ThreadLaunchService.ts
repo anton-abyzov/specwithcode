@@ -25,8 +25,10 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -43,7 +45,15 @@ import {
 } from "@specweave-studio/shared/path";
 
 import { fetchOrigin } from "../fleet/repositorySync.ts";
+import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import {
+  createWorktreeSet,
+  removeWorktreeSetMembers,
+  resolveWorktreeSetRepositories,
+} from "../git/worktreeSetGit.ts";
+import { worktreeSetFolder } from "../worktreePlacement.ts";
+import type { WorktreeSetMember } from "../worktreeSet.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -72,6 +82,8 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
       readonly repository?: string | undefined;
+      /** A worktree set (worktreeSet.ts): environment repository ids or paths relative to the root. */
+      readonly repositories?: ReadonlyArray<string> | undefined;
     };
 
 /** A nested repository checkout a launch runs git in instead of the project root. */
@@ -291,6 +303,10 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  // Worktree sets need the filesystem and the worktrees folder; a test layer may lack them.
+  const setFileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const setPath = yield* Effect.serviceOption(Path.Path);
+  const setConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   const preparationScope = yield* Scope.make("sequential");
   const scheduledLaunches = yield* Ref.make<ReadonlySet<CommandId>>(new Set());
   yield* Effect.addFinalizer(() => Scope.close(preparationScope, Exit.void));
@@ -385,6 +401,10 @@ const make = Effect.gen(function* () {
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
     let createdWorktreePath: string | null = null;
+    let createdSet: {
+      readonly folder: string;
+      readonly members: ReadonlyArray<WorktreeSetMember>;
+    } | null = null;
     let setupTerminalId: string | null = null;
     let workspaceRecorded = false;
     if (input.workspaceStrategy.type === "worktree") {
@@ -455,7 +475,96 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
-      if (input.workspaceStrategy.type === "worktree") {
+      const setRepositories =
+        input.workspaceStrategy.type === "worktree" &&
+        (input.workspaceStrategy.repositories?.length ?? 0) > 0
+          ? input.workspaceStrategy.repositories!
+          : null;
+      if (input.workspaceStrategy.type === "worktree" && setRepositories !== null) {
+        // One thread folder with a worktree of each repository, on one branch.
+        const strategy = input.workspaceStrategy;
+        if (Option.isNone(setFileSystem) || Option.isNone(setPath) || Option.isNone(setConfig))
+          return yield* mapError(
+            input,
+            "provision-worktree",
+            threadId,
+          )("Worktree sets are not available on this server.");
+        const services = <A, E>(
+          effect: Effect.Effect<
+            A,
+            E,
+            FileSystem.FileSystem | Path.Path | GitWorkflow.GitWorkflowService
+          >,
+        ) =>
+          effect.pipe(
+            Effect.provideService(FileSystem.FileSystem, setFileSystem.value),
+            Effect.provideService(Path.Path, setPath.value),
+            Effect.provideService(GitWorkflow.GitWorkflowService, git),
+          );
+        if (runId !== null) {
+          yield* threads
+            .dispatch({
+              type: "prepared-run.progress",
+              commandId: CommandId.make(`${input.commandId}:progress:worktree`),
+              threadId,
+              runId,
+              phase: "worktree",
+            })
+            .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
+        }
+        yield* setupTracker.stageStatus(threadId, "fetch", "skipped");
+        const members = yield* services(
+          resolveWorktreeSetRepositories(
+            project.workspaceRoot,
+            projectRepositoryCheckouts(project),
+            setRepositories,
+          ),
+        ).pipe(Effect.mapError(mapError(input, "resolve-repository", threadId)));
+        // A `studio/` prefix collides with a `studio` branch in any member.
+        if (branch !== null && isTemporaryWorktreeBranch(branch) && branch.includes("/"))
+          branch = flattenTemporaryWorktreeBranchName(branch);
+        const placementSettings = resolveProjectSettings(
+          yield* serverSettings.getSettings,
+          input.projectId,
+        ).settings;
+        const folder = worktreeSetFolder({
+          setting: placementSettings.worktreesDirectory,
+          mode: placementSettings.worktreeLocationMode,
+          defaultDir: setConfig.value.worktreesDir,
+          projectRoot: project.workspaceRoot,
+          branch: branch!,
+          path: setPath.value,
+        });
+        if (folder === null)
+          return yield* mapError(
+            input,
+            "provision-worktree",
+            threadId,
+          )(
+            `The worktree location "${placementSettings.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
+          );
+        yield* setupTracker.stageStatus(threadId, "checkout", "running");
+        yield* services(
+          createWorktreeSet({
+            folder,
+            members,
+            branch: branch!,
+            projectRoot: project.workspaceRoot,
+            baseRef: strategy.baseRef,
+            startFromOrigin: strategy.startFromOrigin === true,
+            submodules: placementSettings.worktreeSubmodules,
+          }),
+        ).pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        createdSet = { folder, members };
+        worktreePath = folder;
+        const setBranch = branch;
+        yield* setupTracker.update(threadId, (snapshot) => ({
+          ...snapshot,
+          worktreePath: folder,
+          branch: setBranch,
+        }));
+        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+      } else if (input.workspaceStrategy.type === "worktree") {
         if (runId !== null) {
           yield* threads
             .dispatch({
@@ -623,7 +732,8 @@ const make = Effect.gen(function* () {
             threadId,
             increment,
             workspaceRoot: project.workspaceRoot,
-            worktreePath,
+            // A set's planning stays in the project root, never a member's copy.
+            worktreePath: createdSet === null ? worktreePath : null,
           }),
         );
       }
@@ -641,14 +751,39 @@ const make = Effect.gen(function* () {
       ) {
         const oldBranch = branch;
         const worktreeCwd = worktreePath;
-        yield* generateBranchNameFor(worktreeCwd, initialMessage).pipe(
+        // Every member of a set takes the name the first one gets.
+        const renameCwds =
+          createdSet === null || Option.isNone(setPath)
+            ? [worktreeCwd]
+            : createdSet.members.map((member) =>
+                member.relativePath === ""
+                  ? createdSet!.folder
+                  : setPath.value.join(createdSet!.folder, member.relativePath),
+              );
+        yield* generateBranchNameFor(renameCwds[0]!, initialMessage).pipe(
           Effect.flatMap(({ branch: newBranch, exactName }) =>
-            git.renameBranch({
-              cwd: worktreeCwd,
-              oldBranch,
-              newBranch,
-              ...(exactName ? { exactName: true } : {}),
-            }),
+            git
+              .renameBranch({
+                cwd: renameCwds[0]!,
+                oldBranch,
+                newBranch,
+                ...(exactName ? { exactName: true } : {}),
+              })
+              .pipe(
+                Effect.tap((renamed) =>
+                  Effect.forEach(
+                    renameCwds.slice(1),
+                    (cwd) =>
+                      git.renameBranch({
+                        cwd,
+                        oldBranch,
+                        newBranch: renamed.branch,
+                        exactName: true,
+                      }),
+                    { discard: true },
+                  ),
+                ),
+              ),
           ),
           Effect.flatMap((renamed) =>
             threads.dispatch({
@@ -777,7 +912,63 @@ const make = Effect.gen(function* () {
           // revalidated ownership exception. Other owners or local data retain it.
           // A failed setup keeps a recorded worktree for retry and attempts to
           // remove one it never recorded, which a retry would otherwise duplicate.
-          if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded)) {
+          const abandonedSet = createdSet;
+          if (
+            abandonedSet !== null &&
+            (cancelled || !workspaceRecorded) &&
+            Option.isSome(setFileSystem) &&
+            Option.isSome(setPath)
+          ) {
+            if (setupTerminalId)
+              yield* terminals
+                .close({ threadId, terminalId: setupTerminalId, deleteHistory: true })
+                .pipe(Effect.ignore);
+            const kept = yield* removeWorktreeSetMembers({
+              folder: abandonedSet.folder,
+              members: abandonedSet.members,
+              ...(cancelled && settledSetup
+                ? {
+                    context: {
+                      cancelledSetup: {
+                        threadId,
+                        verify: () =>
+                          setupTracker
+                            .get(threadId)
+                            .pipe(
+                              Effect.map(
+                                (snapshot) =>
+                                  snapshot?.phase === "cancelled" &&
+                                  snapshot.sequence === settledSetup.sequence &&
+                                  snapshot.worktreePath === abandonedSet.folder,
+                              ),
+                            ),
+                      },
+                    },
+                  }
+                : {}),
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, setFileSystem.value),
+              Effect.provideService(Path.Path, setPath.value),
+              Effect.provideService(GitWorkflow.GitWorkflowService, git),
+              Effect.orElseSucceed(() => [{ reason: "removal failed" }]),
+            );
+            if (kept.length === 0)
+              yield* threads
+                .dispatch({
+                  type: "thread.metadata.update",
+                  commandId: CommandId.make(`${input.commandId}:cancel-workspace`),
+                  threadId,
+                  worktreePath: null,
+                  branch: null,
+                })
+                .pipe(Effect.ignore);
+            else
+              yield* Effect.logWarning("Failed to remove an abandoned thread worktree set", {
+                commandId: input.commandId,
+                threadId,
+                path: abandonedSet.folder,
+              });
+          } else if (tracked && createdWorktreePath && (cancelled || !workspaceRecorded)) {
             if (setupTerminalId)
               yield* terminals
                 .close({ threadId, terminalId: setupTerminalId, deleteHistory: true })

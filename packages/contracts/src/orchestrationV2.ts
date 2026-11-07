@@ -654,6 +654,17 @@ export const OrchestrationV2ThreadLaunchRepository = TrimmedNonEmptyString.annot
     "Nested repository to run git in: an id from the project's environment repositories (studio_project_read lists them under workspaceSettings.environment.repositories) or the absolute path of that repository's checkout. Omit to use the project root.",
 });
 
+/**
+ * A worktree set: one thread folder holding a worktree of each named
+ * repository, all on the same branch, each at its path relative to the
+ * project root. Entries are environment repository ids or paths relative to
+ * the project root ("." is the root's own repository).
+ */
+export const OrchestrationV2ThreadLaunchWorktreeSet = Schema.Array(TrimmedNonEmptyString).annotate({
+  description:
+    'Repositories for one thread folder holding a worktree of each, on one branch: environment repository ids or paths relative to the project root ("." is the root). Omit for a single worktree.',
+});
+
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("root"),
@@ -671,6 +682,7 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
     repository: Schema.optional(OrchestrationV2ThreadLaunchRepository),
+    repositories: Schema.optional(OrchestrationV2ThreadLaunchWorktreeSet),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =

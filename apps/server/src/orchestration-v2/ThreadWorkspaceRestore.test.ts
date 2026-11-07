@@ -21,6 +21,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { writeWorktreeSet } from "../worktreeSet.ts";
 import * as ThreadWorkspaceRestore from "./ThreadWorkspaceRestore.ts";
 
 const threadId = ThreadId.make("thread-workspace-restore");
@@ -150,6 +151,37 @@ describe("worktreeRepositoryCandidates", () => {
 
 describe("restoreMissingWorktree", () => {
   it.layer(testLayer)((it) => {
+    it.effect("recreates every member of a deleted worktree set from its own repository", () =>
+      Effect.gen(function* () {
+        const { fs, path, run, root, specweave, studio } = yield* fixture;
+        const folder = path.join(root, "worktrees", "specweave", "feature-set");
+        yield* run(specweave, ["branch", "feature/set"]);
+        yield* run(studio, ["branch", "feature/set"]);
+        yield* run(specweave, ["worktree", "add", folder, "feature/set"]);
+        yield* run(studio, ["worktree", "add", path.join(folder, "studio"), "feature/set"]);
+        yield* writeWorktreeSet(folder, [
+          { repository: specweave, relativePath: "" },
+          { repository: studio, relativePath: "studio", id: "studio" },
+        ]);
+        yield* fs.remove(folder, { recursive: true });
+        const outcome = yield* ThreadWorkspaceRestore.restoreMissingWorktree({
+          threadId,
+          worktreePath: folder,
+          branch: "feature/set",
+          workspaceRoot: specweave,
+        });
+        expect(outcome).toEqual({ _tag: "Restored", repository: specweave });
+        for (const [checkout, name] of [
+          [folder, "specweave"],
+          [path.join(folder, "studio"), "studio"],
+        ] as const) {
+          expect(yield* fs.readFileString(path.join(checkout, "file.txt"))).toBe(`${name}\n`);
+          const head = yield* run(checkout, ["symbolic-ref", "--short", "HEAD"]);
+          expect(head.stdout.trim()).toBe("feature/set");
+        }
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("recreates a sibling repository's deleted folder at its exact path", () =>
       Effect.gen(function* () {
         const { fs, path, run, specweave, studio, worktrees } = yield* fixture;
