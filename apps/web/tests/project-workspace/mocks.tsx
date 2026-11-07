@@ -303,6 +303,21 @@ function settleFixture(ref, settledOverride) {
 // `?machines`: the project is also checked out on a second machine, so the coordinator machine is a choice.
 const machineLabels = { host: "M4 Max", m1: "M1" };
 const otherMachineProject = { ...project, id: "project-m1", environmentId: "m1" };
+// `?rows&remote`: one logical project on two machines, so another machine's thread opens here.
+if (rowsFixture && new URLSearchParams(window.location.search).has("remote")) {
+  const logicalProject = {
+    id: "atlas",
+    title: "Atlas",
+    coordinatorId: "coord",
+    members: [
+      { environmentId: "host", projectId: project.id, coordinatorThreadId: "coord" },
+      { environmentId: "m1", projectId: otherMachineProject.id, coordinatorThreadId: "coord-m1" },
+    ],
+  };
+  for (const member of [project, otherMachineProject]) {
+    member.workspaceSettings = { ...member.workspaceSettings, logicalProject };
+  }
+}
 const memberProjects = rowsFixture
   ? [project, otherMachineProject]
   : new URLSearchParams(window.location.search).has("machines")

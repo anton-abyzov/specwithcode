@@ -112,6 +112,7 @@ function Harness() {
         providerEntry={null}
         projectCwd="/tmp/fixture"
         canChange
+        renameBlockedReason={null}
         expanded={false}
         onBack={() => {}}
         onToggleResolved={() => {}}

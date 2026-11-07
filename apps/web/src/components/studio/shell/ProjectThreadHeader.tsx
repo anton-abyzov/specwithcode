@@ -7,8 +7,9 @@
  * The title outranks the controls: as the panel narrows, the chips give way
  * first, then the chat's panel toggles fold into the action menu and Resolve
  * drops its label, so the title stays readable; hovering it shows it whole.
- * Double-clicking the title renames the thread, a coordinator's worker too;
- * the coordinator still finds it by id.
+ * Double-clicking the title renames the thread, a coordinator's worker or one on
+ * another machine too; the coordinator still finds it by id. When the thread's own
+ * machine cannot take the change, the double-click says why.
  */
 import { ThreadArtifactsMenu } from "../../chat/ThreadArtifacts";
 import { TimelineDetailMenu } from "../../chat/TimelineDetailMenu";
@@ -99,6 +100,8 @@ export function ProjectThreadHeader(props: {
   providerEntry: Parameters<typeof ModelBadge>[0]["entry"];
   projectCwd: string;
   canChange: boolean;
+  /** Why this thread cannot be renamed from here, or null when it can. */
+  renameBlockedReason: string | null;
   expanded: boolean;
   onBack: () => void;
   onToggleResolved: () => void;
@@ -125,8 +128,15 @@ export function ProjectThreadHeader(props: {
   // Set once Enter, Escape or blur ends an edit, so the blur that follows the
   // input's removal neither saves twice nor saves an edit Escape cancelled.
   const renameSettled = useRef(false);
-  const canRename = props.canChange;
   const startRename = () => {
+    if (props.renameBlockedReason !== null) {
+      toastManager.add({
+        type: "warning",
+        title: "Can't rename this thread",
+        description: props.renameBlockedReason,
+      });
+      return;
+    }
     renameSettled.current = false;
     setRenaming(thread.title);
   };
@@ -150,9 +160,7 @@ export function ProjectThreadHeader(props: {
   const { openMenu } = useThreadActionMenu({
     threadRef,
     projectCwd: props.projectCwd,
-    onStartRename: () => {
-      if (canRename) startRename();
-    },
+    onStartRename: startRename,
   });
   const menuButton = useRef<HTMLButtonElement>(null);
   const localEnvironmentId = usePrimaryEnvironmentId();
@@ -227,9 +235,7 @@ export function ProjectThreadHeader(props: {
           />
         ) : (
           <Tip label={thread.title || "Untitled thread"}>
-            <h2 onDoubleClick={canRename ? startRename : undefined}>
-              {thread.title || "Untitled thread"}
-            </h2>
+            <h2 onDoubleClick={startRename}>{thread.title || "Untitled thread"}</h2>
           </Tip>
         )}
         <span className="sws-thread-head-chips">

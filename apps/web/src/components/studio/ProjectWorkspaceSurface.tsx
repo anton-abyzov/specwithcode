@@ -10,6 +10,7 @@ import { ProjectExecutionHistory, ProjectThreadAvailability } from "./ProjectExe
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { ProjectFolderHealthNotice } from "./ProjectFolderHealthNotice";
 import { toggleProjectThreadResolution } from "../../studio/projectThreadResolution";
+import { threadRenameBlockedReason } from "../../studio/threadTitles";
 import { ProjectWorkspaceColumns } from "./ProjectWorkspaceColumns";
 import { createCoordinatorSelectionTracker } from "../../studio/coordinatorContinuation";
 import { useCoordinatorModelSave } from "../../studio/coordinatorModelSave";
@@ -471,6 +472,12 @@ export function ProjectWorkspaceSurface({
     onShowCoordinator: showCoordinator,
     onPeekSubagent: peekSubagent,
   });
+  // A thread renames on its own machine, which need not be the viewed project's.
+  const selectedThreadEnvironment = useEnvironment(selectedThread?.environmentId ?? null);
+  const canOperateSelectedThread = useEnvironmentScope(
+    selectedThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
   const openCoordinator = useCallback(() => {
     setCoordinatorDetailsOpen(false);
     setSelected(null);
@@ -2002,6 +2009,18 @@ export function ProjectWorkspaceSurface({
                       canOperate &&
                       connected &&
                       selectedThread.environmentId === project.environmentId,
+                    renameBlockedReason: threadRenameBlockedReason({
+                      canOperate: canOperateSelectedThread,
+                      connection: selectedThreadEnvironment?.connection,
+                      environmentId: selectedThread.environmentId,
+                      // The member map falls back to the ID; the machine's own label is better.
+                      machineLabel:
+                        machineLabels.get(selectedThread.environmentId) ===
+                        selectedThread.environmentId
+                          ? selectedThreadEnvironment?.label
+                          : (machineLabels.get(selectedThread.environmentId) ??
+                            selectedThreadEnvironment?.label),
+                    }),
                     expanded: paneExpanded,
                     onBack: leaveThread,
                     onToggleResolved: () => void resolveOpenThread(selectedThread),
