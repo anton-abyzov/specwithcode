@@ -8,6 +8,7 @@ import {
   CommandId,
   type ModelSelection,
   type ProjectId,
+  type ScheduledTask,
   type ScheduledTaskUpsertInput,
 } from "@specweave-studio/contracts";
 import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
@@ -119,6 +120,68 @@ export function briefingRoutine(
   };
 }
 
+/** Early setups saved the briefing under this id, in the app's built-in approval mode. */
+const EARLY_BRIEFING_ID = "scheduled-task:assistant-setup:";
+
+/**
+ * An early setup's briefing waits on approval for every tool, a mode nobody
+ * chose. It becomes the briefing today's setup makes, keeping its thread,
+ * schedule and model. Only the early id matches, so this happens once and a
+ * mode the person sets later stays.
+ */
+export function earlyBriefingReplacement(
+  task: ScheduledTask,
+  tasks: ReadonlyArray<Pick<ScheduledTask, "id">>,
+  runtimeMode: ScheduledTaskUpsertInput["runtimeMode"],
+): ScheduledTaskUpsertInput | null {
+  if (
+    !task.id.startsWith(EARLY_BRIEFING_ID) ||
+    task.runtimeMode !== "approval-required" ||
+    task.schedule.type === "webhook"
+  )
+    return null;
+  const commandId = `aide-briefing:${task.projectId}`;
+  if (tasks.some((other) => other.id === `scheduled-task:${commandId}`)) return null;
+  return {
+    commandId: CommandId.make(commandId),
+    title: task.title,
+    prompt: task.prompt,
+    enabled: task.enabled,
+    schedule: task.schedule as ScheduledTaskUpsertInput["schedule"],
+    projectId: task.projectId,
+    threadId: task.threadId,
+    workspaceStrategy: task.workspaceStrategy,
+    modelSelection: task.modelSelection,
+    runtimeMode,
+    interactionMode: task.interactionMode,
+    createdBy: task.createdBy,
+    creationSource: task.creationSource,
+    ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
+    ...(task.check === undefined ? {} : { check: task.check }),
+    ...(task.brief === undefined ? {} : { brief: task.brief }),
+    ownThread: true,
+  };
+}
+
+const replaceEarlyBriefings = Effect.gen(function* () {
+  const scheduledTasks = yield* ScheduledTaskService;
+  const { tasks } = yield* scheduledTasks.list();
+  const rules = yield* currentTeamRules;
+  for (const task of tasks) {
+    const replacement = earlyBriefingReplacement(
+      task,
+      tasks,
+      teamRulesClampRoutineMode(rules, "full-access"),
+    );
+    if (replacement === null) continue;
+    yield* scheduledTasks.upsert(replacement);
+    yield* scheduledTasks.delete({ id: task.id });
+    yield* Effect.logInfo("Replaced an early briefing that waited on approval", {
+      taskId: task.id,
+    });
+  }
+});
+
 export const runOnce = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const google = yield* Google.GoogleAccountService;
@@ -126,6 +189,7 @@ export const runOnce = Effect.gen(function* () {
   const scheduledTasks = yield* ScheduledTaskService;
   const { aideEnabled } = yield* settings.getSettings;
   if (!aideEnabled) return;
+  yield* replaceEarlyBriefings;
   const googleState = yield* google.briefingState;
   if (googleState.email === null) return;
   const { tasks } = yield* scheduledTasks.list();

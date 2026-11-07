@@ -7,7 +7,12 @@ import * as Google from "../integrations/google/GoogleAccountService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { type BriefingSetupInput, briefingSetupStep, runOnce } from "./AideBriefingSetup.ts";
+import {
+  type BriefingSetupInput,
+  briefingSetupStep,
+  earlyBriefingReplacement,
+  runOnce,
+} from "./AideBriefingSetup.ts";
 
 const MODEL = { instanceId: "claudeAgent", model: "claude-opus-5-5" } as ModelSelection;
 const aide = {
@@ -94,6 +99,7 @@ describe("briefingSetupStep", () => {
 
 const harness = (tasks: BriefingSetupInput["tasks"], briefingSetUp: string[] = []) => {
   const upserts: unknown[] = [];
+  const deleted: string[] = [];
   const marked: string[] = [];
   const layer = Layer.mergeAll(
     Layer.mock(ServerSettings.ServerSettingsService)({
@@ -116,9 +122,14 @@ const harness = (tasks: BriefingSetupInput["tasks"], briefingSetUp: string[] = [
           upserts.push(input);
           return { task: {} } as never;
         }),
+      delete: (input) =>
+        Effect.sync(() => {
+          deleted.push(input.id);
+          return { id: input.id } as never;
+        }),
     }),
   );
-  return { upserts, marked, layer };
+  return { upserts, deleted, marked, layer };
 };
 
 it.effect("creates one daily 08:00 briefing in its own thread, then never again", () => {
@@ -147,5 +158,62 @@ it.effect("leaves a briefing the person deleted deleted", () => {
   return Effect.gen(function* () {
     yield* runOnce;
     expect(h.upserts).toEqual([]);
+  }).pipe(Effect.provide(h.layer));
+});
+
+const EARLY = {
+  id: "scheduled-task:assistant-setup:4c5387ce",
+  title: "Proactive briefing",
+  prompt: "/proactive-briefing",
+  enabled: true,
+  schedule: { type: "fixed_time", timeOfDay: "08:00" },
+  projectId: "aide",
+  threadId: "thread:project:aide:briefing",
+  workspaceStrategy: { type: "root" },
+  modelSelection: MODEL,
+  runtimeMode: "approval-required",
+  interactionMode: "default",
+  createdBy: "user",
+  creationSource: "web",
+  ownThread: true,
+} as never as Parameters<typeof earlyBriefingReplacement>[0];
+
+describe("earlyBriefingReplacement", () => {
+  it("turns an early approval-mode briefing into today's, keeping its thread", () => {
+    expect(earlyBriefingReplacement(EARLY, [EARLY], "full-access")).toMatchObject({
+      commandId: "aide-briefing:aide",
+      threadId: "thread:project:aide:briefing",
+      schedule: { type: "fixed_time", timeOfDay: "08:00" },
+      modelSelection: MODEL,
+      runtimeMode: "full-access",
+      ownThread: true,
+    });
+  });
+
+  it("leaves a mode someone chose, other routines and an existing briefing alone", () => {
+    expect(
+      earlyBriefingReplacement({ ...EARLY, runtimeMode: "auto-accept-edits" }, [], "full-access"),
+    ).toBeNull();
+    expect(
+      earlyBriefingReplacement({ ...EARLY, id: "scheduled-task:abc" } as never, [], "full-access"),
+    ).toBeNull();
+    expect(
+      earlyBriefingReplacement(
+        EARLY,
+        [{ id: "scheduled-task:aide-briefing:aide" } as never],
+        "full-access",
+      ),
+    ).toBeNull();
+  });
+});
+
+it.effect("replaces the early briefing once, before anything else", () => {
+  const h = harness([EARLY as never], ["aide"]);
+  return Effect.gen(function* () {
+    yield* runOnce;
+    expect(h.upserts).toEqual([
+      expect.objectContaining({ commandId: "aide-briefing:aide", runtimeMode: "full-access" }),
+    ]);
+    expect(h.deleted).toEqual(["scheduled-task:assistant-setup:4c5387ce"]);
   }).pipe(Effect.provide(h.layer));
 });

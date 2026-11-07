@@ -1,6 +1,6 @@
 import * as Context from "effect/Context";
 import { Tool } from "effect/ai";
-import { assert, describe, it } from "vitest";
+import { assert, describe, it } from "@effect/vitest";
 
 import { DesignScreenshotToolkit, DesignToolkit } from "./toolkits/design/tools.ts";
 import { DecisionToolkit } from "./toolkits/decision/tools.ts";

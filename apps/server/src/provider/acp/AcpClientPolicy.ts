@@ -241,11 +241,11 @@ export function acpPermissionDisposition(
  * A provider's permission request: SpecWithCode's own read-only tools run in
  * every mode; everything else follows the provider's rule.
  */
-export function acpRequestDisposition(
-  runtimePolicy: AcpRuntimePolicy,
+export function acpRequestDisposition<Policy extends AcpRuntimePolicy>(
+  runtimePolicy: Policy,
   request: EffectAcpSchema.RequestPermissionRequest,
   decide: (
-    runtimePolicy: AcpRuntimePolicy,
+    runtimePolicy: Policy,
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => AcpPermissionDisposition = acpPermissionDisposition,
 ): AcpPermissionDisposition {
