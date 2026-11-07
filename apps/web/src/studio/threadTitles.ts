@@ -23,6 +23,32 @@ export function canRenameChat(thread: TitleOwnerFields, canOperate: boolean): bo
 }
 
 /**
+ * Why a thread's heading cannot rename it, or null when it can. A thread renames on its
+ * own machine, so this reads that machine's connection and grant, not the viewed project's.
+ */
+export function threadRenameBlockedReason(input: {
+  readonly canOperate: boolean;
+  readonly connection:
+    | { readonly phase: string; readonly blockedReason?: string | undefined }
+    | null
+    | undefined;
+  readonly environmentId: string;
+  readonly machineLabel: string | undefined;
+}): string | null {
+  const { canOperate, connection, environmentId, machineLabel } = input;
+  // A label can fall back to the ID, which stays out of sight.
+  const label = machineLabel && machineLabel !== environmentId ? machineLabel : null;
+  if (connection?.blockedReason === "authentication") {
+    return `This browser is signed out of ${label ?? "that machine"}. Sign in to it again to rename this thread.`;
+  }
+  if (connection?.phase !== "connected") {
+    return `${label ?? "That machine"} isn't connected right now, so this thread can't be renamed.`;
+  }
+  if (canOperate) return null;
+  return `This connection can't change threads ${label ? `on ${label}` : "there"}.`;
+}
+
+/**
  * Checks a chat title typed in place: the same title saves nothing (an untitled
  * chat opens with an empty field, not an error), and blank is refused.
  */

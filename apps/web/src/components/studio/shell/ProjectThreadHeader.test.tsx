@@ -36,6 +36,7 @@ vi.mock("./ModelBadge", () => ({
 }));
 
 import type { SubagentEntry } from "../../../studio/threadSubagents";
+import { toastManager } from "../../ui/toast";
 import { foldedHeaderControls, ProjectThreadHeader } from "./ProjectThreadHeader";
 
 const thread = {
@@ -82,6 +83,7 @@ const render = (expanded = false, overrides: Partial<EnvironmentThreadShell> = {
         providerEntry={null}
         projectCwd="/scratch/atlas"
         canChange
+        renameBlockedReason={null}
         expanded={expanded}
         {...handlers}
       />,
@@ -153,6 +155,7 @@ describe("an open thread's header", () => {
           providerEntry={null}
           projectCwd="/scratch/atlas"
           canChange
+          renameBlockedReason={null}
           expanded={false}
           toolsSlotRef={(node) => {
             slot = node;
@@ -240,7 +243,8 @@ describe("an open thread's header", () => {
     });
     expect(state.rename).toHaveBeenCalledOnce();
   });
-  it("keeps the title read-only without permission to change the thread", async () => {
+  it("says why when the thread's machine cannot take a rename", async () => {
+    const add = vi.spyOn(toastManager, "add");
     await act(() =>
       root.render(
         <ProjectThreadHeader
@@ -250,6 +254,7 @@ describe("an open thread's header", () => {
           providerEntry={null}
           projectCwd="/scratch/atlas"
           canChange={false}
+          renameBlockedReason="Ministorm isn't connected right now."
           expanded={false}
           {...handlers}
         />,
@@ -259,6 +264,31 @@ describe("an open thread's header", () => {
       container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
     );
     expect(container.querySelector('[aria-label="Thread title"]')).toBeNull();
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({ description: "Ministorm isn't connected right now." }),
+    );
+  });
+
+  it("renames while Resolve is off, as on another machine's thread", async () => {
+    await act(() =>
+      root.render(
+        <ProjectThreadHeader
+          thread={thread}
+          subagents={[]}
+          onPeekSubagent={vi.fn()}
+          providerEntry={null}
+          projectCwd="/scratch/atlas"
+          canChange={false}
+          renameBlockedReason={null}
+          expanded={false}
+          {...handlers}
+        />,
+      ),
+    );
+    await act(async () =>
+      container.querySelector("h2")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+    );
+    expect(container.querySelector('[aria-label="Thread title"]')).not.toBeNull();
   });
   it("folds the chat's hidden panel toggles into the action menu", async () => {
     let slot: HTMLSpanElement | null = null;
@@ -271,6 +301,7 @@ describe("an open thread's header", () => {
           providerEntry={null}
           projectCwd="/scratch/atlas"
           canChange
+          renameBlockedReason={null}
           expanded={false}
           toolsSlotRef={(node) => {
             slot = node;
@@ -331,6 +362,7 @@ it.each([
         providerEntry={null}
         projectCwd="/scratch/atlas"
         canChange
+        renameBlockedReason={null}
         expanded={false}
         {...handlers}
       />,

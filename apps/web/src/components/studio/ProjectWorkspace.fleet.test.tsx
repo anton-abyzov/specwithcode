@@ -83,6 +83,13 @@ describe("one project across execution machines", () => {
       await act(async () => remote!.click());
       expect(container.querySelector('[data-native-thread="same-id"]')).not.toBeNull();
       expect(container.querySelector(".sws-thread-head")?.textContent).toContain("Worker on m1");
+      // Another machine's thread renames from its heading, as a local one does.
+      await act(async () =>
+        container
+          .querySelector(".sws-thread-head h2")!
+          .dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+      );
+      expect(container.querySelector('[aria-label="Thread title"]')).not.toBeNull();
       expect(state.navigate).not.toHaveBeenCalled();
     } finally {
       delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
