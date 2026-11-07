@@ -31,6 +31,7 @@ import { SkillApplyPanel } from "./SkillApplyPanel";
 import {
   nextSkillPatchVersion,
   skillAuthoringSeedFromMarkdown,
+  skillAuthoringMarkdown,
   type SkillAuthoringSeed,
 } from "./skillAuthoringSeed";
 
@@ -58,9 +59,7 @@ const blank: SkillAuthoringContent = {
   prompt: "",
 };
 
-export function skillMarkdown(content: SkillAuthoringContent): string {
-  return `---\nname: ${JSON.stringify(content.name)}\ndescription: ${JSON.stringify(content.description)}\nmetadata:\n  version: ${JSON.stringify(content.version)}\n---\n\n${content.instructions.trim()}\n`;
-}
+export const skillMarkdown = skillAuthoringMarkdown;
 
 export function SkillAuthoringSheet(props: SkillAuthoringSheetProps) {
   const [hasOpened, setHasOpened] = useState(props.open);
@@ -188,7 +187,15 @@ export function SkillAuthoringForm({
   const sync = (result: SkillAuthoringResult) => {
     setDraft(result.draft);
     if (result.draft) {
-      const { name, description, instructions, version, prompt, modelSelection } = result.draft;
+      const {
+        name,
+        description,
+        instructions,
+        version,
+        prompt,
+        modelSelection,
+        sourceFrontmatter,
+      } = result.draft;
       setContent({
         name,
         description,
@@ -196,6 +203,7 @@ export function SkillAuthoringForm({
         version,
         prompt,
         ...(modelSelection ? { modelSelection } : {}),
+        ...(sourceFrontmatter !== undefined ? { sourceFrontmatter } : {}),
       });
       setDirty(false);
       if (result.draft.publication) {

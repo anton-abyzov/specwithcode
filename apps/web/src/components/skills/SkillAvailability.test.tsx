@@ -25,7 +25,10 @@ describe("skill availability evidence", () => {
     expect(
       skillAvailabilityState({
         ...input,
-        snapshot: { ...snapshot, providers: [{ state: "cached" }] } as ProjectSkillsSnapshot,
+        snapshot: {
+          ...snapshot,
+          providers: [{ state: "cached" }],
+        } as unknown as ProjectSkillsSnapshot,
       }).state,
     ).toBe("stale");
   });
@@ -45,7 +48,7 @@ describe("skill availability evidence", () => {
           providers: [{ fileVersion: "1.0.0" }],
         },
       ],
-    } as ProjectSkillsSnapshot;
+    } as unknown as ProjectSkillsSnapshot;
     expect(skillAvailabilityState({ ...input, skillId: "requested", snapshot: data }).state).toBe(
       "missing",
     );

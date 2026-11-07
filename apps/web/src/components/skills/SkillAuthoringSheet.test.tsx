@@ -320,3 +320,20 @@ describe("selected-copy authoring", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("custom frontmatter resume", () => {
+  it("keeps custom metadata through resume, version bump and save", async () => {
+    const sourceFrontmatter =
+      "name: review-code\ndescription: Review changes\nallowed-tools: [Read, Bash]\nmetadata:\n  version: 1.0.0\n  custom:\n    owner: example";
+    const request = vi.fn(async (input: AuthoringRequest) => ({
+      draft: { ...fixtureDraft, sourceFrontmatter, ...input.draft },
+    }));
+    await mount(request);
+    expect(host.textContent).toContain("owner: example");
+    await click("Bump patch to 1.0.1");
+    await click("Close");
+    expect(request.mock.calls[1]?.[0].draft).toMatchObject({ sourceFrontmatter, version: "1.0.1" });
+    expect(skillMarkdown(request.mock.calls[1]![0].draft!)).toContain("allowed-tools:");
+    expect(skillMarkdown(request.mock.calls[1]![0].draft!)).toContain("owner: example");
+  });
+});
