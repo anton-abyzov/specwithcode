@@ -597,6 +597,7 @@ function ConnectAccountOption({
   readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
 }) {
   const t = useT();
+  const tx = useTx();
   const { environments } = useEnvironments();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useStudioConnectAuthPrompt();
@@ -626,14 +627,14 @@ function ConnectAccountOption({
             <span className="block">SpecWithCode Connect</span>
             {optional ? (
               <span className="block text-xs font-normal text-muted-foreground">
-                Optional. Reach this computer from your phone and other machines.
+                {tx("Optional. Reach this computer from your phone and other machines.")}
               </span>
             ) : null}
           </span>
           <span className="text-xs text-muted-foreground">
             {!isLoaded
               ? signInStalled
-                ? "Sign-in did not load"
+                ? tx("Sign-in did not load")
                 : t("wizard.connect.loadingSignIn")
               : !isSignedIn
                 ? t("wizard.connect.signIn")
@@ -673,10 +674,12 @@ function ConnectAccountOption({
       {signInStalled ? (
         <div role="alert" className="flex items-center justify-between gap-3 px-3 pb-3">
           <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-            Connect sign-in did not load, so check this computer's network.{" "}
+            {tx("Connect sign-in did not load, so check this computer's network.")}{" "}
             {optional
-              ? "Setup works without Connect, and you can add it later in Settings > Connections."
-              : "You can add a computer with a pairing link instead."}
+              ? tx(
+                  "Setup works without Connect, and you can add it later in Settings > Connections.",
+                )
+              : tx("You can add a computer with a pairing link instead.")}
           </p>
           <Button
             className="shrink-0"
@@ -684,7 +687,7 @@ function ConnectAccountOption({
             variant="outline"
             onClick={() => window.location.reload()}
           >
-            Retry
+            {tx("Retry")}
           </Button>
         </div>
       ) : null}
@@ -832,6 +835,7 @@ function AgentsStep({
   readonly onContinue: () => void;
 }) {
   const t = useT();
+  const tx = useTx();
   const { environments } = useEnvironments();
   const machines = useMemo(
     () =>
@@ -870,7 +874,7 @@ function AgentsStep({
               : "text-warning-foreground",
         )}
       >
-        {agentReadinessMessage(readiness)}
+        {agentReadinessMessage(readiness, tx)}
       </p>
       <div className="mt-4 flex justify-end">
         <Button
@@ -878,7 +882,7 @@ function AgentsStep({
           variant={readiness.kind === "none" ? "outline" : "default"}
           onClick={onContinue}
         >
-          {readiness.kind === "none" ? "Continue without an agent" : t("wizard.continue")}
+          {readiness.kind === "none" ? tx("Continue without an agent") : t("wizard.continue")}
           <ArrowRightIcon className="size-3.5" />
         </Button>
       </div>
@@ -1211,7 +1215,7 @@ function AgentCard({
             {providerState === "signIn"
               ? t("wizard.agents.signIn")
               : providerState === "attention"
-                ? "Open terminal"
+                ? tx("Open terminal")
                 : t("wizard.agents.install")}
           </Button>
         )}

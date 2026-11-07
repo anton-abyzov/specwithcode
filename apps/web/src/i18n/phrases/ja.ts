@@ -4095,4 +4095,22 @@ export const ja: PhraseCatalog = {
     "各マシンには専用のプライベートアシスタントがあります。マシン間で何も転送されません。",
   "This assistant lives on {name}.": "このアシスタントは{name}にあります。",
   "Open this machine's assistant": "このマシンのアシスタントを開く",
+  "Optional. Reach this computer from your phone and other machines.":
+    "任意。スマートフォンや他のマシンからこのコンピューターにアクセスできます。",
+  "Sign-in did not load": "サインインを読み込めませんでした",
+  "Connect sign-in did not load, so check this computer's network.":
+    "Connect のサインインを読み込めませんでした。このコンピューターのネットワークを確認してください。",
+  "Setup works without Connect, and you can add it later in Settings > Connections.":
+    "セットアップは Connect なしでも使えます。あとから 設定 > 接続 で追加できます。",
+  "You can add a computer with a pairing link instead.":
+    "代わりにペアリングリンクでコンピューターを追加できます。",
+  "Continue without an agent": "エージェントなしで続行",
+  "Checking which agents can run…": "実行できるエージェントを確認しています…",
+  "No agent is ready yet, so chats will not start. Sign in or install one above.":
+    "まだ準備できたエージェントがないため、チャットは開始されません。上でサインインするか、インストールしてください。",
+  "Ready: {agents}.": "準備完了: {agents}。",
+  "Could not confirm {agents}; your first chat will tell.":
+    "{agents} を確認できませんでした。最初のチャットでわかります。",
+  "Nothing is ready on {machines}, so chats there will not start.":
+    "{machines} では何も準備できていないため、そこではチャットは開始されません。",
 };

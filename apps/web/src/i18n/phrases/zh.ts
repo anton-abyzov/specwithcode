@@ -3943,4 +3943,21 @@ export const zh: PhraseCatalog = {
     "每台机器都有自己的私人助手。它们之间不会传输任何内容。",
   "This assistant lives on {name}.": "此助手位于 {name}。",
   "Open this machine's assistant": "打开本机的助手",
+  "Optional. Reach this computer from your phone and other machines.":
+    "可选。从手机和其他机器访问这台电脑。",
+  "Sign-in did not load": "登录未能加载",
+  "Connect sign-in did not load, so check this computer's network.":
+    "Connect 登录未能加载，请检查这台电脑的网络。",
+  "Setup works without Connect, and you can add it later in Settings > Connections.":
+    "不使用 Connect 也能完成设置，之后可以在 设置 > 连接 中添加。",
+  "You can add a computer with a pairing link instead.": "你也可以改用配对链接添加电脑。",
+  "Continue without an agent": "不使用智能体继续",
+  "Checking which agents can run…": "正在检查哪些智能体可以运行…",
+  "No agent is ready yet, so chats will not start. Sign in or install one above.":
+    "还没有可用的智能体，所以聊天无法开始。请在上方登录或安装一个。",
+  "Ready: {agents}.": "已就绪：{agents}。",
+  "Could not confirm {agents}; your first chat will tell.":
+    "无法确认 {agents}；第一次聊天时就会知道。",
+  "Nothing is ready on {machines}, so chats there will not start.":
+    "{machines} 上没有可用的智能体，所以那里的聊天无法开始。",
 };

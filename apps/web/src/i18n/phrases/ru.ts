@@ -4092,4 +4092,22 @@ export const ru: PhraseCatalog = {
     "У каждой машины свой личный ассистент. Между ними ничего не переносится.",
   "This assistant lives on {name}.": "Этот ассистент находится на {name}.",
   "Open this machine's assistant": "Открыть ассистента этой машины",
+  "Optional. Reach this computer from your phone and other machines.":
+    "Необязательно. Подключайтесь к этому компьютеру с телефона и других машин.",
+  "Sign-in did not load": "Вход не загрузился",
+  "Connect sign-in did not load, so check this computer's network.":
+    "Вход в Connect не загрузился, проверьте сеть этого компьютера.",
+  "Setup works without Connect, and you can add it later in Settings > Connections.":
+    "Настройка работает и без Connect, его можно добавить позже в Настройки > Подключения.",
+  "You can add a computer with a pairing link instead.":
+    "Вместо этого можно добавить компьютер по ссылке для сопряжения.",
+  "Continue without an agent": "Продолжить без агента",
+  "Checking which agents can run…": "Проверяем, какие агенты могут работать…",
+  "No agent is ready yet, so chats will not start. Sign in or install one above.":
+    "Ни один агент пока не готов, поэтому чаты не запустятся. Войдите или установите агента выше.",
+  "Ready: {agents}.": "Готово: {agents}.",
+  "Could not confirm {agents}; your first chat will tell.":
+    "Не удалось проверить {agents}; станет ясно в первом чате.",
+  "Nothing is ready on {machines}, so chats there will not start.":
+    "На {machines} ничего не готово, поэтому чаты там не запустятся.",
 };

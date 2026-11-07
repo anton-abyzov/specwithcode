@@ -4107,4 +4107,22 @@ export const pt: PhraseCatalog = {
     "Cada máquina tem o seu próprio assistente privado. Nada é transferido entre eles.",
   "This assistant lives on {name}.": "Este assistente fica em {name}.",
   "Open this machine's assistant": "Abrir o assistente desta máquina",
+  "Optional. Reach this computer from your phone and other machines.":
+    "Opcional. Acesse este computador pelo celular e por outras máquinas.",
+  "Sign-in did not load": "O login não carregou",
+  "Connect sign-in did not load, so check this computer's network.":
+    "O login do Connect não carregou; verifique a rede deste computador.",
+  "Setup works without Connect, and you can add it later in Settings > Connections.":
+    "A configuração funciona sem o Connect, e você pode adicioná-lo depois em Configurações > Conexões.",
+  "You can add a computer with a pairing link instead.":
+    "Você pode adicionar um computador com um link de pareamento.",
+  "Continue without an agent": "Continuar sem agente",
+  "Checking which agents can run…": "Verificando quais agentes podem rodar…",
+  "No agent is ready yet, so chats will not start. Sign in or install one above.":
+    "Nenhum agente está pronto ainda, então os chats não vão iniciar. Entre ou instale um acima.",
+  "Ready: {agents}.": "Pronto: {agents}.",
+  "Could not confirm {agents}; your first chat will tell.":
+    "Não foi possível confirmar {agents}; seu primeiro chat vai dizer.",
+  "Nothing is ready on {machines}, so chats there will not start.":
+    "Nada está pronto em {machines}, então os chats lá não vão iniciar.",
 };

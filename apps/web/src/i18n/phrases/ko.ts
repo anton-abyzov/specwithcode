@@ -4053,4 +4053,22 @@ export const ko: PhraseCatalog = {
     "각 컴퓨터에는 고유한 개인 어시스턴트가 있습니다. 서로 간에 아무것도 전송되지 않습니다.",
   "This assistant lives on {name}.": "이 어시스턴트는 {name}에 있습니다.",
   "Open this machine's assistant": "이 컴퓨터의 어시스턴트 열기",
+  "Optional. Reach this computer from your phone and other machines.":
+    "선택 사항. 휴대폰과 다른 기기에서 이 컴퓨터에 접속하세요.",
+  "Sign-in did not load": "로그인을 불러오지 못했습니다",
+  "Connect sign-in did not load, so check this computer's network.":
+    "Connect 로그인을 불러오지 못했습니다. 이 컴퓨터의 네트워크를 확인하세요.",
+  "Setup works without Connect, and you can add it later in Settings > Connections.":
+    "설정은 Connect 없이도 됩니다. 나중에 설정 > 연결에서 추가할 수 있습니다.",
+  "You can add a computer with a pairing link instead.":
+    "대신 페어링 링크로 컴퓨터를 추가할 수 있습니다.",
+  "Continue without an agent": "에이전트 없이 계속",
+  "Checking which agents can run…": "실행할 수 있는 에이전트를 확인하는 중…",
+  "No agent is ready yet, so chats will not start. Sign in or install one above.":
+    "아직 준비된 에이전트가 없어 채팅이 시작되지 않습니다. 위에서 로그인하거나 설치하세요.",
+  "Ready: {agents}.": "준비됨: {agents}.",
+  "Could not confirm {agents}; your first chat will tell.":
+    "{agents}을(를) 확인하지 못했습니다. 첫 채팅에서 알 수 있습니다.",
+  "Nothing is ready on {machines}, so chats there will not start.":
+    "{machines}에는 준비된 것이 없어 그곳에서는 채팅이 시작되지 않습니다.",
 };

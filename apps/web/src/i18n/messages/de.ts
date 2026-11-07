@@ -12,7 +12,7 @@ export const de: Messages = {
   "settings.language.system": "System ({language})",
 
   "wizard.title": "SpecWithCode einrichten",
-  "wizard.stage.connect": "Verbinden",
+  "wizard.stage.connect": "Computer",
   "wizard.stage.agents": "Agenten",
   "wizard.stage.projects": "Projekte",
   "wizard.close": "Einrichtung schließen",
@@ -62,7 +62,7 @@ export const de: Messages = {
 
   "wizard.agents.title": "Verbinde deine Agenten",
   "wizard.agents.description":
-    "Wähle einen Agenten, um mit dem Programmieren zu beginnen. Weitere kannst du später hinzufügen.",
+    "Wähle einen Agenten, um mit dem Programmieren zu beginnen. Cursor, OpenCode, Grok und weitere kannst du nach der Einrichtung unter Einstellungen > Anbieter hinzufügen.",
   "wizard.agents.noTerminal": "Diese Verbindung kann keine Terminals steuern.",
   "wizard.agents.anotherChatGpt": "Weiteres ChatGPT-Konto verbinden",
   "wizard.agents.readyToCode": "Bereit zum Programmieren.",

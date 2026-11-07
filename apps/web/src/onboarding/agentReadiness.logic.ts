@@ -6,6 +6,7 @@
 
 import type { ServerProvider } from "@specweave-studio/contracts";
 
+import { englishPhrase, type TranslatePhrase } from "../i18n";
 import { providerCanRunWork } from "../components/studio/whatYouCanDo.logic";
 import { getOnboardingProviderState } from "./providerReadiness.logic";
 
@@ -74,23 +75,36 @@ export function summarizeAgentReadiness(
 }
 
 /** One sentence for the step's status line. */
-export function agentReadinessMessage(readiness: AgentReadiness): string {
+export function agentReadinessMessage(
+  readiness: AgentReadiness,
+  tx: TranslatePhrase = englishPhrase,
+): string {
   switch (readiness.kind) {
     case "checking":
-      return "Checking which agents can run…";
+      return tx("Checking which agents can run…");
     case "none":
-      return "No agent is ready yet, so chats will not start. Sign in or install one above.";
+      return tx("No agent is ready yet, so chats will not start. Sign in or install one above.");
     case "ready":
     case "unconfirmed": {
-      const ready = readiness.agents.length > 0 ? `Ready: ${readiness.agents.join(", ")}. ` : "";
-      const unconfirmed =
-        readiness.unconfirmedAgents.length > 0
-          ? `Could not confirm ${readiness.unconfirmedAgents.join(", ")}; your first chat will tell.`
-          : "";
-      const lead = `${ready}${unconfirmed}`.trim();
-      return readiness.machinesWithoutAgent.length > 0
-        ? `${lead} Nothing is ready on ${readiness.machinesWithoutAgent.join(", ")}, so chats there will not start.`
-        : lead;
+      const sentences: string[] = [];
+      if (readiness.agents.length > 0) {
+        sentences.push(tx("Ready: {agents}.", { agents: readiness.agents.join(", ") }));
+      }
+      if (readiness.unconfirmedAgents.length > 0) {
+        sentences.push(
+          tx("Could not confirm {agents}; your first chat will tell.", {
+            agents: readiness.unconfirmedAgents.join(", "),
+          }),
+        );
+      }
+      if (readiness.machinesWithoutAgent.length > 0) {
+        sentences.push(
+          tx("Nothing is ready on {machines}, so chats there will not start.", {
+            machines: readiness.machinesWithoutAgent.join(", "),
+          }),
+        );
+      }
+      return sentences.join(" ");
     }
   }
 }

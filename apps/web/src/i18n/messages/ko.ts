@@ -9,7 +9,7 @@ export const ko: Messages = {
   "settings.language.system": "시스템({language})",
 
   "wizard.title": "SpecWithCode 설정",
-  "wizard.stage.connect": "연결",
+  "wizard.stage.connect": "컴퓨터",
   "wizard.stage.agents": "에이전트",
   "wizard.stage.projects": "프로젝트",
   "wizard.close": "설정 닫기",
@@ -54,7 +54,8 @@ export const ko: Messages = {
     "먼저 SpecWithCode를 시작하거나 {serve}를 실행하세요. tailnet을 사용하려면 {tailscale}을 추가하세요.",
 
   "wizard.agents.title": "에이전트 연결",
-  "wizard.agents.description": "코딩을 시작할 에이전트를 선택하세요. 나중에 더 추가할 수 있습니다.",
+  "wizard.agents.description":
+    "코딩을 시작할 에이전트를 선택하세요. Cursor, OpenCode, Grok 등은 설정 후 설정 > 공급자에서 추가할 수 있습니다.",
   "wizard.agents.noTerminal": "이 연결로는 터미널을 제어할 수 없습니다.",
   "wizard.agents.anotherChatGpt": "다른 ChatGPT 계정 연결",
   "wizard.agents.readyToCode": "코딩할 준비가 되었습니다.",

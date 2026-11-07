@@ -20,7 +20,7 @@ export const en = {
 
   // ── First-run wizard ──────────────────────────────────────
   "wizard.title": "Set up SpecWithCode",
-  "wizard.stage.connect": "Connect",
+  "wizard.stage.connect": "Computers",
   "wizard.stage.agents": "Agents",
   "wizard.stage.projects": "Projects",
   "wizard.close": "Close setup",
@@ -65,7 +65,8 @@ export const en = {
     "Start SpecWithCode first, or run {serve}. Add {tailscale} to use your tailnet.",
 
   "wizard.agents.title": "Connect your agents",
-  "wizard.agents.description": "Choose an agent to start coding. You can add more later.",
+  "wizard.agents.description":
+    "Choose an agent to start coding. Cursor, OpenCode, Grok and others can be added after setup in Settings > Providers.",
   "wizard.agents.noTerminal": "This connection cannot control terminals.",
   "wizard.agents.anotherChatGpt": "Connect another ChatGPT account",
   "wizard.agents.readyToCode": "Ready to code.",
