@@ -1,5 +1,5 @@
 import type { ServiceUpdateBlocker } from "@specweave-studio/contracts";
-import { ChevronRightIcon, FolderIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, InfoIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { cn } from "../../lib/utils";
@@ -53,9 +53,8 @@ export function RestartRunningWorkList({
                   <FolderIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                 )}
                 <span className="min-w-0 flex-1 truncate font-medium">{group.title}</span>
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {runningWorkCounts(group)}
-                </span>
+                <WorkCounts work={group} />
+                <span aria-hidden className="size-3.5 shrink-0" />
               </div>
               <ul>
                 {shown.map((thread) => (
@@ -107,9 +106,7 @@ function RunningWorkThreadRow({
     <>
       {dot}
       <span className="min-w-0 flex-1 truncate">{thread.title}</span>
-      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-        {runningWorkCounts(thread)}
-      </span>
+      <WorkCounts work={thread} />
     </>
   );
   const threadId = thread.threadId;
@@ -128,8 +125,40 @@ function RunningWorkThreadRow({
           />
         </button>
       ) : (
-        <div className="flex items-center gap-2 py-1 pr-3 pl-9">{content}</div>
+        <div className="flex items-center gap-2 py-1 pr-3 pl-9">
+          {content}
+          <span aria-hidden className="size-3.5 shrink-0" />
+        </div>
       )}
     </li>
+  );
+}
+
+/** The counts of a row in one right-aligned column, so rows line up. */
+function WorkCounts({
+  work,
+}: {
+  readonly work: { readonly running: number; readonly queued: number; readonly questions: number };
+}) {
+  return (
+    <span className="min-w-24 shrink-0 text-right text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+      {runningWorkCounts(work)}
+    </span>
+  );
+}
+
+/** Secondary lines under the list: what is asked again, and what waiting does. */
+export function RestartDialogNotes({ lines }: { readonly lines: ReadonlyArray<string | null> }) {
+  const shown = lines.filter((line): line is string => line !== null && line !== "");
+  if (shown.length === 0) return null;
+  return (
+    <ul data-testid="restart-dialog-notes" className="space-y-1 text-xs text-muted-foreground">
+      {shown.map((line) => (
+        <li key={line} className="flex items-start gap-1.5">
+          <InfoIcon aria-hidden className="mt-0.5 size-3 shrink-0" />
+          <span>{line}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

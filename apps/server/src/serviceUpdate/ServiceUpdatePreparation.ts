@@ -111,7 +111,11 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
-import { type BlockerRow, summarizeBlockers } from "./ServiceUpdateBlockers.ts";
+import {
+  type BlockerRow,
+  STALE_WAIT_REQUEST_KINDS,
+  summarizeBlockers,
+} from "./ServiceUpdateBlockers.ts";
 import * as ServiceUpdateCleanup from "./ServiceUpdateCleanup.ts";
 import * as ClosedQuestions from "./ServiceUpdateClosedQuestions.ts";
 import * as Descendants from "./ServiceUpdateDescendants.ts";
@@ -175,19 +179,6 @@ export const HIDDEN_WAIT_REASON =
 const AGENT_WAITING_FOR_QUIET = "waiting-for-quiet";
 /** Blocker kinds a thread that only waits on a person can have. */
 const WAITING_KINDS: ReadonlySet<ServiceUpdateBlockerKind> = new Set(["run", "request", "session"]);
-/**
- * The request kinds a stale wait may be released for: approvals and questions,
- * which are recorded and asked again after the restart. A sign-in
- * (`auth_refresh`) or a tool call cannot be asked again and keeps blocking.
- */
-export const STALE_WAIT_REQUEST_KINDS: ReadonlySet<string> = new Set([
-  "command",
-  "file-read",
-  "file-change",
-  "permission",
-  "mcp-elicitation",
-  "user_input",
-]);
 
 /**
  * Whether Needs you leaves a thread out, as the Threads pane does
@@ -250,7 +241,11 @@ export {
   type ServiceUpdatePreparationTimings,
 } from "./ServiceUpdatePreparationTimings.ts";
 
-export { type BlockerRow, summarizeBlockers } from "./ServiceUpdateBlockers.ts";
+export {
+  type BlockerRow,
+  STALE_WAIT_REQUEST_KINDS,
+  summarizeBlockers,
+} from "./ServiceUpdateBlockers.ts";
 
 export interface ActiveRun {
   readonly runId: string;
@@ -393,6 +388,22 @@ export const makePartsWithTimings = (
         ...(row.kind === "request" ? { requestKind: row.request_kind } : {}),
       }));
     });
+
+    /**
+     * Threads whose active run still works in the background: a subagent, or a
+     * background task the provider reports pending. Neither has a blocker row,
+     * so a thread asking a question meanwhile is still at work.
+     */
+    const readBackgroundBusy = sql<{ readonly thread_id: string }>`
+      SELECT n.thread_id AS thread_id FROM orchestration_v2_projection_nodes n
+        JOIN orchestration_v2_projection_runs r ON r.run_id = n.run_id
+       WHERE n.kind = 'subagent' AND n.status IN ('pending', 'running', 'waiting')
+         AND r.status IN ('preparing', 'starting', 'running', 'waiting')
+      UNION
+      SELECT thread_id FROM orchestration_v2_projection_provider_threads
+       WHERE thread_id IS NOT NULL
+         AND json_array_length(payload_json, '$.pendingBackgroundTasks') > 0
+    `.pipe(Effect.map((found) => new Set(found.map((row) => row.thread_id))));
 
     const readActiveRuns = sql<{
       readonly run_id: string;
@@ -904,7 +915,18 @@ export const makePartsWithTimings = (
       leftover: Option.Option<number> = Option.none(),
     ) =>
       Effect.gen(function* () {
-        const summarized = summarizeBlockers(rows);
+        // Unreadable background work counts every thread as busy: none is marked.
+        const summarized = summarizeBlockers(
+          rows,
+          rows.some((row) => row.kind === "request")
+            ? yield* readBackgroundBusy.pipe(
+                Effect.orElseSucceed(
+                  () =>
+                    new Set(rows.flatMap((row) => (row.threadId === null ? [] : [row.threadId]))),
+                ),
+              )
+            : new Set(),
+        );
         const current = Option.isSome(settings)
           ? yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => null))
           : null;

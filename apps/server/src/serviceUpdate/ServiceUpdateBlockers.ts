@@ -25,6 +25,53 @@ export interface BlockerRow {
   readonly requestKind?: string | null;
 }
 
+/**
+ * The request kinds a stale wait may be released for: approvals and questions,
+ * which are recorded and asked again after the restart. A sign-in
+ * (`auth_refresh`) or a tool call cannot be asked again and keeps blocking.
+ */
+export const STALE_WAIT_REQUEST_KINDS: ReadonlySet<string> = new Set([
+  "command",
+  "file-read",
+  "file-change",
+  "permission",
+  "mcp-elicitation",
+  "user_input",
+]);
+
+/** Blocker kinds a thread that only waits on a person can have. */
+const PERSON_WAIT_KINDS: ReadonlySet<ServiceUpdateBlockerKind> = new Set([
+  "run",
+  "request",
+  "session",
+]);
+
+/**
+ * The threads that only wait on a person: their rows are runs, sessions and at
+ * least one request, every request is an approval or a question that is asked
+ * again after the restart, and nothing runs in the background meanwhile (a
+ * subagent or a background shell, which have no rows: `backgroundBusy`). A
+ * restart interrupts no work there.
+ */
+export function personWaitThreads(
+  rows: ReadonlyArray<BlockerRow>,
+  backgroundBusy: ReadonlySet<string> = new Set(),
+): ReadonlySet<string> {
+  const waiting = new Set<string>();
+  const working = new Set<string>(backgroundBusy);
+  for (const row of rows) {
+    if (row.threadId === null) continue;
+    const reasked =
+      row.kind === "request"
+        ? STALE_WAIT_REQUEST_KINDS.has(row.requestKind ?? "")
+        : PERSON_WAIT_KINDS.has(row.kind);
+    if (!reasked) working.add(row.threadId);
+    else if (row.kind === "request") waiting.add(row.threadId);
+  }
+  for (const threadId of working) waiting.delete(threadId);
+  return waiting;
+}
+
 const KIND_ORDER: Record<ServiceUpdateBlockerKind, number> = {
   run: 0,
   request: 1,
@@ -34,7 +81,10 @@ const KIND_ORDER: Record<ServiceUpdateBlockerKind, number> = {
 };
 
 /** One entry per thread and kind, running work first, then by project and thread. */
-export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<ServiceUpdateBlocker> {
+export function summarizeBlockers(
+  rows: ReadonlyArray<BlockerRow>,
+  backgroundBusy: ReadonlySet<string> = new Set(),
+): Array<ServiceUpdateBlocker> {
   const grouped = new Map<string, ServiceUpdateBlocker>();
   for (const row of rows) {
     const key = `${row.kind}\u0000${row.threadId ?? ""}`;
@@ -66,10 +116,17 @@ export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<Servic
       approvals: (blocker.approvals ?? 0) + (ClosedQuestions.APPROVAL_KINDS.has(kind) ? 1 : 0),
     });
   }
-  return [...grouped.values()].toSorted(
-    (left, right) =>
-      KIND_ORDER[left.kind] - KIND_ORDER[right.kind] ||
-      (left.projectTitle ?? "").localeCompare(right.projectTitle ?? "") ||
-      (left.threadTitle ?? "").localeCompare(right.threadTitle ?? ""),
-  );
+  const waitsOnPerson = personWaitThreads(rows, backgroundBusy);
+  return [...grouped.values()]
+    .map((blocker) =>
+      blocker.threadId !== null && waitsOnPerson.has(blocker.threadId)
+        ? { ...blocker, waitsOnPerson: true }
+        : blocker,
+    )
+    .toSorted(
+      (left, right) =>
+        KIND_ORDER[left.kind] - KIND_ORDER[right.kind] ||
+        (left.projectTitle ?? "").localeCompare(right.projectTitle ?? "") ||
+        (left.threadTitle ?? "").localeCompare(right.threadTitle ?? ""),
+    );
 }

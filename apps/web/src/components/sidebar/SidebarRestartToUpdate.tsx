@@ -55,7 +55,7 @@ import {
   forceInstallAfterMinutes,
   holdWindowElapsed,
 } from "./restartHoldWindow";
-import { RestartRunningWorkList } from "./RestartRunningWorkList";
+import { RestartDialogNotes, RestartRunningWorkList } from "./RestartRunningWorkList";
 import { onRestartToUpdateRequest } from "./restartToUpdateRequests";
 import { keepLiveQuestionBlockers, waitingKey } from "./liveQuestionThreads";
 import { useLiveWaitingThreads } from "./useLiveWaitingThreads";
@@ -64,7 +64,8 @@ import {
   canPressUpdateAgain,
   describeInstallOutcome,
   getRestartToUpdateView,
-  RESTART_WHEN_IDLE_NOTE,
+  describeReaskedRequests,
+  restartWhenIdleNote,
   runningAppRelease,
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceInstallTarget,
@@ -249,10 +250,10 @@ function SidebarRestartToUpdateButton() {
 
   // The dialog's list: a thread row opens that thread and closes the dialog.
   const renderRunningWork = useCallback(
-    (blockers: ReadonlyArray<ServiceUpdateBlocker>) => (
+    (working: ReadonlyArray<ServiceUpdateBlocker>, all: ReadonlyArray<ServiceUpdateBlocker>) => (
       <div className="space-y-3">
         <RestartRunningWorkList
-          blockers={blockers}
+          blockers={working}
           onOpenThread={
             environmentId === null
               ? undefined
@@ -265,10 +266,12 @@ function SidebarRestartToUpdateButton() {
                 }
           }
         />
-        <p className="text-xs text-muted-foreground">{RESTART_WHEN_IDLE_NOTE}</p>
+        <RestartDialogNotes
+          lines={[describeReaskedRequests(all), restartWhenIdleNote(holdMinutes)]}
+        />
       </div>
     ),
-    [environmentId, navigate],
+    [environmentId, holdMinutes, navigate],
   );
 
   // Arms the check that the app really quit after an accepted install.
