@@ -47,11 +47,17 @@ export function useProjectLinkSuggestions(
   const suggestionFor = (group: SidebarProjectSnapshot): ProjectLinkSuggestion | undefined => {
     const suggestion = suggestions.get(group.projectKey);
     if (!suggestion) return undefined;
-    const machine = nickname(suggestion.anchor.environmentId);
     const repository = suggestion.repository ? ` (${suggestion.repository})` : "";
+    // A row holding both copies is this machine's: it names the other machine's copy.
+    const machine = nickname(
+      suggestion.sameRow ? suggestion.candidate.environmentId : suggestion.anchor.environmentId,
+    );
+    const label = suggestion.sameRow
+      ? `Same repository${repository} also added on ${machine}, not linked`
+      : `Same repository${repository} as ${suggestion.anchorTitle} on ${machine}`;
     return {
-      label: `Same repository${repository} as ${suggestion.anchorTitle} on ${machine}`,
-      action: `Link with ${suggestion.anchorTitle} on ${machine}…`,
+      label,
+      action: `Link with ${suggestion.sameRow ? suggestion.candidate.title : suggestion.anchorTitle} on ${machine}…`,
       onLink: () => setOpen(suggestion),
       onDismiss: () => {
         dismissLinkSuggestion(suggestion.candidate);

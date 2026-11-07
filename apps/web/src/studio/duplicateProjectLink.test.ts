@@ -71,6 +71,7 @@ it("offers the other machine's copy of the same repository", () => {
   expect(suggestion.candidate.id).toBe("p-m3");
   expect(suggestion.repository).toBe("anton-abyzov/specweave");
   expect(linkDialogTarget(suggestion).candidate).toEqual({ environmentId: M3, projectId: "p-m3" });
+  expect(suggestion.sameRow).toBeUndefined();
 });
 
 it("offers the single copy to join a project already shared, anchored on its coordinator", () => {
@@ -280,6 +281,7 @@ describe("one row that repository grouping merged across machines", () => {
     expect(suggestion.candidate.id).toBe("p-m1");
     expect(suggestion.anchorTitle).toBe("EasyChamp");
     expect(suggestion.repository).toBe("anton-abyzov/sw-easychamp");
+    expect(suggestion.sameRow).toBe(true);
     expect(linkDialogTarget(suggestion)).toMatchObject({
       project: { environmentId: M4, id: "p-m4" },
       candidate: { environmentId: M1, projectId: "p-m1" },
@@ -317,6 +319,19 @@ describe("one row that repository grouping merged across machines", () => {
           },
         },
       } as unknown as Partial<EnvironmentProject>),
+    );
+    // A merged row whose copy names another machine's copy, as a source that has not
+    // streamed its new grouping yet would leave it.
+    const linked = copyOf(M1, "p-m1", {
+      workspaceSettings: {
+        logicalProject: {
+          id: "logical:elsewhere",
+          members: [{ environmentId: M3, projectId: "p-m3", workspaceRoot: "/Users/a/p-m3" }],
+        },
+      },
+    } as unknown as Partial<EnvironmentProject>);
+    expect(duplicateLinkSuggestions([group("row", copyOf(M4, "p-m4"), linked)], options).size).toBe(
+      0,
     );
     // Ineligible copies, and a copy the person said is different.
     expect(

@@ -26,6 +26,8 @@ export interface DuplicateLinkSuggestion {
   readonly anchorTitle: string;
   /** "anton-abyzov/specweave", when the repository names itself. */
   readonly repository: string | null;
+  /** Both copies sit on this one row, so its text names the candidate's machine. */
+  readonly sameRow?: true;
 }
 
 export interface SuggestionGroup {
@@ -195,6 +197,7 @@ export function duplicateLinkSuggestions(
       repository: candidate.repositoryIdentity
         ? (repositoryGroupingDisplayNameOf(candidate.repositoryIdentity) ?? null)
         : null,
+      sameRow: true,
     });
   }
   return suggestions;
