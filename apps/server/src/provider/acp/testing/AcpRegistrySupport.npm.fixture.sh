@@ -21,8 +21,15 @@ if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
   printf '%s' "$FAKE_NPM_MANIFEST" > "$package_root/package.json"
   printf '#!/bin/sh\n' > "$executable"
   chmod 755 "$executable"
+  # Like an npmrc with ignore-scripts=true: install scripts run only when the
+  # command line turns them back on.
+  scripts_run=0
+  case " $* " in *" --ignore-scripts=false "*) scripts_run=1 ;; esac
+  if [ -n "$FAKE_NPM_SCRIPTS_BROKEN" ]; then scripts_run=0; fi
   if [ -n "$FAKE_NPM_INSTALL_ENV_LOG" ]; then
     printf '%s\n%s\n%s\n' "$HOME" "$GROK_HOME" "$GROK_INSTALL_COMPLETIONS" > "$FAKE_NPM_INSTALL_ENV_LOG"
+  fi
+  if [ -n "$FAKE_NPM_INSTALL_ENV_LOG" ] && [ "$scripts_run" = 1 ]; then
     mkdir -p "$GROK_HOME/bin"
     printf '#!/bin/sh\n' > "$GROK_HOME/bin/grok"
     chmod 755 "$GROK_HOME/bin/grok"
