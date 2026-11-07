@@ -154,6 +154,8 @@ export const harness = (
           }),
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({
+        // No thread record: a routine's own thread keeps its mode.
+        getThreadShell: () => Effect.succeed(null),
         sendToThread: (input) =>
           state.hangSends
             ? Effect.suspend(() => {

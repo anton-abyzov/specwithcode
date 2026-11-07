@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  ScheduledTaskError,
   ScheduledTaskUpsertInput,
   ThreadId,
   type ProjectId,
@@ -65,6 +66,7 @@ const harness = Effect.gen(function* () {
     transferDuringCheck: false,
     threadMode: "full-access" as string,
     modeSets: [] as Array<{ readonly threadId: string; readonly runtimeMode: string }>,
+    modeSetFails: false,
   };
   const threadRow = (id: string) =>
     sql`INSERT OR IGNORE INTO orchestration_v2_projection_threads ${sql.insert({ thread_id: id, project_id: "aide", title: "Monthly tax prep", default_provider: "claudeAgent", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", deleted_at: null, payload_json: "{}" })}`.pipe(
@@ -122,13 +124,18 @@ const harness = Effect.gen(function* () {
           }),
         getThreadShell: () => Effect.succeed({ runtimeMode: state.threadMode } as never),
         dispatch: (command) =>
-          Effect.sync(() => {
-            if (command.type === "thread.runtime-mode.set") {
-              state.modeSets.push({ threadId: command.threadId, runtimeMode: command.runtimeMode });
-              state.threadMode = command.runtimeMode;
-            }
-            return {} as never;
-          }),
+          state.modeSetFails
+            ? (Effect.fail(new ScheduledTaskError({ message: "Dispatch refused." })) as never)
+            : Effect.sync(() => {
+                if (command.type === "thread.runtime-mode.set") {
+                  state.modeSets.push({
+                    threadId: command.threadId,
+                    runtimeMode: command.runtimeMode,
+                  });
+                  state.threadMode = command.runtimeMode;
+                }
+                return {} as never;
+              }),
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ProcessRunner.ProcessRunner)({
@@ -226,6 +233,12 @@ it.effect("moves its own thread to the routine's mode before a later run", () =>
         // Already in step: nothing to change.
         yield* runNow(service, "third");
         assert.equal(state.modeSets.length, 1);
+
+        // A thread that cannot be moved to the routine's mode does not run.
+        state.threadMode = "approval-required";
+        state.modeSetFails = true;
+        yield* runNow(service, "fourth").pipe(Effect.exit);
+        assert.equal(state.sent.length, 2);
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),

@@ -36,8 +36,8 @@ const TOOLS = [
   GoogleToolkit,
 ].flatMap((toolkit) => Object.values(toolkit.tools));
 
-// Annotated as writes only because reading a finished result acknowledges its delivery.
-const ACKNOWLEDGING_READS = ["task_status", "studio_thread_read"];
+// Annotated as a write only because reading a finished result acknowledges its delivery.
+const ACKNOWLEDGING_READS = ["task_status"];
 
 describe("STUDIO_READ_ONLY_TOOLS", () => {
   it("holds only real tools that read, or acknowledge a delivered result", () => {
@@ -58,6 +58,10 @@ describe("STUDIO_READ_ONLY_TOOLS", () => {
       google.filter((name) => STUDIO_READ_ONLY_TOOLS.has(name)),
       ["studio_google_status"],
     );
+  });
+
+  it("keeps other threads' transcripts behind approval", () => {
+    assert.isFalse(STUDIO_READ_ONLY_TOOLS.has("studio_thread_read"));
   });
 
   it("needs the server in the title", () => {

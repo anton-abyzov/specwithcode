@@ -1044,8 +1044,9 @@ export const layer = Layer.effect(
                           ),
                         ),
                 ),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Could not apply a routine's mode to its thread", {
+                // Team rules judged the routine's mode: a thread left in another must not run.
+                Effect.mapError((cause) =>
+                  taskError("Could not run the routine in its saved mode.", {
                     taskId: active.id,
                     cause,
                   }),

@@ -3,8 +3,9 @@ import { CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS } from "../orchestration-v2/A
 /**
  * SpecWithCode's own tools that only read state, by bare tool name. A provider
  * may run them without asking in any mode: the read-only toolkit tools Claude
- * already allows, plus status reads whose only effect is to acknowledge a
- * delivered result. Gmail, Drive and Calendar content stays behind approval.
+ * already allows, plus Google's setup status and the status of this thread's
+ * own delegated tasks. Gmail, Drive and Calendar content, and other threads'
+ * transcripts, stay behind approval.
  */
 export const STUDIO_READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   ...CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS.map((name) =>
@@ -12,7 +13,6 @@ export const STUDIO_READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   ),
   "studio_google_status",
   "task_status",
-  "studio_thread_read",
 ]);
 
 // How providers spell a studio-code tool: mcp__studio_code__x (Muse, Claude),

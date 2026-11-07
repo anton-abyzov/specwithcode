@@ -129,11 +129,16 @@ const EARLY_BRIEFING_ID = "scheduled-task:assistant-setup:";
  * schedule and model. Only the early id matches, so this happens once and a
  * mode the person sets later stays.
  */
+/** Save today's briefing in place of the early one, or only drop the early one once it exists. */
+export type EarlyBriefingStep =
+  | { readonly kind: "replace"; readonly input: ScheduledTaskUpsertInput }
+  | { readonly kind: "drop" };
+
 export function earlyBriefingReplacement(
   task: ScheduledTask,
   tasks: ReadonlyArray<Pick<ScheduledTask, "id">>,
   runtimeMode: ScheduledTaskUpsertInput["runtimeMode"],
-): ScheduledTaskUpsertInput | null {
+): EarlyBriefingStep | null {
   if (
     !task.id.startsWith(EARLY_BRIEFING_ID) ||
     task.runtimeMode !== "approval-required" ||
@@ -141,25 +146,29 @@ export function earlyBriefingReplacement(
   )
     return null;
   const commandId = `aide-briefing:${task.projectId}`;
-  if (tasks.some((other) => other.id === `scheduled-task:${commandId}`)) return null;
+  // Saved by an earlier pass whose delete did not finish.
+  if (tasks.some((other) => other.id === `scheduled-task:${commandId}`)) return { kind: "drop" };
   return {
-    commandId: CommandId.make(commandId),
-    title: task.title,
-    prompt: task.prompt,
-    enabled: task.enabled,
-    schedule: task.schedule as ScheduledTaskUpsertInput["schedule"],
-    projectId: task.projectId,
-    threadId: task.threadId,
-    workspaceStrategy: task.workspaceStrategy,
-    modelSelection: task.modelSelection,
-    runtimeMode,
-    interactionMode: task.interactionMode,
-    createdBy: task.createdBy,
-    creationSource: task.creationSource,
-    ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
-    ...(task.check === undefined ? {} : { check: task.check }),
-    ...(task.brief === undefined ? {} : { brief: task.brief }),
-    ownThread: true,
+    kind: "replace",
+    input: {
+      commandId: CommandId.make(commandId),
+      title: task.title,
+      prompt: task.prompt,
+      enabled: task.enabled,
+      schedule: task.schedule as ScheduledTaskUpsertInput["schedule"],
+      projectId: task.projectId,
+      threadId: task.threadId,
+      workspaceStrategy: task.workspaceStrategy,
+      modelSelection: task.modelSelection,
+      runtimeMode,
+      interactionMode: task.interactionMode,
+      createdBy: task.createdBy,
+      creationSource: task.creationSource,
+      ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
+      ...(task.check === undefined ? {} : { check: task.check }),
+      ...(task.brief === undefined ? {} : { brief: task.brief }),
+      ownThread: true,
+    },
   };
 }
 
@@ -168,17 +177,22 @@ const replaceEarlyBriefings = Effect.gen(function* () {
   const { tasks } = yield* scheduledTasks.list();
   const rules = yield* currentTeamRules;
   for (const task of tasks) {
-    const replacement = earlyBriefingReplacement(
+    const step = earlyBriefingReplacement(
       task,
       tasks,
       teamRulesClampRoutineMode(rules, "full-access"),
     );
-    if (replacement === null) continue;
-    yield* scheduledTasks.upsert(replacement);
-    yield* scheduledTasks.delete({ id: task.id });
-    yield* Effect.logInfo("Replaced an early briefing that waited on approval", {
-      taskId: task.id,
-    });
+    if (step === null) continue;
+    yield* (step.kind === "replace" ? scheduledTasks.upsert(step.input) : Effect.void).pipe(
+      Effect.andThen(scheduledTasks.delete({ id: task.id })),
+      Effect.andThen(
+        Effect.logInfo("Replaced an early briefing that waited on approval", { taskId: task.id }),
+      ),
+      // One routine that cannot be saved must not stop setup or the others.
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not replace an early briefing", { taskId: task.id, cause }),
+      ),
+    );
   }
 });
 

@@ -53,7 +53,10 @@ const serviceLayer = Service.layer.pipe(
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: () => Effect.succeed({ threadId: "synthetic", resumed: false } as never),
       }),
-      Layer.mock(ThreadManagement.ThreadManagementService)({}),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        // No thread record: a routine's own thread keeps its mode.
+        getThreadShell: () => Effect.succeed(null),
+      }),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ProcessRunner.ProcessRunner)({}),
       Layer.mock(Scheduler.Scheduler)({

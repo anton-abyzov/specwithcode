@@ -238,7 +238,7 @@ describe("acpRequestDisposition", () => {
       "mcp__studio_code__studio_google_status",
       "mcp__studio-code__task_status",
       "studio-code_studio_thread_list",
-      "studio-code/studio_thread_read",
+      "studio-code/studio_project_read",
       "studio_project_memory_read (studio-code MCP Server)",
     ])
       assert.equal(acpRequestDisposition(approval, titled(title)), "allow", title);
@@ -253,8 +253,14 @@ describe("acpRequestDisposition", () => {
       "studio_google_status",
     ])
       assert.equal(acpRequestDisposition(approval, titled(title)), "ask", title);
+    for (const kind of ["execute", "edit", "delete", "move"] as const)
+      assert.equal(
+        acpRequestDisposition(approval, titled("studio-code/html_render", kind)),
+        "ask",
+        kind,
+      );
     assert.equal(
-      acpRequestDisposition(approval, titled("mcp__studio_code__task_status", "execute")),
+      acpRequestDisposition(approval, titled("mcp__studio_code__studio_thread_read")),
       "ask",
     );
   });

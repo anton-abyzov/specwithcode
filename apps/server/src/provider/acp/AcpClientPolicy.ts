@@ -237,6 +237,9 @@ export function acpPermissionDisposition(
   });
 }
 
+// A request that edits, deletes, moves or runs something is never a read, whatever its title.
+const CHANGING_KINDS: ReadonlySet<string> = new Set(["edit", "delete", "move", "execute"]);
+
 /**
  * A provider's permission request: SpecWithCode's own read-only tools run in
  * every mode; everything else follows the provider's rule.
@@ -249,7 +252,8 @@ export function acpRequestDisposition<Policy extends AcpRuntimePolicy>(
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => AcpPermissionDisposition = acpPermissionDisposition,
 ): AcpPermissionDisposition {
-  return request.toolCall.kind !== "execute" && isStudioReadOnlyTool(request.toolCall.title)
+  return !CHANGING_KINDS.has(request.toolCall.kind ?? "other") &&
+    isStudioReadOnlyTool(request.toolCall.title)
     ? "allow"
     : decide(runtimePolicy, request);
 }
