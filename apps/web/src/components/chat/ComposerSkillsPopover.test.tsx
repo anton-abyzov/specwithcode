@@ -2,7 +2,14 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ProjectId, type ServerProviderSkill } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  type ServerProviderSkill,
+} from "@specweave-studio/contracts";
+
+const queryState = vi.hoisted(() => ({ snapshot: null as any }));
 
 vi.mock("../settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => [
@@ -19,7 +26,7 @@ vi.mock("../../studio/projectWorkspace", () => ({ projectWorkspace: { skills: ()
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: () => ({
     refresh: () => {},
-    data: null,
+    data: queryState.snapshot,
     dataUpdatedAt: 0,
     error: null,
     failure: null,
@@ -70,6 +77,7 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  queryState.snapshot = null;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -109,9 +117,12 @@ describe("ComposerSkillsPopover", () => {
     expect(manage.closest(".opacity-50")).toBeNull();
     expect(manage.className).toContain("focus-visible:ring-2");
     expect(manage.getAttribute("href")).toBe(
-      "/settings/skills?machine=host&project=logical-project&checkout=host%3A%2Fwork%2Fapp&skill=html-report",
+      "/settings/skills?machine=host&skillContext=host%3Aproject&project=logical-project&checkout=host%3A%2Fwork%2Fapp&skill=html-report",
     );
-    // A skill that is on has nothing to manage from here.
+    // Every enabled skill opens the scoped detail page too.
+    expect(document.querySelector<HTMLAnchorElement>("[data-skill-name=deploy] a")?.href).toContain(
+      "skill=deploy",
+    );
     expect(
       document.querySelector("[data-skill-name='deploy'] [data-testid=composer-skill-manage]"),
     ).toBeNull();
@@ -159,10 +170,82 @@ describe("ComposerSkillsPopover", () => {
       expect(panel.querySelectorAll("[data-skill-name]")).toHaveLength(expected);
       if (text) expect(panel.textContent).toContain(`${expected} of 19 skills`);
     }
+    await act(async () => {
+      setter.call(input, "marketing");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => trigger.click());
+    await act(async () => trigger.click());
+    expect(
+      document.querySelector<HTMLInputElement>('input[aria-label="Search skills"]')?.value,
+    ).toBe("marketing");
     const settings = [...panel.querySelectorAll("a")].find(
       (a) => a.textContent === "Open Skills settings",
     )!;
     expect(settings.getAttribute("href")).toContain("agent=codex");
-    expect(settings.getAttribute("href")).toContain("machine=host&project=logical-project");
+    expect(settings.getAttribute("href")).toContain("machine=host");
+    expect(settings.getAttribute("href")).toContain("project=logical-project");
+  });
+  it("deep links differing copies with exact machine, agent and thread folder", async () => {
+    queryState.snapshot = {
+      rows: [
+        {
+          name: "deploy",
+          status: "ok",
+          attention: false,
+          issues: [],
+          doctor: [],
+          drift: "unlocked",
+          copies: 2,
+          divergent: true,
+          lock: null,
+          providers: [
+            {
+              instanceId: "codex",
+              driver: "codex",
+              label: "Codex",
+              path: skills[0]!.path,
+              scope: "project",
+              enabled: true,
+              fileVersion: "1.0.0",
+            },
+          ],
+        },
+      ],
+      providers: [],
+    };
+    await act(async () =>
+      root.render(
+        <ComposerSkillsPopover
+          environmentId={EnvironmentId.make("host")}
+          projectId={ProjectId.make("project")}
+          cwd="/work/app"
+          threadId={ThreadId.make("thread-a")}
+          provider={
+            { instanceId: "codex", displayName: "Codex", snapshot: { status: "ready" } } as never
+          }
+          machineLabel="Laptop"
+          skills={skills}
+        />,
+      ),
+    );
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>("[data-testid=composer-skills-trigger]")!.click(),
+    );
+    const link = document.querySelector<HTMLAnchorElement>(
+      '[aria-label="Compare copies of deploy"]',
+    )!;
+    expect(link).not.toBeNull();
+    const params = new URL(link.href).searchParams;
+    expect(Object.fromEntries(params)).toMatchObject({
+      machine: "host",
+      project: "logical-project",
+      agent: "codex",
+      skill: "deploy",
+      skillView: "compare",
+      skillThread: "thread-a",
+      skillCwd: "/work/app",
+      skillContext: "host:project",
+    });
   });
 });

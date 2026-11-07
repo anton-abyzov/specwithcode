@@ -39,6 +39,7 @@ vi.mock("../../studio/projectWorkspace", () => ({
       state.versionInputs.push(options.input);
       return { kind: "versions" };
     },
+    skillCopies: { label: "skill-copies" },
     skillAction: { label: "skill-action" },
     skillFleetPush: { label: "skill-fleet-push" },
     skillStudioLink: { label: "skill-studio-link" },
@@ -82,12 +83,14 @@ vi.mock("../ui/toast", () => ({
 }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand:
-    () =>
+    (command: { label?: string }) =>
     async ({
       input,
     }: {
       input: { preview: boolean; action: { kind: string; enabled?: boolean }; expected?: unknown };
     }) => {
+      if (command?.label === "skill-copies")
+        return { _tag: "Success", value: { _tag: "read", copies: [] } };
       state.actionInputs.push(input);
       state.actions.push({
         preview: input.preview,
@@ -751,5 +754,19 @@ describe("ProjectSkillsView", () => {
     await render();
     expect(bodyRows()).toEqual([]);
     expect(document.querySelector("[data-testid=skill-details]")).toBeNull();
+  });
+  it("refuses a linked skill when its project context cannot be resolved", async () => {
+    state.search = { skill: "deploy", skillContext: "other:project" };
+    await act(async () =>
+      root.render(
+        <ProjectSkillsView
+          environmentId={EnvironmentId.make("host")}
+          projectId={ProjectId.make("project")}
+          folder="/work/app"
+        />,
+      ),
+    );
+    expect(container.textContent).toContain("original project or machine is unavailable");
+    expect(state.skillsInputs).toHaveLength(0);
   });
 });

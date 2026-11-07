@@ -144,6 +144,8 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
   );
 });
 
+const retainedSkillSearch = new Map<string, string>();
+
 function ComposerSkillsPanel(
   props: ComposerSkillsPopoverProps & {
     onCreate: () => void;
@@ -152,7 +154,15 @@ function ComposerSkillsPanel(
 ) {
   const tx = useTx();
   const [rescan, setRescan] = useState(false);
-  const [search, setSearch] = useState("");
+  const searchKey = `${props.environmentId}:${props.projectId}:${props.threadId ?? ""}:${props.cwd ?? ""}:${props.provider?.instanceId ?? ""}`;
+  const [search, setSearch] = useState(() => retainedSkillSearch.get(searchKey) ?? "");
+  const rememberSearch = (value: string) => {
+    setSearch(value);
+    retainedSkillSearch.delete(searchKey);
+    retainedSkillSearch.set(searchKey, value);
+    if (retainedSkillSearch.size > 32)
+      retainedSkillSearch.delete(retainedSkillSearch.keys().next().value!);
+  };
   const query = useEnvironmentQuery(
     props.projectId
       ? projectWorkspace.skills({
@@ -188,6 +198,7 @@ function ComposerSkillsPanel(
   );
   const settingsSearch = {
     machine: props.environmentId,
+    ...(props.projectId ? { skillContext: `${props.environmentId}:${props.projectId}` } : {}),
     ...(projectGroup ? { project: projectGroup.projectKey } : {}),
     ...(projectMember ? { checkout: projectMember.physicalProjectKey } : {}),
     ...(props.provider ? { agent: props.provider.instanceId } : {}),
@@ -195,7 +206,6 @@ function ComposerSkillsPanel(
       ? {
           skillCwd: props.cwd,
           skillThread: props.threadId,
-          skillContext: `${props.environmentId}:${props.projectId}`,
         }
       : {}),
   };
@@ -291,7 +301,7 @@ function ComposerSkillsPanel(
           <Input
             size="sm"
             value={search}
-            onChange={(event) => setSearch(event.currentTarget.value)}
+            onChange={(event) => rememberSearch(event.currentTarget.value)}
             placeholder={tx("Search skills")}
             aria-label={tx("Search skills")}
             className="w-full"
@@ -359,7 +369,7 @@ function ComposerSkillsPanel(
         </Button>
         {props.projectId ? (
           <Button type="button" size="xs" variant="outline" onClick={props.onCreate}>
-            Create skill
+            New skill
           </Button>
         ) : null}
         <Link
@@ -393,27 +403,42 @@ function ComposerSkillRow({
       data-skill-name={item.name}
       data-skill-enabled={item.enabled ? "true" : "false"}
     >
-      {/* Only the name greys out, so the Manage link keeps full contrast. */}
-      <span
-        className={cn("min-w-0 flex-1 truncate", !item.enabled && "opacity-50")}
-        data-testid="composer-skill-label"
+      <Link
+        to="/settings/skills"
+        search={{ ...settingsSearch, skill: item.name }}
+        className="min-w-0 flex-1 rounded-sm py-1 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+        aria-label={`Open ${item.displayName} in Skills settings`}
       >
-        <span className={cn("font-medium", !item.enabled && "line-through decoration-1")}>
-          {item.displayName}
-        </span>
-        {item.version ? (
-          <span
-            className={cn(
-              "ms-1.5 text-2xs tabular-nums text-muted-foreground",
-              !item.version.value && "italic",
-            )}
-            data-version-source={item.version.source ?? "none"}
-          >
-            {versionText}
-            {item.version.note ? ` · ${item.version.note}` : null}
+        <span
+          className={cn("block truncate", !item.enabled && "opacity-50")}
+          data-testid="composer-skill-label"
+        >
+          <span className={cn("font-medium", !item.enabled && "line-through decoration-1")}>
+            {item.displayName}
           </span>
-        ) : null}
-      </span>
+          {item.version ? (
+            <span
+              className="ms-1.5 text-2xs tabular-nums text-muted-foreground"
+              data-version-source={item.version.source ?? "none"}
+            >
+              {versionText}
+              {item.version.note && item.version.note !== "copies differ"
+                ? ` · ${item.version.note}`
+                : null}
+            </span>
+          ) : null}
+        </span>
+      </Link>
+      {item.version?.note === "copies differ" ? (
+        <Link
+          to="/settings/skills"
+          search={{ ...settingsSearch, skill: item.name, skillView: "compare" }}
+          aria-label={`Compare copies of ${item.displayName}`}
+          className="shrink-0 rounded-sm text-2xs text-warning-foreground underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          copies differ
+        </Link>
+      ) : null}
       {!item.enabled ? (
         <>
           <span className="shrink-0 text-2xs text-muted-foreground">{tx("off")}</span>
