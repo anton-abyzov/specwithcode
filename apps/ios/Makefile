@@ -70,4 +70,4 @@ testflight:
 	@if [ -z "$(V)" ] || [ -z "$(B)" ]; then \
 	  echo "usage: make testflight V=<version> B=<build> [NOTES=\"What to Test\"]" >&2; exit 2; \
 	fi
-	bash Tools/release.sh '$(V)' '$(B)' '$(NOTES)'
+	bash Tools/release.sh '$(V)' '$(B)' '$(subst ','\'',$(NOTES))'

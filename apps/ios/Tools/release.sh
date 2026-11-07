@@ -53,6 +53,8 @@ asc builds wait --app "$APP_ID" --build-number "$B" --platform IOS | tee "$OUT/w
 BUILD_ID=$(asc builds info --app "$APP_ID" --build-number "$B" --platform IOS --output json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).data.id))')
 asc builds add-groups --build-id "$BUILD_ID" --group "$INTERNAL_GROUP" | tee "$OUT/groups.log"
 if [ -n "$NOTES" ]; then
-  asc builds test-notes create --build-id "$BUILD_ID" --locale en-US --whats-new "$NOTES" | tee "$OUT/notes.log"
+  # App Store Connect may create the en-US note itself; update it then.
+  asc builds test-notes create --build-id "$BUILD_ID" --locale en-US --whats-new "$NOTES" > "$OUT/notes.log" 2>&1 \
+    || asc builds test-notes update --build-id "$BUILD_ID" --locale en-US --whats-new "$NOTES" | tee "$OUT/notes.log"
 fi
 echo "Uploaded $V ($B) as $BUILD_ID; it is in the Internal TestFlight group."
