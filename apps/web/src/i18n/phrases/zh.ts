@@ -3960,4 +3960,5 @@ export const zh: PhraseCatalog = {
     "无法确认 {agents}；第一次聊天时就会知道。",
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines} 上没有可用的智能体，所以那里的聊天无法开始。",
+  "{agent} on {machine}": "{machine} 上的 {agent}",
 };

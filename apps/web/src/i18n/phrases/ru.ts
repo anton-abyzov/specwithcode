@@ -4110,4 +4110,5 @@ export const ru: PhraseCatalog = {
     "Не удалось проверить {agents}; станет ясно в первом чате.",
   "Nothing is ready on {machines}, so chats there will not start.":
     "На {machines} ничего не готово, поэтому чаты там не запустятся.",
+  "{agent} on {machine}": "{agent} на {machine}",
 };

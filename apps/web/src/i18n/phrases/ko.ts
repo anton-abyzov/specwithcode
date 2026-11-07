@@ -4071,4 +4071,5 @@ export const ko: PhraseCatalog = {
     "{agents}을(를) 확인하지 못했습니다. 첫 채팅에서 알 수 있습니다.",
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines}에는 준비된 것이 없어 그곳에서는 채팅이 시작되지 않습니다.",
+  "{agent} on {machine}": "{machine}의 {agent}",
 };

@@ -16,14 +16,20 @@ export interface AgentReadinessMachine {
   readonly providers: ReadonlyArray<ServerProvider> | null;
 }
 
+/** An agent name, and its machine when setup covers more than one. */
+export interface AgentLabel {
+  readonly agent: string;
+  readonly machine: string | null;
+}
+
 export type AgentReadiness =
   | { readonly kind: "checking" }
   | { readonly kind: "none" }
   | {
       readonly kind: "ready" | "unconfirmed";
-      /** "Claude on Studio Mac" or, with one machine, "Claude". */
-      readonly agents: readonly string[];
-      readonly unconfirmedAgents: readonly string[];
+      /** Claude on Studio Mac or, with one machine, Claude. */
+      readonly agents: readonly AgentLabel[];
+      readonly unconfirmedAgents: readonly AgentLabel[];
       /** Machines with nothing able to run, once they have answered. */
       readonly machinesWithoutAgent: readonly string[];
     };
@@ -60,9 +66,10 @@ export function summarizeAgentReadiness(
   );
   const names = (keep: (provider: ServerProvider) => boolean) =>
     running.flatMap((machine) =>
-      [...new Set(machine.providers.filter(keep).map(providerName))].map((name) =>
-        machines.length > 1 ? `${name} on ${machine.label}` : name,
-      ),
+      [...new Set(machine.providers.filter(keep).map(providerName))].map((agent): AgentLabel => ({
+        agent,
+        machine: machines.length > 1 ? machine.label : null,
+      })),
     );
   return {
     kind: confirmed.length > 0 ? "ready" : "unconfirmed",
@@ -79,6 +86,12 @@ export function agentReadinessMessage(
   readiness: AgentReadiness,
   tx: TranslatePhrase = englishPhrase,
 ): string {
+  const list = (labels: readonly AgentLabel[]) =>
+    labels
+      .map(({ agent, machine }) =>
+        machine === null ? agent : tx("{agent} on {machine}", { agent, machine }),
+      )
+      .join(", ");
   switch (readiness.kind) {
     case "checking":
       return tx("Checking which agents can run…");
@@ -88,12 +101,12 @@ export function agentReadinessMessage(
     case "unconfirmed": {
       const sentences: string[] = [];
       if (readiness.agents.length > 0) {
-        sentences.push(tx("Ready: {agents}.", { agents: readiness.agents.join(", ") }));
+        sentences.push(tx("Ready: {agents}.", { agents: list(readiness.agents) }));
       }
       if (readiness.unconfirmedAgents.length > 0) {
         sentences.push(
           tx("Could not confirm {agents}; your first chat will tell.", {
-            agents: readiness.unconfirmedAgents.join(", "),
+            agents: list(readiness.unconfirmedAgents),
           }),
         );
       }

@@ -4113,4 +4113,5 @@ export const ja: PhraseCatalog = {
     "{agents} を確認できませんでした。最初のチャットでわかります。",
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines} では何も準備できていないため、そこではチャットは開始されません。",
+  "{agent} on {machine}": "{machine} の {agent}",
 };

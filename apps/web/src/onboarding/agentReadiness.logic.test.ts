@@ -59,7 +59,7 @@ describe("summarizeAgentReadiness", () => {
     ]);
     expect(readiness).toMatchObject({
       kind: "ready",
-      agents: ["Claude on Mac"],
+      agents: [{ agent: "Claude", machine: "Mac" }],
       unconfirmedAgents: [],
       machinesWithoutAgent: ["Windows PC"],
     });
@@ -109,5 +109,23 @@ describe("summarizeAgentReadiness", () => {
         summarizeAgentReadiness([{ label: "Mac", providers: [unverified, codex] }]),
       ),
     ).toBe("Ready: Codex. Could not confirm Claude; your first chat will tell.");
+  });
+
+  it("translates the machine joiner with the rest of the line", () => {
+    const tx = (english: string, values?: Record<string, string | number>) =>
+      english === "{agent} on {machine}"
+        ? `${values?.agent} auf ${values?.machine}`
+        : english.replace(/\{(\w+)\}/g, (_, name: string) => String(values?.[name]));
+    expect(
+      agentReadinessMessage(
+        summarizeAgentReadiness([
+          { label: "Mac", providers: [provider()] },
+          { label: "Windows PC", providers: [unverified] },
+        ]),
+        tx,
+      ),
+    ).toBe(
+      "Ready: Claude auf Mac. Could not confirm Claude auf Windows PC; your first chat will tell.",
+    );
   });
 });

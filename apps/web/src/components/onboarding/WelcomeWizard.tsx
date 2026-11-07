@@ -898,6 +898,7 @@ function ConnectedAgentsStep({
   readonly machineLabel: string;
 }) {
   const t = useT();
+  const tx = useTx();
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -958,7 +959,7 @@ function ConnectedAgentsStep({
             );
           }}
         >
-          {rechecking ? "Checking…" : "Check again"}
+          {rechecking ? tx("Checking…") : tx("Check again")}
         </Button>
       </div>
       {!canOperateTerminal ? (

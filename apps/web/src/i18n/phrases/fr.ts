@@ -4151,4 +4151,5 @@ export const fr: PhraseCatalog = {
     "Impossible de confirmer {agents} ; votre première discussion le dira.",
   "Nothing is ready on {machines}, so chats there will not start.":
     "Rien n’est prêt sur {machines}, les discussions n’y démarreront donc pas.",
+  "{agent} on {machine}": "{agent} sur {machine}",
 };

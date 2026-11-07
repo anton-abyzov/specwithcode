@@ -4140,4 +4140,5 @@ export const de: PhraseCatalog = {
     "{agents} konnte nicht bestätigt werden; dein erster Chat zeigt es.",
   "Nothing is ready on {machines}, so chats there will not start.":
     "Auf {machines} ist nichts bereit, daher starten dort keine Chats.",
+  "{agent} on {machine}": "{agent} auf {machine}",
 };
