@@ -192,10 +192,12 @@ extension TranscriptRow {
   var isUser: Bool { if case .user = kind { true } else { false } }
   var isAssistant: Bool { if case .assistant = kind { true } else { false } }
   var isReasoning: Bool { if case .reasoning = kind { true } else { false } }
-  /// Thinking, a tool call, a command or an agent that did not fail.
+  /// Thinking, a tool call, a command or a finished agent that did not fail.
+  /// An agent still at work stays visible: its row links to the worker.
   var isFoldableStep: Bool {
     switch kind {
-    case .reasoning, .subagent: true
+    case .reasoning: true
+    case let .subagent(_, _, isRunning): !isRunning
     case let .tool(_, _, _, status): status != .failed
     default: false
     }
