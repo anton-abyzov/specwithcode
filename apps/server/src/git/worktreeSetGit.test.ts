@@ -131,7 +131,8 @@ describe("worktree sets", () => {
           "--path-format=absolute",
           "--git-common-dir",
         ]);
-        expect(apiCommon.stdout.trim()).toBe(path.join(api, ".git"));
+        // Git prints forward slashes on Windows; resolve gives the native form.
+        expect(path.resolve(apiCommon.stdout.trim())).toBe(path.join(api, ".git"));
         // The nested outside member is ignored locally by the root's repository.
         const status = yield* run(folder, ["status", "--porcelain"]);
         expect(status.stdout.trim()).toBe("");
