@@ -26,7 +26,7 @@ describe("worktree set pull requests", () => {
     expect(note).toContain("branch `feat/login`");
     expect(note).toContain("increment `1251-per-increment-multi-repo-worktrees`");
     expect(note).toContain("- `project`: https://github.com/acme/project/pull/1");
-    expect(note).toContain("- `web`: pull request to follow");
+    expect(note).toContain("- `web`: its pull request from the same branch");
   });
 
   it("replaces its own note and keeps the rest of the description", () => {
@@ -44,7 +44,7 @@ describe("worktree set pull requests", () => {
     });
     const rewritten = replaceWorktreeSetPullRequestNote(`${body}\nFooter`, second);
     expect(rewritten).toContain("https://example.invalid/1");
-    expect(rewritten).not.toContain("pull request to follow");
+    expect(rewritten).not.toContain("from the same branch");
     expect(rewritten.startsWith("Summary\n\nDetails")).toBe(true);
     expect(rewritten.endsWith("\nFooter")).toBe(true);
   });

@@ -564,7 +564,14 @@ const make = Effect.gen(function* () {
         startFromOrigin: settings.newWorktreesStartFromOrigin,
         submodules: resolved.settings.worktreeSubmodules,
       }),
-    ).pipe(Effect.mapError((message) => failure("invalid_request", message)));
+    ).pipe(
+      // A cancel waits, so the manifest never lists a member that was not made.
+      Effect.uninterruptible,
+      Effect.mapError((message) =>
+        // "Could not ..." is git or the manifest failing, not a bad argument.
+        failure(message.startsWith("Could not") ? "operation_failed" : "invalid_request", message),
+      ),
+    );
     const added = members.at(-1)!;
     const repositoryPath = worktreeSetMemberPath(worktreePath, added, path);
     yield* vcsStatusBroadcaster

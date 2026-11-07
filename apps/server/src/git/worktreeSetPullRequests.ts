@@ -26,7 +26,8 @@ export function worktreeSetPullRequestNote(input: {
 }): string {
   const scope = input.incrementId === null ? "" : ` for increment \`${input.incrementId}\``;
   const lines = input.entries.map(
-    (entry) => `- \`${entry.label}\`: ${entry.url ?? "pull request to follow"}`,
+    // Stays true where the host cannot rewrite descriptions once the rest exist.
+    (entry) => `- \`${entry.label}\`: ${entry.url ?? "its pull request from the same branch"}`,
   );
   return [
     START,
