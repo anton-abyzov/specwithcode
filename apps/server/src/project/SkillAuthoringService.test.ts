@@ -147,6 +147,15 @@ it.effect("preserves publication on unchanged save and requires a version bump f
       })
       .pipe(Effect.result);
     expect(sameVersion._tag).toBe("Failure");
+    const changedHeader = yield* service
+      .execute({
+        ...target,
+        operation: "save",
+        revision: unchanged.revision,
+        draft: { ...content, sourceFrontmatter: "allowed-tools: [Read]" },
+      })
+      .pipe(Effect.result);
+    expect(changedHeader._tag).toBe("Failure");
     const generated = yield* service
       .execute({
         ...target,
@@ -339,4 +348,71 @@ it.effect("constructs the live authoring layer without an ambient process runner
       ),
     ),
   ),
+);
+
+it.effect("retains imported frontmatter through save, reload, omitted fields and generation", () =>
+  Effect.gen(function* () {
+    const sourceFrontmatter =
+      "allowed-tools: [Read, Bash]\nmetadata:\n  version: 1.0.0\n  nested: { enabled: true, labels: [one, two] }\n";
+    const service = yield* Authoring.make.pipe(
+      Effect.provide(
+        Layer.mock(TextGeneration.TextGeneration)({
+          generateSkill: () =>
+            Effect.succeed({
+              name: "generated",
+              description: "Generated description",
+              instructions: "Generated instructions",
+            }),
+        }),
+      ),
+    );
+    const saved = (yield* service.execute({
+      ...target,
+      operation: "save",
+      draft: { ...content, sourceFrontmatter },
+    })).draft!;
+    const reloaded = yield* Authoring.make;
+    expect(
+      (yield* reloaded.execute({ ...target, operation: "read" })).draft?.sourceFrontmatter,
+    ).toBe(sourceFrontmatter);
+    const edited = (yield* service.execute({
+      ...target,
+      operation: "save",
+      revision: saved.revision,
+      draft: { ...content, version: "1.0.1" },
+    })).draft!;
+    expect(edited.sourceFrontmatter).toBe(sourceFrontmatter);
+    const generated = (yield* service.execute({
+      ...target,
+      operation: "generate",
+      revision: edited.revision,
+      draft: {
+        ...edited,
+        modelSelection: { instanceId: ProviderInstanceId.make("selected"), model: "chosen-model" },
+      },
+    })).draft!;
+    expect(generated.sourceFrontmatter).toBe(sourceFrontmatter);
+    expect(generated.instructions).toBe("Generated instructions");
+  }).pipe(Effect.provide(fixture)),
+);
+it.effect("rejects duplicate or unsafe frontmatter without replacing the stored draft", () =>
+  Effect.gen(function* () {
+    const service = yield* Authoring.make;
+    const saved = (yield* service.execute({ ...target, operation: "save", draft: content })).draft!;
+    for (const sourceFrontmatter of [
+      "custom: one\ncustom: two",
+      "metadata: { constructor: { prototype: true } }",
+    ]) {
+      const failure = yield* service
+        .execute({
+          ...target,
+          operation: "save",
+          revision: saved.revision,
+          draft: { ...content, sourceFrontmatter },
+        })
+        .pipe(Effect.flip);
+      expect(failure.reason).toBe("invalid");
+    }
+    expect((yield* service.execute({ ...target, operation: "read" })).draft).toEqual(saved);
+  }).pipe(Effect.provide(fixture)),
 );

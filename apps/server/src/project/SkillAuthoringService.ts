@@ -165,11 +165,27 @@ export const make = Effect.gen(function* () {
                     reason: "invalid",
                     detail: "Check publication status before editing this submitted draft.",
                   });
-                let content = input.draft;
+                let content = {
+                  ...input.draft,
+                  ...(input.draft.sourceFrontmatter === undefined &&
+                  draft?.sourceFrontmatter !== undefined
+                    ? { sourceFrontmatter: draft.sourceFrontmatter }
+                    : {}),
+                };
+                yield* Effect.try({
+                  try: () =>
+                    SkillPublishingService.parseSkillFrontmatter(content.sourceFrontmatter),
+                  catch: () =>
+                    new SkillAuthoringError({
+                      reason: "invalid",
+                      detail:
+                        "The skill frontmatter is invalid or unsafe. Correct it before saving.",
+                    }),
+                });
                 const priorPublication = draft?.publication;
                 const sameContent =
                   draft &&
-                  ["name", "description", "instructions", "version"].every(
+                  ["name", "description", "instructions", "version", "sourceFrontmatter"].every(
                     (key) => draft?.[key as "name"] === content[key as "name"],
                   );
                 if (

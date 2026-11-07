@@ -38,3 +38,24 @@ describe("skill authoring boundary", () => {
     ).toEqual(["filesystem:write", "terminal:operate"]);
   });
 });
+
+it("retains bounded original frontmatter on the wire", () => {
+  const draft = {
+    name: "sample",
+    description: "sample",
+    instructions: "body",
+    prompt: "",
+    version: "1.0.0",
+    sourceFrontmatter: "allowed-tools: [Read]\nmetadata: { author: Example }",
+  };
+  expect(decode({ projectId: "p", operation: "save", draft }).draft?.sourceFrontmatter).toBe(
+    draft.sourceFrontmatter,
+  );
+  expect(() =>
+    decode({
+      projectId: "p",
+      operation: "save",
+      draft: { ...draft, sourceFrontmatter: "x".repeat(20_001) },
+    }),
+  ).toThrow();
+});
