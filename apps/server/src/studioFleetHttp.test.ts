@@ -2,7 +2,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as DateTime from "effect/DateTime";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Native fixture writes independently exercise the fleet HTTP reader.
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "./nodePath.ts";
 import { decodeFleetJoinCode, encodeFleetJoinCode } from "./studioFleetJoin.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -168,10 +168,12 @@ async function api(
             recordedAt: "2026-10-18T00:00:00.000Z",
           }),
         };
+  let baseDir = "";
   const config = Layer.effect(
     Config.ServerConfig,
     Effect.gen(function* () {
       const config = yield* Config.ServerConfig;
+      baseDir = config.baseDir;
       yield* Effect.promise(() =>
         writeFile(
           join(config.baseDir, "studio-fleet.json"),
@@ -491,11 +493,22 @@ async function api(
         headers: { host: "localhost:8319", authorization: "Bearer synthetic-session" },
       }),
     );
+  /** Takes a machine out of the fleet file here, as an edit by hand would. */
+  const forget = async (id: string) => {
+    const file = join(baseDir, "studio-fleet.json");
+    const fleet = JSON.parse(await readFile(file, "utf8")) as { machines: Array<{ id: string }> };
+    await writeFile(
+      file,
+      JSON.stringify({ ...fleet, machines: fleet.machines.filter((entry) => entry.id !== id) }),
+      { mode: 0o600 },
+    );
+  };
   return {
     request,
     diskRoom,
     workers,
     add,
+    forget,
     invite,
     tailscaleStatus,
     signIn,
@@ -782,6 +795,36 @@ describe("allowing a main machine's workers from that machine", () => {
         id: "m1",
         workers: { status: "allowed", access: "auto" },
       });
+    } finally {
+      await coordinator.dispose();
+    }
+  });
+  it("takes back a machine it just added when allowing its workers fails", async () => {
+    const M2_ORIGIN = "https://m2.example.ts.net";
+    const machine = fakeMachine({ environmentId: "env-m2", origins: [M2_ORIGIN] });
+    vi.stubGlobal("fetch", machine.fetcher);
+    const m2Line = encodeFleetJoinCode({
+      url: M2_ORIGIN,
+      environmentId: "env-m2",
+      label: "M2",
+      managementToken: "management-secret",
+    });
+    const coordinator = await api(OWNER_SCOPES, false, ORIGIN, EnvironmentId.make("env-m2"));
+    try {
+      const self = { invitation: m2Line, access: "auto" };
+      expect((await coordinator.workers("self-allow", self)).status).toBe(200);
+      await coordinator.forget("m2");
+      // Within a minute allowing is refused, after the line was spent adding m2 again.
+      const retried = await coordinator.workers("self-allow", self);
+      expect(retried.status).toBe(400);
+      const fleet = (await (await coordinator.request()).json()) as {
+        machines: Array<{ id: string }>;
+      };
+      expect(fleet.machines.map((entry) => entry.id)).not.toContain("m2");
+      // Its management token there was given up on the way out.
+      expect(
+        machine.calls.some((call) => call.method === "POST" && call.url.includes("revoke")),
+      ).toBe(true);
     } finally {
       await coordinator.dispose();
     }

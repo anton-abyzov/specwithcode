@@ -76,6 +76,7 @@ import {
   discoverFleet,
   fleetConnectPermission,
   FleetError,
+  type FleetTarget,
   readBoundedJson,
   readFleetConfig,
 } from "./studioFleet.ts";
@@ -332,6 +333,26 @@ export const layer = HttpApiBuilder.group(
           catch: joinFailure,
         });
       });
+    /** The grant store here revokes its sessions on `target` and forgets the grant. */
+    const revokeWorkerAccess = (target: FleetTarget) =>
+      Effect.runPromise(
+        grants.status(target.id).pipe(
+          Effect.flatMap((before) =>
+            grants
+              .stop(target.id)
+              .pipe(
+                Effect.map((stopped) =>
+                  stopped.remoteSessionKept
+                    ? ("kept" as const)
+                    : before.status === "not_allowed"
+                      ? ("none" as const)
+                      : ("revoked" as const),
+                ),
+              ),
+          ),
+          Effect.orElseSucceed(() => "kept" as const),
+        ),
+      );
     /**
      * The line hands out the invite scopes, so only a caller holding all of
      * them may make one: never more than the maker holds.
@@ -695,9 +716,25 @@ export const layer = HttpApiBuilder.group(
               });
             yield* refuseByTeamRules(teamRulesMachineLinkRefusal);
             const added = yield* addMachine(payload.invitation);
+            // Adding spent the line for a management token there: a machine
+            // this call added leaves again, token revoked, when allowing fails.
             const workers = yield* grants
               .allow({ machineId: added.id, access: payload.access })
-              .pipe(Effect.mapError(grantFailure));
+              .pipe(
+                Effect.mapError(grantFailure),
+                Effect.tapError(() =>
+                  added.change === "added"
+                    ? Effect.promise(() =>
+                        removeFleetMachineEverywhere({
+                          baseDir: config.baseDir,
+                          machine: added.id,
+                          fetcher: fleetLink,
+                          revokeWorkerAccess,
+                        }).catch(() => undefined),
+                      )
+                    : Effect.void,
+                ),
+              );
             yield* Effect.logInfo("A main machine added itself and allowed its workers here.", {
               coordinatorEnvironmentId: principal.environmentId,
               machine: added.id,
@@ -747,7 +784,8 @@ export const layer = HttpApiBuilder.group(
               label: descriptor.label,
               via: "connect",
             });
-            // Anything short of that machine's answer leaves no usable line behind.
+            // Without that machine's answer the line is revoked here; once it is
+            // spent, that machine itself takes back what it added (self-allow).
             const revokeIssued = Effect.all([
               issued.pairingId === undefined
                 ? Effect.void
@@ -830,26 +868,7 @@ export const layer = HttpApiBuilder.group(
                   baseDir: config.baseDir,
                   machine: payload.id,
                   fetcher: fleetLink,
-                  // The grant store here revokes its sessions there and forgets the grant.
-                  revokeWorkerAccess: (target) =>
-                    Effect.runPromise(
-                      grants.status(target.id).pipe(
-                        Effect.flatMap((before) =>
-                          grants
-                            .stop(target.id)
-                            .pipe(
-                              Effect.map((stopped) =>
-                                stopped.remoteSessionKept
-                                  ? ("kept" as const)
-                                  : before.status === "not_allowed"
-                                    ? ("none" as const)
-                                    : ("revoked" as const),
-                              ),
-                            ),
-                        ),
-                        Effect.orElseSucceed(() => "kept" as const),
-                      ),
-                    ),
+                  revokeWorkerAccess,
                   unlinkPhones: (target) =>
                     Effect.runPromise(serverEnvironment.getEnvironmentId).then((hubEnvironmentId) =>
                       PhoneLinks.unlinkPhonesFrom({
