@@ -11,7 +11,9 @@ const state = vi.hoisted(() => ({
   update: vi.fn(),
   folderCheck: null as unknown,
   checkedProject: undefined as unknown,
+  groups: [] as unknown[],
 }));
+vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => state.groups }));
 vi.mock("../../studio/useProjectFolderHealth", () => ({
   useProjectFolderCheck: (project: unknown) => {
     state.checkedProject = project;
@@ -125,6 +127,7 @@ beforeEach(() => {
   state.update.mockClear();
   state.folderCheck = null;
   state.checkedProject = undefined;
+  state.groups = [];
 });
 afterEach(() => {
   act(() => renderer?.unmount());
@@ -132,15 +135,63 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("web workspace default presentation", () => {
-  it("offers no machine-wide workspace choice and points at Projects", () => {
+  it("offers only a default for new projects and points at Projects", () => {
     expect(state.target.settings.defaultThreadEnvMode).toBe("local");
     render();
     const text = JSON.stringify(renderer!.toJSON());
-    expect(text).toContain("Set per project");
+    expect(text).toContain("Use worktrees for new projects");
+    expect(text).toContain("existing projects keep theirs");
     expect(text).toContain("Open Projects");
     expect(text).not.toContain("Automatic (Git worktree)");
     // Environment defaults read no project folder.
     expect(state.checkedProject ?? null).toBeNull();
+    const toggle = renderer!.root.findByProps({
+      "aria-label": "Use worktrees for new projects",
+      type: "checkbox",
+    });
+    expect(toggle.props.checked).toBe(false);
+    act(() => toggle.props.onCheckedChange(true));
+    // Only the environment's new-project default changes, never a project's switch.
+    expect(state.update).toHaveBeenCalledWith({ newProjectThreadEnvMode: "worktree" });
+  });
+  it("lists the projects that have Use worktrees on when projects differ", () => {
+    const code = (id: string) => ({ id, environmentId: "worker", workspaceSettings: undefined });
+    state.environment = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [ProjectId.make("p-atlas")]: { defaultThreadEnvMode: "worktree" },
+        [ProjectId.make("p-beacon")]: { defaultThreadEnvMode: "local" },
+      },
+    } as typeof DEFAULT_SERVER_SETTINGS;
+    state.groups = [
+      { displayName: "Atlas", memberProjects: [code("p-atlas")] },
+      { displayName: "Beacon", memberProjects: [code("p-beacon")] },
+      { displayName: "Comet", memberProjects: [code("p-comet")] },
+      {
+        displayName: "Aide",
+        memberProjects: [{ ...code("p-aide"), workspaceSettings: { kind: "personal" } }],
+      },
+    ];
+    const summary = () => {
+      const node = renderer!.root.find(
+        (candidate) => candidate.props["data-project-worktrees-summary"] !== undefined,
+      );
+      const textOf = (value: unknown): string =>
+        typeof value === "string"
+          ? value
+          : Array.isArray(value)
+            ? value.map(textOf).join("")
+            : value && typeof value === "object" && "children" in value
+              ? textOf((value as { children: unknown }).children)
+              : "";
+      return node.children.map(textOf).join("");
+    };
+    render();
+    expect(summary()).toBe("On in Atlas; off in the other 2.");
+    // When every project agrees, it says so instead of listing them.
+    state.groups = state.groups.slice(1, 3);
+    render();
+    expect(summary()).toBe("Every project has it off.");
   });
   it.each(["local", "worktree"] as const)(
     "ignores a stored environment workspace value of %s",
@@ -149,7 +200,7 @@ describe("web workspace default presentation", () => {
       state.target = resolveProjectSettings(state.environment, project, null, null);
       expect(state.target.settings.defaultThreadEnvMode).toBe("local");
       render();
-      expect(JSON.stringify(renderer!.toJSON())).toContain("Set per project");
+      expect(JSON.stringify(renderer!.toJSON())).toContain("Use worktrees for new projects");
     },
   );
   it("puts every new-thread override on the Project page", () => {

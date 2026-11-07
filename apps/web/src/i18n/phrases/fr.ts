@@ -553,8 +553,6 @@ export const fr: PhraseCatalog = {
     "Réglez la vitesse d’ouverture et de fermeture des panneaux.",
   "Set how wide messages and the composer can grow on large screens.":
     "Réglez la largeur maximale des messages et de la zone de saisie sur les grands écrans.",
-  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
-    "Réglé par projet. Les nouveaux fils démarrent dans la copie de travail actuelle du projet, sauf si ce projet active Utiliser des worktrees ou si son specweave-studio.json définit un worktree par défaut. Le stockage des worktrees se règle séparément dans Stockage.",
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "Choisissez si le panneau de diff ignore par défaut les modifications d’espaces uniquement.",
   "Shared Codex config, sessions, and state.": "Configuration, sessions et état partagés de Codex.",

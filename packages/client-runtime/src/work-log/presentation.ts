@@ -465,6 +465,23 @@ export function workEntryReportsChromeDisconnected(
   return CHROME_DISCONNECTED.test(text.slice(0, 8_192));
 }
 
+/** The project `git` shim's and the worktree tools' refusals, never the launch notice. */
+const WORKTREES_OFF = /Use worktrees is off for this project, so [^.]*cannot/i;
+
+/** True when a command or tool was refused a worktree because the project's Use worktrees is off. */
+export function workEntryReportsWorktreesOff(
+  entry: Pick<WorkLogPresentationEntry, "detail" | "toolData" | "structuredPayload">,
+): boolean {
+  const item = entry.structuredPayload;
+  // A command that succeeded was not refused; it may only have printed the text.
+  if (item?.type === "command_execution" && item.exitCode === 0) return false;
+  if (entry.detail && WORKTREES_OFF.test(entry.detail)) return true;
+  const output = item?.type === "command_execution" ? item.output : workEntryToolOutput(entry);
+  if (output === undefined || output === null) return false;
+  const text = typeof output === "string" ? output : JSON.stringify(output);
+  return WORKTREES_OFF.test(text.slice(0, 16_384));
+}
+
 /** The macOS permission a failed `computer_*` tool says SpecWithCode is missing, if any. */
 export function workEntryComputerUsePermission(
   entry: Pick<WorkLogPresentationEntry, "detail" | "toolData" | "structuredPayload">,

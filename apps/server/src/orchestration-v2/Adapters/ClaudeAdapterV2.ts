@@ -1870,10 +1870,13 @@ export function claudeEffectiveQueryPolicyKey(
     readonly claudeWorkflowMode?: ClaudeWorkflowMode | undefined;
     readonly responseStyle?: ResponseStyle | undefined;
     readonly subagentPromptFileContents?: string | undefined;
+    /** The git shim is in the process environment, so turning Use worktrees on reopens it. */
+    readonly manualWorktreesBlocked?: boolean | undefined;
   },
 ): string {
   return stringifyJson({
     agentInstructions: context?.agentInstructions,
+    manualWorktreesBlocked: context?.manualWorktreesBlocked === true,
     claudeWorkflowMode: context?.claudeWorkflowMode ?? "on-request",
     responseStyle: context?.responseStyle ?? "concise",
     subagentPromptFileContents: context?.subagentPromptFileContents,

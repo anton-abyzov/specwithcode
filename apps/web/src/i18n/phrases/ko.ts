@@ -547,8 +547,6 @@ export const ko: PhraseCatalog = {
   "Set how fast panels open and close.": "패널이 열리고 닫히는 속도를 설정합니다.",
   "Set how wide messages and the composer can grow on large screens.":
     "큰 화면에서 메시지와 입력창이 넓어질 수 있는 최대 폭을 설정합니다.",
-  "Set per project. New threads start in the project's current checkout unless that project turns on Use worktrees, or its specweave-studio.json names a worktree default. Worktree storage is configured separately in Storage.":
-    "프로젝트별로 설정합니다. 프로젝트에서 워크트리 사용을 켜거나 specweave-studio.json에 기본 워크트리가 지정되어 있지 않으면, 새 스레드는 프로젝트의 현재 체크아웃에서 시작합니다. 워크트리 저장 위치는 저장 공간에서 따로 설정합니다.",
   "Set whether the diff panel ignores whitespace-only edits by default.":
     "diff 패널에서 공백만 바뀐 수정을 기본적으로 무시할지 설정합니다.",
   "Shared Codex config, sessions, and state.": "공유되는 Codex 구성, 세션, 상태입니다.",

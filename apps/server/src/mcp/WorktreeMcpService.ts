@@ -189,7 +189,7 @@ const make = Effect.gen(function* () {
     if (!projectUsesWorktrees(resolveProjectSettings(settings, project.id, project))) {
       return yield* failure(
         "invalid_request",
-        "Use worktrees is off for this project, so this thread cannot move into a new worktree. Keep working in the project folder and create or switch to your branch there; for a separate worktree the user must first turn on Use worktrees in the project's settings.",
+        "Use worktrees is off for this project, so this thread cannot move into a new worktree. Keep working in the project folder and create or switch to your branch there; for a separate worktree the user can turn on Use worktrees in the project's settings (in SpecWithCode, with the one-click button the thread shows), then call this again.",
       );
     }
 
@@ -536,7 +536,7 @@ const make = Effect.gen(function* () {
     if (!projectUsesWorktrees(resolved))
       return yield* failure(
         "invalid_request",
-        "Use worktrees is off for this project, so a thread cannot add worktrees. The user can turn on Use worktrees in the project's settings.",
+        "Use worktrees is off for this project, so a thread cannot add worktrees. The user can turn on Use worktrees in the project's settings (in SpecWithCode, with the one-click button the thread shows).",
       );
     if (Option.isNone(fileSystem))
       return yield* failure("operation_failed", "This server cannot reach its file system.");
