@@ -439,7 +439,8 @@ export const THREAD_GROUP_PAGE = 5;
 export const THREAD_GROUP_PAGE_STEP = 10;
 
 export type ThreadPaneGroup = {
-  readonly group: ProjectThreadGroup;
+  /** "Pinned" only in the personal assistant's list. */
+  readonly group: ProjectThreadGroup | "Pinned";
   readonly threads: readonly EnvironmentThreadShell[];
 };
 

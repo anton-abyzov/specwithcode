@@ -46,6 +46,13 @@ export const ProjectConnectionActionInput = Schema.Struct({
   expectedRevision: Schema.Int,
 });
 export type ProjectConnectionActionInput = typeof ProjectConnectionActionInput.Type;
+/** A value for one variable the connection names, written to this machine's secret store. Never returned. */
+export const ProjectConnectionCredentialInput = Schema.Struct({
+  ...ProjectConnectionActionInput.fields,
+  envKey: Text,
+  value: TrimmedNonEmptyString.check(Schema.isMaxLength(8192)),
+});
+export type ProjectConnectionCredentialInput = typeof ProjectConnectionCredentialInput.Type;
 export const ProjectConnectionCallInput = Schema.Struct({
   ...ProjectConnectionActionInput.fields,
   tool: Text,

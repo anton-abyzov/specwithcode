@@ -545,6 +545,7 @@ export const useEnvironmentScopeAccess = () => "granted";
 export const useEnvironmentsWithScope = (environments) =>
   new Set(environments.map((environment) => environment.environmentId));
 const connections = [];
+let googleServices = ["gmail"];
 export const useEnvironmentQuery = (q) => ({
   data:
     q?.kind === "environment"
@@ -562,171 +563,180 @@ export const useEnvironmentQuery = (q) => ({
               : { ...r, status: "missing" },
           ),
         }
-      : q?.kind === "connections"
-        ? { connections }
-        : q?.kind === "memory"
-          ? {
-              name: q.name ?? "MEMORY.md",
-              content:
-                q.name && q.name !== "MEMORY.md"
-                  ? `# ${q.name}\n\nRecorded during the project review.\n\n- Keep one file per subject.\n- Update it instead of adding a dated copy.`
-                  : "Use independent providers per thread. Decisions stay in this project.",
-              revision: 3,
-              byteLength: 128,
-            }
-          : q?.kind === "usage"
+      : q?.kind === "google"
+        ? {
+            services: ["gmail", "calendar"],
+            projects: [{ projectId: project.id, services: googleServices }],
+          }
+        : q?.kind === "connections"
+          ? { connections }
+          : q?.kind === "memory"
             ? {
-                totals,
-                readAt: new Date().toISOString(),
-                coverage: {
-                  threads: 6,
-                  threadsWithUsage: 5,
-                  missingThreads: 1,
-                  partialTurns: 1,
-                  missingTurns: 2,
-                  costUnknownTurns: 2,
-                },
-                models: [
-                  {
-                    providerInstanceId: "claude",
-                    provider: "claudeAgent",
-                    model: "Coordinator model",
-                    modelAttribution: "run_selection",
-                    totals: scaledTotals(0.08),
-                  },
-                  {
-                    providerInstanceId: "codex",
-                    provider: "codex",
-                    model: "Worker model",
-                    modelAttribution: "run_selection",
-                    totals: scaledTotals(0.92),
-                  },
-                ],
-                folderSessions: {
-                  hostLabel: "Development Mac",
-                  windowDays: 90,
-                  roots: [project.workspaceRoot],
-                  sessions: 14,
-                  studioOwnedSessions: 2,
-                  totals: scaledTotals(3),
-                  providers: [
-                    {
-                      provider: "claude",
-                      sessions: 9,
-                      totals: scaledTotals(2.2),
-                      lastActiveAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
-                    },
-                    {
-                      provider: "codex",
-                      sessions: 4,
-                      totals: scaledTotals(0.7),
-                      lastActiveAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
-                    },
-                    {
-                      provider: "copilot",
-                      sessions: 1,
-                      totals: scaledTotals(0.1),
-                      lastActiveAt: null,
-                    },
-                  ],
-                  models: [
-                    { provider: "claude", model: "claude-opus-5-5[1m]", totals: scaledTotals(2.2) },
-                    { provider: "codex", model: "gpt-5.5", totals: scaledTotals(0.7) },
-                    { provider: "copilot", model: null, totals: scaledTotals(0.1) },
-                  ],
-                  daily: Array.from({ length: 20 }, (_, back) => {
-                    const date = new Date(Date.now() - (back + 1) * 86_400_000);
-                    const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-                    return {
-                      day,
-                      provider: "claude",
-                      model: "claude-opus-5-5",
-                      totalTokens: back % 3 === 0 ? 0 : 3000 + back * 300,
-                    };
-                  }).filter((row) => row.totalTokens > 0),
-                },
-                // The same model under two spellings, an ACP Grok agent and a run that
-                // never reported its model: the tab must merge, name and fold them.
-                threads: shells.map((s, i) => {
-                  const share = i === 0 ? 0.08 : i === 5 ? 0 : 0.23;
-                  const rows: [string, string, string | null, number][] =
-                    i === 0
-                      ? [["claudeAgent", "claude", "claude-opus-5.5", 0.08]]
-                      : i === 5
-                        ? []
-                        : i === 1
-                          ? [
-                              ["claudeAgent", "claude", "claude-opus-5-5", 0.15],
-                              ["acpRegistry", "acp-grok-cli", "grok-code-fast-1", 0.05],
-                              ["codex", "codex", null, 0.03],
-                            ]
-                          : [["codex", "codex", "gpt-5.5", 0.23]];
-                  return {
-                    threadId: s.id,
-                    title: s.title,
-                    role: i === 0 ? "coordinator" : "worker",
-                    share: i === 5 ? null : share,
-                    totals: scaledTotals(share),
-                    archived: !!s.archivedAt,
-                    models: rows.map(([provider, providerInstanceId, model, part]) => ({
-                      provider,
-                      providerInstanceId,
-                      model,
-                      totals: scaledTotals(part),
-                    })),
-                  };
-                }),
-                daily: Array.from({ length: 24 }, (_, back) => {
-                  const date = new Date(Date.now() - back * 86_400_000);
-                  const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-                  const wave = Math.round(
-                    4000 + 3500 * Math.sin(back / 2.5) + (back % 7 === 0 ? 6000 : 0),
-                  );
-                  return [
-                    {
-                      day,
-                      role: "coordinator",
-                      provider: "claudeAgent",
-                      providerInstanceId: "claude",
-                      model: "claude-opus-5.5",
-                      totalTokens: Math.round(wave * 0.3),
-                    },
-                    {
-                      day,
-                      role: "worker",
-                      provider: "codex",
-                      providerInstanceId: "codex",
-                      model: "gpt-5.5",
-                      totalTokens: Math.max(0, wave),
-                    },
-                  ];
-                }).flat(),
+                name: q.name ?? "MEMORY.md",
+                content:
+                  q.name && q.name !== "MEMORY.md"
+                    ? `# ${q.name}\n\nRecorded during the project review.\n\n- Keep one file per subject.\n- Update it instead of adding a dated copy.`
+                    : "Use independent providers per thread. Decisions stay in this project.",
+                revision: 3,
+                byteLength: 128,
               }
-            : q?.kind === "routines"
-              ? { tasks: routineTasks() }
-              : q?.kind === "threadIncrementProgress"
-                ? { threads: [] }
-                : q?.kind === "starters"
-                  ? starters
-                  : q?.kind === "threadReports"
-                    ? reportSnapshot()
-                    : q?.kind === "read" || q?.kind === undefined
-                      ? {
-                          // `?switch`: Beacon has a coordinator of its own.
-                          settings:
-                            q?.projectId === beaconProject.id
-                              ? { ...settings, coordinatorThreadId: "beacon-coord" }
-                              : settings,
-                          memory: fresh !== null ? { files: [], totalBytes: 0 } : memory,
-                          // Real VCS status atoms land here too: an empty working tree.
-                          workingTree: { files: [] },
-                          // And the real design list: a project with no designs.
-                          designs: [],
-                          problems: [],
-                        }
-                      : q?.kind === "knowledge"
-                        ? knowledgeStatus()
-                        : undefined,
+            : q?.kind === "usage"
+              ? {
+                  totals,
+                  readAt: new Date().toISOString(),
+                  coverage: {
+                    threads: 6,
+                    threadsWithUsage: 5,
+                    missingThreads: 1,
+                    partialTurns: 1,
+                    missingTurns: 2,
+                    costUnknownTurns: 2,
+                  },
+                  models: [
+                    {
+                      providerInstanceId: "claude",
+                      provider: "claudeAgent",
+                      model: "Coordinator model",
+                      modelAttribution: "run_selection",
+                      totals: scaledTotals(0.08),
+                    },
+                    {
+                      providerInstanceId: "codex",
+                      provider: "codex",
+                      model: "Worker model",
+                      modelAttribution: "run_selection",
+                      totals: scaledTotals(0.92),
+                    },
+                  ],
+                  folderSessions: {
+                    hostLabel: "Development Mac",
+                    windowDays: 90,
+                    roots: [project.workspaceRoot],
+                    sessions: 14,
+                    studioOwnedSessions: 2,
+                    totals: scaledTotals(3),
+                    providers: [
+                      {
+                        provider: "claude",
+                        sessions: 9,
+                        totals: scaledTotals(2.2),
+                        lastActiveAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+                      },
+                      {
+                        provider: "codex",
+                        sessions: 4,
+                        totals: scaledTotals(0.7),
+                        lastActiveAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+                      },
+                      {
+                        provider: "copilot",
+                        sessions: 1,
+                        totals: scaledTotals(0.1),
+                        lastActiveAt: null,
+                      },
+                    ],
+                    models: [
+                      {
+                        provider: "claude",
+                        model: "claude-opus-5-5[1m]",
+                        totals: scaledTotals(2.2),
+                      },
+                      { provider: "codex", model: "gpt-5.5", totals: scaledTotals(0.7) },
+                      { provider: "copilot", model: null, totals: scaledTotals(0.1) },
+                    ],
+                    daily: Array.from({ length: 20 }, (_, back) => {
+                      const date = new Date(Date.now() - (back + 1) * 86_400_000);
+                      const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                      return {
+                        day,
+                        provider: "claude",
+                        model: "claude-opus-5-5",
+                        totalTokens: back % 3 === 0 ? 0 : 3000 + back * 300,
+                      };
+                    }).filter((row) => row.totalTokens > 0),
+                  },
+                  // The same model under two spellings, an ACP Grok agent and a run that
+                  // never reported its model: the tab must merge, name and fold them.
+                  threads: shells.map((s, i) => {
+                    const share = i === 0 ? 0.08 : i === 5 ? 0 : 0.23;
+                    const rows: [string, string, string | null, number][] =
+                      i === 0
+                        ? [["claudeAgent", "claude", "claude-opus-5.5", 0.08]]
+                        : i === 5
+                          ? []
+                          : i === 1
+                            ? [
+                                ["claudeAgent", "claude", "claude-opus-5-5", 0.15],
+                                ["acpRegistry", "acp-grok-cli", "grok-code-fast-1", 0.05],
+                                ["codex", "codex", null, 0.03],
+                              ]
+                            : [["codex", "codex", "gpt-5.5", 0.23]];
+                    return {
+                      threadId: s.id,
+                      title: s.title,
+                      role: i === 0 ? "coordinator" : "worker",
+                      share: i === 5 ? null : share,
+                      totals: scaledTotals(share),
+                      archived: !!s.archivedAt,
+                      models: rows.map(([provider, providerInstanceId, model, part]) => ({
+                        provider,
+                        providerInstanceId,
+                        model,
+                        totals: scaledTotals(part),
+                      })),
+                    };
+                  }),
+                  daily: Array.from({ length: 24 }, (_, back) => {
+                    const date = new Date(Date.now() - back * 86_400_000);
+                    const day = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                    const wave = Math.round(
+                      4000 + 3500 * Math.sin(back / 2.5) + (back % 7 === 0 ? 6000 : 0),
+                    );
+                    return [
+                      {
+                        day,
+                        role: "coordinator",
+                        provider: "claudeAgent",
+                        providerInstanceId: "claude",
+                        model: "claude-opus-5.5",
+                        totalTokens: Math.round(wave * 0.3),
+                      },
+                      {
+                        day,
+                        role: "worker",
+                        provider: "codex",
+                        providerInstanceId: "codex",
+                        model: "gpt-5.5",
+                        totalTokens: Math.max(0, wave),
+                      },
+                    ];
+                  }).flat(),
+                }
+              : q?.kind === "routines"
+                ? { tasks: routineTasks() }
+                : q?.kind === "threadIncrementProgress"
+                  ? { threads: [] }
+                  : q?.kind === "starters"
+                    ? starters
+                    : q?.kind === "threadReports"
+                      ? reportSnapshot()
+                      : q?.kind === "read" || q?.kind === undefined
+                        ? {
+                            // `?switch`: Beacon has a coordinator of its own.
+                            settings:
+                              q?.projectId === beaconProject.id
+                                ? { ...settings, coordinatorThreadId: "beacon-coord" }
+                                : settings,
+                            memory: fresh !== null ? { files: [], totalBytes: 0 } : memory,
+                            // Real VCS status atoms land here too: an empty working tree.
+                            workingTree: { files: [] },
+                            // And the real design list: a project with no designs.
+                            designs: [],
+                            problems: [],
+                          }
+                        : q?.kind === "knowledge"
+                          ? knowledgeStatus()
+                          : undefined,
   dataUpdatedAt: knowledgeLoadedAt,
   error: null,
   refresh: () => {},
@@ -845,6 +855,15 @@ const runAtomCommand = (command) => async (args) => {
         repositories: settings.environment.repositories.map((r) => ({ ...r, status: "ready" })),
       },
     };
+  if (command === "googleAccess") {
+    googleServices = args.input.services;
+    return { _tag: "Success", value: {} };
+  }
+  if (command === "connectionCredentialSet") {
+    const value = connections.find((c) => c.id === args.input.id);
+    value.revision += 1;
+    return { _tag: "Success", value };
+  }
   if (command === "connectionSave") {
     const value = {
       id: args.input.id,
@@ -887,6 +906,7 @@ export const projectWorkspace = withFallback({
   environmentPrepare: "environmentPrepare",
   connections: () => ({ kind: "connections" }),
   connectionSave: "connectionSave",
+  connectionCredentialSet: "connectionCredentialSet",
   connectionCheck: "connectionCheck",
   connectionRevoke: "connectionRevoke",
   read: (args) => ({ kind: "read", projectId: args?.input?.projectId }),
@@ -917,6 +937,8 @@ export const projectEnvironment = withFallback({
 const noServerConfig = Atom.make(null);
 export const primaryServerConfigAtom = noServerConfig;
 export const serverEnvironment = withFallback({
+  googleAccountStatus: () => ({ kind: "google" }),
+  setGoogleProjectAccess: "googleAccess",
   scheduledTasksLive: () => ({ kind: "routines" }),
   configValueAtom: () => noServerConfig,
   updateSettings: "updateSettings",

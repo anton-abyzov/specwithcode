@@ -20,6 +20,7 @@ import {
   type ProjectConnectionSaveInput,
   type ProjectConnectionCallInput,
   type ProjectConnectionCallResult,
+  type ProjectConnectionCredentialInput,
   ProjectConnectionError,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
@@ -27,11 +28,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Transport from "./connections/ProjectConnectionTransport.ts";
 import { connectionFingerprint, validConnectionConfig } from "./connections/config.ts";
+
+const CREDENTIAL_INDEX = "project-connection-index";
 
 export class ProjectConnectionService extends Context.Service<
   ProjectConnectionService,
@@ -54,6 +59,9 @@ export class ProjectConnectionService extends Context.Service<
     revoke: (
       input: ProjectConnectionActionInput,
     ) => Effect.Effect<ProjectConnection, ProjectConnectionError>;
+    setCredential: (
+      input: ProjectConnectionCredentialInput,
+    ) => Effect.Effect<ProjectConnection, ProjectConnectionError>;
     call: (
       input: ProjectConnectionCallInput & { actor: string },
     ) => Effect.Effect<ProjectConnectionCallResult, ProjectConnectionError>;
@@ -65,6 +73,55 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const transport = yield* Transport.ProjectConnectionTransport;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
+  // Hashed: one project's token is out of reach of any other project's connection.
+  const credentialName = (projectId: ProjectId, id: string, key: string) =>
+    `project-connection-${connectionFingerprint([projectId, id, key])}`;
+  const removeCredentials = (projectId: ProjectId, value: ProjectConnection) =>
+    Effect.forEach(
+      value.envKeys,
+      (key) => secrets.remove(credentialName(projectId, value.id, key)),
+      { discard: true },
+    );
+  // Hashed names cannot be listed back, so this remembers which project wrote each one.
+  const indexLock = yield* Semaphore.make(1);
+  const readIndex = secrets
+    .get(CREDENTIAL_INDEX)
+    .pipe(
+      Effect.flatMap((bytes) =>
+        Option.isSome(bytes)
+          ? Effect.try(
+              () => parseJson(new TextDecoder().decode(bytes.value)) as Record<string, string>,
+            ).pipe(Effect.orElseSucceed((): Record<string, string> => ({})))
+          : Effect.succeed<Record<string, string>>({}),
+      ),
+    );
+  const writeIndex = (index: Record<string, string>) =>
+    secrets.set(CREDENTIAL_INDEX, new TextEncoder().encode(stringifyJson(index)));
+  // A deleted project's tokens go at the next start, whichever path deleted it. Never blocks one.
+  yield* indexLock
+    .withPermit(
+      Effect.gen(function* () {
+        const index = yield* readIndex;
+        const kept: Record<string, string> = {};
+        for (const [name, projectId] of Object.entries(index)) {
+          const found = yield* projects.get(projectId as ProjectId);
+          if (Option.isSome(found)) kept[name] = projectId;
+          else yield* secrets.remove(name);
+        }
+        if (Object.keys(kept).length !== Object.keys(index).length) yield* writeIndex(kept);
+      }),
+    )
+    .pipe(Effect.catchCause(() => Effect.void));
+  const storedCredentials = (projectId: ProjectId, value: ProjectConnection) =>
+    Effect.gen(function* () {
+      const stored: Record<string, string> = {};
+      for (const key of value.envKeys) {
+        const bytes = yield* secrets.get(credentialName(projectId, value.id, key));
+        if (Option.isSome(bytes)) stored[key] = new TextDecoder().decode(bytes.value);
+      }
+      return stored;
+    });
   const error = (projectId: ProjectId, code: ProjectConnectionError["code"]) =>
     new ProjectConnectionError({ projectId, code });
   const safe = (projectId: ProjectId) =>
@@ -160,6 +217,8 @@ const make = Effect.gen(function* () {
                   (allowedTools.length > 0 && previous?.status !== "ready")
                 )
                   return yield* error(input.projectId, "denied");
+                // A token was given to one command; a different command must never receive it.
+                if (previous && !unchanged) yield* removeCredentials(input.projectId, previous);
                 return yield* persist(input.projectId, {
                   id: input.id,
                   ...input.config,
@@ -181,8 +240,9 @@ const make = Effect.gen(function* () {
       const initial = yield* connection(input);
       if (initial.status === "revoked") return yield* error(input.projectId, "denied");
       yield* refuseByTeamRules(input.projectId, target.workspaceRoot, [initial.name]);
+      const stored = yield* storedCredentials(input.projectId, initial);
       const discovered = yield* transport
-        .discover({ config: configOf(initial), cwd: target.workspaceRoot })
+        .discover({ config: configOf(initial), cwd: target.workspaceRoot, stored })
         .pipe(Effect.option);
       return yield* admission.withLock(
         input.projectId,
@@ -212,6 +272,7 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* project(input.projectId);
             const current = yield* connection(input);
+            yield* removeCredentials(input.projectId, current);
             return yield* persist(input.projectId, {
               ...current,
               revision: current.revision + 1,
@@ -221,6 +282,34 @@ const make = Effect.gen(function* () {
             });
           }),
         ),
+      )
+      .pipe(safe(input.projectId));
+  const setCredential = (input: ProjectConnectionCredentialInput) =>
+    admission
+      .withLock(
+        input.projectId,
+        Effect.gen(function* () {
+          yield* project(input.projectId);
+          const current = yield* connection(input);
+          if (current.status === "revoked" || !current.envKeys.includes(input.envKey))
+            return yield* error(input.projectId, "denied");
+          const name = credentialName(input.projectId, current.id, input.envKey);
+          yield* indexLock.withPermit(
+            readIndex.pipe(
+              Effect.flatMap((index) => writeIndex({ ...index, [name]: input.projectId })),
+            ),
+          );
+          yield* secrets.set(name, new TextEncoder().encode(input.value));
+          // Another token can mean another account: tools and grants need a new check.
+          return yield* persist(input.projectId, {
+            ...current,
+            revision: current.revision + 1,
+            status: "configured",
+            checkedAt: null,
+            tools: [],
+            allowedTools: [],
+          });
+        }),
       )
       .pipe(safe(input.projectId));
   const call = (input: ProjectConnectionCallInput & { actor: string }) =>
@@ -248,11 +337,13 @@ const make = Effect.gen(function* () {
             if (receipt.result === null) return yield* error(input.projectId, "outcome_unknown");
             return parseJson(receipt.result) as ProjectConnectionCallResult;
           }
+          const stored = yield* storedCredentials(input.projectId, current);
           yield* sql`INSERT INTO project_connection_calls (project_id,command_id,fingerprint) VALUES (${input.projectId},${input.commandId},${fingerprint})`;
           const result = yield* transport
             .call({
               config: configOf(current),
               cwd: target.workspaceRoot,
+              stored,
               tool,
               arguments: input.arguments,
             })
@@ -286,6 +377,7 @@ const make = Effect.gen(function* () {
     save,
     check,
     revoke,
+    setCredential,
     call,
     discoverNative,
     applyNative: (input) =>

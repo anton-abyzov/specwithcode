@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { paneWords } from "../../studio/assistantTerms";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { useEnvironment } from "../../state/environments";
@@ -144,9 +145,13 @@ const RAW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-/i;
 /** Also names declared hosts absent from the local catalog, so missing rows are never silently complete. */
 export function ProjectThreadAvailability({
   scopes,
+  personal,
 }: {
   scopes: readonly ProjectExecutionScope[];
+  /** The personal assistant says topics where a project says threads. */
+  personal?: boolean;
 }) {
+  const say = paneWords(personal);
   const { environments } = useNamedEnvironments();
   const nickname = useMachineNicknames();
   const stillChecking = useMachineStillChecking();
@@ -179,8 +184,8 @@ export function ProjectThreadAvailability({
             role="status"
             data-unavailable-thread-host={environmentId}
           >
-            {environment ? `${name} is offline` : `This app is not connected to ${name}`} — the
-            thread list may be incomplete. Cached threads may be out of date.
+            {environment ? `${name} is offline` : `This app is not connected to ${name}`} —{" "}
+            {say("the thread list may be incomplete. Cached threads may be out of date.")}
           </p>
         );
       })}

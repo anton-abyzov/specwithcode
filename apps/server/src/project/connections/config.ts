@@ -42,8 +42,13 @@ export function validConnectionConfig(value: unknown): value is ProjectConnectio
   });
 }
 /** Environment values never appear in config, tool descriptions, receipts or client errors. */
-export function redactConnectionText(text: string, envKeys: readonly string[]): string {
+export function redactConnectionText(
+  text: string,
+  envKeys: readonly string[],
+  stored: readonly string[] = [],
+): string {
   let result = text;
+  for (const value of stored) if (value) result = result.split(value).join("[redacted]");
   for (const key of envKeys) {
     const value = process.env[key];
     if (value) result = result.split(value).join("[redacted]");
@@ -55,14 +60,19 @@ export function toolFingerprint(tool: ProjectConnectionTool): string {
 }
 
 /** Redact decoded leaves before JSON serialization, including escaped credential characters. */
-export function redactConnectionValue(value: unknown, envKeys: readonly string[]): unknown {
-  if (typeof value === "string") return redactConnectionText(value, envKeys);
-  if (Array.isArray(value)) return value.map((item) => redactConnectionValue(item, envKeys));
+export function redactConnectionValue(
+  value: unknown,
+  envKeys: readonly string[],
+  stored: readonly string[] = [],
+): unknown {
+  if (typeof value === "string") return redactConnectionText(value, envKeys, stored);
+  if (Array.isArray(value))
+    return value.map((item) => redactConnectionValue(item, envKeys, stored));
   if (value && typeof value === "object")
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
-        redactConnectionText(key, envKeys),
-        redactConnectionValue(item, envKeys),
+        redactConnectionText(key, envKeys, stored),
+        redactConnectionValue(item, envKeys, stored),
       ]),
     );
   return value;

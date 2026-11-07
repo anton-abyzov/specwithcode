@@ -27,6 +27,7 @@ import {
   PROJECT_PANE_TABS,
   type ProjectPaneTab,
 } from "../../../studio/projectPaneModel";
+import { paneWords } from "../../../studio/assistantTerms";
 import { PullRequestGlyph } from "../../pullRequest/pullRequestIcons";
 import { Tip } from "./Tip";
 
@@ -49,10 +50,13 @@ export interface ProjectPaneBarProps {
   expanded: boolean;
   onToggleExpanded: () => void;
   onClose: () => void;
+  /** The personal assistant says topics where a project says threads. */
+  personal?: boolean;
 }
 
 export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tools?: ReactNode }) {
   const tabRefs = useRef(new Map<ProjectPaneTab, HTMLButtonElement>());
+  const say = paneWords(props.personal);
   // Arrow keys move between tabs, as a tablist does; Tab leaves the list.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if ((event.target as HTMLElement).getAttribute("role") !== "tab") return;
@@ -108,7 +112,7 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
               onClick={() => props.onTabChange(tab)}
             >
               <Icon aria-hidden />
-              <span className="sws-pane-tab-label">{PROJECT_PANE_TAB_LABELS[tab]}</span>
+              <span className="sws-pane-tab-label">{say(PROJECT_PANE_TAB_LABELS[tab])}</span>
               {count && count.value > 0 ? (
                 <span
                   className={`sws-count${count.tone === "waiting" ? " sws-count-waiting" : ""}`}
@@ -121,11 +125,11 @@ export function ProjectPaneBar({ tools, ...props }: ProjectPaneBarProps & { tool
           );
         })}
       </div>
-      <Tip label="Ask the coordinator for a thread">
+      <Tip label={say("Ask the coordinator for a thread")}>
         <button
           type="button"
           className="sws-icon-button"
-          aria-label="Ask the coordinator for a thread"
+          aria-label={say("Ask the coordinator for a thread")}
           onClick={props.onNewThread}
         >
           <PlusIcon aria-hidden />

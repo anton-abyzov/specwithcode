@@ -44,6 +44,7 @@ import { ProjectUsage } from "./ProjectUsage";
 import { ProjectRoutines } from "./ProjectRoutines";
 import {
   FolderIcon,
+  PlugIcon,
   Settings2Icon,
   NotebookPenIcon,
   ChartNoAxesCombinedIcon,
@@ -54,6 +55,7 @@ import { ProjectSpecweaveSetting } from "./ProjectSpecweaveSetting";
 import { useProjectDeletionWorktrees } from "./ProjectDeletionWorktrees";
 import { ProjectThreadsDeletion } from "./ProjectThreadsDeletion";
 import { ProjectEnvironment } from "./ProjectEnvironment";
+import { AssistantServices } from "./AssistantServices";
 import { ProjectConnections } from "./ProjectConnections";
 import { useProjectIconEditor } from "./ProjectIconEditor";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -69,15 +71,15 @@ import { ProjectSettingsSearch } from "./ProjectSettingsSearch";
 import {
   findProjectSettingsAnchor,
   PROJECT_SETTINGS_SEARCH_ROWS,
-  PROJECT_SETTINGS_TABS,
+  projectSettingsTabs,
   type ProjectSettingsTab,
 } from "./projectSettingsSearch.logic";
 
 export type { ProjectSettingsTab };
-const tabs = PROJECT_SETTINGS_TABS;
 const tabIcons = {
   general: Settings2Icon,
   memory: NotebookPenIcon,
+  services: PlugIcon,
   environment: FolderIcon,
   usage: ChartNoAxesCombinedIcon,
   routines: Clock3Icon,
@@ -371,6 +373,10 @@ export function ProjectWorkspaceSettings({
       );
     onDeleted();
   }
+  const personal = snapshot.settings.kind === "personal";
+  const tabs = projectSettingsTabs(personal);
+  // A remembered or linked tab this project does not have.
+  if (!tabs.includes(tab)) setTab("general");
   return (
     <Dialog
       open
@@ -390,7 +396,7 @@ export function ProjectWorkspaceSettings({
         <div className="project-surface project-settings-dialog">
           <header className="project-settings-heading">
             <DialogTitle className="text-lg font-semibold tracking-tight">
-              Project settings
+              {personal ? "Assistant settings" : "Project settings"}
             </DialogTitle>
             <DialogDescription className="project-settings-identity" title={projectTitle}>
               {projectTitle}
@@ -692,6 +698,7 @@ export function ProjectWorkspaceSettings({
                   environmentId={project.environmentId}
                   projectId={project.id}
                   memory={snapshot.memory}
+                  personal={snapshot.settings.kind === "personal"}
                   disabled={disabled}
                   onSaved={onSaved}
                   onDirtyChange={setMemoryDirty}
@@ -747,6 +754,15 @@ export function ProjectWorkspaceSettings({
                   onBusyChange={setEnvironmentBusy}
                 />
               </div>
+              {tab === "services" && snapshot.settings.kind === "personal" && (
+                <AssistantServices
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  disabled={disabled}
+                  admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
+                  onOpenEnvironment={() => setTab("environment")}
+                />
+              )}
               {tab === "usage" && (
                 <ProjectUsage
                   environmentId={project.environmentId}

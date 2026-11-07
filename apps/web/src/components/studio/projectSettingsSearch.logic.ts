@@ -4,11 +4,18 @@ import {
   type GroupedSettingsSearchResult,
 } from "../settings/settingsSearchModel";
 
-export type ProjectSettingsTab = "general" | "memory" | "environment" | "usage" | "routines";
+export type ProjectSettingsTab =
+  | "general"
+  | "memory"
+  | "services"
+  | "environment"
+  | "usage"
+  | "routines";
 
 export const PROJECT_SETTINGS_TAB_LABELS: Readonly<Record<ProjectSettingsTab, string>> = {
   general: "General",
   memory: "Memory",
+  services: "Services",
   environment: "Environment",
   usage: "Usage",
   routines: "Routines",
@@ -21,6 +28,13 @@ export const PROJECT_SETTINGS_TABS: readonly ProjectSettingsTab[] = [
   "usage",
   "routines",
 ];
+
+/** Only the personal assistant has Services: its connections are one person's accounts. */
+export function projectSettingsTabs(personal: boolean): readonly ProjectSettingsTab[] {
+  return personal
+    ? ["general", "memory", "services", "environment", "usage", "routines"]
+    : PROJECT_SETTINGS_TABS;
+}
 
 export function isProjectSettingsTab(value: string): value is ProjectSettingsTab {
   return Object.hasOwn(PROJECT_SETTINGS_TAB_LABELS, value);
@@ -226,6 +240,7 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
 const TAB_SEARCH_TERMS: Readonly<Record<ProjectSettingsTab, readonly string[]>> = {
   general: ["settings name goal model"],
   memory: ["instructions notes knowledge"],
+  services: ["connect google email calendar drive notion todoist health finances browser"],
   environment: ["folders repositories connections"],
   usage: ["limits tokens"],
   routines: ["scheduled tasks"],

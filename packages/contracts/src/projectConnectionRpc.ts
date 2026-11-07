@@ -14,6 +14,7 @@ import {
   ProjectConnectionsReadResult,
   ProjectConnectionSaveInput,
   ProjectConnectionActionInput,
+  ProjectConnectionCredentialInput,
   ProjectConnection,
 } from "./projectConnections.ts";
 export const PROJECT_CONNECTION_RPC_METHODS = {
@@ -23,6 +24,7 @@ export const PROJECT_CONNECTION_RPC_METHODS = {
   projectsConnectionSave: "projects.connectionSave",
   projectsConnectionCheck: "projects.connectionCheck",
   projectsConnectionRevoke: "projects.connectionRevoke",
+  projectsConnectionCredentialSet: "projects.connectionCredentialSet",
 } as const;
 const error = Schema.Union([ProjectConnectionError, EnvironmentAuthorizationError]);
 export const projectConnectionRpcs = [
@@ -59,5 +61,14 @@ export const nativeConnectionApplyRpc = Rpc.make(
     payload: NativeConnectionApplyInput,
     success: NativeConnectionsSnapshot,
     error: Schema.Union([NativeConnectionsError, EnvironmentAuthorizationError]),
+  },
+);
+/** Beside the apply method, for the same depth reason. */
+export const projectConnectionCredentialSetRpc = Rpc.make(
+  PROJECT_CONNECTION_RPC_METHODS.projectsConnectionCredentialSet,
+  {
+    payload: ProjectConnectionCredentialInput,
+    success: ProjectConnection,
+    error,
   },
 );

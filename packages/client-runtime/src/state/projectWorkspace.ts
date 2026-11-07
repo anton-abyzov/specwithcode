@@ -81,6 +81,10 @@ export function createProjectWorkspaceAtoms<R, E>(
       label: "project-connections:revoke",
       tag: WS_METHODS.projectsConnectionRevoke,
     }),
+    connectionCredentialSet: createEnvironmentRpcCommand(runtime, {
+      label: "project-connections:credential-set",
+      tag: WS_METHODS.projectsConnectionCredentialSet,
+    }),
     environmentRead: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "project-environment:read",
       tag: WS_METHODS.projectsEnvironmentRead,
