@@ -884,10 +884,17 @@ export const pt: PhraseCatalog = {
   "About this list: sources and limits": "Sobre esta lista: fontes e limites",
   "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.":
     "{value} Ativado significa que a entrada está ativada no arquivo dela; login e disponibilidade da sessão não são verificados.",
-  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
-    "{value}Plugins só contam quando ativados. As alterações vão apenas para arquivos de usuário, cada uma com prévia e backup para poder ser desfeita. Copiar local copia o arquivo e a chave, nunca o comando, a URL ou segredos. Conectores do claude.ai e outros conectores de conta ficam na sua conta, não em arquivos, por isso não aparecem. Configurações gerenciadas, configurações de pastas superiores e perfis de cliente alternativos não são inventariados. Nomes iguais não provam que servidores ou contas sejam os mesmos.",
-  "Scanned {value} · Tools pick up changes when they next start":
-    "Verificado {value} · As ferramentas aplicam as alterações na próxima vez que iniciarem",
+  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
+    "{value}Plugins só contam quando ativados. As alterações vão apenas para arquivos de usuário, cada uma com prévia e backup para poder ser desfeita. Copiar local copia o arquivo e a chave, nunca o comando, a URL ou segredos. Apps de conta do Codex em cache aparecem; o acesso atual à conta não é verificado. Conectores de conta sem declaração local ou cache não aparecem. Configurações gerenciadas, configurações de pastas superiores e perfis de cliente alternativos não são inventariados. Nomes iguais não provam que servidores ou contas sejam os mesmos.",
+  "Scanned {value} · Running sessions may keep their previous configuration":
+    "Verificado {value} · Sessões em andamento podem manter a configuração anterior",
+  "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.":
+    "Configuração desta máquina. Instruções carregadas, ferramentas em execução e login não são verificados. Outras máquinas mantêm a própria configuração.",
+  "Account app cached": "App de conta em cache",
+  "Skills enabled": "Skills ativadas",
+  "Skills disabled": "Skills desativadas",
+  "Enabled in config": "Ativado na configuração",
+  "Disabled in config": "Desativado na configuração",
   "{value}Connect this machine to inspect its MCP configurations.":
     "{value}Conecte esta máquina para inspecionar as configurações MCP dela.",
   "Filesystem read access is required to inspect configurations on this machine.":

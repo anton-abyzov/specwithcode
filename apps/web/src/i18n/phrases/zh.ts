@@ -849,10 +849,17 @@ export const zh: PhraseCatalog = {
   "About this list: sources and limits": "关于此列表：来源与限制",
   "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.":
     "{value} “已启用”表示该条目在其文件中已开启；不检查登录状态和会话可用性。",
-  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
-    "{value}插件仅在启用时计入。更改只写入用户文件，每项更改都会先预览并备份，以便撤销。“复制位置”会复制文件和键名，绝不复制命令、URL 或密钥。claude.ai 连接器和其他账户连接器保存在你的账户中而非文件中，因此不会列出。托管设置、上级目录配置和其他客户端配置文件不在清点范围内。名称相同并不代表服务器或账户相同。",
-  "Scanned {value} · Tools pick up changes when they next start":
-    "已扫描 {value} · 工具会在下次启动时应用更改",
+  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
+    "{value}插件仅在启用时计入。更改只写入用户文件，每项更改都会先预览并备份，以便撤销。“复制位置”会复制文件和键名，绝不复制命令、URL 或密钥。会列出已缓存的 Codex 账户应用，但不检查其当前的账户访问权限。没有本地声明或缓存的账户连接器不会列出。托管设置、上级目录配置和其他客户端配置文件不在清点范围内。名称相同并不代表服务器或账户相同。",
+  "Scanned {value} · Running sessions may keep their previous configuration":
+    "已扫描 {value} · 正在运行的会话可能仍使用之前的配置",
+  "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.":
+    "此机器上的配置。不检查已加载的指令、运行时工具和登录状态。其他机器保留各自的配置。",
+  "Account app cached": "账户应用（已缓存）",
+  "Skills enabled": "技能已启用",
+  "Skills disabled": "技能已停用",
+  "Enabled in config": "配置中已启用",
+  "Disabled in config": "配置中已停用",
   "{value}Connect this machine to inspect its MCP configurations.":
     "{value}连接此电脑以检查其 MCP 配置。",
   "Filesystem read access is required to inspect configurations on this machine.":

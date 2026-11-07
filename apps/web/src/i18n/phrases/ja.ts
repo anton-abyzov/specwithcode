@@ -880,10 +880,17 @@ export const ja: PhraseCatalog = {
   "About this list: sources and limits": "この一覧について: ソースと制限",
   "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.":
     "{value} 「有効」は、そのエントリがファイル内で有効になっていることを意味します。サインインやセッションの利用可否は確認しません。",
-  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
-    "{value}プラグインは有効な場合のみ数えます。変更はユーザーファイルにのみ書き込まれ、それぞれ事前にプレビューされ、元に戻せるようバックアップされます。「場所をコピー」はファイルとキーをコピーし、コマンド、URL、シークレットは決してコピーしません。claude.ai のコネクターやその他のアカウント コネクターはファイルではなくアカウントにあるため、一覧には表示されません。管理された設定、上位フォルダーの設定、別のクライアント プロファイルは対象外です。名前が一致しても、サーバーやアカウントが同じとは限りません。",
-  "Scanned {value} · Tools pick up changes when they next start":
-    "スキャン: {value} · ツールは次回の起動時に変更を読み込みます",
+  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
+    "{value}プラグインは有効な場合のみ数えます。変更はユーザーファイルにのみ書き込まれ、それぞれ事前にプレビューされ、元に戻せるようバックアップされます。「場所をコピー」はファイルとキーをコピーし、コマンド、URL、シークレットは決してコピーしません。キャッシュされた Codex アカウント アプリは一覧に表示されますが、現在のアカウント アクセスは確認しません。ローカルの宣言やキャッシュがないアカウント コネクターは表示されません。管理された設定、上位フォルダーの設定、別のクライアント プロファイルは対象外です。名前が一致しても、サーバーやアカウントが同じとは限りません。",
+  "Scanned {value} · Running sessions may keep their previous configuration":
+    "スキャン: {value} · 実行中のセッションは以前の設定のままの場合があります",
+  "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.":
+    "このマシンの設定です。読み込まれた指示、実行時のツール、サインインは確認しません。他のマシンにはそれぞれの設定があります。",
+  "Account app cached": "アカウント アプリ (キャッシュ)",
+  "Skills enabled": "スキル有効",
+  "Skills disabled": "スキル無効",
+  "Enabled in config": "設定で有効",
+  "Disabled in config": "設定で無効",
   "{value}Connect this machine to inspect its MCP configurations.":
     "{value}このマシンを接続すると MCP の設定を確認できます。",
   "Filesystem read access is required to inspect configurations on this machine.":

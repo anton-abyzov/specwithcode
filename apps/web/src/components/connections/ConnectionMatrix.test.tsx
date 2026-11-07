@@ -398,7 +398,14 @@ describe("connection matrix", () => {
       enabled: true,
     });
     // An account plugin switches only its skills; one without skills has no switch at all.
-    expect(text()).toContain("Skills on");
+    expect(text()).toContain("Skills enabled");
+    expect(text()).toContain("Disabled in config");
+    expect(text()).toContain("Account app cached");
+    expect(text()).toContain("Loaded instructions, runtime tools and sign-in are not");
+    expect(text()).toContain("Other machines keep their own configuration.");
+    expect(text()).toContain("Cached Codex account apps are listed;");
+    expect(text()).not.toContain("so they are not listed");
+    expect(text()).not.toContain("Tools pick up changes when they");
     expect(byLabel("Turn off skills: Pay")).toHaveLength(1);
     expect(text()).toContain("Managed in your ChatGPT account");
     expect(byLabel("Turn off skills: Notes")).toHaveLength(0);

@@ -890,10 +890,17 @@ export const es: PhraseCatalog = {
   "About this list: sources and limits": "Sobre esta lista: fuentes y límites",
   "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.":
     "{value} Activado significa que la entrada está activada en su archivo; no se comprueban el inicio de sesión ni la disponibilidad de la sesión.",
-  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
-    "{value}Los plugins solo cuentan cuando están activados. Los cambios solo van a archivos de usuario, cada uno con vista previa y copia de seguridad para poder deshacerlo. Copiar ubicación copia el archivo y la clave, nunca el comando, la URL ni los secretos. Los conectores de claude.ai y otros conectores de cuenta viven en tu cuenta y no en archivos, así que no aparecen. No se inventarían la configuración gestionada, las configuraciones de carpetas superiores ni los perfiles de cliente alternativos. Que los nombres coincidan no demuestra que coincidan los servidores o las cuentas.",
-  "Scanned {value} · Tools pick up changes when they next start":
-    "Escaneado {value} · Las herramientas aplican los cambios la próxima vez que se inicien",
+  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
+    "{value}Los plugins solo cuentan cuando están activados. Los cambios solo van a archivos de usuario, cada uno con vista previa y copia de seguridad para poder deshacerlo. Copiar ubicación copia el archivo y la clave, nunca el comando, la URL ni los secretos. Las apps de cuenta de Codex en caché aparecen; su acceso actual a la cuenta no se comprueba. Los conectores de cuenta sin declaración local ni caché no aparecen. No se inventarían la configuración gestionada, las configuraciones de carpetas superiores ni los perfiles de cliente alternativos. Que los nombres coincidan no demuestra que coincidan los servidores o las cuentas.",
+  "Scanned {value} · Running sessions may keep their previous configuration":
+    "Escaneado {value} · Las sesiones en curso pueden conservar su configuración anterior",
+  "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.":
+    "Configuración de esta máquina. No se comprueban las instrucciones cargadas, las herramientas en tiempo de ejecución ni el inicio de sesión. Otras máquinas tienen su propia configuración.",
+  "Account app cached": "App de cuenta en caché",
+  "Skills enabled": "Skills activadas",
+  "Skills disabled": "Skills desactivadas",
+  "Enabled in config": "Activado en la configuración",
+  "Disabled in config": "Desactivado en la configuración",
   "{value}Connect this machine to inspect its MCP configurations.":
     "{value}Conecta este equipo para revisar sus configuraciones MCP.",
   "Filesystem read access is required to inspect configurations on this machine.":
