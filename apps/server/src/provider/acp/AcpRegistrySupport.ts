@@ -1247,8 +1247,12 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const manifest = yield* fileSystem
         .readFileString(manifestPath)
         .pipe(Effect.flatMap(decodeNpmPackageManifest), Effect.option);
+      if (Option.isNone(manifest)) {
+        return {
+          miss: `${manifestPath} could not be read as a package manifest.`,
+        } satisfies NpmGlobalPackageInspection;
+      }
       if (
-        Option.isNone(manifest) ||
         manifest.value.name !== packageIdentity.name ||
         manifest.value.version !== packageIdentity.version
       ) {
