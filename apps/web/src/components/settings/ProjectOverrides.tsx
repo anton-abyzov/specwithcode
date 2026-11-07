@@ -1,19 +1,87 @@
 import { useTx } from "../../i18n";
-import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
-import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
-import { useMemo } from "react";
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  ProviderLimitAction,
+  PullRequestMergeMethod,
+  ResponseStreamingMode,
+  RuntimeMode,
+  ThreadEnvMode,
+  ThreadFinishAction,
+  type ProjectId,
+  type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrides,
+} from "@specweave-studio/contracts";
+import { useMemo, useState } from "react";
 
-import { useNamedEnvironments } from "./useNamedEnvironments";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { Button } from "../ui/button";
-import { listProjectSettingOverrides } from "./projectOverrideRows";
-import { planProjectOverridesClear } from "./scopedSettings";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { toastManager } from "../ui/toast";
+import {
+  groupProjectSettingOverrides,
+  type ProjectOverrideGroup,
+  type ProjectOverrideLine,
+  type ProjectOverrideMachine,
+} from "./projectOverrideRows";
+import {
+  planProjectOverrideEdits,
+  planProjectOverridesClear,
+  undoProjectOverrideEdits,
+} from "./scopedSettings";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { useRunScopedPlan } from "./useScopedSettings";
+import { formatSettingValueFor } from "./settingValueLabels";
+import { useNamedEnvironments } from "./useNamedEnvironments";
+import { useRunScopedPlan, type ScopedPlanFeedback } from "./useScopedSettings";
+
+/** Keys edited in place with a Select; every other key opens its own row. */
+const ENUM_OPTIONS: Partial<Record<ProjectScopedServerSettingKey, readonly string[]>> = {
+  threadFinishAction: ThreadFinishAction.literals,
+  defaultRuntimeMode: RuntimeMode.literals,
+  providerLimitAction: ProviderLimitAction.literals,
+  defaultThreadEnvMode: ThreadEnvMode.literals,
+  pullRequestMergeMethod: PullRequestMergeMethod.literals,
+  responseStreamingMode: ResponseStreamingMode.literals,
+};
+
+function editOptions(key: ProjectScopedServerSettingKey, line: ProjectOverrideLine) {
+  const listed = ENUM_OPTIONS[key];
+  if (listed) return listed;
+  return typeof line.rawValue === "boolean" ? ["true", "false"] : null;
+}
+
+const machineNames = (machines: readonly ProjectOverrideMachine[]) =>
+  machines.map((machine) => machine.environmentLabel).join(", ");
+
+/** Scroll to the setting's own row on this page and draw the eye to it. */
+function revealSettingRow(key: ProjectScopedServerSettingKey, label: string, page: string) {
+  const row = document.querySelector<HTMLElement>(`[data-setting-keys~="${key}"]`);
+  if (!row) {
+    toastManager.add({
+      type: "info",
+      title: `${label} is edited in App settings`,
+      description: `Open App settings > ${page} with this project selected.`,
+    });
+    return;
+  }
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+  row.focus({ preventScroll: true });
+  row.classList.add("ring-2", "ring-primary");
+  window.setTimeout(() => row.classList.remove("ring-2", "ring-primary"), 1600);
+}
+
+interface SessionChange {
+  readonly text: string;
+  readonly undo: () => void;
+}
 
 /**
- * The values this project sets for itself instead of the app settings.
- * Renders nothing when the project follows the app settings everywhere.
+ * The values this project sets for itself instead of the app settings: one
+ * row per setting, machines with the same value on one line, the app value
+ * beside it, an edit control and Use app setting. Every change says what it
+ * did and can be undone. Renders nothing when the project follows the app
+ * settings everywhere and nothing was changed here.
  */
 export function ProjectOverrides({
   checkouts,
@@ -22,11 +90,29 @@ export function ProjectOverrides({
 }) {
   const tx = useTx();
   const { environments } = useNamedEnvironments();
-  const rows = useMemo(
-    () => listProjectSettingOverrides(checkouts, environments),
-    [checkouts, environments],
-  );
-  const environmentKey = [...new Set(rows.map((row) => row.environmentId))].join("\n");
+  const groups = useMemo(() => {
+    const names = new Map(
+      environments.map((environment) => [
+        environment.environmentId,
+        new Map(
+          deriveProviderInstanceEntries(environment.serverConfig?.providers ?? []).map((entry) => [
+            entry.instanceId as string,
+            entry.displayName,
+          ]),
+        ),
+      ]),
+    );
+    return groupProjectSettingOverrides(checkouts, environments, (environmentId, item) =>
+      names.get(environmentId)?.get(item),
+    );
+  }, [checkouts, environments]);
+  const environmentKey = [
+    ...new Set(
+      groups.flatMap((group) =>
+        group.lines.flatMap((line) => line.machines.map((machine) => machine.environmentId)),
+      ),
+    ),
+  ].join("\n");
   const rowEnvironments = useMemo(
     () =>
       environmentKey === ""
@@ -36,37 +122,252 @@ export function ProjectOverrides({
   );
   const writable = useEnvironmentsWithScope(rowEnvironments, AuthSettingsWriteScope);
   const run = useRunScopedPlan();
-  if (rows.length === 0) return null;
-  const showMachine = new Set(rows.map((row) => row.environmentId)).size > 1;
+  // What was changed here this session, by setting, so a cleared row stays
+  // visible with its result and Undo instead of vanishing.
+  const [changes, setChanges] = useState<ReadonlyMap<string, SessionChange>>(new Map());
+  const [labels, setLabels] = useState<
+    ReadonlyMap<string, { readonly label: string; readonly page: string }>
+  >(new Map());
+
+  const shownKeys = new Set(groups.map((group) => group.key as string));
+  const goneGroups = [...changes.keys()].filter((key) => !shownKeys.has(key));
+  if (groups.length === 0 && goneGroups.length === 0) return null;
+  const machineCount = environmentKey === "" ? 0 : environmentKey.split("\n").length;
+
+  const apply = async (
+    group: ProjectOverrideGroup,
+    machines: readonly ProjectOverrideMachine[],
+    change: { readonly set: unknown } | { readonly clear: true },
+    describe: (shown: string) => string,
+  ) => {
+    const plan =
+      "clear" in change
+        ? planProjectOverridesClear(environments, machines, [group.key])
+        : planProjectOverrideEdits(
+            environments,
+            machines.map((machine) => ({
+              environmentId: machine.environmentId,
+              projectId: machine.projectId,
+              set: { [group.key]: change.set } as ProjectSettingsOverrides,
+            })),
+          );
+    const undo = planProjectOverrideEdits(
+      environments,
+      undoProjectOverrideEdits(group.key, machines),
+    );
+    const was = [
+      ...new Set(machines.map((machine) => formatSettingValueFor(group.key, machine.rawValue))),
+    ].join(" / ");
+    const where = machineNames(machines);
+    const feedback: ScopedPlanFeedback = {
+      title: describe(where),
+      description: `Was: ${was}.`,
+      undo,
+    };
+    const result = await run(plan, feedback);
+    if (result.savedEnvironmentIds.size === 0) return;
+    const saved = machines.filter((machine) =>
+      result.savedEnvironmentIds.has(machine.environmentId),
+    );
+    const savedUndo = planProjectOverrideEdits(
+      environments,
+      undoProjectOverrideEdits(group.key, saved),
+    );
+    setLabels((current) =>
+      new Map(current).set(group.key, { label: group.label, page: group.page }),
+    );
+    setChanges((current) =>
+      new Map(current).set(group.key, {
+        text: `${describe(machineNames(saved))}. Was: ${was}.`,
+        undo: () => {
+          setChanges((latest) => {
+            const next = new Map(latest);
+            next.delete(group.key);
+            return next;
+          });
+          void run(savedUndo, { title: "Change undone" });
+        },
+      }),
+    );
+  };
+
+  const marker = (key: string) => {
+    const change = changes.get(key);
+    if (!change) return null;
+    return (
+      <div
+        role="status"
+        className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground"
+      >
+        <span>{change.text}</span>
+        <Button size="xs" variant="ghost" onClick={change.undo}>
+          {tx("Undo")}
+        </Button>
+      </div>
+    );
+  };
+
   return (
     <SettingsSection id="project-overrides" title="Overrides">
-      {rows.map((row) => (
-        <SettingsRow
-          key={`${row.environmentId}:${row.projectId}:${row.key}`}
-          data-override-key={row.key}
-          title={row.label}
-          description={`${row.value} for this project${showMachine ? ` on ${row.environmentLabel}` : ""}. ${row.appValue === "Same" ? `Same as the app setting (${row.page}).` : `App setting (${row.page}): ${row.appValue}.`}`}
-          control={
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!writable.has(row.environmentId)}
-              aria-label={`Use the app setting for ${row.label}`}
-              onClick={() =>
-                run(
-                  planProjectOverridesClear(
-                    environments,
-                    [{ environmentId: row.environmentId, projectId: row.projectId }],
-                    [row.key],
-                  ),
-                )
-              }
-            >
-              {tx("Use app setting")}
-            </Button>
-          }
-        />
-      ))}
+      <p className="px-3 pt-1 pb-2 text-xs text-muted-foreground sm:px-4">
+        {groups.length === 0
+          ? tx("This project follows the app settings everywhere.")
+          : `${groups.length} ${groups.length === 1 ? "setting differs" : "settings differ"} from the app settings${machineCount > 1 ? ` on ${machineCount} machines` : ""}.`}
+      </p>
+      {groups.map((group) => {
+        const allMachines = group.lines.flatMap((line) => line.machines);
+        const allWritable = allMachines.every((machine) => writable.has(machine.environmentId));
+        return (
+          <SettingsRow
+            key={group.key}
+            data-override-key={group.key}
+            literal
+            title={group.label}
+            description={`${group.page} page`}
+            control={
+              group.lines.length > 1 ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!allWritable}
+                  onClick={() =>
+                    void apply(
+                      group,
+                      allMachines,
+                      { clear: true },
+                      (where) => `${group.label} follows the app setting on ${where}`,
+                    )
+                  }
+                >
+                  {tx("Use app setting everywhere")}
+                </Button>
+              ) : undefined
+            }
+          >
+            <ul role="list" className="mb-2 space-y-2">
+              {group.lines.map((line) => {
+                const lineWritable = line.machines.every((machine) =>
+                  writable.has(machine.environmentId),
+                );
+                const reason = lineWritable
+                  ? undefined
+                  : tx("This connection cannot change settings on this machine.");
+                const options = editOptions(group.key, line);
+                const where = machineNames(line.machines);
+                return (
+                  <li
+                    key={line.machines.map((machine) => machine.environmentId).join(",")}
+                    className="grid grid-cols-1 items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0 text-sm">
+                      <div className="flex flex-wrap gap-1">
+                        {line.machines.map((machine) => (
+                          <span
+                            key={machine.environmentId}
+                            className="rounded-full border border-border px-2 text-xs text-muted-foreground"
+                          >
+                            {machine.environmentLabel}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-1">
+                        <span className="font-medium text-foreground">{line.value}</span>
+                        <span className="text-muted-foreground">
+                          {line.sameAsApp
+                            ? ` · ${tx("Same as the app setting")}`
+                            : ` · App: ${line.appValue}`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2" title={reason}>
+                      {options ? (
+                        <Select
+                          value={String(line.rawValue)}
+                          disabled={!lineWritable}
+                          onValueChange={(value) => {
+                            if (value === null || value === String(line.rawValue)) return;
+                            const next =
+                              typeof line.rawValue === "boolean" ? value === "true" : value;
+                            const shown = formatSettingValueFor(group.key, next);
+                            void apply(
+                              group,
+                              line.machines,
+                              { set: next },
+                              (machines) => `${group.label} changed to ${shown} on ${machines}`,
+                            );
+                          }}
+                        >
+                          <SelectTrigger size="sm" aria-label={`${group.label} on ${where}`}>
+                            <SelectValue>
+                              {(value: string | null) =>
+                                formatSettingValueFor(
+                                  group.key,
+                                  typeof line.rawValue === "boolean" ? value === "true" : value,
+                                )
+                              }
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectPopup align="end" alignItemWithTrigger={false}>
+                            {options.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {formatSettingValueFor(
+                                  group.key,
+                                  typeof line.rawValue === "boolean" ? option === "true" : option,
+                                )}
+                              </SelectItem>
+                            ))}
+                          </SelectPopup>
+                        </Select>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          aria-label={`Edit ${group.label}`}
+                          onClick={() => revealSettingRow(group.key, group.label, group.page)}
+                        >
+                          {tx("Edit")}
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!lineWritable}
+                        aria-label={`Use the app setting for ${group.label} on ${where}`}
+                        onClick={() =>
+                          void apply(
+                            group,
+                            line.machines,
+                            { clear: true },
+                            (machines) =>
+                              `${group.label} follows the app setting (${line.appValue}) on ${machines}`,
+                          )
+                        }
+                      >
+                        {tx("Use app setting")}
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {marker(group.key)}
+          </SettingsRow>
+        );
+      })}
+      {goneGroups.map((key) => {
+        const shown = labels.get(key);
+        return (
+          <SettingsRow
+            key={key}
+            data-override-key={key}
+            literal
+            title={shown?.label ?? key}
+            description={shown ? `${shown.page} page` : undefined}
+          >
+            {marker(key)}
+          </SettingsRow>
+        );
+      })}
     </SettingsSection>
   );
 }

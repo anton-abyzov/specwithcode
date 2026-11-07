@@ -27,6 +27,24 @@ vi.mock("../../state/session", () => ({
 }));
 vi.mock("./useScopedSettings", () => ({ useRunScopedPlan: () => state.run }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
+vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn(() => "t"), close: vi.fn() } }));
+vi.mock("../ui/select", () => ({
+  Select: ({
+    value,
+    onValueChange,
+    children,
+  }: React.PropsWithChildren<{ value: string; onValueChange: (value: string) => void }>) => (
+    <select data-testid="edit" value={value} onChange={(e) => onValueChange(e.target.value)}>
+      {children}
+    </select>
+  ),
+  SelectTrigger: () => null,
+  SelectValue: () => null,
+  SelectPopup: ({ children }: React.PropsWithChildren) => <>{children}</>,
+  SelectItem: ({ value, children }: React.PropsWithChildren<{ value: string }>) => (
+    <option value={value}>{children}</option>
+  ),
+}));
 vi.mock("./settingsLayout", () => ({
   SettingsSection: ({ title, children }: React.PropsWithChildren<{ title: string }>) => (
     <section>
@@ -38,15 +56,17 @@ vi.mock("./settingsLayout", () => ({
     title,
     description,
     control,
-  }: {
+    children,
+  }: React.PropsWithChildren<{
     title: string;
     description: string;
     control: React.ReactNode;
-  }) => (
+  }>) => (
     <div>
       <strong>{title}</strong>
       <span>{description}</span>
       {control}
+      {children}
     </div>
   ),
 }));
@@ -54,10 +74,15 @@ vi.mock("./settingsLayout", () => ({
 import { ProjectOverrides } from "./ProjectOverrides";
 
 const m4 = EnvironmentId.make("m4");
+const storm = EnvironmentId.make("storm");
 const project = ProjectId.make("p1");
-const environment = (overrides: ServerSettings["projectSettingsOverrides"]) => ({
-  environmentId: m4,
-  label: "MacBook",
+const environment = (
+  overrides: ServerSettings["projectSettingsOverrides"],
+  environmentId = m4,
+  label = "MacBook",
+) => ({
+  environmentId,
+  label,
   connection: { phase: "connected" },
   serverConfig: {
     settings: {
@@ -68,6 +93,8 @@ const environment = (overrides: ServerSettings["projectSettingsOverrides"]) => (
   },
 });
 
+type Plan = { serverWrites: { environmentId: string; patch: unknown }[] };
+
 let container: HTMLDivElement;
 let root: Root;
 beforeEach(() => {
@@ -76,11 +103,18 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   state.run.mockReset();
+  state.run.mockImplementation(async (plan: Plan) => ({
+    savedEnvironmentIds: new Set(plan.serverWrites.map((write) => write.environmentId)),
+    failedLabels: [],
+  }));
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
 });
+
+const button = (label: string) =>
+  [...container.querySelectorAll("button")].find((candidate) => candidate.textContent === label)!;
 
 describe("ProjectOverrides", () => {
   it("shows nothing when the project follows the app settings", async () => {
@@ -91,23 +125,85 @@ describe("ProjectOverrides", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("lists an override and resets it to the app setting", async () => {
+  it("shows the project value beside the app value in words", async () => {
     state.environments = [environment({ [project]: { defaultRuntimeMode: "approval-required" } })];
     await act(async () =>
       root.render(<ProjectOverrides checkouts={[{ environmentId: m4, id: project }]} />),
     );
     expect(container.textContent).toContain("Overrides");
     expect(container.textContent).toContain("Permissions for new threads");
-    expect(container.textContent).toContain("Ask for approval for this project");
-    expect(container.textContent).toContain("App setting (General): Full access.");
-    await act(async () => container.querySelector("button")!.click());
+    expect(container.textContent).toContain("Ask for approval");
+    expect(container.textContent).toContain("App: Full access");
+    expect(container.textContent).not.toMatch(/approval-required|full-access/);
+  });
+
+  it("groups machines with the same value on one line", async () => {
+    const overrides = { [project]: { defaultRuntimeMode: "approval-required" as const } };
+    state.environments = [
+      environment(overrides, m4, "M4MAX"),
+      environment(overrides, storm, "Ministorm"),
+    ];
+    await act(async () =>
+      root.render(
+        <ProjectOverrides
+          checkouts={[
+            { environmentId: m4, id: project },
+            { environmentId: storm, id: project },
+          ]}
+        />,
+      ),
+    );
+    expect(container.querySelectorAll("li")).toHaveLength(1);
+    expect(container.querySelector("li")!.textContent).toContain("M4MAX");
+    expect(container.querySelector("li")!.textContent).toContain("Ministorm");
+  });
+
+  it("uses the app setting, confirms it, keeps the row and undoes it", async () => {
+    state.environments = [environment({ [project]: { defaultRuntimeMode: "approval-required" } })];
+    await act(async () =>
+      root.render(<ProjectOverrides checkouts={[{ environmentId: m4, id: project }]} />),
+    );
+    await act(async () => button("Use app setting").click());
     expect(state.run).toHaveBeenCalledTimes(1);
-    const plan = state.run.mock.calls[0]![0] as {
-      serverWrites: { environmentId: string; patch: unknown }[];
-    };
+    const [plan, feedback] = state.run.mock.calls[0]! as [
+      Plan,
+      { title: string; description: string; undo: Plan },
+    ];
     expect(plan.serverWrites[0]).toMatchObject({
       environmentId: "m4",
       patch: { projectSettingsOverrides: { p1: null } },
     });
+    expect(feedback.title).toBe(
+      "Permissions for new threads follows the app setting (Full access) on MacBook",
+    );
+    expect(feedback.description).toBe("Was: Ask for approval.");
+    expect(feedback.undo.serverWrites[0]!.environmentId).toBe("m4");
+
+    // The server now reports no override; the row stays with its result and Undo.
+    state.environments = [environment({})];
+    await act(async () =>
+      root.render(<ProjectOverrides checkouts={[{ environmentId: m4, id: project }]} />),
+    );
+    expect(container.textContent).toContain("Permissions for new threads");
+    expect(container.querySelector("[role=status]")!.textContent).toContain(
+      "Was: Ask for approval.",
+    );
+    await act(async () => button("Undo").click());
+    expect(state.run).toHaveBeenCalledTimes(2);
+    expect(state.run.mock.calls[1]![1]).toEqual({ title: "Change undone" });
+  });
+
+  it("edits an enum value in place on every machine of the line", async () => {
+    state.environments = [environment({ [project]: { defaultRuntimeMode: "approval-required" } })];
+    await act(async () =>
+      root.render(<ProjectOverrides checkouts={[{ environmentId: m4, id: project }]} />),
+    );
+    const select = container.querySelector<HTMLSelectElement>("[data-testid=edit]")!;
+    await act(async () => {
+      select.value = "auto-accept-edits";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const [, feedback] = state.run.mock.calls[0]! as [Plan, { title: string }];
+    expect(feedback.title).toBe("Permissions for new threads changed to Accept edits on MacBook");
   });
 });
