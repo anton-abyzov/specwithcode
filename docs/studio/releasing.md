@@ -456,11 +456,13 @@ that session can run the helper, so it installs only a package signed by the pin
 the installed version. It reads the caller's files as the caller and works on a root-only copy.
 
 The release Linux job signs the `.deb` with the `LINUX_UPDATE_SIGNING_KEY` secret (armored private
-key, fingerprint `9B93F551ECE923E2F262872560ACC8279860A5D1`), checks the signature against the key
+key, fingerprint `B10CBBD0F4893ACD3FF6F256563A3A098EE4C0D7`), checks the signature against the key
 inside that package, and adds it to the feed as `debSignature`. A real release fails without it. An
 install with the helper refuses an unsigned or badly signed package and does not fall back to the
-password prompt. The secret is the only copy of the private key and it grants root on every Linux
-install at its next update, so never copy it elsewhere.
+password prompt. The private key grants root on every Linux install at its next update: keep it
+only in the secret and the maintainer's Keychain, never in a file, log or chat.
+`apps/desktop/resources/linux/update-key.gpg` must hold this key's public half, and
+`scripts/linux-update-helper.test.ts` fails when its fingerprint is not the one above.
 
 Rotating takes three releases. First, export both public keys into
 `apps/desktop/resources/linux/update-key.gpg` and release, still signed by the old key. Next, change

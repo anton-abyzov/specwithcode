@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Runs the root update helper against stubbed system tools.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -221,4 +222,39 @@ describe("update polkit action", () => {
     expect(helperSource).toContain("KEYRING=/usr/lib/specwithcode/update-key.gpg");
     expect(NodeFS.statSync(resource("update-key.gpg")).size).toBeGreaterThan(0);
   });
+
+  // The release signs with LINUX_UPDATE_SIGNING_KEY and checks the signature against this file
+  // inside the package; v1.0.207 shipped no Linux apps because it held a retired key.
+  it("pins the release signing key, B10CBBD0F4893ACD3FF6F256563A3A098EE4C0D7", () => {
+    expect(primaryKeyFingerprint(NodeFS.readFileSync(resource("update-key.gpg")))).toBe(
+      "B10CBBD0F4893ACD3FF6F256563A3A098EE4C0D7",
+    );
+  });
 });
+
+/** The v4 fingerprint of a binary keyring's first packet, which must be a public key (RFC 4880 12.2). */
+function primaryKeyFingerprint(keyring: Buffer): string {
+  const header = keyring[0]!;
+  expect(header & 0x80).toBe(0x80);
+  let tag: number;
+  let start: number;
+  let length: number;
+  if (header & 0x40) {
+    tag = header & 0x3f;
+    const first = keyring[1]!;
+    if (first < 192) [start, length] = [2, first];
+    else if (first < 224) [start, length] = [3, ((first - 192) << 8) + keyring[2]! + 192];
+    else [start, length] = [6, keyring.readUInt32BE(2)];
+  } else {
+    tag = (header >> 2) & 0x0f;
+    const size = [1, 2, 4][header & 0x03]!;
+    start = 1 + size;
+    length =
+      size === 1 ? keyring[1]! : size === 2 ? keyring.readUInt16BE(1) : keyring.readUInt32BE(1);
+  }
+  expect(tag).toBe(6);
+  const body = keyring.subarray(start, start + length);
+  expect(body[0]).toBe(4);
+  const prefix = Buffer.from([0x99, (body.length >> 8) & 0xff, body.length & 0xff]);
+  return NodeCrypto.createHash("sha1").update(prefix).update(body).digest("hex").toUpperCase();
+}
