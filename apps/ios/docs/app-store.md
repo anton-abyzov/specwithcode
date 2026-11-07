@@ -1,11 +1,11 @@
 # App Store and TestFlight listing
 
-Listing copy and answers for SpecWithCode for iPhone, ready to paste into App Store Connect. Nothing here has been created in App Store Connect or the Apple developer account yet; the steps that need the owner's go-ahead are at the end.
+Listing copy and answers for SpecWithCode for iPhone. The App Store Connect app is `6824245458` (`com.specwithcode.ios`); 0.1.4 (30) is on the App Store. Releasing is under Release below.
 
 | Field            | Value                                                                         |
 | ---------------- | ----------------------------------------------------------------------------- |
 | Bundle id        | `com.specwithcode.ios` (Release); Debug builds use `com.specwithcode.ios.dev` |
-| Version          | `0.1.0` (`MARKETING_VERSION`), build `1` (`CURRENT_PROJECT_VERSION`)          |
+| Version          | `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml`            |
 | Platform         | iPhone only, iOS 26.0 or later, portrait                                      |
 | Primary language | English (U.S.)                                                                |
 | Suggested SKU    | `specwithcode-ios`                                                            |
@@ -201,6 +201,13 @@ Every build includes Connect, so this section applies to every submission and re
 - App Privacy: the answer is no longer Data Not Collected. Declare Contact Info (name, email address) and Identifiers (user ID, device ID: the random Connect device id and the APNs token), all linked to the user, used for App Functionality, not for tracking. Update `App/PrivacyInfo.xcprivacy` to match (`NSPrivacyCollectedDataTypes`) in the same release; the Clerk SDK ships its own privacy manifest. The privacy policy's iPhone section must also describe the account, the relay and push notifications.
 - Capabilities: the App ID needs Sign in with Apple and Push Notifications, and the build must be signed with `Config/Connect.entitlements` (README > Sign in with SpecWithCode Connect).
 - What to Test: replace the Pairing bullet with "Sign in with the same SpecWithCode Connect account as on your Mac, then open your Mac from the list", keep pairing as "Pair with a link or QR code", and drop push notifications from "Not in this build".
+
+## Release
+
+1. Raise `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml`. App Store Connect refuses a build number it has seen, and a version that is already on the App Store takes no new builds for review.
+2. `make testflight V=<version> B=<build> NOTES="<What to Test>"` runs `Tools/release.sh`: Xcode 27.2 archive, export with `Config/ExportOptions.plist`, `asc builds upload`, wait for processing, then the Internal TestFlight group. It needs `~/.config/skill-studio-release/release.env` and never submits for review.
+3. Install the TestFlight build on a real iPhone and launch it.
+4. Stage and submit: `asc release stage --app 6824245458 --version <version> --build <buildId> --copy-metadata-from <previous>`, then `ASC_LAUNCH_VERIFIED="<device, iOS, time>" asc review submit --app 6824245458 --version <version> --build <buildId> --confirm`. The local `asc` guard refuses the submit without `ASC_LAUNCH_VERIFIED`.
 
 ## Steps that need the owner's go-ahead
 

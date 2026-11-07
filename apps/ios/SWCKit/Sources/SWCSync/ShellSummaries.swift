@@ -5,7 +5,7 @@ import SWCWire
 /// tested without sockets.
 public enum ShellSummaries {
   /// What one machine contributes.
-  public struct Machine: Sendable {
+  public struct Machine: Sendable, Equatable {
     public var environmentId: String
     public var label: String
     public var online: Bool
@@ -55,7 +55,9 @@ public enum ShellSummaries {
   ///     its own machine's (see `listedMachines`). Empty lists every machine.
   ///   - includeAide: False hides Aide: no `aide`, and its chats are left out
   ///     of recents and `threadsByProject`. Nothing on the machines changes.
-  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:], home: Set<String> = [], includeAide: Bool = true) -> Output {
+  ///   - cache: Each machine's rows from the previous build, reused for a
+  ///     machine whose rows would come out the same.
+  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:], home: Set<String> = [], includeAide: Bool = true, cache: Cache? = nil) -> Output {
     let known = machines.map { machine in
       var machine = machine
       if machine.nickname == nil { machine.nickname = nicknames[machine.environmentId] }
@@ -83,7 +85,7 @@ public enum ShellSummaries {
     for machine in ordered {
       guard let snapshot = machine.snapshot else { continue }
       let personalIds = Set(snapshot.projects.filter(\.isPersonal).map(\.id))
-      let byProject = topLevelThreads(on: machine, directory: directory, listed: listed) { includeAide || !personalIds.contains($0) }
+      let byProject = topLevelThreads(on: machine, directory: directory, listed: listed, filter: .excluding(includeAide ? [] : personalIds), cache: cache)
       all += byProject.values.joined()
 
       for project in snapshot.projects where project.deletedAt == nil {
@@ -116,7 +118,7 @@ public enum ShellSummaries {
         guard let snapshot = machine.snapshot else { continue }
         let personalIds = Set(snapshot.projects.filter { $0.isPersonal && $0.deletedAt == nil }.map(\.id))
         guard !personalIds.isEmpty else { continue }
-        let byProject = topLevelThreads(on: machine, directory: directory, listed: listed) { personalIds.contains($0) }
+        let byProject = topLevelThreads(on: machine, directory: directory, listed: listed, filter: .only(personalIds), cache: cache)
         for project in snapshot.projects where personalIds.contains(project.id) {
           let ref = ProjectRef(environmentId: machine.environmentId, projectId: project.id)
           let threads = sortThreads(byProject[project.id] ?? [])
@@ -163,6 +165,7 @@ public enum ShellSummaries {
       if $0.activityAt != $1.activityAt { return $0.activityAt > $1.activityAt }
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }.prefix(recentLimit))
+    cache?.finish()
     return Output(aide: aide, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
   }
 
@@ -201,6 +204,72 @@ public enum ShellSummaries {
     return listed
   }
 
+  /// The projects whose threads a machine contributes.
+  enum ProjectFilter: Equatable {
+    case excluding(Set<String>)
+    case only(Set<String>)
+
+    func includes(_ projectId: String) -> Bool {
+      switch self {
+      case let .excluding(ids): !ids.contains(projectId)
+      case let .only(ids): ids.contains(projectId)
+      }
+    }
+  }
+
+  /// Every machine's rows from the last build. A machine's rows are made only
+  /// from what `Key` holds, so while that is equal they are reused instead of
+  /// summarizing each of its threads again. Not thread-safe: one owner builds
+  /// with it at a time.
+  public final class Cache {
+    struct Key: Equatable {
+      var machine: Machine
+      var directory: Directory
+      /// The machine's handed-off threads whose continuation is listed.
+      var continuations: Set<String>
+      var filter: ProjectFilter
+    }
+
+    private var entries: [String: (key: Key, rows: [String: [ThreadSummary]])] = [:]
+    private var used: Set<String> = []
+    /// How often each machine's threads were summarized afresh, for tests.
+    private(set) var summarized: [String: Int] = [:]
+
+    public init() {}
+
+    func rows(_ key: Key, make: () -> [String: [ThreadSummary]]) -> [String: [ThreadSummary]] {
+      let id = key.machine.environmentId
+      used.insert(id)
+      if let entry = entries[id], entry.key == key { return entry.rows }
+      let rows = make()
+      entries[id] = (key, rows)
+      summarized[id, default: 0] += 1
+      return rows
+    }
+
+    /// Forgets machines the last build did not visit.
+    func finish() {
+      entries = entries.filter { used.contains($0.key) }
+      used = []
+    }
+  }
+
+  /// `topLevelThreads` through `cache`, when there is one.
+  static func topLevelThreads(on machine: Machine, directory: Directory, listed: Set<String>, filter: ProjectFilter, cache: Cache?) -> [String: [ThreadSummary]] {
+    guard let cache else { return topLevelThreads(on: machine, directory: directory, listed: listed, include: filter.includes) }
+    let continuations = Set((machine.snapshot?.threads ?? []).compactMap { thread -> String? in
+      guard let next = thread.movedTo, next.isHandoff else { return nil }
+      let key = "\(next.environmentId ?? machine.environmentId)/\(next.threadId)"
+      return listed.contains(key) ? key : nil
+    })
+    // Rows read a machine's last-seen time only while it is unreachable, and
+    // an online machine's moves every heartbeat: it is not part of the key.
+    var keyed = machine
+    if keyed.online { keyed.lastSeenAt = nil }
+    let key = Cache.Key(machine: keyed, directory: directory, continuations: continuations, filter: filter)
+    return cache.rows(key) { topLevelThreads(on: machine, directory: directory, listed: listed, include: filter.includes) }
+  }
+
   /// One machine's top-level threads by project id, for the projects `include`
   /// accepts. A handed-off copy is left out when its continuation is listed.
   static func topLevelThreads(on machine: Machine, directory: Directory, listed: Set<String>, include: (String) -> Bool) -> [String: [ThreadSummary]] {
@@ -219,13 +288,23 @@ public enum ShellSummaries {
   }
 
   /// Names and reachability of every machine the phone knows.
-  struct Directory {
-    var machines: [String: Machine]
+  struct Directory: Equatable {
+    /// What a row reads about another machine; never its threads, so one
+    /// machine's new thread list leaves the others' rows as they were.
+    struct Peer: Equatable {
+      var displayName: String
+      var online: Bool
+      /// Only while the peer is unreachable: an online peer's moves every
+      /// heartbeat, and keeping it would rebuild every machine's rows.
+      var lastSeenAt: Date?
+    }
+
+    var machines: [String: Peer]
     var names: [String: String]
     var nicknames: [String: String]
 
     init(machines: [Machine], names: [String: String], nicknames: [String: String] = [:]) {
-      self.machines = Dictionary(machines.map { ($0.environmentId, $0) }, uniquingKeysWith: { first, _ in first })
+      self.machines = Dictionary(machines.map { ($0.environmentId, Peer(displayName: $0.displayName, online: $0.online, lastSeenAt: $0.online ? nil : $0.lastSeenAt)) }, uniquingKeysWith: { first, _ in first })
       self.names = names
       self.nicknames = nicknames
     }
@@ -448,6 +527,12 @@ public enum ShellSummaries {
   }
 
   public static func preview(_ thread: ThreadShell) -> String? {
+    preview(thread, attention: ThreadAttention.attention(thread))
+  }
+
+  /// `preview` from attention the caller already read, so a row reads its
+  /// thread's report once.
+  static func preview(_ thread: ThreadShell, attention: ThreadAttention.Attention) -> String? {
     switch activity(thread) {
     case .needsYou:
       if thread.pendingRuntimeRequest == nil { return "Plan ready" }
@@ -457,14 +542,14 @@ public enum ShellSummaries {
       if thread.pendingRuntimeRequest?.kind.isUserInput == true { return "Answer needed" }
       return thread.pendingRuntimeRequest?.kind == .authRefresh ? "Sign-in needed" : "Approval requested"
     case .working:
-      if let wait = ThreadAttention.dependencyWait(thread) { return wait }
+      if let wait = attention.dependencyWait { return wait }
       if let label = thread.activeWork?.label, !label.isEmpty { return oneLine(label) }
     case .failed:
       if let error = thread.lastError, !error.isEmpty { return oneLine(error) }
     case .idle:
-      if ThreadAttention.needsReply(thread) { return "Reply needed" }
+      if attention.needsReply { return "Reply needed" }
       if (thread.heldQueuedCount ?? 0) > 0 { return "Queue held" }
-      if let wait = ThreadAttention.dependencyWait(thread) { return wait }
+      if let wait = attention.dependencyWait { return wait }
     }
     if let text = thread.latestVisibleMessage?.text, !text.isEmpty { return oneLine(text) }
     if let blocker = thread.reportedBlocker, !blocker.isEmpty { return oneLine(blocker) }
@@ -473,6 +558,7 @@ public enum ShellSummaries {
 
   public static func threadSummary(_ thread: ThreadShell, environmentId: String, projectTitle: String?, machineLabel: String, machineOnline: Bool, providers: [ServerProviderSummary] = []) -> ThreadSummary {
     let activity = activity(thread)
+    let attention = ThreadAttention.attention(thread)
     let working = activity == .working || activity == .needsYou
     let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
     var summary = ThreadSummary(
@@ -481,7 +567,7 @@ public enum ShellSummaries {
       projectTitle: projectTitle,
       title: title.isEmpty ? "New thread" : title,
       activity: activity,
-      preview: preview(thread),
+      preview: preview(thread, attention: attention),
       updatedAt: thread.updatedAt,
       workStartedAt: working ? (thread.activityRunStartedAt ?? thread.latestRunStartedAt) : nil,
       isPinned: thread.isPinned,
@@ -492,10 +578,10 @@ public enum ShellSummaries {
       planProgress: thread.planProgress.flatMap { $0.total > 0 ? PlanProgress(completed: $0.completed, total: $0.total) : nil },
       activityAt: [thread.createdAt, thread.latestRunRequestedAt, thread.latestUserMessageAt].compactMap { $0 }.max(),
       identity: ThreadIdentity(selection: thread.modelIdentity?.current ?? thread.modelSelection, providers: providers),
-      waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || ThreadAttention.needsReply(thread)
+      waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || attention.needsReply
     )
     summary.isDone = thread.status == .completed
-    summary.waitReason = ThreadAttention.dependencyWait(thread)
+    summary.waitReason = attention.dependencyWait
     summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true
     return summary
   }

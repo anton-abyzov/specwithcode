@@ -290,6 +290,26 @@
     "accessStatus": "pending"
   },
   {
+    "id": "ti_secret",
+    "threadId": "thr_1",
+    "runId": "run_1",
+    "nodeId": null,
+    "providerThreadId": null,
+    "providerTurnId": null,
+    "nativeItemRef": null,
+    "parentItemId": null,
+    "ordinal": 9,
+    "status": "waiting",
+    "title": null,
+    "startedAt": "2026-10-18T06:00:03.000Z",
+    "completedAt": null,
+    "updatedAt": "2026-10-18T06:00:05.123Z",
+    "type": "secret_request",
+    "label": "OpenAI API key",
+    "reason": "To run the image script.",
+    "secretStatus": "pending"
+  },
+  {
     "id": "ti_input",
     "threadId": "thr_1",
     "runId": "run_1",

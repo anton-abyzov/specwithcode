@@ -4,23 +4,24 @@ import SWCWire
 /// Maps a thread projection to the rows and composer state a `ChatSession` shows.
 public enum TranscriptMapper {
   /// Rows in timeline order, then messages waiting in the queue. Item types
-  /// this build does not know are skipped.
-  public static func rows(for projection: ThreadProjection, environmentId: String) -> [TranscriptRow] {
+  /// this build does not know are skipped. `machineLabel` names a machine by
+  /// its environment id, for routed messages that carry one.
+  public static func rows(for projection: ThreadProjection, environmentId: String, machineLabel: ((String) -> String)? = nil) -> [TranscriptRow] {
     let requests = Dictionary(projection.runtimeRequests.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
     let timeline = projection.visibleTurnItems
       .sorted { $0.position < $1.position }
       .compactMap { row in
-        kind(for: row.item, requests: requests, environmentId: environmentId).map { kind in
+        kind(for: row.item, requests: requests, environmentId: environmentId, machineLabel: machineLabel).map { kind in
           TranscriptRow(id: row.id, kind: placed(kind, visibility: row.visibility))
         }
       }
-    return timeline + queuedRows(projection)
+    return timeline + queuedRows(projection, machineLabel: machineLabel)
   }
 
   /// Messages you queued behind the active run. They have no turn item until
   /// their run starts, so they come from the runs and messages, in queue order,
   /// as the web client lists them. Automatic notification runs are left out.
-  static func queuedRows(_ projection: ThreadProjection) -> [TranscriptRow] {
+  static func queuedRows(_ projection: ThreadProjection, machineLabel: ((String) -> String)? = nil) -> [TranscriptRow] {
     let inTimeline = Set(userMessages(projection).map(\.messageId))
     let messages = Dictionary(projection.messages.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
     return projection.runs
@@ -29,7 +30,7 @@ public enum TranscriptMapper {
       .compactMap { run in
         let message = messages[run.userMessageId]
         if message?.notification != nil { return nil }
-        let text = message?.text ?? "Queued message"
+        let text = message.map { RoutedMessageDisplay.text($0.text, messageId: $0.id, createdBy: $0.createdBy, senderThreadId: $0.senderThreadId, machineLabel: machineLabel) } ?? "Queued message"
         return TranscriptRow(id: "queued:\(run.id)", kind: .user(text: text, state: run.queueHeld == true ? .held : .queued, attachments: (message?.attachments ?? []).map(TranscriptAttachment.init)))
       }
   }
@@ -49,10 +50,11 @@ public enum TranscriptMapper {
     return seconds >= 1 ? seconds : nil
   }
 
-  public static func kind(for item: TurnItem, requests: [String: RuntimeRequest] = [:], environmentId: String) -> TranscriptRow.Kind? {
+  public static func kind(for item: TurnItem, requests: [String: RuntimeRequest] = [:], environmentId: String, machineLabel: ((String) -> String)? = nil) -> TranscriptRow.Kind? {
     switch item.content {
     case let .userMessage(message):
-      return .user(text: message.text, attachments: message.attachments.map(TranscriptAttachment.init))
+      let text = RoutedMessageDisplay.text(message.text, messageId: message.messageId, createdBy: message.createdBy, senderThreadId: message.senderThreadId, machineLabel: machineLabel)
+      return .user(text: text, attachments: message.attachments.map(TranscriptAttachment.init))
 
     case let .assistantMessage(message):
       return .assistant(markdown: message.text, streaming: message.streaming)
@@ -116,9 +118,28 @@ public enum TranscriptMapper {
     case let .notification(notification):
       return .notice(text: notification.summary)
 
+    case let .secretRequest(request):
+      return .notice(text: secretNotice(request))
+
     case .unknown:
       return nil
     }
+  }
+
+  /// The phone cannot take a secret, so a request shows as a notice: where to
+  /// answer it while it waits, otherwise how it was answered.
+  static func secretNotice(_ request: TurnItem.SecretRequest) -> String {
+    let trimmed = request.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    let label = trimmed.isEmpty ? "a secret" : trimmed
+    let outcome: String
+    switch request.secretStatus.known {
+    case .pending: return "Waiting for \(label). Enter it on your computer or the desktop app."
+    case .saved: outcome = "Saved securely and kept private"
+    case .declined: outcome = "Declined"
+    // Cancelled, or a status this build does not know: nothing left to answer.
+    case .cancelled, nil: outcome = "Request ended"
+    }
+    return "\(trimmed.isEmpty ? "Secret" : trimmed): \(outcome)"
   }
 
   /// A run holds the thread now.

@@ -40,7 +40,11 @@ nonisolated enum SidebarItem: Hashable, Sendable {
 /// each have their own; views push through whichever is in the environment.
 @Observable
 final class StackNavigator {
-  var path: [Route] = []
+  var path: [Route] = [] {
+    didSet { if path != oldValue { onChange?() } }
+  }
+  /// Called after the path changes, by a push, a pop or the stack's own back swipe.
+  @ObservationIgnored var onChange: (() -> Void)?
 
   func push(_ route: Route) { path.append(route) }
 
@@ -55,7 +59,25 @@ final class StackNavigator {
 final class AppRouter {
   let main = StackNavigator()
   /// The chat at the root of the main stack. nil means the default landing.
-  var root: ChatTarget?
+  var root: ChatTarget? {
+    didSet { if root != oldValue { navigated() } }
+  }
+  /// Remembers the root and its thread across launches. nil in tests and
+  /// sample data, so they never write it.
+  @ObservationIgnored let lastOpenedStore: LastOpenedStore?
+  /// The model the router belongs to, read for the default landing when a
+  /// thread opened over it is saved.
+  @ObservationIgnored weak var model: AppModel?
+  /// The chat a cold start opens again once the model can back it. Any
+  /// navigation, link or launch route before then wins.
+  var pendingRestore: LastOpened?
+  @ObservationIgnored private var isRestoring = false
+
+  init(lastOpenedStore: LastOpenedStore? = nil, model: AppModel? = nil) {
+    self.lastOpenedStore = lastOpenedStore
+    self.model = model
+    main.onChange = { [weak self] in self?.navigated() }
+  }
   var isDrawerOpen = false {
     didSet { if !isDrawerOpen { isDrawerSearching = false } }
   }
@@ -369,6 +391,12 @@ final class AppRouter {
   /// The chat to show at the root right now.
   func landing(in model: AppModel) -> ChatTarget? {
     if let root, Self.isValid(root, in: model) { return root }
+    // A saved chat shows as soon as it is in, whatever else is still loading;
+    // until then the screen shows loading, not Aide.
+    if let saved = pendingRestore, model.isLoading {
+      if case let .thread(ref) = saved.root { return model.thread(ref) != nil ? saved.root : nil }
+      return Self.isValid(saved.root, in: model) ? saved.root : nil
+    }
     return Self.defaultLanding(aide: model.aide, projects: model.projects)
   }
 
@@ -390,6 +418,7 @@ final class AppRouter {
   }
 
   func handle(_ link: DeepLink) {
+    dropPendingRestore()
     sheet = nil
     isDrawerOpen = false
     switch link {
@@ -412,6 +441,7 @@ final class AppRouter {
   @discardableResult
   func applyLaunchRoute(in model: AppModel) -> Bool {
     guard let route = pendingLaunchRoute else { return true }
+    dropPendingRestore()
     switch route {
     case .settings:
       sheet = .globalSettings
@@ -457,5 +487,99 @@ final class AppRouter {
     }
     pendingLaunchRoute = nil
     return true
+  }
+
+  // MARK: - Last opened
+
+  /// The person or a link moved: a restore still waiting is dropped, and the
+  /// new place is saved.
+  private func navigated() {
+    guard !isRestoring, lastOpenedStore != nil else { return }
+    dropPendingRestore()
+    saveLastOpened()
+  }
+
+  /// Writes only when a restore is waiting, so routers without one never
+  /// invalidate the views that read it.
+  private func dropPendingRestore() {
+    if pendingRestore != nil { pendingRestore = nil }
+  }
+
+  /// The root chat and the thread on top of it. With no root, a thread on top
+  /// is saved over the default landing it was opened from; the default landing
+  /// alone is not saved, since a cold start lands there anyway. Nothing is
+  /// written while a restore still waits, so it is never lost to a half-loaded
+  /// screen.
+  private func saveLastOpened() {
+    guard let lastOpenedStore, pendingRestore == nil else { return }
+    let thread = main.path.reversed().lazy.compactMap { route -> ThreadRef? in
+      if case let .chat(.thread(ref)) = route { ref } else { nil }
+    }.first
+    if let root {
+      lastOpenedStore.save(LastOpened(root: root, thread: thread))
+    } else if let thread {
+      let landing = model.flatMap { Self.defaultLanding(aide: $0.aide, projects: $0.projects) }
+      lastOpenedStore.save(landing.map { LastOpened(root: $0, thread: thread) } ?? LastOpened(root: .thread(thread), thread: nil))
+    } else {
+      lastOpenedStore.save(nil)
+    }
+  }
+
+  /// Opens the saved chat as soon as the model can back it, then the thread on
+  /// top of it once that thread's machine can say whether it is still there.
+  /// A chat or thread that is gone is forgotten, so the default landing shows;
+  /// one whose machine's list has not arrived is kept for the next launch.
+  /// Loading ending never strands a restore: a thread a machine has not
+  /// listed yet opens by its ref, and its screen shows the machine's state.
+  /// Returns true when there is nothing left to do.
+  @discardableResult
+  func applyRestore(in model: AppModel) -> Bool {
+    guard let saved = pendingRestore else { return true }
+    if root != saved.root {
+      switch Self.restoreState(of: saved.root, in: model) {
+      case .waiting:
+        return false
+      case .gone:
+        pendingRestore = nil
+        let machine = saved.root.environmentId
+        if model.machine(machine) == nil || !model.unloadedShells.contains(machine) { lastOpenedStore?.save(nil) }
+        return true
+      case .ready:
+        isRestoring = true
+        open(saved.root)
+        isRestoring = false
+      }
+    }
+    if let thread = saved.thread, saved.root != .thread(thread) {
+      switch model.threadExists(thread) {
+      case nil where model.isLoading:
+        return false
+      case false?:
+        break
+      default:
+        isRestoring = true
+        pushThread(thread, on: main, in: model)
+        isRestoring = false
+      }
+    }
+    pendingRestore = nil
+    saveLastOpened()
+    return true
+  }
+
+  private enum RestoreState { case ready, waiting, gone }
+
+  /// A saved project or Aide waits for loading to end; a saved thread, for its
+  /// machine to say whether it is still there.
+  private static func restoreState(of target: ChatTarget, in model: AppModel) -> RestoreState {
+    if case let .thread(ref) = target {
+      switch model.threadExists(ref) {
+      case true?: return .ready
+      case false?: return .gone
+      case nil: return model.isLoading ? .waiting : .ready
+      }
+    }
+    if isValid(target, in: model) { return .ready }
+    return model.isLoading ? .waiting : .gone
   }
 }

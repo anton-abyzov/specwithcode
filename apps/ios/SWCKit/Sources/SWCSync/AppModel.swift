@@ -697,6 +697,9 @@ public final class AppModel {
   /// False while a paired machine's projects and threads have not arrived
   /// yet, so a missing Aide or project may only be missing for now.
   public var allShellsLoaded = true
+  /// Machines whose live projects and threads have not arrived, enabled or
+  /// not: a thread missing from one of them may only be missing for now.
+  public var unloadedShells: Set<String> = []
   /// SpecWithCode Connect, nil when this build has no Connect configuration.
   public var connect: ConnectState?
   /// Open simulators and emulators by machine; missing until a machine answers.

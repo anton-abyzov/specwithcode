@@ -199,3 +199,29 @@ import SWCWire
     #expect(TranscriptMapper.queuedCount(try #require(state.projection)) == 1)
   }
 }
+
+@Suite struct SecretRequestMappingTests {
+  func notice(status: String, label: String = "OpenAI API key") throws -> TranscriptRow.Kind? {
+    let item = try TestData.decode(TurnItem.self, """
+      {"id":"ti_s","threadId":"thr_1","ordinal":3,"status":"waiting","updatedAt":"2026-11-07T06:00:05.123Z",
+       "type":"secret_request","label":"\(label)","reason":"To call the API","secretStatus":"\(status)"}
+      """)
+    return TranscriptMapper.kind(for: item, environmentId: "env")
+  }
+
+  @Test func pendingSecretPointsToTheComputer() throws {
+    #expect(try notice(status: "pending") == .notice(text: "Waiting for OpenAI API key. Enter it on your computer or the desktop app."))
+  }
+
+  @Test func answeredSecretSaysHowInPlainWords() throws {
+    #expect(try notice(status: "saved") == .notice(text: "OpenAI API key: Saved securely and kept private"))
+    #expect(try notice(status: "declined") == .notice(text: "OpenAI API key: Declined"))
+    #expect(try notice(status: "cancelled") == .notice(text: "OpenAI API key: Request ended"))
+    #expect(try notice(status: "expired") == .notice(text: "OpenAI API key: Request ended"))
+  }
+
+  @Test func unlabelledSecretStillReads() throws {
+    #expect(try notice(status: "pending", label: " ") == .notice(text: "Waiting for a secret. Enter it on your computer or the desktop app."))
+    #expect(try notice(status: "saved", label: "") == .notice(text: "Secret: Saved securely and kept private"))
+  }
+}
