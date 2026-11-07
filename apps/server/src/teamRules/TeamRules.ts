@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { TEAM_RULES_MAX_BYTES } from "@specweave-studio/contracts";
+import { type ProjectId, TEAM_RULES_MAX_BYTES } from "@specweave-studio/contracts";
 import {
   canonicalTeamRules,
   parseTeamRulesText,
@@ -13,6 +13,9 @@ import {
 } from "@specweave-studio/shared/teamRules";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import { makeTeamRulesFolderReader } from "./TeamRulesScope.ts";
 
 /**
  * Where the machine's rules live. Hardcoded on purpose: a path derived from the
@@ -121,9 +124,17 @@ export function makeTeamRulesReader(path: string): () => TeamRulesState {
 export interface TeamRulesShape {
   /** The rules right now. Tightening applies to the next check. */
   readonly current: Effect.Effect<TeamRulesState>;
+  /**
+   * The rules for one working folder: the machine's, plus its zones and the
+   * repository's committed rules. Reach, tools and `same-rules` are about the
+   * machine, so they ask `current`.
+   */
+  readonly forFolder: (cwd: string) => Effect.Effect<TeamRulesState>;
 }
 
 const machineReader = makeTeamRulesReader(machineTeamRulesPath());
+
+const folderReader = makeTeamRulesFolderReader(machineReader);
 
 /** The machine's rules, for the few launch helpers that are not Effects. */
 export const readMachineTeamRules = (): TeamRulesState => machineReader();
@@ -133,7 +144,10 @@ export const readMachineTeamRules = (): TeamRulesState => machineReader();
  * service that nobody wired up still enforces them; tests provide another.
  */
 export class TeamRules extends Context.Reference<TeamRulesShape>("studio/teamRules/TeamRules", {
-  defaultValue: () => ({ current: Effect.sync(machineReader) }),
+  defaultValue: () => ({
+    current: Effect.sync(machineReader),
+    forFolder: (cwd) => Effect.promise(() => folderReader(cwd)),
+  }),
 }) {}
 
 export const currentTeamRules: Effect.Effect<TeamRulesState> = Effect.gen(function* () {
@@ -141,9 +155,42 @@ export const currentTeamRules: Effect.Effect<TeamRulesState> = Effect.gen(functi
   return yield* rules.current;
 });
 
-/** A fixed state, for tests. */
-export const teamRulesOf = (state: TeamRulesState): TeamRulesShape => ({
+/** The rules for a thread's working folder; the machine's when it has none. */
+export const teamRulesForFolder = (cwd: string | null | undefined) =>
+  cwd === null || cwd === undefined || cwd.length === 0
+    ? currentTeamRules
+    : Effect.gen(function* () {
+        const rules = yield* TeamRules;
+        return yield* rules.forFolder(cwd);
+      });
+
+/**
+ * The rules for a thread: its worktree, else its project's folder. A project
+ * that cannot be read gets the machine's rules; the turn fails on it anyway.
+ */
+export const teamRulesForThread = <E, R>(
+  projects: {
+    readonly get: (
+      projectId: ProjectId,
+    ) => Effect.Effect<Option.Option<{ readonly workspaceRoot: string }>, E, R>;
+  },
+  thread: { readonly projectId: ProjectId; readonly worktreePath?: string | null | undefined },
+): Effect.Effect<TeamRulesState, never, R> =>
+  thread.worktreePath !== null && thread.worktreePath !== undefined
+    ? teamRulesForFolder(thread.worktreePath)
+    : projects.get(thread.projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+        Effect.flatMap((project) => teamRulesForFolder(project?.workspaceRoot)),
+      );
+
+/** A fixed state, for tests; `folders` gives some folders their own. */
+export const teamRulesOf = (
+  state: TeamRulesState,
+  folders: Readonly<Record<string, TeamRulesState>> = {},
+): TeamRulesShape => ({
   current: Effect.succeed(state),
+  forFolder: (cwd) => Effect.succeed(folders[cwd] ?? state),
 });
 
 const POLL_INTERVAL = "5 seconds";

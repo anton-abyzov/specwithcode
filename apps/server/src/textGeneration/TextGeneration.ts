@@ -1,8 +1,11 @@
 import {
   teamRulesHoldRefusal,
   teamRulesSelectionRefusal,
+  teamRulesFolderLaunchRefusal,
+  teamRulesInstanceHasLaunchValues,
 } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -203,23 +206,33 @@ const resolveInstance = (
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const capacity = yield* StudioCapacity.Capacity;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   /** Titles, commit text and notes send code to a model too, so rules apply. */
   const refuseByTeamRules = (
     operation: TextGenerationOp,
-    input: { modelSelection: ModelSelection },
+    input: { modelSelection: ModelSelection; cwd?: string },
   ) =>
     Effect.gen(function* () {
-      const rules = yield* currentTeamRules;
+      const rules = yield* teamRulesForFolder(input.cwd);
       if (rules.status === "none") return;
+      const driver =
+        (yield* registry.getInstance(input.modelSelection.instanceId))?.driverKind ??
+        input.modelSelection.instanceId;
       const refused =
         teamRulesHoldRefusal(rules) ??
-        teamRulesSelectionRefusal(rules, {
-          driver:
-            (yield* registry.getInstance(input.modelSelection.instanceId))?.driverKind ??
+        teamRulesSelectionRefusal(rules, { driver, model: input.modelSelection.model }) ??
+        teamRulesFolderLaunchRefusal(
+          rules,
+          yield* currentTeamRules,
+          driver,
+          teamRulesInstanceHasLaunchValues(
+            yield* settings.getSettings.pipe(Effect.orDie),
             input.modelSelection.instanceId,
-          model: input.modelSelection.model,
-        });
+            driver,
+            process.env,
+          ),
+        );
       if (refused !== null) {
         return yield* new TextGenerationError({ operation, detail: refused.message });
       }

@@ -147,6 +147,27 @@ assert.ok(body.includes("Switch to Auto-accept edits"));
 await shot("team-rules-carried-ceiling");
 
 // A machine without a rules file: nothing added, nothing locked.
+await page.setViewportSize({ width: 1000, height: 1500 });
+await open("repository");
+body = await text();
+for (const expected of [
+  "Payments team's repository rules allow up to Supervised",
+  "A team agreement, not a security boundary.",
+  "Approved connections",
+  "Update source",
+  "Zone",
+  "Repository rules",
+]) {
+  assert.ok(body.includes(expected), `repository: ${expected}`);
+}
+await shot("team-rules-repository");
+await page.setViewportSize({ width: 1000, height: 820 });
+await open("repository-hold");
+body = await text();
+assert.ok(body.includes("Agents are paused in this repository"));
+assert.ok(body.includes("A team agreement, not a security boundary."));
+await shot("team-rules-repository-hold");
+
 for (const view of ["reach", "tools", "drift"]) {
   await open(view, "light", "none");
   body = await text();

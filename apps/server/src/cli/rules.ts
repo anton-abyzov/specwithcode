@@ -3,10 +3,14 @@
  * the file directly, so it works with the service stopped. `--file` judges a
  * candidate before it is deployed and never changes what the service enforces.
  */
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - a CLI that reads a candidate file and writes companion files.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import { type RuntimeMode, TEAM_RULES_FILE_NAME } from "@specweave-studio/contracts";
 import {
+  parseTeamRulesRepositoryText,
   summarizeTeamRules,
-  TEAM_RULES_DECLARED_ONLY,
   teamRulesCeiling,
   teamRulesModeLabel,
   teamRulesModeRefusal,
@@ -23,6 +27,11 @@ import * as Schema from "effect/Schema";
 import { Flag, Command } from "effect/cli";
 
 import { machineTeamRulesPath, readTeamRulesFile } from "../teamRules/TeamRules.ts";
+import { readTeamRulesFolderState } from "../teamRules/TeamRulesScope.ts";
+import { COMPANION_PATHS, teamRulesCompanion } from "../teamRules/companion.ts";
+import { teamRulesRecordLines, writeTeamRulesRecordsFile } from "../teamRules/TeamRulesRecords.ts";
+import { baseDirFlag } from "./config.ts";
+import { resolveDatabasePath } from "./db.ts";
 
 export class CliTeamRulesError extends Schema.TaggedError<CliTeamRulesError>()(
   "CliTeamRulesError",
@@ -40,10 +49,27 @@ const fileFlag = Flag.String("file").pipe(
   Flag.optional,
 );
 
+const repositoryFlag = Flag.String("repository").pipe(
+  Flag.withDescription(
+    "Also apply this folder's zones and its repository's committed rules, read from the default branch's remote-tracking ref.",
+  ),
+  Flag.optional,
+);
+
 const load = (file: Option.Option<string>) => {
   const path = Option.getOrElse(file, () => machineTeamRulesPath());
   return { path, state: readTeamRulesFile(path), candidate: Option.isSome(file) };
 };
+
+const loadFolder = (file: Option.Option<string>, repository: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const loaded = load(file);
+    if (Option.isNone(repository)) return loaded;
+    const state = yield* Effect.promise(() =>
+      readTeamRulesFolderState(loaded.state, repository.value),
+    );
+    return { ...loaded, state };
+  });
 
 const CANNOT_DO = [
   "It is not a sandbox. It decides what the app asks providers for.",
@@ -64,6 +90,14 @@ const CANNOT_DO = [
   "A carried ceiling limits the permission mode. The model list stays with each machine's own rules.",
   "A restart during a hold restores a stored Connect tunnel; the rules stop it again once the file is fixed.",
   "Older builds ignore these rules. Device application control handles that.",
+  "Repository rules bind only people using SpecWithCode on that repository. They are a team agreement, not a security boundary.",
+  "A repository's rules can only tighten. They cannot set reach, tools, telemetry, updates, zones or a pin, and they reach a machine only after a fetch updates its remote-tracking ref.",
+  "Anyone who can run a shell in the repository, agents included, can move that ref or change its remotes, so repository rules and zones bind cooperative use.",
+  "Zones match the Git remotes of a thread's working folder. A folder that is not a Git repository matches nothing, even if it holds a client's repository. A zone cannot set a pin.",
+  "connections covers project connections and turning on native ones. Provider CLIs load their own configured servers, so use rules companion for those.",
+  "updates.feed stops updates from the public feed. It does not download from your feed; your own deployment installs those.",
+  "rules companion files bind a provider CLI only where you deploy them, and only for what that provider can express.",
+  "Records are not tamper evident while agents run as the same OS user as the database. Person and device come from the client's session, and records begin when machine rules appear.",
 ];
 
 const describeSwitches = (section: object) =>
@@ -77,7 +111,9 @@ const describeRules = (path: string, state: TeamRulesState): ReadonlyArray<strin
   }
   if (state.status === "hold") {
     return [
-      `Team rules at ${path} have an error, so agents are paused until it is fixed.`,
+      state.holdScope === undefined
+        ? `Team rules at ${path} have an error, so agents are paused until it is fixed.`
+        : "This folder's rules could not be read, so agents are paused in this folder until that is fixed.",
       ...(state.owner === undefined ? [] : [`Set by: ${state.owner}`]),
       ...state.issues.map((issue) => `  ${issue}`),
     ];
@@ -85,7 +121,6 @@ const describeRules = (path: string, state: TeamRulesState): ReadonlyArray<strin
   const { rules, fingerprint } = state;
   const ceiling = teamRulesCeiling(state);
   const routines = teamRulesRoutineCeiling(state);
-  const declared = TEAM_RULES_DECLARED_ONLY.filter((section) => rules[section] !== undefined);
   return [
     `Team rules at ${path}`,
     `Set by: ${rules.owner}`,
@@ -105,7 +140,29 @@ const describeRules = (path: string, state: TeamRulesState): ReadonlyArray<strin
         ]
       : []),
     `Telemetry export: ${rules.telemetry?.export === false ? "off" : "not limited"}`,
-    ...(declared.length === 0 ? [] : [`Declared, not enforced yet: ${declared.join(", ")}`]),
+    ...(rules.connections?.allow === undefined
+      ? []
+      : [`Approved connections: ${rules.connections.allow.join(", ") || "none"}`]),
+    ...(rules.updates === undefined
+      ? []
+      : [
+          `Updates: ${[
+            ...(rules.updates.automatic === undefined
+              ? []
+              : [rules.updates.automatic ? "automatic, locked on" : "automatic off, locked"]),
+            ...(rules.updates.feed === undefined
+              ? []
+              : [`delivered from ${rules.updates.feed}, public feed off`]),
+          ].join("; ")}`,
+        ]),
+    ...(rules.zones === undefined
+      ? []
+      : [`Zones: ${rules.zones.map((zone) => zone.remote).join(", ")}`]),
+    ...(state.sources ?? []).map((source) =>
+      source.source === "repository"
+        ? `Repository rules from ${source.owner}: a team agreement, not a security boundary.`
+        : `A zone set by ${source.owner} applies to this folder.`,
+    ),
     ...(state.warnings.length === 0
       ? []
       : ["", "Warnings:", ...state.warnings.map((line) => `  ${line}`)]),
@@ -115,11 +172,33 @@ const describeRules = (path: string, state: TeamRulesState): ReadonlyArray<strin
   ];
 };
 
-const checkCommand = Command.make("check", { file: fileFlag }).pipe(
+const checkCommand = Command.make("check", {
+  file: fileFlag,
+  repository: repositoryFlag,
+  repositoryFile: Flag.String("repository-file").pipe(
+    Flag.withDescription("Judge this file as a candidate for a repository's committed rules."),
+    Flag.optional,
+  ),
+}).pipe(
   Command.withDescription("Validate the Team rules file. Exits non-zero when it has an error."),
   Command.withHandler(
     Effect.fn("cli.rules.check")(function* (flags) {
-      const { path, state, candidate } = load(flags.file);
+      if (Option.isSome(flags.repositoryFile)) {
+        const path = flags.repositoryFile.value;
+        const text = yield* Effect.try({
+          try: () => NodeFS.readFileSync(path, "utf8"),
+          catch: () => new CliTeamRulesError({ reason: `Could not read ${path}.` }),
+        });
+        const parsed = parseTeamRulesRepositoryText(text);
+        if (!parsed.ok) {
+          return yield* new CliTeamRulesError({
+            reason: [`${path} is invalid:`, ...parsed.issues.map((line) => `  ${line}`)].join("\n"),
+          });
+        }
+        yield* Console.log(`${path} is valid repository rules. Set by ${parsed.rules.owner}.`);
+        return;
+      }
+      const { path, state, candidate } = yield* loadFolder(flags.file, flags.repository);
       if (state.status === "hold") {
         return yield* new CliTeamRulesError({
           reason: [
@@ -143,6 +222,7 @@ const checkCommand = Command.make("check", { file: fileFlag }).pipe(
 
 const showCommand = Command.make("show", {
   file: fileFlag,
+  repository: repositoryFlag,
   json: Flag.Boolean("json").pipe(
     Flag.withDescription("Print the client summary as JSON."),
     Flag.withDefault(false),
@@ -151,7 +231,7 @@ const showCommand = Command.make("show", {
   Command.withDescription("Show the rules in force, what they enforce and what they cannot do."),
   Command.withHandler(
     Effect.fn("cli.rules.show")(function* (flags) {
-      const { path, state } = load(flags.file);
+      const { path, state } = yield* loadFolder(flags.file, flags.repository);
       if (flags.json) {
         yield* Console.log(
           // @effect-diagnostics-next-line preferSchemaOverJson:off - prints a plain summary for people and scripts.
@@ -173,6 +253,7 @@ const RUNTIME_MODES: ReadonlyArray<RuntimeMode> = [
 
 const explainCommand = Command.make("explain", {
   file: fileFlag,
+  repository: repositoryFlag,
   mode: Flag.Literals("mode", RUNTIME_MODES).pipe(
     Flag.withDescription("A permission mode to judge."),
     Flag.optional,
@@ -190,7 +271,7 @@ const explainCommand = Command.make("explain", {
   Command.withDescription("Say whether a permission mode, provider or model is allowed, and why."),
   Command.withHandler(
     Effect.fn("cli.rules.explain")(function* (flags) {
-      const { path, state } = load(flags.file);
+      const { path, state } = yield* loadFolder(flags.file, flags.repository);
       if (state.status === "none") {
         yield* Console.log(`Allowed: no Team rules at ${path}.`);
         return;
@@ -236,9 +317,149 @@ const explainCommand = Command.make("explain", {
   ),
 );
 
+const companionCommand = Command.make("companion", {
+  file: fileFlag,
+  output: Flag.String("output").pipe(
+    Flag.withDescription("Write managed-settings.json and requirements.toml into this new folder."),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription(
+    "Print the Claude Code managed-settings.json and Codex requirements.toml matching these rules, for device management.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.rules.companion")(function* (flags) {
+      const { path, state } = load(flags.file);
+      if (state.status === "none") {
+        yield* Console.log(`No Team rules at ${path}, so there is nothing to print.`);
+        return;
+      }
+      if (state.status === "hold") {
+        return yield* new CliTeamRulesError({
+          reason: [`${path} is invalid:`, ...state.issues.map((line) => `  ${line}`)].join("\n"),
+        });
+      }
+      const companion = teamRulesCompanion(state.rules);
+      const notes =
+        companion.notes.length === 0
+          ? []
+          : ["", "Not carried over:", ...companion.notes.map((note) => `  ${note}`)];
+      const where = (paths: { darwin: string; linux: string; win32: string }) =>
+        `macOS ${paths.darwin}, Linux ${paths.linux}, Windows ${paths.win32}`;
+      if (Option.isSome(flags.output)) {
+        const output = flags.output.value;
+        yield* Effect.try({
+          try: () => {
+            NodeFS.mkdirSync(output);
+            NodeFS.writeFileSync(
+              NodePath.join(output, "managed-settings.json"),
+              companion.managedSettings,
+            );
+            NodeFS.writeFileSync(
+              NodePath.join(output, "requirements.toml"),
+              companion.requirements,
+            );
+          },
+          catch: () =>
+            new CliTeamRulesError({
+              reason: `Could not create ${output}. It must be a new folder.`,
+            }),
+        });
+        yield* Console.log(
+          [
+            `Wrote managed-settings.json and requirements.toml to ${output}.`,
+            `Deploy managed-settings.json to: ${where(COMPANION_PATHS.managedSettings)}.`,
+            `Deploy requirements.toml to: ${where(COMPANION_PATHS.requirements)}.`,
+            ...notes,
+          ].join("\n"),
+        );
+        return;
+      }
+      yield* Console.log(
+        [
+          `# managed-settings.json (${where(COMPANION_PATHS.managedSettings)})`,
+          companion.managedSettings.trimEnd(),
+          "",
+          `# requirements.toml (${where(COMPANION_PATHS.requirements)})`,
+          companion.requirements.trimEnd(),
+          ...notes,
+        ].join("\n"),
+      );
+    }),
+  ),
+);
+
+const dateFlag = (name: string, description: string) =>
+  Flag.String(name).pipe(Flag.withDescription(description), Flag.optional);
+
+const isoFrom = (name: string, value: Option.Option<string>) =>
+  Option.match(value, {
+    onNone: () => Effect.succeed(undefined as string | undefined),
+    onSome: (text) =>
+      Number.isNaN(Date.parse(text))
+        ? Effect.fail(new CliTeamRulesError({ reason: `--${name} must be a date.` }))
+        : // A bare --until date includes that whole day.
+          Effect.succeed(
+            new Date(
+              name === "until" && /^\d{4}-\d{2}-\d{2}$/u.test(text)
+                ? `${text}T23:59:59.999Z`
+                : text,
+            ).toISOString(),
+          ),
+  });
+
+const recordsCommand = Command.make("records", {
+  baseDir: baseDirFlag,
+  since: dateFlag("since", "Only records at or after this date."),
+  until: dateFlag("until", "Only records at or before this date."),
+  output: Flag.String("output").pipe(
+    Flag.withDescription("Write to this new private file instead of printing."),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription(
+    "Export who did what as JSON lines: events and settings changes with person and device, never message text or setting values.",
+  ),
+  Command.withHandler(
+    Effect.fn("cli.rules.records")(function* (flags) {
+      const dbPath = yield* resolveDatabasePath(flags.baseDir);
+      const since = yield* isoFrom("since", flags.since);
+      const until = yield* isoFrom("until", flags.until);
+      const query = { dbPath, since, until };
+      if (Option.isSome(flags.output)) {
+        const output = flags.output.value;
+        const count = yield* Effect.try({
+          try: () => writeTeamRulesRecordsFile(query, output),
+          catch: (cause) =>
+            new CliTeamRulesError({
+              reason: `Could not write ${output}: ${(cause as NodeJS.ErrnoException).code ?? "export failed"}. It must be a new file.`,
+            }),
+        });
+        yield* Console.log(`Wrote ${count} records to ${output}.`);
+        return;
+      }
+      const lines = teamRulesRecordLines(query);
+      while (true) {
+        const next = yield* Effect.try({
+          try: () => lines.next(),
+          catch: () => new CliTeamRulesError({ reason: "Could not read the database." }),
+        });
+        if (next.done === true) return;
+        yield* Console.log(next.value);
+      }
+    }),
+  ),
+);
+
 export const rulesCommand = Command.make("rules").pipe(
   Command.withDescription(
     "Read and explain the machine's Team rules: limits a company sets on permissions, providers and models.",
   ),
-  Command.withSubcommands([checkCommand, showCommand, explainCommand]),
+  Command.withSubcommands([
+    checkCommand,
+    showCommand,
+    explainCommand,
+    companionCommand,
+    recordsCommand,
+  ]),
 );

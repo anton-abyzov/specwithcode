@@ -326,6 +326,29 @@ function Notice({
   );
 }
 
+const folderSources = [
+  { source: "zone", owner: "Acme Engineering" },
+  { source: "repository", owner: "Payments team" },
+] as const;
+
+/** A project a zone and its repository's committed rules both narrow. */
+const inRepository: TeamRulesSummary = {
+  ...active,
+  ceiling: "approval-required",
+  ceilingBy: folderSources[1],
+  sources: folderSources,
+  modelLists: [["claude-sonnet-*"]],
+  connections: ["github", "linear"],
+  connectionLists: [["github"]],
+  updates: { automatic: false, feed: "https://updates.acme.example" },
+};
+const repositoryHold: TeamRulesSummary = {
+  status: "hold",
+  owner: "Payments team",
+  holdScope: "repository",
+  issues: [".specwithcode/team-rules.json: agents.ceiling is not a permission mode."],
+};
+
 const view = params.get("view") ?? "settings";
 const rules = summaryFor(params.get("rules"));
 createRoot(document.getElementById("root")!).render(
@@ -340,6 +363,15 @@ createRoot(document.getElementById("root")!).render(
       <Menu carriedLimit={carried} />
       <Notice summary={undefined} mode="full-access" carriedLimit={carried} />
     </>
+  ) : view === "repository" ? (
+    <>
+      <Notice summary={inRepository} mode="full-access" />
+      <div className="mx-auto max-w-3xl p-6">
+        <TeamRulesSectionView summary={inRepository} />
+      </div>
+    </>
+  ) : view === "repository-hold" ? (
+    <Notice summary={repositoryHold} mode="approval-required" />
   ) : view === "menu" ? (
     <Menu />
   ) : view === "above" ? (

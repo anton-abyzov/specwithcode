@@ -12,9 +12,11 @@ import {
   teamRulesClampMode,
   teamRulesClampToCarried,
   teamRulesDrift,
+  teamRulesHoldRefusal,
   teamRulesMachineLinkRefusal,
   teamRulesMachineRefusal,
   teamRulesModeAllowed,
+  teamRulesModeRefusal,
   teamRulesModeLabel,
   teamRulesModelAllowed,
   teamRulesOutgoingWorkRefusal,
@@ -33,6 +35,9 @@ import {
 } from "@specweave-studio/shared/teamRules";
 
 export const TEAM_RULES_ABOVE_LIMIT = "Above your team's limit";
+
+/** Repository rules are committed text anyone with write access can change. */
+export const TEAM_RULES_REPOSITORY_LABEL = "A team agreement, not a security boundary.";
 
 /** What every lock needs from a machine's summary. No summary reads as no rules. */
 export const teamRulesFromSummary = (summary: TeamRulesSummary | undefined) => ({
@@ -88,6 +93,19 @@ export function teamRulesThreadNotice(
   carried?: TeamRulesCarried,
 ): TeamRulesThreadNotice | null {
   const state = teamRulesStateFromSummary(summary);
+  if (summary?.status === "hold" && summary.holdScope !== undefined) {
+    const inRepository = summary.holdScope === "repository";
+    return {
+      kind: "hold",
+      title: inRepository
+        ? "Agents are paused in this repository"
+        : "Agents are paused in this folder",
+      description: [
+        teamRulesHoldRefusal(state)?.message ?? "",
+        ...(inRepository ? [TEAM_RULES_REPOSITORY_LABEL] : []),
+      ].join(" "),
+    };
+  }
   if (summary?.status === "hold") {
     const issue = summary.issues?.[0];
     const contact = summary.contact === undefined ? "" : ` See ${summary.contact}.`;
@@ -104,7 +122,12 @@ export function teamRulesThreadNotice(
     title: TEAM_RULES_ABOVE_LIMIT,
     description: teamRulesModeAllowed(state, mode)
       ? (teamRulesCarriedRefusal(carried, mode)?.message ?? "")
-      : `${teamRulesSetByLabel(summary?.owner)}. This chat uses ${teamRulesModeLabel(mode)}.`,
+      : summary?.ceilingBy !== undefined
+        ? [
+            teamRulesModeRefusal(state, mode)?.message ?? "",
+            ...(summary.ceilingBy.source === "repository" ? [TEAM_RULES_REPOSITORY_LABEL] : []),
+          ].join(" ")
+        : `${teamRulesSetByLabel(summary?.owner)}. This chat uses ${teamRulesModeLabel(mode)}.`,
     switchTo,
     switchLabel: `Switch to ${teamRulesModeLabel(switchTo)}`,
   };
@@ -275,6 +298,10 @@ export function teamRulesRows(summary: TeamRulesSummary): readonly TeamRulesRow[
           },
         ]
       : []),
+    ...(summary.modelLists ?? []).map((list) => ({
+      title: "Also limited to models",
+      value: listed(list) ?? "None",
+    })),
     ...(summary.telemetryExport === false ? [{ title: "Telemetry export", value: "Off" }] : []),
     ...(summary.reach?.phones === false
       ? [
@@ -312,5 +339,41 @@ export function teamRulesRows(summary: TeamRulesSummary): readonly TeamRulesRow[
     ...(summary.tools?.telegram === false
       ? [{ title: "Telegram", value: "Off. The channel stops listening; unpair stays." }]
       : []),
+    ...(summary.connections === undefined
+      ? []
+      : [
+          {
+            title: "Approved connections",
+            value: `${listed(summary.connections)}. Others stay listed but cannot be used.`,
+          },
+        ]),
+    ...(summary.connectionLists ?? []).map((list) => ({
+      title: "Also limited to connections",
+      value: listed(list) ?? "None",
+    })),
+    ...(summary.updates?.automatic === undefined
+      ? []
+      : [
+          {
+            title: "Automatic updates",
+            value: summary.updates.automatic ? "Always on." : "Off. Updating by hand stays.",
+          },
+        ]),
+    ...(summary.updates?.feed === undefined
+      ? []
+      : [
+          {
+            title: "Update source",
+            value: `${summary.updates.feed}. The app does not use its public feed.`,
+          },
+        ]),
+    ...(summary.sources ?? []).map((source) =>
+      source.source === "repository"
+        ? {
+            title: "Repository rules",
+            value: `Set by ${source.owner}, committed in this repository. ${TEAM_RULES_REPOSITORY_LABEL}`,
+          }
+        : { title: "Zone", value: `Set by ${source.owner} for this repository.` },
+    ),
   ];
 }

@@ -24,6 +24,7 @@ import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -494,7 +495,9 @@ it.effect(
       assert.equal(snapshot.archivedThreads.length, 1);
       assert.equal(snapshot.threads[0]!.deletedAt, null);
       assert.equal(snapshot.threads[0]!.projectId, projectId);
-      const access = yield* ProjectRuntimeAccess.make;
+      const access = yield* ProjectRuntimeAccess.make.pipe(
+        Effect.provide(Layer.mock(ProjectStore.ProjectStoreV2)({ list: () => Effect.succeed([]) })),
+      );
       yield* access.updateSettings({
         projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: "full-access" } },
       });

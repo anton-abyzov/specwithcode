@@ -2013,6 +2013,12 @@ const layerWsRpc = (
                 .pipe(
                   Effect.tap(() => recordClientCommandAnalytics(command)),
                   Effect.tap(() =>
+                    ServerSettings.recordTeamRulesCommandActor(
+                      ServerSettings.teamRulesActorOfSession(currentSession),
+                      command.commandId,
+                    ).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+                  ),
+                  Effect.tap(() =>
                     command.type === "thread.user-input.dismiss" &&
                     ProjectActionRequests.isProjectActionRequestId(command.requestId)
                       ? projectActions.dismissed(command.requestId)
@@ -2541,13 +2547,34 @@ const layerWsRpc = (
                 )
               : undefined;
             const nextPatch = { ...patch, ...(deviceHosts ? { deviceHosts } : {}) };
-            const settings = yield* projectRuntimeAccess.updateSettings(
-              nextPatch,
-              providerInstanceMutation,
-            );
+            const settings = yield* projectRuntimeAccess
+              .updateSettings(nextPatch, providerInstanceMutation)
+              .pipe(
+                Effect.provideService(
+                  ServerSettings.TeamRulesActor,
+                  ServerSettings.teamRulesActorOfSession(currentSession),
+                ),
+              );
             return ServerSettings.redactServerSettingsForClient(settings);
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
+        // Named by project or thread, never by path: a client cannot point Git at any folder.
+        [WS_METHODS.serverTeamRulesForFolder]: ({ projectId, threadId }) =>
+          Effect.gen(function* () {
+            const project = Option.getOrUndefined(yield* projectStore.get(projectId));
+            const thread =
+              threadId === undefined
+                ? undefined
+                : (yield* threadManagement.getShellSnapshot({ location: "active" })).threads.find(
+                    (candidate) => candidate.id === threadId && candidate.projectId === projectId,
+                  );
+            const folder = thread?.worktreePath ?? project?.workspaceRoot;
+            const teamRules =
+              folder === undefined || folder === null
+                ? undefined
+                : yield* ServerSettings.teamRulesSummaryForFolder(folder);
+            return teamRules === undefined ? {} : { teamRules };
+          }).pipe(Effect.orElseSucceed(() => ({}))),
         [WS_METHODS.serverDetectLocalUsageHubs]: (_input) =>
           usageLimitSources.detectLocalHubs.pipe(Effect.map((hubs) => ({ hubs }))),
         [WS_METHODS.serverAdoptLocalUsageHub]: ({ id }) =>

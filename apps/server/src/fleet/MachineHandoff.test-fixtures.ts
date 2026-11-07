@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - disposable real Git recovery fixtures.
+import { ProjectStoreV2 } from "../orchestration-v2/ProjectStore.ts";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -468,6 +469,7 @@ const makeHarness = (
   // The real project access save, over a recording orchestrator: it moves the
   // destination's existing coordinator to the saved mode.
   const access = ProjectRuntimeAccess.layer.pipe(
+    Layer.provide(Layer.mock(ProjectStoreV2)({ list: () => Effect.succeed([]) })),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
         withProjectPermissionUpdate: (effect) => effect,

@@ -174,7 +174,7 @@ import type { OrchestrationEffectRequestV2, PendingOrchestrationEffectV2 } from 
 import { IdAllocatorV2 } from "./IdAllocator.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForThread } from "../teamRules/TeamRules.ts";
 import {
   applyToProjection,
   emptyProjection,
@@ -3026,6 +3026,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runtimeMode,
       command.modelSelection,
       command.origin?.carried,
+      { projectId: command.projectId, worktreePath: command.worktreePath },
     );
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
@@ -4544,8 +4545,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runtimeMode: RuntimeMode,
       selection: ModelSelection,
       carried: TeamRulesCarried | undefined,
+      folder: { readonly projectId: ProjectId; readonly worktreePath?: string | null | undefined },
     ) {
-      const state = yield* currentTeamRules;
+      const state = yield* teamRulesForThread(projects, folder);
       yield* refuseByTeamRules(command, threadId, teamRulesModeRefusal(state, runtimeMode));
       yield* refuseByTeamRules(command, threadId, teamRulesCarriedRefusal(carried, runtimeMode));
       yield* refuseByTeamRules(
@@ -4564,19 +4566,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const refuseCommandByTeamRules = Effect.fn("orchestrationV2.dispatch.teamRules")(function* (
     command: OrchestrationV2ServerCommand,
   ) {
-    const state = yield* currentTeamRules;
-    const threadId = commandThreadId(command);
-    // A carried ceiling holds with no rules file here, since the work came from one.
-    const carriedOf = projectionStore.getThreadShell(threadId).pipe(
-      Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
-      Effect.map((shell) => shell?.origin?.carried),
-    );
     switch (command.type) {
       case "thread.runtime-mode.set":
+      case "thread.model-selection.set":
+      case "provider.switch":
+      case "message.dispatch":
+      case "queued-message.promote-to-steer":
+        break;
+      default:
+        return;
+    }
+    const threadId = commandThreadId(command);
+    const shell = yield* projectionStore
+      .getThreadShell(threadId)
+      .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+    const state =
+      shell === null ? yield* currentTeamRules : yield* teamRulesForThread(projects, shell);
+    switch (command.type) {
+      case "thread.runtime-mode.set":
+        // A carried ceiling holds with no rules file here, since the work came from one.
         yield* refuseByTeamRules(
           command,
           threadId,
-          teamRulesCarriedRefusal(yield* carriedOf, command.runtimeMode),
+          teamRulesCarriedRefusal(shell?.origin?.carried, command.runtimeMode),
         );
         return yield* refuseByTeamRules(
           command,
@@ -4594,9 +4606,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "message.dispatch":
       case "queued-message.promote-to-steer": {
         yield* refuseByTeamRules(command, threadId, teamRulesHoldRefusal(state));
-        const shell = yield* projectionStore
-          .getThreadShell(threadId)
-          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
         if (shell === null) return;
         yield* refuseByTeamRules(command, threadId, teamRulesModeRefusal(state, shell.runtimeMode));
         yield* refuseByTeamRules(
@@ -4614,8 +4623,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           yield* teamRulesSelectionRefusalOf(state, selection),
         );
       }
-      default:
-        return;
     }
   });
 
@@ -4662,7 +4669,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const settings = yield* serverSettings.value.getSettings.pipe(mapDispatchError(command));
     const saved = settings.projectSettingsOverrides[projectId]?.defaultRuntimeMode;
     // A saved default from before the rules is nobody's request, so it lowers.
-    return saved === undefined ? commandMode : teamRulesClampMode(yield* currentTeamRules, saved);
+    return saved === undefined
+      ? commandMode
+      : teamRulesClampMode(yield* teamRulesForThread(projects, { projectId }), saved);
   });
 
   const dispatchThreadFork = Effect.fn("orchestrationV2.dispatch.threadFork")(function* (
@@ -4755,6 +4764,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runtimeMode,
       targetThread.modelSelection,
       targetThread.origin?.carried,
+      targetThread,
     );
     yield* emitEvent({
       type: "thread.created",
@@ -8097,6 +8107,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runtimeMode,
         command.modelSelection,
         parentProjection.thread.origin?.carried,
+        parentProjection.thread,
       );
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({

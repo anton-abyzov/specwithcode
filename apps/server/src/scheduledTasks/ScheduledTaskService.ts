@@ -7,7 +7,7 @@ import {
   teamRulesSelectionRefusal,
   type TeamRulesState,
 } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForThread } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   MessageId,
@@ -30,6 +30,7 @@ import {
   type ScheduledTaskUpsertInput,
   DEFAULT_SERVER_SETTINGS,
   type RuntimeMode,
+  ProjectId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -850,13 +851,23 @@ export const layer = Layer.effect(
         // Judged at every run, webhook fires included: a routine keeps the mode it
         // was saved with, and the rules may have tightened since. A refused run
         // starts nothing, and its check's unattended command does not run either.
-        const teamRules = yield* currentTeamRules;
+        const projectRules = yield* teamRulesForThread(projects, {
+          projectId: ProjectId.make(active.projectId),
+        });
         const boundThread =
-          teamRules.status !== "active" || active.threadId === null
+          projectRules.status !== "active" || active.threadId === null
             ? null
             : yield* threadManagement
                 .getThreadShell(ThreadId.make(active.threadId))
                 .pipe(Effect.orElseSucceed(() => null));
+        // A worktree can narrow further; one with rules its project lacks meets them at the turn.
+        const teamRules =
+          boundThread?.worktreePath === null || boundThread?.worktreePath === undefined
+            ? projectRules
+            : yield* teamRulesForThread(projects, {
+                projectId: ProjectId.make(active.projectId),
+                worktreePath: boundThread.worktreePath,
+              });
         // A first run has no thread yet: a person's routine takes the project's saved
         // mode at creation, so that is the mode to judge.
         const firstRunMode =
@@ -1408,7 +1419,9 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         // A turned-off routine runs nothing, so one saved before the rules can
         // still be edited or switched off. Every enabled save is judged.
-        const rules = yield* currentTeamRules;
+        const rules = yield* teamRulesForThread(projects, {
+          projectId: ProjectId.make(input.projectId),
+        });
         // A save that leaves `check` out keeps the one the task has.
         const savedCheck =
           input.check !== undefined || input.id === undefined || rules.status !== "active"
@@ -1585,7 +1598,9 @@ export const layer = Layer.effect(
         const existing = yield* loadTask(input.id);
         if (existing.enabled === input.enabled) return { task: existing };
         if (input.enabled) {
-          const rules = yield* currentTeamRules;
+          const rules = yield* teamRulesForThread(projects, {
+            projectId: ProjectId.make(existing.projectId),
+          });
           const refused =
             teamRulesRoutineRefusal(rules, existing.runtimeMode) ??
             (existing.check === null || existing.check === undefined

@@ -21,7 +21,7 @@ import {
   teamRulesMachines,
   teamRulesSelectionRefusal,
 } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import {
   isPersonalAssistantProject,
   PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
@@ -390,7 +390,10 @@ export const make = Effect.gen(function* () {
     });
 
   const judge = (input: {
-    readonly thread: Pick<OrchestrationV2ThreadShell, "projectId" | "providerInstanceId">;
+    readonly thread: Pick<
+      OrchestrationV2ThreadShell,
+      "projectId" | "providerInstanceId" | "worktreePath"
+    >;
     readonly rule: ServerSettingsValue;
     readonly source: ServerProvider | undefined;
     readonly projectTitle: string | null;
@@ -399,11 +402,17 @@ export const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       // A machine target is a fallback too, so it stays inside this machine's list.
-      const teamRules = yield* currentTeamRules;
       // Reach rules decide first: no target at all when work may not cross machines.
-      if (teamRulesMachines(teamRules) === "none") {
+      if (teamRulesMachines(yield* currentTeamRules) === "none") {
         return [] as ReadonlyArray<MachineCandidateVerdict>;
       }
+      // The list is the one for this thread's folder, which a zone or repository can narrow.
+      const folderProject = yield* projects
+        .getById(input.thread.projectId)
+        .pipe(Effect.orElseSucceed(() => Option.none<{ readonly workspaceRoot: string }>()));
+      const teamRules = yield* teamRulesForFolder(
+        input.thread.worktreePath ?? Option.getOrUndefined(folderProject)?.workspaceRoot,
+      );
       const targets = input.rule.providerLimitMachineTargets.filter(
         (target) =>
           teamRulesSelectionRefusal(teamRules, {

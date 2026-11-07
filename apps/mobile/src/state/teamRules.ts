@@ -164,5 +164,22 @@ export function teamRulesRows(summary: TeamRulesSummary): ReadonlyArray<TeamRule
     ...off("Agent use of this computer", teamRulesToolOff(state, "computerUse")),
     ...off("Google accounts", teamRulesToolOff(state, "google")),
     ...off("Telegram", teamRulesToolOff(state, "telegram")),
+    ...(summary.connections === undefined
+      ? []
+      : [{ title: "Approved connections", value: listed(summary.connections) ?? "None" }]),
+    ...(summary.updates?.automatic === undefined
+      ? []
+      : [{ title: "Automatic updates", value: summary.updates.automatic ? "On" : "Off" }]),
+    ...(summary.updates?.feed === undefined
+      ? []
+      : [{ title: "Update source", value: summary.updates.feed }]),
+    ...(summary.sources ?? []).map((source) =>
+      source.source === "repository"
+        ? {
+            title: "Repository rules",
+            value: `Set by ${source.owner}. A team agreement, not a security boundary.`,
+          }
+        : { title: "Zone", value: `Set by ${source.owner} for this repository.` },
+    ),
   ];
 }

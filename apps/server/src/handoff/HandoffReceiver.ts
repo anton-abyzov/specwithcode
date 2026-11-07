@@ -15,7 +15,7 @@ import {
   teamRulesClampToCarried,
   teamRulesClampMode,
 } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { FLEET_ORIGIN_APP_LABEL } from "../mcp/threadOrigin.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -638,7 +638,7 @@ export const make = Effect.gen(function* () {
       // lowers it on arrival and records that it did.
       const carried = teamRulesArrivingCarried(detail.carried, handoff.environmentId);
       const runtimeMode = teamRulesClampToCarried(
-        teamRulesClampMode(yield* currentTeamRules, grantedMode),
+        teamRulesClampMode(yield* teamRulesForFolder(worktreePath), grantedMode),
         carried,
       );
       const loweredFrom =

@@ -14,6 +14,9 @@ const state = vi.hoisted(() => ({
   groups: [] as unknown[],
 }));
 vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => state.groups }));
+vi.mock("../../teamRules/useFolderTeamRules", () => ({
+  useFolderTeamRulesSummary: () => undefined,
+}));
 vi.mock("../../studio/useProjectFolderHealth", () => ({
   useProjectFolderCheck: (project: unknown) => {
     state.checkedProject = project;

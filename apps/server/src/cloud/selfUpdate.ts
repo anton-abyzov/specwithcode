@@ -1,4 +1,9 @@
 import {
+  teamRulesUpdateFeedReason,
+  teamRulesUpdatePolicy,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import {
   ServerSelfUpdateError,
   type ServerSelfUpdateCapability,
   type ServerSelfUpdateInput,
@@ -197,6 +202,8 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const update: ServerSelfUpdate["Service"]["update"] = Effect.fn(
     "cloud.server_self_update.update",
   )(function* (input, reportProgress = () => Effect.void, onHandoffAccepted = () => Effect.void) {
+    const feedReason = teamRulesUpdateFeedReason(teamRulesUpdatePolicy(yield* currentTeamRules));
+    if (feedReason !== null) return yield* failWith(feedReason);
     if (capability === "desktop-managed") {
       // input.targetVersion is meaningless here: the desktop app's own
       // update feed decides what it downloads, and the result carries what

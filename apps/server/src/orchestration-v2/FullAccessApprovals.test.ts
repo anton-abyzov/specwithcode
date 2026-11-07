@@ -12,6 +12,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -21,6 +22,7 @@ import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import { parseTeamRulesText, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import { OrchestratorDispatchError } from "./Orchestrator.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const coordinatorId = ThreadId.make("project-coordinator:full-access");
@@ -91,6 +93,8 @@ interface FakeThread {
 interface HarnessOptions {
   /** Answers that fail before one goes through. */
   readonly failAccepts?: number;
+  /** Change live state after a failed dispatch, before its retry. */
+  readonly onFailedAccept?: () => void;
   /** Answers that fail for one prompt before one goes through. */
   readonly failAcceptsFor?: Readonly<Record<string, number>>;
   /** Wait before the second answer attempt. */
@@ -170,6 +174,7 @@ function harness(threads: Record<string, FakeThread>, options: HarnessOptions = 
         if (failuresLeft > 0 || failsFor > 0 || options.answeredElsewhere) {
           if (failsFor === 0) failuresLeft--;
           if (options.answeredElsewhere) settle();
+          options.onFailedAccept?.();
           return Effect.fail(
             new OrchestratorDispatchError({
               commandId: command.commandId,
@@ -187,7 +192,12 @@ function harness(threads: Record<string, FakeThread>, options: HarnessOptions = 
     retryDelay: options.retryDelay ?? 1,
     streamRestartDelay: 1,
     sweepInterval: "1 hour",
-  }).pipe(Layer.provide(Layer.succeed(ThreadManagementService.ThreadManagementService, service)));
+  }).pipe(
+    Layer.provide(Layer.succeed(ThreadManagementService.ThreadManagementService, service)),
+    Layer.provide(
+      Layer.mock(ProjectStore.ProjectStoreV2)({ get: () => Effect.succeed(Option.none()) }),
+    ),
+  );
   const use = <A>(
     body: (reactor: FullAccessApprovals.FullAccessApprovals["Service"]) => Effect.Effect<A>,
   ) =>
@@ -538,8 +548,79 @@ describe("FullAccessApprovals", () => {
               assert.equal(fake.runtimeRequests[0]?.status, "pending");
             }),
           ),
-        ).pipe(Effect.provideService(TeamRules, { current: Effect.sync(() => rules) }));
+        ).pipe(Effect.provideService(TeamRules, {
+          current: Effect.sync(() => rules),
+          forFolder: () => Effect.sync(() => rules),
+        }));
       }),
+  );
+
+  for (const scope of ["machine", "folder"] as const) {
+    for (const change of ["ceiling", "hold"] as const) {
+      it.live(`stops a delayed retry after the ${scope} ${change} tightens`, () =>
+        Effect.gen(function* () {
+          const parsed = parseTeamRulesText(
+            '{"version":1,"owner":"Synthetic team","agents":{"ceiling":"auto"}}',
+          );
+          assert.isTrue(parsed.ok);
+          if (!parsed.ok) return;
+          const tightened: TeamRulesState =
+            change === "hold"
+              ? { status: "hold", issues: ["Synthetic unavailable policy"] }
+              : { status: "active", rules: parsed.rules, fingerprint: "synthetic", warnings: [] };
+          let machine: TeamRulesState = { status: "none" };
+          let folder: TeamRulesState = { status: "none" };
+          const prompt = request("runtime-request:tightened-policy");
+          const fake = {
+            thread: { ...thread("full-access"), worktreePath: "/synthetic/team-folder" },
+            runtimeRequests: [prompt],
+          };
+          const { accepted, process } = harness(
+            { [workerId]: fake },
+            {
+              failAccepts: 1,
+              onFailedAccept: () => {
+                if (scope === "machine") machine = tightened;
+                else folder = tightened;
+              },
+            },
+          );
+          yield* process(pendingEvent(workerId, prompt)).pipe(
+            Effect.provideService(TeamRules, {
+              current: Effect.sync(() => machine),
+              forFolder: () => Effect.sync(() => folder),
+            }),
+          );
+          assert.lengthOf(accepted(), 1);
+          assert.strictEqual(
+            fake.runtimeRequests[0]!.status,
+            "pending",
+            "leave the prompt for a person",
+          );
+        }),
+      );
+    }
+  }
+
+  it.live("stops a delayed retry after the thread leaves Full access", () =>
+    Effect.gen(function* () {
+      const prompt = request("runtime-request:lowered-mode");
+      const fake = { thread: thread("full-access"), runtimeRequests: [prompt] };
+      const { accepted, process } = harness(
+        { [workerId]: fake },
+        {
+          failAccepts: 1,
+          onFailedAccept: () => {
+            fake.thread = { ...fake.thread, runtimeMode: "approval-required" };
+          },
+        },
+      );
+      yield* process(pendingEvent(workerId, prompt)).pipe(
+        Effect.provideService(TeamRules, teamRulesOf({ status: "none" })),
+      );
+      assert.lengthOf(accepted(), 1);
+      assert.strictEqual(fake.runtimeRequests[0]!.status, "pending");
+    }),
   );
 
   it.effect("retries in the background without holding up the next event", () =>

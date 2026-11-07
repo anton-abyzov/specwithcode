@@ -1,3 +1,8 @@
+import {
+  teamRulesConnectionAllowsAny,
+  teamRulesConnectionRefusal,
+} from "@specweave-studio/shared/teamRules";
+import { currentTeamRules, teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import { parseJson, stringifyJson } from "../json.ts";
 import * as DateTime from "effect/DateTime";
 import {
@@ -104,41 +109,69 @@ const make = Effect.gen(function* () {
       yield* project(input.projectId);
       return { connections: yield* rows(input.projectId) };
     }).pipe(safe(input.projectId));
+  // Reading and revoking stay available, so a person can see and remove what the rules refuse.
+  const refuseByTeamRules = (
+    projectId: ProjectId,
+    workspaceRoot: string,
+    names: ReadonlyArray<string>,
+  ) =>
+    Effect.gen(function* () {
+      const rules = yield* teamRulesForFolder(workspaceRoot);
+      const refused = rules.status === "none" ? null : teamRulesConnectionRefusal(rules, names);
+      if (refused !== null) {
+        return yield* new ProjectConnectionError({
+          projectId,
+          code: "denied",
+          teamRulesMessage: refused.message,
+        });
+      }
+    });
   const save = (input: ProjectConnectionSaveInput) =>
     admission
       .withLock(
         input.projectId,
-        sql.withTransaction(
-          Effect.gen(function* () {
-            yield* project(input.projectId);
-            if (!validConnectionConfig(input.config) || !/^[a-zA-Z0-9_-]{1,100}$/.test(input.id))
-              return yield* error(input.projectId, "invalid");
-            const all = yield* rows(input.projectId);
-            const previous = all.find((c) => c.id === input.id);
-            if ((previous?.revision ?? null) !== input.expectedRevision)
-              return yield* error(input.projectId, "conflict");
-            if (!previous && all.length >= 32) return yield* error(input.projectId, "invalid");
-            const unchanged =
-              previous &&
-              previous.status !== "revoked" &&
-              connectionFingerprint(configOf(previous)) === connectionFingerprint(input.config);
-            const tools = unchanged ? previous.tools : [];
-            const allowedTools = [...new Set(input.allowedTools)];
-            if (
-              allowedTools.some((name) => !tools.some((tool) => tool.name === name)) ||
-              (allowedTools.length > 0 && previous?.status !== "ready")
-            )
-              return yield* error(input.projectId, "denied");
-            return yield* persist(input.projectId, {
-              id: input.id,
-              ...input.config,
-              revision: (previous?.revision ?? 0) + 1,
-              status: unchanged ? previous.status : "configured",
-              checkedAt: unchanged ? previous.checkedAt : null,
-              tools,
-              allowedTools,
-            });
-          }),
+        // Reading the rules can run Git, so it stays out of the transaction.
+        project(input.projectId).pipe(
+          Effect.flatMap((target) =>
+            refuseByTeamRules(input.projectId, target.workspaceRoot, [input.config.name]),
+          ),
+          Effect.andThen(
+            sql.withTransaction(
+              Effect.gen(function* () {
+                const target = yield* project(input.projectId);
+                if (
+                  !validConnectionConfig(input.config) ||
+                  !/^[a-zA-Z0-9_-]{1,100}$/.test(input.id)
+                )
+                  return yield* error(input.projectId, "invalid");
+                const all = yield* rows(input.projectId);
+                const previous = all.find((c) => c.id === input.id);
+                if ((previous?.revision ?? null) !== input.expectedRevision)
+                  return yield* error(input.projectId, "conflict");
+                if (!previous && all.length >= 32) return yield* error(input.projectId, "invalid");
+                const unchanged =
+                  previous &&
+                  previous.status !== "revoked" &&
+                  connectionFingerprint(configOf(previous)) === connectionFingerprint(input.config);
+                const tools = unchanged ? previous.tools : [];
+                const allowedTools = [...new Set(input.allowedTools)];
+                if (
+                  allowedTools.some((name) => !tools.some((tool) => tool.name === name)) ||
+                  (allowedTools.length > 0 && previous?.status !== "ready")
+                )
+                  return yield* error(input.projectId, "denied");
+                return yield* persist(input.projectId, {
+                  id: input.id,
+                  ...input.config,
+                  revision: (previous?.revision ?? 0) + 1,
+                  status: unchanged ? previous.status : "configured",
+                  checkedAt: unchanged ? previous.checkedAt : null,
+                  tools,
+                  allowedTools,
+                });
+              }),
+            ),
+          ),
         ),
       )
       .pipe(safe(input.projectId));
@@ -147,6 +180,7 @@ const make = Effect.gen(function* () {
       const target = yield* project(input.projectId, true);
       const initial = yield* connection(input);
       if (initial.status === "revoked") return yield* error(input.projectId, "denied");
+      yield* refuseByTeamRules(input.projectId, target.workspaceRoot, [initial.name]);
       const discovered = yield* transport
         .discover({ config: configOf(initial), cwd: target.workspaceRoot })
         .pipe(Effect.option);
@@ -196,6 +230,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const target = yield* project(input.projectId, true);
           const current = yield* connection(input);
+          yield* refuseByTeamRules(input.projectId, target.workspaceRoot, [current.name]);
           const tool = current.tools.find((t) => t.name === input.tool);
           if (current.status !== "ready" || !tool || !current.allowedTools.includes(input.tool))
             return yield* error(input.projectId, "denied");
@@ -253,7 +288,30 @@ const make = Effect.gen(function* () {
     revoke,
     call,
     discoverNative,
-    applyNative: discovery.apply,
+    applyNative: (input) =>
+      Effect.gen(function* () {
+        const rules = yield* currentTeamRules;
+        if (rules.status === "none") return yield* discovery.apply(input);
+        // Turning one off or removing it stays available; anything that can turn one on is judged.
+        const named = (name: string | undefined) => teamRulesConnectionRefusal(rules, [name ?? ""]);
+        let refused = null;
+        if (input.action === "add") refused = named(input.name);
+        if (input.action === "enable" || input.action === "copy") {
+          const connections = (yield* discovery.read()).connections;
+          refused = named(connections.find((row) => row.id === input.connectionId)?.name);
+        }
+        if (input.action === "plugin" && input.enabled === true) refused = named(input.pluginKey);
+        if (input.action === "copyAll" || input.action === "undo") {
+          refused = teamRulesConnectionAllowsAny(rules) ? null : named(undefined);
+        }
+        if (refused !== null) {
+          return yield* new NativeConnectionsError({
+            code: "unsupported",
+            teamRulesMessage: refused.message,
+          });
+        }
+        return yield* discovery.apply(input);
+      }),
   });
 });
 export const layerWithDiscovery = Layer.effect(ProjectConnectionService, make).pipe(

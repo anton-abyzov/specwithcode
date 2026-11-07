@@ -1,3 +1,5 @@
+import { teamRulesSetByLabel, teamRulesUpdateFeedReason } from "@specweave-studio/shared/teamRules";
+import { readTeamRulesUpdatePolicy } from "../../updates/teamRulesUpdates.ts";
 import {
   type DesktopUpdateState,
   DesktopUpdatePreferencesPatchSchema,
@@ -206,8 +208,19 @@ const controllerFor = (environment: DesktopEnvironment.DesktopEnvironment["Servi
 // own; "Check now" and "Install now" in Settings still run it on request.
 const automaticUpdatesAllowed = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
-  return !config.disableAutoUpdate;
+  const rules = readTeamRulesUpdatePolicy();
+  return !config.disableAutoUpdate && rules.automatic !== false && rules.feed === undefined;
 }).pipe(Effect.orElseSucceed(() => false));
+
+/** Who locks the switches, for Settings. Undefined with no `updates` rule. */
+const updateRulesLock = () => {
+  const rules = readTeamRulesUpdatePolicy();
+  const locked = rules.automatic !== undefined || rules.feed !== undefined;
+  return {
+    forcedOn: rules.automatic === true && rules.feed === undefined,
+    setBy: locked ? teamRulesSetByLabel(rules.owner) : undefined,
+  };
+};
 
 /**
  * Writes the current preferences, plus one request's changes, where the
@@ -222,7 +235,9 @@ const writeServiceAgentConfig = Effect.fn("desktop.serviceUpdates.writeConfig")(
   const controller = yield* controllerFor(environment);
   return yield* Effect.try(() =>
     controller.writeConfig({
-      preferences: allowed ? settings.updatePreferences : NO_AUTOMATIC_UPDATES,
+      preferences: allowed
+        ? effectiveUpdatePreferences(settings.updatePreferences, true, updateRulesLock())
+        : NO_AUTOMATIC_UPDATES,
       channel: settings.updateChannel,
       ...extra,
     }),
@@ -418,6 +433,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
           return effectiveUpdatePreferences(
             settings.updatePreferences,
             yield* automaticUpdatesAllowed,
+            updateRulesLock(),
           );
         }),
     }),
@@ -430,11 +446,12 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       result: DesktopUpdatePreferencesSchema,
       handler: Effect.fn("desktop.ipc.updates.setPreferences")(function* (patch) {
         const allowed = yield* automaticUpdatesAllowed;
+        const rulesLock = updateRulesLock();
         // A build with self-update off has nothing to switch on; saving would
-        // show switches that the service never sees.
-        if (!allowed) {
+        // show switches that the service never sees. Rules that set updates lock them too.
+        if (!allowed || rulesLock.setBy !== undefined) {
           const settings = yield* desktopSettings.get;
-          return effectiveUpdatePreferences(settings.updatePreferences, false);
+          return effectiveUpdatePreferences(settings.updatePreferences, allowed, rulesLock);
         }
         const change = yield* desktopSettings.setUpdatePreferences(patch);
         yield* updates.applyPreferences;
@@ -488,6 +505,13 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
         });
         yield* publish;
         return yield* new ServiceUpdateRunEndedError();
+      }
+      // A team that delivers updates itself keeps this machine off the public feed.
+      const feedReason = teamRulesUpdateFeedReason(readTeamRulesUpdatePolicy());
+      if (feedReason !== null) {
+        agentFailure = { at, message: feedReason };
+        if (run !== null) yield* runs.failRequest(run.installRunId, feedReason);
+        return yield* publish;
       }
       const written = yield* syncConfig(
         kind === "check"
@@ -673,11 +697,13 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     }
     const settings = yield* desktopSettings.get;
     const start = appStartAgentRun({
-      checkAutomatically: settings.updatePreferences.checkAutomatically,
+      checkAutomatically:
+        readTeamRulesUpdatePolicy().automatic ?? settings.updatePreferences.checkAutomatically,
       automaticUpdatesAllowed: yield* automaticUpdatesAllowed,
-      pendingForcedInstall: controller.pendingForcedInstall(
-        DateTime.toEpochMillis(yield* DateTime.now),
-      ),
+      // A feed rule that appeared since the request keeps it from the public feed.
+      pendingForcedInstall:
+        readTeamRulesUpdatePolicy().feed === undefined &&
+        controller.pendingForcedInstall(DateTime.toEpochMillis(yield* DateTime.now)),
     });
     if (start !== null) yield* startAgent(start.reason, start.reportFailure);
   }).pipe(Effect.forkScoped);

@@ -41,6 +41,22 @@ import {
   teamRulesThreadModeAllowed,
   teamRulesToolOff,
   teamRulesToolRefusal,
+  parseTeamRulesRepositoryText,
+  teamRulesCombine,
+  teamRulesConnectionRefusal,
+  teamRulesFolderLaunchRefusal,
+  teamRulesNormalizeRemote,
+  teamRulesRepositoryLayer,
+  teamRulesUpdateFeedReason,
+  teamRulesUpdatePolicy,
+  teamRulesUpdatePolicyByText,
+  teamRulesZoneLayers,
+  teamRulesModelMatches,
+  teamRulesCeiling,
+  teamRulesRoutineCeiling,
+  teamRulesProviderAllowed,
+  teamRulesModelAllowed,
+  teamRulesHoldRefusal,
 } from "./teamRules.ts";
 
 const active = (body: Record<string, unknown>): TeamRulesState => {
@@ -51,7 +67,7 @@ const active = (body: Record<string, unknown>): TeamRulesState => {
 const hold: TeamRulesState = { status: "hold", issues: ["broken"], owner: "Acme" };
 
 describe("parseTeamRulesText", () => {
-  it("accepts the full shape and flags later-phase sections as not enforced", () => {
+  it("accepts the full shape", () => {
     const parsed = parseTeamRulesText(
       JSON.stringify({
         version: 1,
@@ -72,7 +88,6 @@ describe("parseTeamRulesText", () => {
     );
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.warnings.filter((line) => line.includes("does not enforce"))).toHaveLength(3);
   });
 
   it.each([
@@ -622,5 +637,265 @@ describe("Team rules phase 2", () => {
         { ...DEFAULT_SERVER_SETTINGS, enableAgentComputerAccess: true },
       )?.reason,
     ).toBe("telemetry");
+  });
+});
+
+describe("folder rules", () => {
+  const machine: TeamRulesState = {
+    status: "active",
+    fingerprint: "abc",
+    warnings: [],
+    rules: {
+      version: 1,
+      owner: "Acme",
+      agents: { ceiling: "auto" },
+      ai: { providers: ["claudeAgent", "codex"], models: ["claude-*", "gpt-*"] },
+      connections: { allow: ["github", "linear"] },
+      zones: [
+        {
+          remote: "github.com/acme/payments*",
+          agents: { ceiling: "approval-required" },
+          ai: { providers: ["claudeAgent"] },
+        },
+        { remote: "github.com/other/*", agents: { ceiling: "full-access" } },
+      ],
+    },
+  };
+  const repository = (text: object) =>
+    teamRulesRepositoryLayer(parseTeamRulesRepositoryText(JSON.stringify(text)));
+
+  it("normalizes every remote form and drops the user part", () => {
+    for (const remote of [
+      "git@github.com:acme/payments.git",
+      "ssh://git@GitHub.com:22/acme/payments.git",
+      "https://x-token:secret@github.com/acme/payments.git",
+      "https://github.com/acme/payments/",
+    ]) {
+      expect(teamRulesNormalizeRemote(remote)).toBe("github.com/acme/payments");
+    }
+    expect(teamRulesNormalizeRemote("/srv/git/project.git")).toBe("/srv/git/project");
+  });
+
+  it("applies every matching zone and only those", () => {
+    expect(teamRulesZoneLayers(machine, ["git@github.com:acme/payments-api.git"])).toHaveLength(1);
+    expect(teamRulesZoneLayers(machine, ["git@github.com:acme/site.git"])).toHaveLength(0);
+    expect(
+      teamRulesZoneLayers(machine, [
+        "git@github.com:acme/site.git",
+        "git@github.com:acme/payments",
+      ]),
+    ).toHaveLength(1);
+  });
+
+  it("combines to the strictest value of every source", () => {
+    const zone = teamRulesZoneLayers(machine, ["github.com/acme/payments"]);
+    const state = teamRulesCombine(machine, [
+      ...zone,
+      repository({
+        version: 1,
+        owner: "Payments team",
+        agents: { routines: "auto-accept-edits" },
+        ai: { models: ["claude-opus-*"] },
+        connections: { allow: ["github", "jira"] },
+      }),
+    ]);
+    expect(teamRulesCeiling(state)).toBe("approval-required");
+    expect(teamRulesRoutineCeiling(state)).toBe("approval-required");
+    expect(teamRulesProviderAllowed(state, "codex")).toBe(false);
+    expect(teamRulesModelAllowed(state, "claude-opus-5")).toBe(true);
+    expect(teamRulesModelAllowed(state, "claude-haiku-5")).toBe(false);
+    expect(teamRulesModelAllowed(state, "gemini-opus-5")).toBe(false);
+    expect(teamRulesConnectionRefusal(state, ["github"])).toBeNull();
+    expect(teamRulesConnectionRefusal(state, ["linear"])?.message).toContain("Payments team");
+    expect(teamRulesConnectionRefusal(state, ["jira"])?.message).toContain("Acme");
+  });
+
+  it("cannot loosen: a broader value from a source changes nothing", () => {
+    const state = teamRulesCombine(machine, [
+      repository({
+        version: 1,
+        owner: "Loose",
+        agents: { ceiling: "full-access" },
+        ai: { providers: ["claudeAgent", "codex", "grok"] },
+      }),
+    ]);
+    expect(teamRulesCeiling(state)).toBe("auto");
+    expect(teamRulesProviderAllowed(state, "grok")).toBe(false);
+    expect(teamRulesModeRefusal(state, "full-access")?.owner).toBe("Acme");
+  });
+
+  it("names the source that set the limit", () => {
+    const state = teamRulesCombine(machine, [
+      repository({ version: 1, owner: "Payments team", agents: { ceiling: "approval-required" } }),
+    ]);
+    const refused = teamRulesModeRefusal(state, "auto");
+    expect(refused?.owner).toBe("Payments team");
+    expect(refused?.message).toContain("Payments team's repository rules");
+    expect(
+      teamRulesCarriedRefusal(teamRulesOutgoingCarried(state, undefined, "m1" as never), "auto")
+        ?.owner,
+    ).toBe("Payments team");
+  });
+
+  it("works with no machine file, keeps the machine's fingerprint with one", () => {
+    const layer = repository({ version: 1, owner: "Team", agents: { ceiling: "auto" } });
+    const alone = teamRulesCombine(TEAM_RULES_NONE, [layer]);
+    expect(alone.status).toBe("active");
+    expect(teamRulesCeiling(alone)).toBe("auto");
+    const both = teamRulesCombine(machine, [layer]);
+    expect(both.status === "active" && both.fingerprint).toBe("abc");
+  });
+
+  it("returns the machine's own state with nothing to add", () => {
+    expect(teamRulesCombine(TEAM_RULES_NONE, [])).toBe(TEAM_RULES_NONE);
+    expect(teamRulesCombine(machine, [])).toBe(machine);
+  });
+
+  it("a machine hold outranks a repository, and a broken repository holds only its folder", () => {
+    const hold: TeamRulesState = { status: "hold", issues: ["bad"] };
+    const layer = repository({ version: 1, owner: "Team" });
+    expect(teamRulesCombine(hold, [layer])).toBe(hold);
+    const broken = teamRulesCombine(machine, [
+      repository({ version: 1, owner: "Team", tools: {} }),
+    ]);
+    expect(broken.status).toBe("hold");
+    expect(teamRulesHoldRefusal(broken)?.message).toContain("in this repository");
+    expect(teamRulesHoldRefusal(broken)?.message).toContain("Team");
+  });
+
+  it("refuses what only a machine may set, and terminal escapes", () => {
+    for (const body of [
+      { reach: { phones: false } },
+      { tools: { chrome: false } },
+      { telemetry: { export: false } },
+      { updates: { automatic: false } },
+      { zones: [] },
+      { ai: { pin: { codex: { binaryPath: "/tmp/x" } } } },
+    ]) {
+      const parsed = parseTeamRulesRepositoryText(
+        JSON.stringify({ version: 1, owner: "Team", ...body }),
+      );
+      expect(parsed.ok).toBe(false);
+    }
+    expect(parseTeamRulesRepositoryText('{"version":1,"owner":"Team\u001b[31m"}').ok).toBe(false);
+    expect(parseTeamRulesRepositoryText('{"version":1,"owner":"Team","extra":1}').ok).toBe(false);
+  });
+
+  it("matches long hostile patterns without backtracking", () => {
+    const pattern = "*a".repeat(5_000) + "b";
+    const started = performance.now();
+    expect(teamRulesModelMatches([pattern], "a".repeat(5_000))).toBe(false);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(teamRulesModelMatches(["CLAUDE-*"], "claude-x")).toBe(true);
+    expect(teamRulesModelMatches(["a*c"], "abd")).toBe(false);
+    expect(teamRulesModelMatches(["a*"], "a")).toBe(true);
+  });
+
+  it("round-trips a folder summary, so clients ask the same questions", () => {
+    const state = teamRulesCombine(machine, [
+      repository({ version: 1, owner: "Team", ai: { models: ["claude-opus-*"] } }),
+    ]);
+    const back = teamRulesStateFromSummary(summarizeTeamRules(state));
+    expect(teamRulesModelAllowed(back, "claude-haiku-1")).toBe(false);
+    expect(teamRulesModelAllowed(back, "claude-opus-1")).toBe(true);
+    expect(summarizeTeamRules(state)?.sources?.[0]?.source).toBe("repository");
+  });
+
+  it("refuses launch values only when a folder adds the limit", () => {
+    const folder = teamRulesCombine(TEAM_RULES_NONE, [
+      repository({ version: 1, owner: "Team", agents: { ceiling: "auto" } }),
+    ]);
+    expect(teamRulesFolderLaunchRefusal(folder, TEAM_RULES_NONE, "codex", true)?.reason).toBe(
+      "provider-launch",
+    );
+    expect(teamRulesFolderLaunchRefusal(folder, TEAM_RULES_NONE, "codex", false)).toBeNull();
+    expect(
+      teamRulesFolderLaunchRefusal(TEAM_RULES_NONE, TEAM_RULES_NONE, "codex", true),
+    ).toBeNull();
+    expect(teamRulesFolderLaunchRefusal(machine, machine, "codex", true)).toBeNull();
+  });
+
+  it("reads the update policy, and a hold turns automatic updates off", () => {
+    expect(teamRulesUpdatePolicy(TEAM_RULES_NONE).automatic).toBeUndefined();
+    expect(teamRulesUpdatePolicyByText("not json").automatic).toBe(false);
+    const policy = teamRulesUpdatePolicyByText(
+      '{"version":1,"owner":"Acme","updates":{"automatic":true,"feed":"https://u.acme.example/"}}',
+    );
+    expect(policy.automatic).toBe(true);
+    expect(teamRulesUpdateFeedReason(policy)).toContain("https://u.acme.example/");
+    expect(teamRulesUpdateFeedReason(teamRulesUpdatePolicy(TEAM_RULES_NONE))).toBeNull();
+  });
+});
+
+describe("teamRulesCombine attribution", () => {
+  it("blames the source that left a provider out, not the last list", () => {
+    const parsed = parseTeamRulesText(
+      JSON.stringify({ version: 1, owner: "Acme", ai: { providers: ["claudeAgent", "codex"] } }),
+    );
+    if (!parsed.ok) throw new Error(parsed.issues.join());
+    const combined = teamRulesCombine(
+      { status: "active", rules: parsed.rules, fingerprint: "machine", warnings: [] },
+      [
+        {
+          status: "active",
+          source: { source: "repository", owner: "Payments" },
+          ai: { providers: ["claudeAgent", "gemini"] },
+        },
+      ],
+    );
+    expect(
+      teamRulesSelectionRefusal(combined, { driver: "gemini", model: "any" })?.message,
+    ).toContain("Acme's rules");
+    expect(
+      teamRulesSelectionRefusal(combined, { driver: "codex", model: "any" })?.message,
+    ).toContain("Payments's repository rules");
+  });
+});
+
+describe("teamRulesNormalizeRemote userinfo", () => {
+  it("keeps every form it has always normalized", () => {
+    for (const remote of [
+      "https://github.com/acme/api.git",
+      "https://github.com/acme/api/",
+      "https://tok:x@GitHub.com:443/acme/api/",
+      "ssh://git@github.com/acme/api.git",
+      "ssh://git@github.com:22/acme/api.git",
+      "git@github.com:acme/api.git",
+      "github.com:acme/api",
+    ]) {
+      expect(teamRulesNormalizeRemote(remote)).toBe("github.com/acme/api");
+    }
+    expect(teamRulesNormalizeRemote("https://github.com/acme/a@b.git")).toBe("github.com/acme/a@b");
+    expect(teamRulesNormalizeRemote("/srv/git/api.git/")).toBe("/srv/git/api");
+  });
+
+  it("drops the user part of a malformed remote too", () => {
+    for (const remote of [
+      "ssh://user:secret@[::1]:22/acme/api",
+      "https://user:secret@host:abc/acme/api",
+      "https://user:secret@/acme/api",
+    ]) {
+      expect(teamRulesNormalizeRemote(remote)).not.toMatch(/user|secret/u);
+    }
+  });
+
+  it("stays fast on a hostile remote", () => {
+    const started = performance.now();
+    for (const remote of [
+      `http://${"@".repeat(200_000)}/a\rb`,
+      `http://${"@".repeat(200_000)}/a\u2028b`,
+      `https://github.com/${"/".repeat(200_000)}a`,
+      `${"/".repeat(200_000)}a`,
+      `${"a".repeat(200_000)}@\n`,
+    ]) {
+      teamRulesNormalizeRemote(remote);
+    }
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("drops a password holding a raw @", () => {
+    expect(teamRulesNormalizeRemote("https://u:p@ss@github.com/acme/api.git")).toBe(
+      "github.com/acme/api",
+    );
   });
 });

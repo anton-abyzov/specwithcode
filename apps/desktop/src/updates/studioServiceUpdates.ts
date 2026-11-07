@@ -308,7 +308,22 @@ export const NO_AUTOMATIC_UPDATES = {
 export function effectiveUpdatePreferences(
   saved: DesktopUpdatePreferences,
   allowed: boolean,
+  /** Team rules that force automatic updates on, naming who set them. */
+  rules?: { readonly forcedOn: boolean; readonly setBy: string | undefined },
 ): DesktopUpdatePreferences {
+  const setBy = rules?.setBy === undefined ? {} : { automaticUpdatesSetBy: rules.setBy };
+  if (allowed && rules?.forcedOn === true) {
+    return {
+      ...saved,
+      checkAutomatically: true,
+      downloadAutomatically: true,
+      automaticUpdatesAllowed: true,
+      ...setBy,
+    };
+  }
+  if (!allowed && rules?.setBy !== undefined) {
+    return { ...NO_AUTOMATIC_UPDATES, automaticUpdatesAllowed: false, ...setBy };
+  }
   return allowed
     ? {
         checkAutomatically: saved.checkAutomatically,

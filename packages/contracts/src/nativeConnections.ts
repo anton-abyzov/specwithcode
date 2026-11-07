@@ -177,9 +177,11 @@ export class NativeConnectionsError extends Schema.TaggedError<NativeConnections
       "unsupported",
       "undo_unavailable",
     ]),
+    /** Why Team rules refused it, in words that name who set them. */
+    teamRulesMessage: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return NATIVE_CONNECTIONS_ERROR_MESSAGES[this.code];
+    return this.teamRulesMessage ?? NATIVE_CONNECTIONS_ERROR_MESSAGES[this.code];
   }
 }

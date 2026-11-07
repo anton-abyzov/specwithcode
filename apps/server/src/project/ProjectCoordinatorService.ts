@@ -1,5 +1,5 @@
 import { teamRulesClampMode, teamRulesClampToCarried } from "@specweave-studio/shared/teamRules";
-import { currentTeamRules } from "../teamRules/TeamRules.ts";
+import { teamRulesForFolder } from "../teamRules/TeamRules.ts";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -163,7 +163,10 @@ const make = Effect.gen(function* () {
           ).settings;
           const providers = yield* providerRegistry.getProviders;
           const runtimePolicy = {
-            runtimeMode: teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
+            runtimeMode: teamRulesClampMode(
+              yield* teamRulesForFolder(project.workspaceRoot),
+              defaults.defaultRuntimeMode,
+            ),
             interactionMode: "default",
           };
           // Nobody chose a model: start on the project's defaults or this host's best
@@ -240,7 +243,10 @@ const make = Effect.gen(function* () {
             title: `${project.title} coordinator`,
             modelSelection,
             runtimeMode: teamRulesClampToCarried(
-              teamRulesClampMode(yield* currentTeamRules, defaults.defaultRuntimeMode),
+              teamRulesClampMode(
+                yield* teamRulesForFolder(project.workspaceRoot),
+                defaults.defaultRuntimeMode,
+              ),
               input.origin?.carried,
             ),
             interactionMode: "default",

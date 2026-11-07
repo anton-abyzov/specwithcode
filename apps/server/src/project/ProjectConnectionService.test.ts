@@ -9,6 +9,7 @@ import {
   type ProjectConnectionConfig,
   type ProjectConnectionTool,
 } from "@specweave-studio/contracts";
+import { TEAM_RULES_NONE, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Deferred from "effect/Deferred";
@@ -16,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Projects from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as Connections from "./ProjectConnectionService.ts";
 import * as Transport from "./connections/ProjectConnectionTransport.ts";
 
@@ -458,6 +460,69 @@ it.effect("discovers only the registered project root and rejects a missing proj
           Layer.provide(Layer.mock(Transport.ProjectConnectionTransport)({})),
         ),
       ),
+    );
+  }).pipe(Effect.provide(storage)),
+);
+
+const repositoryAllows = (patterns: ReadonlyArray<string>): TeamRulesState => ({
+  status: "active",
+  fingerprint: "machine",
+  warnings: [],
+  rules: { version: 1, owner: "Acme" },
+  sources: [{ source: "repository", owner: "Payments" }],
+  connectionLists: [{ patterns, by: { source: "repository", owner: "Payments" } }],
+});
+
+it.effect("refuses a connection off a repository's list, in that project only", () =>
+  Effect.gen(function* () {
+    const f = yield* harness;
+    const rules = teamRulesOf(TEAM_RULES_NONE, {
+      [`/tmp/${id}`]: repositoryAllows(["github"]),
+    });
+    yield* f
+      .run((service) =>
+        Effect.gen(function* () {
+          const refused = yield* service
+            .save({
+              projectId: id,
+              id: "synthetic",
+              expectedRevision: null,
+              config,
+              allowedTools: [],
+            })
+            .pipe(Effect.flip);
+          assert.equal(refused.code, "denied");
+          assert.include(refused.message, "Payments's repository rules");
+          assert.include(refused.message, "connection Synthetic");
+          yield* f.grant(service, other);
+        }),
+      )
+      .pipe(Effect.provideService(TeamRules, rules));
+  }).pipe(Effect.provide(storage)),
+);
+
+it.effect("stops checks and calls of a saved connection once the rules refuse it", () =>
+  Effect.gen(function* () {
+    const f = yield* harness;
+    yield* f.run((service) =>
+      Effect.gen(function* () {
+        const saved = yield* f.grant(service);
+        const callsBefore = f.state.calls.length;
+        const refused = yield* service
+          .call(f.request(saved))
+          .pipe(
+            Effect.provideService(
+              TeamRules,
+              teamRulesOf(TEAM_RULES_NONE, { [`/tmp/${id}`]: repositoryAllows(["github"]) }),
+            ),
+            Effect.flip,
+          );
+        assert.equal(refused.code, "denied");
+        assert.equal(f.state.calls.length, callsBefore);
+        // Nothing was removed: without the rule it works again.
+        const called = yield* service.call(f.request(saved, id, "call-two"));
+        assert.equal(called.isError, false);
+      }),
     );
   }).pipe(Effect.provide(storage)),
 );
