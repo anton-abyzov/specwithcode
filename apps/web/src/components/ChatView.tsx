@@ -31,7 +31,10 @@ import {
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import { useUnreachableHosts } from "../studio/unreachableHosts";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
-import { useMachineNicknames } from "../studio/machineNickname";
+import {
+  machineNickname as machineNicknameNow,
+  useMachineNicknames,
+} from "../studio/machineNickname";
 import {
   threadHandoffMenuState,
   threadHandoffState,
@@ -3305,7 +3308,10 @@ function useChatViewState(props: ChatViewProps) {
       setReconnectWarningGraceElapsedEnvironmentId(activeReconnectingEnvironmentId),
     );
   }, [activeReconnectingEnvironmentId]);
-  const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
+  const machineNickname = useMachineNicknames();
+  const activeEnvironmentUnavailableLabel = activeEnvironment
+    ? machineNickname(activeEnvironment.environmentId, activeEnvironment.label)
+    : null;
   const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
       return null;
@@ -3371,7 +3377,6 @@ function useChatViewState(props: ChatViewProps) {
     [navigate, setEnvironmentEnabled],
   );
   const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
-  const machineNickname = useMachineNicknames();
   const activeProjectIsScratch =
     activeProject !== null &&
     isScratchProject(
@@ -3718,7 +3723,7 @@ function useChatViewState(props: ChatViewProps) {
                   project.environmentId === environment.environmentId &&
                   isScratchProject(project, scratchWorkspaceRootFor(environment.environmentId)),
               )?.id ?? null,
-              environment.label,
+              machineNickname(environment.environmentId, environment.label),
             ),
           )
       : logicalProjectEnvironments.map((option) =>
@@ -3745,6 +3750,7 @@ function useChatViewState(props: ChatViewProps) {
     environments,
     isServerThread,
     logicalProjectEnvironments,
+    machineNickname,
     primaryEnvironmentId,
     providerStatuses,
     renderNowMs,
@@ -4430,7 +4436,9 @@ function useChatViewState(props: ChatViewProps) {
   );
   // The working header names the machine. This machine is never offline, and
   // a brief reconnect gets the same grace as the unavailable banner.
-  const timelineActiveHostLabel = activeEnvironment?.label ?? null;
+  const timelineActiveHostLabel = activeEnvironment
+    ? machineNickname(activeEnvironment.environmentId, activeEnvironment.label)
+    : null;
   const timelineActiveHostConnected =
     !activeEnvironmentUnavailable ||
     activeEnvironmentIsThisMachine ||
@@ -9221,6 +9229,7 @@ function useChatViewActions(
                 (project) =>
                   project.environmentId === activeThread.environmentId && project.id === projectId,
               )?.title,
+            handoffMachineName,
           );
     if (activeThread === undefined) return null;
     if (banner === null) {
@@ -10417,7 +10426,10 @@ export default function ChatView(props: ChatViewProps) {
     const threadId = newThreadId();
     const createdAt = new Date().toISOString();
     const title = activeThread.title;
-    const sourceLabel = environmentById.get(environmentId)?.label ?? "another device";
+    const sourceEnvironment = environmentById.get(environmentId);
+    const sourceLabel = sourceEnvironment
+      ? machineNicknameNow(sourceEnvironment.environmentId, sourceEnvironment.label)
+      : "another device";
     const chatFolder = activeProjectIsScratch;
     const projectId = chatFolder
       ? ((await openScratchProject(target.environmentId, `Could not continue on ${target.label}`))

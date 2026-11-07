@@ -164,6 +164,21 @@ describe("host limit blocks", () => {
     expect(m4Block?.readAt).toBe(now);
   });
 
+  it("names hosts and shared accounts with the machine name the caller resolves", () => {
+    const blocks = collectHostLimitBlocks(presentations, {
+      projectEnvironmentId: m4,
+      saved: new Map(),
+      driverLabel: label,
+      machineName: (environmentId) => (environmentId === m4 ? "m4" : "m3"),
+      now,
+    });
+    const [m4Block, m3Block] = blocks;
+    expect(m4Block?.label).toBe("m4");
+    expect(m3Block?.label).toBe("m3");
+    expect(m4Block?.providers[0]?.sharedWith).toEqual(["m3"]);
+    expect(m3Block?.providers[0]?.sharedWith).toEqual(["m4"]);
+  });
+
   it("never shows a failed probe's status message as the plan", () => {
     const [block] = collectHostLimitBlocks(
       new Map([

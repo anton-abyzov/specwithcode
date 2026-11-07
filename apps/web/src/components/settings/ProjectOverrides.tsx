@@ -3,7 +3,7 @@ import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { AuthSettingsWriteScope } from "@specweave-studio/contracts";
 import { useMemo } from "react";
 
-import { useEnvironments } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { listProjectSettingOverrides } from "./projectOverrideRows";
@@ -21,7 +21,7 @@ export function ProjectOverrides({
   checkouts: readonly { readonly environmentId: EnvironmentId; readonly id: ProjectId }[];
 }) {
   const tx = useTx();
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const rows = useMemo(
     () => listProjectSettingOverrides(checkouts, environments),
     [checkouts, environments],

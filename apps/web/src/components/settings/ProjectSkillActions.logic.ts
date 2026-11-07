@@ -311,12 +311,15 @@ export function fleetPushMachines(
   machines: ReadonlyArray<StudioFleetMachine>,
   self: EnvironmentId,
   members: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly id: ProjectId }>,
+  /** The display name for a machine: its nickname when the user set one. */
+  machineName?: (environmentId: EnvironmentId, hostLabel: string) => string,
 ): ReadonlyArray<FleetPushMachine> {
   return machines
     .filter((machine) => machine.environmentId !== self)
     .map((machine) => ({
       machineId: machine.id,
-      label: machine.machineName ?? machine.label,
+      label:
+        machineName?.(machine.environmentId, machine.label) ?? machine.machineName ?? machine.label,
       environmentId: machine.environmentId,
       reachable: machine.status === "reachable",
       projectId:

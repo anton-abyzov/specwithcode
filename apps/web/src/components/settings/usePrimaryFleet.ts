@@ -7,6 +7,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pairStudioFleet, useStudioFleet } from "../../studio/fleet";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   rejectedSavedEnvironments,
   savedRouteOrigins,
@@ -31,6 +32,7 @@ export function usePrimaryFleet() {
     snapshot?.connectPermission ?? AuthAccessWriteScope,
   );
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const savedOrigins = useMemo(
     () =>
       savedRouteOrigins(
@@ -61,12 +63,12 @@ export function usePrimaryFleet() {
       });
       if (result._tag === "Failure")
         throw new Error(
-          `The app could not connect to ${machine.label}. Check Tailscale and retry. That server must allow this app's origin.`,
+          `The app could not connect to ${nickname(machine.environmentId, machine.label)}. Check Tailscale and retry. That server must allow this app's origin.`,
         );
       // Connecting by hand undoes an earlier removal, as Connect machine does.
       setFleetEnvironmentSkipped(machine.environmentId, false);
     },
-    [pair, primaryEnvironmentId],
+    [nickname, pair, primaryEnvironmentId],
   );
   return {
     primaryEnvironmentId,

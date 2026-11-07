@@ -28,6 +28,7 @@ import {
   workGrantUnavailableNote,
 } from "./machineWorkGrants.logic";
 import { changeMachineWorkGrant, type useMachineWorkGrants } from "../../studio/fleet";
+import { machineNickname } from "../../studio/machineNickname";
 import { FLEET_WORKER_ACCESS_CHOICES } from "../../studio/fleetWorkers";
 import { useEnvironmentScope } from "../../state/session";
 import { SettingsSection } from "./settingsLayout";
@@ -488,7 +489,7 @@ export function MachineWorkGrants({
         machineLabel:
           snapshot?.grants.find(
             (candidate) => candidate.coordinatorEnvironmentId === changed.coordinatorEnvironmentId,
-          )?.machineLabel ?? workGrantMachineLabel(changed),
+          )?.machineLabel ?? workGrantMachineLabel(changed, (id) => machineNickname(id)),
       };
       if (next.action === "revoke")
         setNotice(

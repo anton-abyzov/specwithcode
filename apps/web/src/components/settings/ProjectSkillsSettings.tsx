@@ -31,6 +31,7 @@ import { cn } from "~/lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
@@ -724,6 +725,7 @@ function ScopedProjectSkillsView({
   const [editError, setEditError] = useState<string | null>(null);
   const [rescan, setRescan] = useState(false);
   const environment = useEnvironment(environmentId);
+  const machineName = useMachineNickname(environmentId, environment?.label);
   const machineOffline =
     environment !== null &&
     environment.connection.phase !== "connected" &&
@@ -1012,8 +1014,8 @@ function ScopedProjectSkillsView({
       {query.error && !snapshot ? (
         <p role="alert" className="px-3 py-4 text-sm text-destructive-foreground sm:px-4">
           {machineOffline
-            ? `${environment.label} is not connected, so its skills cannot be read now. Pick another machine above, or open SpecWithCode on ${environment.label}.`
-            : `Could not read this project's skills${environment ? ` on ${environment.label}` : ""}: ${query.error}`}
+            ? `${machineName} is not connected, so its skills cannot be read now. Pick another machine above, or open SpecWithCode on ${machineName}.`
+            : `Could not read this project's skills${environment ? ` on ${machineName}` : ""}: ${query.error}`}
         </p>
       ) : !snapshot ? (
         <p

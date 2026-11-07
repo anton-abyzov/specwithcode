@@ -108,7 +108,7 @@ import { searchableSetting } from "./settingsSearch";
 import { setFleetEnvironmentSkipped } from "../../studio/fleetAutoConnect";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { RenameMachineDialog } from "./RenameMachineDialog";
-import { useMachineNickname } from "../../studio/machineNickname";
+import { machineNickname, useMachineNickname } from "../../studio/machineNickname";
 import { ConnectionReason } from "./ConnectionReason";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { usePreparedConnection } from "~/state/session";
@@ -1731,7 +1731,7 @@ function SavedBackendListRow({
       serverUpdateState.status !== "running" ? (
         <OutdatedServerUpdateAction
           environmentId={environmentId}
-          serverLabel={`${environment.label} server`}
+          serverLabel={`${nickname} server`}
           fromVersion={lastDescriptor?.serverVersion}
           targetVersion={APP_VERSION}
           label={serverUpdateState.status === "failed" ? tx("Retry update") : tx("Update")}
@@ -1740,7 +1740,7 @@ function SavedBackendListRow({
       {showUpdateAction ? (
         <ServerUpdateAction
           environmentId={environmentId}
-          serverLabel={`${environment.label} server`}
+          serverLabel={`${nickname} server`}
           selfUpdate={resolveServerSelfUpdateCapability(environment.serverConfig)}
           installation={environment.serverConfig?.environment.capabilities.serverInstallation}
           desktopAppUpdate={supportsDesktopAppUpdate(environment.serverConfig)}
@@ -1781,7 +1781,7 @@ function SavedBackendListRow({
               variant="ghost-muted"
               size="icon-xs"
               disabled={isRemoving}
-              aria-label={`More actions for ${environment.label}`}
+              aria-label={`More actions for ${nickname}`}
             />
           }
         >
@@ -2202,7 +2202,7 @@ export function ConnectionsSettings({
         return [
           {
             environmentId: environment.environmentId,
-            serverLabel: environment.label,
+            serverLabel: machineNickname(environment.environmentId, environment.label),
             selfUpdate,
             installation: environment.serverConfig?.environment.capabilities.serverInstallation,
             desktopAppUpdate,
@@ -2711,7 +2711,7 @@ export function ConnectionsSettings({
         type: "success",
         title: routeTarget ? "Route added" : "Environment connected",
         description: routeTarget
-          ? `${routeTarget.label} can now be reached over SSH ${target.alias}.`
+          ? `${machineNickname(routeTarget.environmentId, routeTarget.label)} can now be reached over SSH ${target.alias}.`
           : `${target.alias} is ready over an SSH-managed tunnel.`,
       });
       setIsAddingSavedBackend(false);
@@ -2791,7 +2791,7 @@ export function ConnectionsSettings({
         ? {
             type: "success",
             title: "Route added",
-            description: `${routeTarget.label} now has another way to connect.`,
+            description: `${machineNickname(routeTarget.environmentId, routeTarget.label)} now has another way to connect.`,
           }
         : {
             type: "success",
@@ -2963,7 +2963,7 @@ export function ConnectionsSettings({
       }
       // Fail closed: no mounted confirm host means no removal.
       const confirmed = await requestConfirmDialog(
-        `Remove ${environment.label} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`,
+        `Remove ${machineNickname(environment.environmentId, environment.label)} from this device?\nThis forgets its pairing, credentials, and cached threads here. Switch it off instead to keep it saved.`,
         { variant: "destructive" },
       );
       if (confirmed === true) await removeSavedBackend(environment);
@@ -3129,7 +3129,7 @@ export function ConnectionsSettings({
     toastManager.add({
       type: "success",
       title: "Route added",
-      description: `${routeTarget.label} falls back to SpecWithCode Connect when its other routes are unreachable.`,
+      description: `${machineNickname(routeTarget.environmentId, routeTarget.label)} falls back to SpecWithCode Connect when its other routes are unreachable.`,
     });
   };
   const renderRemoteModeBody = () => (
@@ -3887,9 +3887,7 @@ export function ConnectionsSettings({
                     <ServerUpdateAction
                       size="sm"
                       environmentId={primaryEnvironmentId}
-                      serverLabel={
-                        primaryEnvironment ? `${primaryEnvironment.label} server` : "server"
-                      }
+                      serverLabel={primaryEnvironment ? `${primaryNickname} server` : "server"}
                       selfUpdate={resolveServerSelfUpdateCapability(primaryServerConfig)}
                       installation={
                         primaryServerConfig?.environment.capabilities.serverInstallation
@@ -4367,7 +4365,9 @@ export function ConnectionsSettings({
                 <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
                   <DialogHeader>
                     <DialogTitle>
-                      {routeTarget ? `Add a route to ${routeTarget.label}` : tx("Add Environment")}
+                      {routeTarget
+                        ? `Add a route to ${machineNickname(routeTarget.environmentId, routeTarget.label)}`
+                        : tx("Add Environment")}
                     </DialogTitle>
                     <DialogDescription>
                       {routeTarget

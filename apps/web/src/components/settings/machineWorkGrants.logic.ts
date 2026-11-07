@@ -16,8 +16,8 @@ export function formatTime(value: string): string {
 }
 
 /**
- * A coordinator's name for this screen: the server's label, else a name this
- * app knows for that machine (its nickname or saved connection), else a short
+ * A coordinator's name for this screen: a name this app knows for that
+ * machine (its nickname above all), else the server's label, else a short
  * id. The server sends the bare environment id when it knows no name.
  */
 export function workGrantMachineLabel(
@@ -25,10 +25,10 @@ export function workGrantMachineLabel(
   knownName?: (environmentId: string) => string | null | undefined,
 ): string {
   const id = grant.coordinatorEnvironmentId;
-  const label = grant.machineLabel.trim();
-  if (label !== "" && label !== id) return label;
   const known = knownName?.(id)?.trim();
   if (known && known !== id) return known;
+  const label = grant.machineLabel.trim();
+  if (label !== "" && label !== id) return label;
   return `Machine ${id.slice(0, 8)}`;
 }
 

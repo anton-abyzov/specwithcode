@@ -14,6 +14,9 @@ vi.mock("~/cloud/connectRoutePlan", () => ({
   beginConnectRouteRemoval: vi.fn(),
   endConnectRouteRemoval: vi.fn(),
 }));
+vi.mock("~/studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+}));
 vi.mock("~/confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
 import { ConnectionPathDetails } from "./EnvironmentRoutesList";
 const environmentId = EnvironmentId.make("m1");

@@ -50,7 +50,8 @@ import { AnimatedHeight } from "~/components/AnimatedHeight";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
-import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
+import { usePrimaryEnvironment } from "~/state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -986,7 +987,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
-  const { environments, isReady: environmentsReady } = useEnvironments();
+  const { environments, isReady: environmentsReady } = useNamedEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<{

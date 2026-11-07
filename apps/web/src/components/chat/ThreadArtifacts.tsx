@@ -55,6 +55,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 // Relative, so the headless fixture (tests/project-workspace) can stand in for it.
 import { useThreadProjection } from "../../state/entities";
 import { useEnvironment, useUnreachableEnvironmentIds } from "../../state/environments";
+import { useMachineNickname, useMachineNicknames } from "../../studio/machineNickname";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
 import {
@@ -537,6 +538,7 @@ function useInheritedArtifacts(
   const source = useThreadProjection(originRef);
   const fromThread = useThreadArtifacts(originRef, origin?.workspaceRoot ?? undefined);
   const originEnvironment = useEnvironment(origin?.environmentId ?? null);
+  const nickname = useMachineNicknames();
   const messages = source?.projection.messages;
   const turnItems = source?.projection.turnItems;
   const sourceDates = useMemo(() => artifactDates(messages, turnItems), [messages, turnItems]);
@@ -556,9 +558,18 @@ function useInheritedArtifacts(
               entry.at === undefined ? [] : [[`snapshot:${entry.id}`, entry.at] as const],
             ),
           ),
-      machineLabel: origin.machineLabel ?? originEnvironment?.label ?? null,
+      machineLabel: nickname(origin.environmentId, origin.machineLabel ?? originEnvironment?.label),
     };
-  }, [cwd, fromThread, messages, origin, originEnvironment?.label, originRef, sourceDates]);
+  }, [
+    cwd,
+    fromThread,
+    messages,
+    nickname,
+    origin,
+    originEnvironment?.label,
+    originRef,
+    sourceDates,
+  ]);
 }
 
 /** When each message and tool call was written. */
@@ -630,7 +641,8 @@ function useShelfFileChecks(
   enabled: boolean,
 ) {
   const environmentId = threadRef?.environmentId ?? null;
-  const machine = useEnvironment(environmentId)?.label ?? null;
+  const environment = useEnvironment(environmentId);
+  const machine = useMachineNickname(environmentId, environment?.label) || null;
   const unreachable = useUnreachableEnvironmentIds();
   const offline =
     environmentId !== null && unreachable.has(environmentId)

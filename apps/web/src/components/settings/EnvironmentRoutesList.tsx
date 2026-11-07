@@ -35,6 +35,7 @@ import { requestConfirmDialog } from "~/confirmDialog";
 import { environmentCatalog } from "~/connection/catalog";
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
+import { useMachineNickname } from "~/studio/machineNickname";
 import { usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
@@ -55,6 +56,7 @@ export function EnvironmentRoutesList({
   readonly onAddRoute: () => void;
 }) {
   const tx = useTx();
+  const machineName = useMachineNickname(environment.environmentId, environment.label);
   const saved = connectionRoutes(environment.entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
   // A dropped order shows until the catalog matches it, so the row does not
@@ -133,7 +135,7 @@ export function EnvironmentRoutesList({
         onDragEnd={handleDragEnd}
       >
         <SortableContext items={order} strategy={verticalListSortingStrategy}>
-          <ol aria-label={`Routes to ${environment.label}, preferred first`}>
+          <ol aria-label={`Routes to ${machineName}, preferred first`}>
             {routes.map((route, index) => (
               <SortableRouteRow
                 key={connectionRouteId(route.target)}

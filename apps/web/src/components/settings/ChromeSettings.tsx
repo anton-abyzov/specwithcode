@@ -20,7 +20,8 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -171,7 +172,7 @@ const PROVIDER_CONFIG_FILES: Record<BrowserBridgeProviderWiring["provider"], str
 
 export function ChromeSettings() {
   const tx = useTx();
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const { search, selectScope } = useSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   // Chrome on this computer pairs with this computer's service, so default to it.

@@ -28,6 +28,7 @@ import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import { Fragment, type ReactNode, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -549,9 +550,12 @@ export function UsageLimitsPooled({
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
-  const accounts = collectLimitAccounts(presentations);
+  const nickname = useMachineNicknames();
+  const accounts = collectLimitAccounts(presentations, { machineName: nickname });
   const pools = collectLimitPools(accounts, now);
-  const unreported = collectUnreportedLimitAccounts(presentations, accounts);
+  const unreported = collectUnreportedLimitAccounts(presentations, accounts, {
+    machineName: nickname,
+  });
   const history = useUsageLimitHistory(
     // An offline machine cannot answer; its accounts' last reads still show.
     [...presentations]
@@ -562,7 +566,10 @@ export function UsageLimitsPooled({
       .map(([environmentId]) => environmentId),
     now,
   );
-  const notices = collectLimitNotices(presentations, { excludeSubscriptionAgents: true });
+  const notices = collectLimitNotices(presentations, {
+    excludeSubscriptionAgents: true,
+    machineName: nickname,
+  });
   const reported = new Set(
     [
       ...accounts.map((account) => limitAccountKey(account.driver, account.email, account.limits)),

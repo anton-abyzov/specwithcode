@@ -6,6 +6,7 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { describeServerUpdate, serverUpdateRowText } from "../../serverUpdateWording";
 import { useServerConfigs } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { serverEnvironment } from "../../state/server";
 import {
   buildVersionMismatchDismissalKey,
@@ -33,15 +34,21 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 export function SidebarServerUpdate() {
   const configs = useServerConfigs();
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const labels = new Map(
-    environments.map((environment) => [environment.environmentId, environment.label]),
+    environments.map((environment) => [
+      environment.environmentId,
+      nickname(environment.environmentId, environment.label),
+    ]),
   );
   return (
     <>
       {[...configs].map(([environmentId, config]) => {
         // Every row names its machine: a lone "Server" read as some other machine's, not this
         // one's own background service.
-        const machine = labels.get(environmentId) ?? config.environment.label ?? null;
+        const machine =
+          labels.get(environmentId) ??
+          (config.environment.label ? nickname(environmentId, config.environment.label) : null);
         return (
           <SidebarServerUpdateRow
             key={environmentId}

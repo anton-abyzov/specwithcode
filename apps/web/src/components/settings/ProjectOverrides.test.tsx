@@ -13,6 +13,11 @@ const state = vi.hoisted(() => ({
   run: vi.fn(),
   environments: [] as unknown[],
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
+  machineNickname: (id: string, label?: string | null) => label ?? id,
+}));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: state.environments }),
 }));

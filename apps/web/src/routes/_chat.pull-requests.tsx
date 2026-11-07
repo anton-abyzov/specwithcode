@@ -137,6 +137,7 @@ import {
 } from "../state/entities";
 import { ineligibleProjectLabel, isArchivedMember } from "../studio/projectListVisibility";
 import { useEnvironments } from "../state/environments";
+import { useMachineNicknames } from "../studio/machineNickname";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -369,12 +370,19 @@ function PullRequestsRouteView() {
     () => allProjects.filter((project) => environmentIds.includes(project.environmentId)),
     [allProjects, environmentIds],
   );
+  const nickname = useMachineNicknames();
   const environmentLabels = useMemo(
     () =>
       new Map(
-        environments.map((environment) => [environment.environmentId, environment.label] as const),
+        environments.map(
+          (environment) =>
+            [
+              environment.environmentId,
+              nickname(environment.environmentId, environment.label),
+            ] as const,
+        ),
       ),
-    [environments],
+    [environments, nickname],
   );
   // The scope the URL asks for, once the environments have had their say about whether it exists.
   const scopedProjectId = useMemo(
@@ -1976,7 +1984,7 @@ function PullRequestsRouteView() {
     { value: "", label: "All servers", Icon: LayersIcon },
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
-      label: environment.label,
+      label: nickname(environment.environmentId, environment.label),
       Icon: environmentMachineIcon(resolveEnvironmentMachineKind(environment.serverConfig)),
     })),
   ];

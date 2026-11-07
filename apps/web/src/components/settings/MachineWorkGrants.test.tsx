@@ -16,6 +16,7 @@ vi.mock("../../studio/fleet", () => ({
   useMachineWorkGrants: vi.fn(),
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../studio/machineNickname", () => ({ machineNickname: (id: string) => id }));
 vi.mock("./settingsLayout", () => ({ SettingsSection: () => null }));
 import {
   MachineWorkGrantRow,
@@ -64,6 +65,8 @@ describe("who can run work on this Mac", () => {
     const unnamed = { ...grant, coordinatorEnvironmentId: uuid, machineLabel: uuid as string };
     expect(workGrantMachineLabel(grant)).toBe("M4MAX");
     expect(workGrantMachineLabel(unnamed)).toBe("Machine 4d73e481");
+    // A nickname this app knows wins over the server's own label.
+    expect(workGrantMachineLabel(grant, () => "m4")).toBe("m4");
     // A name this app knows (a nickname or a saved connection) comes before the short id.
     expect(workGrantMachineLabel(unnamed, () => "M4")).toBe("M4");
     expect(workGrantMachineLabel(unnamed, (id) => id)).toBe("Machine 4d73e481");

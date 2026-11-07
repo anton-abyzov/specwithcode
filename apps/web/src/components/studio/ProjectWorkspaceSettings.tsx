@@ -32,6 +32,7 @@ import { COORDINATOR_RECOMMENDED_TRAITS } from "../../studio/shellModel";
 import { useStudioFleet } from "../../studio/fleet";
 import { workerMachineChoices, workerMachinesPatch } from "../../studio/fleetWorkers";
 import { ProjectWorkerMachines } from "./ProjectWorkerMachines";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { ProjectModels } from "./ProjectModels";
 import { ProjectMemory } from "./ProjectMemory";
 import { ProjectKnowledge } from "./ProjectKnowledge";
@@ -190,10 +191,12 @@ export function ProjectWorkspaceSettings({
     projectWorkerMachineOrder(snapshot.settings, project.environmentId),
   );
   const fleet = useStudioFleet(project.environmentId);
+  const nickname = useMachineNicknames();
   const machineChoices = workerMachineChoices(
     fleet.snapshot,
     project.environmentId,
     workerMachines,
+    nickname,
   );
   const [baseRevision, setBaseRevision] = useState(snapshot.settings.revision);
   const [dirty, setDirty] = useState(false);

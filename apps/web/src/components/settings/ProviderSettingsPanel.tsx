@@ -53,11 +53,8 @@ import {
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
-import {
-  useEnvironments,
-  usePrimaryEnvironmentId,
-  type EnvironmentPresentation,
-} from "../../state/environments";
+import { usePrimaryEnvironmentId, type EnvironmentPresentation } from "../../state/environments";
+import { useNamedEnvironments } from "./useNamedEnvironments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
 import { useProjects, useServerConfigs } from "../../state/entities";
@@ -404,7 +401,7 @@ export function ProviderSettingsPanel(target: ProviderSettingsTarget) {
 
 function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
   const tx = useTx();
-  const { environments, isReady } = useEnvironments();
+  const { environments, isReady } = useNamedEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const searchTargetId = useSettingsSearchTargetId();
   const options = useMemo(
@@ -626,7 +623,7 @@ function AccessGatedProviderSettings({
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
 }) {
-  const { environments } = useEnvironments();
+  const { environments } = useNamedEnvironments();
   const access = classifyProviderEnvironmentAccess({
     connectionPhase: environment.connection.phase,
     hasServerConfig: environment.serverConfig !== null,

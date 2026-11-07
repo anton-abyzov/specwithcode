@@ -22,6 +22,11 @@ const state = vi.hoisted(() => ({
   listeners: new Set<() => void>(),
 }));
 
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (_id: string, label?: string | null) => label ?? "",
+  useMachineNicknames: () => (id: string, label?: string | null) => label ?? id,
+  machineNickname: (id: string, label?: string | null) => label ?? id,
+}));
 vi.mock("../../state/session", async () => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (environmentId: string, scope: string) =>

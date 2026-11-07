@@ -7,6 +7,7 @@ import {
   useUpdateClientSettings,
 } from "~/hooks/useSettings";
 import type { EnvironmentPresentation } from "~/state/environments";
+import { useMachineNicknames } from "~/studio/machineNickname";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
@@ -57,11 +58,16 @@ export function summarizeLoadPreferences(
  * or more machines are on, since one machine has nothing to balance against.
  */
 export function LoadBalancingSettings({
-  environments,
+  environments: givenEnvironments,
 }: {
   environments: ReadonlyArray<EnvironmentPresentation>;
 }) {
   const tx = useTx();
+  const nickname = useMachineNicknames();
+  const environments = givenEnvironments.map((environment) => {
+    const label = nickname(environment.environmentId, environment.label);
+    return label === environment.label ? environment : { ...environment, label };
+  });
   const settings = useClientSettings();
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdateClientSettings();

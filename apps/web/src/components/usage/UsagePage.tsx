@@ -38,6 +38,7 @@ import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { mergeAnsweredUsage, useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
@@ -187,12 +188,28 @@ export function UsagePage({
   const isPast24Hours = windowDays === 1;
   const {
     merged: fullMerged,
-    environments,
-    selectedEnvironments,
+    environments: rawEnvironments,
+    selectedEnvironments: rawSelectedEnvironments,
     isPending,
     isPartial,
     refresh,
   } = useUsage(window, selectedEnvironmentIds);
+  const nickname = useMachineNicknames();
+  const namedStatus = useMemo(
+    () => (status: EnvironmentUsageStatus) => {
+      const label = nickname(status.environmentId, status.label);
+      return label === status.label ? status : { ...status, label };
+    },
+    [nickname],
+  );
+  const environments = useMemo(
+    () => rawEnvironments.map(namedStatus),
+    [rawEnvironments, namedStatus],
+  );
+  const selectedEnvironments = useMemo(
+    () => rawSelectedEnvironments.map(namedStatus),
+    [rawSelectedEnvironments, namedStatus],
+  );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const chartMerged = useMemo(() => {
     const keep = usageBucketFilter(filters, false);
