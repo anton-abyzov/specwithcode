@@ -128,7 +128,7 @@ export function SkillCopyCompare({
           </p>
           <pre
             aria-label="Copy differences"
-            className="max-h-80 overflow-auto rounded-md border bg-muted/25 p-2 text-xs leading-5"
+            className="max-h-80 overflow-auto rounded-md border bg-muted/25 p-2 text-xs leading-5 sm:hidden"
           >
             {lines.slice(0, 1600).map((line, i) => (
               <div
@@ -148,10 +148,44 @@ export function SkillCopyCompare({
               </div>
             ))}
           </pre>
+          <div className="hidden sm:block" aria-label="Side by side copy differences">
+            <div className="grid grid-cols-2 border border-b-0 text-xs font-medium">
+              <p className="p-2">Comparison copy</p>
+              <p className="border-l p-2">Content to keep</p>
+            </div>
+            <div className="grid max-h-80 grid-cols-2 overflow-auto rounded-b-md border bg-muted/25 text-xs leading-5">
+              {["before", "after"].map((side) => (
+                <pre key={side} className="min-w-0 overflow-x-auto p-2 first:border-r">
+                  {lines.slice(0, 1600).map((line, i) => {
+                    const omitted =
+                      side === "before" ? line.kind === "added" : line.kind === "removed";
+                    return (
+                      <div
+                        key={i}
+                        className={
+                          omitted
+                            ? ""
+                            : line.kind === "added"
+                              ? "bg-success/10 text-success-foreground"
+                              : line.kind === "removed"
+                                ? "bg-destructive/10 text-destructive-foreground"
+                                : "text-muted-foreground"
+                        }
+                      >
+                        {omitted
+                          ? " "
+                          : `${line.kind === "added" ? "+ " : line.kind === "removed" ? "− " : "  "}${line.text || " "}`}
+                      </div>
+                    );
+                  })}
+                </pre>
+              ))}
+            </div>
+          </div>
           {lines.length > 1600 ? (
             <p className="text-xs text-muted-foreground">
-              Showing the first 1,600 diff lines. Review the source files before applying a large
-              change.
+              Showing the first 1,600 diff lines. The display limit does not change what will be
+              copied. Review selected destinations before confirming.
             </p>
           ) : null}
         </>
@@ -208,21 +242,23 @@ export function SkillCopyCompare({
                   {target.agents.map((a) => a.label).join(", ")} · {target.path}
                 </summary>
                 <pre className="mt-2 max-h-64 overflow-auto text-xs">
-                  {skillCopyDiff(target.content, source.content).map((line, i) => (
-                    <div
-                      key={i}
-                      className={
-                        line.kind === "added"
-                          ? "text-success-foreground"
-                          : line.kind === "removed"
-                            ? "text-destructive-foreground"
-                            : "text-muted-foreground"
-                      }
-                    >
-                      {line.kind === "added" ? "+ " : line.kind === "removed" ? "− " : "  "}
-                      {line.text}
-                    </div>
-                  ))}
+                  {skillCopyDiff(target.content, source.content)
+                    .slice(0, 1600)
+                    .map((line, i) => (
+                      <div
+                        key={i}
+                        className={
+                          line.kind === "added"
+                            ? "text-success-foreground"
+                            : line.kind === "removed"
+                              ? "text-destructive-foreground"
+                              : "text-muted-foreground"
+                        }
+                      >
+                        {line.kind === "added" ? "+ " : line.kind === "removed" ? "− " : "  "}
+                        {line.text}
+                      </div>
+                    ))}
                 </pre>
               </details>
             );
@@ -239,7 +275,7 @@ export function SkillCopyCompare({
       ) : (
         <Button
           size="sm"
-          disabled={busy || !canWrite || targets.size === 0 || lines.length > 1600}
+          disabled={busy || !canWrite || targets.size === 0}
           onClick={() => onPreview(source.id, [...targets])}
         >
           Choose this copy

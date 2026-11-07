@@ -45,6 +45,9 @@ export function SkillDetailPanel({
     [error, setError] = useState<string | null>(null),
     [notice, setNotice] = useState<string | null>(null);
   const [instructionId, setInstructionId] = useState("");
+  const [receipts, setReceipts] = useState<
+    ReadonlyArray<{ id: string; path: string; status: string; message?: string }>
+  >([]);
   const generation = useRef(0);
   const parts = skillDescriptionParts(row.description);
   const contextKey = controls
@@ -62,37 +65,78 @@ export function SkillDetailPanel({
     setBusy(true);
     setError(null);
     setNotice(null);
+    if (operation === "apply") {
+      setCopies([]);
+      setPreview(null);
+      setReceipts([]);
+    }
+    const input = {
+      projectId: active.controls.projectId,
+      skill: row.name,
+      ...(active.controls.cwd ? { cwd: active.controls.cwd } : {}),
+      ...(active.controls.threadId ? { threadId: active.controls.threadId } : {}),
+      userLevel: active.controls.userLevel,
+    };
     try {
       const result = await active.command({
         environmentId: active.controls.environmentId,
-        input: {
-          projectId: active.controls.projectId,
-          skill: row.name,
-          ...(active.controls.cwd ? { cwd: active.controls.cwd } : {}),
-          ...(active.controls.threadId ? { threadId: active.controls.threadId } : {}),
-          userLevel: active.controls.userLevel,
-          operation,
-          ...extra,
-        },
+        input: { ...input, operation, ...extra },
       });
       if (token !== generation.current) return;
       if (result._tag !== "Success") {
         setPreview(null);
-        setError(skillActionErrorText(squashAtomCommandFailure(result)));
+        setError(
+          `${operation === "apply" ? "Replacement outcome could not be confirmed. " : ""}${skillActionErrorText(squashAtomCommandFailure(result))}`,
+        );
         return;
       }
-      setCopies(result.value.copies);
+      if (operation !== "apply") setCopies(result.value.copies);
       setPreview(operation === "preview" ? result.value : null);
       if (operation === "apply") {
-        setNotice("Copies updated. Agent readiness still depends on its next discovery.");
-        onChanged();
+        setReceipts(
+          (result.value.receipts ?? []).map((receipt) => ({
+            ...receipt,
+            path: result.value.copies.find((copy) => copy.id === receipt.id)?.path ?? receipt.id,
+          })),
+        );
+        if (result.value._tag === "partial")
+          setError(
+            result.value.message ??
+              "Some copies changed; others were not replaced. Review each result before trying again.",
+          );
+        else setNotice("Copies updated. Agent readiness still depends on its next discovery.");
       }
     } catch (e) {
       if (token === generation.current) {
         setPreview(null);
-        setError(e instanceof Error ? e.message : "Skill copies could not be read.");
+        setError(
+          `${operation === "apply" ? "Replacement outcome could not be confirmed. " : ""}${e instanceof Error ? e.message : "Skill copies could not be read."}`,
+        );
       }
     } finally {
+      if (operation === "apply" && token === generation.current) {
+        onChanged();
+        try {
+          const fresh = await active.command({
+            environmentId: active.controls.environmentId,
+            input: { ...input, operation: "read" },
+          });
+          if (token === generation.current) {
+            if (fresh._tag === "Success") setCopies(fresh.value.copies);
+            else
+              setError(
+                (previous) =>
+                  `${previous ? previous + " " : ""}Current copies could not be refreshed. Their state is unknown; retry reading copies.`,
+              );
+          }
+        } catch {
+          if (token === generation.current)
+            setError(
+              (previous) =>
+                `${previous ? previous + " " : ""}Current copies could not be refreshed. Their state is unknown; retry reading copies.`,
+            );
+        }
+      }
       if (token === generation.current) setBusy(false);
     }
   }
@@ -100,6 +144,7 @@ export function SkillDetailPanel({
     setCopies([]);
     setPreview(null);
     setInstructionId("");
+    setReceipts([]);
     void request("read");
     return () => {
       generation.current++;
@@ -183,6 +228,23 @@ export function SkillDetailPanel({
             Retry reading copies
           </Button>
         </div>
+      ) : null}
+      {receipts.length > 0 ? (
+        <ul aria-label="Copy replacement results" className="mb-4 space-y-2 rounded-md border p-3">
+          {receipts.map((receipt) => (
+            <li key={receipt.id} className="min-w-0 text-sm">
+              <p className="break-all font-mono text-xs">{receipt.path}</p>
+              <p>
+                {receipt.status === "applied"
+                  ? "Replaced"
+                  : receipt.status === "not_applied"
+                    ? "Not replaced"
+                    : "Replacement failed"}
+                {receipt.message ? `: ${receipt.message}` : ""}
+              </p>
+            </li>
+          ))}
+        </ul>
       ) : null}
       {notice ? (
         <p role="status" className="mb-4">

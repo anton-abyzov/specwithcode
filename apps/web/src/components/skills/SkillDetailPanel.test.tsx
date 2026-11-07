@@ -161,11 +161,111 @@ describe("skill detail controls", () => {
         .find((b) => b.textContent === "Confirm replacement")!
         .click(),
     );
-    expect(command.mock.calls.at(-1)?.[0].input).toMatchObject({
+    expect(
+      command.mock.calls.find(([call]) => call.input.operation === "apply")?.[0].input,
+    ).toMatchObject({
       operation: "apply",
       sourceId: "a",
       targetIds: ["b"],
       expected,
     });
+  });
+  it.each([false, true])(
+    "refreshes partial results and hides stale content if refresh fails: %s",
+    async (readFails) => {
+      let applied = false;
+      const copies = [copy("a"), copy("b"), copy("c")];
+      const updated = copies.map((c) =>
+        c.id === "b" ? { ...c, hash: copies[0]!.hash, content: copies[0]!.content } : c,
+      );
+      command.mockImplementation(async ({ input }) => {
+        if (input.operation === "apply") {
+          applied = true;
+          return {
+            _tag: "Success",
+            value: {
+              _tag: "partial",
+              copies: updated,
+              message: "One replacement failed.",
+              receipts: [
+                { id: "b", status: "applied" },
+                { id: "c", status: "failed", message: "Changed on disk" },
+              ],
+            },
+          };
+        }
+        if (input.operation === "read" && applied && readFails) throw Error("Read unavailable");
+        return {
+          _tag: "Success",
+          value: {
+            _tag: input.operation,
+            copies: applied ? updated : copies,
+            sourceId: "a",
+            targetIds: ["b", "c"],
+            expected: {
+              sourceHash: copies[0]!.hash,
+              targets: [
+                { id: "b", hash: copies[1]!.hash },
+                { id: "c", hash: copies[2]!.hash },
+              ],
+            },
+          },
+        };
+      });
+      const refresh = vi.fn();
+      await act(async () =>
+        root.render(
+          <SkillDetailPanel
+            row={{ name: "test", description: "Test.", lock: null } as never}
+            machineLabel="Laptop"
+            initialView="compare"
+            onChanged={refresh}
+            onEdit={() => {}}
+          >
+            Overview
+          </SkillDetailPanel>,
+        ),
+      );
+      for (const box of host.querySelectorAll<HTMLElement>("[role=checkbox]"))
+        await act(async () => box.click());
+      const click = async (text: string) =>
+        act(async () =>
+          [...host.querySelectorAll("button")].find((b) => b.textContent === text)!.click(),
+        );
+      await click("Choose this copy");
+      await click("Confirm replacement");
+      expect(command.mock.calls.at(-1)?.[0].input.operation).toBe("read");
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(host.textContent).toContain("Replaced");
+      expect(host.textContent).toContain("Replacement failed: Changed on disk");
+      expect(host.textContent).not.toContain("Copies updated.");
+      if (readFails) {
+        expect(host.textContent).toContain("Their state is unknown");
+        expect(host.querySelector('[aria-label="Copy differences"]')).toBeNull();
+      } else expect(host.textContent).toContain("These copies have identical contents.");
+    },
+  );
+  it("allows reconciliation when unchanged context exceeds the diff display limit", async () => {
+    const a = { ...copy("a"), content: "same\n".repeat(1700) + "old" };
+    const b = { ...copy("b"), content: "same\n".repeat(1700) + "new" };
+    await act(async () =>
+      root.render(
+        <SkillCopyCompare
+          copies={[a, b] as never}
+          machineLabel="Laptop"
+          busy={false}
+          canWrite
+          preview={null}
+          onPreview={() => {}}
+          onApply={() => {}}
+          onCancel={() => {}}
+        />,
+      ),
+    );
+    await act(async () => host.querySelector<HTMLElement>("[role=checkbox]")!.click());
+    expect(
+      [...host.querySelectorAll("button")].find((b) => b.textContent === "Choose this copy")!
+        .disabled,
+    ).toBe(false);
   });
 });

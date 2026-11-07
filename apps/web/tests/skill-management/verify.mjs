@@ -137,7 +137,7 @@ try {
       });
       await page.getByRole("button", { name: "Confirm installation", exact: true }).click();
       const results = await page.getByTestId("skill-fleet-results").innerText();
-      assert.match(results, /Desktop: installed 1.3.0/);
+      assert.match(results, /Desktop: Installed 1.3.0 · next session/);
       assert.match(results, /Mini: Permission changed/);
       await page.screenshot({
         path: join(output, `verified-fleet-partial-${theme}-${width}.png`),
