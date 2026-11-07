@@ -43,6 +43,9 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
+import { incomingMachines, matchIncoming, reverseGrantMessage } from "./incomingMachines.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import * as PhoneLinks from "./phoneLinks.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -539,18 +542,80 @@ const make = Effect.gen(function* () {
   );
   const workspace = yield* Effect.serviceOption(ProjectWorkspaceService.ProjectWorkspaceService);
   const probes = yield* Ref.make<ReadonlyMap<string, Probe>>(new Map());
+  const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
 
-  const machines = targets.load.pipe(
+  // A row naming this machine itself (a line added while the server was down, or a copied
+  // file) is never a remote machine: it would list as needing a grant and resolve to itself.
+  const everyRow = targets.load.pipe(
     Effect.map((config) => config?.machines ?? []),
     Effect.mapError(() =>
       failure("orchestration_error", "Private machine configuration could not be read securely."),
     ),
   );
+  const machines = Effect.all([everyRow, environment.getEnvironmentId]).pipe(
+    Effect.map(([rows, own]) => rows.filter((machine) => machine.environmentId !== own)),
+  );
+  /** Whether `lower` names this machine: its own name, or a row that points at it. */
+  const namesThisMachine = (lower: string) =>
+    Effect.gen(function* () {
+      const descriptor = yield* environment.getDescriptor;
+      if (descriptor.label.toLowerCase() === lower) return true;
+      return (yield* everyRow).some(
+        (machine) =>
+          machine.environmentId === descriptor.environmentId &&
+          (machine.id === lower || machine.label.toLowerCase() === lower),
+      );
+    });
   const refOf = (target: FleetTarget): OrchestratorMcpMachineRef => ({
     id: target.id,
     label: target.label,
     environmentId: target.environmentId,
   });
+
+  /** Machines that run work here but are not in this machine's own fleet. */
+  const incoming = (configured: ReadonlyArray<FleetTarget>) =>
+    Effect.gen(function* () {
+      const descriptor = yield* environment.getDescriptor;
+      const labels = new Map<string, string>(
+        configured.map((machine) => [machine.environmentId, machine.label]),
+      );
+      if (Option.isSome(settings)) {
+        const read = yield* settings.value.getSettings.pipe(Effect.option);
+        for (const [environmentId, entry] of Object.entries(
+          Option.isSome(read) ? read.value.machineNicknames : {},
+        )) {
+          const name = normalizeMachineNickname(entry.name);
+          if (name !== "") labels.set(environmentId, name);
+        }
+      }
+      const hereLabel = labels.get(descriptor.environmentId) ?? descriptor.label;
+      return {
+        hereLabel,
+        machines: yield* incomingMachines({
+          ownEnvironmentId: descriptor.environmentId,
+          hereLabel,
+          configured: new Set(configured.map((machine) => machine.environmentId)),
+          labels,
+        }),
+      };
+    });
+
+  /** No configured machine is called `wanted`; name the one-click step when one sends work here. */
+  const notConfigured = (wanted: string, configured: ReadonlyArray<FleetTarget>) =>
+    Effect.gen(function* () {
+      const { hereLabel, machines: others } = yield* incoming(configured);
+      const meant = matchIncoming(wanted, others);
+      if (meant !== undefined)
+        return yield* failure(
+          "machine_not_authorized",
+          reverseGrantMessage(hereLabel, meant.label),
+        );
+      if (others.length === 0) return yield* noMachines(wanted);
+      return yield* failure(
+        "unknown_machine",
+        `No machine named "${wanted}". studio_machine_list shows the machines this one can use, and under incoming the ones that run work here with the step that lets this machine use them.`,
+      );
+    });
 
   const resolveMachine: RemoteWorkersShape["resolveMachine"] = (target) =>
     Effect.gen(function* () {
@@ -565,7 +630,8 @@ const make = Effect.gen(function* () {
       if (byEnvironment) return { kind: "remote", machine: refOf(byEnvironment) } as const;
       const byLabel = configured.filter((machine) => machine.label.toLowerCase() === lower);
       if (byLabel.length === 1) return { kind: "remote", machine: refOf(byLabel[0]!) } as const;
-      return yield* noMachines(wanted);
+      if (yield* namesThisMachine(lower)) return { kind: "local" } as const;
+      return yield* notConfigured(wanted, configured);
     });
 
   const resolveThread: RemoteWorkersShape["resolveThread"] = ({ machine, threadId }) =>
@@ -733,6 +799,9 @@ const make = Effect.gen(function* () {
         },
         machines: rows,
         ...workerMachineSummary(project, descriptor.environmentId),
+        ...(yield* incoming(configured).pipe(
+          Effect.map(({ machines: others }) => (others.length === 0 ? {} : { incoming: others })),
+        )),
       };
     });
 

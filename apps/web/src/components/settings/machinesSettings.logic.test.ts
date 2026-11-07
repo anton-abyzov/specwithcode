@@ -8,10 +8,12 @@ import {
 import type {
   StudioFleetMachine,
   StudioFleetSnapshot,
+  StudioWorkGrantsSnapshot,
 } from "@specweave-studio/contracts/studioFleet";
 
 import {
   buildMachineRows,
+  canAllowBack,
   connectBothWaysInstruction,
   pairingLinkBaseUrl,
   sharedProjectRole,
@@ -480,6 +482,60 @@ describe("buildMachineRows project lists", () => {
       hostBlocks: [],
     });
     expect(unknown.map((row) => row.canAddForAgents)).toEqual([false, false]);
+  });
+
+  it("offers letting a connected machine run work here only when it holds no grant from this one", () => {
+    const grantFrom = (
+      coordinator: EnvironmentId,
+      status: "active" | "revoked" | "expired",
+    ): StudioWorkGrantsSnapshot => ({
+      grants: [
+        {
+          coordinatorEnvironmentId: coordinator,
+          machineLabel: "Windows",
+          projects: { kind: "linked" },
+          accounts: { kind: "all" },
+          owner: "self",
+          hopLimit: 2,
+          runtimeCap: "auto",
+          expiresAt: null,
+          status,
+          revokedAt: null,
+          interruptAt: null,
+          runningThreads: 0,
+          legacy: false,
+        },
+      ],
+      projects: [],
+      accounts: [],
+    });
+    const none: StudioWorkGrantsSnapshot = { grants: [], projects: [], accounts: [] };
+    const rows = (workGrants: StudioWorkGrantsSnapshot | null, phase = "connected") =>
+      buildMachineRows({
+        environments: [env(m4, "M4MAX"), env(m3, "Windows", phase)],
+        primaryEnvironmentId: m4,
+        fleet: fleet([fleetMachine(m3, "Windows"), fleetMachine(m1, "M1Max")]),
+        canPair: true,
+        projects: [],
+        hostBlocks: [],
+        workGrants,
+      }).map((row) => row.canAllowBack);
+    // This machine, the connected one without a grant, and one this app cannot see.
+    expect(rows(none)).toEqual([false, true, false]);
+    expect(rows(none, "connecting")).toEqual([false, false, false]);
+    // Without a grants answer yet, "no grant" means nothing.
+    expect(rows(null)).toEqual([false, false, false]);
+    for (const status of ["active", "revoked", "expired"] as const)
+      expect(rows(grantFrom(m3, status))).toEqual([false, false, false]);
+    expect(rows(grantFrom(m1, "active"))).toEqual([false, true, false]);
+    expect(
+      canAllowBack({
+        environmentId: m3,
+        primaryEnvironmentId: null,
+        connected: true,
+        workGrants: none,
+      }),
+    ).toBe(false);
   });
 
   it("files a machine out of sight by all the copies in sight, not the first", () => {

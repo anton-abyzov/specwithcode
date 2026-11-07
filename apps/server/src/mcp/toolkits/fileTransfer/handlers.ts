@@ -36,7 +36,7 @@ import {
 import { FileOffers, type OfferCaller } from "../../../fleet/fileTransfer/offers.ts";
 import { newReceivingKey, seal, unseal } from "../../../fleet/fileTransfer/seal.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
-import { projectInGrant } from "../../../fleet/workGrantPolicy.ts";
+import { mayReturnToOrigin, projectInGrant } from "../../../fleet/workGrantPolicy.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -182,9 +182,15 @@ const describeProxyFailure = (machineLabel: string) => (error: OrchestratorMcpFa
     : error.code === "machine_not_authorized"
       ? new OrchestratorMcpFailure({
           code: error.code,
-          message: `This machine may not reach ${machineLabel}. Only the user allows that, in Settings > Connections > Your private machines. Until then, end your turn naming the file and its path: whoever holds access, such as your coordinator, can move it with studio_file_transfer.`,
+          message: `This machine may not reach ${machineLabel}. Only the user allows that: on ${machineLabel}, open Settings > Machines, find this machine and choose "Let … use this machine too" on its card. Until then, end your turn naming the file and its path: whoever holds access, such as your coordinator, can move it with studio_file_transfer.`,
         })
       : error;
+
+const coordinatorOnly = (coordinatorLabel: string) =>
+  new OrchestratorMcpFailure({
+    code: "capability_denied",
+    message: `${coordinatorLabel} started this work, and it moves files only with ${coordinatorLabel}. End your turn naming the file and where it is; the coordinator on ${coordinatorLabel} moves it here with studio_file_transfer. Do not use SSH or paste the file.`,
+  });
 
 const unreadable = (machineLabel: string) =>
   new OrchestratorMcpFailure({
@@ -444,20 +450,34 @@ export const layer = McpToolAccess.toLayer(FileTransferToolkit, {
           );
         return yield* answerWithin(input.transferId, running);
       }
-      const work = yield* workGrantOf(context);
-      if (work !== undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "capability_denied",
-          message: `${work.coordinatorLabel} started this work, and work reaches other machines only through its coordinator. End your turn naming the file and where it is; the coordinator on ${work.coordinatorLabel} moves it here with studio_file_transfer. Do not use SSH or paste the file.`,
-        });
       if (input.machine === undefined || input.direction === undefined || input.path === undefined)
         return yield* invalid("Pass machine, direction and path, or transferId alone.");
       const { machine: machineName, direction, path } = input;
       const remote = yield* RemoteWorkers.RemoteWorkers;
-      const target = yield* remote.resolveMachine(machineName);
+      const work = yield* workGrantOf(context);
+      // Work another machine started here moves files only with that machine, and only
+      // through the grant the user gave this machine there (the call presents it).
+      const target = yield* remote
+        .resolveMachine(machineName)
+        .pipe(
+          Effect.mapError((error) =>
+            work === undefined || error.code === "machine_not_authorized"
+              ? error
+              : coordinatorOnly(work.coordinatorLabel),
+          ),
+        );
       if (target.kind !== "remote")
         return yield* invalid("That is this machine; nothing needs moving.");
       const machine = target.machine;
+      if (
+        work !== undefined &&
+        !mayReturnToOrigin({
+          grant: work.grant,
+          origin: work.origin,
+          targetEnvironmentId: machine.environmentId,
+        })
+      )
+        return yield* coordinatorOnly(work.coordinatorLabel);
       const config = yield* ServerConfig.ServerConfig;
       const roots = yield* localRoots(thread);
       // Writing into a project can change what agents there run, so the caller's own limits apply.

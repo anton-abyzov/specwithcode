@@ -242,6 +242,7 @@ export function IncomingWorkerAction({
   hereLabel,
   coordinatorLabel,
   connected,
+  actionLabel,
   onGranted,
 }: {
   here: EnvironmentId;
@@ -249,6 +250,8 @@ export function IncomingWorkerAction({
   hereLabel: string;
   coordinatorLabel: string;
   connected: boolean;
+  /** The button's words where the card already names the direction; "Allow <machine>" otherwise. */
+  actionLabel?: string;
   onGranted: (grant: { access: StudioFleetWorkerAccess; expiresAt: string | null }) => void;
 }) {
   const tx = useTx();
@@ -315,7 +318,9 @@ export function IncomingWorkerAction({
       {/* The selects do not save on their own, so the button always shows. */}
       <div className="space-y-1">
         <Button size="xs" disabled={pending || unavailable !== null} onClick={() => void allow()}>
-          {pending ? tx("Setting up…") : tx("Allow {coordinatorLabel}", { coordinatorLabel })}
+          {pending
+            ? tx("Setting up…")
+            : (actionLabel ?? tx("Allow {coordinatorLabel}", { coordinatorLabel }))}
         </Button>
         {unavailable ? (
           <p role="status" className="text-xs text-muted-foreground">

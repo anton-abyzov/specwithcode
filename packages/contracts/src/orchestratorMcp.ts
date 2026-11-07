@@ -1053,6 +1053,15 @@ export const OrchestratorMcpMachineListInput = Schema.Struct({
 });
 export type OrchestratorMcpMachineListInput = typeof OrchestratorMcpMachineListInput.Type;
 
+export const OrchestratorMcpIncomingMachine = Schema.Struct({
+  label: Schema.String,
+  environmentId: EnvironmentId,
+  status: Schema.Literal("needs_reverse_grant"),
+  /** What the user does on that machine so this one may use it. */
+  allow: Schema.String,
+});
+export type OrchestratorMcpIncomingMachine = typeof OrchestratorMcpIncomingMachine.Type;
+
 export const OrchestratorMcpMachineListResult = Schema.Struct({
   local: Schema.Struct({
     id: Schema.Literal("local"),
@@ -1067,6 +1076,11 @@ export const OrchestratorMcpMachineListResult = Schema.Struct({
    * without machine tries them; "local" is this machine. Absent from older hosts.
    */
   projectWorkerMachines: Schema.optional(Schema.Array(Schema.String)),
+  /**
+   * Machines that run work on this one but that this one may not use yet,
+   * with the one step on that machine that allows it. Absent from older hosts.
+   */
+  incoming: Schema.optional(Schema.Array(OrchestratorMcpIncomingMachine)),
 });
 export type OrchestratorMcpMachineListResult = typeof OrchestratorMcpMachineListResult.Type;
 

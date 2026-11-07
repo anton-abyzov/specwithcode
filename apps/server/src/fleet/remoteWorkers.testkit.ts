@@ -31,6 +31,7 @@ import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import * as RemoteWorkers from "./RemoteWorkers.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
+import * as WorkGrants from "./WorkGrants.ts";
 
 export const identity = (key: string, rootPath: string): RepositoryIdentity => ({
   canonicalKey: key,
@@ -117,6 +118,12 @@ export const launchAnswer = {
 export const setup = (
   tools: Record<string, FakeToolHandler> = {},
   timingOverrides: Partial<RemoteWorkerFollower.RemoteWorkerFollowerTimingsShape> = {},
+  fleet: {
+    /** More rows in this machine's fleet file, after M1. */
+    readonly extraTargets?: ReadonlyArray<typeof target>;
+    /** What this machine lets other machines do here ("Who can run work here"). */
+    readonly workGrants?: Partial<WorkGrants.WorkGrantsShape>;
+  } = {},
 ) => {
   const tokens = ["approval-required", "auto-accept-edits", "auto", "full-access"].flatMap(
     (access) => [1, 2, 3, 4].map((n) => `mcp-token-${access}-${n}`),
@@ -211,11 +218,20 @@ export const setup = (
     Layer.provideMerge(Layer.merge(FleetWorkerGrants.layer, RemoteWorkerStore.layer)),
     Layer.provideMerge(
       Layer.succeed(FleetTargets.FleetTargets, {
-        load: Effect.succeed({ version: 1 as const, machines: [target] }),
+        load: Effect.succeed({
+          version: 1 as const,
+          machines: [target, ...(fleet.extraTargets ?? [])],
+        }),
         fetch: fetcher,
       }),
     ),
     Layer.provideMerge(Layer.mergeAll(threads, projects, providers, environment, timings)),
+    Layer.provideMerge(
+      Layer.succeed(WorkGrants.WorkGrants, {
+        ...WorkGrants.WorkGrants.defaultValue(),
+        ...fleet.workGrants,
+      }),
+    ),
     Layer.provideMerge(ServerSecretStore.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "studio-remote-workers-" })),
     Layer.provideMerge(NodeServices.layer),

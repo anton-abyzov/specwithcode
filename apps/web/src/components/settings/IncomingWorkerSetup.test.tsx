@@ -1,4 +1,6 @@
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { create } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import type {
@@ -15,7 +17,13 @@ vi.mock("../../state/session", () => ({ useEnvironmentScope: vi.fn() }));
 vi.mock("../../studio/machineNickname", () => ({ useMachineNicknames: vi.fn() }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn() }));
 vi.mock("../../env", () => ({ isElectron: true }));
+import { requestConfirmDialog } from "../../confirmDialog";
 import { useEnvironmentScope } from "../../state/session";
+import {
+  addVisibleMachineToStudioFleet,
+  allowStudioFleetWorkers,
+  readStudioFleetMachines,
+} from "../../studio/fleet";
 import {
   IncomingWorkerAction,
   IncomingWorkerSaved,
@@ -212,6 +220,41 @@ describe("incoming worker setup view", () => {
   it("explains an unconnected sending machine", () => {
     vi.mocked(useEnvironmentScope).mockReturnValue(true);
     expect(action(false)).toContain("Connect to m1 first.");
+  });
+  it("runs the incoming setup from the card's own label after one confirmation", async () => {
+    vi.mocked(useEnvironmentScope).mockReturnValue(true);
+    vi.mocked(requestConfirmDialog).mockResolvedValue(true);
+    vi.mocked(readStudioFleetMachines).mockResolvedValue([]);
+    vi.mocked(addVisibleMachineToStudioFleet).mockResolvedValue(added);
+    vi.mocked(allowStudioFleetWorkers).mockResolvedValue(allowed);
+    const onGranted = vi.fn();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        <IncomingWorkerAction
+          here={here}
+          coordinator={coordinator}
+          hereLabel="m4"
+          coordinatorLabel="m1"
+          connected
+          actionLabel="Let m1 use this machine too"
+          onGranted={onGranted}
+        />,
+      );
+    });
+    const button = renderer!.root.findByType("button");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Let m1 use this machine too");
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("Allow m1");
+    await act(async () => button.props.onClick());
+    expect(requestConfirmDialog).toHaveBeenCalledTimes(1);
+    // This machine is added on the other one, which then allows its workers here.
+    expect(addVisibleMachineToStudioFleet).toHaveBeenCalledExactlyOnceWith(coordinator, here, "m4");
+    expect(allowStudioFleetWorkers).toHaveBeenCalledExactlyOnceWith(coordinator, {
+      id: "m4",
+      access: "full-access",
+    });
+    expect(onGranted).toHaveBeenCalledExactlyOnceWith({ access: "full-access", expiresAt: null });
+    await act(async () => renderer!.unmount());
   });
   it("shows the saved access, its expiry and the sending side as done", () => {
     const html = renderToStaticMarkup(

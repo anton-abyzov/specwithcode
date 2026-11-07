@@ -96,7 +96,12 @@ const setup = (
       resolveMachine: (target) =>
         target === undefined || target === "local"
           ? Effect.succeed({ kind: "local" })
-          : Effect.succeed({ kind: "remote", machine: MINI }),
+          : target === "m1"
+            ? Effect.succeed({
+                kind: "remote",
+                machine: { id: "m1", label: "M1", environmentId: M1 },
+              })
+            : Effect.succeed({ kind: "remote", machine: MINI }),
       resolveThread: ({ threadId }) =>
         Effect.succeed({ target: { kind: "local" }, threadId: ThreadId.make(threadId) }),
     }),
@@ -394,6 +399,11 @@ it.effect(
         });
       }
       expect(scoped.calls).toEqual([]);
+      // The owner's M1 sent that work, so it may move back there, through this machine's grant on M1.
+      expect(yield* scoped.call({ machine: "m1", threadIds: ["w1"] })).toMatchObject({
+        results: [{ threadId: "w1", outcome: "moved" }],
+      });
+      expect(scoped.handoffCalls()).toHaveLength(1);
       // The owner's own machine still moves this machine's threads in a project that is not linked.
       expect(yield* legacy.call({ machine: "mini", threadIds: ["off"] })).toMatchObject({
         results: [{ threadId: "off", outcome: "moved" }],

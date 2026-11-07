@@ -23,7 +23,7 @@ import * as Tracer from "effect/Tracer";
 import * as ServerConfig from "../../../config.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as WorkGrants from "../../../fleet/WorkGrants.ts";
-import { unscopedGrant } from "../../../fleet/workGrantPolicy.ts";
+import { unscopedGrant, type WorkOrigin } from "../../../fleet/workGrantPolicy.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -93,7 +93,8 @@ const toolkitFor = (
   input: {
     readonly scope: Partial<McpInvocationContext.McpInvocationScope>;
     readonly grant: ReturnType<typeof unscopedGrant> | undefined;
-    readonly origin?: boolean;
+    /** Another machine's work started the caller: M4's (true), or this exact origin. */
+    readonly origin?: boolean | WorkOrigin;
     readonly proxy?: RemoteWorkers.RemoteWorkersShape["proxy"];
     readonly approved?: ProjectActionRequests.SecretTransfer;
     readonly cards?: ProjectActionRequests.ProjectActionRequestInput[];
@@ -121,7 +122,9 @@ const toolkitFor = (
         Effect.succeed(
           input.origin === true
             ? ({ coordinatorEnvironmentId: EnvironmentId.make("env-m4") } as never)
-            : undefined,
+            : input.origin === false
+              ? undefined
+              : input.origin,
         ),
       forCoordinator: (id) => Effect.succeed(unscopedGrant(id)),
     }),
@@ -216,6 +219,18 @@ it.effect("gets a file from the other machine", () =>
     expect(result).toMatchObject({ status: "done", machine: "this machine", secret: false });
     expect(String(result.path).startsWith(local)).toBe(true);
     expect(NodeFS.readFileSync(String(result.path), "utf8")).toBe("built there");
+  }),
+);
+
+it.effect("lets the owner's machine's work get a file from the machine that sent it", () =>
+  Effect.gen(function* () {
+    const source = NodePath.join(remoteProject, "tutorial-8.mp4");
+    NodeFS.writeFileSync(source, "clip");
+    const result = yield* caller({
+      origin: { coordinatorEnvironmentId: M1.environmentId, path: [M1.environmentId], hops: 1 },
+    })("studio_file_transfer", { machine: "m1", direction: "get", path: source });
+    expect(result).toMatchObject({ status: "done", machine: "this machine" });
+    expect(NodeFS.readFileSync(String(result.path), "utf8")).toBe("clip");
   }),
 );
 

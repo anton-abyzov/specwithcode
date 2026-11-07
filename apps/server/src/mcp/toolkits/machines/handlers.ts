@@ -35,13 +35,17 @@ export const layer = McpToolAccess.toLayer(MachinesToolkit, {
       // A thread here or an outside agent approved here may look into the
       // other machines. Another machine's own credential sees grant status
       // only: its work reaches a third machine through the threads it starts.
+      const work = yield* workGrantOf(context);
       const machineCredential =
-        client !== undefined &&
-        (isOtherMachineCredential(client) || (yield* workGrantOf(context)) !== undefined);
-      const listed = yield* remote.listMachines({
+        client !== undefined && (isOtherMachineCredential(client) || work !== undefined);
+      // Which machines run work here is the owner's to see, and their own machines' work's.
+      const showsIncoming =
+        !machineCredential && (work === undefined || work.grant.owner === "self");
+      const { incoming, ...rest } = yield* remote.listMachines({
         projectId: input.projectId ?? context.caller?.projectId,
         probe: context.caller !== undefined || (client !== undefined && !machineCredential),
       });
+      const listed = showsIncoming && incoming !== undefined ? { ...rest, incoming } : rest;
       return client === undefined || machineCredential
         ? listed
         : withinClientCeiling(listed, McpInvocationContext.clientRuntimeModeCeiling(client));

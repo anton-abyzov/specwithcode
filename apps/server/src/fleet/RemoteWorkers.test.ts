@@ -16,6 +16,7 @@ import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
 import * as RemoteWorkers from "./RemoteWorkers.ts";
 import * as RemoteWorkerStore from "./RemoteWorkerStore.ts";
+import { target } from "./fleetMachine.testkit.ts";
 import {
   allow,
   allowLater,
@@ -308,6 +309,69 @@ describe("RemoteWorkers", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live("never lists this machine as one of its own remote machines", () => {
+    const { layer } = setup(
+      {},
+      {},
+      {
+        extraTargets: [{ ...target, id: "m4", label: "M4 Max", environmentId: "env-m4" as never }],
+      },
+    );
+    return Effect.gen(function* () {
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const listed = yield* workers.listMachines({ projectId: undefined, probe: false });
+      expect(listed.machines.map((machine) => machine.id)).toEqual(["m1"]);
+      for (const name of ["m4", "M4 Max", "M4", "env-m4"])
+        expect(yield* workers.resolveMachine(name), name).toEqual({ kind: "local" });
+      expect((yield* workers.machineLabels).has("env-m4")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("names the one click that lets this machine use a machine that runs work here", () => {
+    const policy = (
+      coordinatorEnvironmentId: string,
+      revokedAt: string | null = null,
+      owner: "self" | "other" = "self",
+    ) => ({ coordinatorEnvironmentId, revokedAt, owner }) as never;
+    const { layer } = setup(
+      {},
+      {},
+      {
+        workGrants: {
+          enabled: true,
+          // M1 is in the fleet already; Ministorm's grant was revoked; M3 runs work here only.
+          policies: Effect.succeed([
+            policy("env-m1"),
+            policy("env-m3"),
+            policy("env-mini", "2026-11-01T00:00:00.000Z"),
+            // Another person's machine is never told to ask for this one.
+            policy("env-anna", null, "other"),
+          ]),
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const listed = yield* workers.listMachines({ projectId: undefined, probe: false });
+      expect(listed.incoming).toEqual([
+        {
+          label: "the machine that sends work here",
+          environmentId: "env-m3",
+          status: "needs_reverse_grant",
+          allow:
+            'On the machine that sends work here, open Settings > Machines, find M4 and choose "Let M4 use this machine too" (if the machine that sends work here lists M4 as revoked or expired under Who can run work here, allow it again there).',
+        },
+      ]);
+      const asked = yield* workers.resolveMachine("env-m3").pipe(Effect.flip);
+      expect(asked.code).toBe("machine_not_authorized");
+      expect(asked.message).toContain("Let M4 use this machine too");
+      const unknown = yield* workers.resolveMachine("laptop").pipe(Effect.flip);
+      expect(unknown.code).toBe("unknown_machine");
+      expect(unknown.message).toContain("under incoming");
+      expect(unknown.message).not.toContain("env-m3");
+    }).pipe(Effect.provide(layer));
+  });
 
   it.live("lists machines with their grant, providers and the matching project", () => {
     const { layer } = setup();

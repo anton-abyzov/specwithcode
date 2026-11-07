@@ -1680,6 +1680,8 @@ export const zh: PhraseCatalog = {
   "Most access for incoming work": "传入工作的最高访问权限",
   "Setting up…": "正在设置…",
   "Allow {coordinatorLabel}": "允许 {coordinatorLabel}",
+  "{coordinatorLabel} cannot run work here yet.": "{coordinatorLabel} 还不能在这里运行工作。",
+  "Let {coordinatorLabel} use this machine too": "也让 {coordinatorLabel} 使用这台电脑",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 上：已完成",
   "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
     "{coordinatorLabel} 上：尚未设置。打开“设置 > 电脑”，展开 {hereLabel} 卡片上的“访问、路由和工作者权限”，然后选择“允许工作者”。",

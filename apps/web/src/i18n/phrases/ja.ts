@@ -1739,6 +1739,9 @@ export const ja: PhraseCatalog = {
   "Most access for incoming work": "受け取る作業の最大アクセス",
   "Setting up…": "設定しています…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} を許可",
+  "{coordinatorLabel} cannot run work here yet.":
+    "{coordinatorLabel} はまだここで作業を実行できません。",
+  "Let {coordinatorLabel} use this machine too": "{coordinatorLabel} にもこのマシンを使わせる",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 側: 完了",
   "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
     "{coordinatorLabel} 側: まだ設定されていません。「設定」>「マシン」を開き、{hereLabel} のカードで「アクセス、ルート、ワーカーの権限」を展開して「ワーカーを許可」を選んでください。",

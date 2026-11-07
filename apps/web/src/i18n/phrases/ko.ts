@@ -1727,6 +1727,9 @@ export const ko: PhraseCatalog = {
   "Most access for incoming work": "들어오는 작업의 최대 액세스",
   "Setting up…": "설정하는 중…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} 허용",
+  "{coordinatorLabel} cannot run work here yet.":
+    "{coordinatorLabel}은(는) 아직 여기에서 작업을 실행할 수 없습니다.",
+  "Let {coordinatorLabel} use this machine too": "{coordinatorLabel}도 이 컴퓨터를 사용하도록 허용",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 쪽: 완료",
   "On {coordinatorLabel}: not set up yet. Open Settings > Machines, expand Access, routes and worker permissions on {hereLabel}'s card, and choose Allow workers.":
     "{coordinatorLabel} 쪽: 아직 설정되지 않았습니다. 설정 > 컴퓨터를 열고 {hereLabel} 카드의 액세스, 경로 및 워커 권한을 펼친 다음 워커 허용을 선택하세요.",
