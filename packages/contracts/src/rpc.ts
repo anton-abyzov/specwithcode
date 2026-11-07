@@ -28,6 +28,7 @@ import {
 import { DESIGN_SYSTEM_EDIT_RPC_METHODS, designSystemEditRpcs } from "./designSystemEditRpc.ts";
 import {
   nativeConnectionApplyRpc,
+  projectConnectionCredentialSetRpc,
   PROJECT_CONNECTION_RPC_METHODS,
   projectConnectionRpcs,
 } from "./projectConnectionRpc.ts";
@@ -2301,8 +2302,10 @@ export const WsComposerDraftsRpcGroup = RpcGroup.make(
   WsComposerDraftsDeleteRpc,
 ).middleware(RpcScopeAuthorization);
 
-export const WsNativeConnectionsRpcGroup =
-  RpcGroup.make(nativeConnectionApplyRpc).middleware(RpcScopeAuthorization);
+export const WsNativeConnectionsRpcGroup = RpcGroup.make(
+  nativeConnectionApplyRpc,
+  projectConnectionCredentialSetRpc,
+).middleware(RpcScopeAuthorization);
 
 export const WsStatusPageRpcGroup = RpcGroup.make(
   WsStatusPageSnapshotRpc,

@@ -879,7 +879,11 @@ export function ProjectWorkspaceSurface({
       setOverviewOpen(false);
     }
     setError(null);
-    setNotice("Ask the coordinator for a new thread. It starts the thread and links it here.");
+    setNotice(
+      project.workspaceSettings?.kind === "personal"
+        ? "Ask Aide for a new topic. It starts the topic and links it here."
+        : "Ask the coordinator for a new thread. It starts the thread and links it here.",
+    );
     requestAnimationFrame(() => {
       focusCoordinatorPrompt();
     });
@@ -1260,7 +1264,11 @@ export function ProjectWorkspaceSurface({
     goal: liveSettings?.goal ?? snapshot?.settings.goal ?? "",
     hasMemory: (snapshot?.memory.files.length ?? 0) > 0,
   });
-  const promptPlaceholder = useCoordinatorPlaceholder(workers.length > 0, starters.suggestions);
+  const promptPlaceholder = useCoordinatorPlaceholder(
+    workers.length > 0,
+    starters.suggestions,
+    snapshot?.settings.kind === "personal",
+  );
   // Stop and continue every worker at once, from the Threads pane or the composer's `/` commands.
   const bulk = useBulkThreadControl();
   const bulkTargets = useMemo(() => bulkThreadTargets(workers), [workers]);
@@ -1494,6 +1502,7 @@ export function ProjectWorkspaceSurface({
     [coordinatorIds, selectedThread, shells, subagents, unreachableHosts, workers],
   );
   const paneBar: ProjectPaneBarProps = {
+    personal: snapshot?.settings.kind === "personal",
     tab: paneTab,
     onTabChange: setPaneTab,
     counts: {
@@ -1997,6 +2006,7 @@ export function ProjectWorkspaceSurface({
                       : null
                   }
                   header={{
+                    personal: snapshot?.settings.kind === "personal",
                     thread: selectedThread,
                     subagents,
                     onPeekSubagent: (subagentId) => peekSubagent(selectedThread.id, subagentId),
@@ -2077,6 +2087,7 @@ export function ProjectWorkspaceSurface({
                 />
               ) : (
                 <ThreadsPane
+                  personal={snapshot?.settings.kind === "personal"}
                   environmentId={project.environmentId}
                   projectId={project.id}
                   // Remote workers' threads arrive with their list; a filter on them waits for it.
@@ -2140,7 +2151,10 @@ export function ProjectWorkspaceSurface({
                   }
                   notice={
                     <>
-                      <ProjectThreadAvailability scopes={executionScopes} />
+                      <ProjectThreadAvailability
+                        scopes={executionScopes}
+                        personal={snapshot?.settings.kind === "personal"}
+                      />
                       {remoteWorkerCount > 0 ? (
                         <RemoteWorkerCards
                           representedThreads={projectAttention.roots.map((root) => root.thread)}

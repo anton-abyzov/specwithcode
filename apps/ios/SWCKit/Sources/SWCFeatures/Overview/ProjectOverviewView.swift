@@ -5,6 +5,8 @@ import Weave
 /// A project's threads grouped by what they need: you, time, or nothing.
 struct ProjectOverviewView: View {
   let project: ProjectRef
+  /// The personal assistant says topics; a project says threads.
+  private var isAssistant: Bool { model.project(project)?.kind == .personal }
 
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
@@ -33,7 +35,7 @@ struct ProjectOverviewView: View {
           .plainListRow()
       }
       if let machine = model.machine(project.environmentId), machine.isStale {
-        Banner("Catching up with \(machine.label). Threads may be a little behind for a moment.", kind: .info)
+        Banner("Catching up with \(machine.label). \(isAssistant ? "Topics" : "Threads") may be a little behind for a moment.", kind: .info)
           .padding(.horizontal, WeaveSpacing.gutter)
           .padding(.vertical, WeaveSpacing.s2)
           .plainListRow()
@@ -66,7 +68,7 @@ struct ProjectOverviewView: View {
       ScreenHeader {
         BackButton()
       } center: {
-        HeaderTitle(title: "Threads", subtitle: model.project(project)?.title)
+        HeaderTitle(title: isAssistant ? "Topics" : "Threads", subtitle: model.project(project)?.title)
       } trailing: {
         WeaveIconButton(searching ? "xmark" : "magnifyingglass", label: searching ? "Close search" : "Search threads") {
           withAnimation(.snappy) {
@@ -251,11 +253,11 @@ struct ProjectOverviewView: View {
 
   @ViewBuilder private var emptyState: some View {
     if searching, !query.isEmpty {
-      EmptyState(systemName: "magnifyingglass", title: "No matches", message: "No thread matches \u{201C}\(query)\u{201D}.")
+      EmptyState(systemName: "magnifyingglass", title: "No matches", message: "No \(isAssistant ? "topic" : "thread") matches \u{201C}\(query)\u{201D}.")
         .frame(maxWidth: .infinity)
         .padding(.top, WeaveSpacing.s8)
     } else {
-      EmptyState(systemName: "bubble.left.and.bubble.right", title: "No threads yet", message: "Threads this project starts show up here.")
+      EmptyState(systemName: "bubble.left.and.bubble.right", title: isAssistant ? "No topics yet" : "No threads yet", message: isAssistant ? "Topics you ask Aide for show up here." : "Threads this project starts show up here.")
         .frame(maxWidth: .infinity)
         .padding(.top, WeaveSpacing.s8)
     }

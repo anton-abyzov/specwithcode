@@ -35,6 +35,7 @@ import {
   threadAttentionNote,
   type ProjectThreadGroup,
 } from "../../../studio/projectWorkspaceModel";
+import { paneWords, withPinnedTopics } from "../../../studio/assistantTerms";
 import { threadLocation } from "../../../studio/threadLocation";
 import {
   machineColumnCh,
@@ -58,6 +59,7 @@ import {
   nowFromMinute,
   THREAD_GROUP_PAGE,
   THREAD_GROUP_PAGE_STEP,
+  type ThreadPaneGroup,
   THREAD_GROUPS_FOLDED_BY_DEFAULT,
   THREAD_SORT_LABELS,
   THREAD_SORTS,
@@ -160,6 +162,8 @@ export function ThreadsPane({
   /** The project's design each agent thread is bound to, by thread id. */
   designsByThread?: ReadonlyMap<string, DesignSummary>;
   bar: ProjectPaneBarProps;
+  /** The personal assistant says topics, and leads with its pinned ones. */
+  personal?: boolean;
   /** First tasks to offer in place of the groups while the project has no threads. */
   starters?: ReactNode;
   /** The find field stays out of the way until asked for, as the sort menu does. */
@@ -180,6 +184,7 @@ export function ThreadsPane({
 }) {
   const entriesByEnvironment = useProviderEntriesByEnvironment();
   const router = useRouter();
+  const say = paneWords(props.personal);
   const now = nowFromMinute(useNowMinute());
   const [sortBy, setSortBy] = useLocalStorage<ThreadSort, ThreadSort>(
     SORT_STORAGE_KEY,
@@ -191,7 +196,7 @@ export function ThreadsPane({
     THREAD_GROUPS_FOLDED_BY_DEFAULT,
     FoldedSchema,
   );
-  const setGroupFolded = (group: ProjectThreadGroup, fold: boolean) =>
+  const setGroupFolded = (group: ThreadPaneGroup["group"], fold: boolean) =>
     setFolded((current) =>
       fold
         ? [...current.filter((name) => name !== group), group]
@@ -199,7 +204,7 @@ export function ThreadsPane({
     );
   const findShown = findOpen || query !== "";
   const findButtonRef = useRef<HTMLButtonElement>(null);
-  const [limits, setLimits] = useState<Partial<Record<ProjectThreadGroup, number>>>({});
+  const [limits, setLimits] = useState<Partial<Record<ThreadPaneGroup["group"], number>>>({});
   // With the project on one machine the composer already names it, so rows stay quiet.
   // Once it lives on several, every row names its own, so rows compare at a glance.
   const multiMachine =
@@ -408,8 +413,9 @@ export function ThreadsPane({
           ),
         }))
       : built;
-    return unplannedShown;
+    return props.personal ? withPinnedTopics(unplannedShown) : unplannedShown;
   }, [
+    props.personal,
     allThreads,
     query,
     sortBy,
@@ -478,12 +484,12 @@ export function ThreadsPane({
         {...bar}
         tools={
           <>
-            <Tip label="Find a thread (/)">
+            <Tip label={say("Find a thread (/)")}>
               <button
                 ref={findButtonRef}
                 type="button"
                 className="sws-icon-button"
-                aria-label="Find a thread"
+                aria-label={say("Find a thread")}
                 aria-keyshortcuts="/"
                 aria-expanded={findShown}
                 aria-controls={findShown ? "sws-threads-find" : undefined}
@@ -520,7 +526,7 @@ export function ThreadsPane({
                   >
                     <ListChecksIcon aria-hidden />
                   </TooltipTrigger>
-                  <TooltipPopup side="bottom">Stop or continue all threads</TooltipPopup>
+                  <TooltipPopup side="bottom">{say("Stop or continue all threads")}</TooltipPopup>
                 </Tooltip>
                 <MenuPopup align="end" side="bottom" className="min-w-56">
                   {anyFilter ? (
@@ -562,7 +568,7 @@ export function ThreadsPane({
                 >
                   <SlidersVerticalIcon aria-hidden />
                 </TooltipTrigger>
-                <TooltipPopup side="bottom">Sort threads</TooltipPopup>
+                <TooltipPopup side="bottom">{say("Sort threads")}</TooltipPopup>
               </Tooltip>
               <MenuPopup align="end" side="bottom" className="min-w-52">
                 <MenuGroup>
@@ -589,7 +595,7 @@ export function ThreadsPane({
                     onCheckedChange={(checked) => setUnplannedNoticeShown(checked)}
                     data-unplanned-notice-toggle
                   >
-                    Note threads without an increment
+                    {say("Note threads without an increment")}
                   </MenuCheckboxItem>
                 </MenuGroup>
               </MenuPopup>
@@ -609,14 +615,16 @@ export function ThreadsPane({
           {offerStarters ? <h2>Welcome.</h2> : null}
           <p role="status">
             {offerStarters && !props.attention
-              ? "No threads yet. Pick a first task, or ask the coordinator for one."
-              : threadsSummary(
-                  allThreads,
-                  props.remoteWorkerCount,
-                  unreachable,
-                  props.runningSubagents,
-                  props.attention,
-                  props.unattended,
+              ? say("No threads yet. Pick a first task, or ask the coordinator for one.")
+              : say(
+                  threadsSummary(
+                    allThreads,
+                    props.remoteWorkerCount,
+                    unreachable,
+                    props.runningSubagents,
+                    props.attention,
+                    props.unattended,
+                  ),
                 )}
           </p>
           {coordinatorAsk ? (
@@ -650,7 +658,11 @@ export function ThreadsPane({
           {!offerStarters && (machineRow.length > 1 || offerAgents || offerPullRequests) ? (
             <div className="sws-threads-filters" data-thread-filters>
               {machineRow.length > 1 ? (
-                <div className="sws-filter-machines" role="group" aria-label="Show threads on">
+                <div
+                  className="sws-filter-machines"
+                  role="group"
+                  aria-label={say("Show threads on")}
+                >
                   <button
                     type="button"
                     className="sws-filter-choice"
@@ -671,7 +683,7 @@ export function ThreadsPane({
                           type="button"
                           className="sws-filter-choice"
                           aria-pressed={machineFilter === choice.machineId}
-                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${choice.count === 1 ? "thread" : "threads"}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
+                          aria-label={`${choice.label}${choice.current ? ", this machine" : ""}, ${choice.count} open ${say(choice.count === 1 ? "thread" : "threads")}${waiting > 0 ? `, ${waiting} ${waiting === 1 ? "needs" : "need"} you` : ""}`}
                           data-machine-choice={choice.machineId}
                           data-current={choice.current || undefined}
                           onClick={() =>
@@ -738,7 +750,7 @@ export function ThreadsPane({
                     >
                       <ListFilterIcon aria-hidden />
                     </TooltipTrigger>
-                    <TooltipPopup side="bottom">Filter threads</TooltipPopup>
+                    <TooltipPopup side="bottom">{say("Filter threads")}</TooltipPopup>
                   </Tooltip>
                   <MenuPopup align="end" side="bottom" className="min-w-52">
                     {offerAgents ? (
@@ -800,12 +812,12 @@ export function ThreadsPane({
           {findShown ? (
             <label className="sws-find">
               <SearchIcon aria-hidden />
-              <span className="sr-only">Find a project thread</span>
+              <span className="sr-only">{say("Find a project thread")}</span>
               <input
                 ref={findRef}
                 type="search"
-                aria-label="Find a project thread"
-                placeholder="Find a thread"
+                aria-label={say("Find a project thread")}
+                placeholder={say("Find a thread")}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
@@ -825,9 +837,11 @@ export function ThreadsPane({
         {matches === 0 && (searching || anyFilter) && !offerStarters ? (
           <p className="sws-empty" role="status" data-thread-filter-empty>
             {searching ? (
-              <>No thread matches “{query.trim()}”.</>
+              <>
+                {say("No thread matches")} “{query.trim()}”.
+              </>
             ) : (
-              "No thread matches these filters."
+              say("No thread matches these filters.")
             )}
             {anyFilter ? (
               <>
@@ -947,7 +961,7 @@ export function ThreadsPane({
                               aria-hidden
                             />
                             <span className="sws-thread-text">
-                              <strong>{thread.title || "Untitled thread"}</strong>
+                              <strong>{thread.title || say("Untitled thread")}</strong>
                               <span className="sws-thread-meta">
                                 <span className="sws-thread-meta-lead">
                                   {rowStatus

@@ -12,10 +12,12 @@ import {
 import { TEAM_RULES_NONE, type TeamRulesState } from "@specweave-studio/shared/teamRules";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Projects from "../orchestration-v2/ProjectStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
 import * as Connections from "./ProjectConnectionService.ts";
@@ -69,10 +71,20 @@ const harness = Effect.gen(function* () {
     unavailable: false,
     callGate: Effect.void,
     discoverGate: Effect.void,
+    discovered: [] as Parameters<Transport.ProjectConnectionTransport["Service"]["discover"]>[0][],
   };
+  const stored = new Map<string, Uint8Array>();
+  const secrets = Layer.mock(ServerSecretStore.ServerSecretStore)({
+    get: (name) => Effect.succeed(Option.fromNullishOr(stored.get(name))),
+    set: (name, value) => Effect.sync(() => void stored.set(name, value)),
+    remove: (name) => Effect.sync(() => void stored.delete(name)),
+  });
   const transport = Layer.mock(Transport.ProjectConnectionTransport)({
-    discover: () =>
-      Effect.suspend(() => state.discoverGate).pipe(Effect.andThen(Effect.sync(() => state.tools))),
+    discover: (input) =>
+      Effect.sync(() => void state.discovered.push(input)).pipe(
+        Effect.andThen(Effect.suspend(() => state.discoverGate)),
+        Effect.andThen(Effect.sync(() => state.tools)),
+      ),
     call: (input) =>
       Effect.gen(function* () {
         state.calls.push(input);
@@ -87,7 +99,11 @@ const harness = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       return yield* body(yield* Connections.ProjectConnectionService);
-    }).pipe(Effect.provide(Layer.fresh(Connections.layer).pipe(Layer.provide(transport))));
+    }).pipe(
+      Effect.provide(
+        Layer.fresh(Connections.layer).pipe(Layer.provide(Layer.merge(transport, secrets))),
+      ),
+    );
   const grant = (service: Connections.ProjectConnectionService["Service"], projectId = id) =>
     Effect.gen(function* () {
       const saved = yield* service.save({
@@ -127,7 +143,7 @@ const harness = Effect.gen(function* () {
       type: "project.deleted",
       payload: { projectId, deletedAt: "2026-10-09T00:01:00Z" },
     });
-  return { sql, state, run, grant, request, remove };
+  return { sql, state, stored, run, grant, request, remove };
 });
 
 it.effect(
@@ -443,6 +459,11 @@ it.effect("discovers only the registered project root and rejects a missing proj
       Effect.provide(
         Connections.layerWithDiscovery.pipe(
           Layer.provide(
+            Layer.mock(ServerSecretStore.ServerSecretStore)({
+              get: () => Effect.succeed(Option.none()),
+            }),
+          ),
+          Layer.provide(
             Layer.mock(NativeDiscovery.NativeConnectionDiscovery)({
               read: (root) =>
                 Effect.sync(() => {
@@ -460,6 +481,144 @@ it.effect("discovers only the registered project root and rejects a missing proj
           Layer.provide(Layer.mock(Transport.ProjectConnectionTransport)({})),
         ),
       ),
+    );
+  }).pipe(Effect.provide(storage)),
+);
+
+it.effect("keeps a token in the secret store, resets grants and deletes it on revoke", () =>
+  Effect.gen(function* () {
+    const f = yield* harness;
+    const token = "synthetic-token-value";
+    const withKey = { ...config, envKeys: ["SYNTHETIC_TOKEN"] };
+    yield* f.run((service) =>
+      Effect.gen(function* () {
+        const saved = yield* service.save({
+          projectId: id,
+          id: "keyed",
+          expectedRevision: null,
+          config: withKey,
+          allowedTools: [],
+        });
+        const set = yield* service.setCredential({
+          projectId: id,
+          id: saved.id,
+          expectedRevision: saved.revision,
+          envKey: "SYNTHETIC_TOKEN",
+          value: token,
+        });
+        assert.strictEqual(set.status, "configured");
+        assert.notInclude(JSON.stringify(set), token);
+        const rows = yield* f.sql<{
+          data: string;
+        }>`SELECT data_json AS data FROM project_connections`;
+        assert.notInclude(JSON.stringify(rows), token);
+        assert.notInclude(JSON.stringify(yield* service.read({ projectId: id })), token);
+        const checked = yield* service.check({
+          projectId: id,
+          id: set.id,
+          expectedRevision: set.revision,
+        });
+        assert.strictEqual(f.state.discovered.at(-1)?.stored?.["SYNTHETIC_TOKEN"], token);
+        const allowed = yield* service.save({
+          projectId: id,
+          id: set.id,
+          expectedRevision: checked.revision,
+          config: withKey,
+          allowedTools: ["echo"],
+        });
+        // A new token can be another account, so the grant does not survive it.
+        const replaced = yield* service.setCredential({
+          projectId: id,
+          id: set.id,
+          expectedRevision: allowed.revision,
+          envKey: "SYNTHETIC_TOKEN",
+          value: "another-synthetic-value",
+        });
+        assert.deepStrictEqual(replaced.allowedTools, []);
+        assert.deepStrictEqual(replaced.tools, []);
+        const tokenFiles = () =>
+          [...f.stored.keys()].filter((name) => name !== "project-connection-index");
+        assert.strictEqual(tokenFiles().length, 1);
+        // A different command never receives the token.
+        const changed = yield* service.save({
+          projectId: id,
+          id: set.id,
+          expectedRevision: replaced.revision,
+          config: { ...withKey, command: "another-command" },
+          allowedTools: [],
+        });
+        assert.strictEqual(tokenFiles().length, 0);
+        const again = yield* service.setCredential({
+          projectId: id,
+          id: set.id,
+          expectedRevision: changed.revision,
+          envKey: "SYNTHETIC_TOKEN",
+          value: token,
+        });
+        assert.strictEqual(tokenFiles().length, 1);
+        yield* service.revoke({ projectId: id, id: set.id, expectedRevision: again.revision });
+        assert.strictEqual(tokenFiles().length, 0);
+      }),
+    );
+  }).pipe(Effect.provide(storage)),
+);
+
+it.effect("removes a deleted project's token at the next start", () =>
+  Effect.gen(function* () {
+    const f = yield* harness;
+    const name = yield* f.run((service) =>
+      Effect.gen(function* () {
+        const saved = yield* service.save({
+          projectId: id,
+          id: "keyed",
+          expectedRevision: null,
+          config: { ...config, envKeys: ["SYNTHETIC_TOKEN"] },
+          allowedTools: [],
+        });
+        yield* service.setCredential({
+          projectId: id,
+          id: saved.id,
+          expectedRevision: saved.revision,
+          envKey: "SYNTHETIC_TOKEN",
+          value: "synthetic-token-value",
+        });
+        return [...f.stored.keys()].find((key) => key !== "project-connection-index")!;
+      }),
+    );
+    assert.isTrue(f.stored.has(name));
+    // Still on disk while its project exists, however many times the service starts.
+    yield* f.run(() => Effect.void);
+    assert.isTrue(f.stored.has(name));
+    yield* f.remove(id);
+    yield* f.run(() => Effect.void);
+    assert.isFalse(f.stored.has(name));
+  }).pipe(Effect.provide(storage)),
+);
+
+it.effect("refuses a token for a variable the connection does not name", () =>
+  Effect.gen(function* () {
+    const f = yield* harness;
+    yield* f.run((service) =>
+      Effect.gen(function* () {
+        const saved = yield* service.save({
+          projectId: id,
+          id: "plain",
+          expectedRevision: null,
+          config,
+          allowedTools: [],
+        });
+        const refused = yield* service
+          .setCredential({
+            projectId: id,
+            id: saved.id,
+            expectedRevision: saved.revision,
+            envKey: "OTHER_SECRET",
+            value: "synthetic-token-value",
+          })
+          .pipe(Effect.flip);
+        assert.strictEqual(refused.code, "denied");
+        assert.strictEqual(f.stored.size, 0);
+      }),
     );
   }).pipe(Effect.provide(storage)),
 );

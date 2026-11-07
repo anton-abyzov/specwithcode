@@ -70,6 +70,7 @@ vi.mock("./ProjectIconEditor", () => ({
   }),
 }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("./AssistantServices", () => ({ AssistantServices: () => null }));
 vi.mock("../../lib/archivedThreadsState", () => ({
   refreshArchivedThreadsForEnvironment: state.refreshArchived,
 }));
@@ -531,8 +532,8 @@ describe("project settings and memory", () => {
     await act(async () => {
       memory.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
-    expect(current()).toEqual(["Environment"]);
-    expect(document.activeElement?.textContent).toBe("Environment");
+    expect(current()).toEqual(["Services"]);
+    expect(document.activeElement?.textContent).toBe("Services");
     await act(async () => {
       document.activeElement!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "End", bubbles: true }),
