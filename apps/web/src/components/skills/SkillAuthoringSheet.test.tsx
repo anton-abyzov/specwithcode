@@ -97,11 +97,13 @@ async function fill(label: string, value: string) {
 async function mount(
   request: (input: AuthoringRequest) => Promise<SkillAuthoringResult>,
   onOpenChange = vi.fn(),
+  seed?: import("./skillAuthoringSeed").SkillAuthoringSeed,
 ) {
   await act(async () =>
     root.render(
       <SkillAuthoringForm
         open
+        seed={seed}
         onOpenChange={onOpenChange}
         machineLabel="Fixture machine"
         cwd="/fixture/project"
@@ -284,5 +286,37 @@ describe("skill authoring", () => {
     expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read", "new"]);
     expect(host.textContent).toContain("What should this skill do?");
     confirmation.mockRestore();
+  });
+});
+
+describe("selected-copy authoring", () => {
+  const seed = {
+    key: "copy:hash",
+    label: "selected-skill",
+    content: { ...fixtureDraft, name: "selected-skill", version: "2.0.0" },
+  };
+  it("keeps an existing draft until archive confirmation", async () => {
+    const request = vi.fn(async (input: AuthoringRequest) => ({
+      draft: input.operation === "new" ? null : fixtureDraft,
+    }));
+    await mount(request, vi.fn(), seed);
+    expect(host.textContent).toContain("Your saved draft is still here");
+    expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read"]);
+    vi.mocked(window.confirm).mockReturnValue(false);
+    await click("Use selected copy");
+    expect(request).toHaveBeenCalledTimes(1);
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await click("Use selected copy");
+    expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read", "new"]);
+    expect(host.textContent).toContain("Bump patch to 2.0.1");
+  });
+  it("seeds and bumps a copy without automatic writes", async () => {
+    const request = vi.fn(async () => ({ draft: null }));
+    await mount(request, vi.fn(), seed);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain("Bump patch to 2.0.1");
+    await click("Bump patch to 2.0.1");
+    expect(host.textContent).toContain("Bump patch to 2.0.2");
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

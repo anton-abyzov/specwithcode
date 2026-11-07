@@ -28,6 +28,11 @@ import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import { SkillPublicationStatus } from "./SkillPublicationStatus";
 import { SkillApplyPanel } from "./SkillApplyPanel";
+import {
+  nextSkillPatchVersion,
+  skillAuthoringSeedFromMarkdown,
+  type SkillAuthoringSeed,
+} from "./skillAuthoringSeed";
 
 export interface SkillAuthoringSheetProps {
   environmentId: EnvironmentId;
@@ -37,6 +42,7 @@ export interface SkillAuthoringSheetProps {
   userLevel?: boolean | undefined;
   machineLabel: string;
   initialInstanceId?: string | undefined;
+  seed?: SkillAuthoringSeed | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -116,11 +122,12 @@ export function SkillAuthoringForm({
   machineLabel,
   cwd,
   initialInstanceId,
+  seed,
   userLevel = false,
   canApply = canPublish,
 }: Pick<
   SkillAuthoringSheetProps,
-  "open" | "onOpenChange" | "machineLabel" | "cwd" | "initialInstanceId" | "userLevel"
+  "open" | "onOpenChange" | "machineLabel" | "cwd" | "initialInstanceId" | "userLevel" | "seed"
 > & {
   agents: readonly ProviderInstanceEntry[];
   request: (input: AuthoringRequest) => Promise<SkillAuthoringResult>;
@@ -129,6 +136,9 @@ export function SkillAuthoringForm({
   canPublish: boolean;
   canApply?: boolean;
 }) {
+  const [acceptedSeed, setAcceptedSeed] = useState<string | null>(null);
+  const [paste, setPaste] = useState("");
+  const [pasteMode, setPasteMode] = useState(false);
   const [content, setContent] = useState<SkillAuthoringContent>(blank);
   const [draft, setDraft] = useState<SkillAuthoringDraft | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -220,6 +230,15 @@ export function SkillAuthoringForm({
       });
   }, [open, loaded, request]);
 
+  useEffect(() => {
+    // An Edit click may prepare a new draft, but never overwrites a saved one.
+    if (!open || !loaded || draft || dirty || !seed || acceptedSeed === seed.key) return;
+    setContent(seed.content);
+    setDirty(true);
+    setStep("review");
+    setAcceptedSeed(seed.key);
+  }, [open, loaded, draft, dirty, seed, acceptedSeed]);
+
   const edit = (patch: Partial<SkillAuthoringContent>) => {
     setContent((current) => ({ ...current, ...patch }));
     setDirty(true);
@@ -264,6 +283,38 @@ export function SkillAuthoringForm({
       busyRef.current = false;
       setBusy(null);
     }
+  };
+  const importSeed = async () => {
+    if (!seed || frozen || busyRef.current) return;
+    if (
+      draft &&
+      !window.confirm(
+        "Archive the current draft and its publication receipt before editing this copy? Unsaved edits will be discarded.",
+      )
+    )
+      return;
+    if (draft && !(await execute("new"))) return;
+    setContent(seed.content);
+    setDirty(true);
+    setStep("review");
+    setAcceptedSeed(seed.key);
+    setConfirmed(false);
+    setApplication(null);
+  };
+  const importPaste = () => {
+    const parsed = skillAuthoringSeedFromMarkdown(paste, content.name);
+    if ("error" in parsed) {
+      setError(parsed.error);
+      return;
+    }
+    if (
+      (content.instructions || content.name) &&
+      !window.confirm("Replace the current draft fields with this pasted skill?")
+    )
+      return;
+    edit(parsed.content);
+    setError(null);
+    setStep("review");
   };
   const close = async () => {
     if (busyRef.current) {
@@ -317,7 +368,7 @@ export function SkillAuthoringForm({
     >
       <SheetPopup className="w-full sm:max-w-xl">
         <SheetHeader>
-          <SheetTitle>Create skill</SheetTitle>
+          <SheetTitle>{seed ? `Edit ${seed.label}` : "New skill"}</SheetTitle>
           <SheetDescription>
             Describe it, review the version, then choose where to apply it.
           </SheetDescription>
@@ -353,80 +404,200 @@ export function SkillAuthoringForm({
               File write permission is required to save a skill.
             </p>
           ) : null}
+          {seed && loaded && acceptedSeed !== seed.key && draft ? (
+            <section
+              className="space-y-2 rounded-lg border bg-muted/40 p-3"
+              aria-label="Saved draft"
+            >
+              <p className="text-sm">
+                Your saved draft is still here. Use the selected copy to start an edit of{" "}
+                {seed.label}.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={inProgress || frozen || !canWrite}
+                onClick={() => void importSeed()}
+              >
+                Use selected copy
+              </Button>
+              {frozen ? (
+                <p className="text-xs text-muted-foreground">
+                  Check the current publication status before replacing this draft.
+                </p>
+              ) : null}
+            </section>
+          ) : null}
           {step === "describe" ? (
             <section className="space-y-4">
-              <label className="block space-y-2 text-sm font-medium">
-                What should this skill do?
-                <Textarea
-                  aria-label="What should this skill do?"
-                  rows={5}
-                  value={content.prompt}
-                  maxLength={20000}
-                  disabled={inProgress || frozen}
-                  onChange={(event) => edit({ prompt: event.target.value })}
-                  placeholder="For example: review a pull request and explain each finding with a file and line."
-                />
-              </label>
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Generate with</p>
-                <ProviderModelPicker
-                  activeInstanceId={
-                    content.modelSelection?.instanceId ??
-                    ProviderInstanceId.make(initialInstanceId ?? "studio_no_provider")
-                  }
-                  model={content.modelSelection?.model ?? ""}
-                  instanceEntries={readyAgents}
-                  modelOptionsByInstance={modelOptions}
-                  lockedProvider={null}
-                  isComposerOwned={false}
-                  unset={!content.modelSelection}
-                  disabled={inProgress || frozen}
-                  {...(!content.modelSelection
-                    ? { triggerLabel: "Choose provider and model" }
-                    : {})}
-                  onInstanceModelChange={(instanceId, model) =>
-                    edit({ modelSelection: { instanceId, model } })
-                  }
-                />
-                {selectedProvider ? (
-                  <p className="text-xs text-muted-foreground">
-                    {accountEmailLine(selectedProvider.displayName, selectedProvider.snapshot) ??
-                      selectedProvider.displayName}
-                    . Billing: {selectedModel?.billing ?? "not reported"}.
-                  </p>
-                ) : null}
-                <p className="text-xs text-muted-foreground">
-                  Only this description goes to the selected model. No fallback model is used.
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex gap-2" aria-label="Create a skill from">
                 <Button
                   type="button"
-                  disabled={
-                    inProgress ||
-                    frozen ||
-                    !canGenerate ||
-                    !content.prompt.trim() ||
-                    !selectedModel ||
-                    !selectedProvider?.isAvailable
-                  }
-                  onClick={() => {
-                    if (
-                      (content.name || content.description || content.instructions) &&
-                      !window.confirm(
-                        "Replace the current name, description and instructions with a generated draft?",
-                      )
-                    )
-                      return;
-                    void execute("generate");
-                  }}
+                  size="sm"
+                  variant={!pasteMode ? "secondary" : "ghost"}
+                  onClick={() => setPasteMode(false)}
                 >
-                  {busy === "generate" ? "Generating draft…" : "Generate draft"}
+                  Describe
                 </Button>
-                <Button type="button" variant="outline" onClick={() => setStep("review")}>
-                  Write myself
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={pasteMode ? "secondary" : "ghost"}
+                  onClick={() => setPasteMode(true)}
+                >
+                  Paste SKILL.md
                 </Button>
               </div>
+              {pasteMode ? (
+                <div className="space-y-3">
+                  <label className="block space-y-2 text-sm font-medium">
+                    Paste a skill
+                    <Textarea
+                      aria-label="Paste a skill"
+                      rows={9}
+                      maxLength={110000}
+                      value={paste}
+                      disabled={inProgress || frozen}
+                      onChange={(event) => setPaste(event.target.value)}
+                      placeholder="Paste SKILL.md or write your instructions here."
+                    />
+                  </label>
+                  <Button
+                    type="button"
+                    disabled={inProgress || frozen || !paste.trim()}
+                    onClick={importPaste}
+                  >
+                    Review pasted skill
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <label className="block space-y-2 text-sm font-medium">
+                    What should this skill do?
+                    <Textarea
+                      aria-label="What should this skill do?"
+                      rows={5}
+                      value={content.prompt}
+                      maxLength={20000}
+                      disabled={inProgress || frozen}
+                      onChange={(event) => edit({ prompt: event.target.value })}
+                      placeholder="For example: review a pull request and explain each finding with a file and line."
+                    />
+                  </label>
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Generate with</p>
+                    <ProviderModelPicker
+                      activeInstanceId={
+                        content.modelSelection?.instanceId ??
+                        ProviderInstanceId.make(initialInstanceId ?? "studio_no_provider")
+                      }
+                      model={content.modelSelection?.model ?? ""}
+                      instanceEntries={readyAgents}
+                      modelOptionsByInstance={modelOptions}
+                      lockedProvider={null}
+                      isComposerOwned={false}
+                      unset={!content.modelSelection}
+                      disabled={inProgress || frozen}
+                      {...(!content.modelSelection
+                        ? { triggerLabel: "Choose provider and model" }
+                        : {})}
+                      onInstanceModelChange={(instanceId, model) =>
+                        edit({ modelSelection: { instanceId, model } })
+                      }
+                    />
+                    {selectedProvider ? (
+                      <p className="text-xs text-muted-foreground">
+                        {accountEmailLine(
+                          selectedProvider.displayName,
+                          selectedProvider.snapshot,
+                        ) ?? selectedProvider.displayName}
+                        . Billing: {selectedModel?.billing ?? "not reported"}.
+                      </p>
+                    ) : null}
+                    <p className="text-xs text-muted-foreground">
+                      Only this description goes to the selected model. No fallback model is used.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      disabled={
+                        inProgress ||
+                        frozen ||
+                        !canGenerate ||
+                        !content.prompt.trim() ||
+                        !selectedModel ||
+                        !selectedProvider?.isAvailable
+                      }
+                      onClick={() => {
+                        if (
+                          (content.name || content.description || content.instructions) &&
+                          !window.confirm(
+                            "Replace the current name, description and instructions with a generated draft?",
+                          )
+                        )
+                          return;
+                        void execute("generate");
+                      }}
+                    >
+                      {busy === "generate" ? "Generating draft…" : "Generate draft"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => setStep("review")}>
+                      Write myself
+                    </Button>
+                  </div>
+                </>
+              )}
+              <fieldset disabled={inProgress} className="space-y-2 rounded-lg border p-3 text-sm">
+                <legend className="px-1 font-medium">Use it with</legend>
+                <div className="flex flex-wrap gap-3">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={!applyUser}
+                      onChange={() => {
+                        setApplyUser(false);
+                        setApplication(null);
+                      }}
+                    />
+                    This project
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      checked={applyUser}
+                      onChange={() => {
+                        setApplyUser(true);
+                        setApplication(null);
+                      }}
+                    />
+                    My projects on this machine
+                  </label>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {applyAgents.map((agent) => (
+                    <label key={agent.instanceId} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedAgents.includes(agent.instanceId)}
+                        onChange={(event) => {
+                          setSelectedAgents((ids) =>
+                            event.target.checked
+                              ? [...ids, agent.instanceId]
+                              : ids.filter((id) => id !== agent.instanceId),
+                          );
+                          setApplication(null);
+                        }}
+                      />
+                      {agent.displayName}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  These choices are reviewed again after publication. Nothing is installed yet.
+                </p>
+              </fieldset>
             </section>
           ) : null}
           {step === "review" ? (
@@ -471,6 +642,16 @@ export function SkillAuthoringForm({
                     onChange={(event) => edit({ version: event.target.value })}
                   />
                 </label>
+                {nextSkillPatchVersion(content.version) ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => edit({ version: nextSkillPatchVersion(content.version)! })}
+                  >
+                    Bump patch to {nextSkillPatchVersion(content.version)}
+                  </Button>
+                ) : null}
               </fieldset>
               <details className="rounded-lg border p-3">
                 <summary className="cursor-pointer text-sm font-medium">
