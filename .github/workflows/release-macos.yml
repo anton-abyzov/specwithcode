@@ -220,6 +220,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Server shards run one test file at a time each, so they scale with cores the
+          # stage-1 pool does not need. release.sh caps RELEASE_SERVER_SHARDS at 6.
+          export RELEASE_SERVER_SHARDS="$(( $(sysctl -n hw.ncpu) >= 10 ? 6 : 4 ))"
           args=("$RELEASE_VERSION" --ci --jobs "$(( $(sysctl -n hw.ncpu) > 4 ? 4 : 2 ))")
           if [ -n "$INPUT_PREVIOUS" ]; then args+=(--previous "$INPUT_PREVIOUS"); fi
           if [ -n "$INPUT_STOP_AFTER" ]; then args+=(--stop-after "$INPUT_STOP_AFTER"); fi
@@ -236,6 +239,9 @@ jobs:
             ~/.specwithcode/release-staging/${{ inputs.version }}/timings
             ~/.specwithcode/release-staging/${{ inputs.version }}/release.json
             ~/.specwithcode/release-staging/${{ inputs.version }}/google-verify-*
+            ~/.specwithcode/release-staging/${{ inputs.version }}/server/*/shards.json
+            ~/.specwithcode/release-staging/${{ inputs.version }}/server/*/server-*.json
+            ~/.specwithcode/release-staging/${{ inputs.version }}/stage1/*/*.secs
           if-no-files-found: ignore
           retention-days: 30
 
