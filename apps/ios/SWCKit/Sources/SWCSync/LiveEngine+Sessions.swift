@@ -428,7 +428,7 @@ extension LiveEngine {
     let session = controller.session
     var rows: [TranscriptRow] = []
     if let projection = controller.projection {
-      rows = TranscriptMapper.rows(for: projection, environmentId: controller.environmentId)
+      rows = TranscriptMapper.rows(for: projection, environmentId: controller.environmentId, machineLabel: machineLabelResolver())
       assign(session, \.isRunning, TranscriptMapper.isRunning(projection))
       assign(session, \.queuedCount, TranscriptMapper.queuedCount(projection))
       assign(session, \.promptSuggestion, TranscriptMapper.promptSuggestion(projection, mode: machines[controller.environmentId]?.settings?.promptSuggestions ?? "all"))

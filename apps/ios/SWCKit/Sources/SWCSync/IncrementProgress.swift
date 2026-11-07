@@ -97,6 +97,17 @@ extension AppModel {
     return try threadLinkResult(threadId: threadId, environmentId: environmentId, threadIds: threadIds, title: title, label: label, from: origin, machines: ThreadLinkResolver.merging(archived, into: machines)).get()
   }
 
+  /// Whether a thread is still on its machine, by the machine's whole list, so
+  /// a subagent or coordinator no drawer list shows counts. Nil while that
+  /// cannot be said yet: the machine's live list has not arrived.
+  public func threadExists(_ ref: ThreadRef) -> Bool? {
+    if thread(ref) != nil { return true }
+    guard machine(ref.environmentId) != nil else { return isLoading ? nil : false }
+    let listed = threadLinkMachines().first { $0.environmentId == ref.environmentId }?.threads?.first { $0.id == ref.threadId }
+    if let listed { return !listed.isDeleted }
+    return unloadedShells.contains(ref.environmentId) ? nil : false
+  }
+
   private func threadLinkMachines() -> [ThreadLinkResolver.Machine] {
     engine.threadLinkMachines() ?? machines.map { machine in
       ThreadLinkResolver.Machine(environmentId: machine.id, threads: (threadsByProject.values.flatMap { $0 } + recentThreads)

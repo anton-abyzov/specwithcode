@@ -5,7 +5,7 @@ SCHEME := SpecWithCode
 DESTINATION ?= generic/platform=iOS Simulator
 DERIVED_DATA ?= build/DerivedData
 
-.PHONY: project build test-core test-app shots fault-shots sim sim-build sim-test sim-smoke sim-run sim-stop
+.PHONY: project build test-core test-app shots fault-shots sim sim-build sim-test sim-smoke sim-run sim-stop testflight
 
 # The device viewer's stream script is bundled from the shared transport first.
 project:
@@ -64,3 +64,10 @@ sim-run:
 
 sim-stop:
 	bash Tools/sim.sh stop
+
+# Archive, upload and add to the Internal TestFlight group; never submits for review.
+testflight:
+	@if [ -z "$(V)" ] || [ -z "$(B)" ]; then \
+	  echo "usage: make testflight V=<version> B=<build> [NOTES=\"What to Test\"]" >&2; exit 2; \
+	fi
+	bash Tools/release.sh '$(V)' '$(B)' '$(NOTES)'

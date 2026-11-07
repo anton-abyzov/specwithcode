@@ -71,7 +71,10 @@ private struct AppScreens: View {
     .environment(router)
     .environment(router.main)
     .weaveTheme(appearance: currentAppearance.rawValue)
-    .task(id: launchKey) { router.applyLaunchRoute(in: model) }
+    .task(id: launchKey) {
+      router.applyLaunchRoute(in: model)
+      router.applyRestore(in: model)
+    }
   }
 
   /// The drawer and the main stack. At regular width with room for both,
@@ -109,8 +112,10 @@ private struct AppScreens: View {
 
   private var currentAppearance: AppearancePreference { router.appearanceOverride ?? model.appearance }
 
-  /// Changes when the data a launch route waits for arrives.
-  private var launchKey: String { "\(model.isLoading)-\(model.machines.count)-\(model.projects.count)" }
+  /// Changes when the data a launch route or the last opened chat waits for arrives.
+  private var launchKey: String {
+    "\(model.isLoading)-\(model.machines.count)-\(model.projects.count)-\(model.recentThreads.count)-\(model.unloadedShells.count)"
+  }
 }
 
 /// Navigation beside or over the main stack: the open thread's coordinator or

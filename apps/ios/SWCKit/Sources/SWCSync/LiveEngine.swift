@@ -104,6 +104,9 @@ public final class LiveEngine: AppEngine {
   /// Machines whose projects are listed; see `FleetCache.home()`.
   var fleetHome: Set<String> = []
   var fleetLinkedAt: [String: ContinuousClock.Instant] = [:]
+  /// Each machine's rows from the last publish, so a change on one machine
+  /// does not summarize every other machine's threads again.
+  let summaryCache = ShellSummaries.Cache()
   /// The user's machine nicknames, merged from every machine's settings.
   var fleetNicknames: [String: String] {
     MachineNickname.merge(machineOrder.compactMap { machines[$0]?.settings?.machineNicknames })
@@ -462,7 +465,7 @@ public final class LiveEngine: AppEngine {
     let output = ShellSummaries.build(entries.map { entry in
       // A live list replaces the saved one wholesale, so a reconnect never doubles rows.
       ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt, providers: entry.config?.providers ?? [])
-    }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled)
+    }, names: fleetNames, nicknames: nicknames, home: fleetHome, includeAide: aideEnabled, cache: summaryCache)
     assign(model, \.aide, output.aide)
     assign(model, \.projects, output.projects)
     assign(model, \.threadsByProject, output.threadsByProject)
@@ -475,6 +478,7 @@ public final class LiveEngine: AppEngine {
     let loading = !loadingDeadlinePassed && entries.contains { $0.record.enabled && !$0.answered }
     assign(model, \.isLoading, loading)
     assign(model, \.allShellsLoaded, entries.allSatisfy { !$0.record.enabled || $0.snapshot != nil })
+    assign(model, \.unloadedShells, Set(entries.filter { $0.snapshot == nil }.map(\.environmentId)))
 
     for controller in controllers.values {
       if controller.threadId == nil {
@@ -492,6 +496,17 @@ public final class LiveEngine: AppEngine {
   /// The name the machine goes by in rows, titles and notices.
   func displayName(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> String {
     MachineNickname.resolve(environmentId: entry.environmentId, label: entry.label, nicknames: nicknames ?? fleetNicknames)
+  }
+
+  /// Names machines by environment id for routed messages: a paired machine's
+  /// display name, else a fleet name, else the id itself.
+  func machineLabelResolver() -> (String) -> String {
+    let nicknames = fleetNicknames
+    let names = machines.mapValues { displayName($0, nicknames: nicknames) }
+    let fleet = fleetNames
+    return { id in
+      names[id] ?? MachineNickname.resolve(environmentId: id, label: fleet[id] ?? "", nicknames: nicknames)
+    }
   }
 
   func aideMachine(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> AideSetting.Machine {
