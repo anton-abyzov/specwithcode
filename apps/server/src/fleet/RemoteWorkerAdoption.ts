@@ -216,8 +216,8 @@ const make = Effect.gen(function* () {
                 answered: false,
                 origins: new Map(),
                 reason: Option.isNone(loaded)
-                  ? "This Mac could not read its list of machines."
-                  : "This Mac has no link to that machine.",
+                  ? "This machine could not read its list of machines."
+                  : "This machine has no link to that machine.",
               }
             : yield* client
                 .call({
@@ -239,7 +239,7 @@ const make = Effect.gen(function* () {
                       answered: true,
                       reason: read.accepted
                         ? null
-                        : `${machine.label} did not let this Mac take over its workers.`,
+                        : `${machine.label} did not let this machine take over its workers.`,
                     };
                   }),
                   Effect.catch((error) =>
@@ -249,7 +249,7 @@ const make = Effect.gen(function* () {
                       origins: new Map<string, string | null>(),
                       reason:
                         error.reason === "unsupported" || error.reason === "refused"
-                          ? `${machine.label} needs an update before this Mac can take over its workers.`
+                          ? `${machine.label} needs an update before this machine can take over its workers.`
                           : error.message,
                     }),
                   ),

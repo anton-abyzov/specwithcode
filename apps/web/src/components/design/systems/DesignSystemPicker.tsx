@@ -223,7 +223,7 @@ export function useCopyDesignSystem(
 ) => Promise<CopyOutcome> {
   const copySystem = useAtomCommand(design.systemCopy, { reportFailure: false });
   return async (system, to, options) => {
-    if (environmentId === null) return { ok: false, message: "Connect to this Mac first." };
+    if (environmentId === null) return { ok: false, message: "Connect to this machine first." };
     const result = await copySystem({
       environmentId,
       input: {

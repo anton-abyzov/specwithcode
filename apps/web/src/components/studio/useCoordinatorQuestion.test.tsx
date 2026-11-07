@@ -232,7 +232,7 @@ it("an answer this Mac never takes says it is busy, never that it is not connect
   commands.respond.mockResolvedValue(notConnected());
   hostReady.mockResolvedValueOnce(false);
   await expect(act(() => current!.answerFromDraft("Tall", undefined))).rejects.toThrow(
-    "SpecWithCode on this Mac is busy",
+    "SpecWithCode on this machine is busy",
   );
   expect(errors.join(" ")).not.toContain("not connected");
 });

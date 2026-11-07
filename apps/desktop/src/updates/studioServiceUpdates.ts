@@ -1163,7 +1163,7 @@ export function makeServiceUpdateController(input: {
       if (target === null || script === null) {
         throw new ServiceAgentError({
           step: "repair",
-          message: "No update agent is installed for this Mac's service.",
+          message: "No update agent is installed for this machine's service.",
         });
       }
       await run(

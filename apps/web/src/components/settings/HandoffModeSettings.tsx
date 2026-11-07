@@ -75,7 +75,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
     >
       <SettingsRow
         title={tx("Keep threads ready to move")}
-        description="Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this Mac's threads, existing ones too. Uses a few more tokens."
+        description="Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens."
         control={
           <Switch
             aria-label={tx("Keep threads ready to move")}
@@ -113,7 +113,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
       </SettingsRow>
       <SettingsRow
         {...searchableSetting("handoff-sleep-target")}
-        title="When this Mac sleeps, move running threads to"
+        title="When this machine sleeps, move running threads to"
         description="Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count."
         control={
           <Select
@@ -127,7 +127,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           >
             <SelectTrigger
               size="sm"
-              aria-label={tx("Machine to move running threads to when this Mac sleeps")}
+              aria-label={tx("Machine to move running threads to when this machine sleeps")}
             >
               <SelectValue>
                 {sleepTarget

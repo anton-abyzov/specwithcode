@@ -351,7 +351,7 @@ describe("SidebarRestartToUpdate", () => {
     expect(label()).toBe("Updating…");
     // The toast says what the agent does, not that it checks for running work.
     expect(lastToast().description).toBe(
-      "The SpecWithCode service on this Mac still runs 0.2.4. Downloading SpecWithCode 0.2.5",
+      "The SpecWithCode service on this machine still runs 0.2.4. Downloading SpecWithCode 0.2.5",
     );
     expect(calls.filter((call) => call === "prepare:true+hold")).toHaveLength(1);
     // The agent has it now: work that started meanwhile is stopped and held once more.
@@ -551,7 +551,7 @@ describe("SidebarRestartToUpdate", () => {
       await advance(2_000);
       expect(lastToast()).toMatchObject({
         type: "error",
-        description: "SpecWithCode 0.2.5 is not available to the service on this Mac yet.",
+        description: "SpecWithCode 0.2.5 is not available to the service on this machine yet.",
       });
       expect(label()).toBe("Retry update");
       // Work may start again at once.

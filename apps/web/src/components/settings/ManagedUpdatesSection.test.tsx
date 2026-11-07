@@ -162,9 +162,9 @@ it("native cancellation never falls through to a remote administrator request", 
 });
 
 describe("this Mac's own service and its update agent", () => {
-  it("says the local service is managed by this Mac's updater instead of asking for permission", () => {
+  it("says the local service is managed by this machine's updater instead of asking for permission", () => {
     const html = renderToStaticMarkup(<ManagedUpdatesView {...props} local />);
-    expect(html).toContain("Managed by this Mac&#x27;s updater.");
+    expect(html).toContain("Managed by this machine&#x27;s updater.");
     expect(html).not.toContain("Update permission: Not granted");
     expect(html).not.toContain("Grant update permission");
     expect(html).not.toContain("administrator must approve");

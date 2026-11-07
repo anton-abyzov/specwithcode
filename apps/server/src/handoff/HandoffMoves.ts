@@ -1295,7 +1295,7 @@ export const make = Effect.gen(function* () {
     // Threads this machine paused when its network went down. Its network coming
     // back proves nothing about them: a replica machine may have continued one and
     // gone to sleep since. Only an answer from one of their replica machines (which
-    // carries any continuation) or Resume this Mac lifts the pause.
+    // carries any continuation) or Resume this machine lifts the pause.
     const waiting = Object.values(document.threads).filter(
       (record) =>
         record.fencedBy === "sleep" &&

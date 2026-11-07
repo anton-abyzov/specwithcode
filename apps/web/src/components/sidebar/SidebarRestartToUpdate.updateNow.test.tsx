@@ -98,7 +98,7 @@ const FOLLOW_UP_KEY = "specwithcode.serviceUpdate.thenInstallApp";
 const STOP_AND_INSTALL = ["prepare:false", "prepare:true+hold", "installServiceUpdate:force"];
 // What the app's own restart sends: a look, a drain of the service it started, the install.
 const APP_ONLY = ["prepare:false", "prepare:true+hold:app-restart", "installUpdate:0.2.5"];
-const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this Mac yet.";
+const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this machine yet.";
 
 const RUNNING: ServerPrepareServiceUpdateResult = {
   idle: false,

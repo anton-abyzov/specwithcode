@@ -36,7 +36,7 @@ describe("evaluateAppActivation", () => {
       serviceStatus: "error",
     });
     expect(describeAppActivation(activation)).toBe(
-      "SpecWithCode 1.0.64 installs after the SpecWithCode service on this Mac, which runs 1.0.62 and cannot update yet: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update.",
+      "SpecWithCode 1.0.64 installs after the SpecWithCode service on this machine, which runs 1.0.62 and cannot update yet: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update.",
     );
     expect(installOnQuitAllowed(true, activation)).toBe(false);
   });
@@ -108,7 +108,7 @@ describe("evaluateAppActivation", () => {
       snapshot: service("1.0.62", "waiting-for-quiet"),
     });
     expect(describeAppActivation(activation)).toBe(
-      "SpecWithCode 1.0.64 installs after the SpecWithCode service on this Mac, which runs 1.0.62.",
+      "SpecWithCode 1.0.64 installs after the SpecWithCode service on this machine, which runs 1.0.62.",
     );
   });
 

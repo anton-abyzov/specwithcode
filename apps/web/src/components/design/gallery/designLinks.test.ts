@@ -22,7 +22,7 @@ describe("designLinkReach", () => {
   it("keeps the paired-devices copy for a reachable host", () => {
     expect(designLinkReach("https://studio.tail1234.ts.net/design/x")).toEqual({
       loopback: false,
-      text: "Works on this Mac and your paired devices.",
+      text: "Works on this machine and your paired devices.",
     });
   });
 });

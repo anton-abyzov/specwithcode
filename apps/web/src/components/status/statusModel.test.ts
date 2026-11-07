@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  STATUS_GROUPS,
   desktopUpdaterComponent,
   groupPastIncidents,
   groupStatusServices,
@@ -30,6 +31,10 @@ const service = (overrides: Partial<StatusService>): StatusService => ({
 });
 
 describe("status model", () => {
+  it("names the host as a machine, never a Mac, so Linux and Windows read right", () => {
+    for (const group of STATUS_GROUPS) expect(group.description).not.toMatch(/\bMac\b/);
+  });
+
   it("keeps the banner green when only a dependency has trouble, and names it", () => {
     const headline = statusHeadline([
       service({}),

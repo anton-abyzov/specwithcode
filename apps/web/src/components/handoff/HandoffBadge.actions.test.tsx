@@ -140,7 +140,7 @@ afterEach(() => {
   renderer = null;
 });
 
-describe("Resume this Mac…", () => {
+describe("Resume this machine…", () => {
   const paused = { kind: "paused", label: "Paused: offline" } as const;
 
   it("asks first, and resumes only after the confirm button", async () => {
@@ -153,19 +153,19 @@ describe("Resume this Mac…", () => {
         onOpenThread={() => {}}
       />,
     );
-    expect(text()).not.toContain("Resume all threads on this Mac?");
-    act(() => button("Resume this Mac…").props.onClick());
-    expect(text()).toContain("Resume all threads on this Mac?");
+    expect(text()).not.toContain("Resume all threads on this machine?");
+    act(() => button("Resume this machine…").props.onClick());
+    expect(text()).toContain("Resume all threads on this machine?");
     expect(text()).toContain(
-      "This Mac lost its network, so it paused threads that other machines could continue. Resuming lets them run here again, even if another machine already picked them up.",
+      "This machine lost its network, so it paused threads that other machines could continue. Resuming lets them run here again, even if another machine already picked them up.",
     );
     expect(button("Cancel")).toBeTruthy();
     expect(runHandoffMode).not.toHaveBeenCalled();
-    act(() => button("Resume this Mac").props.onClick());
+    act(() => button("Resume this machine").props.onClick());
     await flush();
     expect(runHandoffMode).toHaveBeenCalledTimes(1);
     expect(runHandoffMode.mock.calls[0]![1]).toEqual({ environmentId: M4, input: {} });
-    expect(text()).not.toContain("Resume all threads on this Mac?");
+    expect(text()).not.toContain("Resume all threads on this machine?");
   });
 });
 

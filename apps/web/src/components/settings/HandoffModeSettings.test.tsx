@@ -57,7 +57,7 @@ describe("Moving work between machines", () => {
     expect(html).toContain('id="handoff-sleep-target"');
     const order = [
       "Keep threads ready to move",
-      "When this Mac sleeps, move running threads to",
+      "When this machine sleeps, move running threads to",
       "More options",
       "Turn summary",
       "Also back up syncs to the repository&#x27;s remote",
@@ -82,7 +82,7 @@ describe("Moving work between machines", () => {
 
   it("titles the sleep row without a placeholder when no machine is chosen", () => {
     const html = render({});
-    expect(html).toContain("When this Mac sleeps, move running threads to</");
+    expect(html).toContain("When this machine sleeps, move running threads to</");
     expect(html).not.toContain("to …");
   });
 

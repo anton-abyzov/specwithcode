@@ -170,7 +170,7 @@ describe("makeRunFollowUp", () => {
         {
           accepted: false,
           failed: false,
-          message: "The app update waits for the service on this Mac.",
+          message: "The app update waits for the service on this machine.",
           reason: "service-behind",
         },
         { accepted: true, failed: false, message: null },
@@ -304,7 +304,7 @@ describe("installAppRelease", () => {
       expect(yield* install("1.0.70")).toEqual({
         accepted: false,
         failed: false,
-        message: "The app update waits for the service on this Mac.",
+        message: "The app update waits for the service on this machine.",
         // The reason too: a refusal like this one is asked again within seconds.
         reason: "service-behind",
       });

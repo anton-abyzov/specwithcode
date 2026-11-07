@@ -51,5 +51,5 @@ export function designLinkReach(link: string): {
         loopback: true,
         text: "This link opens on this computer only. On a paired device, open the design from SpecWithCode there.",
       }
-    : { loopback: false, text: "Works on this Mac and your paired devices." };
+    : { loopback: false, text: "Works on this machine and your paired devices." };
 }

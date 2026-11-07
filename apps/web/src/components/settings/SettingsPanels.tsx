@@ -2578,7 +2578,7 @@ export function GeneralSettingsPanel() {
         {isElectron ? (
           <SettingsRow
             {...searchableSetting("keep-awake")}
-            description="Hold off idle sleep while a session is working, so turns on this Mac keep running. Closing the lid still sleeps."
+            description="Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps."
             control={
               <Switch
                 checked={settings.keepAwakeWhileWorking}

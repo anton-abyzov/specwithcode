@@ -404,7 +404,7 @@ function OpenIncidents({
           </div>
           <p className="mt-1 text-muted-foreground text-xs">
             {names.get(incident.serviceId) ?? incident.serviceId} ·{" "}
-            {incident.origin === "public" ? "Provider status page" : "Seen by this Mac"} · Started{" "}
+            {incident.origin === "public" ? "Provider status page" : "Seen by this machine"} · Started{" "}
             {formatStatusTime(incident.startedAt)}
             {incident.url ? (
               <>
@@ -581,7 +581,7 @@ export function StatusView({
 
       {snapshot !== null && services.length > 0 ? (
         <p className="px-1 text-[11px] text-muted-foreground leading-relaxed">
-          Checked every 5 minutes; history stays on this Mac for 90 days. Each bar is one day at the
+          Checked every 5 minutes; history stays on this machine for 90 days. Each bar is one day at the
           worst level seen, and a single failed check among many shows as Needs attention. Provider
           rows combine their public status pages with sign-in, usage limits and failed turns seen
           here in the last hour. A machine offline for over a day is not counted.

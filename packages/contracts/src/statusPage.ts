@@ -74,7 +74,7 @@ export const StatusService = Schema.Struct({
   /** Why the service has its level, in a sentence. */
   detail: Schema.String,
   checkedAt: Schema.NullOr(Schema.String),
-  /** Where the level comes from, such as "This Mac" or "status.claude.com". */
+  /** Where the level comes from, such as "This machine" or "status.claude.com". */
   source: Schema.String,
   sourceUrl: Schema.NullOr(Schema.String),
   /** App features that stop working or degrade when this service is down. */

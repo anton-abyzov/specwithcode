@@ -56,7 +56,7 @@ import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
 const LOG_DELETED =
   "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update";
 const RECOVERING = "Restarting SpecWithCode to recover its database";
-const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this Mac yet.";
+const NOT_AVAILABLE = "SpecWithCode 0.2.5 is not available to the service on this machine yet.";
 const STOP_AND_INSTALL = ["prepare:false", "prepare:true+hold", "installServiceUpdate:force"];
 const IDLE: ServerPrepareServiceUpdateResult = { idle: true, stoppedThreads: 0, blockers: [] };
 
@@ -282,7 +282,7 @@ describe("Update now beside a failed service update pass", () => {
     );
     expect(description).not.toContain("Restart SpecWithCode");
     expect(description).toContain(
-      "The SpecWithCode service on this Mac still runs 0.2.4; this installs 0.2.5.",
+      "The SpecWithCode service on this machine still runs 0.2.4; this installs 0.2.5.",
     );
   });
 

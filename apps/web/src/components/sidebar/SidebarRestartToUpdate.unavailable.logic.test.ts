@@ -51,7 +51,7 @@ describe("the agent's answer to a request it found nothing for", () => {
       advanceServiceUpdateProgress(requested, foundNothing(), requestedAt + 2_000),
     ).toMatchObject({
       phase: "failed",
-      message: "SpecWithCode 0.2.5 is not available to the service on this Mac yet.",
+      message: "SpecWithCode 0.2.5 is not available to the service on this machine yet.",
       unavailable: true,
     });
   });

@@ -47,7 +47,7 @@ const cases = [
   ["machine-done", "Open on Minis"],
   // 0969 AC-10: the switcher's "Move M4's running threads…" scopes the dialog to one project.
   ["migrate", "atlas's coordinator stays on M4."],
-  ["resume", "Resume all threads on this Mac?"],
+  ["resume", "Resume all threads on this machine?"],
   // 1121: one machine default; projects are set on their own page.
   ["settings", "Keep threads ready to move"],
   ["settings-overrides", "Old app (archived): Off"],

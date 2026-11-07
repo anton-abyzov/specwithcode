@@ -2270,7 +2270,7 @@ describe("environmentUnavailableBanner", () => {
       });
       expect(banner.calm).toBe(true);
       expect(banner.variant).toBe("info");
-      expect(banner.title).toBe("SpecWithCode on this Mac is busy");
+      expect(banner.title).toBe("SpecWithCode on this machine is busy");
       expect(banner.status.reason).toBeNull();
       expect(banner.status.retryable).toBe(false);
       expect(banner.waitsForGrace).toBe(true);

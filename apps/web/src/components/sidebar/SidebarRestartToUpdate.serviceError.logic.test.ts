@@ -82,7 +82,7 @@ describe("a service whose last update pass failed", () => {
       label: "Update now",
       description: [
         `${LOG_DELETED_NOW}.`,
-        "The SpecWithCode service on this Mac still runs 1.0.62; this installs 1.0.63.",
+        "The SpecWithCode service on this machine still runs 1.0.62; this installs 1.0.63.",
         SERVICE_UPDATE_NOW_DESCRIPTION,
       ].join(" "),
     });
@@ -117,7 +117,7 @@ describe("a service whose last update pass failed", () => {
         expect(description).toBe(
           [
             `${shown}.`,
-            "The SpecWithCode service on this Mac still runs 1.0.62; this installs 1.0.63.",
+            "The SpecWithCode service on this machine still runs 1.0.62; this installs 1.0.63.",
             SERVICE_UPDATE_NOW_DESCRIPTION,
           ].join(" "),
         );
@@ -273,7 +273,7 @@ describe("a service whose install request lapsed before it could start", () => {
     expect(view?.description).toBe(
       [
         SERVICE_REQUEST_EXPIRED,
-        "The SpecWithCode service on this Mac still runs 1.0.62; this installs 1.0.63.",
+        "The SpecWithCode service on this machine still runs 1.0.62; this installs 1.0.63.",
         SERVICE_UPDATE_NOW_DESCRIPTION,
       ].join(" "),
     );

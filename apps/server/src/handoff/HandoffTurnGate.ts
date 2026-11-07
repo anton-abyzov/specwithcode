@@ -41,7 +41,7 @@ export class HandoffTurnGate extends Context.Reference<HandoffTurnGateShape>(
 /** Why a turn may not start on this machine, or null. Pure, for tests. */
 /** Why a thread waits after this machine paused on losing its network. */
 export const PAUSED_OFFLINE_REFUSAL =
-  "This machine lost its network while other machines hold copies of this thread, so one of them may have continued it. It starts no turn here until one of those machines answers; choose Resume this Mac to run it here anyway.";
+  "This machine lost its network while other machines hold copies of this thread, so one of them may have continued it. It starts no turn here until one of those machines answers; choose Resume this machine to run it here anyway.";
 
 export function turnRefusal(
   document: HandoffDocument,

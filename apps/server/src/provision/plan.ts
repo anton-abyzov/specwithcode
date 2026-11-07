@@ -278,8 +278,8 @@ export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
   if (manager) {
     const runs =
       manager.kind === "desktop"
-        ? `The desktop app (${manager.label}) runs the server on this Mac.`
-        : `The managed launch agent ${manager.label} runs the server on this Mac.`;
+        ? `The desktop app (${manager.label}) runs the server on this machine.`
+        : `The managed launch agent ${manager.label} runs the server on this machine.`;
     const order = compareVersions(manager.version, ctx.wantedServer);
     items.push(
       manager.version !== null && order >= 0

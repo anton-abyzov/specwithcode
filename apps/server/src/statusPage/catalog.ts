@@ -341,7 +341,7 @@ function providerInstanceComponent(provider: ServerProvider): StatusComponent {
   if (provider.availability === "unavailable") {
     return component(id, name, "unknown", provider.unavailableReason ?? "Driver unavailable.");
   }
-  if (!provider.installed) return component(id, name, "degraded", "Not installed on this Mac.");
+  if (!provider.installed) return component(id, name, "degraded", "Not installed on this machine.");
   if (provider.status === "error") {
     return component(id, name, "partial_outage", provider.message ?? "Provider check failed.");
   }
@@ -423,7 +423,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
       localComponents,
       `SpecWithCode ${input.serverVersion} · up ${formatDuration(input.now - input.startedAt)}`,
     ),
-    source: "This Mac",
+    source: "This machine",
     sourceUrl: null,
     dependents: ["Every thread and window", "Scheduled tasks", "MCP tools for agents"],
     components: localComponents,
@@ -462,7 +462,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
         ? "MCP endpoint ready; no project coordinators."
         : `${input.coordinators.length} project coordinator${input.coordinators.length === 1 ? "" : "s"} healthy.`,
     ),
-    source: "This Mac",
+    source: "This machine",
     sourceUrl: null,
     dependents: ["Project coordinators", "Delegated tasks", "Scheduled task runs"],
     components: coordinatorComponents,
@@ -555,7 +555,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
     // missing is only a fault when nothing else covers remote access.
     const local = component(
       "tailscale:local",
-      "Tailscale on this Mac",
+      "Tailscale on this machine",
       running || connectManaged ? "operational" : "degraded",
       running
         ? (input.tailscale.dnsName ?? "Connected")
@@ -573,7 +573,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
         tailscaleComponents,
         running ? "Connected to the tailnet." : "Not running; optional here.",
       ),
-      source: "This Mac and status.tailscale.com",
+      source: "This machine and status.tailscale.com",
       sourceUrl: FEEDS.tailscale.pageUrl,
       dependents: ["Remote machines (worker delegation)"],
       components: tailscaleComponents,
@@ -603,7 +603,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
           connect.tunnel === "running"
             ? "Connector running."
             : connect.tunnel === "down"
-              ? "Connector is not running; the relay cannot reach this Mac."
+              ? "Connector is not running; the relay cannot reach this machine."
               : "Connector state not reported.",
         ),
       );
@@ -614,7 +614,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
       name: "SpecWithCode Connect",
       level: levelOf(connectComponents),
       detail: detailOf(connectComponents, linkDetail),
-      source: "This Mac",
+      source: "This machine",
       sourceUrl: null,
       dependents: ["Phone and browser access"],
       components: connectComponents,
@@ -669,7 +669,7 @@ export function buildStatusServices(input: StatusInputs): ReadonlyArray<BuiltSer
         components,
         publicLevel === "unknown"
           ? "Sign-in and recent turns look healthy; public status unavailable."
-          : "Public status, this Mac's sign-in and recent turns all look healthy.",
+          : "Public status, this machine's sign-in and recent turns all look healthy.",
       ),
       source: FEEDS[definition.feed].label,
       sourceUrl: FEEDS[definition.feed].pageUrl,

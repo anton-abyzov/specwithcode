@@ -53,9 +53,9 @@ import { useLinkMachines } from "./useLinkMachines";
 const clock = (value: string) =>
   new Date(value).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
-/** "If this Mac goes quiet", or the coordinator's name when this app runs elsewhere. */
+/** "If this machine goes quiet", or the coordinator's name when this app runs elsewhere. */
 export const standbySectionTitle = (coordinatorLabel: string, coordinatorIsHere: boolean) =>
-  `If ${coordinatorIsHere ? "this Mac" : coordinatorLabel} goes quiet`;
+  `If ${coordinatorIsHere ? "this machine" : coordinatorLabel} goes quiet`;
 
 export type StandbyRowState = "unknown" | "ready" | "failed";
 
@@ -72,7 +72,7 @@ export const standbyWarningText = (
   coordinatorLabel: string,
   coordinatorIsHere: boolean,
 ) =>
-  `${standby} must stay awake. If it is off, ${coordinatorIsHere ? "this Mac" : coordinatorLabel} pauses its coordinator.`;
+  `${standby} must stay awake. If it is off, ${coordinatorIsHere ? "this machine" : coordinatorLabel} pauses its coordinator.`;
 
 /** Shown on the machine that took over. */
 export const tookOverText = (standby: string, previous: string, at: string) =>
@@ -86,7 +86,7 @@ export const workersReportHereText = (count: number, machine: string) =>
 /** Shown for the machine that returned after an automatic takeover. */
 export const returnedText = (successor: string, returned: string, returnedIsHere: boolean) =>
   returnedIsHere
-    ? `${successor} took over while this Mac was away. This Mac now runs workers.`
+    ? `${successor} took over while this machine was away. This machine now runs workers.`
     : `${successor} took over while ${returned} was away. ${returned} now runs workers.`;
 
 export const handBackHint = (successor: string) =>
@@ -319,7 +319,7 @@ const sameOrder = (left: ReadonlyArray<EnvironmentId>, right: ReadonlyArray<Envi
   left.every((environmentId, index) => right[index] === environmentId);
 
 /**
- * "If this Mac goes quiet": the opt-in standby for one shared project's
+ * "If this machine goes quiet": the opt-in standby for one shared project's
  * coordinator, the arming rows for each worker machine, and what a takeover
  * changed. Only the desktop app arms it; any client can turn it off.
  */
@@ -926,7 +926,7 @@ function TakeoverNotices({
                 onClick={() => setHandBack(`${returned.environmentId}:${returned.id}`)}
               >
                 {returned.environmentId === primaryEnvironmentId
-                  ? "Make this Mac the coordinator again"
+                  ? "Make this machine the coordinator again"
                   : `Make ${previousLabel} the coordinator again`}
               </Button>
             ) : null

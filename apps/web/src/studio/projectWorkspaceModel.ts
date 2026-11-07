@@ -217,7 +217,7 @@ const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElap
 // Sends are refused while it catches up (nothing queues them), so the text
 // says when sending works again and that the draft is kept.
 export const THIS_DEVICE_BUSY_ADMISSION =
-  "SpecWithCode on this Mac is busy. You can send once it catches up; your draft is kept.";
+  "SpecWithCode on this machine is busy. You can send once it catches up; your draft is kept.";
 
 /** A short status for a host that is not connected, naming why where it is known. */
 export function hostDisconnectedLabel(
@@ -280,10 +280,10 @@ export function projectAdmissionReason(
       // The desktop window loads its UI from this same server, so reloading
       // while it is stalled gives a blank page: never suggest it here.
       if (connection?.blockedReason === "authentication") {
-        return "This window is signed out of SpecWithCode on this Mac. Quit and reopen the app to sign in again.";
+        return "This window is signed out of SpecWithCode on this machine. Quit and reopen the app to sign in again.";
       }
       if (connection?.phase === "error" || connection?.phase === "unsupported") {
-        return "SpecWithCode on this Mac stopped answering. Quit and reopen the app to continue.";
+        return "SpecWithCode on this machine stopped answering. Quit and reopen the app to continue.";
       }
       return context.graceElapsed ? THIS_DEVICE_BUSY_ADMISSION : "Catching up…";
     }
