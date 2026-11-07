@@ -1210,7 +1210,12 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       : undefined;
   };
 
-  const discoverNpmGlobalPackage = Effect.fn("AcpRegistryCatalog.discoverNpmGlobalPackage")(
+  type NpmGlobalPackageInspection =
+    | { readonly receipt: AcpRegistryPackageInstallReceipt }
+    | { readonly miss: string };
+
+  // Says why an installed package is not usable, so a failed install can name it.
+  const inspectNpmGlobalPackage = Effect.fn("AcpRegistryCatalog.inspectNpmGlobalPackage")(
     function* (
       agent: AcpRegistryAgent,
       packageSpec: string,
@@ -1235,7 +1240,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const manifestPath = path.join(packageRoot, "package.json");
       const manifestInfo = yield* fileSystem.stat(manifestPath).pipe(Effect.option);
       if (Option.isNone(manifestInfo) || manifestInfo.value.size > MAX_PACKAGE_MANIFEST_BYTES) {
-        return Option.none<AcpRegistryPackageInstallReceipt>();
+        return {
+          miss: `npm reported no ${packageIdentity.name} in its global folder ${globalRoot}.`,
+        } satisfies NpmGlobalPackageInspection;
       }
       const manifest = yield* fileSystem
         .readFileString(manifestPath)
@@ -1245,33 +1252,59 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         manifest.value.name !== packageIdentity.name ||
         manifest.value.version !== packageIdentity.version
       ) {
-        return Option.none<AcpRegistryPackageInstallReceipt>();
+        return {
+          miss: `${manifestPath} does not describe ${packageIdentity.name}@${packageIdentity.version}.`,
+        } satisfies NpmGlobalPackageInspection;
       }
       const commandName = npmCommandName(agent, packageIdentity.name, manifest.value);
-      if (commandName === undefined) return Option.none<AcpRegistryPackageInstallReceipt>();
-      if (!(yield* hasManagedPackageRuntime(agent, "npx", packageSpec)))
-        return Option.none<AcpRegistryPackageInstallReceipt>();
+      if (commandName === undefined) {
+        return {
+          miss: `${packageIdentity.name} declares no single command in its package.json "bin".`,
+        } satisfies NpmGlobalPackageInspection;
+      }
+      if (!(yield* hasManagedPackageRuntime(agent, "npx", packageSpec))) {
+        return {
+          miss: `${packageIdentity.name}'s install script did not create its native binary. Check that npm can run install scripts (ignore-scripts) and that its platform package installed, then retry.`,
+        } satisfies NpmGlobalPackageInspection;
+      }
       const binDirectory = platform === "win32" ? globalPrefix : path.join(globalPrefix, "bin");
       const executablePath = resolveExecutable(
         commandName,
         platform,
         withPreferredPath(environment, binDirectory, platform),
       );
-      return executablePath === undefined || path.dirname(executablePath) !== binDirectory
-        ? Option.none<AcpRegistryPackageInstallReceipt>()
-        : Option.some<AcpRegistryPackageInstallReceipt>({
-            agentId: agent.id,
-            agentVersion: agent.version,
-            distribution: "npx" as const,
-            packageSpec,
-            managerPath,
-            binDirectory,
-            executablePath,
-            packageRoot,
-            packageVersion: manifest.value.version,
-          });
+      if (executablePath === undefined || path.dirname(executablePath) !== binDirectory) {
+        return {
+          miss: `npm did not link the '${commandName}' command into ${binDirectory}.`,
+        } satisfies NpmGlobalPackageInspection;
+      }
+      return {
+        receipt: {
+          agentId: agent.id,
+          agentVersion: agent.version,
+          distribution: "npx" as const,
+          packageSpec,
+          managerPath,
+          binDirectory,
+          executablePath,
+          packageRoot,
+          packageVersion: manifest.value.version,
+        },
+      } satisfies NpmGlobalPackageInspection;
     },
   );
+
+  const discoverNpmGlobalPackage = (
+    agent: AcpRegistryAgent,
+    packageSpec: string,
+    managerPath: string,
+    environment: NodeJS.ProcessEnv,
+  ) =>
+    inspectNpmGlobalPackage(agent, packageSpec, managerPath, environment).pipe(
+      Effect.map((inspection) =>
+        "receipt" in inspection ? Option.some(inspection.receipt) : Option.none(),
+      ),
+    );
 
   const discoverUvGlobalPackage = Effect.fn("AcpRegistryCatalog.discoverUvGlobalPackage")(
     function* (
@@ -1561,7 +1594,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         path.join(packageRoot, ".grok-install"),
       );
       const npmInstall = (env: NodeJS.ProcessEnv) =>
-        runCommand(managerPath, ["install", "--global", packageSpec], {
+        // The user chose this agent, so its own install script runs even when
+        // their npm config ignores scripts: Grok builds its binary there.
+        runCommand(managerPath, ["install", "--global", packageSpec, "--ignore-scripts=false"], {
           env,
           timeout: PACKAGE_INSTALL_TIMEOUT,
           truncatedOutputReason: "install_failed",
@@ -1596,20 +1631,20 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     }
 
     if (distribution === "npx") {
-      const installed = yield* discoverNpmGlobalPackage(
+      const installed = yield* inspectNpmGlobalPackage(
         agent,
         packageSpec,
         managerPath,
         packageEnvironment,
       );
-      if (Option.isNone(installed)) {
+      if ("miss" in installed) {
         return yield* new AcpRegistryError({
           reason: "install_failed",
-          detail: `ACP Registry installed ${packageSpec}, but could not resolve its global command.`,
+          detail: `ACP Registry installed ${packageSpec}, but could not resolve its command: ${installed.miss}`,
         });
       }
-      yield* writePackageReceipt(installed.value);
-      return installed.value;
+      yield* writePackageReceipt(installed.receipt);
+      return installed.receipt;
     }
 
     const installed = yield* discoverUvGlobalPackage(

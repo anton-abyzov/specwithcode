@@ -556,6 +556,50 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
+  itOnLinuxHost("names the missing Grok binary when its install script did not run", () => {
+    const agent = {
+      ...makeAgent({ npx: { package: "@xai-official/grok@1.2.3", args: ["agent", "stdio"] } }),
+      id: "grok-build",
+    };
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-grok-noscripts-" });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = {
+        ...toolchain.environment,
+        FAKE_NPM_PACKAGE: "@xai-official/grok",
+        FAKE_NPM_EXECUTABLE_NAME: "grok",
+        FAKE_NPM_INSTALL_ENV_LOG: path.join(cacheDir, "install-env.txt"),
+        FAKE_NPM_SCRIPTS_BROKEN: "1",
+        FAKE_NPM_MANIFEST: encodeUnknownJson({
+          name: "@xai-official/grok",
+          version: "1.2.3",
+          bin: { grok: "bin/grok" },
+        }),
+      };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcessEnvironment, environment));
+      const error = yield* resolver.prepare({ agentId: "grok-build" }).pipe(Effect.flip);
+      expect(error.detail).toContain("could not resolve its command");
+      expect(error.detail).toContain("install script did not create its native binary");
+      expect(error.detail).toContain("ignore-scripts");
+      expect(yield* fs.readFileString(toolchain.logPath)).toContain(
+        "install --global @xai-official/grok@1.2.3 --ignore-scripts=false",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   itOnLinuxHost("retries on the public npm registry when the default registry refuses", () => {
     const agent = makeAgent({
       npx: { package: "@example/acp@1.2.3", args: ["--stdio"] },
