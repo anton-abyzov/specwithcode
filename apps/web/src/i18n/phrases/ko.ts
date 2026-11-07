@@ -2157,7 +2157,6 @@ export const ko: PhraseCatalog = {
   "Install for": "설치 대상",
   "{radio} This project": "{radio} 이 프로젝트",
   "{radio} User": "{radio} 사용자",
-  "{checkbox}Pin {value}": "{checkbox}{value} 고정",
   Results: "결과",
   failed: "실패",
   "Needs permission to maintain machines.": "컴퓨터를 유지 관리할 권한이 필요합니다.",
@@ -2896,9 +2895,6 @@ export const ko: PhraseCatalog = {
   "Connected. Let all {length} active projects read {value2}?":
     "연결되었습니다. 활성 프로젝트 {length}개 모두가 {value2}을(를) 읽도록 허용할까요?",
   "Reset it": "재설정",
-  "this version": "이 버전",
-  "Install on {length} machine": "컴퓨터 {length}대에 설치",
-  "Install on {length} machines": "컴퓨터 {length}대에 설치",
   " · {version} available": " · {version} 사용 가능",
   never: "없음",
   " through @{bot}": " (@{bot} 경유)",

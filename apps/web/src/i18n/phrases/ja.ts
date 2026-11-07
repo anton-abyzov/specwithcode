@@ -2176,7 +2176,6 @@ export const ja: PhraseCatalog = {
   "Install for": "インストール先",
   "{radio} This project": "{radio} このプロジェクト",
   "{radio} User": "{radio} ユーザー",
-  "{checkbox}Pin {value}": "{checkbox}{value} を固定",
   Results: "結果",
   failed: "失敗",
   "Needs permission to maintain machines.": "マシンを保守する権限が必要です。",
@@ -2922,9 +2921,6 @@ export const ja: PhraseCatalog = {
   "Connected. Let all {length} active projects read {value2}?":
     "接続しました。アクティブな {length} 件のプロジェクトすべてに{value2}の読み取りを許可しますか？",
   "Reset it": "リセット",
-  "this version": "このバージョン",
-  "Install on {length} machine": "{length} 台のマシンにインストール",
-  "Install on {length} machines": "{length} 台のマシンにインストール",
   " · {version} available": " · {version} が利用可能",
   never: "なし",
   " through @{bot}": "（@{bot} 経由）",

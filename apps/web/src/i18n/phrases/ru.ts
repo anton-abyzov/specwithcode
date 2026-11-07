@@ -2173,7 +2173,6 @@ export const ru: PhraseCatalog = {
   "Install for": "Установить для",
   "{radio} This project": "{radio} Этот проект",
   "{radio} User": "{radio} Пользователь",
-  "{checkbox}Pin {value}": "{checkbox}Закрепить {value}",
   Results: "Результаты",
   failed: "ошибка",
   "Needs permission to maintain machines.": "Нужно разрешение на обслуживание машин.",
@@ -2919,9 +2918,6 @@ export const ru: PhraseCatalog = {
   "Connected. Let all {length} active projects read {value2}?":
     "Подключено. Разрешить всем активным проектам ({length}) читать {value2}?",
   "Reset it": "Сбросить",
-  "this version": "эту версию",
-  "Install on {length} machine": "Установить на машин: {length}",
-  "Install on {length} machines": "Установить на машин: {length}",
   " · {version} available": " · доступна {version}",
   never: "никогда",
   " through @{bot}": " через @{bot}",

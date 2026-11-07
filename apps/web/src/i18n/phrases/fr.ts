@@ -2190,7 +2190,6 @@ export const fr: PhraseCatalog = {
   "Install for": "Installer pour",
   "{radio} This project": "{radio} Ce projet",
   "{radio} User": "{radio} Utilisateur",
-  "{checkbox}Pin {value}": "{checkbox}Épingler {value}",
   Results: "Résultats",
   failed: "échec",
   "Needs permission to maintain machines.": "Nécessite l’autorisation de maintenir les machines.",
@@ -2948,9 +2947,6 @@ export const fr: PhraseCatalog = {
   "Connected. Let all {length} active projects read {value2}?":
     "Connecté. Autoriser les {length} projets actifs à lire {value2} ?",
   "Reset it": "Le réinitialiser",
-  "this version": "cette version",
-  "Install on {length} machine": "Installer sur {length} machine",
-  "Install on {length} machines": "Installer sur {length} machines",
   " · {version} available": " · {version} disponible",
   never: "jamais",
   " through @{bot}": " via @{bot}",
