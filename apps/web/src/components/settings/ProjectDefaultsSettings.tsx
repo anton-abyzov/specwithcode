@@ -109,7 +109,6 @@ export function ProjectDefaultsSettings({
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
-  const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
   const mixedSubmodules = useScopedSettingsMixed(["worktreeSubmodules"]);
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedComputer = useScopedSettingsMixed(["enableAgentComputerAccess"]);
@@ -134,17 +133,6 @@ export function ProjectDefaultsSettings({
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-  // What the project's folder holds, for the Use worktrees recommendation.
-  const folderProject = isProjectScope
-    ? (scope.members.find(
-        (member) =>
-          member.id === target?.projectId && member.environmentId === target.environmentId,
-      ) ?? null)
-    : null;
-  const folderLayout = useProjectFolderCheck(folderProject)?.layout;
-  const worktreesRecommendation = folderLayout
-    ? worktreesSettingRecommendation(folderLayout)
-    : null;
   // File-backed submodule settings show the effective value.
   const effective = target
     ? resolveProjectSettings(target.settings, null, null, null).settings
@@ -257,51 +245,7 @@ export function ProjectDefaultsSettings({
       }
     />
   );
-  // A project's switch is its own choice: on gives every new thread, including
-  // ones the coordinator starts, its own worktree; off keeps them in the project folder.
-  const projectUsesWorktrees =
-    target?.sources.defaultThreadEnvMode === "project" &&
-    target.settings.defaultThreadEnvMode === "worktree";
-  const useWorktreesRow = (
-    <SettingsRow
-      serverScoped
-      settingKeys={["defaultThreadEnvMode"]}
-      mixed={mixedWorkspace}
-      id={searchableSetting("new-threads").id}
-      title="Use worktrees"
-      description={
-        <>
-          New threads in this project, including ones the coordinator starts, open in their own git
-          worktree off the project's current branch. A folder holding other repositories, such as an
-          umbrella, keeps its threads in the folder. Off or not set: new threads work in the project
-          folder. There is no machine-wide workspace default.
-          {worktreesRecommendation ? (
-            <span className="mt-1 block text-foreground" data-workspace-recommendation="">
-              {worktreesRecommendation}
-            </span>
-          ) : null}
-        </>
-      }
-      resetAction={
-        target?.sources.defaultThreadEnvMode === "project" ? (
-          <SettingResetButton
-            label={tx("Use worktrees")}
-            onClick={() => updateSettings({ defaultThreadEnvMode: null })}
-          />
-        ) : null
-      }
-      control={
-        <Switch
-          aria-label={tx("Use worktrees")}
-          mixed={mixedWorkspace}
-          checked={mixedWorkspace ? false : projectUsesWorktrees}
-          onCheckedChange={(checked) =>
-            updateSettings({ defaultThreadEnvMode: checked ? "worktree" : "local" })
-          }
-        />
-      }
-    />
-  );
+  const useWorktreesRow = <UseWorktreesSetting />;
   // Where new threads start is each project's own choice, with no
   // machine-wide default above it, so the environment page only points at
   // the per-project switch.
@@ -843,5 +787,73 @@ export function ProjectDefaultsSettings({
         </>
       )}
     </SettingsSection>
+  );
+}
+
+/**
+ * The project's Use worktrees switch. Settings > Projects and the project's
+ * own General tab both render this row, over the same project-scoped setting.
+ */
+export function UseWorktreesSetting() {
+  const tx = useTx();
+  const { scope, target } = useSettingsScope();
+  const updateSettings = useUpdateScopedSettings();
+  const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  // What the project's folder holds, for the Use worktrees recommendation.
+  const folderProject = isProjectScope
+    ? (scope.members.find(
+        (member) =>
+          member.id === target?.projectId && member.environmentId === target.environmentId,
+      ) ?? null)
+    : null;
+  const folderLayout = useProjectFolderCheck(folderProject)?.layout;
+  const worktreesRecommendation = folderLayout
+    ? worktreesSettingRecommendation(folderLayout)
+    : null;
+  // A project's switch is its own choice: on gives every new thread, including
+  // ones the coordinator starts, its own worktree; off keeps them in the project folder.
+  const projectUsesWorktrees =
+    target?.sources.defaultThreadEnvMode === "project" &&
+    target.settings.defaultThreadEnvMode === "worktree";
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["defaultThreadEnvMode"]}
+      mixed={mixedWorkspace}
+      id={searchableSetting("new-threads").id}
+      title="Use worktrees"
+      description={
+        <>
+          New threads in this project, including ones the coordinator starts, open in their own git
+          worktree off the project's current branch. A folder holding other repositories, such as an
+          umbrella, keeps its threads in the folder. Off or not set: new threads work in the project
+          folder. There is no machine-wide workspace default.
+          {worktreesRecommendation ? (
+            <span className="mt-1 block text-foreground" data-workspace-recommendation="">
+              {worktreesRecommendation}
+            </span>
+          ) : null}
+        </>
+      }
+      resetAction={
+        target?.sources.defaultThreadEnvMode === "project" ? (
+          <SettingResetButton
+            label={tx("Use worktrees")}
+            onClick={() => updateSettings({ defaultThreadEnvMode: null })}
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          aria-label={tx("Use worktrees")}
+          mixed={mixedWorkspace}
+          checked={mixedWorkspace ? false : projectUsesWorktrees}
+          onCheckedChange={(checked) =>
+            updateSettings({ defaultThreadEnvMode: checked ? "worktree" : "local" })
+          }
+        />
+      }
+    />
   );
 }

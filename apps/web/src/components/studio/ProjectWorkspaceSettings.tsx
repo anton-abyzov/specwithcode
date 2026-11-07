@@ -59,6 +59,7 @@ import { RecommendedModelProviders } from "../settings/RecommendedModelProviders
 import { SettingsScopeProvider } from "../settings/SettingsScopeContext";
 import { SettingsSection } from "../settings/settingsLayout";
 import { ProjectOverrides } from "../settings/ProjectOverrides";
+import { UseWorktreesSetting } from "../settings/ProjectDefaultsSettings";
 import { ProjectSettingsSearch } from "./ProjectSettingsSearch";
 import {
   findProjectSettingsAnchor,
@@ -452,6 +453,18 @@ export function ProjectWorkspaceSettings({
                       }
                       onChanged={onSaved}
                     />
+                  ) : null}
+                  {/* Where threads run, next to the folder; the same setting as Settings > Projects. */}
+                  {snapshot.settings.kind !== "personal" ? (
+                    <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
+                      <SettingsSection
+                        id="project-use-worktrees"
+                        title="Workspace"
+                        className="pt-3"
+                      >
+                        <UseWorktreesSetting />
+                      </SettingsSection>
+                    </SettingsScopeProvider>
                   ) : null}
                   <label>
                     Goal

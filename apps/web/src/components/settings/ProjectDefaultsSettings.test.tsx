@@ -101,7 +101,7 @@ vi.mock("../ui/select", () => ({
     <option value={value}>{children}</option>
   ),
 }));
-import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ProjectDefaultsSettings, UseWorktreesSetting } from "./ProjectDefaultsSettings";
 const project = ProjectId.make("project");
 let renderer: ReactTestRenderer | undefined;
 function render() {
@@ -140,7 +140,7 @@ describe("web workspace default presentation", () => {
     expect(text).toContain("Open Projects");
     expect(text).not.toContain("Automatic (Git worktree)");
     // Environment defaults read no project folder.
-    expect(state.checkedProject).toBeNull();
+    expect(state.checkedProject ?? null).toBeNull();
   });
   it.each(["local", "worktree"] as const)(
     "ignores a stored environment workspace value of %s",
@@ -211,6 +211,20 @@ describe("project Use worktrees switch", () => {
     expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "local" });
     act(() => toggle.props.onCheckedChange(true));
     expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "worktree" });
+  });
+  it("is the same switch on its own, as the project General tab renders it", () => {
+    state.environment = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [project]: { defaultThreadEnvMode: "worktree" } },
+    };
+    state.target = resolveProjectSettings(state.environment, project, null, null);
+    act(() => {
+      renderer = create(<UseWorktreesSetting />);
+    });
+    const toggle = renderer!.root.findByProps({ "aria-label": "Use worktrees", type: "checkbox" });
+    expect(toggle.props.checked).toBe(true);
+    act(() => toggle.props.onCheckedChange(false));
+    expect(state.update).toHaveBeenLastCalledWith({ defaultThreadEnvMode: "local" });
   });
 });
 
