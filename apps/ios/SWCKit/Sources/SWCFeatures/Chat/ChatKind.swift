@@ -82,3 +82,14 @@ struct ChatKindLine: Equatable {
     machine.isEmpty ? text : "\(text) · \(machine)"
   }
 }
+
+extension ChatKindLine {
+  /// Only a worker thread shows its SpecWeave increment, as on the desktop,
+  /// whose coordinator pane has no plan card. A coordinator that ran
+  /// `specweave` itself is bound to whatever it touched last, which is not
+  /// its own work.
+  static func showsIncrement(_ target: ChatTarget) -> Bool {
+    guard case let .thread(ref) = target else { return false }
+    return !ref.threadId.hasPrefix("project-coordinator:")
+  }
+}

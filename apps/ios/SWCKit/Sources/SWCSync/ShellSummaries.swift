@@ -461,6 +461,7 @@ public enum ShellSummaries {
     var summary = primary.summary
     summary.title = groupLabel(copies, primary: primary, logicalId: logicalId)
     summary.members = members
+    summary.logicalProjectId = logicalId
     let here = primary.summary.ref.environmentId
     var named = Set([here])
     summary.linkedMachineIds = (primary.project.workspaceSettings?.logicalProject?.members ?? []).map(\.environmentId).filter { named.insert($0).inserted }

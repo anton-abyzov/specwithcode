@@ -232,13 +232,18 @@ struct SidebarView: View {
     // With a thread open, the switch above already leads to the coordinator.
     let hasModes = router.openThreadCoordinator(in: model) != nil || isThreadsPane
     if !hasModes {
+      // A linked project says so here too, as its row in the project list does.
+      let badge = model.sharedProjectBadge(project)
       Section {
         SidebarRow(title: project.title, subtitle: "Coordinator") {
           ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
         } trailing: {
-          ProjectStatusGlyphs(project: project)
+          HStack(spacing: WeaveSpacing.s2) {
+            if let badge { SharedProjectGlyph(badge: badge) }
+            ProjectStatusGlyphs(project: project)
+          }
         }
-        .accessibilityValue(ProjectStatusGlyphs.spoken(project))
+        .accessibilityValue(([badge?.label, ProjectStatusGlyphs.spoken(project)] as [String?]).compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", "))
         .sidebarItem(.chat(.project(project.ref)))
       }
     }

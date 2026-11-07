@@ -21,7 +21,7 @@ struct OrchestratorSwitcher: View {
           ForEach(members) { member in
             Button {
               if member.ref != current {
-                if isBesideCoordinator { router.chosenCoordinator = member.ref } else { router.open(.project(member.ref)) }
+                router.chooseCoordinator(member.ref, besideThread: isBesideCoordinator, in: model)
               }
             } label: {
               if member.ref == current {

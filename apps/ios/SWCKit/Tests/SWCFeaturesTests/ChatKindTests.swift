@@ -158,4 +158,15 @@ struct ChatKindTests {
     router.returnToCoordinator(from: thread.ref, on: router.main, wide: true, in: model)
     #expect(router.sidebarSelection(in: model) == .chat(.project(project.ref)))
   }
+
+  @Test func onlyAWorkerThreadShowsItsIncrement() throws {
+    let model = model()
+    let project = try #require(model.projects.first { !model.threads(in: $0.ref).isEmpty })
+    let thread = try #require(model.threads(in: project.ref).first)
+    #expect(ChatKindLine.showsIncrement(.thread(thread.ref)))
+    #expect(!ChatKindLine.showsIncrement(.project(project.ref)))
+    if let aide = model.aide { #expect(!ChatKindLine.showsIncrement(.aide(aide.ref))) }
+    let coordinator = ThreadRef(environmentId: thread.ref.environmentId, threadId: "project-coordinator:\(project.ref.projectId)")
+    #expect(!ChatKindLine.showsIncrement(.thread(coordinator)))
+  }
 }

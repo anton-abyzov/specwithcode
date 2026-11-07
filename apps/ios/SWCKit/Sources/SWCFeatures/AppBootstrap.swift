@@ -32,7 +32,7 @@ public enum AppBootstrap {
     let model = AppModel(engine: engine)
     // Only real machines reopen the last chat; sample data starts fresh.
     let store = options.fixture == nil && liveEngineFactory != nil ? LastOpenedStore() : nil
-    let router = router(for: model, lastOpenedStore: store)
+    let router = router(for: model, lastOpenedStore: store, coordinatorPicks: store == nil ? nil : CoordinatorPickStore())
     router.appearanceOverride = options.appearance
     router.pendingLaunchRoute = options.route
     if options.route == nil { router.pendingRestore = store?.load() }
@@ -60,10 +60,10 @@ public enum AppBootstrap {
   }
 
   /// The navigation state that belongs to a model.
-  static func router(for model: AppModel, lastOpenedStore: LastOpenedStore? = nil) -> AppRouter {
+  static func router(for model: AppModel, lastOpenedStore: LastOpenedStore? = nil, coordinatorPicks: CoordinatorPickStore? = nil) -> AppRouter {
     let key = ObjectIdentifier(model)
     if let entry = routers[key] { return entry.router }
-    let router = AppRouter(lastOpenedStore: lastOpenedStore, model: model)
+    let router = AppRouter(lastOpenedStore: lastOpenedStore, coordinatorPicks: coordinatorPicks, model: model)
     routers[key] = (model, router)
     return router
   }
