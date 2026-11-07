@@ -51,6 +51,52 @@ const ATTENTION_LABELS: Record<AttentionKind, string> = {
 
 export const attentionLabel = (kind: AttentionKind) => ATTENTION_LABELS[kind];
 
+/** What breaks first leads: a failed run, then what blocks work, then what only waits. */
+const ATTENTION_RANK: Record<AttentionKind, number> = {
+  failed: 0,
+  signin: 1,
+  approval: 2,
+  input: 3,
+  plan: 4,
+  message: 5,
+  limited: 6,
+  held: 7,
+  stalled: 8,
+};
+
+export type AttentionGroup = {
+  readonly kind: AttentionKind;
+  readonly sessions: readonly SessionView[];
+};
+
+/** Sessions that need you, grouped by what they need, most urgent group first; order within a group is kept. */
+export function groupAttention(sessions: readonly SessionView[]): AttentionGroup[] {
+  const groups = new Map<AttentionKind, SessionView[]>();
+  for (const session of sessions) {
+    if (session.attention === null) continue;
+    const list = groups.get(session.attention) ?? [];
+    list.push(session);
+    groups.set(session.attention, list);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => ATTENTION_RANK[a] - ATTENTION_RANK[b])
+    .map(([kind, list]) => ({ kind, sessions: list }));
+}
+
+export type DayGroup = "today" | "yesterday" | "earlier";
+
+/** The local calendar day a time falls on, relative to now. */
+export function dayGroup(value: string | null | undefined, now: number = Date.now()): DayGroup {
+  const timestamp = validTimestamp(value);
+  if (!timestamp) return "earlier";
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const today = startOfToday.getTime();
+  if (timestamp >= today) return "today";
+  startOfToday.setDate(startOfToday.getDate() - 1);
+  return timestamp >= startOfToday.getTime() ? "yesterday" : "earlier";
+}
+
 /** The chip for a session that needs you: an access request is named as one. */
 export function sessionAttentionLabel(
   kind: AttentionKind,

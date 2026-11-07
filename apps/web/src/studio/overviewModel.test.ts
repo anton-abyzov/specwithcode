@@ -8,13 +8,16 @@ import type {
   StudioCapacityAccount,
   StudioCapacitySnapshot,
 } from "@specweave-studio/contracts/studio";
+import type { SessionView } from "./overviewModel";
 import {
   absoluteTime,
   attentionLabel,
   canSelectCapacity,
   capacityLabel,
   capacitySummary,
+  dayGroup,
   deriveSessions,
+  groupAttention,
   quotaFresh,
   resolveNativeModel,
   resolvePolicyDraft,
@@ -599,4 +602,30 @@ it("fresh explicit native allowance supports missing windows without treating cr
   });
   expect(quotaFresh(a, now)).toBe(false);
   expect(canSelectCapacity(a, now)).toBe(false);
+});
+
+describe("Needs you groups", () => {
+  const view = (id: string, attention: SessionView["attention"]) =>
+    ({ thread: { id }, attention }) as unknown as SessionView;
+  it("puts a failed run first and keeps each group's own order", () => {
+    const groups = groupAttention([
+      view("reply-new", "message"),
+      view("answer", "input"),
+      view("reply-old", "message"),
+      view("idle", null),
+      view("failed", "failed"),
+    ]);
+    expect(groups.map((group) => group.kind)).toEqual(["failed", "input", "message"]);
+    expect(groups[2]!.sessions.map((s) => s.thread.id)).toEqual(["reply-new", "reply-old"]);
+  });
+});
+
+describe("day groups", () => {
+  it("splits by local calendar day", () => {
+    const at = new Date(2026, 10, 7, 9, 30).getTime();
+    expect(dayGroup(new Date(2026, 10, 7, 0, 5).toISOString(), at)).toBe("today");
+    expect(dayGroup(new Date(2026, 10, 6, 23, 50).toISOString(), at)).toBe("yesterday");
+    expect(dayGroup(new Date(2026, 10, 5, 12, 0).toISOString(), at)).toBe("earlier");
+    expect(dayGroup(null, at)).toBe("earlier");
+  });
 });
