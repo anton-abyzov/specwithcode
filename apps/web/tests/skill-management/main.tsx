@@ -1,3 +1,5 @@
+import { AuthoringFixture } from "./AuthoringFixture";
+import { FleetPushPanel } from "../../src/components/settings/ProjectSkillFleetPush";
 import { SkillDetailPanel } from "../../src/components/skills/SkillDetailPanel";
 import { setFixtureRow } from "./mocks";
 import { createRoot } from "react-dom/client";
@@ -34,6 +36,21 @@ const row = {
 };
 setFixtureRow(row);
 function Fixture() {
+  if (params.get("case") === "authoring") return <AuthoringFixture />;
+  if (params.get("case") === "fleet")
+    return (
+      <main className="flex min-h-screen justify-end bg-muted/30 text-foreground">
+        <aside className="w-full max-w-lg space-y-6 border-l bg-background p-6">
+          <header>
+            <h1 className="text-xl font-semibold">Install on all</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Review destinations before installing this version.
+            </p>
+          </header>
+          <FleetPushPanel />
+        </aside>
+      </main>
+    );
   return (
     <main className="flex min-h-screen justify-end bg-muted/30 text-foreground">
       <aside className="flex min-h-screen w-full max-w-2xl flex-col border-l bg-background">

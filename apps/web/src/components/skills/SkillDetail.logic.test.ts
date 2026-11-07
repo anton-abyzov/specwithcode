@@ -13,6 +13,8 @@ describe("skill detail source content", () => {
         .usage,
     ).toBe("Use when making assets.");
     expect(skillDescriptionParts("A plain description").usage).toBeNull();
+    const long = "Detailed ".repeat(50) + "instructions.";
+    expect(skillDescriptionParts(long).summary).toBe(long);
   });
   it("rejects executable and relative links", () => {
     for (const url of [

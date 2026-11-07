@@ -8,6 +8,11 @@ const appSource = resolve(fixture, "../../src");
 const mocks = resolve(fixture, "mocks.tsx");
 const stubs = new Set(
   [
+    "hooks/useSettings",
+    "state/server",
+    "components/chat/TraitsPicker",
+    "components/studio/shell/ModelBadge",
+    "components/chat/ChatGptSharingControl",
     "state/query",
     "state/environments",
     "state/session",
@@ -24,6 +29,7 @@ export default defineConfig({
       name: "skill-detail-fixture",
       enforce: "pre",
       resolveId(source, importer) {
+        if (source === "@tanstack/react-router") return mocks;
         if (!importer) return;
         const target = source.startsWith("~/")
           ? resolve(appSource, source.slice(2))

@@ -103,7 +103,51 @@ try {
         await page.getByRole("button", { name: "Edit and publish", exact: true }).isEnabled(),
         true,
       );
+      await page.goto(`${origin}/?case=authoring&theme=${theme}`);
+      await page.getByRole("heading", { name: "New skill", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Paste SKILL.md", exact: true }).waitFor();
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+        false,
+      );
+      await page.screenshot({
+        path: join(output, `verified-new-skill-${theme}-${width}.png`),
+        fullPage: true,
+      });
+      await page.getByRole("button", { name: "Paste SKILL.md", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await page
+        .getByRole("textbox", { name: "Paste a skill", exact: true })
+        .fill("# Image workflow\nReview illustrations before publishing.");
+      await page.screenshot({
+        path: join(output, `verified-paste-skill-${theme}-${width}.png`),
+        fullPage: true,
+      });
+      await page.goto(`${origin}/?case=fleet&theme=${theme}`);
+      await page.getByRole("button", { name: "Preview installation", exact: true }).click();
+      await page.getByRole("button", { name: "Confirm installation", exact: true }).waitFor();
+      assert.match(await page.getByRole("status").innerText(), /2 machines/);
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+        false,
+      );
+      await page.screenshot({
+        path: join(output, `verified-fleet-preview-${theme}-${width}.png`),
+        fullPage: true,
+      });
+      await page.getByRole("button", { name: "Confirm installation", exact: true }).click();
+      const results = await page.getByTestId("skill-fleet-results").innerText();
+      assert.match(results, /Desktop: installed 1.3.0/);
+      assert.match(results, /Mini: Permission changed/);
+      await page.screenshot({
+        path: join(output, `verified-fleet-partial-${theme}-${width}.png`),
+        fullPage: true,
+      });
       checks.push({
+        newSkill: true,
+        pasteKeyboard: true,
+        fleetPreview: true,
+        fleetPartial: true,
         theme,
         width,
         overflow: false,

@@ -30,7 +30,18 @@ const copies = [
   },
 ];
 export const useSkillControls = () => ({
-  row,
+  row:
+    new URLSearchParams(location.search).get("case") === "fleet"
+      ? {
+          ...row,
+          lock: {
+            skillId: "example/image-workflow",
+            version: "1.3.0",
+            sha: "a".repeat(64),
+            lockScope: "user",
+          },
+        }
+      : row,
   environmentId: "local",
   projectId: "demo",
   cwd: "/work/demo",
@@ -38,11 +49,28 @@ export const useSkillControls = () => ({
   canWrite: true,
   canOperate: true,
   canPush: true,
-  memberProjects: [],
+  versions: { data: null },
+  memberProjects: [
+    { environmentId: "desktop", id: "desktop-project" },
+    { environmentId: "mini", id: "mini-project" },
+  ],
   setPushOpen() {},
   previews: new Map(),
 });
-export const useStudioFleet = () => ({ snapshot: { machines: [] }, loading: false, failed: false });
+export const useStudioFleet = () => ({
+  snapshot: {
+    machines:
+      new URLSearchParams(location.search).get("case") === "fleet"
+        ? [
+            { id: "desktop", environmentId: "desktop", label: "Desktop", status: "reachable" },
+            { id: "mini", environmentId: "mini", label: "Mini", status: "reachable" },
+            { id: "travel", environmentId: "travel", label: "Travel", status: "offline" },
+          ]
+        : [],
+  },
+  loading: false,
+  failed: false,
+});
 export const SkillControlsProvider = ({ children }: { children: React.ReactNode }) => children;
 export const SkillActionPreviewCard = () => null;
 export const useEnvironmentScope = () => true;
@@ -57,23 +85,42 @@ export const useEnvironments = () => ({ presentationById: new Map() });
 export const usePrimaryEnvironmentId = () => "local";
 export const useAtomCommand =
   () =>
-  async ({ input }: any) => ({
-    _tag: "Success",
-    value: {
-      _tag: input.operation === "apply" ? "applied" : input.operation,
-      copies,
-      ...(input.operation === "preview"
-        ? {
-            sourceId: input.sourceId,
-            targetIds: input.targetIds,
-            expected: {
-              sourceHash: copies[0].hash,
-              targets: input.targetIds.map((id: string) => ({ id, hash: copies[1].hash })),
-            },
-          }
-        : {}),
-    },
-  });
+  async ({ input }: any) =>
+    input.targets
+      ? {
+          _tag: "Success",
+          value: {
+            preview: input.preview,
+            results: input.targets.map((target: any) => ({
+              machineId: target.machineId,
+              ok: input.preview || target.machineId === "desktop",
+              ...(input.preview
+                ? { preview: true, expectedHash: `observed-${target.machineId}` }
+                : {
+                    installedVersion: target.machineId === "desktop" ? "1.3.0" : null,
+                    pinnedVersion: target.machineId === "desktop" ? "1.3.0" : null,
+                    message: "Permission changed. Refresh access before retrying.",
+                  }),
+            })),
+          },
+        }
+      : {
+          _tag: "Success",
+          value: {
+            _tag: input.operation === "apply" ? "applied" : input.operation,
+            copies,
+            ...(input.operation === "preview"
+              ? {
+                  sourceId: input.sourceId,
+                  targetIds: input.targetIds,
+                  expected: {
+                    sourceHash: copies[0].hash,
+                    targets: input.targetIds.map((id: string) => ({ id, hash: copies[1].hash })),
+                  },
+                }
+              : {}),
+          },
+        };
 export const projectWorkspace = new Proxy({}, { get: () => () => ({}) });
 export * from "../provider-usability/mocks";
 export const skillActionKey = JSON.stringify;
@@ -83,3 +130,14 @@ export const readEnvironmentScope = () => true;
 export const readPreparedConnection = () => null;
 export const usePreparedConnection = () => null;
 export const formatEnvironmentQueryError = String;
+
+import { settings } from "../provider-usability/mocks";
+export const usePrimarySettings = () => settings;
+export const useProviderEntries = () => new Map();
+export const useTraitsEffortControl = () => null;
+export const useSearch = () => ({});
+export const useLocation = () => ({ pathname: "/settings/skills", search: {} });
+export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE = "Fixture settings unavailable";
+export const usePrimarySettingsAvailable = () => true;
+export const mergeEnvironmentSettings = (local: unknown) => local;
+export const persistClientSettingsPatch = () => Promise.resolve();

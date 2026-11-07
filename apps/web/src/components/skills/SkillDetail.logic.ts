@@ -5,7 +5,7 @@ export function skillDescriptionParts(description: string | undefined) {
   const text = description?.trim() ?? "";
   const first = text.split(/\n\s*\n/)[0] ?? "";
   const sentence = first.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? first;
-  const summary = sentence.length <= 360 ? sentence : `${sentence.slice(0, 357).trimEnd()}…`;
+  const summary = sentence;
   const usage =
     text
       .match(/(?:^|[.!?]\s+|\n)(?:Use when|Activate when|When to use:?)[\s\S]*?(?=\n\s*\n|$)/i)?.[0]
