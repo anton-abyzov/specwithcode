@@ -3841,89 +3841,19 @@ export const ru: PhraseCatalog = {
     "Этот выбор ёмкости больше недоступен. Обновите наблюдения или проверьте подключение хоста и разрешения, затем выберите снова.",
   "The draft could not be opened. Reconnect the host or check the project, then try again.":
     "Не удалось открыть черновик. Переподключите хост или проверьте проект, затем попробуйте снова.",
-  "Reading session state from connected hosts…": "Чтение состояния сессий с подключённых хостов…",
-  "{count} sessions with known actions. Partial observations; some hosts are not current.":
-    "Сессий с известными действиями: {count}. Наблюдения неполные; часть хостов не актуальна.",
-  "{count} session needs your decision. {working} working across {projects} projects.":
-    "Ждут вашего решения: {count}. В работе: {working}, проектов: {projects}.",
-  "{count} sessions need your decision. {working} working across {projects} projects.":
-    "Ждут вашего решения: {count}. В работе: {working}, проектов: {projects}.",
-  "Nothing needs you. {working} session is working.":
-    "Ничего не требует вашего участия. Работающих сессий: {working}.",
-  "Nothing needs you. {working} sessions are working.":
-    "Ничего не требует вашего участия. Работающих сессий: {working}.",
-  "Nothing needs you right now. Start a session or pick up where you left off.":
-    "Сейчас ничего не требует вашего участия. Начните сессию или продолжите с того места, где остановились.",
   "Private workspace": "Приватное рабочее пространство",
   Connections: "Подключения",
-  "Control desk": "Пульт управления",
-  "Manage projects": "Управлять проектами",
   "New session": "Новая сессия",
-  "This device is offline. Saved session state may be incomplete; reconnect before starting work.":
-    "Это устройство не в сети. Сохранённое состояние сессий может быть неполным; переподключитесь, прежде чем начинать работу.",
-  "Observed workspace status": "Наблюдаемое состояние рабочего пространства",
-  "Sessions needing action": "Сессии, требующие действий",
-  "Partial observations": "Наблюдения неполные",
-  "Review now": "Проверить сейчас",
-  "All clear": "Всё в порядке",
-  "Sessions working": "Работающие сессии",
-  "{count} sessions in total": "Всего сессий: {count}",
-  "Registered projects": "Зарегистрированные проекты",
-  "Browse projects": "Просмотреть проекты",
-  "Hosts connected": "Подключённые хосты",
-  "Some hosts are offline": "Некоторые хосты не в сети",
-  "Manage hosts": "Управлять хостами",
-  "Start deliberately": "Начинайте осознанно",
   "The project’s native provider and permission settings apply.":
     "Применяются нативные настройки провайдера и разрешений проекта.",
   "No connected project is available with this connection’s operating permission. {link} or {link2}.":
     "С рабочим разрешением этого подключения нет доступных подключённых проектов. {link} или {link2}.",
-  "Project and host": "Проект и хост",
   "Choose a registered project…": "Выберите зарегистрированный проект…",
   "Opening…": "Открытие…",
-  "Reading session state…": "Чтение состояния сессий…",
-  "Each connected host reports its native sessions.":
-    "Каждый подключённый хост сообщает о своих нативных сессиях.",
   "A clear desk.": "На столе чисто.",
-  "No approvals, questions or plans reported by connected hosts need a decision.":
-    "Ни одно одобрение, вопрос или план от подключённых хостов не требует решения.",
-  "Disconnected hosts have not reported current attention.":
-    "Отключённые хосты не сообщили о текущих запросах внимания.",
-  "Attention pages": "Страницы запросов внимания",
-  Sessions: "Сессии",
-  "Filter sessions": "Фильтр сессий",
-  "Reading sessions…": "Чтение сессий…",
-  "The next session starts here.": "Следующая сессия начнётся здесь.",
-  "No sessions match this filter.": "Нет сессий, подходящих под этот фильтр.",
-  "Saved hosts and session shells are synchronizing.":
-    "Сохранённые хосты и оболочки сессий синхронизируются.",
-  "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.":
-    "Выберите «Новая сессия» выше. Нативные планы, одобрения и чекпоинты остаются с разговором.",
-  "Choose another filter to see the rest.": "Выберите другой фильтр, чтобы увидеть остальное.",
-  "Session pages": "Страницы сессий",
-  "Filter projects": "Фильтр проектов",
   "Add your first project.": "Добавьте свой первый проект.",
-  "Register a folder on a connected host to start sessions in it.":
-    "Зарегистрируйте папку на подключённом хосте, чтобы запускать в ней сессии.",
-  "No projects match.": "Нет подходящих проектов.",
-  "Try a shorter name.": "Попробуйте более короткое название.",
-  "Project pages": "Страницы проектов",
-  "Workspace settings": "Настройки рабочего пространства",
-  "Add your first project": "Добавьте свой первый проект",
-  "Register a workspace on a connected host.":
-    "Зарегистрируйте рабочее пространство на подключённом хосте.",
-  "Native instances, sign-in and model settings.": "Нативные экземпляры, вход и настройки моделей.",
-  "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.":
-    "Подключайтесь к машинам откуда угодно через SpecWithCode Connect или по LAN, SSH и Tailscale.",
-  "SpecWeave keeps intent and ownership portable.":
-    "SpecWeave сохраняет намерения и владение переносимыми.",
-  "SpecWithCode keeps native conversations on their host.":
-    "SpecWithCode хранит нативные разговоры на их хосте.",
-  "{value}–{value2} of {total}": "{value}–{value2} из {total}",
   "Untitled session": "Сессия без названия",
   "Project unavailable": "Проект недоступен",
-  "Working sessions": "Работающие сессии",
-  "No sessions yet": "Сессий пока нет",
   "What you can do": "Что можно сделать",
   "{done} of {total} done": "Готово: {done} из {total}",
   "Dismiss What you can do": "Скрыть «Что можно сделать»",
@@ -4065,7 +3995,6 @@ export const ru: PhraseCatalog = {
   "{count}h ago": "{count} ч назад",
   "{count}d ago": "{count} дн назад",
   "Native instance: {instance} · {model}": "Нативный экземпляр: {instance} · {model}",
-  "Active {when}": "Активность: {when}",
   "No project, not available here": "Без проекта, здесь недоступно",
   "Archived project, not available here": "Архивный проект, здесь недоступен",
   "Automated project, not available here": "Автоматизированный проект, здесь недоступен",
@@ -4107,4 +4036,67 @@ export const ru: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "На {machines} ничего не готово, поэтому чаты там не запустятся.",
   "{agent} on {machine}": "{agent} на {machine}",
+  "Can’t connect": "Не удаётся подключиться",
+  "Catching up": "Обновляется",
+  "Chats that need you": "Чаты, которые ждут вас",
+  "Chats that need you or are working are listed above.":
+    "Чаты, которые ждут вас или работают, показаны выше.",
+  "Chats you start or continue show here while they work.":
+    "Чаты, которые вы начинаете или продолжаете, видны здесь, пока работают.",
+  "Check connection": "Проверить подключение",
+  "Choose New chat above. Plans, approvals and checkpoints stay with the chat.":
+    "Нажмите «Новый чат» выше. Планы, одобрения и чекпоинты остаются в чате.",
+  "Connect this machine or another one in Connections.":
+    "Подключите эту или другую машину в разделе «Подключения».",
+  "Connection settings for {machine}": "Настройки подключения для {machine}",
+  "Each connected machine reports its chats.": "Каждая подключённая машина сообщает о своих чатах.",
+  Earlier: "Ранее",
+  "Filter chats": "Фильтр чатов",
+  "New chat in {project}": "Новый чат в {project}",
+  "No approvals, questions or plans reported by connected machines need a decision.":
+    "Нет одобрений, вопросов или планов с подключённых машин, требующих решения.",
+  "No chats match.": "Нет подходящих чатов.",
+  "No finished chats yet.": "Завершённых чатов пока нет.",
+  "No other open chats.": "Других открытых чатов нет.",
+  "None working": "Нет активных",
+  "Nothing is running.": "Ничего не запущено.",
+  "Nothing needs you": "Ничего не ждёт вас",
+  "Project and machine": "Проект и машина",
+  "Projects and machines": "Проекты и машины",
+  "Reading your chats…": "Читаем ваши чаты…",
+  Recent: "Недавние",
+  Reconnecting: "Переподключение",
+  "Register a folder on a connected machine to start chats in it.":
+    "Зарегистрируйте папку на подключённой машине, чтобы начинать в ней чаты.",
+  "Show all {count}": "Показать все ({count})",
+  "Show only chats that need you in {project}":
+    "Показать только чаты, которые ждут вас в {project}",
+  "Showing chats in {name}": "Чаты в {name}",
+  "Showing chats on {name}": "Чаты на {name}",
+  "Some machines are still reporting, so these counts may be incomplete.":
+    "Некоторые машины ещё передают данные, поэтому подсчёты могут быть неполными.",
+  "The next chat starts here.": "Здесь начнётся следующий чат.",
+  "This device is offline. Saved chats may be out of date; reconnect before starting work.":
+    "Это устройство не в сети. Сохранённые чаты могут быть устаревшими; переподключитесь, прежде чем начинать работу.",
+  "Try a shorter name, or switch between Open and Done.":
+    "Попробуйте имя короче или переключитесь между «Открытые» и «Готовые».",
+  move: "перейти",
+  open: "открыть",
+  "this machine": "эта машина",
+  "{count} chat": "{count} чат",
+  "{count} chats": "чатов: {count}",
+  "{count} machine": "{count} машина",
+  "{count} machines": "машин: {count}",
+  "{count} project": "{count} проект",
+  "{count} projects": "проектов: {count}",
+  "{count} working": "в работе: {count}",
+  "{em} need you": "Ждут вас · {em}",
+  "{em} needs you": "{em} ждёт вас",
+  "{machines} are not current, so their chats may be missing from these counts.":
+    "{machines} не актуальны, поэтому их чаты могут не попасть в эти подсчёты.",
+  "{machine} is {status}, so its chats may be missing from these counts.":
+    "{machine}: {status}, поэтому её чаты могут не попасть в эти подсчёты.",
+  "{shown} of {total}": "{shown} из {total}",
+  "{working} · {chats} in {projects} on {machines}":
+    "{working} · {chats} · {projects} · {machines}",
 };

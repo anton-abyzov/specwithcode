@@ -15,22 +15,12 @@ import {
   type ScratchRootLookup,
 } from "../../studio/projectListVisibility";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
-import type { ModelSelection, ServerProvider } from "@specweave-studio/contracts";
-import { AuthOrchestrationOperateScope, PROVIDER_DISPLAY_NAMES } from "@specweave-studio/contracts";
+import type { ModelSelection } from "@specweave-studio/contracts";
+import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
-import {
-  ArrowRightIcon,
-  CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CircleIcon,
-  LayersIcon,
-  LinkIcon,
-  PlusIcon,
-  SearchIcon,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { APP_DISPLAY_NAME } from "../../branding";
+import { ArrowRightIcon, CheckIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { openCommandPalette } from "../../commandPaletteBus";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
 import { useNewChatDestination } from "../../hooks/useNewChatDestination";
@@ -42,14 +32,16 @@ import {
   useServerConfigs,
   useThreadShells,
 } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { WhatYouCanDo } from "./WhatYouCanDo";
 import {
-  sessionAttentionLabel,
+  attentionLabel,
+  dayGroup,
   deriveSessions,
-  sessionStateSince,
+  groupAttention,
   resolveNativeModel,
+  type DayGroup,
   type SessionView,
 } from "../../studio/overviewModel";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -57,11 +49,16 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import { CapacityFleet } from "./CapacityFleet";
-import type { ProviderInstanceEntry } from "../../providerInstances";
-import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./shell/ModelBadge";
-import { PlanProgressChip } from "./PlanProgressChip";
-import { compactThreadPlan } from "../../studio/threadPlanProgress";
-import { useThreadIncrementProgress } from "../../studio/useThreadIncrementProgress";
+import {
+  ChatRow,
+  MachineRow,
+  ProjectRow,
+  providerLabel,
+  useOverviewKeys,
+  type MachineRowView,
+  type ProjectRowView,
+} from "./OverviewRows";
+import { useProviderEntriesByEnvironment } from "./shell/ModelBadge";
 import "./overview.css";
 
 type DraftRequest = {
@@ -70,64 +67,19 @@ type DraftRequest = {
   readonly validate?: () => boolean;
 };
 
-type SessionFilter = "all" | "attention" | "working" | "ready" | "resolved";
+type RecentTab = "open" | "done";
 
-const ATTENTION_PAGE = 3;
-const SESSION_PAGE = 8;
-const PROJECT_PAGE = 6;
+/** Needs you shows this many rows before "Show more". */
+const ATTENTION_PAGE = 8;
+/** Recent shows this many, and "Show more" adds as many again. */
+const RECENT_PAGE = 20;
+const PROJECT_PAGE = 8;
 
-const SESSION_FILTERS: ReadonlyArray<{ value: SessionFilter; label: string }> = [
-  { value: "all", label: "All" },
-  { value: "attention", label: "Needs you" },
-  { value: "working", label: "Working" },
-  { value: "ready", label: "Ready" },
-  { value: "resolved", label: "Resolved" },
-];
-
-function matchesFilter(session: SessionView, filter: SessionFilter): boolean {
-  switch (filter) {
-    case "all":
-      return true;
-    case "attention":
-      return session.attention !== null;
-    case "working":
-      return session.working;
-    case "resolved":
-      return session.settled && session.attention === null && !session.working;
-    case "ready":
-      return !session.settled && session.attention === null && !session.working;
-  }
-}
-
-/** relativeTime from the overview model, with its words translated. */
-function relativeTimeLabel(
-  tx: ReturnType<typeof useTx>,
-  value: string | null | undefined,
-  now: number,
-): string {
-  const timestamp = value ? Date.parse(value) : NaN;
-  if (!Number.isFinite(timestamp) || timestamp === 0) return tx("Time unknown");
-  const minutes = Math.max(0, Math.floor((now - timestamp) / 60_000));
-  if (minutes < 1) return tx("Just now");
-  if (minutes < 60) return tx("{count}m ago", { count: minutes });
-  if (minutes < 1_440) return tx("{count}h ago", { count: Math.floor(minutes / 60) });
-  return tx("{count}d ago", { count: Math.floor(minutes / 1_440) });
-}
-
-function providerLabel(providers: readonly ServerProvider[], instanceId: string | null): string {
-  if (!instanceId) return "Provider unknown";
-  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-  return (
-    provider?.displayName ??
-    (provider ? PROVIDER_DISPLAY_NAMES[provider.driver] : undefined) ??
-    (PROVIDER_DISPLAY_NAMES as Record<string, string | undefined>)[instanceId] ??
-    instanceId
-  );
-}
-
-function attentionTone(session: SessionView): "amber" | "red" {
-  return session.attention === "failed" ? "red" : "amber";
-}
+const DAY_LABELS: Record<DayGroup, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  earlier: "Earlier",
+};
 
 export function StudioOverview() {
   const tx = useTx();
@@ -214,11 +166,15 @@ export function StudioOverview() {
   const [selectedProject, setSelectedProject] = useState("");
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<SessionFilter>("all");
-  const [sessionPage, setSessionPage] = useState(0);
-  const [attentionPage, setAttentionPage] = useState(0);
-  const [projectPage, setProjectPage] = useState(0);
-  const [projectQuery, setProjectQuery] = useState("");
+  const [recentTab, setRecentTab] = useState<RecentTab>("open");
+  const [recentLimit, setRecentLimit] = useState(RECENT_PAGE);
+  const [attentionOpen, setAttentionOpen] = useState(false);
+  const [chatQuery, setChatQuery] = useState("");
+  // Picking a machine or a project's count narrows every list to it.
+  const [machineScope, setMachineScope] = useState<string | null>(null);
+  const [projectScope, setProjectScope] = useState<string | null>(null);
+  const pageRef = useRef<HTMLElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     // Display age advances locally; this clock never refreshes a provider or session.
@@ -260,21 +216,6 @@ export function StudioOverview() {
   // A project can leave the list after it was picked; only one still listed counts as chosen.
   const chosenProject =
     draftProjects.find((p) => `${p.environmentId}:${p.id}` === selectedProject) ?? null;
-  const filterCounts = useMemo(
-    () =>
-      Object.fromEntries(
-        SESSION_FILTERS.map(({ value }) => [
-          value,
-          sessions.filter((s) => matchesFilter(s, value)).length,
-        ]),
-      ) as Record<SessionFilter, number>,
-    [sessions],
-  );
-  const filteredSessions = sessions.filter((s) => matchesFilter(s, filter));
-  const sessionPages = Math.max(1, Math.ceil(filteredSessions.length / SESSION_PAGE));
-  const currentSessionPage = Math.min(sessionPage, sessionPages - 1);
-  const attentionPages = Math.max(1, Math.ceil(attention.length / ATTENTION_PAGE));
-  const currentAttentionPage = Math.min(attentionPage, attentionPages - 1);
   const projectCards = useMemo(
     () =>
       summarizeProjects(listedGroups, sessions).map((card) => ({
@@ -293,12 +234,6 @@ export function StudioOverview() {
       })),
     [listedGroups, sessions, attentionMembers, attentionComplete],
   );
-  const query = projectQuery.trim().toLowerCase();
-  const filteredProjects = query
-    ? projectCards.filter((card) => card.group.displayName.toLowerCase().includes(query))
-    : projectCards;
-  const projectPages = Math.max(1, Math.ceil(filteredProjects.length / PROJECT_PAGE));
-  const currentProjectPage = Math.min(projectPage, projectPages - 1);
   const providerEntries = useProviderEntriesByEnvironment();
   const providersFor = (environmentId: SessionView["thread"]["environmentId"]) =>
     configs.get(environmentId)?.providers ?? [];
@@ -308,11 +243,8 @@ export function StudioOverview() {
     setSelectedProject("");
     setStartError(null);
   };
-  const showSessions = (next: SessionFilter) => {
-    setFilter(next);
-    setSessionPage(0);
-    document.getElementById("studio-sessions-title")?.scrollIntoView({ block: "start" });
-  };
+  const openDraftChooserRef = useRef(openDraftChooser);
+  openDraftChooserRef.current = openDraftChooser;
   const startDraft = async () => {
     const project = chosenProject;
     if (!project || starting) return;
@@ -360,56 +292,211 @@ export function StudioOverview() {
     }
   };
 
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const groupByMemberKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of listedGroups)
+      for (const ref of group.memberProjectRefs)
+        map.set(`${ref.environmentId}:${ref.projectId}`, group.projectKey);
+    return map;
+  }, [listedGroups]);
+  const inScope = (s: SessionView) =>
+    (machineScope === null || s.thread.environmentId === machineScope) &&
+    (projectScope === null ||
+      groupByMemberKey.get(`${s.thread.environmentId}:${s.thread.projectId}`) === projectScope);
+  const scoped = sessions.filter(inScope);
+  const scopedAttention = scoped.filter((s) => s.attention !== null);
+  const attentionGroups = groupAttention(scopedAttention);
+  const workingSessions = scoped.filter((s) => s.working && s.attention === null);
+  const query = chatQuery.trim().toLowerCase();
+  const recentOf = (tab: RecentTab) =>
+    scoped.filter(
+      (s) => s.attention === null && !s.working && (tab === "done" ? s.settled : !s.settled),
+    );
+  const recentCounts = { open: recentOf("open").length, done: recentOf("done").length };
+  const recent = recentOf(recentTab).filter(
+    (s) =>
+      !query ||
+      (s.thread.title ?? "").toLowerCase().includes(query) ||
+      (s.project?.title ?? "").toLowerCase().includes(query),
+  );
+  const recentShown = recent.slice(0, recentLimit);
+  // Machines whose chats this page cannot currently vouch for.
+  const staleMachines = environments.filter(
+    (environment) =>
+      environment.connection.phase !== "connected" ||
+      attentionMembers.some(
+        (member) =>
+          member.environmentId === environment.environmentId && member.freshness !== "live",
+      ),
+  );
+  const machineStatus = (phase: string) =>
+    phase === "connected"
+      ? tx("Connected")
+      : phase === "connecting" || phase === "reconnecting"
+        ? tx("Reconnecting")
+        : phase === "error" || phase === "unsupported"
+          ? tx("Can’t connect")
+          : tx("Offline");
+  const machines: MachineRowView[] = environments.map((environment) => {
+    const phase = environment.connection.phase;
+    const stale = staleMachines.includes(environment);
+    return {
+      environmentId: environment.environmentId,
+      label: environment.label,
+      status: phase === "connected" && stale ? tx("Catching up") : machineStatus(phase),
+      tone:
+        phase === "connected" ? (stale ? "amber" : "moss") : phase === "error" ? "red" : "amber",
+      version: environment.serverConfig?.environment.serverVersion ?? null,
+      attention: attention.filter((s) => s.thread.environmentId === environment.environmentId)
+        .length,
+      projects: listedGroups.filter((group) =>
+        group.memberProjectRefs.some((ref) => ref.environmentId === environment.environmentId),
+      ).length,
+      thisMachine: environment.environmentId === primaryEnvironmentId,
+    };
+  });
+  const railProjects = projectCards.filter(
+    (card) =>
+      machineScope === null ||
+      card.group.memberProjectRefs.some((ref) => ref.environmentId === machineScope),
+  );
+  const [allProjects, setAllProjects] = useState(false);
+  const scopeLabel =
+    machineScope !== null
+      ? (hostNames.get(machineScope as never) ?? tx("this machine"))
+      : projectScope !== null
+        ? (listedGroups.find((group) => group.projectKey === projectScope)?.displayName ?? "")
+        : null;
+  const clearScope = () => {
+    setMachineScope(null);
+    setProjectScope(null);
+  };
+  const jump = (id: string) =>
+    document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const focusFilter = useCallback(() => {
+    filterRef.current?.focus();
+    filterRef.current?.scrollIntoView({ block: "nearest" });
+  }, []);
+  const newChat = useCallback(() => openDraftChooserRef.current(), []);
+  useOverviewKeys(pageRef, { onNewChat: newChat, onFilter: focusFilter });
+
+  const headline = !bootstrapped
+    ? tx("Reading your chats…")
+    : attention.length > 0
+      ? renderRich(tx(attention.length === 1 ? "{em} needs you" : "{em} need you"), {
+          em: (
+            <em>
+              {tx(attention.length === 1 ? "{count} chat" : "{count} chats", {
+                count: attention.length,
+              })}
+            </em>
+          ),
+        })
+      : tx("Nothing needs you");
+  const linkButton = (label: string, id: string) => (
+    <button type="button" className="studio-inline-link" onClick={() => jump(id)}>
+      {label}
+    </button>
+  );
   const summary = !bootstrapped
-    ? tx("Reading session state from connected hosts…")
-    : !observationsComplete
-      ? tx(
-          "{count} sessions with known actions. Partial observations; some hosts are not current.",
-          { count: attention.length },
-        )
-      : attention.length > 0
-        ? tx(
-            attention.length === 1
-              ? "{count} session needs your decision. {working} working across {projects} projects."
-              : "{count} sessions need your decision. {working} working across {projects} projects.",
-            { count: attention.length, working, projects: listedGroups.length },
-          )
-        : working > 0
-          ? tx(
-              working === 1
-                ? "Nothing needs you. {working} session is working."
-                : "Nothing needs you. {working} sessions are working.",
-              { working },
-            )
-          : tx("Nothing needs you right now. Start a session or pick up where you left off.");
+    ? tx("Each connected machine reports its chats.")
+    : renderRich(tx("{working} · {chats} in {projects} on {machines}"), {
+        working:
+          working > 0
+            ? linkButton(tx("{count} working", { count: working }), "studio-working-title")
+            : tx("None working"),
+        chats: tx(sessions.length === 1 ? "{count} chat" : "{count} chats", {
+          count: sessions.length,
+        }),
+        projects: linkButton(
+          tx(listedGroups.length === 1 ? "{count} project" : "{count} projects", {
+            count: listedGroups.length,
+          }),
+          "studio-projects-title",
+        ),
+        machines: linkButton(
+          tx(environments.length === 1 ? "{count} machine" : "{count} machines", {
+            count: environments.length,
+          }),
+          "studio-machines-title",
+        ),
+      });
+  const staleNotice =
+    bootstrapped && isReady && (staleMachines.length > 0 || !observationsComplete)
+      ? staleMachines.length === 1
+        ? tx("{machine} is {status}, so its chats may be missing from these counts.", {
+            machine: staleMachines[0]!.label,
+            status: (
+              machines.find((m) => m.environmentId === staleMachines[0]!.environmentId)?.status ??
+              ""
+            ).toLowerCase(),
+          })
+        : staleMachines.length > 1
+          ? tx("{machines} are not current, so their chats may be missing from these counts.", {
+              machines: staleMachines.map((environment) => environment.label).join(", "),
+            })
+          : tx("Some machines are still reporting, so these counts may be incomplete.")
+      : null;
+  const chatRow = (s: SessionView) => (
+    <ChatRow
+      key={`${s.thread.environmentId}:${s.thread.id}`}
+      session={s}
+      target={chatTarget(s.thread)}
+      host={hostNames.get(s.thread.environmentId) ?? "Host"}
+      provider={providerLabel(providersFor(s.thread.environmentId), s.thread.providerInstanceId)}
+      entries={providerEntries.get(s.thread.environmentId) ?? new Map()}
+      now={now}
+    />
+  );
+  // Needs you shows its first rows across groups, then the rest on request.
+  let attentionBudget = attentionOpen ? Number.POSITIVE_INFINITY : ATTENTION_PAGE;
+  const attentionHidden = Math.max(0, scopedAttention.length - ATTENTION_PAGE);
+  const recentByDay: Array<{ day: DayGroup; sessions: SessionView[] }> = [];
+  for (const s of recentShown) {
+    const day = dayGroup(s.thread.updatedAt, now);
+    const last = recentByDay.at(-1);
+    if (last?.day === day) last.sessions.push(s);
+    else recentByDay.push({ day, sessions: [s] });
+  }
+  const tabs: RecentTab[] = ["open", "done"];
+  const onTabKey = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = tabs[(tabs.indexOf(recentTab) + 1) % tabs.length]!;
+    setRecentTab(next);
+    setRecentLimit(RECENT_PAGE);
+    document.getElementById(`studio-recent-tab-${next}`)?.focus();
+  };
 
   return (
     <SidebarInset className="studio-desk h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader electron={isElectron} className="studio-topbar">
         <span className="studio-topbar-title">{tx("Overview")}</span>
-        <span className="studio-private-label">
-          <CircleIcon aria-hidden="true" /> {tx("Private workspace")}
-        </span>
-        <Link to="/settings/connections" className="studio-text-link no-drag">
+        <Link to="/settings/connections" className="studio-text-link studio-topbar-link no-drag">
           {tx("Connections")} <ArrowRightIcon aria-hidden="true" />
         </Link>
       </WorkspacePageHeader>
-      <main className="studio-scroll" aria-labelledby="studio-heading">
+      <main ref={pageRef} className="studio-scroll" aria-labelledby="studio-heading">
         <div className="studio-content">
           <header className="studio-masthead">
             <div className="studio-masthead-copy">
-              <p className="studio-eyebrow">{APP_DISPLAY_NAME}</p>
-              <h1 id="studio-heading">{tx("Control desk")}</h1>
+              <h1 id="studio-heading">{headline}</h1>
               <p className="studio-intro" aria-live="polite">
                 {summary}
               </p>
             </div>
             <div className="studio-masthead-actions">
-              <Link to="/settings/projects" className="studio-secondary">
-                {tx("Manage projects")}
-              </Link>
-              <button className="studio-primary" onClick={() => openDraftChooser()}>
-                <PlusIcon aria-hidden="true" /> {tx("New session")}
+              <button
+                type="button"
+                className="studio-secondary"
+                onClick={() => openCommandPalette()}
+              >
+                <SearchIcon aria-hidden="true" /> {tx("Search")}
+              </button>
+              <button type="button" className="studio-primary" onClick={() => openDraftChooser()}>
+                <PlusIcon aria-hidden="true" /> {tx("New chat")}
+                <kbd aria-hidden="true">N</kbd>
               </button>
             </div>
           </header>
@@ -417,8 +504,17 @@ export function StudioOverview() {
           {networkStatus === "offline" && (
             <p className="studio-notice" role="status">
               {tx(
-                "This device is offline. Saved session state may be incomplete; reconnect before starting work.",
+                "This device is offline. Saved chats may be out of date; reconnect before starting work.",
               )}
+            </p>
+          )}
+          {staleNotice && (
+            <p className="studio-notice studio-stale-notice" role="status">
+              <span className="studio-state-dot amber" aria-hidden="true" />
+              <span>{staleNotice}</span>
+              <Link to="/settings/connections" className="studio-notice-action">
+                {tx("Check connection")}
+              </Link>
             </p>
           )}
           <WhatYouCanDo
@@ -430,50 +526,11 @@ export function StudioOverview() {
             hasOtherMachine={environments.length > 1}
             onNewSession={() => openDraftChooser()}
           />
-          <div className="studio-stat-strip" aria-label={tx("Observed workspace status")}>
-            <Stat
-              value={bootstrapped ? String(attention.length) : "—"}
-              label={tx("Sessions needing action")}
-              hint={
-                !observationsComplete
-                  ? tx("Partial observations")
-                  : attention.length > 0
-                    ? tx("Review now")
-                    : tx("All clear")
-              }
-              tone={attention.length > 0 ? "amber" : "plain"}
-              onClick={() => showSessions("attention")}
-            />
-            <Stat
-              value={bootstrapped ? String(working) : "—"}
-              label={tx("Sessions working")}
-              hint={tx("{count} sessions in total", { count: sessions.length })}
-              tone={working > 0 ? "moss" : "plain"}
-              onClick={() => showSessions("working")}
-            />
-            <Stat
-              value={bootstrapped ? String(listedGroups.length) : "—"}
-              label={tx("Registered projects")}
-              hint={tx("Browse projects")}
-              onClick={() =>
-                document.getElementById("studio-projects-title")?.scrollIntoView({ block: "start" })
-              }
-            />
-            <Stat
-              value={isReady ? `${connected}/${environments.length}` : "—"}
-              label={tx("Hosts connected")}
-              hint={
-                connected < environments.length ? tx("Some hosts are offline") : tx("Manage hosts")
-              }
-              tone={isReady && connected < environments.length ? "amber" : "plain"}
-              href="/settings/connections"
-            />
-          </div>
 
           {request !== null && (
             <section className="studio-draft-chooser" aria-labelledby="studio-draft-title">
               <div>
-                <p className="studio-eyebrow">{tx("Start deliberately")}</p>
+                <p className="studio-eyebrow">{tx("New chat")}</p>
                 <h2 id="studio-draft-title">{tx("Choose a project")}</h2>
                 <p className="studio-small">
                   {request.model
@@ -498,7 +555,7 @@ export function StudioOverview() {
                 </p>
               ) : (
                 <div className="studio-draft-fields">
-                  <label htmlFor="studio-project">{tx("Project and host")}</label>
+                  <label htmlFor="studio-project">{tx("Project and machine")}</label>
                   <Select
                     value={chosenProject ? selectedProject : ""}
                     onValueChange={(value) => setSelectedProject(value ?? "")}
@@ -564,215 +621,309 @@ export function StudioOverview() {
             </section>
           )}
 
+          {scopeLabel !== null && (
+            <div className="studio-scope" role="status">
+              <span>
+                {machineScope !== null
+                  ? tx("Showing chats on {name}", { name: scopeLabel })
+                  : tx("Showing chats in {name}", { name: scopeLabel })}
+              </span>
+              <button type="button" className="studio-scope-clear" onClick={clearScope}>
+                <XIcon aria-hidden="true" /> {tx("Show all")}
+              </button>
+            </div>
+          )}
+
           <div className="studio-work-grid">
-            <section
-              className="studio-panel studio-attention"
-              aria-labelledby="studio-attention-title"
-            >
-              <SectionHeading
-                title={tx("Needs you")}
-                id="studio-attention-title"
-                count={bootstrapped ? attention.length : undefined}
-                tone={attention.length > 0 ? "amber" : "plain"}
-              />
-              {!bootstrapped ? (
-                <EmptyState
-                  title={tx("Reading session state…")}
-                  detail={tx("Each connected host reports its native sessions.")}
+            <div className="studio-work-main">
+              <section className="studio-attention" aria-labelledby="studio-attention-title">
+                <SectionHeading
+                  title={tx("Needs you")}
+                  id="studio-attention-title"
+                  count={bootstrapped ? scopedAttention.length : undefined}
+                  tone="amber"
+                  action={
+                    scopedAttention.length > 0 ? (
+                      <span className="studio-key-hint" aria-hidden="true">
+                        <kbd>J</kbd> <kbd>K</kbd> {tx("move")} · <kbd>↵</kbd> {tx("open")}
+                      </span>
+                    ) : undefined
+                  }
                 />
-              ) : attention.length === 0 ? (
-                <div className="studio-clear">
-                  <CheckIcon aria-hidden="true" />
-                  <div>
-                    <h3>{tx("A clear desk.")}</h3>
-                    <p>
-                      {tx(
-                        "No approvals, questions or plans reported by connected hosts need a decision.",
-                      )}
-                    </p>
-                    {connected < environments.length && (
-                      <p>{tx("Disconnected hosts have not reported current attention.")}</p>
+                {!bootstrapped ? (
+                  <EmptyState
+                    title={tx("Reading your chats…")}
+                    detail={tx("Each connected machine reports its chats.")}
+                  />
+                ) : scopedAttention.length === 0 ? (
+                  <div className="studio-list studio-clear">
+                    <CheckIcon aria-hidden="true" />
+                    <div>
+                      <h3>{tx("A clear desk.")}</h3>
+                      <p>
+                        {tx(
+                          "No approvals, questions or plans reported by connected machines need a decision.",
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="studio-list">
+                    {attentionGroups.map((group) => {
+                      if (attentionBudget <= 0) return null;
+                      const rows = group.sessions.slice(0, attentionBudget);
+                      attentionBudget -= rows.length;
+                      return (
+                        <div key={group.kind} role="group" aria-label={attentionLabel(group.kind)}>
+                          <h3 className="studio-group-label">
+                            {tx(attentionLabel(group.kind))} · {group.sessions.length}
+                          </h3>
+                          {rows.map(chatRow)}
+                        </div>
+                      );
+                    })}
+                    {attentionHidden > 0 && (
+                      <button
+                        type="button"
+                        className="studio-more"
+                        aria-expanded={attentionOpen}
+                        onClick={() => setAttentionOpen(!attentionOpen)}
+                      >
+                        {attentionOpen
+                          ? tx("Show fewer")
+                          : tx("Show {count} more", { count: attentionHidden })}
+                      </button>
                     )}
                   </div>
-                </div>
-              ) : (
-                <>
-                  <div className="studio-attention-list">
-                    {attention
-                      .slice(
-                        currentAttentionPage * ATTENTION_PAGE,
-                        (currentAttentionPage + 1) * ATTENTION_PAGE,
-                      )
-                      .map((s) => (
-                        <AttentionItem
-                          key={`${s.thread.environmentId}:${s.thread.id}`}
-                          session={s}
-                          target={chatTarget(s.thread)}
-                          host={hostNames.get(s.thread.environmentId) ?? "Host"}
-                          now={now}
-                        />
-                      ))}
-                  </div>
-                  <Pager
-                    label={tx("Attention pages")}
-                    page={currentAttentionPage}
-                    pageSize={ATTENTION_PAGE}
-                    total={attention.length}
-                    onChange={setAttentionPage}
-                  />
-                </>
-              )}
-            </section>
+                )}
+              </section>
 
-            <section className="studio-panel" aria-labelledby="studio-sessions-title">
-              <SectionHeading
-                title={tx("Sessions")}
-                id="studio-sessions-title"
-                count={sessions.length}
-              />
-              <div className="studio-filter-row" role="tablist" aria-label={tx("Filter sessions")}>
-                {SESSION_FILTERS.map((option) => (
-                  <button
-                    key={option.value}
-                    role="tab"
-                    aria-selected={filter === option.value}
-                    className={`studio-filter${filter === option.value ? " selected" : ""}${option.value === "attention" && filterCounts.attention > 0 ? " amber" : ""}`}
-                    onClick={() => {
-                      setFilter(option.value);
-                      setSessionPage(0);
-                    }}
-                  >
-                    {tx(option.label)}
-                    <span>{filterCounts[option.value]}</span>
-                  </button>
-                ))}
-              </div>
-              {filteredSessions.length === 0 ? (
-                <EmptyState
-                  title={
-                    !bootstrapped
-                      ? tx("Reading sessions…")
-                      : sessions.length === 0
-                        ? tx("The next session starts here.")
-                        : tx("No sessions match this filter.")
-                  }
-                  detail={
-                    !bootstrapped
-                      ? tx("Saved hosts and session shells are synchronizing.")
-                      : sessions.length === 0
-                        ? tx(
-                            "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.",
-                          )
-                        : tx("Choose another filter to see the rest.")
+              <section aria-labelledby="studio-working-title">
+                <SectionHeading
+                  title={tx("Working")}
+                  id="studio-working-title"
+                  count={bootstrapped ? workingSessions.length : undefined}
+                  tone="moss"
+                />
+                {workingSessions.length === 0 ? (
+                  <EmptyState
+                    title={tx("Nothing is running.")}
+                    detail={tx("Chats you start or continue show here while they work.")}
+                  />
+                ) : (
+                  <div className="studio-list">{workingSessions.map(chatRow)}</div>
+                )}
+              </section>
+
+              <section aria-labelledby="studio-sessions-title">
+                <SectionHeading
+                  title={tx("Recent")}
+                  id="studio-sessions-title"
+                  action={
+                    <>
+                      <div className="studio-segmented" role="tablist" aria-label={tx("Show")}>
+                        {tabs.map((tab) => (
+                          <button
+                            key={tab}
+                            id={`studio-recent-tab-${tab}`}
+                            type="button"
+                            role="tab"
+                            aria-selected={recentTab === tab}
+                            tabIndex={recentTab === tab ? 0 : -1}
+                            onKeyDown={onTabKey}
+                            onClick={() => {
+                              setRecentTab(tab);
+                              setRecentLimit(RECENT_PAGE);
+                            }}
+                          >
+                            {tab === "open" ? tx("Open") : tx("Done")}
+                            <span>{recentCounts[tab]}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <label className="studio-search">
+                        <SearchIcon aria-hidden="true" />
+                        <input
+                          ref={filterRef}
+                          type="search"
+                          placeholder={tx("Filter chats")}
+                          aria-label={tx("Filter chats")}
+                          aria-keyshortcuts="/"
+                          value={chatQuery}
+                          onChange={(event) => {
+                            setChatQuery(event.target.value);
+                            setRecentLimit(RECENT_PAGE);
+                          }}
+                        />
+                      </label>
+                    </>
                   }
                 />
-              ) : (
-                <div className="studio-session-list">
-                  {filteredSessions
-                    .slice(
-                      currentSessionPage * SESSION_PAGE,
-                      (currentSessionPage + 1) * SESSION_PAGE,
-                    )
-                    .map((s) => (
-                      <SessionItem
-                        key={`${s.thread.environmentId}:${s.thread.id}`}
-                        session={s}
-                        target={chatTarget(s.thread)}
-                        host={hostNames.get(s.thread.environmentId) ?? "Host"}
-                        provider={providerLabel(
-                          providersFor(s.thread.environmentId),
-                          s.thread.providerInstanceId,
-                        )}
-                        entries={providerEntries.get(s.thread.environmentId) ?? new Map()}
-                        now={now}
-                      />
-                    ))}
-                </div>
-              )}
-              <Pager
-                label={tx("Session pages")}
-                page={currentSessionPage}
-                pageSize={SESSION_PAGE}
-                total={filteredSessions.length}
-                onChange={setSessionPage}
-              />
-            </section>
-          </div>
-
-          <section className="studio-project-section" aria-labelledby="studio-projects-title">
-            <SectionHeading
-              title={tx("Projects")}
-              id="studio-projects-title"
-              count={projectCards.length}
-              action={
-                projectCards.length > PROJECT_PAGE ? (
-                  <label className="studio-search">
-                    <SearchIcon aria-hidden="true" />
-                    <input
-                      type="search"
-                      placeholder={tx("Filter projects")}
-                      aria-label={tx("Filter projects")}
-                      value={projectQuery}
-                      onChange={(event) => {
-                        setProjectQuery(event.target.value);
-                        setProjectPage(0);
-                      }}
-                    />
-                  </label>
+                {recent.length === 0 ? (
+                  <EmptyState
+                    title={
+                      !bootstrapped
+                        ? tx("Reading your chats…")
+                        : sessions.length === 0
+                          ? tx("The next chat starts here.")
+                          : query
+                            ? tx("No chats match.")
+                            : recentTab === "done"
+                              ? tx("No finished chats yet.")
+                              : tx("No other open chats.")
+                    }
+                    detail={
+                      sessions.length === 0
+                        ? tx(
+                            "Choose New chat above. Plans, approvals and checkpoints stay with the chat.",
+                          )
+                        : query
+                          ? tx("Try a shorter name, or switch between Open and Done.")
+                          : tx("Chats that need you or are working are listed above.")
+                    }
+                  />
                 ) : (
-                  <Link to="/settings/projects" className="studio-text-link">
-                    {tx("Add project")} <ArrowRightIcon aria-hidden="true" />
-                  </Link>
-                )
-              }
-            />
-            {projectCards.length === 0 ? (
-              <EmptyState
-                title={tx("Add your first project.")}
-                detail={tx("Register a folder on a connected host to start sessions in it.")}
-              />
-            ) : filteredProjects.length === 0 ? (
-              <EmptyState title={tx("No projects match.")} detail={tx("Try a shorter name.")} />
-            ) : (
-              <div className="studio-project-grid">
-                {filteredProjects
-                  .slice(currentProjectPage * PROJECT_PAGE, (currentProjectPage + 1) * PROJECT_PAGE)
-                  .map((card) => {
-                    const target = card.group.memberProjectRefs.find(
-                      (ref) =>
-                        canOperate.has(ref.environmentId) && connectedIds.has(ref.environmentId),
-                    );
-                    return (
-                      <ProjectCard
-                        key={card.group.projectKey}
-                        card={card}
-                        hosts={[
-                          ...new Set(
-                            card.group.memberProjectRefs.map(
-                              (ref) => hostNames.get(ref.environmentId) ?? "Host",
-                            ),
-                          ),
-                        ].join(", ")}
-                        now={now}
-                        canStart={target !== undefined}
-                        onNewSession={() => {
-                          if (!target) return;
-                          openDraftChooser({ environmentId: target.environmentId });
-                          setSelectedProject(`${target.environmentId}:${target.projectId}`);
+                  <div
+                    className="studio-list"
+                    role="tabpanel"
+                    aria-labelledby={`studio-recent-tab-${recentTab}`}
+                  >
+                    {recentByDay.map((block) => (
+                      <div key={block.day} role="group" aria-label={tx(DAY_LABELS[block.day])}>
+                        <h3 className="studio-group-label">{tx(DAY_LABELS[block.day])}</h3>
+                        {block.sessions.map(chatRow)}
+                      </div>
+                    ))}
+                    {recent.length > recentShown.length && (
+                      <button
+                        type="button"
+                        className="studio-more"
+                        onClick={() => setRecentLimit(recentLimit + RECENT_PAGE)}
+                      >
+                        {tx("Show {count} more", {
+                          count: Math.min(RECENT_PAGE, recent.length - recentShown.length),
+                        })}
+                        <span className="studio-more-total">
+                          {tx("{shown} of {total}", {
+                            shown: recentShown.length,
+                            total: recent.length,
+                          })}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+            </div>
+
+            <aside className="studio-rail" aria-label={tx("Projects and machines")}>
+              <section aria-labelledby="studio-projects-title">
+                <SectionHeading
+                  title={tx("Projects")}
+                  id="studio-projects-title"
+                  count={railProjects.length}
+                  action={
+                    <Link to="/settings/projects" className="studio-text-link">
+                      {tx("Manage")}
+                    </Link>
+                  }
+                />
+                {railProjects.length === 0 ? (
+                  <EmptyState
+                    title={tx("Add your first project.")}
+                    detail={tx("Register a folder on a connected machine to start chats in it.")}
+                  />
+                ) : (
+                  <div className="studio-list">
+                    {(allProjects ? railProjects : railProjects.slice(0, PROJECT_PAGE)).map(
+                      (card) => {
+                        const target = card.group.memberProjectRefs.find(
+                          (ref) =>
+                            canOperate.has(ref.environmentId) &&
+                            connectedIds.has(ref.environmentId),
+                        );
+                        return (
+                          <ProjectRow
+                            key={card.group.projectKey}
+                            card={card}
+                            hosts={[
+                              ...new Set(
+                                card.group.memberProjectRefs.map(
+                                  (ref) => hostNames.get(ref.environmentId) ?? "Host",
+                                ),
+                              ),
+                            ].join(" · ")}
+                            filtered={projectScope === card.group.projectKey}
+                            canStart={target !== undefined}
+                            onFilter={() => {
+                              setMachineScope(null);
+                              setProjectScope(
+                                projectScope === card.group.projectKey
+                                  ? null
+                                  : card.group.projectKey,
+                              );
+                              jump("studio-attention-title");
+                            }}
+                            onNewChat={() => {
+                              if (!target) return;
+                              openDraftChooser({ environmentId: target.environmentId });
+                              setSelectedProject(`${target.environmentId}:${target.projectId}`);
+                            }}
+                          />
+                        );
+                      },
+                    )}
+                    {railProjects.length > PROJECT_PAGE && (
+                      <button
+                        type="button"
+                        className="studio-more"
+                        aria-expanded={allProjects}
+                        onClick={() => setAllProjects(!allProjects)}
+                      >
+                        {allProjects
+                          ? tx("Show fewer")
+                          : tx("Show all {count}", { count: railProjects.length })}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+              <section aria-labelledby="studio-machines-title">
+                <SectionHeading
+                  title={tx("Machines")}
+                  id="studio-machines-title"
+                  count={machines.length}
+                  action={
+                    <Link to="/settings/connections" className="studio-text-link">
+                      {tx("Connections")}
+                    </Link>
+                  }
+                />
+                {machines.length === 0 ? (
+                  <EmptyState
+                    title={tx("No machines yet.")}
+                    detail={tx("Connect this machine or another one in Connections.")}
+                  />
+                ) : (
+                  <div className="studio-list">
+                    {machines.map((machine) => (
+                      <MachineRow
+                        key={machine.environmentId}
+                        machine={machine}
+                        selected={machineScope === machine.environmentId}
+                        onSelect={() => {
+                          setProjectScope(null);
+                          setMachineScope(
+                            machineScope === machine.environmentId ? null : machine.environmentId,
+                          );
                         }}
                       />
-                    );
-                  })}
-              </div>
-            )}
-            <Pager
-              label={tx("Project pages")}
-              page={currentProjectPage}
-              pageSize={PROJECT_PAGE}
-              total={filteredProjects.length}
-              onChange={setProjectPage}
-            />
-          </section>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </aside>
+          </div>
 
           <CapacityFleet
             environments={environments}
@@ -781,61 +932,17 @@ export function StudioOverview() {
               openDraftChooser({ environmentId, model, ...(validate ? { validate } : {}) })
             }
           />
-
-          <nav className="studio-controls" aria-label={tx("Workspace settings")}>
-            <Link to="/settings/projects" className="studio-control-link">
-              <PlusIcon aria-hidden="true" />
-              <div>
-                <h3>{projects.length ? tx("All projects") : tx("Add your first project")}</h3>
-                <p>{tx("Register a workspace on a connected host.")}</p>
-              </div>
-              <ArrowRightIcon aria-hidden="true" />
-            </Link>
-            <Link to="/settings/providers" className="studio-control-link">
-              <LayersIcon aria-hidden="true" />
-              <div>
-                <h3>{tx("Providers")}</h3>
-                <p>{tx("Native instances, sign-in and model settings.")}</p>
-              </div>
-              <ArrowRightIcon aria-hidden="true" />
-            </Link>
-            <Link to="/settings/connections" className="studio-control-link">
-              <LinkIcon aria-hidden="true" />
-              <div>
-                <h3>{tx("Connections")}</h3>
-                <p>
-                  {tx(
-                    "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.",
-                  )}
-                </p>
-              </div>
-              <ArrowRightIcon aria-hidden="true" />
-            </Link>
-          </nav>
-          <footer className="studio-footer">
-            <span>{tx("SpecWeave keeps intent and ownership portable.")}</span>
-            <span>{tx("SpecWithCode keeps native conversations on their host.")}</span>
-          </footer>
         </div>
       </main>
     </SidebarInset>
   );
 }
 
-type ProjectCardView = {
-  readonly group: SidebarProjectSnapshot;
-  readonly sessions: number;
-  readonly attention: number;
-  readonly working: number;
-  readonly lastActivity: string | null;
-  readonly complete?: boolean;
-};
-
 /** Projects that need a decision or are running lead, then the most recently active. */
 function summarizeProjects(
   groups: readonly SidebarProjectSnapshot[],
   sessions: readonly SessionView[],
-): ProjectCardView[] {
+): Array<ProjectRowView & { readonly lastActivity: string | null }> {
   const groupByProject = new Map<string, string>();
   for (const group of groups) {
     for (const ref of group.memberProjectRefs) {
@@ -879,124 +986,33 @@ function summarizeProjects(
     );
 }
 
-function Stat({
-  value,
-  label,
-  hint,
-  tone = "plain",
-  onClick,
-  href,
-}: {
-  value: string;
-  label: string;
-  hint: string;
-  tone?: "plain" | "amber" | "moss";
-  onClick?: () => void;
-  href?: "/settings/connections";
-}) {
-  const className = `studio-stat${tone === "amber" ? " studio-stat-attention" : tone === "moss" ? " studio-stat-working" : ""}`;
-  const body = (
-    <>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <em>
-        {hint}
-        <ArrowRightIcon aria-hidden="true" />
-      </em>
-    </>
-  );
-  return href ? (
-    <Link to={href} className={className}>
-      {body}
-    </Link>
-  ) : (
-    <button type="button" className={className} onClick={onClick}>
-      {body}
-    </button>
-  );
-}
-
-export function SectionHeading({
-  number,
+function SectionHeading({
   title,
   id,
-  detail,
   count,
   tone = "plain",
   action,
 }: {
-  number?: string;
   title: string;
   id: string;
-  detail?: string;
   count?: number | undefined;
-  tone?: "plain" | "amber";
+  tone?: "plain" | "amber" | "moss";
   action?: ReactNode;
 }) {
   return (
     <div className="studio-section-heading">
-      {number && <span className="studio-section-number">{number}</span>}
       <h2 id={id}>{title}</h2>
       {count !== undefined && (
-        <span className={`studio-count${tone === "amber" && count > 0 ? " amber" : ""}`}>
+        <span className={`studio-count${count > 0 && tone !== "plain" ? ` ${tone}` : ""}`}>
           {count}
         </span>
       )}
-      {detail && <span className="studio-small">{detail}</span>}
       {action && <div className="studio-section-action">{action}</div>}
     </div>
   );
 }
 
-function Pager({
-  label,
-  page,
-  pageSize,
-  total,
-  onChange,
-}: {
-  label: string;
-  page: number;
-  pageSize: number;
-  total: number;
-  onChange: (page: number) => void;
-}) {
-  const tx = useTx();
-  if (total <= pageSize) return null;
-  const pages = Math.ceil(total / pageSize);
-  return (
-    <nav className="studio-pager" aria-label={label}>
-      <span>
-        {tx("{value}–{value2} of {total}", {
-          value: page * pageSize + 1,
-          value2: Math.min(total, (page + 1) * pageSize),
-          total,
-        })}
-      </span>
-      <button
-        type="button"
-        aria-label={tx("Previous page")}
-        disabled={page === 0}
-        onClick={() => onChange(page - 1)}
-      >
-        <ChevronLeftIcon aria-hidden="true" />
-      </button>
-      <span className="studio-pager-pages">
-        {page + 1} / {pages}
-      </span>
-      <button
-        type="button"
-        aria-label={tx("Next page")}
-        disabled={page >= pages - 1}
-        onClick={() => onChange(page + 1)}
-      >
-        <ChevronRightIcon aria-hidden="true" />
-      </button>
-    </nav>
-  );
-}
-
-/** One project in the chooser: its icon and title, with the host it lives on beside it. */
+/** One project in the chooser: its icon and title, with the machine it lives on beside it. */
 function ProjectChoice({ project, host }: { project: ProjectFaviconProject; host: string }) {
   return (
     <span className="studio-project-choice">
@@ -1006,206 +1022,12 @@ function ProjectChoice({ project, host }: { project: ProjectFaviconProject; host
     </span>
   );
 }
+
 function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
-    <div className="studio-empty">
+    <div className="studio-list studio-empty">
       <h3>{title}</h3>
       <p>{detail}</p>
     </div>
-  );
-}
-
-type ChatTarget = ReturnType<typeof chatNavigationTarget>;
-
-/** A link to a chat: a project's thread in the project's right panel, any other full page. */
-function ChatLink({
-  target,
-  className,
-  children,
-}: {
-  target: ChatTarget;
-  className: string;
-  children: ReactNode;
-}) {
-  return target.to === "/projects/$projectKey" ? (
-    <Link
-      to={target.to}
-      params={{ ...target.params }}
-      search={{ ...target.search }}
-      className={className}
-    >
-      {children}
-    </Link>
-  ) : (
-    <Link to={target.to} params={{ ...target.params }} className={className}>
-      {children}
-    </Link>
-  );
-}
-
-function AttentionItem({
-  session: s,
-  target,
-  host,
-  now,
-}: {
-  session: SessionView;
-  target: ChatTarget;
-  host: string;
-  now: number;
-}) {
-  const tx = useTx();
-  return (
-    <ChatLink target={target} className={`studio-attention-item ${attentionTone(s)}`}>
-      <div className="studio-attention-top">
-        <span className="studio-chip">
-          {s.attentionLabel ?? sessionAttentionLabel(s.attention!, s.thread)}
-        </span>
-        <time dateTime={sessionStateSince(s.thread)}>
-          {relativeTimeLabel(tx, sessionStateSince(s.thread), now)}
-        </time>
-      </div>
-      <h3>{s.thread.title || tx("Untitled session")}</h3>
-      <div className="studio-row-meta">
-        <span>
-          {s.project?.title ?? tx("Project unavailable")} · {host}
-        </span>
-        <span>
-          {tx("Open")} <ArrowRightIcon aria-hidden="true" />
-        </span>
-      </div>
-    </ChatLink>
-  );
-}
-
-function SessionItem({
-  session: s,
-  target,
-  host,
-  provider,
-  entries,
-  now,
-}: {
-  session: SessionView;
-  target: ChatTarget;
-  host: string;
-  provider: string;
-  entries: ReadonlyMap<string, ProviderInstanceEntry>;
-  now: number;
-}) {
-  const tx = useTx();
-  // A cached row from an older host can arrive without its model.
-  const selection = s.thread.modelSelection as typeof s.thread.modelSelection | undefined;
-  const tone = s.attention ? attentionTone(s) : s.working ? "moss" : s.settled ? "muted" : "plain";
-  const incrementProgress = useThreadIncrementProgress({
-    environmentId: s.thread.environmentId,
-    projectId: s.project === null ? null : s.thread.projectId,
-    threadIds: [s.thread.id],
-    activityKey: s.thread.updatedAt,
-  });
-  const plan = compactThreadPlan(incrementProgress.get(s.thread.id) ?? null, s.thread.planProgress);
-  return (
-    <ChatLink target={target} className="studio-session-item">
-      <span
-        className={`studio-state-dot${s.attention ? " attention" : s.working ? " working" : ""}`}
-        aria-hidden="true"
-      />
-      <div className="studio-session-main">
-        <h3>{s.thread.title || tx("Untitled session")}</h3>
-        <p style={{ container: "sessmeta / inline-size" }}>
-          <span className="studio-session-project">
-            {s.project?.title ?? tx("Project unavailable")}
-          </span>
-          <span aria-hidden="true">·</span> {host} <span aria-hidden="true">·</span>{" "}
-          {selection ? <ThreadModelBadge thread={s.thread} entries={entries} /> : provider}
-          {plan ? (
-            <>
-              {" "}
-              <span aria-hidden="true">·</span> <PlanProgressChip plan={plan} />
-            </>
-          ) : null}
-        </p>
-      </div>
-      <div className="studio-session-state">
-        <span className={`studio-pill ${tone}`}>{s.state}</span>
-        <time dateTime={sessionStateSince(s.thread)}>
-          {relativeTimeLabel(tx, sessionStateSince(s.thread), now)}
-        </time>
-      </div>
-      <ArrowRightIcon aria-hidden="true" />
-    </ChatLink>
-  );
-}
-
-function ProjectCard({
-  card,
-  hosts,
-  now,
-  canStart,
-  onNewSession,
-}: {
-  card: ProjectCardView;
-  hosts: string;
-  now: number;
-  canStart: boolean;
-  onNewSession: () => void;
-}) {
-  const tx = useTx();
-  return (
-    <article className={`studio-project${card.attention > 0 ? " needs-you" : ""}`}>
-      <div className="studio-project-head">
-        <ProjectFavicon project={card.group} className="studio-project-icon" />
-        <div>
-          <h3>{card.group.displayName}</h3>
-          <p className="studio-small">{hosts}</p>
-        </div>
-      </div>
-      <dl className="studio-project-stats">
-        <div className={card.attention > 0 ? "amber" : ""}>
-          <dt>{tx("Sessions needing action")}</dt>
-          <dd>
-            {card.complete === false
-              ? card.attention > 0
-                ? `${card.attention}+`
-                : tx("Unknown")
-              : card.attention}
-          </dd>
-        </div>
-        <div className={card.working > 0 ? "moss" : ""}>
-          <dt>{tx("Working sessions")}</dt>
-          <dd>{card.complete === false ? `${card.working}+` : card.working}</dd>
-        </div>
-        <div>
-          <dt>{tx("Sessions")}</dt>
-          <dd>{card.sessions}</dd>
-        </div>
-      </dl>
-      <div className="studio-project-foot">
-        <span className="studio-small">
-          {card.lastActivity
-            ? tx("Active {when}", {
-                when: relativeTimeLabel(tx, card.lastActivity, now).toLowerCase(),
-              })
-            : tx("No sessions yet")}
-        </span>
-        <div>
-          <button
-            type="button"
-            className="studio-text-link"
-            disabled={!canStart}
-            onClick={onNewSession}
-          >
-            {tx("New session")}
-          </button>
-          <Link
-            to="/projects/$projectKey"
-            params={{ projectKey: card.group.projectKey }}
-            className="studio-text-link"
-          >
-            {tx("Open")} <ArrowRightIcon aria-hidden="true" />
-          </Link>
-        </div>
-      </div>
-    </article>
   );
 }

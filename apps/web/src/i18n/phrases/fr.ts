@@ -3878,91 +3878,19 @@ export const fr: PhraseCatalog = {
     "Ce choix de capacité n’est plus disponible. Actualisez les observations ou vérifiez la connexion de l’hôte et les autorisations, puis choisissez à nouveau.",
   "The draft could not be opened. Reconnect the host or check the project, then try again.":
     "Le brouillon n’a pas pu s’ouvrir. Reconnectez l’hôte ou vérifiez le projet, puis réessayez.",
-  "Reading session state from connected hosts…":
-    "Lecture de l’état des sessions depuis les hôtes connectés…",
-  "{count} sessions with known actions. Partial observations; some hosts are not current.":
-    "{count} sessions avec actions connues. Observations partielles ; certains hôtes ne sont pas à jour.",
-  "{count} session needs your decision. {working} working across {projects} projects.":
-    "{count} session attend votre décision. {working} en cours dans {projects} projets.",
-  "{count} sessions need your decision. {working} working across {projects} projects.":
-    "{count} sessions attendent votre décision. {working} en cours dans {projects} projets.",
-  "Nothing needs you. {working} session is working.":
-    "Rien ne vous attend. {working} session en cours.",
-  "Nothing needs you. {working} sessions are working.":
-    "Rien ne vous attend. {working} sessions en cours.",
-  "Nothing needs you right now. Start a session or pick up where you left off.":
-    "Rien ne vous attend pour l’instant. Démarrez une session ou reprenez là où vous vous étiez arrêté.",
   "Private workspace": "Espace de travail privé",
   Connections: "Connexions",
-  "Control desk": "Poste de pilotage",
-  "Manage projects": "Gérer les projets",
   "New session": "Nouvelle session",
-  "This device is offline. Saved session state may be incomplete; reconnect before starting work.":
-    "Cet appareil est hors ligne. L’état enregistré des sessions peut être incomplet ; reconnectez-vous avant de commencer à travailler.",
-  "Observed workspace status": "État observé de l’espace de travail",
-  "Sessions needing action": "Sessions nécessitant une action",
-  "Partial observations": "Observations partielles",
-  "Review now": "Examiner maintenant",
-  "All clear": "Tout est en ordre",
-  "Sessions working": "Sessions en cours",
-  "{count} sessions in total": "{count} sessions au total",
-  "Registered projects": "Projets enregistrés",
-  "Browse projects": "Parcourir les projets",
-  "Hosts connected": "Hôtes connectés",
-  "Some hosts are offline": "Certains hôtes sont hors ligne",
-  "Manage hosts": "Gérer les hôtes",
-  "Start deliberately": "Démarrer en connaissance de cause",
   "The project’s native provider and permission settings apply.":
     "Les réglages natifs du fournisseur et des autorisations du projet s’appliquent.",
   "No connected project is available with this connection’s operating permission. {link} or {link2}.":
     "Aucun projet connecté n’est disponible avec l’autorisation d’exploitation de cette connexion. {link} ou {link2}.",
-  "Project and host": "Projet et hôte",
   "Choose a registered project…": "Choisissez un projet enregistré…",
   "Opening…": "Ouverture…",
-  "Reading session state…": "Lecture de l’état des sessions…",
-  "Each connected host reports its native sessions.":
-    "Chaque hôte connecté signale ses sessions natives.",
   "A clear desk.": "Un bureau dégagé.",
-  "No approvals, questions or plans reported by connected hosts need a decision.":
-    "Aucune approbation, question ou plan signalé par les hôtes connectés ne demande de décision.",
-  "Disconnected hosts have not reported current attention.":
-    "Les hôtes déconnectés n’ont signalé aucune demande d’attention actuelle.",
-  "Attention pages": "Pages d’attention",
-  Sessions: "Sessions",
-  "Filter sessions": "Filtrer les sessions",
-  "Reading sessions…": "Lecture des sessions…",
-  "The next session starts here.": "La prochaine session commence ici.",
-  "No sessions match this filter.": "Aucune session ne correspond à ce filtre.",
-  "Saved hosts and session shells are synchronizing.":
-    "Les hôtes enregistrés et les enveloppes de session se synchronisent.",
-  "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.":
-    "Choisissez Nouvelle session ci-dessus. Les plans natifs, les approbations et les checkpoints restent avec la conversation.",
-  "Choose another filter to see the rest.": "Choisissez un autre filtre pour voir le reste.",
-  "Session pages": "Pages de sessions",
-  "Filter projects": "Filtrer les projets",
   "Add your first project.": "Ajoutez votre premier projet.",
-  "Register a folder on a connected host to start sessions in it.":
-    "Enregistrez un dossier sur un hôte connecté pour y démarrer des sessions.",
-  "No projects match.": "Aucun projet ne correspond.",
-  "Try a shorter name.": "Essayez un nom plus court.",
-  "Project pages": "Pages de projets",
-  "Workspace settings": "Réglages de l’espace de travail",
-  "Add your first project": "Ajoutez votre premier projet",
-  "Register a workspace on a connected host.":
-    "Enregistrez un espace de travail sur un hôte connecté.",
-  "Native instances, sign-in and model settings.":
-    "Instances natives, connexion et réglages des modèles.",
-  "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.":
-    "Joignez vos machines de partout avec SpecWithCode Connect, ou via LAN, SSH ou Tailscale.",
-  "SpecWeave keeps intent and ownership portable.":
-    "SpecWeave garde l’intention et la propriété portables.",
-  "SpecWithCode keeps native conversations on their host.":
-    "SpecWithCode garde les conversations natives sur leur hôte.",
-  "{value}–{value2} of {total}": "{value}–{value2} sur {total}",
   "Untitled session": "Session sans titre",
   "Project unavailable": "Projet indisponible",
-  "Working sessions": "Sessions en cours",
-  "No sessions yet": "Aucune session pour l’instant",
   "What you can do": "Ce que vous pouvez faire",
   "{done} of {total} done": "{done} sur {total} faits",
   "Dismiss What you can do": "Masquer Ce que vous pouvez faire",
@@ -4106,7 +4034,6 @@ export const fr: PhraseCatalog = {
   "{count}h ago": "il y a {count} h",
   "{count}d ago": "il y a {count} j",
   "Native instance: {instance} · {model}": "Instance native : {instance} · {model}",
-  "Active {when}": "Actif : {when}",
   "No project, not available here": "Aucun projet, indisponible ici",
   "Archived project, not available here": "Projet archivé, indisponible ici",
   "Automated project, not available here": "Projet automatisé, indisponible ici",
@@ -4148,4 +4075,67 @@ export const fr: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "Rien n’est prêt sur {machines}, les discussions n’y démarreront donc pas.",
   "{agent} on {machine}": "{agent} sur {machine}",
+  "Can’t connect": "Connexion impossible",
+  "Catching up": "Mise à jour",
+  "Chats that need you": "Chats qui ont besoin de vous",
+  "Chats that need you or are working are listed above.":
+    "Les chats qui ont besoin de vous ou en cours sont listés plus haut.",
+  "Chats you start or continue show here while they work.":
+    "Les chats que vous lancez ou reprenez s’affichent ici pendant qu’ils travaillent.",
+  "Check connection": "Vérifier la connexion",
+  "Choose New chat above. Plans, approvals and checkpoints stay with the chat.":
+    "Choisissez Nouveau chat ci-dessus. Plans, approbations et points de contrôle restent avec le chat.",
+  "Connect this machine or another one in Connections.":
+    "Connectez cette machine ou une autre dans Connexions.",
+  "Connection settings for {machine}": "Paramètres de connexion de {machine}",
+  "Each connected machine reports its chats.": "Chaque machine connectée signale ses chats.",
+  Earlier: "Plus ancien",
+  "Filter chats": "Filtrer les chats",
+  "New chat in {project}": "Nouveau chat dans {project}",
+  "No approvals, questions or plans reported by connected machines need a decision.":
+    "Aucune approbation, question ou plan signalé par les machines connectées n’attend de décision.",
+  "No chats match.": "Aucun chat ne correspond.",
+  "No finished chats yet.": "Aucun chat terminé pour l’instant.",
+  "No other open chats.": "Aucun autre chat ouvert.",
+  "None working": "Aucun en cours",
+  "Nothing is running.": "Rien ne tourne.",
+  "Nothing needs you": "Rien ne vous attend",
+  "Project and machine": "Projet et machine",
+  "Projects and machines": "Projets et machines",
+  "Reading your chats…": "Lecture de vos chats…",
+  Recent: "Récents",
+  Reconnecting: "Reconnexion",
+  "Register a folder on a connected machine to start chats in it.":
+    "Enregistrez un dossier sur une machine connectée pour y lancer des chats.",
+  "Show all {count}": "Tout afficher ({count})",
+  "Show only chats that need you in {project}":
+    "Afficher seulement les chats qui ont besoin de vous dans {project}",
+  "Showing chats in {name}": "Chats dans {name}",
+  "Showing chats on {name}": "Chats sur {name}",
+  "Some machines are still reporting, so these counts may be incomplete.":
+    "Certaines machines n’ont pas fini de signaler, ces chiffres peuvent donc être incomplets.",
+  "The next chat starts here.": "Le prochain chat commence ici.",
+  "This device is offline. Saved chats may be out of date; reconnect before starting work.":
+    "Cet appareil est hors ligne. Les chats enregistrés peuvent être obsolètes ; reconnectez-vous avant de commencer.",
+  "Try a shorter name, or switch between Open and Done.":
+    "Essayez un nom plus court, ou passez de Ouverts à Terminés.",
+  move: "déplacer",
+  open: "ouvrir",
+  "this machine": "cette machine",
+  "{count} chat": "{count} chat",
+  "{count} chats": "{count} chats",
+  "{count} machine": "{count} machine",
+  "{count} machines": "{count} machines",
+  "{count} project": "{count} projet",
+  "{count} projects": "{count} projets",
+  "{count} working": "{count} en cours",
+  "{em} need you": "{em} ont besoin de vous",
+  "{em} needs you": "{em} a besoin de vous",
+  "{machines} are not current, so their chats may be missing from these counts.":
+    "{machines} ne sont pas à jour, leurs chats peuvent donc manquer dans ces chiffres.",
+  "{machine} is {status}, so its chats may be missing from these counts.":
+    "{machine} : {status}, ses chats peuvent donc manquer dans ces chiffres.",
+  "{shown} of {total}": "{shown} sur {total}",
+  "{working} · {chats} in {projects} on {machines}":
+    "{working} · {chats} dans {projects} sur {machines}",
 };

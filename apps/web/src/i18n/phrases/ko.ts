@@ -3810,88 +3810,19 @@ export const ko: PhraseCatalog = {
     "이 용량 선택은 더 이상 사용할 수 없습니다. 관측을 새로 고치거나 호스트 연결과 권한을 확인한 다음 다시 선택하세요.",
   "The draft could not be opened. Reconnect the host or check the project, then try again.":
     "초안을 열 수 없습니다. 호스트를 다시 연결하거나 프로젝트를 확인한 다음 다시 시도하세요.",
-  "Reading session state from connected hosts…": "연결된 호스트에서 세션 상태를 읽는 중…",
-  "{count} sessions with known actions. Partial observations; some hosts are not current.":
-    "알려진 작업이 있는 세션 {count}개. 관측이 일부만 있으며 일부 호스트는 최신 상태가 아닙니다.",
-  "{count} session needs your decision. {working} working across {projects} projects.":
-    "세션 {count}개가 결정을 기다리고 있습니다. 프로젝트 {projects}개에서 {working}개가 실행 중입니다.",
-  "{count} sessions need your decision. {working} working across {projects} projects.":
-    "세션 {count}개가 결정을 기다리고 있습니다. 프로젝트 {projects}개에서 {working}개가 실행 중입니다.",
-  "Nothing needs you. {working} session is working.":
-    "처리할 일이 없습니다. 세션 {working}개가 실행 중입니다.",
-  "Nothing needs you. {working} sessions are working.":
-    "처리할 일이 없습니다. 세션 {working}개가 실행 중입니다.",
-  "Nothing needs you right now. Start a session or pick up where you left off.":
-    "지금은 처리할 일이 없습니다. 세션을 시작하거나 멈춘 곳에서 이어 가세요.",
   "Private workspace": "비공개 작업 공간",
   Connections: "연결",
-  "Control desk": "컨트롤 데스크",
-  "Manage projects": "프로젝트 관리",
   "New session": "새 세션",
-  "This device is offline. Saved session state may be incomplete; reconnect before starting work.":
-    "이 기기는 오프라인입니다. 저장된 세션 상태가 불완전할 수 있으니 작업을 시작하기 전에 다시 연결하세요.",
-  "Observed workspace status": "관측된 작업 공간 상태",
-  "Sessions needing action": "조치가 필요한 세션",
-  "Partial observations": "일부 관측",
-  "Review now": "지금 검토",
-  "All clear": "모두 정상",
-  "Sessions working": "실행 중인 세션",
-  "{count} sessions in total": "총 세션 {count}개",
-  "Registered projects": "등록된 프로젝트",
-  "Browse projects": "프로젝트 둘러보기",
-  "Hosts connected": "연결된 호스트",
-  "Some hosts are offline": "일부 호스트가 오프라인입니다",
-  "Manage hosts": "호스트 관리",
-  "Start deliberately": "신중하게 시작하기",
   "The project’s native provider and permission settings apply.":
     "프로젝트의 네이티브 공급자 및 권한 설정이 적용됩니다.",
   "No connected project is available with this connection’s operating permission. {link} or {link2}.":
     "이 연결의 운영 권한으로 사용할 수 있는 연결된 프로젝트가 없습니다. {link} 또는 {link2}.",
-  "Project and host": "프로젝트 및 호스트",
   "Choose a registered project…": "등록된 프로젝트 선택…",
   "Opening…": "여는 중…",
-  "Reading session state…": "세션 상태를 읽는 중…",
-  "Each connected host reports its native sessions.":
-    "연결된 각 호스트가 네이티브 세션을 보고합니다.",
   "A clear desk.": "책상이 깔끔합니다.",
-  "No approvals, questions or plans reported by connected hosts need a decision.":
-    "연결된 호스트가 보고한 승인, 질문, 계획 중 결정이 필요한 것은 없습니다.",
-  "Disconnected hosts have not reported current attention.":
-    "연결이 끊긴 호스트는 현재 주의 사항을 보고하지 않았습니다.",
-  "Attention pages": "주의 사항 페이지",
-  Sessions: "세션",
-  "Filter sessions": "세션 필터",
-  "Reading sessions…": "세션을 읽는 중…",
-  "The next session starts here.": "다음 세션은 여기서 시작됩니다.",
-  "No sessions match this filter.": "이 필터와 일치하는 세션이 없습니다.",
-  "Saved hosts and session shells are synchronizing.":
-    "저장된 호스트와 세션 셸을 동기화하는 중입니다.",
-  "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.":
-    "위에서 새 세션을 선택하세요. 네이티브 계획, 승인, 체크포인트는 대화와 함께 유지됩니다.",
-  "Choose another filter to see the rest.": "나머지를 보려면 다른 필터를 선택하세요.",
-  "Session pages": "세션 페이지",
-  "Filter projects": "프로젝트 필터",
   "Add your first project.": "첫 프로젝트를 추가하세요.",
-  "Register a folder on a connected host to start sessions in it.":
-    "연결된 호스트에 폴더를 등록하면 그곳에서 세션을 시작할 수 있습니다.",
-  "No projects match.": "일치하는 프로젝트가 없습니다.",
-  "Try a shorter name.": "더 짧은 이름으로 시도해 보세요.",
-  "Project pages": "프로젝트 페이지",
-  "Workspace settings": "작업 공간 설정",
-  "Add your first project": "첫 프로젝트 추가",
-  "Register a workspace on a connected host.": "연결된 호스트에 작업 공간을 등록합니다.",
-  "Native instances, sign-in and model settings.": "네이티브 인스턴스, 로그인, 모델 설정.",
-  "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.":
-    "SpecWithCode Connect나 LAN, SSH, Tailscale로 어디서나 머신에 접속하세요.",
-  "SpecWeave keeps intent and ownership portable.":
-    "SpecWeave는 의도와 소유권을 이식 가능하게 유지합니다.",
-  "SpecWithCode keeps native conversations on their host.":
-    "SpecWithCode는 네이티브 대화를 해당 호스트에 유지합니다.",
-  "{value}–{value2} of {total}": "{value}–{value2} / {total}",
   "Untitled session": "제목 없는 세션",
   "Project unavailable": "프로젝트를 사용할 수 없음",
-  "Working sessions": "실행 중인 세션",
-  "No sessions yet": "아직 세션이 없습니다",
   "What you can do": "할 수 있는 일",
   "{done} of {total} done": "{done}/{total} 완료",
   "Dismiss What you can do": "할 수 있는 일 닫기",
@@ -4027,7 +3958,6 @@ export const ko: PhraseCatalog = {
   "{count}h ago": "{count}시간 전",
   "{count}d ago": "{count}일 전",
   "Native instance: {instance} · {model}": "네이티브 인스턴스: {instance} · {model}",
-  "Active {when}": "활동: {when}",
   "No project, not available here": "프로젝트 없음, 여기서 사용할 수 없음",
   "Archived project, not available here": "보관된 프로젝트, 여기서 사용할 수 없음",
   "Automated project, not available here": "자동화된 프로젝트, 여기서 사용할 수 없음",
@@ -4068,4 +3998,66 @@ export const ko: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines}에는 준비된 것이 없어 그곳에서는 채팅이 시작되지 않습니다.",
   "{agent} on {machine}": "{machine}의 {agent}",
+  "Can’t connect": "연결할 수 없음",
+  "Catching up": "동기화 중",
+  "Chats that need you": "응답이 필요한 채팅",
+  "Chats that need you or are working are listed above.":
+    "응답이 필요하거나 진행 중인 채팅은 위에 표시됩니다.",
+  "Chats you start or continue show here while they work.":
+    "시작하거나 이어 간 채팅은 진행되는 동안 여기에 표시됩니다.",
+  "Check connection": "연결 확인",
+  "Choose New chat above. Plans, approvals and checkpoints stay with the chat.":
+    "위에서 새 채팅을 선택하세요. 계획, 승인, 체크포인트는 채팅에 남습니다.",
+  "Connect this machine or another one in Connections.":
+    "연결에서 이 컴퓨터나 다른 컴퓨터를 연결하세요.",
+  "Connection settings for {machine}": "{machine} 연결 설정",
+  "Each connected machine reports its chats.": "연결된 각 컴퓨터가 자신의 채팅을 알립니다.",
+  Earlier: "이전",
+  "Filter chats": "채팅 필터",
+  "New chat in {project}": "{project}에서 새 채팅",
+  "No approvals, questions or plans reported by connected machines need a decision.":
+    "연결된 컴퓨터가 알린 승인, 질문, 계획 중 결정이 필요한 것이 없습니다.",
+  "No chats match.": "일치하는 채팅이 없습니다.",
+  "No finished chats yet.": "아직 완료된 채팅이 없습니다.",
+  "No other open chats.": "다른 열린 채팅이 없습니다.",
+  "None working": "진행 중 없음",
+  "Nothing is running.": "실행 중인 것이 없습니다.",
+  "Nothing needs you": "응답이 필요한 것이 없습니다",
+  "Project and machine": "프로젝트 및 컴퓨터",
+  "Projects and machines": "프로젝트 및 컴퓨터",
+  "Reading your chats…": "채팅을 읽는 중…",
+  Recent: "최근",
+  Reconnecting: "다시 연결 중",
+  "Register a folder on a connected machine to start chats in it.":
+    "연결된 컴퓨터의 폴더를 등록하면 그곳에서 채팅을 시작할 수 있습니다.",
+  "Show all {count}": "모두 보기({count})",
+  "Show only chats that need you in {project}": "{project}에서 응답이 필요한 채팅만 보기",
+  "Showing chats in {name}": "{name}의 채팅 표시 중",
+  "Showing chats on {name}": "{name}의 채팅 표시 중",
+  "Some machines are still reporting, so these counts may be incomplete.":
+    "일부 컴퓨터가 아직 보고 중이라 개수가 불완전할 수 있습니다.",
+  "The next chat starts here.": "다음 채팅은 여기서 시작됩니다.",
+  "This device is offline. Saved chats may be out of date; reconnect before starting work.":
+    "이 기기는 오프라인입니다. 저장된 채팅이 최신이 아닐 수 있으니 작업을 시작하기 전에 다시 연결하세요.",
+  "Try a shorter name, or switch between Open and Done.":
+    "더 짧은 이름을 입력하거나 열림과 완료를 전환해 보세요.",
+  move: "이동",
+  open: "열기",
+  "this machine": "이 컴퓨터",
+  "{count} chat": "채팅 {count}개",
+  "{count} chats": "채팅 {count}개",
+  "{count} machine": "컴퓨터 {count}대",
+  "{count} machines": "컴퓨터 {count}대",
+  "{count} project": "프로젝트 {count}개",
+  "{count} projects": "프로젝트 {count}개",
+  "{count} working": "{count}개 진행 중",
+  "{em} need you": "{em}에 응답이 필요합니다",
+  "{em} needs you": "{em}에 응답이 필요합니다",
+  "{machines} are not current, so their chats may be missing from these counts.":
+    "{machines}의 정보가 최신이 아니라 해당 채팅이 이 개수에서 빠졌을 수 있습니다.",
+  "{machine} is {status}, so its chats may be missing from these counts.":
+    "{machine} 상태가 {status}이라 해당 채팅이 이 개수에서 빠졌을 수 있습니다.",
+  "{shown} of {total}": "{shown}/{total}",
+  "{working} · {chats} in {projects} on {machines}":
+    "{working} · {chats} · {projects} · {machines}",
 };

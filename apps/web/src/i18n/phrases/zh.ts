@@ -3709,85 +3709,19 @@ export const zh: PhraseCatalog = {
     "此容量选择已不可用。请刷新观察数据或检查主机连接和权限，然后重新选择。",
   "The draft could not be opened. Reconnect the host or check the project, then try again.":
     "无法打开草稿。请重新连接主机或检查项目，然后重试。",
-  "Reading session state from connected hosts…": "正在从已连接主机读取会话状态…",
-  "{count} sessions with known actions. Partial observations; some hosts are not current.":
-    "{count} 个会话有已知操作。观察数据不完整；部分主机不是最新的。",
-  "{count} session needs your decision. {working} working across {projects} projects.":
-    "{count} 个会话需要你决定。{projects} 个项目中有 {working} 个在运行。",
-  "{count} sessions need your decision. {working} working across {projects} projects.":
-    "{count} 个会话需要你决定。{projects} 个项目中有 {working} 个在运行。",
-  "Nothing needs you. {working} session is working.":
-    "没有需要你处理的事项。{working} 个会话正在运行。",
-  "Nothing needs you. {working} sessions are working.":
-    "没有需要你处理的事项。{working} 个会话正在运行。",
-  "Nothing needs you right now. Start a session or pick up where you left off.":
-    "目前没有需要你处理的事项。开始一个会话，或从上次中断处继续。",
   "Private workspace": "私密工作区",
   Connections: "连接",
-  "Control desk": "控制台",
-  "Manage projects": "管理项目",
   "New session": "新会话",
-  "This device is offline. Saved session state may be incomplete; reconnect before starting work.":
-    "此设备已离线。已保存的会话状态可能不完整；请在开始工作前重新连接。",
-  "Observed workspace status": "观察到的工作区状态",
-  "Sessions needing action": "需要处理的会话",
-  "Partial observations": "观察数据不完整",
-  "Review now": "立即查看",
-  "All clear": "一切正常",
-  "Sessions working": "运行中的会话",
-  "{count} sessions in total": "共 {count} 个会话",
-  "Registered projects": "已注册项目",
-  "Browse projects": "浏览项目",
-  "Hosts connected": "已连接主机",
-  "Some hosts are offline": "部分主机已离线",
-  "Manage hosts": "管理主机",
-  "Start deliberately": "有意识地开始",
   "The project’s native provider and permission settings apply.":
     "将应用项目的原生提供方和权限设置。",
   "No connected project is available with this connection’s operating permission. {link} or {link2}.":
     "以此连接的操作权限，没有可用的已连接项目。{link}或{link2}。",
-  "Project and host": "项目和主机",
   "Choose a registered project…": "选择一个已注册项目…",
   "Opening…": "正在打开…",
-  "Reading session state…": "正在读取会话状态…",
-  "Each connected host reports its native sessions.": "每台已连接主机都会报告其原生会话。",
   "A clear desk.": "桌面一片清爽。",
-  "No approvals, questions or plans reported by connected hosts need a decision.":
-    "已连接主机报告的审批、问题或计划都不需要决定。",
-  "Disconnected hosts have not reported current attention.":
-    "已断开的主机未报告当前需要关注的事项。",
-  "Attention pages": "关注事项页",
-  Sessions: "会话",
-  "Filter sessions": "筛选会话",
-  "Reading sessions…": "正在读取会话…",
-  "The next session starts here.": "下一个会话从这里开始。",
-  "No sessions match this filter.": "没有符合此筛选条件的会话。",
-  "Saved hosts and session shells are synchronizing.": "已保存的主机和会话外壳正在同步。",
-  "Choose New session above. Native plans, approvals and checkpoints stay with the conversation.":
-    "选择上方的“新会话”。原生计划、审批和检查点会保留在对话中。",
-  "Choose another filter to see the rest.": "选择其他筛选条件查看其余内容。",
-  "Session pages": "会话页",
-  "Filter projects": "筛选项目",
   "Add your first project.": "添加你的第一个项目。",
-  "Register a folder on a connected host to start sessions in it.":
-    "在已连接主机上注册一个文件夹，以便在其中启动会话。",
-  "No projects match.": "没有匹配的项目。",
-  "Try a shorter name.": "试试更短的名称。",
-  "Project pages": "项目页",
-  "Workspace settings": "工作区设置",
-  "Add your first project": "添加你的第一个项目",
-  "Register a workspace on a connected host.": "在已连接主机上注册一个工作区。",
-  "Native instances, sign-in and model settings.": "原生实例、登录和模型设置。",
-  "Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or Tailscale.":
-    "通过 SpecWithCode Connect，或通过局域网、SSH 或 Tailscale，从任何地方访问机器。",
-  "SpecWeave keeps intent and ownership portable.": "SpecWeave 让意图和归属保持可移植。",
-  "SpecWithCode keeps native conversations on their host.":
-    "SpecWithCode 将原生对话保留在其主机上。",
-  "{value}–{value2} of {total}": "{value}–{value2}，共 {total}",
   "Untitled session": "未命名会话",
   "Project unavailable": "项目不可用",
-  "Working sessions": "运行中的会话",
-  "No sessions yet": "还没有会话",
   "What you can do": "你可以做什么",
   "{done} of {total} done": "已完成 {done}/{total}",
   "Dismiss What you can do": "关闭“你可以做什么”",
@@ -3918,7 +3852,6 @@ export const zh: PhraseCatalog = {
   "{count}h ago": "{count} 小时前",
   "{count}d ago": "{count} 天前",
   "Native instance: {instance} · {model}": "原生实例：{instance} · {model}",
-  "Active {when}": "活跃于{when}",
   "No project, not available here": "无项目，此处不可用",
   "Archived project, not available here": "已归档项目，此处不可用",
   "Automated project, not available here": "自动化项目，此处不可用",
@@ -3957,4 +3890,64 @@ export const zh: PhraseCatalog = {
   "Nothing is ready on {machines}, so chats there will not start.":
     "{machines} 上没有可用的智能体，所以那里的聊天无法开始。",
   "{agent} on {machine}": "{machine} 上的 {agent}",
+  "Can’t connect": "无法连接",
+  "Catching up": "正在同步",
+  "Chats that need you": "需要你处理的对话",
+  "Chats that need you or are working are listed above.": "需要你处理或正在进行的对话列在上方。",
+  "Chats you start or continue show here while they work.":
+    "你开始或继续的对话在进行时会显示在这里。",
+  "Check connection": "检查连接",
+  "Choose New chat above. Plans, approvals and checkpoints stay with the chat.":
+    "请在上方选择新对话。计划、审批和检查点会保留在对话中。",
+  "Connect this machine or another one in Connections.": "在连接中连接这台电脑或其他电脑。",
+  "Connection settings for {machine}": "{machine} 的连接设置",
+  "Each connected machine reports its chats.": "每台已连接的电脑都会报告自己的对话。",
+  Earlier: "更早",
+  "Filter chats": "筛选对话",
+  "New chat in {project}": "在 {project} 中新建对话",
+  "No approvals, questions or plans reported by connected machines need a decision.":
+    "已连接电脑报告的审批、问题或计划都无需决定。",
+  "No chats match.": "没有匹配的对话。",
+  "No finished chats yet.": "还没有已完成的对话。",
+  "No other open chats.": "没有其他未完成的对话。",
+  "None working": "无进行中",
+  "Nothing is running.": "没有正在运行的内容。",
+  "Nothing needs you": "没有需要你处理的事",
+  "Project and machine": "项目和电脑",
+  "Projects and machines": "项目和电脑",
+  "Reading your chats…": "正在读取你的对话…",
+  Recent: "最近",
+  Reconnecting: "正在重新连接",
+  "Register a folder on a connected machine to start chats in it.":
+    "在已连接的电脑上注册一个文件夹，即可在其中开始对话。",
+  "Show all {count}": "显示全部 {count} 个",
+  "Show only chats that need you in {project}": "只显示 {project} 中需要你处理的对话",
+  "Showing chats in {name}": "正在显示 {name} 中的对话",
+  "Showing chats on {name}": "正在显示 {name} 上的对话",
+  "Some machines are still reporting, so these counts may be incomplete.":
+    "部分电脑仍在报告，因此这些数量可能不完整。",
+  "The next chat starts here.": "下一个对话从这里开始。",
+  "This device is offline. Saved chats may be out of date; reconnect before starting work.":
+    "此设备已离线。已保存的对话可能已过时；开始工作前请重新连接。",
+  "Try a shorter name, or switch between Open and Done.":
+    "试试更短的名称，或在未完成和已完成之间切换。",
+  move: "移动",
+  open: "打开",
+  "this machine": "这台电脑",
+  "{count} chat": "{count} 个对话",
+  "{count} chats": "{count} 个对话",
+  "{count} machine": "{count} 台电脑",
+  "{count} machines": "{count} 台电脑",
+  "{count} project": "{count} 个项目",
+  "{count} projects": "{count} 个项目",
+  "{count} working": "{count} 个进行中",
+  "{em} need you": "{em}需要你处理",
+  "{em} needs you": "{em}需要你处理",
+  "{machines} are not current, so their chats may be missing from these counts.":
+    "{machines} 的信息不是最新的，因此其对话可能未计入这些数量。",
+  "{machine} is {status}, so its chats may be missing from these counts.":
+    "{machine} {status}，因此其对话可能未计入这些数量。",
+  "{shown} of {total}": "{shown} / {total}",
+  "{working} · {chats} in {projects} on {machines}":
+    "{working} · {chats} · {projects} · {machines}",
 };
