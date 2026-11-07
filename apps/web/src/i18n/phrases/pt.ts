@@ -320,9 +320,9 @@ export const pt: PhraseCatalog = {
   "Warn when the app folder is large": "Avisar quando a pasta do app estiver grande",
   "When a thread finishes": "Quando uma thread terminar",
   "When this machine sleeps, move running threads":
-    "Quando este Mac dormir, mover threads em andamento",
+    "Quando esta máquina dormir, mover threads em andamento",
   "When this machine sleeps, move running threads to":
-    "Quando este Mac dormir, mover threads em andamento para",
+    "Quando esta máquina dormir, mover threads em andamento para",
   "Who can run work here": "Quem pode executar trabalho aqui",
   "Word wrap": "Quebra de linha",
   "Working section (beta)": "Seção Em andamento (beta)",
@@ -441,7 +441,7 @@ export const pt: PhraseCatalog = {
   "Hold mode also quits on two quick presses.":
     "O modo segurar também sai com dois toques rápidos.",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
-    "Impedir a suspensão por inatividade enquanto uma sessão trabalha, para que os turnos neste Mac continuem. Fechar a tampa ainda suspende.",
+    "Impedir a suspensão por inatividade enquanto uma sessão trabalha, para que os turnos nesta máquina continuem. Fechar a tampa ainda suspende.",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "Quanto tempo uma atualização automática do serviço do SpecWithCode espera pelo trabalho em andamento. Depois, os turnos em andamento pausam, o serviço é atualizado e eles continuam de onde pararam. Depois, na barra lateral, espera mais uma hora.",
   "Include text and controls when the app makes them available.":
@@ -585,7 +585,7 @@ export const pt: PhraseCatalog = {
     "Por padrão, o Auto gasta o uso da assinatura. Provedores cobrados por token (créditos de API) ficam de fora, a menos que sejam permitidos aqui, e só até o nível que você escolher. O Auto nunca adiciona uma chave, faz login ou compra créditos.",
   "Switches the hosted app release channel.": "Muda o canal de versões do app hospedado.",
   "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "Sincroniza cada turno com as outras máquinas que têm o mesmo projeto, para que qualquer uma possa continuar. Vale para as threads deste Mac, inclusive as existentes. Usa alguns tokens a mais.",
+    "Sincroniza cada turno com as outras máquinas que têm o mesmo projeto, para que qualquer uma possa continuar. Vale para as threads desta máquina, inclusive as existentes. Usa alguns tokens a mais.",
   "System default follows your browser or OS clock preference.":
     "O padrão do sistema segue a preferência de relógio do navegador ou do sistema operacional.",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1465,7 +1465,7 @@ export const pt: PhraseCatalog = {
     "O Jev responde assim que uma chave for salva. Crie uma em {a}. Ela fica no cofre de segredos desta máquina e só é enviada para {label}.",
   Saved: "Salvo",
   "Connect to this machine to see design systems.":
-    "Conecte-se a este Mac para ver os design systems.",
+    "Conecte-se a esta máquina para ver os design systems.",
   "This window may not read design systems.": "Esta janela não pode ler design systems.",
   "Open {title}": "Abrir {title}",
   "Add device host": "Adicionar host de dispositivos",
@@ -1726,7 +1726,7 @@ export const pt: PhraseCatalog = {
   "A removed project": "Um projeto removido",
   "Use default": "Usar padrão",
   "Machine to move running threads to when this machine sleeps":
-    "Máquina para onde mover threads em execução quando este Mac dormir",
+    "Máquina para onde mover threads em execução quando esta máquina dormir",
   "A removed machine": "Uma máquina removida",
   "More options": "Mais opções",
   "Automatic takeover": "Assumir automaticamente",
@@ -1937,7 +1937,7 @@ export const pt: PhraseCatalog = {
     "Esta máquina não tem uma instalação de serviço gerenciada.",
   "Managed updates are unavailable on this installation.":
     "Atualizações gerenciadas não estão disponíveis nesta instalação.",
-  "Managed by this machine's updater.": "Gerenciado pelo atualizador deste Mac.",
+  "Managed by this machine's updater.": "Gerenciado pelo atualizador desta máquina.",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "Atualizações automáticas em {label}: {value}. Mudanças de permissão preservam esta configuração.",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1949,7 +1949,7 @@ export const pt: PhraseCatalog = {
   "Revoke update permission": "Revogar permissão de atualização",
   "Grant update permission": "Conceder permissão de atualização",
   "Check for updates": "Verificar atualizações",
-  " Use the installed app on this machine.": " Use o app instalado neste Mac.",
+  " Use the installed app on this machine.": " Use o app instalado nesta máquina.",
   " Being connected does not grant update permission.":
     " Estar conectado não concede permissão de atualização.",
   "Checking for updates requires permission for this connection.":

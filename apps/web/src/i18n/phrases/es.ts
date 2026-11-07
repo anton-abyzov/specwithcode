@@ -320,9 +320,9 @@ export const es: PhraseCatalog = {
   "Warn when the app folder is large": "Avisar cuando la carpeta de la app sea grande",
   "When a thread finishes": "Cuando termina un hilo",
   "When this machine sleeps, move running threads":
-    "Cuando este Mac se suspenda, mover los hilos activos",
+    "Cuando este equipo se suspenda, mover los hilos activos",
   "When this machine sleeps, move running threads to":
-    "Cuando este Mac se suspenda, mover los hilos activos a",
+    "Cuando este equipo se suspenda, mover los hilos activos a",
   "Who can run work here": "Quién puede ejecutar trabajo aquí",
   "Word wrap": "Ajuste de línea",
   "Working section (beta)": "Sección En curso (beta)",
@@ -442,7 +442,7 @@ export const es: PhraseCatalog = {
   "Hold mode also quits on two quick presses.":
     "El modo mantener también sale con dos pulsaciones rápidas.",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
-    "Evitar la suspensión por inactividad mientras una sesión trabaja, para que los turnos en este Mac sigan. Cerrar la tapa lo suspende igualmente.",
+    "Evitar la suspensión por inactividad mientras una sesión trabaja, para que los turnos en este equipo sigan. Cerrar la tapa lo suspende igualmente.",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "Cuánto espera una actualización automática del servicio de SpecWithCode al trabajo en curso. Después, los turnos en curso se pausan, el servicio se actualiza y continúan donde lo dejaron. Más tarde, en la barra lateral, espera una hora más.",
   "Include text and controls when the app makes them available.":
@@ -589,7 +589,7 @@ export const es: PhraseCatalog = {
     "Por defecto, Auto gasta el uso de la suscripción. Los proveedores que cobran por token (créditos de API) quedan fuera salvo que se permitan aquí, y solo hasta el nivel que elijas. Auto nunca añade una clave, inicia sesión ni compra créditos.",
   "Switches the hosted app release channel.": "Cambia el canal de versiones de la app alojada.",
   "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "Sincroniza cada turno con los otros equipos que tienen el mismo proyecto, para que cualquiera pueda continuar. Se aplica a los hilos de este Mac, también a los existentes. Usa algunos tokens más.",
+    "Sincroniza cada turno con los otros equipos que tienen el mismo proyecto, para que cualquiera pueda continuar. Se aplica a los hilos de este equipo, también a los existentes. Usa algunos tokens más.",
   "System default follows your browser or OS clock preference.":
     "El valor del sistema sigue la preferencia de reloj del navegador o del sistema operativo.",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1469,7 +1469,7 @@ export const es: PhraseCatalog = {
     "Jev responde una vez guardada una clave. Crea una en {a}. Se queda en el almacén de secretos de este equipo y solo se envía a {label}.",
   Saved: "Guardado",
   "Connect to this machine to see design systems.":
-    "Conéctate a este Mac para ver los sistemas de diseño.",
+    "Conéctate a este equipo para ver los sistemas de diseño.",
   "This window may not read design systems.": "Esta ventana no puede leer sistemas de diseño.",
   "Open {title}": "Abrir {title}",
   "Add device host": "Añadir host de dispositivos",
@@ -1731,7 +1731,7 @@ export const es: PhraseCatalog = {
   "A removed project": "Un proyecto eliminado",
   "Use default": "Usar predeterminado",
   "Machine to move running threads to when this machine sleeps":
-    "Equipo al que mover los hilos en ejecución cuando este Mac entre en reposo",
+    "Equipo al que mover los hilos en ejecución cuando este equipo entre en reposo",
   "A removed machine": "Un equipo eliminado",
   "More options": "Más opciones",
   "Automatic takeover": "Relevo automático",
@@ -1942,7 +1942,7 @@ export const es: PhraseCatalog = {
     "Este equipo no tiene una instalación de servicio gestionada.",
   "Managed updates are unavailable on this installation.":
     "Las actualizaciones gestionadas no están disponibles en esta instalación.",
-  "Managed by this machine's updater.": "Gestionado por el actualizador de este Mac.",
+  "Managed by this machine's updater.": "Gestionado por el actualizador de este equipo.",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "Actualizaciones automáticas en {label}: {value}. Los cambios de permiso conservan este ajuste.",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1954,7 +1954,7 @@ export const es: PhraseCatalog = {
   "Revoke update permission": "Revocar permiso de actualización",
   "Grant update permission": "Conceder permiso de actualización",
   "Check for updates": "Buscar actualizaciones",
-  " Use the installed app on this machine.": " Usa la app instalada en este Mac.",
+  " Use the installed app on this machine.": " Usa la app instalada en este equipo.",
   " Being connected does not grant update permission.":
     " Estar conectado no concede permiso de actualización.",
   "Checking for updates requires permission for this connection.":

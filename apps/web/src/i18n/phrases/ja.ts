@@ -318,9 +318,9 @@ export const ja: PhraseCatalog = {
   "Warn when the app folder is large": "アプリフォルダーが大きいときに警告",
   "When a thread finishes": "スレッドが終了したとき",
   "When this machine sleeps, move running threads":
-    "この Mac がスリープしたら実行中のスレッドを移動",
+    "このマシン がスリープしたら実行中のスレッドを移動",
   "When this machine sleeps, move running threads to":
-    "この Mac がスリープしたら実行中のスレッドの移動先",
+    "このマシン がスリープしたら実行中のスレッドの移動先",
   "Who can run work here": "ここで作業を実行できるユーザー",
   "Word wrap": "折り返し",
   "Working section (beta)": "作業中セクション（ベータ）",
@@ -438,7 +438,7 @@ export const ja: PhraseCatalog = {
     "新しい録画で、マウスのクリックと押したままのボタンを強調表示します。",
   "Hold mode also quits on two quick presses.": "長押しモードでも、すばやく 2 回押すと終了します。",
   "Hold off idle sleep while a session is working, so turns on this machine keep running. Closing the lid still sleeps.":
-    "セッションの実行中はアイドルスリープを防ぎ、この Mac のターンが続くようにします。蓋を閉じるとスリープします。",
+    "セッションの実行中はアイドルスリープを防ぎ、このマシン のターンが続くようにします。蓋を閉じるとスリープします。",
   "How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour.":
     "SpecWithCode サービスの自動アップデートが実行中の作業を待つ時間です。その後、実行中のターンは一時停止し、サービスが更新され、中断したところから再開します。サイドバーの「あとで」はさらに 1 時間待ちます。",
   "Include text and controls when the app makes them available.":
@@ -580,7 +580,7 @@ export const ja: PhraseCatalog = {
     "自動選択は既定でサブスクリプションの使用量を使います。トークン課金のプロバイダー（API クレジット）は、ここで許可しない限り使わず、許可しても選んだティアまでです。自動選択がキーを追加したり、サインインしたり、クレジットを購入したりすることはありません。",
   "Switches the hosted app release channel.": "ホスト版アプリのリリースチャンネルを切り替えます。",
   "Syncs each turn to the other machines that have the same project, so any of them can continue. Applies to this machine's threads, existing ones too. Uses a few more tokens.":
-    "同じプロジェクトを持つほかのマシンに各ターンを同期し、どのマシンでも続きができるようにします。この Mac のスレッドに適用され、既存のスレッドも対象です。トークンを少し多く使います。",
+    "同じプロジェクトを持つほかのマシンに各ターンを同期し、どのマシンでも続きができるようにします。このマシン のスレッドに適用され、既存のスレッドも対象です。トークンを少し多く使います。",
   "System default follows your browser or OS clock preference.":
     "「システムの既定」はブラウザーまたは OS の時計の設定に従います。",
   "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.":
@@ -1457,7 +1457,7 @@ export const ja: PhraseCatalog = {
     "キーを保存すると Jev が応答します。{a} で作成してください。キーはこのマシンのシークレットストアに保存され、{label} にのみ送信されます。",
   Saved: "保存済み",
   "Connect to this machine to see design systems.":
-    "デザインシステムを表示するには、この Mac に接続してください。",
+    "デザインシステムを表示するには、このマシン に接続してください。",
   "This window may not read design systems.": "このウィンドウはデザインシステムを読み取れません。",
   "Open {title}": "{title} を開く",
   "Add device host": "デバイスホストを追加",
@@ -1720,7 +1720,7 @@ export const ja: PhraseCatalog = {
   "A removed project": "削除されたプロジェクト",
   "Use default": "既定を使う",
   "Machine to move running threads to when this machine sleeps":
-    "この Mac がスリープしたときに実行中のスレッドを移すマシン",
+    "このマシン がスリープしたときに実行中のスレッドを移すマシン",
   "A removed machine": "削除されたマシン",
   "More options": "その他のオプション",
   "Automatic takeover": "自動引き継ぎ",
@@ -1932,7 +1932,7 @@ export const ja: PhraseCatalog = {
     "このマシンには管理されたサービスのインストールがありません。",
   "Managed updates are unavailable on this installation.":
     "このインストールでは管理されたアップデートを利用できません。",
-  "Managed by this machine's updater.": "この Mac のアップデーターで管理されています。",
+  "Managed by this machine's updater.": "このマシン のアップデーターで管理されています。",
   "Automatic updates on {label}: {value}. Permission changes preserve this setting.":
     "{label} の自動アップデート: {value}。権限を変更してもこの設定は保持されます。",
   "Last result: {value}{value2}. Last check: {value3}.":
@@ -1945,7 +1945,7 @@ export const ja: PhraseCatalog = {
   "Grant update permission": "アップデート権限を付与",
   "Check for updates": "アップデートを確認",
   " Use the installed app on this machine.":
-    " この Mac にインストールされたアプリを使ってください。",
+    " このマシン にインストールされたアプリを使ってください。",
   " Being connected does not grant update permission.":
     " 接続しているだけではアップデート権限は付与されません。",
   "Checking for updates requires permission for this connection.":
