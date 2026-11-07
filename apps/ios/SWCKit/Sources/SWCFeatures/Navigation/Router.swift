@@ -418,7 +418,7 @@ final class AppRouter {
   }
 
   func handle(_ link: DeepLink) {
-    pendingRestore = nil
+    dropPendingRestore()
     sheet = nil
     isDrawerOpen = false
     switch link {
@@ -441,7 +441,7 @@ final class AppRouter {
   @discardableResult
   func applyLaunchRoute(in model: AppModel) -> Bool {
     guard let route = pendingLaunchRoute else { return true }
-    pendingRestore = nil
+    dropPendingRestore()
     switch route {
     case .settings:
       sheet = .globalSettings
@@ -494,9 +494,15 @@ final class AppRouter {
   /// The person or a link moved: a restore still waiting is dropped, and the
   /// new place is saved.
   private func navigated() {
-    guard !isRestoring else { return }
-    pendingRestore = nil
+    guard !isRestoring, lastOpenedStore != nil else { return }
+    dropPendingRestore()
     saveLastOpened()
+  }
+
+  /// Writes only when a restore is waiting, so routers without one never
+  /// invalidate the views that read it.
+  private func dropPendingRestore() {
+    if pendingRestore != nil { pendingRestore = nil }
   }
 
   /// The root chat and the thread on top of it. With no root, a thread on top
