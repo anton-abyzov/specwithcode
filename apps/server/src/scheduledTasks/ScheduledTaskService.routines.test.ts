@@ -63,6 +63,8 @@ const harness = Effect.gen(function* () {
     coordinatorWakes: 0,
     transferred: false,
     transferDuringCheck: false,
+    threadMode: "full-access" as string,
+    modeSets: [] as Array<{ readonly threadId: string; readonly runtimeMode: string }>,
   };
   const threadRow = (id: string) =>
     sql`INSERT OR IGNORE INTO orchestration_v2_projection_threads ${sql.insert({ thread_id: id, project_id: "aide", title: "Monthly tax prep", default_provider: "claudeAgent", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", deleted_at: null, payload_json: "{}" })}`.pipe(
@@ -116,6 +118,15 @@ const harness = Effect.gen(function* () {
         sendToThread: (input) =>
           Effect.sync(() => {
             state.sent.push({ threadId: input.threadId, text: input.text });
+            return {} as never;
+          }),
+        getThreadShell: () => Effect.succeed({ runtimeMode: state.threadMode } as never),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            if (command.type === "thread.runtime-mode.set") {
+              state.modeSets.push({ threadId: command.threadId, runtimeMode: command.runtimeMode });
+              state.threadMode = command.runtimeMode;
+            }
             return {} as never;
           }),
       }),
@@ -190,6 +201,31 @@ it.effect("gives a routine its own thread, continued by later runs, with the bri
         assert.equal(state.sent[0]?.threadId, "routine-thread-1");
         assert.include(state.sent[0]?.text ?? "", "Previous month: September 2026");
         assert.equal(state.coordinatorWakes, 0);
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("moves its own thread to the routine's mode before a later run", () =>
+  Effect.gen(function* () {
+    const { state, run } = yield* harness;
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput());
+        yield* runNow(service, "first");
+        assert.deepStrictEqual(state.modeSets, []);
+
+        // The thread was left in approval mode, as early setup briefings were.
+        state.threadMode = "approval-required";
+        yield* runNow(service, "second");
+        assert.deepStrictEqual(state.modeSets, [
+          { threadId: "routine-thread-1", runtimeMode: "full-access" },
+        ]);
+        assert.equal(state.sent.length, 1);
+
+        // Already in step: nothing to change.
+        yield* runNow(service, "third");
+        assert.equal(state.modeSets.length, 1);
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),
