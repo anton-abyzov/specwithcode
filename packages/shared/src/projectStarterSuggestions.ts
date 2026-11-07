@@ -72,6 +72,8 @@ const INCREMENT_ID = /^\d{3,5}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** A thread that works an increment also closes it once its last task is done. */
 const CLOSE_INCREMENT =
   "When none of its tasks is left, close the increment in the same thread without asking: `specweave verify`, a review in a fresh context (a subagent), then `specweave complete`. If a close gate stops you, say which.";
+const CONTINUE_HANDOFF =
+  "Continue within the named task's files. If the handoff assigns the full increment, record tasks and close per repository rules. Report what is left.";
 /** Path segments of letters, digits and `._@+-`, none of them only dots. */
 const PLAIN_PATH = /^(?:[\w@+-][\w.@+-]*\/)*[\w@+-][\w.@+-]*$/;
 const PLAIN_PATH_LENGTH = 160;
@@ -155,8 +157,8 @@ function repositorySuggestions(signals: ProjectStarterSignals): ProjectStarterSu
       prompt: thread(
         "Pick up the handoff",
         handedOff
-          ? `Run \`specweave pickup ${handedOff}\` in this project, read .specweave/increments/${handedOff}/handoff.md and continue the task it names, recording each finished task with \`specweave task done\`. ${CLOSE_INCREMENT} Report what you picked up and what is left.`
-          : `Run \`specweave pickup\` in this project and continue the task it names, recording each finished task with \`specweave task done\`. ${CLOSE_INCREMENT} Report what you picked up and what is left.`,
+          ? `Run \`specweave pickup ${handedOff}\` in this project and read .specweave/increments/${handedOff}/handoff.md. ${CONTINUE_HANDOFF}`
+          : `Run \`specweave pickup\` in this project. ${CONTINUE_HANDOFF}`,
       ),
     });
   const increment = signals.openIncrements.find(
