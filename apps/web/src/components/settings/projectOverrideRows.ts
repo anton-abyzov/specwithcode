@@ -7,6 +7,8 @@ import type {
 import { PROJECT_SCOPED_SERVER_SETTING_KEYS } from "@specweave-studio/contracts";
 import * as Equal from "effect/Equal";
 
+import { formatSettingValueFor } from "./settingValueLabels";
+
 /** The setting's name and the Settings page that holds its value for every other project. */
 export const PROJECT_OVERRIDE_LABELS: Readonly<
   Record<ProjectScopedServerSettingKey, { readonly label: string; readonly page: string }>
@@ -66,60 +68,30 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   keepActiveThreadsPerProject: { label: "Keep active chats per project", page: "Storage" },
 };
 
-const VALUE_LABELS: Readonly<Record<string, string>> = {
-  "approval-required": "Ask for approval",
-  "auto-accept-edits": "Accept edits",
-  auto: "Automatic",
-  "full-access": "Full access",
-  local: "Local",
-  worktree: "New worktree",
-  ask: "Ask",
-  wait: "Wait",
-  switch: "Switch",
-  "on-request": "On request",
-  automatic: "Automatic",
-  disabled: "Off",
-  concise: "Concise",
-  detailed: "Detailed",
-  turn: "Per turn",
-  paragraph: "Per paragraph",
-  "top-level": "Top level",
-  recursive: "Recursive",
-  none: "None",
-  "same-machine-first": "This machine",
-  "other-machine-first": "Other machines",
-};
-
-/** A short, human-readable value for a settings value of any shape. */
-export function formatSettingValue(value: unknown): string {
-  if (value === null || value === undefined) return "None";
-  if (typeof value === "boolean") return value ? "On" : "Off";
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") {
-    if (value.length === 0) return "Empty";
-    const label = VALUE_LABELS[value];
-    if (label) return label;
-    return value.length > 40 ? `${value.slice(0, 39)}…` : value;
-  }
-  if (Array.isArray(value)) return value.length === 1 ? "1 item" : `${value.length} items`;
-  if (typeof value === "object" && "model" in value && typeof value.model === "string") {
-    return value.model;
-  }
-  if (typeof value === "object" && "mode" in value && typeof value.mode === "string") {
-    return formatSettingValue(value.mode);
-  }
-  return "Custom";
-}
-
-export interface ProjectOverrideRow {
+export interface ProjectOverrideMachine {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly projectId: ProjectId;
+  /** The stored override, kept raw for undo and edit. */
+  readonly rawValue: unknown;
+}
+
+/** Machines that share the same project value and the same app value. */
+export interface ProjectOverrideLine {
+  readonly machines: readonly ProjectOverrideMachine[];
+  readonly rawValue: unknown;
+  readonly rawAppValue: unknown;
+  readonly value: string;
+  readonly appValue: string;
+  readonly sameAsApp: boolean;
+}
+
+/** One setting this project overrides, with its machines grouped by value. */
+export interface ProjectOverrideGroup {
   readonly key: ProjectScopedServerSettingKey;
   readonly label: string;
   readonly page: string;
-  readonly value: string;
-  readonly appValue: string;
+  readonly lines: readonly ProjectOverrideLine[];
 }
 
 interface OverrideEnvironment {
@@ -128,36 +100,57 @@ interface OverrideEnvironment {
   readonly serverConfig: { readonly settings: ServerSettings } | null;
 }
 
+/** Names list items such as provider instance IDs, per machine. */
+export type OverrideValueNamer = (environmentId: EnvironmentId, item: string) => string | undefined;
+
 /**
- * Every value one project sets for itself on any of its checkouts. Only real
- * overrides are listed; a project that follows the app settings has none.
+ * Every value one project sets for itself, one group per setting in the app's
+ * key order. Machines with the same project and app values share a line.
+ * Only real overrides are listed; a project that follows the app settings has none.
  */
-export function listProjectSettingOverrides(
+export function groupProjectSettingOverrides(
   checkouts: readonly { readonly environmentId: EnvironmentId; readonly id: ProjectId }[],
   environments: readonly OverrideEnvironment[],
-): ProjectOverrideRow[] {
-  return checkouts.flatMap((checkout) => {
-    const environment = environments.find(
-      (candidate) => candidate.environmentId === checkout.environmentId,
-    );
-    const settings = environment?.serverConfig?.settings;
-    const entry = settings?.projectSettingsOverrides[checkout.id];
-    if (!environment || !settings || !entry) return [];
-    return PROJECT_SCOPED_SERVER_SETTING_KEYS.flatMap((key) => {
-      if (!Object.hasOwn(entry, key)) return [];
-      const value = entry[key];
-      const appValue = settings[key];
-      return [
-        {
-          environmentId: checkout.environmentId,
-          environmentLabel: environment.label,
-          projectId: checkout.id,
-          key,
-          ...PROJECT_OVERRIDE_LABELS[key],
-          value: formatSettingValue(value),
-          appValue: Equal.equals(value, appValue) ? "Same" : formatSettingValue(appValue),
-        },
-      ];
-    });
-  });
+  name?: OverrideValueNamer,
+): ProjectOverrideGroup[] {
+  const groups: ProjectOverrideGroup[] = [];
+  for (const key of PROJECT_SCOPED_SERVER_SETTING_KEYS) {
+    const lines: Array<ProjectOverrideLine & { machines: ProjectOverrideMachine[] }> = [];
+    for (const checkout of checkouts) {
+      const environment = environments.find(
+        (candidate) => candidate.environmentId === checkout.environmentId,
+      );
+      const settings = environment?.serverConfig?.settings;
+      const entry = settings?.projectSettingsOverrides[checkout.id];
+      if (!environment || !settings || !entry || !Object.hasOwn(entry, key)) continue;
+      const rawValue: unknown = entry[key];
+      const rawAppValue: unknown = settings[key];
+      const machine = {
+        environmentId: checkout.environmentId,
+        environmentLabel: environment.label,
+        projectId: checkout.id,
+        rawValue,
+      };
+      const line = lines.find(
+        (candidate) =>
+          Equal.equals(candidate.rawValue, rawValue) &&
+          Equal.equals(candidate.rawAppValue, rawAppValue),
+      );
+      if (line) {
+        line.machines.push(machine);
+        continue;
+      }
+      const namer = name ? (item: string) => name(checkout.environmentId, item) : undefined;
+      lines.push({
+        machines: [machine],
+        rawValue,
+        rawAppValue,
+        value: formatSettingValueFor(key, rawValue, namer),
+        appValue: formatSettingValueFor(key, rawAppValue, namer),
+        sameAsApp: Equal.equals(rawValue, rawAppValue),
+      });
+    }
+    if (lines.length > 0) groups.push({ key, ...PROJECT_OVERRIDE_LABELS[key], lines });
+  }
+  return groups;
 }
