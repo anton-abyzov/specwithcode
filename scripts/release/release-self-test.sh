@@ -1419,10 +1419,14 @@ single_sums_refused() {  # single_sums_refused DIR VERSION STUB_PAIR
 }
 single_wrong_sums() {
   single_sums_refused "$WORK/s2" 1.6.3 RELEASE_STUB_STATUS=same-sums-public=1 &&
+    has "> publish-private" &&
     has 'SHA256SUMS on anton-abyzov/specwithcode is not'
 }
 check 'one repository: a draft whose SHA256SUMS is not the built one is never published' single_wrong_sums
-single_planless_sums() { single_sums_refused "$WORK/s3" 1.6.4 RELEASE_STUB_FAIL=publish-private:check-sums-public; }
+single_planless_sums() {
+  single_sums_refused "$WORK/s3" 1.6.4 RELEASE_STUB_FAIL=publish-private:check-sums-public &&
+    case "$(labels_of publish-private)" in *check-sums-public*) ;; *) false ;; esac
+}
 check 'one repository: a draft whose SHA256SUMS leaves out the plan is never published' single_planless_sums
 stub_set RELEASE_PRIVATE_REPO=example/specwithcode-private RELEASE_STUB_STATUS= RELEASE_STUB_FAIL=
 
