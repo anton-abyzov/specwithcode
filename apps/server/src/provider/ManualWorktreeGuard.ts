@@ -13,7 +13,7 @@ import * as NodePath from "node:path";
 import * as NodeOS from "node:os";
 
 export const MANUAL_WORKTREE_REFUSAL =
-  "Use worktrees is off for this project, so this checkout cannot add a worktree. Do not stop for this: keep working in the checkout this thread was given. The thread now shows the user a one-click Turn on Use worktrees for this project button; once they turn it on, a later turn may create the worktree.";
+  "Use worktrees is off for this project, so this checkout cannot add a worktree. Do not stop for this: keep working in the checkout this thread was given. In SpecWithCode the thread shows the user a one-click Turn on Use worktrees for this project button; once it is on, move into a worktree with studio_worktree_handoff.";
 
 /** Global options that take their value as the next argument (`-C <dir>`). */
 export const GIT_GLOBAL_OPTIONS_WITH_VALUE = [

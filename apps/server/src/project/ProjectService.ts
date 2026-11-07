@@ -627,7 +627,13 @@ export const make = Effect.gen(function* () {
   // A new project merges a finished thread's branch once its checks pass, unless
   // Settings changed the environment value; older projects keep that value. It
   // also takes Settings' Use worktrees for new projects as its own switch.
-  const seedNewProjectSettings = (projectId: ProjectId, kind: string | undefined) =>
+  // A copy of an existing project arriving from another machine (it names its
+  // logical project) keeps that project's own switch rather than this machine's default.
+  const seedNewProjectSettings = (
+    projectId: ProjectId,
+    kind: string | undefined,
+    arriving: boolean,
+  ) =>
     Effect.gen(function* () {
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       if (Option.isNone(serverSettings)) return;
@@ -639,6 +645,7 @@ export const make = Effect.gen(function* () {
           : {}),
         ...(settings.newProjectThreadEnvMode === "worktree" &&
         kind !== "personal" &&
+        !arriving &&
         entry.defaultThreadEnvMode === undefined
           ? { defaultThreadEnvMode: "worktree" as const }
           : {}),
@@ -707,7 +714,11 @@ export const make = Effect.gen(function* () {
         ...createdOrigin(input),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
-      yield* seedNewProjectSettings(input.projectId, input.kind);
+      yield* seedNewProjectSettings(
+        input.projectId,
+        input.kind,
+        input.initialLogicalProject !== undefined,
+      );
       const created = yield* readCommitted(input.projectId);
       if (input.initialWorkerModelSelection !== undefined || created.defaultModelSelection !== null)
         return created;

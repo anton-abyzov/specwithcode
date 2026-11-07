@@ -281,6 +281,15 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     const policy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
       CLAUDE_TEST_RUNTIME_POLICY,
     );
+    // Turning Use worktrees on drops the git shim, which lives in the process environment.
+    assert.notEqual(
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { manualWorktreesBlocked: true }),
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { manualWorktreesBlocked: false }),
+    );
+    assert.equal(
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}),
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(policy, {}, { manualWorktreesBlocked: false }),
+    );
     const first = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
       policy,
       {},

@@ -1075,6 +1075,12 @@ describe("workEntryReportsWorktreesOff", () => {
       }),
     ).toBe(false);
     expect(workEntryReportsWorktreesOff({ detail: "fatal: not a git repository" })).toBe(false);
+    // A search that printed the refusal's text exited 0: nothing was refused.
+    expect(
+      workEntryReportsWorktreesOff({
+        structuredPayload: { type: "command_execution", exitCode: 0, output: refusal } as never,
+      }),
+    ).toBe(false);
     expect(workEntryReportsWorktreesOff({})).toBe(false);
   });
 });

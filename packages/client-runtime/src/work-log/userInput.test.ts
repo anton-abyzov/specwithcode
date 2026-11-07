@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ApprovalRequestId, type UserInputAttachmentAnswerPayload } from "@specweave-studio/contracts";
+import {
+  ApprovalRequestId,
+  type UserInputAttachmentAnswerPayload,
+} from "@specweave-studio/contracts";
 import { getQuestionTextPreview } from "./userInput.ts";
 
 function answer(

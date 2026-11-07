@@ -52,10 +52,11 @@ export function projectWorktreesSummary(
   return { on, total: listed.length };
 }
 
-/** "Every project has it off", or the projects that have it on when they differ. */
-export function projectWorktreesSummaryText(summary: ProjectWorktreesSummary): string | null {
+/** Whether the listed projects agree; null when there are none. */
+export function projectWorktreesAgreement(
+  summary: ProjectWorktreesSummary,
+): "all-off" | "all-on" | "differ" | null {
   if (summary.total === 0) return null;
-  if (summary.on.length === 0) return "Every project has it off.";
-  if (summary.on.length === summary.total) return "Every project has it on.";
-  return `On in ${summary.on.join(", ")}; off in the other ${summary.total - summary.on.length}.`;
+  if (summary.on.length === 0) return "all-off";
+  return summary.on.length === summary.total ? "all-on" : "differ";
 }

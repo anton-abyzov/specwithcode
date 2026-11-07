@@ -1,4 +1,5 @@
 import { useTx } from "../../i18n";
+import { renderRich } from "../../i18n/rich";
 import {
   DEFAULT_SERVER_SETTINGS,
   INCOGNITO_BROWSER_PROFILE_ID,
@@ -38,7 +39,7 @@ import { AccessGrantsList } from "./AccessGrantsList";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { projectWorktreesSummary, projectWorktreesSummaryText } from "./newProjectWorktrees";
+import { projectWorktreesAgreement, projectWorktreesSummary } from "./newProjectWorktrees";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { worktreesSettingRecommendation } from "../../lib/folderLayoutGuidance";
 import { useProjectFolderCheck } from "../../studio/useProjectFolderHealth";
@@ -790,9 +791,21 @@ export function NewProjectWorktreesSetting() {
   const groups = useSettingsProjectGroups();
   const { environments } = useNamedEnvironments();
   const summary = useMemo(
-    () => projectWorktreesSummaryText(projectWorktreesSummary(groups, environments)),
+    () => projectWorktreesSummary(groups, environments),
     [environments, groups],
   );
+  const agreement = projectWorktreesAgreement(summary);
+  const summaryText =
+    agreement === "all-off"
+      ? tx("Every project has it off.")
+      : agreement === "all-on"
+        ? tx("Every project has it on.")
+        : agreement === "differ"
+          ? renderRich(tx("On in {projects}; off in the other {count}."), {
+              projects: summary.on.join(", "),
+              count: String(summary.total - summary.on.length),
+            })
+          : null;
   return (
     <SettingsRow
       serverScoped
@@ -802,11 +815,12 @@ export function NewProjectWorktreesSetting() {
       title="Use worktrees for new projects"
       description={
         <>
-          Each project has its own Use worktrees switch, on its General tab. This sets the switch
-          for projects added from now on; existing projects keep theirs.
-          {summary ? (
+          {tx(
+            "Each project has its own Use worktrees switch, on its General tab. This sets the switch for projects added from now on; existing projects keep theirs.",
+          )}
+          {summaryText ? (
             <span className="mt-1 block text-foreground" data-project-worktrees-summary="">
-              {summary}
+              {summaryText}
             </span>
           ) : null}
         </>

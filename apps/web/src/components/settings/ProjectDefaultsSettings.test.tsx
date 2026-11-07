@@ -172,12 +172,26 @@ describe("web workspace default presentation", () => {
         memberProjects: [{ ...code("p-aide"), workspaceSettings: { kind: "personal" } }],
       },
     ];
+    const summary = () => {
+      const node = renderer!.root.find(
+        (candidate) => candidate.props["data-project-worktrees-summary"] !== undefined,
+      );
+      const textOf = (value: unknown): string =>
+        typeof value === "string"
+          ? value
+          : Array.isArray(value)
+            ? value.map(textOf).join("")
+            : value && typeof value === "object" && "children" in value
+              ? textOf((value as { children: unknown }).children)
+              : "";
+      return node.children.map(textOf).join("");
+    };
     render();
-    expect(JSON.stringify(renderer!.toJSON())).toContain("On in Atlas; off in the other 2.");
+    expect(summary()).toBe("On in Atlas; off in the other 2.");
     // When every project agrees, it says so instead of listing them.
     state.groups = state.groups.slice(1, 3);
     render();
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Every project has it off.");
+    expect(summary()).toBe("Every project has it off.");
   });
   it.each(["local", "worktree"] as const)(
     "ignores a stored environment workspace value of %s",

@@ -79,6 +79,21 @@ it.effect("gives new projects Use worktrees from Settings, never changing existi
     yield* createCode(service, "chosen");
     assert.equal(yield* switchOf("chosen"), "local");
 
+    // A copy of an existing project arriving from another machine keeps that project's switch.
+    yield* service.create({
+      commandId: CommandId.make("code:arriving"),
+      projectId: ProjectId.make("project:arriving"),
+      title: "arriving",
+      workspaceRoot: "/fixtures/example-studio/arriving",
+      initialLogicalProject: {
+        id: "logical:arriving",
+        title: "arriving",
+        coordinatorId: "coordinator:logical:arriving",
+        members: [],
+      },
+    });
+    assert.isUndefined(yield* switchOf("arriving"));
+
     // The personal assistant is not a code project.
     yield* service.create({
       commandId: CommandId.make("assistant:aide"),

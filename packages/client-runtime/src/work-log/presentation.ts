@@ -472,8 +472,10 @@ const WORKTREES_OFF = /Use worktrees is off for this project, so [^.]*cannot/i;
 export function workEntryReportsWorktreesOff(
   entry: Pick<WorkLogPresentationEntry, "detail" | "toolData" | "structuredPayload">,
 ): boolean {
-  if (entry.detail && WORKTREES_OFF.test(entry.detail)) return true;
   const item = entry.structuredPayload;
+  // A command that succeeded was not refused; it may only have printed the text.
+  if (item?.type === "command_execution" && item.exitCode === 0) return false;
+  if (entry.detail && WORKTREES_OFF.test(entry.detail)) return true;
   const output = item?.type === "command_execution" ? item.output : workEntryToolOutput(entry);
   if (output === undefined || output === null) return false;
   const text = typeof output === "string" ? output : JSON.stringify(output);

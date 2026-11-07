@@ -82,9 +82,7 @@ export function UseWorktreesCard({
           </p>
           <p className="text-muted-foreground">
             {on
-              ? tx(
-                  "The agent can create its worktree from its next turn. Send it a message to continue.",
-                )
+              ? tx("The agent can now move into its own worktree. Send it a message to continue.")
               : tx(
                   "The agent kept working in this checkout. Turn it on to let threads in this project use their own git worktree.",
                 )}
