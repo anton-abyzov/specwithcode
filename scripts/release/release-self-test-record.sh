@@ -302,7 +302,12 @@ import json, sys
 workflow = json.loads(sys.argv[1])
 stage_workflow = json.loads(sys.argv[2])
 graph = {stage: set(needs) for stage, needs in json.loads(sys.argv[3])}
-jobs = workflow['jobs']
+jobs = dict(workflow['jobs'])
+# The one job outside the graph: provenance for the published macOS files (attest-macos.yml).
+attest = jobs.pop('attest_macos')
+assert attest['uses'] == './.github/workflows/attest-macos.yml', attest
+assert attest['needs'] == ['verify_release'] and attest['if'] == '${{ !inputs.dry_run }}', attest
+assert 'secrets' not in attest, attest
 stage_of = {}
 for name, job in jobs.items():
     assert job.get('uses') == './.github/workflows/release-stage.yml', (name, job.get('uses'))

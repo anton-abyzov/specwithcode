@@ -1,0 +1,69 @@
+name: Attest macOS release
+
+# Build provenance for the files release.sh publishes (the macOS app, its feed, the CLI and
+# installer archives, SHA256SUMS): release.yml and release-macos.yml call it once the release is
+# published, and it runs by hand for an earlier version. Each file is checked against the
+# release's SHA256SUMS before it is attested. Attestations need a public repository; a private one
+# skips with a notice. Verify: `gh attestation verify FILE --repo anton-abyzov/specwithcode`.
+# release-windows-linux.yml attests the Windows and Linux files it uploads.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published version to attest (1.x.y)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  attest:
+    name: Attest macOS ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Download the release files
+        id: download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Not a stable version: $VERSION"; exit 1; }
+          private="$(gh api "repos/$GITHUB_REPOSITORY" --jq .private)"
+          if [ "$private" != false ]; then
+            echo "::notice::$GITHUB_REPOSITORY is private; build provenance attestations are skipped."
+            echo "public=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir assets
+          # release.sh's names (release-windows-linux.ts isReleaseShAssetName).
+          gh release download "v$version" -R "$GITHUB_REPOSITORY" -D assets \
+            -p '*-mac.yml' -p '*.dmg' -p '*.dmg.blockmap' -p 'SpecWithCode-*-arm64.zip' \
+            -p 'SpecWithCode-*-arm64.zip.blockmap' -p SHA256SUMS -p studio-update.json \
+            -p deployment-helpers-manifest.json -p install.sh -p 'studio-*.tar.gz'
+          cd assets
+          [ -s SHA256SUMS ] || { echo "::error::v$version has no SHA256SUMS."; exit 1; }
+          sha256sum --check --ignore-missing --strict SHA256SUMS
+          ls -1 >> "$GITHUB_STEP_SUMMARY"
+          echo "public=true" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        if: steps.download.outputs.public == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: assets/*

@@ -48,15 +48,35 @@ const graph = JSON.parse(
   ),
 ) as ReadonlyArray<[string, ReadonlyArray<string>]>;
 
+/** The one job outside the graph: provenance for the published macOS files (attest-macos.yml). */
+const ATTEST = "attest_macos";
+const stageJobs = () => Object.entries(workflow.jobs).filter(([name]) => name !== ATTEST);
+
 const jobId = (stage: string) => stage.replaceAll(".", "_").replaceAll("-", "_");
 const needsOf = (job: StageJob) =>
   [job.needs ?? []].flat().toSorted((left, right) => left.localeCompare(right));
 
 describe("release.yml", () => {
-  it("has one job per graph stage, plus the server suite's merge", () => {
+  it("has one job per graph stage, plus the server suite's merge and the macOS attestation", () => {
     expect(Object.keys(workflow.jobs).toSorted()).toEqual(
-      [...graph.map(([stage]) => jobId(stage)), "test_server_merge"].toSorted(),
+      [...graph.map(([stage]) => jobId(stage)), "test_server_merge", ATTEST].toSorted(),
     );
+  });
+
+  it("attests the macOS files once the release is verified, never on a dry run", () => {
+    const attest = workflow.jobs[ATTEST] as StageJob & {
+      if?: string;
+      permissions?: Record<string, string>;
+    };
+    expect(attest.uses).toBe("./.github/workflows/attest-macos.yml");
+    expect(needsOf(attest)).toEqual(["verify_release"]);
+    expect(attest.if).toBe("${{ !inputs.dry_run }}");
+    expect(attest.secrets).toBeUndefined();
+    expect(attest.permissions).toEqual({
+      contents: "read",
+      "id-token": "write",
+      attestations: "write",
+    });
   });
 
   it("expresses the graph's needs, with the server suite done once its merge passed", () => {
@@ -70,7 +90,7 @@ describe("release.yml", () => {
   });
 
   it("runs every job as release.sh --stage <id> --resume through release-stage.yml", () => {
-    for (const [name, job] of Object.entries(workflow.jobs)) {
+    for (const [name, job] of stageJobs()) {
       expect([name, job.uses, job.secrets]).toEqual([
         name,
         "./.github/workflows/release-stage.yml",
@@ -170,10 +190,12 @@ describe("release.yml", () => {
       type: "boolean",
       default: false,
     });
-    for (const [name, job] of Object.entries(workflow.jobs)) {
+    for (const [name, job] of stageJobs()) {
       expect([name, job.with?.dry_run]).toEqual([name, "${{ inputs.dry_run }}"]);
     }
-    expect(stageWorkflow.jobs.stage.env.RELEASE_SECRETS).toMatch(/^\$\{\{ !inputs\.dry_run && contains\(/);
+    expect(stageWorkflow.jobs.stage.env.RELEASE_SECRETS).toMatch(
+      /^\$\{\{ !inputs\.dry_run && contains\(/,
+    );
     const run = stageWorkflow.jobs.stage.steps.map((step) => step.run ?? "").join("\n");
     expect(run).toContain(
       'if [ "$INPUT_DRY_RUN" = true ]; then args=("$RELEASE_VERSION" --stage "$RELEASE_STAGE" --dry-run); fi',

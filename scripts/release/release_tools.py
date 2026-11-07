@@ -265,7 +265,21 @@ def notes(repo, to, release, base=None):
         if subject.startswith('Prepare SpecWithCode ') or not subject.strip():
             continue
         lines.append('- ' + re.sub(r'\s*\(#\d+\)$', '', subject.strip()))
-    return '\n'.join(lines) + '\n'
+    return '\n'.join(lines + [''] + VERIFY_NOTES) + '\n'
+
+
+# Every release's notes end with how to check a download; release-windows-linux.yml adds the
+# SHA-256 of each installer under it once the Windows and Linux files are attached.
+VERIFY_NOTES = [
+    '### Verify your download',
+    '',
+    '- macOS: signed with an Apple Developer ID and notarized (`spctl -a -vv /Applications/SpecWithCode.app`).',
+    '- Windows: signed by EasyChamp, Inc. with Azure Trusted Signing (`Get-AuthenticodeSignature .\\SpecWithCode-<version>-x64.exe`).',
+    '- Linux: each AppImage and .deb has a GPG signature (`.asc`) by `specwithcode-release-key.asc`.',
+    '- Every file: SHA-256 in `SHA256SUMS` (macOS, CLI) and `SHA256SUMS-windows-linux` (signed, `.asc`), and a build provenance attestation (`gh attestation verify <file> --repo anton-abyzov/specwithcode`).',
+    '',
+    'Steps: https://github.com/anton-abyzov/specwithcode/blob/main/docs/user/install.md#verify-a-download',
+]
 
 
 def public_notes(text, rules=None):

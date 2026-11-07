@@ -218,6 +218,8 @@ class Notes(Temporary):
         self.assertIn('- Show usage per project\n', text)
         self.assertNotIn('Prepare SpecWithCode', text)
         self.assertNotIn('Previous release', text)
+        self.assertIn('### Verify your download\n', text)
+        self.assertIn('install.md#verify-a-download', text)
         self.assertIn('is not in this history', release_tools.notes(repo, head, '1.2.0', 'f' * 40))
 
 
