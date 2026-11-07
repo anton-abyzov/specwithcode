@@ -421,7 +421,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.deepStrictEqual(latestConfig, {
         provider: "github",
         owner: "anton-abyzov",
-        repo: "specwithcode-dev",
+        repo: "specwithcode",
         releaseType: "release",
       });
       assert.deepStrictEqual(nightlyConfig, {
