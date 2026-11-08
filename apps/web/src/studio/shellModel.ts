@@ -513,6 +513,8 @@ export function threadsSummary(
   attention?: ProjectAttention,
   /** A check's project: what it asks stays listed, but is not counted as waiting on the person. */
   unattended = false,
+  /** The machine the list is narrowed to, and how many of the waiting it still shows. */
+  shown?: { readonly count: number; readonly label: string },
 ): string {
   if (unattended)
     return `Automated project. Nothing here alerts you.${attention?.working ? ` ${attention.working} working.` : ""}`;
@@ -527,8 +529,13 @@ export function threadsSummary(
     coordinatorCount > 0 && attention
       ? ` (${coordinatorCount} coordinator${coordinatorCount === 1 ? "" : "s"}${attention.count > coordinatorCount ? `, ${attention.count - coordinatorCount} worker${attention.count - coordinatorCount === 1 ? "" : "s"}` : ""})`
       : "";
+  // The count stays the whole project's, so it matches the badge; a narrowed list says its share.
+  const shownScope =
+    shown && attention && attention.count > 0 && shown.count < attention.count
+      ? `, ${shown.count} on ${shown.label}`
+      : "";
   if (attention)
-    return `${attention.complete && attention.count === 0 ? "Nothing needs you" : attention.label}${countedScope}${attention.working + dependencyCount > 0 ? ` · ${attention.working + dependencyCount} working` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
+    return `${attention.complete && attention.count === 0 ? "Nothing needs you" : attention.label}${countedScope}${shownScope}${attention.working + dependencyCount > 0 ? ` · ${attention.working + dependencyCount} working` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
   const waiting = waitingCount(threads, unreachable);
   const working = threads.filter(
     (thread) =>

@@ -557,6 +557,28 @@ describe("a project's Threads pane", () => {
       "Nothing needs you · 3 working.",
     );
   });
+  it("keeps the project's count under a machine filter and says how many are on that machine", () => {
+    const ask = {
+      coordinator: false,
+      working: false,
+      actions: [{ reason: "input" }],
+    } as unknown as ProjectAttention["roots"][number];
+    const attention = {
+      roots: [ask, ask, { ...ask, coordinator: true }],
+      working: 4,
+      count: 3,
+      complete: true,
+      staleCount: 0,
+      label: "3 need you",
+    } as unknown as ProjectAttention;
+    expect(
+      threadsSummary([], 0, undefined, undefined, attention, false, { count: 1, label: "m4" }),
+    ).toBe("3 need you (1 coordinator, 2 workers), 1 on m4 · 4 working.");
+    // Everything waiting is on the filtered machine, so there is nothing to add.
+    expect(
+      threadsSummary([], 0, undefined, undefined, attention, false, { count: 3, label: "m4" }),
+    ).toBe("3 need you (1 coordinator, 2 workers) · 4 working.");
+  });
   it("leads a row with a status word only when the thread wants something", () => {
     expect(threadStatusWord(thread({ hasPendingApprovals: true }))).toBe("Approval requested");
     expect(threadStatusWord(thread({ hasPendingUserInput: true }))).toBe("Answer needed");
