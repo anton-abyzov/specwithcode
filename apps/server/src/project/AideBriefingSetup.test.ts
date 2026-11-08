@@ -6,11 +6,13 @@ import {
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 
 import * as Google from "../integrations/google/GoogleAccountService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import {
   type BriefingSetupInput,
   briefingSetupStep,
@@ -253,4 +255,28 @@ it.effect("keeps setting up when the early briefing cannot be saved", () => {
     expect(h.deleted).toEqual([]);
     expect(h.marked).toEqual(["aide"]);
   }).pipe(Effect.provide(Layer.merge(h.layer, failing)));
+});
+
+const holdLayer = (held: Ref.Ref<boolean>) =>
+  Layer.mock(ServiceUpdateHold.ServiceUpdateHold)({
+    current: Effect.succeedNone,
+    installGated: Ref.get(held),
+    isHeld: Ref.get(held),
+  });
+
+it.effect("waits for an update hold to end before replacing or creating anything", () => {
+  const h = harness([EARLY as never]);
+  return Effect.gen(function* () {
+    const held = yield* Ref.make(true);
+    yield* runOnce.pipe(Effect.provide(holdLayer(held)));
+    expect(h.upserts).toEqual([]);
+    expect(h.deleted).toEqual([]);
+    expect(h.marked).toEqual([]);
+    yield* Ref.set(held, false);
+    yield* runOnce.pipe(Effect.provide(holdLayer(held)));
+    expect(h.upserts).toEqual([
+      expect.objectContaining({ commandId: "aide-briefing:aide", runtimeMode: "full-access" }),
+    ]);
+    expect(h.deleted).toEqual(["scheduled-task:assistant-setup:4c5387ce"]);
+  }).pipe(Effect.provide(h.layer));
 });

@@ -27,6 +27,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
 
 /** How often a new sign-in or a newly set up assistant is noticed. */
@@ -198,6 +199,9 @@ const replaceEarlyBriefings = Effect.gen(function* () {
 });
 
 export const runOnce = Effect.gen(function* () {
+  // An update proves scheduled tasks and their receipts unchanged across its restart,
+  // so nothing is saved or replaced while it is held; the next pass does it.
+  if (yield* (yield* ServiceUpdateHold.optional).isHeld) return;
   const settings = yield* ServerSettings.ServerSettingsService;
   const google = yield* Google.GoogleAccountService;
   const projects = yield* ProjectStore.ProjectStoreV2;
