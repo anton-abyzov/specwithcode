@@ -4,6 +4,7 @@ import {
   canonicalLinkKey,
   folderHint,
   formatShelfTime,
+  isPlainTextLog,
   organizeShelf,
   SHELF_SECTION_LIMIT,
   SHELF_STALE_AFTER_MS,
@@ -362,5 +363,52 @@ describe("row text", () => {
     expect(formatShelfTime(new Date(2025, 9, 24, 9, 5).getTime(), now, "en-US")).toBe(
       "Oct 24, 2025",
     );
+  });
+});
+
+describe("logs", () => {
+  const LOG = "/Users/example/app/.specweave/increments/0007-bot/reports/task-T-04.txt";
+  const DOC = "/Users/example/app/.specweave/increments/0007-bot/reports/summary.md";
+
+  it("knows a raw log from a document", () => {
+    expect(isPlainTextLog(LOG)).toBe(true);
+    expect(isPlainTextLog("/tmp/build.log:12")).toBe(true);
+    expect(isPlainTextLog("/repo/out/run-output")).toBe(true);
+    expect(isPlainTextLog(DOC)).toBe(false);
+    expect(isPlainTextLog("/repo/report.html")).toBe(false);
+    expect(isPlainTextLog("/repo/.env")).toBe(false);
+  });
+
+  it("folds logs into a closed Logs section the chip does not count", () => {
+    const entries = shelfEntries(input([file(LOG), file(DOC)]));
+    const shelf = organizeShelf(entries, { query: "", expanded: new Set() });
+    expect(
+      shelf.sections.map((section) => [section.id, section.total, section.entries.length]),
+    ).toEqual([
+      ["files", 1, 1],
+      ["logs", 1, 0],
+    ]);
+    expect(shelf.visibleCount).toBe(1);
+    const opened = organizeShelf(entries, { query: "", expanded: new Set(["logs"]) });
+    expect(opened.sections.find((section) => section.id === "logs")?.entries[0]?.label).toBe(
+      "task-T-04.txt",
+    );
+  });
+
+  it("lists a pinned log under Pinned and counts it", () => {
+    const pinned = new Set([`file:${LOG}`]);
+    const shelf = organizeShelf(shelfEntries(input([file(LOG)], { pinned })), {
+      query: "",
+      expanded: new Set(),
+    });
+    expect(shelf.sections.map((section) => section.id)).toEqual(["pinned"]);
+    expect(shelf.visibleCount).toBe(1);
+  });
+
+  it("still finds a log by search", () => {
+    const entries = shelfEntries(input([file(LOG), file(DOC)]));
+    expect(searchShelf(entries, "task-T-04").map((entry) => entry.label)).toEqual([
+      "task-T-04.txt",
+    ]);
   });
 });

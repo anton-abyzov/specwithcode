@@ -16,7 +16,7 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 
-import { canonicalLinkKey } from "../artifactShelf";
+import { canonicalLinkKey, isPlainTextLog } from "../artifactShelf";
 import { libraryFileExtension, libraryFileType } from "./projectPaneModel";
 
 export type ProjectArtifactKind =
@@ -371,6 +371,25 @@ export function compareArtifacts(left: ProjectArtifact, right: ProjectArtifact):
   const rightAt = right.updatedAt ?? -Infinity;
   if (leftAt !== rightAt) return rightAt - leftAt;
   return left.title.localeCompare(right.title);
+}
+
+/**
+ * What the shelf above the Threads list shows: what a person would open
+ * (designs, decks, pages, documents, images, video, published links). Run
+ * logs, code and data stay in the Library, unless the hub registered them as
+ * deliverables or the user pinned them.
+ */
+export function isShelfDeliverable(artifact: ProjectArtifact): boolean {
+  if (artifact.pinned || artifact.source === "registered") return true;
+  if (artifact.kind === "data" || artifact.kind === "code") return false;
+  if (artifact.kind === "document" && artifact.path !== null) return !isPlainTextLog(artifact.path);
+  return true;
+}
+
+export function shelfArtifacts(
+  artifacts: ReadonlyArray<ProjectArtifact>,
+): ReadonlyArray<ProjectArtifact> {
+  return artifacts.filter(isShelfDeliverable);
 }
 
 /* Sorting ----------------------------------------------------------------- */

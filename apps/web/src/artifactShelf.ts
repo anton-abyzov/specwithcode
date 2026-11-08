@@ -7,12 +7,12 @@ import type { ThreadArtifact, ThreadArtifactKind } from "./threadArtifacts";
  * The artifacts list, organized so it stays usable at hundreds of entries:
  * pinned first, then one section per type with the newest few showing, and
  * what has gone quiet (files no longer on disk, anything not named for a
- * week) folded into Older. Pull requests are not artifacts and never list. Hiding an entry
+ * week) folded into Older. Raw logs fold into Logs: reachable, not counted. Pull requests are not artifacts and never list. Hiding an entry
  * only takes it off the list; nothing here touches a file.
  */
 
 export type ShelfCategory = "files" | "reports" | "links";
-export type ShelfSectionId = "pinned" | ShelfCategory | "older" | "hidden" | "results";
+export type ShelfSectionId = "pinned" | ShelfCategory | "logs" | "older" | "hidden" | "results";
 export type ShelfAgedReason = "missing" | "stale";
 
 /**
@@ -75,6 +75,8 @@ export interface ShelfEntry {
   readonly hidden: boolean;
   /** Why it sits in Older, or null while it is current. */
   readonly aged: ShelfAgedReason | null;
+  /** A raw log (`task-T-04.txt`, `build.log`): folded into Logs unless pinned. */
+  readonly log: boolean;
 }
 
 export interface ShelfSection {
@@ -89,7 +91,7 @@ export interface ShelfSection {
 
 export interface Shelf {
   readonly sections: ReadonlyArray<ShelfSection>;
-  /** What the chip counts: every entry not hidden. */
+  /** What the chip counts: every entry not hidden, and not a log. */
   readonly visibleCount: number;
   readonly totalCount: number;
 }
@@ -141,6 +143,22 @@ export function shelfEntryId(artifact: ThreadArtifact): string {
   }
   if ("meta" in artifact) return `file:${artifact.meta.filePath.replace(/(?::\d+){1,2}$/, "")}`;
   return artifact.key;
+}
+
+/** Plain-text output nobody reads as a document: run logs, task evidence, files with no extension. */
+const PLAIN_TEXT_LOG = /\.(?:txt|log|out|err)$/i;
+
+/**
+ * Whether a file is a raw log rather than something made to be read, such as
+ * the `task-T-04.txt` evidence `specweave task done --run` writes. Logs stay
+ * reachable (a thread folds them, the Library lists them) but are not shown
+ * as deliverables.
+ */
+export function isPlainTextLog(path: string): boolean {
+  const base = path.replace(/(?::\d+){1,2}$/, "").replace(/[\\/]+$/, "");
+  const name = base.slice(Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\")) + 1);
+  if (name.length === 0 || name.startsWith(".")) return false;
+  return PLAIN_TEXT_LOG.test(name) || !name.includes(".");
 }
 
 export function shelfCategory(artifact: ThreadArtifact): ShelfCategory {
@@ -293,6 +311,7 @@ export function shelfEntries(input: ShelfInput): ShelfEntry[] {
       pinned: input.pinned.has(id),
       hidden: input.hidden.has(id),
       aged,
+      log: artifact.kind !== "native" && localPath !== null && isPlainTextLog(localPath),
     });
   }
   return entries;
@@ -344,7 +363,9 @@ export interface OrganizeOptions {
 
 /** The sections the list shows, in order; empty sections are left out. */
 export function organizeShelf(entries: ReadonlyArray<ShelfEntry>, options: OrganizeOptions): Shelf {
-  const visibleCount = entries.filter((entry) => !entry.hidden).length;
+  const visibleCount = entries.filter(
+    (entry) => !entry.hidden && (entry.pinned || !entry.log),
+  ).length;
   const totalCount = entries.length;
   if (options.query.trim().length > 0) {
     const results = searchShelf(entries, options.query);
@@ -382,7 +403,7 @@ export function organizeShelf(entries: ReadonlyArray<ShelfEntry>, options: Organ
     listed.filter((entry) => entry.pinned),
     false,
   );
-  const unpinned = listed.filter((entry) => !entry.pinned);
+  const unpinned = listed.filter((entry) => !entry.pinned && !entry.log);
   for (const category of CATEGORY_ORDER) {
     push(
       category,
@@ -391,6 +412,12 @@ export function organizeShelf(entries: ReadonlyArray<ShelfEntry>, options: Organ
       false,
     );
   }
+  push(
+    "logs",
+    "Logs",
+    listed.filter((entry) => !entry.pinned && entry.log),
+    true,
+  );
   push(
     "older",
     "Older",

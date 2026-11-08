@@ -57,6 +57,25 @@ function artifacts(pinned: ReadonlySet<string>) {
       ],
       folders: [],
       outputs: [
+        // Task evidence `specweave task done --run` writes: Library only, never the shelf.
+        {
+          path: ".specweave/increments/0007-bot/reports/task-T-04.txt",
+          byteLength: 240,
+          modifiedAt: ago(19),
+          increment: "0007-bot",
+        },
+        {
+          path: ".specweave/increments/0007-bot/reports/task-T-03.txt",
+          byteLength: 240,
+          modifiedAt: ago(36),
+          increment: "0007-bot",
+        },
+        {
+          path: ".specweave/increments/0007-bot/reports/task-T-02.txt",
+          byteLength: 240,
+          modifiedAt: ago(52),
+          increment: "0007-bot",
+        },
         {
           path: ".specweave/increments/1148-shelf/reports/shelf-light.png",
           byteLength: 184_000,
