@@ -637,6 +637,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (next.reason === "application-active-reconnect") {
             return true;
           }
+          // An attempt to this machine may hold a request to the backend that
+          // just restarted; others are not affected.
+          if (ConnectionWakeups.isLocalBackendWakeup(next.reason) && loopback) {
+            return true;
+          }
           if (next.reason === "credentials-changed" && usesRelay) {
             yield* logManagedRelayAccountChange;
             return false;
@@ -671,6 +676,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // Mobile operating systems often kill a suspended socket without a close
       // event. A probe would show a dead socket as "Resuming" until it times
       // out, so a long background resume replaces the session at once.
+      return "reset" as const;
+    }
+    // A session to this machine predates the backend's restart: its socket is
+    // gone or about to be. A remote session keeps going.
+    if (ConnectionWakeups.isLocalBackendWakeup(next.reason) && (yield* leaseIsLoopback(lease))) {
       return "reset" as const;
     }
     // Only a session over Studio Connect holds the old account's credential.
@@ -1017,6 +1027,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           switch (next._tag) {
             case "Wakeup":
               if (ignoreRetryHints && next.reason === "retry-hint") break;
+              if (ConnectionWakeups.isLocalBackendWakeup(next.reason) && !(yield* prefersLoopback))
+                break;
               return ConnectionWakeups.resetsRetryBackoff(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
@@ -1037,7 +1049,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.repeat({
       while: (next) =>
         next._tag === "BetterRouteAvailable" ||
-        (next._tag === "Wakeup" && next.reason === "retry-hint"),
+        (next._tag === "Wakeup" &&
+          (next.reason === "retry-hint" || ConnectionWakeups.isLocalBackendWakeup(next.reason))),
     }),
     Effect.map(
       (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),

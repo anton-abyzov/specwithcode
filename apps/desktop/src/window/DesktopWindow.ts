@@ -1555,7 +1555,12 @@ export const make = Effect.gen(function* () {
       // retry timers, or a focus change that a window in the background never gets.
       yield* Effect.sync(() => {
         for (const window of windows) {
-          if (!window.isDestroyed()) window.webContents.send(BACKEND_READY_CHANNEL);
+          // A frame disposed mid-reload must not keep the main window from opening.
+          try {
+            if (!window.isDestroyed()) window.webContents.send(BACKEND_READY_CHANNEL);
+          } catch {
+            // That window reconnects when it loads again.
+          }
         }
       });
       // A backend that restarts while someone works in a project window with

@@ -129,26 +129,40 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   ).pipe(Effect.asVoid),
 );
 
+// One bridge listener for every connection: each supervisor subscribes to the
+// wakeups, and one IPC listener each would pass Node's listener limit.
+const backendReadyListeners = new Set<() => void>();
+let stopBackendReadyBridge: (() => void) | undefined;
+
+function onBackendReady(listener: () => void): () => void {
+  backendReadyListeners.add(listener);
+  if (backendReadyListeners.size === 1 && typeof window !== "undefined") {
+    stopBackendReadyBridge = window.desktopBridge?.onBackendReady?.(() => {
+      for (const each of [...backendReadyListeners]) each();
+    });
+  }
+  return () => {
+    if (!backendReadyListeners.delete(listener) || backendReadyListeners.size > 0) return;
+    stopBackendReadyBridge?.();
+    stopBackendReadyBridge = undefined;
+  };
+}
+
 /**
- * Reconnects when the desktop's own backend answers again after a restart (a
- * failed install restarts it). A request or socket opened to the stopping
- * backend can otherwise hold the attempt until its timeout, and a window in
- * the background gets no focus change to cut that short.
+ * Reconnects to this machine when the desktop's own backend answers again
+ * after a restart (a failed install restarts it). A request or socket opened
+ * to the stopping backend can otherwise hold the attempt until its timeout,
+ * and a window in the background gets no focus change to cut that short.
+ * Connections to other machines ignore it.
  */
-export const backendRestarts = Stream.callback<"application-active-reconnect">((queue) =>
+export const backendRestarts = Stream.callback<"local-backend-ready">((queue) =>
   Effect.acquireRelease(
-    Effect.sync(() =>
-      typeof window === "undefined"
-        ? undefined
-        : window.desktopBridge?.onBackendReady?.(() =>
-            Queue.offerUnsafe(queue, "application-active-reconnect"),
-          ),
-    ),
-    (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+    Effect.sync(() => onBackendReady(() => Queue.offerUnsafe(queue, "local-backend-ready"))),
+    (unsubscribe) => Effect.sync(unsubscribe),
   ).pipe(Effect.asVoid),
 );
 
-const layerWakeups = Wakeups.layer({
+export const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
       Stream.callback<"application-active" | "retry-hint">((queue) =>

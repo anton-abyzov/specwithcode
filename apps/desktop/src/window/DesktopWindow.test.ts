@@ -2006,6 +2006,29 @@ describe("DesktopWindow", () => {
     }),
   );
 
+  it.effect("finishes backend-ready handling when a window's frame is gone", () =>
+    Effect.gen(function* () {
+      const disposed = makeFakeBrowserWindow();
+      disposed.send.mockImplementation(() => {
+        throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+      });
+      const created = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const appWindows: Electron.BrowserWindow[] = [disposed.window];
+      const layer = layerTest({
+        window: created.window,
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        createCount,
+        appWindows,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* DesktopWindow.DesktopWindow;
+        yield* service.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        assert.equal(disposed.send.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect(
     "pins capture lifecycle to its project window across focus changes and window closure",
     () =>

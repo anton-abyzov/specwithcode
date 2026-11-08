@@ -1241,6 +1241,24 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("keeps a session to another machine when this machine's backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("local-backend-ready");
+      yield* TestClock.adjust("1 second");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("restarts the retry ladder when a long resume interrupts connection setup", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -2386,6 +2404,24 @@ describe("EnvironmentSupervisor routes", () => {
 describe("EnvironmentSupervisor for a server on this machine", () => {
   const preparedForTarget = (_attempt: number, target: ConnectionTarget) =>
     Effect.succeed(preparedFor(target));
+
+  it.effect("replaces a session to this machine when its backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: preparedForTarget });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("local-backend-ready");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
   it.effect("connects to the desktop primary while the network reports offline", () =>
     Effect.gen(function* () {
