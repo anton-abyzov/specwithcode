@@ -1,3 +1,4 @@
+import { WorkflowPreflight } from "./workflowCapabilities.ts";
 import * as Schema from "effect/Schema";
 
 import {
@@ -70,6 +71,8 @@ export const ProjectSkillDrift = Schema.Literals(["match", "drift", "unknown", "
 export type ProjectSkillDrift = typeof ProjectSkillDrift.Type;
 
 export const ProjectSkillPresence = Schema.Struct({
+  workflow: Schema.optionalKey(WorkflowPreflight),
+  workflows: Schema.optionalKey(Schema.Array(WorkflowPreflight)),
   instanceId: ProviderInstanceId,
   driver: ProviderDriverKind,
   label: TrimmedNonEmptyString,

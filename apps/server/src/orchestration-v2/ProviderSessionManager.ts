@@ -1,3 +1,16 @@
+import * as Path from "effect/Path";
+import type {
+  WorkflowCapabilityScope,
+  RuntimeToolInventory,
+  ProjectId,
+} from "@specweave-studio/contracts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import {
+  checkWorkflow,
+  explicitlyInvokedSkills,
+  hasWorkflowInvocationSyntax,
+  unknownToolInventory,
+} from "../project/workflowCapabilities.ts";
 import { providerThreadLoadKey } from "./ProviderSessionPolicy.ts";
 import { teamRulesToolRefusal } from "@specweave-studio/shared/teamRules";
 import { currentTeamRules } from "../teamRules/TeamRules.ts";
@@ -171,6 +184,17 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
 export interface ProviderSessionManagerV2Shape {
+  /** Existing local sessions only. Exact project/workspace filtering; no process is opened. */
+  readonly workflowInventories?: (input: {
+    workspaceRoot: string;
+    projectId: ProjectId;
+  }) => Effect.Effect<
+    ReadonlyArray<{
+      scope: WorkflowCapabilityScope;
+      inventory: RuntimeToolInventory;
+      executionPath: string;
+    }>
+  >;
   readonly shutdown: Effect.Effect<void>;
   readonly open: (input: {
     readonly threadId: ThreadId;
@@ -314,6 +338,7 @@ export const layerWithOptions = (
   never,
   | EventSink.EventSinkV2
   | FileSystem.FileSystem
+  | Path.Path
   | IdAllocator.IdAllocatorV2
   | McpSessionRegistry.McpSessionRegistry
   | ProjectionStore.ProjectionStoreV2
@@ -325,6 +350,7 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const fileSystem = yield* FileSystem.FileSystem;
+      const workflowPath = yield* Path.Path;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       /**
        * A native Claude session resumed by an instance with another config
@@ -376,6 +402,12 @@ export const layerWithOptions = (
       const capacity = yield* Effect.serviceOption(StudioCapacity.Capacity);
       // Optional like settings: without provider snapshots every model keeps its tools.
       const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+      const environmentIdentity = yield* Effect.serviceOption(
+        ServerEnvironment.ServerEnvironmentIdentity,
+      );
+      const workflowEnvironmentId = Option.isSome(environmentIdentity)
+        ? yield* environmentIdentity.value.getEnvironmentId
+        : null;
       // No new agent process starts while the service is held for an update.
       const updateHold = yield* ServiceUpdateHold.optional;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -1672,6 +1704,103 @@ export const layerWithOptions = (
           return { events, close } satisfies ProviderAdapterV2EventSubscription;
         });
 
+      const workflowScope = (
+        runtime: ProviderAdapterV2SessionRuntime,
+        threadId: ThreadId,
+        cwd: string,
+        providerThread: OrchestrationV2ProviderThread,
+      ): WorkflowCapabilityScope => ({
+        environmentId: workflowEnvironmentId,
+        instanceId: runtime.instanceId,
+        sessionId: runtime.providerSessionId,
+        threadId,
+        providerThreadId: providerThread.id,
+        nativeThreadId: providerThread.nativeThreadRef?.nativeId ?? null,
+        workspaceRoot: cwd,
+      });
+      const prepareWorkflowInvocation = <
+        T extends Pick<
+          Parameters<ProviderAdapterV2SessionRuntime["startTurn"]>[0],
+          "threadId" | "runId" | "providerThread" | "message"
+        >,
+      >(
+        runtime: ProviderAdapterV2SessionRuntime,
+        turn: T,
+        cwd: string | null,
+      ) =>
+        Effect.gen(function* () {
+          if (cwd === null || Option.isNone(providerRegistry)) return turn;
+          // Plain messages must not start a discovery process or wait on a provider probe.
+          if (!hasWorkflowInvocationSyntax(turn.message.text)) return turn;
+          const previous = yield* providerRegistry.value.getProviders;
+          const refreshed = yield* providerRegistry.value
+            .refreshWorkspaceSnapshot({ instanceId: runtime.instanceId, cwd })
+            .pipe(Effect.timeoutOption(2_000));
+          const providers = Option.isSome(refreshed) ? refreshed.value : previous;
+          const provider = providers.find(
+            (candidate) => candidate.instanceId === runtime.instanceId,
+          );
+          const workspace = provider?.workspaceSnapshots?.find((entry) => entry.cwd === cwd);
+          const source = yield* (
+            providerRegistry.value.workflowSkillSource?.({ instanceId: runtime.instanceId, cwd }) ??
+              Effect.succeed({
+                skills: workspace?.skills ?? [],
+                discoveredAt: workspace?.checkedAt,
+              })
+          );
+          const invoked = explicitlyInvokedSkills(turn.message.text, source.skills);
+          if (!invoked.length) return turn;
+          const scope = workflowScope(runtime, turn.threadId, cwd, turn.providerThread);
+          const inventory = yield* (
+            runtime.inspectWorkflowTools?.({ scope, providerThread: turn.providerThread }) ??
+              unknownToolInventory(scope)
+          );
+          const notes: string[] = [];
+          for (const skill of invoked) {
+            const result = yield* checkWorkflow({
+              skill,
+              scope,
+              inventory,
+              executionPath: runtime.workflowExecutionPath,
+              discoveredAt: source.discoveredAt,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, workflowPath),
+            );
+            if (result.status === "blocked")
+              return yield* Effect.fail(
+                new ProviderAdapterTurnStartError({
+                  driver: runtime.driver,
+                  threadId: turn.threadId,
+                  providerThreadId: turn.providerThread.id,
+                  runId: turn.runId,
+                  detail: `Workflow ${skill.name} cannot run here: ${result.checks
+                    .filter((check) =>
+                      ["missing", "denied", "unsupported", "error"].includes(check.state),
+                    )
+                    .map((check) => `${check.id}: ${check.reason}`)
+                    .join(" ")}`,
+                }),
+              );
+            if (result.declaration.state === "declared" && result.status === "unknown")
+              notes.push(
+                `${skill.name}: ${result.checks
+                  .filter((check) => check.state !== "available")
+                  .map((check) => `${check.id}: ${check.reason}`)
+                  .join(" ")}`,
+              );
+          }
+          return notes.length
+            ? {
+                ...turn,
+                message: {
+                  ...turn.message,
+                  text: `${turn.message.text}\n\n[Workflow dependency evidence on this execution machine]\n${notes.join("\n")}\nTool registration does not establish service authentication or action permission. Do not infer missing access or grant it automatically.`,
+                },
+              }
+            : turn;
+        });
+
       const decorateRuntime = (
         runtime: ProviderAdapterV2SessionRuntime,
         eventSubscribers: Ref.Ref<
@@ -1679,6 +1808,7 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
+        const workflowCwds = new Map<ThreadId, string | null>();
         const subscribeEvents = makeEventSubscription(eventSubscribers);
         // Every provider's turn operations pass through here, so this is where they are
         // counted. Only turn starts are timed: until the provider accepts the turn.
@@ -1854,7 +1984,11 @@ export const layerWithOptions = (
                             cause,
                           }),
                       ),
-                      Effect.andThen(() => runtime.startTurn(input)),
+                      Effect.andThen(() => {
+                        workflowCwds.set(input.threadId, input.runtimePolicy.cwd);
+                        return prepareWorkflowInvocation(runtime, input, input.runtimePolicy.cwd);
+                      }),
+                      Effect.flatMap((prepared) => runtime.startTurn(prepared)),
                       turnMetrics("send", input.modelSelection.model),
                     ),
                   (_, exit) =>
@@ -1872,7 +2006,14 @@ export const layerWithOptions = (
             ),
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              Effect.andThen(
+                prepareWorkflowInvocation(
+                  runtime,
+                  input,
+                  workflowCwds.get(input.threadId) ?? runtime.providerSession.cwd,
+                ),
+              ),
+              Effect.flatMap((prepared) => runtime.steerTurn(prepared).pipe(turnMetrics("steer"))),
             ),
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
@@ -2104,6 +2245,82 @@ export const layerWithOptions = (
         });
 
       return ProviderSessionManagerV2.of({
+        workflowInventories: (request) =>
+          Effect.gen(function* () {
+            const observations: Array<{
+              scope: WorkflowCapabilityScope;
+              inventory: RuntimeToolInventory;
+              executionPath: string;
+            }> = [];
+            for (const entry of (yield* Ref.get(sessions)).values()) {
+              if (entry.runtime.providerSession.cwd !== request.workspaceRoot) continue;
+              for (const threadId of entry.attachedThreadIds) {
+                const thread = yield* projectionStore.getThread(threadId).pipe(Effect.option);
+                if (Option.isNone(thread) || thread.value.projectId !== request.projectId) continue;
+                const records = yield* projectionStore
+                  .getThreadRecords(threadId, ["providerThreads"])
+                  .pipe(Effect.option);
+                if (Option.isNone(records)) continue;
+                const providerThread = records.value.providerThreads.find(
+                  (candidate) =>
+                    candidate.providerSessionId === entry.runtime.providerSessionId &&
+                    candidate.appThreadId === threadId &&
+                    candidate.id === thread.value.activeProviderThreadId,
+                );
+                if (!providerThread) continue;
+                const scope = workflowScope(
+                  entry.runtime,
+                  threadId,
+                  request.workspaceRoot,
+                  providerThread,
+                );
+                const inventory = yield* (
+                  entry.runtime.inspectWorkflowTools?.({ scope, providerThread }) ??
+                    unknownToolInventory(scope)
+                );
+                // A released/replaced runtime cannot publish late observations into its successor.
+                const current = (yield* Ref.get(sessions)).get(
+                  sessionKey(entry.runtime.providerSessionId),
+                );
+                const stillActive = yield* projectionStore.getThread(threadId).pipe(Effect.option);
+                if (
+                  current?.runtime !== entry.runtime ||
+                  !current.attachedThreadIds.has(threadId) ||
+                  Option.isNone(stillActive) ||
+                  stillActive.value.activeProviderThreadId !== providerThread.id
+                )
+                  continue;
+                const currentRecords = yield* projectionStore
+                  .getThreadRecords(threadId, ["providerThreads"])
+                  .pipe(Effect.option);
+                const currentThread = Option.isSome(currentRecords)
+                  ? currentRecords.value.providerThreads.find(
+                      (candidate) => candidate.id === providerThread.id,
+                    )
+                  : undefined;
+                if (
+                  !currentThread ||
+                  currentThread.nativeThreadRef?.nativeId !==
+                    providerThread.nativeThreadRef?.nativeId
+                )
+                  continue;
+                const finalEntry = (yield* Ref.get(sessions)).get(
+                  sessionKey(entry.runtime.providerSessionId),
+                );
+                if (
+                  finalEntry?.runtime !== entry.runtime ||
+                  !finalEntry.attachedThreadIds.has(threadId)
+                )
+                  continue;
+                observations.push({
+                  scope,
+                  inventory,
+                  executionPath: entry.runtime.workflowExecutionPath ?? "",
+                });
+              }
+            }
+            return observations;
+          }),
         shutdown,
         releaseIdle,
         replacementPending,

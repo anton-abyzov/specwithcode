@@ -1,8 +1,53 @@
+import {
+  evaluateWorkflow,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@specweave-studio/contracts";
+import { WorkflowCapabilities } from "../../src/components/settings/WorkflowCapabilities";
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionsLibrarySettings } from "../../src/components/settings/ConnectionsLibrarySettings";
 import { setFixture, setProject } from "./mocks";
 import "./fixture.css";
+function WorkflowFixture() {
+  const now = Date.parse("2026-10-28T04:00:00Z");
+  const workflow = evaluateWorkflow({
+    scope: {
+      environmentId: "Linux worker",
+      instanceId: "codex-personal",
+      workspaceRoot: "/home/example/project",
+      sessionId: "native-session-3",
+      providerThreadId: "native-thread-3",
+      nativeThreadId: "codex-native-3",
+      threadId: "match-report-thread",
+    },
+    declaration: {
+      state: "declared",
+      requires: { tools: ["mcp__reports__read_match"], binaries: ["ffmpeg"], platforms: ["linux"] },
+    },
+    enabled: true,
+    discoveredAt: new Date(now).toISOString(),
+    now,
+    platform: "linux",
+    binaries: new Map([["ffmpeg", "missing"]]),
+  });
+  return (
+    <main className="mx-auto max-w-3xl space-y-5 p-4 text-sm">
+      <h1 className="text-xl font-medium">Match report workflow</h1>
+      <WorkflowCapabilities
+        presence={{
+          label: "Codex",
+          instanceId: ProviderInstanceId.make("codex-personal"),
+          driver: ProviderDriverKind.make("codex"),
+          path: "/example/SKILL.md",
+          scope: "project",
+          enabled: true,
+          workflow,
+        }}
+      />
+    </main>
+  );
+}
 function App() {
   const [project, updateProject] = useState(false);
   return (
@@ -45,4 +90,6 @@ function App() {
     </>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(
+  location.search.includes("workflow") ? <WorkflowFixture /> : <App />,
+);

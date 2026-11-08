@@ -1,4 +1,5 @@
 import { TeamRules, teamRulesOf } from "../teamRules/TeamRules.ts";
+import * as FileSystem from "effect/FileSystem";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -1748,8 +1749,10 @@ it.layer(
           const providers = yield* registry.getProviders;
           assert.deepStrictEqual(providers[0]?.skills, machineProvider.skills);
           assert.deepStrictEqual(
-            providers[0]?.workspaceSnapshots?.[0]?.skills,
-            scopedProvider.skills,
+            providers[0]?.workspaceSnapshots?.[0]?.skills.map(
+              ({ workflow: _workflow, ...skill }) => skill,
+            ),
+            [...scopedProvider.skills],
           );
           assert.deepStrictEqual(providers[0]?.workspaceSnapshots?.[0]?.slashCommands, [
             COMPACT_SLASH_COMMAND,
@@ -1785,7 +1788,9 @@ it.layer(
           assert.strictEqual(yield* Ref.get(snapshotCalls), 4);
           assert.strictEqual(yield* Ref.get(cacheInvalidations), 1);
           assert.deepStrictEqual(
-            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) =>
+              s.skills.map(({ workflow: _workflow, ...skill }) => skill),
+            ),
             [newSkills],
           );
 
@@ -1812,7 +1817,9 @@ it.layer(
           yield* Deferred.succeed(releaseSlow, undefined);
           yield* Fiber.join(slowScan);
           assert.deepStrictEqual(
-            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) =>
+              s.skills.map(({ workflow: _workflow, ...skill }) => skill),
+            ),
             [latestSkills],
           );
 
@@ -1832,7 +1839,9 @@ it.layer(
           assert.strictEqual(yield* Ref.get(snapshotCalls), callsBeforeAging + 1);
           assert.strictEqual(yield* Ref.get(cacheInvalidations), invalidationsBeforeAging);
           assert.deepStrictEqual(
-            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) =>
+              s.skills.map(({ workflow: _workflow, ...skill }) => skill),
+            ),
             [outsideSkills],
           );
 
@@ -3522,3 +3531,94 @@ it.layer(
     );
   });
 });
+
+it.effect(
+  "machine-wide skill discovery gets scoped picker checks without borrowing another project's skills",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const skillPath = `${directory}/SKILL.md`;
+      yield* fs.writeFileString(
+        skillPath,
+        "---\nmetadata:\n  specwithcode:\n    requires:\n      binaries: [workflow-missing-picker-binary]\n---\n",
+      );
+      const provider: ServerProvider = {
+        instanceId: ProviderInstanceId.make("pi-fixture"),
+        driver: ProviderDriverKind.make("pi"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        version: null,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-28T04:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [
+          { name: "machine", path: skillPath, enabled: true, scope: "user" },
+          {
+            name: "other-folder",
+            path: "/another-project/SKILL.md",
+            enabled: true,
+            scope: "project",
+          },
+        ],
+      };
+      const instance: ProviderInstance = {
+        instanceId: provider.instanceId,
+        driverKind: provider.driver,
+        displayName: undefined,
+        enabled: true,
+        continuationIdentity: { driverKind: provider.driver, continuationKey: "fixture-pi" },
+        workflowExecutionPath: directory,
+        snapshot: {
+          getSnapshot: Effect.succeed(provider),
+          refresh: Effect.succeed(provider),
+          streamChanges: Stream.empty,
+          applyUsageLimits: () => Effect.void,
+          resolveMaintenance: () =>
+            Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({
+                provider: provider.driver,
+                packageName: null,
+              }),
+            ),
+        },
+        orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+        textGeneration: {} as ProviderInstance["textGeneration"],
+      };
+      const registryLayer = ProviderRegistry.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+              getInstance: () => Effect.succeed(instance),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.never,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            }),
+            ModelManifest.layerTest,
+            layerBackgroundPolicyAlwaysRun,
+            ServerConfig.layerTest(process.cwd(), { prefix: "workflow-machine-picker-" }),
+          ).pipe(Layer.provideMerge(NodeServices.layer)),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const registry = yield* ProviderRegistry.ProviderRegistry;
+        yield* registry.refreshWorkspaceSnapshot({
+          instanceId: provider.instanceId,
+          cwd: directory,
+        });
+        const scoped = (yield* registry.getProviders)[0]?.workspaceSnapshots?.find(
+          (entry) => entry.cwd === directory,
+        );
+        assert.strictEqual(scoped?.skillsDiscovery, "machine");
+        assert.deepStrictEqual(
+          scoped?.skills.map((skill) => skill.name),
+          ["machine"],
+        );
+        assert.strictEqual(scoped?.skills[0]?.workflow?.status, "blocked");
+        assert.strictEqual(scoped?.skills[0]?.workflow?.checks[0]?.state, "missing");
+      }).pipe(Effect.provide(registryLayer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

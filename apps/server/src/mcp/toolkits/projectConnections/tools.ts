@@ -1,3 +1,5 @@
+import * as Skills from "../../../project/ProjectSkillsService.ts";
+import { WorkflowPreflight } from "@specweave-studio/contracts";
 import {
   OrchestratorMcpFailure,
   ProjectId,
@@ -20,6 +22,26 @@ const shared = {
   ],
 };
 export const ProjectConnectionsToolkit = Toolkit.make(
+  Tool.make("studio_workflow_capabilities", {
+    ...shared,
+    dependencies: [...shared.dependencies, Skills.ProjectSkillsService],
+    description:
+      "Read dependency evidence for one skill in this calling project's execution folder. Separates configuration, discovery, registered session tools and local checks. Does not start provider turns, test external actions, install, sign in or grant access. Unknown or another machine's evidence cannot establish readiness; registered tools do not prove service authentication.",
+    parameters: Schema.Struct({
+      skill: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(160)),
+      projectId: Schema.optional(ProjectId),
+    }),
+    success: Schema.Array(
+      Schema.Struct({
+        skill: Schema.String,
+        instanceId: Schema.String,
+        workflow: Schema.NullOr(WorkflowPreflight),
+        sessions: Schema.Array(WorkflowPreflight),
+      }),
+    ),
+  })
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false),
   Tool.make("studio_project_connections_list", {
     ...shared,
     description:

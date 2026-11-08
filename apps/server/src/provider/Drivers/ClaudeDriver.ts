@@ -1,3 +1,4 @@
+import { workflowExecutionPathOf } from "../../project/workflowCapabilities.ts";
 /**
  * ClaudeDriver — `ProviderDriver` for the Claude Agent SDK runtime.
  *
@@ -341,6 +342,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
 
       return {
         instanceId,
+        workflowExecutionPath: workflowExecutionPathOf(processEnv),
         driverKind: DRIVER_KIND,
         continuationIdentity: {
           ...fallbackContinuationIdentity,

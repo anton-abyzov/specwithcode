@@ -2217,19 +2217,40 @@ export const ru: PhraseCatalog = {
   "agent only": "только агент",
   "Also listed as {value}.": "Также указан как {value}.",
   Problems: "Проблемы",
-  "Loaded by": "Загружают",
-  "No agent loads this skill in this folder.":
-    "Ни один агент не загружает этот навык в этой папке.",
+  "Discovered by": "Обнаруживают",
+  "No agent reports this skill in this folder.":
+    "Ни один агент не сообщает об этом навыке в этой папке.",
+  "Declared dependencies present": "Объявленные зависимости на месте",
+  "Cannot run here": "Здесь не запустить",
+  "Readiness unknown": "Готовность неизвестна",
+  "Identity not reported": "Идентификатор не сообщён",
+  Folder: "Папка",
+  "Native thread": "Нативный тред",
+  "No live session selected": "Активный сеанс не выбран",
+  Thread: "Тред",
+  "Capability evidence stages": "Этапы подтверждения возможностей",
+  Discovered: "Обнаружено",
+  "Registered in session": "Зарегистрировано в сеансе",
+  "Last safe check": "Последняя безопасная проверка",
+  "Workflow dependencies": "Зависимости рабочего процесса",
+  "{label} workflow capabilities": "Возможности рабочего процесса {label}",
+  "{label} dependency checks": "Проверки зависимостей {label}",
+  "Discovery does not prove instructions loaded or service access. Checks apply only to the machine, provider, folder and session shown.":
+    "Обнаружение не доказывает, что инструкции загружены или есть доступ к сервису. Проверки относятся только к показанным машине, провайдеру, папке и сеансу.",
+  "Readiness unknown. This machine has not supplied dependency evidence; refresh or update its server.":
+    "Готовность неизвестна. Эта машина не передала данные о зависимостях; обновите вид или её сервер.",
+  "Tools from another machine or account do not satisfy these checks. Configure missing dependencies on this machine; sign-in and access remain under your control.":
+    "Инструменты с другой машины или аккаунта не проходят эти проверки. Настройте недостающие зависимости на этой машине; вход и доступ остаются под вашим контролем.",
   "plugin ": "плагин ",
   "as {name}": "как {name}",
   off: "выкл.",
   "{copies} separate copies on disk{value}": "Отдельных копий на диске: {copies}{value}",
   "Agents: {value}. Lockfiles: {value2}. {value3}":
     "Агенты: {value}. Lock-файлы: {value2}. {value3}",
-  "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
-    "Все навыки, которые каждый агент загружает для вас на этой машине, во всех проектах. Выключение навыка меняет только собственные настройки этого агента, поэтому у других агентов он остаётся и ничего не удаляется. Выберите проект, чтобы увидеть и его навыки. Нажмите на навык, чтобы увидеть подробности.",
-  "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
-    "Какие навыки каждый агент загружает в {span} и совпадает ли каждый с версией, установленной vskill. Фильтруйте по агенту или уровню: навыки проекта лежат в этой папке, навыки пользователя применяются ко всем проектам. Нажмите на навык, чтобы увидеть подробности.",
+  "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
+    "Все навыки, которые каждый агент обнаруживает для вас на этой машине, во всех проектах. Выключение навыка меняет только собственные настройки этого агента, поэтому у других агентов он остаётся и ничего не удаляется. Выберите проект, чтобы увидеть и его навыки. Нажмите на навык, чтобы увидеть подробности.",
+  "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
+    "Какие навыки каждый агент обнаруживает в {span} и совпадает ли каждый с версией, установленной vskill. Фильтруйте по агенту или уровню: навыки проекта лежат в этой папке, навыки пользователя применяются ко всем проектам. Нажмите на навык, чтобы увидеть подробности.",
   "{span} is not loaded in this project.": "{span} не загружается в этом проекте.",
   "· showing {length}": "· показано {length}",
   "Search skills": "Поиск навыков",

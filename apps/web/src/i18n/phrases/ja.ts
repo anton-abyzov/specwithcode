@@ -2214,25 +2214,46 @@ export const ja: PhraseCatalog = {
   Pin: "固定",
   "Update to {latest}": "{latest} に更新",
   "Choose a project to see which skills each agent loads in its folder.":
-    "プロジェクトを選ぶと、各エージェントがそのフォルダーで読み込むスキルを確認できます。",
+    "プロジェクトを選ぶと、各エージェントがそのフォルダーで検出するスキルを確認できます。",
   "lock says {lock}": "lock では {lock}",
   pinned: "固定済み",
   "agent only": "エージェントのみ",
   "Also listed as {value}.": "{value} としても表示されています。",
   Problems: "問題",
-  "Loaded by": "読み込み元",
-  "No agent loads this skill in this folder.":
-    "このフォルダーでこのスキルを読み込むエージェントはありません。",
+  "Discovered by": "検出元",
+  "No agent reports this skill in this folder.":
+    "このフォルダーでこのスキルを報告しているエージェントはありません。",
+  "Declared dependencies present": "宣言された依存関係あり",
+  "Cannot run here": "ここでは実行できません",
+  "Readiness unknown": "準備状況は不明",
+  "Identity not reported": "識別情報が報告されていません",
+  Folder: "フォルダー",
+  "Native thread": "ネイティブ スレッド",
+  "No live session selected": "実行中のセッションが選択されていません",
+  Thread: "スレッド",
+  "Capability evidence stages": "機能の証拠の段階",
+  Discovered: "検出済み",
+  "Registered in session": "セッションに登録済み",
+  "Last safe check": "最後の安全なチェック",
+  "Workflow dependencies": "ワークフローの依存関係",
+  "{label} workflow capabilities": "{label} のワークフロー機能",
+  "{label} dependency checks": "{label} の依存関係チェック",
+  "Discovery does not prove instructions loaded or service access. Checks apply only to the machine, provider, folder and session shown.":
+    "検出されても、指示が読み込まれたことやサービスにアクセスできることは保証されません。チェックは表示中のマシン、プロバイダー、フォルダー、セッションにのみ適用されます。",
+  "Readiness unknown. This machine has not supplied dependency evidence; refresh or update its server.":
+    "準備状況は不明です。このマシンは依存関係の証拠を提供していません。更新するか、サーバーを更新してください。",
+  "Tools from another machine or account do not satisfy these checks. Configure missing dependencies on this machine; sign-in and access remain under your control.":
+    "別のマシンやアカウントのツールでは、これらのチェックを満たせません。不足している依存関係はこのマシンで設定してください。サインインとアクセスは引き続きあなたが管理します。",
   "plugin ": "プラグイン ",
   "as {name}": "{name} として",
   off: "オフ",
   "{copies} separate copies on disk{value}": "ディスク上に {copies} 個の別々のコピー{value}",
   "Agents: {value}. Lockfiles: {value2}. {value3}":
     "エージェント: {value}。ロックファイル: {value2}。{value3}",
-  "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
-    "このマシンで、各エージェントがすべてのプロジェクトで読み込むすべてのスキルです。オフにしてもそのエージェント自身の設定が変わるだけなので、他のエージェントでは残り、何も削除されません。プロジェクトを選ぶと、そのプロジェクトのスキルも表示されます。スキルをクリックすると詳細を確認できます。",
-  "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
-    "各エージェントが {span} で読み込むスキルと、それぞれが vskill のインストールしたバージョンと一致しているかを示します。エージェントまたはレベルで絞り込めます。プロジェクトのスキルはこのフォルダーにあり、ユーザーのスキルはすべてのプロジェクトに適用されます。スキルをクリックすると詳細を確認できます。",
+  "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
+    "このマシンで、各エージェントがすべてのプロジェクトで検出するすべてのスキルです。オフにしてもそのエージェント自身の設定が変わるだけなので、他のエージェントでは残り、何も削除されません。プロジェクトを選ぶと、そのプロジェクトのスキルも表示されます。スキルをクリックすると詳細を確認できます。",
+  "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
+    "各エージェントが {span} で検出するスキルと、それぞれが vskill のインストールしたバージョンと一致しているかを示します。エージェントまたはレベルで絞り込めます。プロジェクトのスキルはこのフォルダーにあり、ユーザーのスキルはすべてのプロジェクトに適用されます。スキルをクリックすると詳細を確認できます。",
   "{span} is not loaded in this project.": "{span} はこのプロジェクトでは読み込まれていません。",
   "· showing {length}": "· {length} 件を表示",
   "Search skills": "スキルを検索",

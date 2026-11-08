@@ -1,3 +1,4 @@
+import { workflowExecutionPathOf } from "../../project/workflowCapabilities.ts";
 /**
  * CodexDriver — first concrete `ProviderDriver` in the new per-instance model.
  *
@@ -404,6 +405,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
 
       return {
         instanceId,
+        workflowExecutionPath: workflowExecutionPathOf(processEnv),
         driverKind: DRIVER_KIND,
         continuationIdentity,
         displayName,

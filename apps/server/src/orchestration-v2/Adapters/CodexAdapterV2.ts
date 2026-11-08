@@ -1,3 +1,9 @@
+import * as Cause from "effect/Cause";
+import {
+  codexToolInventory,
+  unknownToolInventory,
+  workflowExecutionPathOf,
+} from "../../project/workflowCapabilities.ts";
 import {
   codexFileChangeApprovalPrompt,
   legacyCodexFileChanges,
@@ -45,7 +51,7 @@ import {
   getModelSelectionStringOptionValue,
   modelSelectionsEqual,
 } from "@specweave-studio/shared/model";
-import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
+import { readEnvPath, resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -6552,6 +6558,43 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          workflowExecutionPath:
+            readEnvPath(resolvedRuntime?.environment ?? {}) ??
+            workflowExecutionPathOf(adapterOptions.environment),
+          inspectWorkflowTools: (inspection) =>
+            Effect.gen(function* () {
+              const threadId = yield* getNativeThreadId(inspection.providerThread);
+              const pages: unknown[] = [];
+              let cursor: string | undefined;
+              const seen = new Set<string>();
+              for (let page = 0; page < 8; page++) {
+                const response = yield* client.request("mcpServerStatus/list", {
+                  threadId,
+                  detail: "toolsAndAuthOnly",
+                  limit: 128,
+                  ...(cursor ? { cursor } : {}),
+                });
+                pages.push(response);
+                if (!response.nextCursor) return yield* codexToolInventory(inspection.scope, pages);
+                if (seen.has(response.nextCursor)) break;
+                seen.add(response.nextCursor);
+                cursor = response.nextCursor;
+              }
+              // A bounded or changing inventory cannot establish absence.
+              return yield* codexToolInventory(inspection.scope, pages);
+            }).pipe(
+              Effect.timeoutOption(2_000),
+              Effect.flatMap((result) =>
+                Option.isSome(result)
+                  ? Effect.succeed(result.value)
+                  : unknownToolInventory(inspection.scope, "unknown"),
+              ),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.interrupt
+                  : unknownToolInventory(inspection.scope, "unsupported"),
+              ),
+            ),
           canReuseContextUsage: canReuseCodexContextUsage,
           restartRequired: Effect.sync(() =>
             authChanged ? CODEX_AUTH_CHANGED_RESTART_REASON : null,

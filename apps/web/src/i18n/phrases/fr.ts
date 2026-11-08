@@ -634,7 +634,7 @@ export const fr: PhraseCatalog = {
   "Which of each provider's models reviews while the reviewer order is empty. A frontier model is slower and uses more of the plan; set the models under Regular and frontier models.":
     "Quel modèle de chaque fournisseur fait la revue tant que l’ordre des relecteurs est vide. Un modèle de pointe est plus lent et consomme davantage du forfait ; réglez les modèles dans Modèles courants et de pointe.",
   "Which skills each agent loads in this folder, with vskill versions and drift.":
-    "Les compétences que chaque agent charge dans ce dossier, avec les versions vskill et les écarts.",
+    "Les compétences que chaque agent détecte dans ce dossier, avec les versions vskill et les écarts.",
   "Wrap long lines in code blocks, diffs, and file previews by default.":
     "Renvoyer à la ligne les longues lignes dans les blocs de code, diffs et aperçus de fichiers par défaut.",
   "Save usage": "Économiser l’utilisation",
@@ -2226,23 +2226,45 @@ export const fr: PhraseCatalog = {
   Pin: "Épingler",
   "Update to {latest}": "Mettre à jour vers {latest}",
   "Choose a project to see which skills each agent loads in its folder.":
-    "Choisissez un projet pour voir quelles skills chaque agent charge dans son dossier.",
+    "Choisissez un projet pour voir quelles skills chaque agent détecte dans son dossier.",
   "lock says {lock}": "le verrou indique {lock}",
   pinned: "épinglée",
   "agent only": "agent uniquement",
   "Also listed as {value}.": "Aussi listée comme {value}.",
   Problems: "Problèmes",
-  "Loaded by": "Chargée par",
-  "No agent loads this skill in this folder.": "Aucun agent ne charge cette skill dans ce dossier.",
+  "Discovered by": "Détectée par",
+  "No agent reports this skill in this folder.":
+    "Aucun agent ne signale cette skill dans ce dossier.",
+  "Declared dependencies present": "Dépendances déclarées présentes",
+  "Cannot run here": "Impossible d'exécuter ici",
+  "Readiness unknown": "Disponibilité inconnue",
+  "Identity not reported": "Identité non signalée",
+  Folder: "Dossier",
+  "Native thread": "Fil natif",
+  "No live session selected": "Aucune session active sélectionnée",
+  Thread: "Fil",
+  "Capability evidence stages": "Étapes de preuve des capacités",
+  Discovered: "Détecté",
+  "Registered in session": "Enregistré dans la session",
+  "Last safe check": "Dernière vérification sûre",
+  "Workflow dependencies": "Dépendances du workflow",
+  "{label} workflow capabilities": "Capacités de workflow de {label}",
+  "{label} dependency checks": "Vérifications des dépendances de {label}",
+  "Discovery does not prove instructions loaded or service access. Checks apply only to the machine, provider, folder and session shown.":
+    "La détection ne prouve ni que les instructions sont chargées ni l'accès au service. Les vérifications ne valent que pour la machine, le fournisseur, le dossier et la session affichés.",
+  "Readiness unknown. This machine has not supplied dependency evidence; refresh or update its server.":
+    "Disponibilité inconnue. Cette machine n'a fourni aucune preuve de dépendances ; actualisez ou mettez à jour son serveur.",
+  "Tools from another machine or account do not satisfy these checks. Configure missing dependencies on this machine; sign-in and access remain under your control.":
+    "Les outils d'une autre machine ou d'un autre compte ne satisfont pas ces vérifications. Configurez les dépendances manquantes sur cette machine ; la connexion et l'accès restent sous votre contrôle.",
   "plugin ": "plugin ",
   "as {name}": "comme {name}",
   off: "désactivée",
   "{copies} separate copies on disk{value}": "{copies} copies séparées sur le disque{value}",
   "Agents: {value}. Lockfiles: {value2}. {value3}":
     "Agents : {value}. Fichiers de verrouillage : {value2}. {value3}",
-  "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
-    "Toutes les skills que chaque agent charge pour vous sur cette machine, dans tous les projets. En désactiver une ne change que les réglages de cet agent : les autres agents la gardent et rien n’est supprimé. Choisissez un projet pour voir aussi ses skills de projet. Cliquez sur une skill pour les détails.",
-  "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
+  "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
+    "Toutes les skills que chaque agent détecte pour vous sur cette machine, dans tous les projets. En désactiver une ne change que les réglages de cet agent : les autres agents la gardent et rien n’est supprimé. Choisissez un projet pour voir aussi ses skills de projet. Cliquez sur une skill pour les détails.",
+  "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "Quelles skills chaque agent charge dans {span}, et si chacune correspond encore à la version installée par vskill. Filtrez par agent ou par niveau : les skills de projet vivent dans ce dossier, les skills utilisateur s’appliquent à tous les projets. Cliquez sur une skill pour les détails.",
   "{span} is not loaded in this project.": "{span} n’est pas chargée dans ce projet.",
   "· showing {length}": "· {length} affichées",

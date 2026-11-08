@@ -1,3 +1,4 @@
+import * as Skills from "../../../project/ProjectSkillsService.ts";
 import {
   CommandId,
   OrchestratorMcpFailure,
@@ -29,6 +30,43 @@ const failure = (error: ProjectConnectionError) =>
     message: error.message,
   });
 export const layer = Access.toLayer(ProjectConnectionsToolkit, {
+  studio_workflow_capabilities: Access.reads((input) =>
+    Effect.gen(function* () {
+      const projectId = yield* boundProject(input.projectId);
+      const skills = yield* Skills.ProjectSkillsService;
+      // The caller's own execution folder: a worktree thread reads its worktree, not the root.
+      const thread = (yield* readCaller()).caller;
+      const snapshot = yield* skills
+        .read({
+          projectId,
+          ...(thread?.worktreePath ? { threadId: thread.id, cwd: thread.worktreePath } : {}),
+        })
+        .pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "Workflow evidence could not be read on this machine.",
+              }),
+          ),
+        );
+      return snapshot.rows
+        .filter(
+          (row) =>
+            row.name === input.skill ||
+            row.aliases?.includes(input.skill) ||
+            row.providers.some((presence) => presence.name === input.skill),
+        )
+        .flatMap((row) =>
+          row.providers.map((presence) => ({
+            skill: row.name,
+            instanceId: presence.instanceId,
+            workflow: presence.workflow ?? null,
+            sessions: presence.workflows ?? [],
+          })),
+        );
+    }),
+  ),
   studio_project_connections_list: Access.reads((input) =>
     Effect.gen(function* () {
       const projectId = yield* boundProject(input.projectId);

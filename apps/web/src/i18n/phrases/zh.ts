@@ -608,7 +608,7 @@ export const zh: PhraseCatalog = {
   "Which of each provider's models reviews while the reviewer order is empty. A frontier model is slower and uses more of the plan; set the models under Regular and frontier models.":
     "审查者顺序为空时，由每个提供方的哪个模型进行审查。前沿模型更慢，也会消耗更多套餐额度；在“常规与前沿模型”中设置模型。",
   "Which skills each agent loads in this folder, with vskill versions and drift.":
-    "每个智能体在此文件夹中加载哪些技能，以及 vskill 版本和偏差。",
+    "每个智能体在此文件夹中发现哪些技能，以及 vskill 版本和偏差。",
   "Wrap long lines in code blocks, diffs, and file previews by default.":
     "默认在代码块、差异和文件预览中自动换行。",
   "Save usage": "节省用量",
@@ -2130,22 +2130,43 @@ export const zh: PhraseCatalog = {
   Pin: "固定",
   "Update to {latest}": "更新到 {latest}",
   "Choose a project to see which skills each agent loads in its folder.":
-    "选择一个项目，查看每个智能体在其文件夹中加载哪些技能。",
+    "选择一个项目，查看每个智能体在其文件夹中发现哪些技能。",
   "lock says {lock}": "锁文件为 {lock}",
   pinned: "已固定",
   "agent only": "仅智能体",
   "Also listed as {value}.": "也列为 {value}。",
   Problems: "问题",
-  "Loaded by": "加载者",
-  "No agent loads this skill in this folder.": "没有智能体在此文件夹中加载此技能。",
+  "Discovered by": "发现者",
+  "No agent reports this skill in this folder.": "没有智能体在此文件夹中报告此技能。",
+  "Declared dependencies present": "已声明的依赖项均存在",
+  "Cannot run here": "无法在此运行",
+  "Readiness unknown": "就绪状态未知",
+  "Identity not reported": "未报告身份",
+  Folder: "文件夹",
+  "Native thread": "原生线程",
+  "No live session selected": "未选择正在运行的会话",
+  Thread: "线程",
+  "Capability evidence stages": "能力证据阶段",
+  Discovered: "已发现",
+  "Registered in session": "已在会话中注册",
+  "Last safe check": "上次安全检查",
+  "Workflow dependencies": "工作流依赖项",
+  "{label} workflow capabilities": "{label} 的工作流能力",
+  "{label} dependency checks": "{label} 的依赖项检查",
+  "Discovery does not prove instructions loaded or service access. Checks apply only to the machine, provider, folder and session shown.":
+    "被发现并不代表指令已加载或可访问服务。检查仅适用于所显示的机器、提供方、文件夹和会话。",
+  "Readiness unknown. This machine has not supplied dependency evidence; refresh or update its server.":
+    "就绪状态未知。此机器未提供依赖项证据；请刷新或更新其服务器。",
+  "Tools from another machine or account do not satisfy these checks. Configure missing dependencies on this machine; sign-in and access remain under your control.":
+    "其他机器或账户中的工具无法满足这些检查。请在此机器上配置缺少的依赖项；登录和访问仍由你掌控。",
   "plugin ": "插件 ",
   "as {name}": "作为 {name}",
   off: "关",
   "{copies} separate copies on disk{value}": "磁盘上有 {copies} 份独立副本{value}",
   "Agents: {value}. Lockfiles: {value2}. {value3}": "智能体：{value}。锁文件：{value2}。{value3}",
-  "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
-    "在这台电脑上，每个智能体在所有项目中为你加载的所有技能。关闭某个技能只会更改该智能体自己的设置，其他智能体仍会保留，也不会删除任何内容。选择一个项目可同时查看其项目技能。点击技能查看详情。",
-  "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
+  "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
+    "在这台电脑上，每个智能体在所有项目中为你发现的所有技能。关闭某个技能只会更改该智能体自己的设置，其他智能体仍会保留，也不会删除任何内容。选择一个项目可同时查看其项目技能。点击技能查看详情。",
+  "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
     "每个智能体在 {span} 中加载哪些技能，以及每个技能是否仍与 vskill 安装的版本一致。可按智能体或级别筛选：项目技能位于此文件夹中，用户技能适用于所有项目。点击技能查看详情。",
   "{span} is not loaded in this project.": "{span} 未在此项目中加载。",
   "· showing {length}": "· 显示 {length} 个",

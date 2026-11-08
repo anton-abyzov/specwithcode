@@ -2231,18 +2231,40 @@ export const es: PhraseCatalog = {
   "agent only": "solo el agente",
   "Also listed as {value}.": "También aparece como {value}.",
   Problems: "Problemas",
-  "Loaded by": "Lo cargan",
-  "No agent loads this skill in this folder.": "Ningún agente carga esta skill en esta carpeta.",
+  "Discovered by": "Lo detectan",
+  "No agent reports this skill in this folder.":
+    "Ningún agente informa de esta skill en esta carpeta.",
+  "Declared dependencies present": "Dependencias declaradas presentes",
+  "Cannot run here": "No se puede ejecutar aquí",
+  "Readiness unknown": "Disponibilidad desconocida",
+  "Identity not reported": "Identidad no informada",
+  Folder: "Carpeta",
+  "Native thread": "Hilo nativo",
+  "No live session selected": "Ninguna sesión activa seleccionada",
+  Thread: "Hilo",
+  "Capability evidence stages": "Etapas de evidencia de capacidades",
+  Discovered: "Detectado",
+  "Registered in session": "Registrado en la sesión",
+  "Last safe check": "Última comprobación segura",
+  "Workflow dependencies": "Dependencias del flujo de trabajo",
+  "{label} workflow capabilities": "Capacidades de flujo de trabajo de {label}",
+  "{label} dependency checks": "Comprobaciones de dependencias de {label}",
+  "Discovery does not prove instructions loaded or service access. Checks apply only to the machine, provider, folder and session shown.":
+    "Detectar una skill no demuestra que sus instrucciones se hayan cargado ni que haya acceso al servicio. Las comprobaciones solo se aplican a la máquina, el proveedor, la carpeta y la sesión mostrados.",
+  "Readiness unknown. This machine has not supplied dependency evidence; refresh or update its server.":
+    "Disponibilidad desconocida. Esta máquina no ha enviado evidencia de dependencias; actualiza la vista o su servidor.",
+  "Tools from another machine or account do not satisfy these checks. Configure missing dependencies on this machine; sign-in and access remain under your control.":
+    "Las herramientas de otra máquina o cuenta no cumplen estas comprobaciones. Configura las dependencias que faltan en esta máquina; el inicio de sesión y el acceso siguen bajo tu control.",
   "plugin ": "plugin ",
   "as {name}": "como {name}",
   off: "desactivado",
   "{copies} separate copies on disk{value}": "{copies} copias separadas en disco{value}",
   "Agents: {value}. Lockfiles: {value2}. {value3}":
     "Agentes: {value}. Lockfiles: {value2}. {value3}",
-  "Every skill each agent loads for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
-    "Todas las skills que cada agente carga para ti en este equipo, en todos los proyectos. Desactivar una solo cambia la configuración de ese agente, así que los demás agentes la conservan y no se borra nada. Elige un proyecto para ver también sus skills de proyecto. Haz clic en una skill para ver los detalles.",
-  "Which skills each agent loads in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
-    "Qué skills carga cada agente en {span} y si cada una sigue coincidiendo con la versión que instaló vskill. Filtra por agente o por nivel: las skills de proyecto están en esta carpeta, las skills de usuario se aplican a todos los proyectos. Haz clic en una skill para ver los detalles.",
+  "Every skill each agent discovers for you on this machine, in every project. Turning one off changes only that agent's own settings, so other agents keep it and nothing is deleted. Pick a project to see its project skills too. Click a skill for details.":
+    "Todas las skills que cada agente detecta para ti en este equipo, en todos los proyectos. Desactivar una solo cambia la configuración de ese agente, así que los demás agentes la conservan y no se borra nada. Elige un proyecto para ver también sus skills de proyecto. Haz clic en una skill para ver los detalles.",
+  "Which skills each agent discovers in {span}, and whether each still matches the version vskill installed. Filter by agent or by level: project skills live in this folder, user skills apply to every project. Click a skill for details.":
+    "Qué skills detecta cada agente en {span} y si cada una sigue coincidiendo con la versión que instaló vskill. Filtra por agente o por nivel: las skills de proyecto están en esta carpeta, las skills de usuario se aplican a todos los proyectos. Haz clic en una skill para ver los detalles.",
   "{span} is not loaded in this project.": "{span} no se carga en este proyecto.",
   "· showing {length}": "· mostrando {length}",
   "Search skills": "Buscar skills",

@@ -1,3 +1,4 @@
+import type { RuntimeToolInventory, WorkflowCapabilityScope } from "@specweave-studio/contracts";
 import type { OrchestrationV2HistoricalMessage } from "@specweave-studio/contracts";
 import {
   ChatAttachment,
@@ -314,10 +315,14 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     providerThreadId: ProviderThreadId,
     runId: RunId,
     cause: Schema.optional(Schema.Defect()),
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Failed to start run ${this.runId} on ${this.driver} provider thread ${this.providerThreadId}.`;
+    return (
+      this.detail ??
+      `Failed to start run ${this.runId} on ${this.driver} provider thread ${this.providerThreadId}.`
+    );
   }
 }
 
@@ -544,6 +549,13 @@ export interface ProviderAdapterV2HistoricalContext {
 }
 
 export interface ProviderAdapterV2SessionRuntime {
+  /** Read metadata from an already-open native thread. Never starts a process or turn. */
+  readonly inspectWorkflowTools?: (input: {
+    scope: WorkflowCapabilityScope;
+    providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<RuntimeToolInventory>;
+  /** Only PATH is used for dependency lookup; other provider environment values stay private. */
+  readonly workflowExecutionPath?: string;
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly providerSessionId: ProviderSessionId;
