@@ -628,7 +628,8 @@ export function ProjectArtifactShelf(props: {
     true,
     Schema.Boolean,
   );
-  if (artifacts.length === 0) return null;
+  // Only logs or data: the shelf stays, with View all, so they are one click away.
+  if (props.artifacts.length === 0) return null;
   const scroll = (direction: 1 | -1) =>
     rowRef.current?.scrollBy({ left: direction * 360, behavior: "smooth" });
   return (

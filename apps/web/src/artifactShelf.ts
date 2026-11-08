@@ -145,7 +145,7 @@ export function shelfEntryId(artifact: ThreadArtifact): string {
   return artifact.key;
 }
 
-/** Plain-text output nobody reads as a document: run logs, task evidence, files with no extension. */
+/** Plain-text output nobody reads as a document: run logs and task evidence. */
 const PLAIN_TEXT_LOG = /\.(?:txt|log|out|err)$/i;
 
 /**
@@ -157,8 +157,7 @@ const PLAIN_TEXT_LOG = /\.(?:txt|log|out|err)$/i;
 export function isPlainTextLog(path: string): boolean {
   const base = path.replace(/(?::\d+){1,2}$/, "").replace(/[\\/]+$/, "");
   const name = base.slice(Math.max(base.lastIndexOf("/"), base.lastIndexOf("\\")) + 1);
-  if (name.length === 0 || name.startsWith(".")) return false;
-  return PLAIN_TEXT_LOG.test(name) || !name.includes(".");
+  return PLAIN_TEXT_LOG.test(name);
 }
 
 export function shelfCategory(artifact: ThreadArtifact): ShelfCategory {

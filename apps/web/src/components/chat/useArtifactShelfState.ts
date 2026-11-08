@@ -240,7 +240,10 @@ export function readOriginSnapshot(origin: Pick<ShelfOrigin, "environmentId" | "
 export function compactSnapshot(entries: ReadonlyArray<ShelfEntry>): ShelfSnapshotEntry[] {
   const chosen = [
     ...entries.filter((entry) => entry.pinned && !entry.hidden),
-    ...entries.filter((entry) => !entry.pinned && !entry.hidden).slice(0, SNAPSHOT_RECENT),
+    // Logs never reach the project shelf, so they do not spend the budget.
+    ...entries
+      .filter((entry) => !entry.pinned && !entry.hidden && !entry.log)
+      .slice(0, SNAPSHOT_RECENT),
   ];
   const snapshot: ShelfSnapshotEntry[] = [];
   let bytes = 2;

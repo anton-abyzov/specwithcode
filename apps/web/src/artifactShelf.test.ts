@@ -373,7 +373,9 @@ describe("logs", () => {
   it("knows a raw log from a document", () => {
     expect(isPlainTextLog(LOG)).toBe(true);
     expect(isPlainTextLog("/tmp/build.log:12")).toBe(true);
-    expect(isPlainTextLog("/repo/out/run-output")).toBe(true);
+    expect(isPlainTextLog("C:\\work\\reports\\task-T-01.txt")).toBe(true);
+    expect(isPlainTextLog("/repo/README")).toBe(false);
+    expect(isPlainTextLog("/repo/docs/")).toBe(false);
     expect(isPlainTextLog(DOC)).toBe(false);
     expect(isPlainTextLog("/repo/report.html")).toBe(false);
     expect(isPlainTextLog("/repo/.env")).toBe(false);

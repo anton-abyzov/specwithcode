@@ -268,6 +268,18 @@ describe("snapshots", () => {
     expect(JSON.stringify(snapshot).length).toBeLessThanOrEqual(SNAPSHOT_MAX_BYTES);
   });
 
+  it("spends the recent budget on deliverables, not task logs", () => {
+    const [log, doc] = shelfEntries({
+      artifacts: [file(`${ROOT_A}/reports/task-T-04.txt`), file(`${ROOT_A}/reports/summary.md`)],
+      mentionedAt: () => 1,
+      fileChecks: new Map(),
+      pinned: new Set(),
+      hidden: new Set(),
+      now: 0,
+    });
+    expect(compactSnapshot([log!, doc!]).map((entry) => entry.name)).toEqual(["summary.md"]);
+  });
+
   it("drops the least recently opened thread's snapshot past the limit, never its pins", () => {
     const keys = Array.from({ length: SNAPSHOT_THREADS + 1 }, (_, index) =>
       artifactShelfStorageKey({ environmentId: MAC_A, threadId: ThreadId.make(`thread-${index}`) }),
