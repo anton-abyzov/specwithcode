@@ -151,6 +151,14 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   /// Each machine's copy of a project linked across machines, coordinator
   /// first. Empty for a project on one machine.
   public var members: [ProjectMember]
+  /// The other machines the row's copy is linked with, by environment id, as
+  /// its linked project lists them, so a machine this phone never loaded counts.
+  public var linkedMachineIds: [String] = []
+  /// The machine running the coordinator when the row's copy only runs
+  /// workers, followed along later moves; nil when it runs its own.
+  public var coordinatorElsewhereId: String?
+  /// The linked project its copies share; nil for an unlinked project.
+  public var logicalProjectId: String?
 
   public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, isAutomated: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
     self.ref = ref
@@ -473,6 +481,9 @@ public final class ChatSession: Identifiable {
   public var title: String
   /// e.g. "Coordinator · M4" or "Thread · 2 artifacts"
   public var subtitle: String
+  /// A thread's project, as the engine knows it: set even for a subagent's
+  /// child or an archived thread, which are in no project list.
+  public var projectTitle: String?
   public var rows: [TranscriptRow] = []
   /// True from the moment the first cached or live data arrives.
   public var isLoaded = false
@@ -807,6 +818,7 @@ public final class AppModel {
       let summary = thread(t)
       let machine = machine(t.environmentId)
       s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: ChatSession.threadSubtitle(summary?.projectTitle ?? "Thread", machine: machine?.displayName ?? "", isPersonal: summary?.projectRef.flatMap { project($0) }?.kind == .personal), machineLabel: machine?.displayName ?? "", machineOnline: machine?.status.isOnline ?? false)
+      s.projectTitle = summary?.projectTitle
     }
     sessions[target] = s
     return s

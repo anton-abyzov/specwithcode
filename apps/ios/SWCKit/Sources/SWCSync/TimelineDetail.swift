@@ -5,7 +5,7 @@ import Foundation
 public enum TimelineDetail: String, CaseIterable, Sendable, Identifiable {
   /// Results only: your messages, each turn's reply and one fold per turn.
   case concise
-  /// Folded steps: finished turns fold; the running turn shows its steps.
+  /// Folded steps: finished turns fold; the running turn folds each run of steps.
   case normal
   /// Everything: every step, thought and message.
   case verbose
@@ -25,7 +25,7 @@ public enum TimelineDetail: String, CaseIterable, Sendable, Identifiable {
   public var summary: String {
     switch self {
     case .concise: "Hide thinking, tool runs and in-between messages; one line per turn, opened on tap"
-    case .normal: "Fold finished turns; the running turn shows its steps"
+    case .normal: "Fold finished turns and tool groups"
     case .verbose: "Show every step, thought and message"
     }
   }
@@ -76,7 +76,9 @@ public enum TranscriptFolding {
     running: Bool,
     expandedFolds: Set<String>
   ) -> [TranscriptRow] {
-    if active, detail == .normal { return segment }
+    if active, detail == .normal {
+      return foldStepRuns(segment, running: running, expandedFolds: expandedFolds)
+    }
     // Results only never shows thinking, opened or not.
     let rows = detail == .concise ? segment.filter { !$0.isReasoning } : segment
     let lastReply = rows.lastIndex { row in
@@ -121,6 +123,44 @@ public enum TranscriptFolding {
     return folded
   }
 
+  /// Folded steps on a turn still in progress (running, or waiting on you):
+  /// notes, failed steps and requests stay; each run of two or more steps
+  /// folds into one row, and the run the turn is still working on is the live
+  /// row. The rule is docs/transcript-detail.md.
+  static func foldStepRuns(_ segment: [TranscriptRow], running: Bool, expandedFolds: Set<String>) -> [TranscriptRow] {
+    var result: [TranscriptRow] = []
+    var run: [TranscriptRow] = []
+    func flush(trailing: Bool) {
+      defer { run = [] }
+      guard let first = run.first else { return }
+      let live = running && trailing
+      if run.count == 1, !live {
+        result.append(first)
+        return
+      }
+      let id = foldId(for: first)
+      let expanded = expandedFolds.contains(id)
+      result.append(TranscriptRow(id: id, kind: .fold(
+        label: live ? "Working" : "Worked",
+        summary: summary(of: run),
+        failures: 0,
+        expanded: expanded,
+        running: live
+      )))
+      if expanded { result += run }
+    }
+    for row in segment {
+      if row.isFoldableStep {
+        run.append(row)
+      } else {
+        flush(trailing: false)
+        result.append(row)
+      }
+    }
+    flush(trailing: true)
+    return result
+  }
+
   /// "Ran 3 commands · Edited 1 file · 2 searches · 1 agent", or nil for thoughts and notes alone.
   static func summary(of steps: [TranscriptRow]) -> String? {
     var commands = 0, edits = 0, searches = 0, tools = 0, agents = 0
@@ -152,6 +192,16 @@ extension TranscriptRow {
   var isUser: Bool { if case .user = kind { true } else { false } }
   var isAssistant: Bool { if case .assistant = kind { true } else { false } }
   var isReasoning: Bool { if case .reasoning = kind { true } else { false } }
+  /// Thinking, a tool call, a command or a finished agent that did not fail.
+  /// An agent still at work stays visible: its row links to the worker.
+  var isFoldableStep: Bool {
+    switch kind {
+    case .reasoning: true
+    case let .subagent(_, _, isRunning): !isRunning
+    case let .tool(_, _, _, status): status != .failed
+    default: false
+    }
+  }
   /// An approval, question or access request still waiting for the person.
   var awaitsAnswer: Bool {
     switch kind {

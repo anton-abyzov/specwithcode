@@ -491,9 +491,16 @@ it("asks workers for short reports and the coordinator to relay only their outco
   // Report length and the **Blockers:** paragraph come from the runtime response style.
   assert.include(worker, "Your final message is your report");
   assert.include(worker, "Give each path in full");
-  // A worker that works an increment closes it once its last task is done.
-  assert.include(worker, 'ends with "Verify and close NNNN"');
-  assert.include(worker, "close it in this thread without asking");
+  assert.include(
+    worker,
+    "Follow the current request, repository rules and the task's listed files",
+  );
+  assert.include(
+    worker,
+    "For an authorized full increment, record tasks, verify and close per repository rules",
+  );
+  assert.include(worker, "required by an in-scope acceptance gate");
+  assert.notInclude(worker, "close it in this thread without asking");
   assert.notInclude(worker, "<response_style>");
   assert.notInclude(worker, "Studio");
   // Detailed may include steps, so the fixed worker text must not forbid them.
@@ -510,7 +517,8 @@ it("asks workers for short reports and the coordinator to relay only their outco
   assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
   assert.include(coordinator, "do not relay, summarize or repeat it here");
   assert.include(coordinator, "otherwise end the turn without a reply");
-  assert.include(coordinator, "start a worker to verify, review and close it");
+  assert.include(coordinator, "the assignment includes closing the increment");
+  assert.include(coordinator, "delegate only its remaining close checks");
   assert.notInclude(coordinator, "relay its outcome");
   assert.include(worker, "the user reads it in this thread");
   assert.notInclude(coordinator, "not a replay of your steps");
@@ -587,7 +595,8 @@ it("asks a coordinator for an increment on every launch only in a SpecWeave proj
   assert.notInclude(text(true, "w"), line);
   // Workers get the sizing rule on every turn, so a question that later turns
   // into a build still meets it; projects without SpecWeave never see it.
-  const sizing = "When this thread has no increment: If the work grows past a small fix";
+  const sizing =
+    "When no existing increment applies to this work: If the work grows past a small fix";
   assert.include(text(true, "w"), sizing);
   assert.include(text(true, "w"), '`specweave create-increment "<title>"`');
   assert.notInclude(text(false, "w"), sizing);

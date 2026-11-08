@@ -100,6 +100,32 @@ final class AdaptiveLayoutUITests: SWCUITestCase {
     waitForHittable(threads)
   }
 
+  /// A thread's header says it is a thread in its project, and that line opens
+  /// the project's coordinator: in place beside it when wide, by going back on a phone.
+  func testThreadHeaderNamesItsKindAndOpensTheCoordinator() throws {
+    launch(fixture: "long", route: "thread", coordinatorBeside: true)
+    let kind = app.buttons["chat.kind"]
+    // isHittable can stay false on SDK 27 while a tap works: check it exists, then tap where it is.
+    waitFor(kind)
+    XCTAssertTrue(kind.label.hasPrefix("Thread in "), kind.label)
+    saveShot("header-thread-compact")
+    kind.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    waitFor(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "coordinator ·")).firstMatch)
+    saveShot("header-coordinator-compact")
+
+    launch(fixture: "long", route: "thread", coordinatorBeside: true)
+    XCUIDevice.shared.orientation = .landscapeLeft
+    settle()
+    try XCTSkipIf(app.frame.width < 760, "The scene is \(Int(app.frame.width)) points wide; this layout starts at 760")
+    let wideKind = app.buttons["chat.kind"]
+    waitFor(wideKind)
+    saveShot("header-thread-wide")
+    wideKind.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    settle()
+    XCTAssertTrue(wideKind.exists, "The thread stays open beside its coordinator")
+    saveShot("header-thread-wide-after-tap")
+  }
+
   /// The coordinator stays in the left column; beside it are its threads,
   /// then the thread picked from them. The pane switch shows either alone.
   func testCoordinatorStaysLeftWithItsThreadsBeside() throws {

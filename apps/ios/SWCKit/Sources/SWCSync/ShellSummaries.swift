@@ -461,6 +461,11 @@ public enum ShellSummaries {
     var summary = primary.summary
     summary.title = groupLabel(copies, primary: primary, logicalId: logicalId)
     summary.members = members
+    summary.logicalProjectId = logicalId
+    let here = primary.summary.ref.environmentId
+    var named = Set([here])
+    summary.linkedMachineIds = (primary.project.workspaceSettings?.logicalProject?.members ?? []).map(\.environmentId).filter { named.insert($0).inserted }
+    summary.coordinatorElsewhereId = coordinatorElsewhere(primary, among: copies)
     summary.isPinned = copies.contains { $0.summary.isPinned }
     summary.archived = live.isEmpty
     // Automated only when no machine holds it as the person's own.
@@ -495,6 +500,23 @@ public enum ShellSummaries {
     if displayNames.count == 1 { return displayNames[0] }
     if repositoryNames.count == 1 { return repositoryNames[0] }
     return primary.project.title
+  }
+
+  /// The machine a workers-only copy's coordinator moved to, followed along
+  /// later moves, as the web's `coordinatorElsewhere`. Nil when the copy is not
+  /// workers-only, names no successor, or the coordinator is on its own machine.
+  static func coordinatorElsewhere(_ copy: LinkedCopy, among copies: [LinkedCopy]) -> String? {
+    guard let binding = copy.project.workspaceSettings?.coordinatorBinding, binding.state == .transferred, var successor = binding.successor else { return nil }
+    let key = { (ref: ProjectRef) in "\(ref.environmentId):\(ref.projectId)" }
+    var seen = Set([key(copy.summary.ref)])
+    while true {
+      let next = "\(successor.environmentId):\(successor.projectId)"
+      guard seen.insert(next).inserted else { return nil }
+      guard let binding = copies.first(where: { key($0.summary.ref) == next })?.project.workspaceSettings?.coordinatorBinding,
+            binding.state == .transferred, let later = binding.successor else { break }
+      successor = later
+    }
+    return successor.environmentId == copy.summary.ref.environmentId ? nil : successor.environmentId
   }
 
   /// The active coordinator with the highest epoch, as the desktop decides it.

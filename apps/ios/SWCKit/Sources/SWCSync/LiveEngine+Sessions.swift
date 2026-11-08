@@ -473,6 +473,7 @@ extension LiveEngine {
       let title = (shell?.title ?? controller.projection?.thread.title)?.trimmingCharacters(in: .whitespacesAndNewlines)
       if let title, !title.isEmpty { assign(session, \.title, title) }
       if let projectTitle = project?.displayTitle, !projectTitle.isEmpty {
+        assign(session, \.projectTitle, projectTitle)
         assign(session, \.subtitle, ChatSession.threadSubtitle(projectTitle, machine: name, isPersonal: project?.isPersonal == true))
       }
     }

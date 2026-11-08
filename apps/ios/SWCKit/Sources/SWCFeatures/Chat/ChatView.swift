@@ -57,6 +57,9 @@ private struct ChatScreen: View {
   /// The chat's height between its safe areas; shrinks while the keyboard is up.
   @State private var availableHeight: CGFloat = 0
   @State private var increment: IncrementProgress?
+  /// How many of the newest transcript rows are laid out; "Show earlier"
+  /// adds more.
+  @State private var rowLimit = TranscriptWindow.step
   @State private var choosingAttachment = false
   /// Turn folds the person opened, by fold row id.
   @State private var expandedFolds: Set<String> = []
@@ -152,7 +155,7 @@ private struct ChatScreen: View {
 
   /// Beside a thread, another machine's coordinator replaces only this column.
   private func showOrchestrator(_ ref: ProjectRef) {
-    if isBesideCoordinator { router.chosenCoordinator = ref } else { router.open(.project(ref)) }
+    router.chooseCoordinator(ref, besideThread: isBesideCoordinator, in: model)
   }
 
   // MARK: Transcript
@@ -186,7 +189,22 @@ private struct ChatScreen: View {
             emptyTranscript
           }
         }
-        ForEach(visibleRows) { row in
+        let window = TranscriptWindow.shown(visibleRows, limit: rowLimit)
+        if window.hidden > 0 {
+          Button("Show earlier messages") {
+            var change = Transaction()
+            change.disablesAnimations = true
+            withTransaction(change) { rowLimit += TranscriptWindow.step }
+          }
+          .font(.weave(.callout))
+          .foregroundStyle(Color.weave.muted)
+          .buttonStyle(.plain)
+          .frame(maxWidth: .infinity, minHeight: WeaveSize.minTap)
+          .contentShape(Rectangle())
+          .accessibilityHint("\(window.hidden) earlier messages")
+          .accessibilityIdentifier("chat.showEarlier")
+        }
+        ForEach(window.rows) { row in
           TranscriptRowView(
             row: row,
             busyRequests: busyRequests,
@@ -557,13 +575,41 @@ private struct ChatScreen: View {
     switch target {
     case let .aide(ref), let .project(ref):
       let project = model.project(ref)
-      TitleCapsule(title: project?.title ?? session.title, subtitle: session.subtitle, action: { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }) {
+      let kind = ChatKindLine.make(for: target, machine: session.machineLabel, in: model)
+      TitleCapsule(
+        title: project?.title ?? session.title,
+        subtitle: kind?.text ?? session.subtitle,
+        compactSubtitle: kind?.shortText,
+        subtitleSymbol: kind?.symbol,
+        hint: "Opens project settings",
+        action: { router.sheet = .projectSettings(LinkedProjectState.settingsTarget(ref, in: model)) }
+      ) {
         ProjectAvatar(icon: project?.icon.avatarIcon ?? .none, title: project?.title ?? session.title, size: WeaveSize.titleTile)
       }
-      .accessibilityHint("Opens project settings")
     case let .thread(ref):
-      TitleCapsule(title: model.thread(ref)?.title ?? session.title, subtitle: session.subtitle, isPlain: sidebarVisible, action: { router.sheet = .threadInfo(ref) })
-        .accessibilityHint("Shows thread details")
+      let coordinator = router.coordinator(returningFrom: ref, in: model)
+      // Beside the list the machine control moves to the Duo's status rail,
+      // under the system's own indicators, so the line names the machine.
+      let kind = ChatKindLine.make(for: target, machine: session.machineLabel, projectTitle: session.projectTitle, coordinator: coordinator, namesMachine: usesRail, in: model)
+      TitleCapsule(
+        title: model.thread(ref)?.title ?? session.title,
+        subtitle: kind?.text ?? session.subtitle,
+        compactSubtitle: kind?.shortText,
+        subtitleSymbol: kind?.symbol,
+        subtitleLink: coordinatorLink(from: ref, hint: kind?.coordinatorHint),
+        isPlain: sidebarVisible,
+        hint: "Shows thread details",
+        action: { router.sheet = .threadInfo(ref) }
+      )
+    }
+  }
+
+  /// "Thread in specweave" opens the project's coordinator, when it has one;
+  /// the hint is only set then.
+  private func coordinatorLink(from ref: ThreadRef, hint: String?) -> TitleCapsuleLink? {
+    guard let hint else { return nil }
+    return TitleCapsuleLink(hint: hint, identifier: "chat.kind") {
+      withAnimation(.snappy) { router.returnToCoordinator(from: ref, on: nav, wide: wide, in: model) }
     }
   }
 
@@ -713,7 +759,10 @@ private struct ChatScreen: View {
         nav.push(.overview(project))
       }
     case .thread:
-      if let first = session.rows.first(where: \.isRunningSubagent) { withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(id: first.id) } }
+      if let first = session.rows.first(where: \.isRunningSubagent) {
+        reveal(first.id)
+        withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(id: first.id) }
+      }
     }
   }
 
@@ -734,8 +783,8 @@ private struct ChatScreen: View {
         .accessibilityLabel(workingAgents == 1 ? "1 agent working" : "\(workingAgents) agents working")
         .accessibilityIdentifier("chat.agents")
       }
-      // Only a chat with a bound SpecWeave increment shows it; a coordinator
-      // or Aide chat without one shows nothing here.
+      // Only a worker thread with a bound SpecWeave increment shows it; a
+      // coordinator or Aide chat never does.
       if !(isShort && composerFocused), increment != nil || session.plan != nil {
         HStack {
           if let increment {
@@ -827,6 +876,7 @@ private struct ChatScreen: View {
   private var incrementKey: String { "\(target)-\(session.isRunning)-\(session.machineOnline)" }
 
   private func loadIncrement() async {
+    guard ChatKindLine.showsIncrement(target) else { increment = nil; return }
     guard session.machineOnline, !session.isRunning || increment == nil else { return }
     // A failed read keeps what is shown; a read that finds no binding clears it.
     switch try? await model.engine.incrementProgress(for: target) {
@@ -839,7 +889,13 @@ private struct ChatScreen: View {
   private var placeholder: String {
     switch target {
     case .aide: "Ask Aide anything…"
-    case .project: "Message the coordinator…"
+    case let .project(project):
+      // With a thread from another machine beside it, say whose coordinator this is.
+      if isBesideCoordinator, OrchestratorSwitcher.choices(model.project(project)?.members ?? [], current: project).count > 1, !session.machineLabel.isEmpty {
+        "Message the coordinator on \(session.machineLabel)…"
+      } else {
+        "Message the coordinator…"
+      }
     case .thread: sidebarVisible && !session.machineLabel.isEmpty ? "Work on \(session.machineLabel)" : "Message…"
     }
   }
@@ -1033,8 +1089,14 @@ private struct ChatScreen: View {
     }
   }
 
+  /// Lays out enough rows for `id` before scrolling to it.
+  private func reveal(_ id: TranscriptRow.ID) {
+    rowLimit = TranscriptWindow.limit(revealing: id, in: visibleRows, current: rowLimit)
+  }
+
   private func scrollToPlan() {
     guard let row = session.rows.last(where: { if case .plan = $0.kind { true } else { false } }) else { return }
+    reveal(row.id)
     withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: row.id, anchor: .top) }
   }
 }

@@ -17,11 +17,11 @@ struct OrchestratorSwitcher: View {
     if members.count > 1 {
       let viewing = members.first { $0.ref == current }
       Menu {
-        Section("Orchestrator") {
+        Section("Coordinator runs on") {
           ForEach(members) { member in
             Button {
               if member.ref != current {
-                if isBesideCoordinator { router.chosenCoordinator = member.ref } else { router.open(.project(member.ref)) }
+                router.chooseCoordinator(member.ref, besideThread: isBesideCoordinator, in: model)
               }
             } label: {
               if member.ref == current {
@@ -60,7 +60,7 @@ struct OrchestratorSwitcher: View {
       }
       .menuIndicator(.hidden)
       .buttonStyle(.plain)
-      .accessibilityLabel("Orchestrator on \(viewing?.machineLabel ?? "this machine")")
+      .accessibilityLabel("Coordinator on \(viewing?.machineLabel ?? "this machine")")
       .accessibilityHint("Shows another machine's orchestrator for this project")
       .accessibilityIdentifier("orchestrator.switcher")
     }

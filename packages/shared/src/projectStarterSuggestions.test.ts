@@ -202,7 +202,9 @@ describe("buildStarterSuggestions", () => {
     expect(built[0]?.title).toBe("Pick up the handoff for 0887");
     expect(built[0]?.prompt).toContain("specweave pickup 0887-studio-cleanup");
     expect(built[0]?.prompt).toContain(".specweave/increments/0887-studio-cleanup/handoff.md");
-    expect(built[0]?.prompt).toContain("`specweave complete`");
+    expect(built[0]?.prompt).toContain("within the named task's files");
+    expect(built[0]?.prompt).toContain("If the handoff assigns the full increment");
+    expect(built[0]?.prompt).not.toContain("a review in a fresh context");
     expect(built[1]?.title).toBe("Continue increment 0885");
     // A name that is not a plain increment id falls back to the general pickup.
     const odd = buildStarterSuggestions(

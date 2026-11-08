@@ -65,6 +65,9 @@ final class AppRouter {
   /// Remembers the root and its thread across launches. nil in tests and
   /// sample data, so they never write it.
   @ObservationIgnored let lastOpenedStore: LastOpenedStore?
+  /// The machine whose coordinator each project last showed. nil in tests
+  /// and sample data, so they never write it.
+  @ObservationIgnored let coordinatorPicks: CoordinatorPickStore?
   /// The model the router belongs to, read for the default landing when a
   /// thread opened over it is saved.
   @ObservationIgnored weak var model: AppModel?
@@ -73,8 +76,9 @@ final class AppRouter {
   var pendingRestore: LastOpened?
   @ObservationIgnored private var isRestoring = false
 
-  init(lastOpenedStore: LastOpenedStore? = nil, model: AppModel? = nil) {
+  init(lastOpenedStore: LastOpenedStore? = nil, coordinatorPicks: CoordinatorPickStore? = nil, model: AppModel? = nil) {
     self.lastOpenedStore = lastOpenedStore
+    self.coordinatorPicks = coordinatorPicks
     self.model = model
     main.onChange = { [weak self] in self?.navigated() }
   }
@@ -185,9 +189,25 @@ final class AppRouter {
     sidebarShowsAllProjects = false
     linkedThread = nil
     if target.threadRef == nil { chosenCoordinator = nil } else { isDetailCollapsed = false }
-    root = target
+    root = remembered(target)
     main.path = []
     isDrawerOpen = false
+  }
+
+  /// A project opened by its row shows the machine picked last time, as on
+  /// the desktop; a copy opened by name stays that copy.
+  private func remembered(_ target: ChatTarget) -> ChatTarget {
+    guard case let .project(ref) = target, let model, let project = model.project(ref),
+          project.ref == ref, let pick = coordinatorPicks?.pick(for: project) else { return target }
+    return .project(pick)
+  }
+
+  /// Shows another machine's coordinator for a project on several machines
+  /// and remembers it. Beside a thread only the column changes. Viewing never
+  /// moves the coordinator.
+  func chooseCoordinator(_ ref: ProjectRef, besideThread: Bool, in model: AppModel) {
+    if let project = model.project(ref) { coordinatorPicks?.save(ref, for: project) }
+    if besideThread { chosenCoordinator = ref } else { open(.project(ref)) }
   }
 
   /// Pushes a screen onto the main stack and closes the drawer.
@@ -251,8 +271,40 @@ final class AppRouter {
     if model.aide?.ref == project.ref { return .aide(project.ref) }
     if let chosen = chosenCoordinator, project.contains(chosen) { return .project(chosen) }
     if case let .project(chosen)? = root, project.contains(chosen) { return .project(chosen) }
+    if let pick = coordinatorPicks?.pick(for: project) { return .project(pick) }
     if let active = project.members.first(where: \.isCoordinator) { return .project(active.ref) }
     return .project(projectRef)
+  }
+
+  /// The coordinator a thread's "Thread in …" line goes back to: the one the
+  /// walk from the open thread finds, which is the one beside it on a wide
+  /// screen; otherwise the project's coordinator by the rules above, so a
+  /// linked project opens its active copy even on another machine.
+  func coordinator(returningFrom ref: ThreadRef, in model: AppModel) -> ChatTarget? {
+    if sidebarSelection(in: model) == .chat(.thread(ref)), let open = openThreadCoordinator(in: model) { return open }
+    return coordinator(ofThread: ref, in: model)
+  }
+
+  /// Shows the coordinator a thread came from. On a wide screen it is
+  /// already in the column beside the thread: the column comes back if hidden
+  /// and its composer takes focus. Otherwise the stack goes back to it if it is underneath, or
+  /// it opens at the root.
+  func returnToCoordinator(from ref: ThreadRef, on nav: StackNavigator, wide: Bool, in model: AppModel) {
+    guard let coordinator = coordinator(returningFrom: ref, in: model) else { return }
+    if wide, nav === main, besideCoordinator(in: model) == coordinator {
+      if widePanes == .detail { choosePanes(.both, in: model) }
+      pendingComposerFocus = coordinator
+      return
+    }
+    if let index = nav.path.lastIndex(of: .chat(coordinator)) {
+      nav.path.removeSubrange((index + 1)...)
+      return
+    }
+    if nav === main, !main.path.isEmpty, (root ?? landing(in: model)) == coordinator {
+      main.path = []
+      return
+    }
+    open(coordinator)
   }
 
   /// Opens a thread from a chat, unless it is already the one on screen: a

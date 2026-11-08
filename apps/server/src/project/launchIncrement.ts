@@ -121,7 +121,7 @@ export const INCREMENT_SIZING_RULE =
 export const NO_INCREMENT_BRIEF = `If you change code, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
 
 /** A worker in a SpecWeave project that neither named nor inherited an increment. */
-export const UNPLANNED_BRIEF = `No increment is linked to this thread. For a small code change, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
+export const UNPLANNED_BRIEF = `Use the existing increment if the assignment names one or continues its handoff. Apply the following guidance only when no increment applies: for a small code change, run \`specweave small-fix "<why>"\` first. ${INCREMENT_SIZING_RULE}`;
 
 /**
  * Whether a thread starting in `worktreePath` (null: the project) reads
