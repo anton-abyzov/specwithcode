@@ -2791,8 +2791,6 @@ export const es: PhraseCatalog = {
   "Connect automatically": "Conectar automáticamente",
   "Let agents on this machine start work on another computer.":
     "Permitir que los agentes de este equipo inicien trabajo en otro ordenador.",
-  "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
-    "¿Ya estás conectado a él? Abre {link} y elige Añadir para agentes en su fila. No hay nada que copiar. Si no, sigue estos pasos:",
   "Connect command": "Comando de conexión",
   "this machine's ID": "el ID de este equipo",
   "Without its window, run this command on that machine instead:":
@@ -2802,7 +2800,6 @@ export const es: PhraseCatalog = {
   "Invitation from the other machine": "Invitación del otro equipo",
   "swc-machine-…": "swc-machine-…",
   "Add machine": "Añadir equipo",
-  "Choose Allow workers on its card above.": "Elige Permitir workers en su tarjeta de arriba.",
   "Adding a Linux server you rent? Start with the {a}.":
     "¿Añades un servidor Linux que alquilas? Empieza por la {a}.",
   "Linux worker guide": "guía de workers en Linux",

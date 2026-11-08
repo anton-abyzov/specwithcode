@@ -2672,8 +2672,6 @@ export const zh: PhraseCatalog = {
   "Connect automatically": "自动连接",
   "Let agents on this machine start work on another computer.":
     "允许此电脑上的智能体在另一台电脑上开始工作。",
-  "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
-    "已经连接到它了？打开 {link}，在它的那一行选择“为智能体添加”。无需复制任何内容。否则请按以下步骤操作：",
   "Connect command": "连接命令",
   "this machine's ID": "此电脑的 ID",
   "Without its window, run this command on that machine instead:":
@@ -2683,7 +2681,6 @@ export const zh: PhraseCatalog = {
   "Invitation from the other machine": "来自另一台电脑的邀请",
   "swc-machine-…": "swc-machine-…",
   "Add machine": "添加电脑",
-  "Choose Allow workers on its card above.": "在上方它的卡片上选择“允许 worker”。",
   "Adding a Linux server you rent? Start with the {a}.": "要添加租用的 Linux 服务器？请先阅读{a}。",
   "Linux worker guide": "Linux worker 指南",
   "Link SpecWithCode Connect here first, then make a line to paste on your main machine.":

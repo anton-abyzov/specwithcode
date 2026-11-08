@@ -2747,8 +2747,6 @@ export const ko: PhraseCatalog = {
   "Connect automatically": "자동으로 연결",
   "Let agents on this machine start work on another computer.":
     "이 컴퓨터의 에이전트가 다른 컴퓨터에서 작업을 시작하도록 허용합니다.",
-  "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
-    "이미 연결되어 있나요? {link}을(를) 열고 해당 행에서 에이전트용으로 추가를 선택하세요. 복사할 것은 없습니다. 아니라면 다음 단계를 따르세요:",
   "Connect command": "연결 명령",
   "this machine's ID": "이 컴퓨터의 ID",
   "Without its window, run this command on that machine instead:":
@@ -2758,7 +2756,6 @@ export const ko: PhraseCatalog = {
   "Invitation from the other machine": "다른 컴퓨터에서 온 초대",
   "swc-machine-…": "swc-machine-…",
   "Add machine": "컴퓨터 추가",
-  "Choose Allow workers on its card above.": "위의 카드에서 워커 허용을 선택하세요.",
   "Adding a Linux server you rent? Start with the {a}.":
     "임대한 Linux 서버를 추가하나요? {a}부터 시작하세요.",
   "Linux worker guide": "Linux 워커 가이드",

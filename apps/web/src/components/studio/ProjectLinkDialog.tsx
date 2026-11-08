@@ -383,8 +383,8 @@ export function ProjectLinkDialog({
               <CheckIcon className="size-5 shrink-0" aria-hidden />
               <span>
                 The coordinator on {sides?.joiningLabel} is now read-only history. Workers there
-                keep running. Allow workers on {sides?.joiningLabel} in Settings &gt; Machines to
-                send it work.
+                keep running. choose Allow on {sides?.joiningLabel}&apos;s card in Settings &gt;
+                Machines to send it work.
               </span>
             </div>
           ) : sides ? (

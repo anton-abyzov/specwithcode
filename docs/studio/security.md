@@ -7,7 +7,7 @@ hub and Tailscale, and says what SpecWithCode enforces versus what you configure
 ## How machines connect, with or without Tailscale
 
 Tailscale is not required to connect machines. A machine can have several routes: SpecWithCode Connect,
-LAN address, SSH, Tailscale or a public URL. SpecWithCode Connect (**Settings → Connections → SpecWithCode Connect**,
+LAN address, SSH, Tailscale or a public URL. SpecWithCode Connect (**Settings → Machines → SpecWithCode Connect**,
 or `specwithcode connect link`) is the default way to reach a machine from anywhere. What each gives you:
 
 | Route                                                                  | Works off your home network | Notes                                                                                                                                   |

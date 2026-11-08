@@ -230,7 +230,7 @@ needs no Tailscale.
 
 ## Windows Subsystem for Linux
 
-In the Windows desktop app, choose a WSL distro in **Settings → Connections** to run agents and projects
+In the Windows desktop app, choose a WSL distro in **Settings → Machines** to run agents and projects
 there. Install the provider CLIs inside that distro. SpecWithCode installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.

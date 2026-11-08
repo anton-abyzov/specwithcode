@@ -25,7 +25,7 @@ ways; to let your main machine start work on it, see
 [Linux worker](./linux-worker.md).
 
 Open **Settings → Machines** to add or join a machine. A connected remote machine offers
-**Remote control**, or **View** when its grant is read-only. Open a thread from that
+**Open projects**, or **View projects** when its grant is read-only. It needs no worker permission. Open a thread from that
 panel to view its work; closing the panel leaves the current thread unchanged.
 Advanced routes and saved connections are folded below the machine setup controls.
 External MCP services are under **Settings → Integrations → MCP connections**.

@@ -189,7 +189,7 @@ subscription on a VPS.
 
 ## Pair it with your main computer
 
-Replace `<main-machine-environment-id>` below with the environment ID shown under **Settings → Connections** on your main machine; it approves that machine to manage this one.
+Replace `<main-machine-environment-id>` below with the environment ID shown under **Settings → Machines** on your main machine; it approves that machine to manage this one.
 
 On the Linux host, run:
 

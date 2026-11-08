@@ -9,7 +9,7 @@ in once, and you choose what it may do.
 
 ## Get the MCP URL
 
-In **Settings → Connections**, open a saved environment's menu and choose
+In **Settings → Machines**, open a saved environment's menu and choose
 **Copy MCP URL**. The URL is the environment's address followed by `/mcp`, for
 example:
 
@@ -46,7 +46,7 @@ The page names the agent and where its access goes:
   services you trust with it.
 
 Only approve a sign-in you just started. To approve, enter a pairing code from
-**Settings → Connections** or from `specweave-studio auth pairing create` on the
+**Settings → Machines** or from `specweave-studio auth pairing create` on the
 host. A browser already signed in to the environment with permission to manage
 access can approve without a code.
 
@@ -108,7 +108,7 @@ host, run:
 specweave-studio auth mcp-token create --label grok-bot --access read-only --ttl 7d
 ```
 
-- `--label` names the client in **Settings → Connections**.
+- `--label` names the client in **Settings → Machines**.
 - `--access` is the most the token may do: `read-only`, `approval-required`,
   `auto-accept-edits`, `auto` or `full-access`, the same levels as a sign-in.
 - `--ttl` is how long it lasts. It defaults to 30 days.
@@ -155,11 +155,11 @@ allows:
 
 A thread there never runs with more permissions than the lower of the agent's
 access and what that machine lets this one use. Allow workers on a machine in
-**Settings → Connections → Your private machines**; each machine sets what
+**Settings → Machines**, on the line "Agents on <this machine> can start work on <machine>"; each machine sets what
 others may use on it in **Settings → Machines → Who can run work here**.
 
 ## Remove an agent
 
-Approved agents and static tokens appear under **Settings → Connections** like
+Approved agents and static tokens appear under **Settings → Machines** like
 other clients. Revoke one there to cut off its access immediately. A sign-in
 lasts 30 days; after that the agent asks you to approve it again.

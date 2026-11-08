@@ -307,7 +307,7 @@ const addCommand = Command.make("add", {
               : `Renewed ${added.label} at ${added.url}.`,
           "",
           added.change === "added"
-            ? "Open Settings > Machines: with Connect automatically on, your browser pairs with it within a minute. Choose Allow workers there to let coordinators start work on it."
+            ? "Open Settings > Machines: with Connect automatically on, your browser pairs with it within a minute. Then choose Allow on its card, on the line “Agents on … can start work on” that machine."
             : "Browsers add the new address on their own. Workers already allowed there carry over the next time a coordinator uses them.",
           "",
         ].join("\n"),

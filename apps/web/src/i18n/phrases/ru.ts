@@ -2767,8 +2767,6 @@ export const ru: PhraseCatalog = {
   "Connect automatically": "Подключаться автоматически",
   "Let agents on this machine start work on another computer.":
     "Разрешить агентам на этой машине запускать работу на другом компьютере.",
-  "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
-    "Уже подключены к ней? Откройте {link} и выберите «Добавить для агентов» в её строке. Копировать ничего не нужно. Иначе выполните эти шаги:",
   "Connect command": "Команда подключения",
   "this machine's ID": "ID этой машины",
   "Without its window, run this command on that machine instead:":
@@ -2778,7 +2776,6 @@ export const ru: PhraseCatalog = {
   "Invitation from the other machine": "Приглашение с другой машины",
   "swc-machine-…": "swc-machine-…",
   "Add machine": "Добавить машину",
-  "Choose Allow workers on its card above.": "Выберите «Разрешить воркеров» на её карточке выше.",
   "Adding a Linux server you rent? Start with the {a}.":
     "Добавляете арендованный Linux-сервер? Начните с {a}.",
   "Linux worker guide": "руководства по Linux-воркеру",
