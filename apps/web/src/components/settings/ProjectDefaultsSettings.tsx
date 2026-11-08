@@ -7,7 +7,7 @@ import {
   type ProviderInstanceId,
   type WorktreeSubmodules,
 } from "@specweave-studio/contracts";
-import { createModelSelection } from "@specweave-studio/shared/model";
+import { createModelSelection, resolveSelectableModel } from "@specweave-studio/shared/model";
 import {
   carryModelOptions,
   describeCarriedOptions,
@@ -199,7 +199,9 @@ export function ProjectDefaultsSettings({
 
   const catalogModel = (instanceId: ProviderInstanceId | undefined, model: string | undefined) => {
     const entry = entries.find((candidate) => candidate.instanceId === instanceId);
-    const listed = entry?.models.find((candidate) => candidate.slug === model);
+    // Aliases and older slugs resolve the way the pickers resolve them.
+    const slug = entry ? resolveSelectableModel(entry.driverKind, model, entry.models) : null;
+    const listed = entry?.models.find((candidate) => candidate.slug === slug);
     return entry && listed ? { entry, listed } : undefined;
   };
   // Undefined for a custom or not yet listed model: its options are unknown, not missing.

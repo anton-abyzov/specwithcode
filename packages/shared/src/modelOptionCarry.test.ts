@@ -197,6 +197,19 @@ describe("carryModelOptions without a full catalog", () => {
     expect(carried.dropped).toEqual([]);
   });
 
+  it("does not take a thinking toggle for the effort of an unlisted model", () => {
+    const carried = carryModelOptions({
+      previous: [
+        { id: "thinking", value: true },
+        { id: "effort", value: "max" },
+      ],
+      previousDescriptors: undefined,
+      nextDescriptors: COPILOT,
+    });
+    expect(carried.options).toEqual([{ id: "reasoning_effort", value: "high" }]);
+    expect(carried.dropped).toEqual(["Thinking"]);
+  });
+
   it("names a lost option by a readable label when its descriptor is gone", () => {
     const carried = carryModelOptions({
       previous: [{ id: "contextWindow", value: "1m" }],

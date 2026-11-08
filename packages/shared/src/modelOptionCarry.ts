@@ -100,7 +100,9 @@ export function carryModelOptions(input: {
 
   const previousEffort = findEffortDescriptor(input.previousDescriptors);
   const effortSelection = previous.find((selection) =>
-    previousEffort ? selection.id === previousEffort.id : isEffortId(selection.id),
+    previousEffort
+      ? selection.id === previousEffort.id
+      : typeof selection.value === "string" && isEffortId(selection.id),
   );
   if (effortSelection) handled.add(effortSelection.id);
   if (typeof effortSelection?.value === "string") {
