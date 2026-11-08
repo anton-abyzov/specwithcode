@@ -57,6 +57,9 @@ private struct ChatScreen: View {
   /// The chat's height between its safe areas; shrinks while the keyboard is up.
   @State private var availableHeight: CGFloat = 0
   @State private var increment: IncrementProgress?
+  /// How many of the newest transcript rows are laid out; "Show earlier"
+  /// adds more.
+  @State private var rowLimit = TranscriptWindow.step
   @State private var choosingAttachment = false
   /// Turn folds the person opened, by fold row id.
   @State private var expandedFolds: Set<String> = []
@@ -186,7 +189,22 @@ private struct ChatScreen: View {
             emptyTranscript
           }
         }
-        ForEach(visibleRows) { row in
+        let window = TranscriptWindow.shown(visibleRows, limit: rowLimit)
+        if window.hidden > 0 {
+          Button("Show earlier messages") {
+            var change = Transaction()
+            change.disablesAnimations = true
+            withTransaction(change) { rowLimit += TranscriptWindow.step }
+          }
+          .font(.weave(.callout))
+          .foregroundStyle(Color.weave.muted)
+          .buttonStyle(.plain)
+          .frame(maxWidth: .infinity, minHeight: WeaveSize.minTap)
+          .contentShape(Rectangle())
+          .accessibilityHint("\(window.hidden) earlier messages")
+          .accessibilityIdentifier("chat.showEarlier")
+        }
+        ForEach(window.rows) { row in
           TranscriptRowView(
             row: row,
             busyRequests: busyRequests,
@@ -741,7 +759,10 @@ private struct ChatScreen: View {
         nav.push(.overview(project))
       }
     case .thread:
-      if let first = session.rows.first(where: \.isRunningSubagent) { withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(id: first.id) } }
+      if let first = session.rows.first(where: \.isRunningSubagent) {
+        reveal(first.id)
+        withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(id: first.id) }
+      }
     }
   }
 
@@ -1068,8 +1089,14 @@ private struct ChatScreen: View {
     }
   }
 
+  /// Lays out enough rows for `id` before scrolling to it.
+  private func reveal(_ id: TranscriptRow.ID) {
+    rowLimit = TranscriptWindow.limit(revealing: id, in: visibleRows, current: rowLimit)
+  }
+
   private func scrollToPlan() {
     guard let row = session.rows.last(where: { if case .plan = $0.kind { true } else { false } }) else { return }
+    reveal(row.id)
     withAnimation(.easeOut(duration: 0.3)) { position.scrollTo(id: row.id, anchor: .top) }
   }
 }
