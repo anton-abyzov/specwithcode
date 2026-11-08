@@ -93,14 +93,16 @@ for (const theme of ["light", "dark"]) {
   check(`${theme}: a toast names Ultracode and Fast mode`, () =>
     assert.ok(
       toast.some((text) =>
-        text.includes("GitHub Copilot has no Ultracode or Fast mode, so they were left off."),
+        text.includes(
+          "Claude Opus 5.5 on GitHub Copilot has no Ultracode or Fast mode, so they were left off.",
+        ),
       ),
       JSON.stringify(toast),
     ),
   );
   const copilotLine = await unsupported();
   check(`${theme}: the row names what Copilot lacks`, () =>
-    assert.equal(copilotLine, "GitHub Copilot has no Fast mode or Ultracode."),
+    assert.equal(copilotLine, "Claude Opus 5.5 on GitHub Copilot has no Fast mode or Ultracode."),
   );
   await shot(`${theme}-copilot`);
 }
@@ -119,7 +121,9 @@ check("Codex takes Claude's Fast mode as its Fast service tier", () =>
   }),
 );
 const codexLine = await unsupported();
-check("the row names what Codex lacks", () => assert.equal(codexLine, "Codex has no Ultracode."));
+check("the row names what Codex lacks", () =>
+  assert.equal(codexLine, "GPT-5.5 on Codex has no Ultracode."),
+);
 await shot("light-codex");
 
 check("no page errors", () => assert.deepEqual(errors, []));

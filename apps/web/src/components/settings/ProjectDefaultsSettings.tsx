@@ -197,37 +197,54 @@ export function ProjectDefaultsSettings({
     return true;
   };
 
+  const catalogModel = (instanceId: ProviderInstanceId | undefined, model: string | undefined) => {
+    const entry = entries.find((candidate) => candidate.instanceId === instanceId);
+    const listed = entry?.models.find((candidate) => candidate.slug === model);
+    return entry && listed ? { entry, listed } : undefined;
+  };
+  // Undefined for a custom or not yet listed model: its options are unknown, not missing.
   const descriptorsFor = (
     instanceId: ProviderInstanceId | undefined,
     model: string | undefined,
   ) => {
-    const entry = entries.find((candidate) => candidate.instanceId === instanceId);
-    return entry && model
+    const found = catalogModel(instanceId, model);
+    return found && model
       ? getProviderModelCapabilities(
-          entry.models,
+          found.entry.models,
           model,
-          entry.driverKind,
+          found.entry.driverKind,
           settings.planModeEnabled,
         ).optionDescriptors
       : undefined;
   };
+  // "Claude Sonnet 5.5", or "Claude Opus 5.5 on GitHub Copilot" when the provider is not its maker's.
+  const modelLabel = (instanceId: ProviderInstanceId, model: string) => {
+    const found = catalogModel(instanceId, model);
+    const name = found?.listed.name || model;
+    const provider = found?.entry.displayName;
+    return provider && !name.toLowerCase().startsWith(provider.split(" ")[0]!.toLowerCase())
+      ? `${name} on ${provider}`
+      : name;
+  };
   // A new provider or model keeps the options it can run; the rest are named, not lost.
   const changeModel = (instanceId: ProviderInstanceId, model: string) => {
+    // Several machines with different defaults: no one machine's options speak for the rest.
+    if (mixedModel) {
+      setModel(createModelSelection(instanceId, model));
+      return;
+    }
     const carried = carryModelOptions({
       previous: selection?.options,
       previousDescriptors: descriptorsFor(selection?.instanceId, selection?.model),
       nextDescriptors: descriptorsFor(instanceId, model),
     });
     if (!setModel(createModelSelection(instanceId, model, carried.options))) return;
-    const providerName =
-      entries.find((candidate) => candidate.instanceId === instanceId)?.displayName ?? model;
-    const note = describeCarriedOptions(carried, providerName);
+    const note = describeCarriedOptions(carried, modelLabel(instanceId, model));
     if (note) toastManager.add({ type: "info", title: "Default model options", description: note });
   };
-  const missingOptions =
-    selection && activeEntry && !mixedModel
-      ? missingCommonOptions(descriptorsFor(selection.instanceId, selection.model))
-      : [];
+  const selectionDescriptors =
+    selection && !mixedModel ? descriptorsFor(selection.instanceId, selection.model) : undefined;
+  const missingOptions = selectionDescriptors ? missingCommonOptions(selectionDescriptors) : [];
 
   const modelRow = (
     <SettingsRow
@@ -241,9 +258,9 @@ export function ProjectDefaultsSettings({
           {isProjectScope
             ? tx("Model for new threads in this project.")
             : tx("Default model for new threads. Projects can override it.")}
-          {missingOptions.length > 0 && activeEntry ? (
+          {missingOptions.length > 0 && selection ? (
             <span className="block" data-default-model-unsupported>
-              {`${activeEntry.displayName} has no ${joinLabels(missingOptions)}.`}
+              {`${modelLabel(selection.instanceId, selection.model)} has no ${joinLabels(missingOptions)}.`}
             </span>
           ) : null}
         </>

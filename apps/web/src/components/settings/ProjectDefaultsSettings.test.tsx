@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   environment: {} as typeof DEFAULT_SERVER_SETTINGS,
   target: {} as ReturnType<typeof resolveProjectSettings>,
   mixed: false,
+  mixedModel: false,
   scope: "environment" as "environment" | "project",
   update: vi.fn(),
   folderCheck: null as unknown,
@@ -59,7 +60,9 @@ vi.mock("./SettingsScopeContext", () => ({
 }));
 vi.mock("./useScopedSettings", () => ({
   useScopedSettings: () => state.target.settings,
-  useScopedSettingsMixed: (keys: string[]) => keys.includes("defaultThreadEnvMode") && state.mixed,
+  useScopedSettingsMixed: (keys: string[]) =>
+    (keys.includes("defaultThreadEnvMode") && state.mixed) ||
+    (keys.includes("defaultModelSelection") && state.mixedModel),
   useScopedSettingSource: () => "environment",
   useUpdateScopedSettings: () => state.update,
 }));
@@ -140,6 +143,7 @@ beforeEach(() => {
   state.environment = DEFAULT_SERVER_SETTINGS;
   state.target = resolveProjectSettings(state.environment, project, null, null);
   state.mixed = false;
+  state.mixedModel = false;
   state.scope = "environment";
   state.update.mockClear();
   state.folderCheck = null;
@@ -431,9 +435,69 @@ describe("default model options", () => {
     expect(toastAdd).toHaveBeenCalledWith(
       expect.objectContaining({
         type: "info",
-        description: "GitHub Copilot has no Ultracode or Fast mode, so they were left off.",
+        description:
+          "Claude Opus 5.5 on GitHub Copilot has no Ultracode or Fast mode, so they were left off.",
       }),
     );
+  });
+
+  it("carries no options when machines with different defaults are edited together", () => {
+    withDefault({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      options: [
+        { id: "effort", value: "max" },
+        { id: "fastMode", value: true },
+      ],
+    });
+    state.mixedModel = true;
+    render();
+    expect(unsupportedLine()).toHaveLength(0);
+    act(() => state.picker!.onInstanceModelChange("acpRegistry_copilot", "claude-opus-5.5"));
+    expect(state.update).toHaveBeenCalledWith({
+      defaultModelSelection: { instanceId: "acpRegistry_copilot", model: "claude-opus-5.5" },
+    });
+    expect(toastAdd).not.toHaveBeenCalled();
+  });
+
+  it("names no missing options for a model the provider has not listed", () => {
+    withDefault({ instanceId: "claudeAgent", model: "my-custom-claude" });
+    render();
+    expect(unsupportedLine()).toHaveLength(0);
+  });
+
+  it("names the model, not just its maker, when a Claude model lacks an option", () => {
+    state.providers = [
+      {
+        ...CLAUDE,
+        models: [
+          ...CLAUDE.models,
+          {
+            slug: "claude-sonnet-5-5",
+            name: "Claude Sonnet 5.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Effort",
+                  type: "select",
+                  options: [level("high", "High"), level("xhigh", "Extra High")],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    state.environment = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+    } as unknown as typeof DEFAULT_SERVER_SETTINGS;
+    state.target = resolveProjectSettings(state.environment, project, null, null);
+    render();
+    const [line] = unsupportedLine();
+    expect(line?.children.join("")).toBe("Claude Sonnet 5.5 has no Fast mode or Ultracode.");
   });
 
   it("names the options the chosen provider lacks on the row", () => {
@@ -444,6 +508,8 @@ describe("default model options", () => {
     });
     render();
     const [line] = unsupportedLine();
-    expect(line?.children.join("")).toBe("GitHub Copilot has no Fast mode or Ultracode.");
+    expect(line?.children.join("")).toBe(
+      "Claude Opus 5.5 on GitHub Copilot has no Fast mode or Ultracode.",
+    );
   });
 });

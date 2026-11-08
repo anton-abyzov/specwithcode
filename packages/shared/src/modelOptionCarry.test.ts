@@ -168,6 +168,74 @@ describe("carryModelOptions", () => {
   });
 });
 
+describe("carryModelOptions without a full catalog", () => {
+  it("carries nothing and says so when the next model has not listed its options", () => {
+    const carried = carryModelOptions({
+      previous: [{ id: "effort", value: "high" }],
+      previousDescriptors: CLAUDE,
+      nextDescriptors: undefined,
+    });
+    expect(carried).toEqual({ options: [], dropped: [], adjusted: [], unknown: true });
+    expect(describeCarriedOptions(carried, "my-custom-model")).toBe(
+      "my-custom-model has not listed its options yet, so effort and speed start at its defaults.",
+    );
+  });
+
+  it("maps effort and the Fast tier from a previous model that is no longer listed", () => {
+    const carried = carryModelOptions({
+      previous: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "serviceTier", value: "priority" },
+      ],
+      previousDescriptors: undefined,
+      nextDescriptors: CLAUDE,
+    });
+    expect(carried.options).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    expect(carried.dropped).toEqual([]);
+  });
+
+  it("names a lost option by a readable label when its descriptor is gone", () => {
+    const carried = carryModelOptions({
+      previous: [{ id: "contextWindow", value: "1m" }],
+      previousDescriptors: undefined,
+      nextDescriptors: COPILOT,
+    });
+    expect(carried.dropped).toEqual(["Context window"]);
+  });
+
+  it("says when Ultrafast becomes Fast", () => {
+    const ultrafast: ReadonlyArray<ProviderOptionDescriptor> = [
+      {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [
+          { id: "default", label: "Standard", isDefault: true },
+          level("priority", "Fast"),
+          level("ultrafast", "Ultrafast"),
+        ],
+      },
+    ];
+    const toCodex = carryModelOptions({
+      previous: [{ id: "serviceTier", value: "ultrafast" }],
+      previousDescriptors: ultrafast,
+      nextDescriptors: CODEX,
+    });
+    expect(toCodex.options).toEqual([{ id: "serviceTier", value: "priority" }]);
+    expect(toCodex.adjusted).toEqual(["Ultrafast → Fast"]);
+    const toClaude = carryModelOptions({
+      previous: [{ id: "serviceTier", value: "ultrafast" }],
+      previousDescriptors: ultrafast,
+      nextDescriptors: CLAUDE,
+    });
+    expect(toClaude.options).toEqual([{ id: "fastMode", value: true }]);
+    expect(toClaude.adjusted).toEqual(["Ultrafast → Fast mode"]);
+  });
+});
+
 describe("missingCommonOptions", () => {
   it("names what each provider lacks", () => {
     expect(missingCommonOptions(CLAUDE)).toEqual([]);

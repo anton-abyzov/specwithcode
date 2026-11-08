@@ -3,7 +3,7 @@ import type {
   ProviderOptionSelection,
 } from "@specweave-studio/contracts";
 
-import { findEffortDescriptor, resolveEffort } from "./effortLevel.ts";
+import { findEffortDescriptor, isEffortId, resolveEffort } from "./effortLevel.ts";
 import { upgradeLegacyUltracodeEffort } from "./model.ts";
 
 /**
@@ -18,6 +18,8 @@ type Descriptors = ReadonlyArray<ProviderOptionDescriptor> | null | undefined;
 type Selections = ReadonlyArray<ProviderOptionSelection> | null | undefined;
 
 const FAST_TIER_LABELS = new Set(["fast", "ultrafast"]);
+// Codex tier ids, for a previous model whose catalog is no longer listed.
+const FAST_TIER_IDS = new Set(["priority", "fast", "ultrafast"]);
 
 function fastTierChoice(descriptors: Descriptors, ultrafast = false) {
   const tier = descriptors?.find(
@@ -60,6 +62,8 @@ export function missingCommonOptions(descriptors: Descriptors): ReadonlyArray<st
 
 export interface CarriedModelOptions {
   readonly options: ReadonlyArray<ProviderOptionSelection>;
+  /** The next model has not listed its options, so nothing could be carried. */
+  readonly unknown?: true;
   /** Options the new model has no equivalent for, by label. */
   readonly dropped: ReadonlyArray<string>;
   /** Options kept at a different value, e.g. "Effort Max → High". */
@@ -83,7 +87,12 @@ export function carryModelOptions(input: {
     (input.previousDescriptors
       ? upgradeLegacyUltracodeEffort(input.previousDescriptors, input.previous)
       : input.previous) ?? [];
-  const next = input.nextDescriptors ?? [];
+  if (!input.nextDescriptors) {
+    return previous.length > 0
+      ? { options: [], dropped: [], adjusted: [], unknown: true }
+      : { options: [], dropped: [], adjusted: [] };
+  }
+  const next = input.nextDescriptors;
   const options: Array<ProviderOptionSelection> = [];
   const dropped: Array<string> = [];
   const adjusted: Array<string> = [];
@@ -91,9 +100,9 @@ export function carryModelOptions(input: {
 
   const previousEffort = findEffortDescriptor(input.previousDescriptors);
   const effortSelection = previous.find((selection) =>
-    previousEffort ? selection.id === previousEffort.id : false,
+    previousEffort ? selection.id === previousEffort.id : isEffortId(selection.id),
   );
-  if (previousEffort && effortSelection) handled.add(effortSelection.id);
+  if (effortSelection) handled.add(effortSelection.id);
   if (typeof effortSelection?.value === "string") {
     let resolved = resolveEffort(effortSelection.value, next);
     // An Ultracode effort level on a model without Ultracode keeps its Extra High.
@@ -133,13 +142,24 @@ export function carryModelOptions(input: {
       ? choiceLabel(input.previousDescriptors, "serviceTier", tier.value).toLowerCase()
       : null;
   if (fastMode) handled.add("fastMode");
-  if (tier && tierLabel !== null && FAST_TIER_LABELS.has(tierLabel)) handled.add("serviceTier");
+  const tierValue = typeof tier?.value === "string" ? tier.value : null;
+  if (tierValue !== null && (FAST_TIER_LABELS.has(tierLabel ?? "") || FAST_TIER_IDS.has(tierValue)))
+    handled.add("serviceTier");
+  const wantsUltrafast = tierLabel === "ultrafast" || tierValue === "ultrafast";
   const wantsFast = fastMode?.value === true || handled.has("serviceTier");
   if (wantsFast) {
-    const nextTier = fastTierChoice(next, tierLabel === "ultrafast");
-    if (hasBoolean(next, "fastMode")) options.push({ id: "fastMode", value: true });
-    else if (nextTier) options.push({ id: nextTier.optionId, value: nextTier.value });
-    else dropped.push("Fast mode");
+    const nextTier = fastTierChoice(next, wantsUltrafast);
+    if (hasBoolean(next, "fastMode")) {
+      options.push({ id: "fastMode", value: true });
+      if (wantsUltrafast) adjusted.push("Ultrafast → Fast mode");
+    } else if (nextTier) {
+      options.push({ id: nextTier.optionId, value: nextTier.value });
+      if (
+        wantsUltrafast &&
+        choiceLabel(next, nextTier.optionId, nextTier.value).toLowerCase() !== "ultrafast"
+      )
+        adjusted.push("Ultrafast → Fast");
+    } else dropped.push("Fast mode");
   } else if (fastMode && hasBoolean(next, "fastMode")) {
     options.push(fastMode);
   }
@@ -162,17 +182,28 @@ export function carryModelOptions(input: {
       selection.value === false ||
       (before?.type === "select" &&
         before.options.some((option) => option.id === selection.value && option.isDefault));
-    if (!isDefault) dropped.push(before?.label ?? selection.id);
+    if (!isDefault) dropped.push(before?.label ?? optionIdLabel(selection.id));
   }
 
   return { options, dropped, adjusted };
 }
 
+/** "contextWindow" → "Context window", for an option whose descriptor is gone. */
+function optionIdLabel(id: string): string {
+  const words = id
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** One sentence for a toast, or null when nothing changed. */
 export function describeCarriedOptions(
-  carried: Pick<CarriedModelOptions, "dropped" | "adjusted">,
+  carried: Pick<CarriedModelOptions, "dropped" | "adjusted" | "unknown">,
   modelLabel: string,
 ): string | null {
+  if (carried.unknown)
+    return `${modelLabel} has not listed its options yet, so effort and speed start at its defaults.`;
   const parts = [
     carried.dropped.length > 0
       ? `${modelLabel} has no ${joinLabels(carried.dropped)}, so ${
