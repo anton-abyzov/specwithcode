@@ -47,7 +47,15 @@ const written: Record<string, string[]> = {};
 const ready = { supported: true, microphone: "granted" as const, reason: null };
 
 /** One composer: the coordinator's or a thread's, each with its own box. */
-function Composer({ name, keybindings }: { name: string; keybindings: ResolvedKeybindingsConfig }) {
+function Composer({
+  name,
+  keybindings,
+  disabled = false,
+}: {
+  name: string;
+  keybindings: ResolvedKeybindingsConfig;
+  disabled?: boolean;
+}) {
   const ref = useRef<HTMLFormElement | null>(null);
   const dictation = useVoiceDictation(() => undefined, name, {
     insert: (text) => {
@@ -55,7 +63,7 @@ function Composer({ name, keybindings }: { name: string; keybindings: ResolvedKe
     },
   });
   sessions[name] = dictation;
-  useDictationShortcut({ dictation, root: ref, keybindings });
+  useDictationShortcut({ dictation, root: ref, keybindings, disabled });
   return (
     <form ref={ref} data-name={name}>
       <textarea aria-label={name} />
@@ -288,6 +296,24 @@ describe("dictation shortcut", () => {
     expect(written.thread).toEqual(["late words"]);
     expect(sessions.thread!.phase).toBe("idle");
     expect(sessions.thread!.writing).toBe(false);
+  });
+
+  it("does nothing when the focused thread composer waits on an approval or a choice", async () => {
+    await act(async () => {
+      root.render(
+        <>
+          <Composer name="coordinator" keybindings={DEFAULT_RESOLVED_KEYBINDINGS} />
+          <Composer name="thread" keybindings={DEFAULT_RESOLVED_KEYBINDINGS} disabled />
+        </>,
+      );
+    });
+    box("coordinator").focus();
+    box("thread").focus();
+    const event = await press();
+    expect(event.defaultPrevented).toBe(true);
+    expect(sessions.thread!.active).toBe(false);
+    expect(sessions.coordinator!.active).toBe(false);
+    expect(state.openMicrophone).not.toHaveBeenCalled();
   });
 
   it("leaves the key to the browser where dictation cannot run", async () => {
