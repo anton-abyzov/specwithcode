@@ -422,7 +422,10 @@ public actor RelayClient {
       request.setValue("Bearer " + jwt, forHTTPHeaderField: "Authorization")
       do {
         return try await send(request)
-      } catch let error as ConnectError where error.isRenewable && !refresh {
+      } catch let error as ConnectError where error.isRenewable {
+        // The bearer is the Clerk session itself: refused again with a fresh
+        // one, the session is over.
+        guard !refresh else { tokens = [:]; throw ConnectError.signedOut }
         refresh = true
       }
     }
@@ -433,7 +436,17 @@ public actor RelayClient {
   private func dpopRequest(path: String, method: String, scopes: [String], body: Data?) async throws -> Data {
     var refresh = false
     while true {
-      let (token, key) = try await accessToken(scopes: scopes, refresh: refresh)
+      let token: String
+      let key: any DpopKey
+      do {
+        (token, key) = try await accessToken(scopes: scopes, refresh: refresh)
+      } catch let error as ConnectError where error.isRenewable {
+        // The exchange checks the Clerk session itself: refused with a fresh
+        // Clerk token, the session is over.
+        guard !refresh else { tokens = [:]; throw ConnectError.signedOut }
+        refresh = true
+        continue
+      }
       var request = try makeRequest(path, method: method)
       request.setValue("DPoP \(token)", forHTTPHeaderField: "Authorization")
       request.setValue(try DpopProof.make(key: key, method: method, url: request.url!, accessToken: token, now: now()), forHTTPHeaderField: "DPoP")
@@ -444,6 +457,8 @@ public actor RelayClient {
       do {
         return try await send(request)
       } catch let error as ConnectError where error.isRenewable && !refresh {
+        // A resource refusal after a fresh exchange is the relay's token or
+        // proof, not the account, so the second one is thrown as it is.
         refresh = true
       }
     }

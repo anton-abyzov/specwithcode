@@ -24,6 +24,7 @@ enum RelayFixture {
   static let online = #"{"environmentId":"env-1","status":"online","checkedAt":"2026-10-19T10:00:00.000Z"}"#
   static let offline = #"{"environmentId":"env-2","status":"offline","checkedAt":"2026-10-19T10:00:00.000Z","offlineReason":"endpoint_unreachable"}"#
   static let authInvalid = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"invalid_dpop","traceId":"t"}"#
+  static let invalidBearer = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"invalid_bearer","traceId":"t"}"#
   static let upstreamUnavailable = #"{"_tag":"RelayInternalError","code":"internal_error","reason":"upstream_unavailable","traceId":"t"}"#
   static let timedOut = #"{"_tag":"RelayEnvironmentEndpointTimedOutError","code":"environment_endpoint_timed_out","traceId":"t"}"#
 
@@ -79,6 +80,31 @@ enum RelayFixture {
     let environments = try await client(fake, session: session).environments()
     #expect(environments.count == 2)
     #expect(session.refreshes == [false, true])
+  }
+
+  @Test func a401WithAFreshTokenMeansSignedOut() async {
+    let session = FakeSession(["stale", "fresh"])
+    let fake = FakeHTTP { _ in (401, RelayFixture.invalidBearer) }
+    await #expect(throws: ConnectError.signedOut) { try await client(fake, session: session).environments() }
+    #expect(session.refreshes == [false, true])
+  }
+
+  @Test func aRefusedExchangeWithAFreshTokenMeansSignedOut() async {
+    let session = FakeSession(["stale", "fresh"])
+    let fake = FakeHTTP { request in
+      request.url?.path == "/v1/client/dpop-token" ? (401, RelayFixture.invalidBearer) : (200, RelayFixture.connect)
+    }
+    await #expect(throws: ConnectError.signedOut) { try await client(fake, session: session).connect("env-1", deviceId: "device-1") }
+    #expect(session.refreshes == [false, true])
+  }
+
+  @Test func aResourceRefusalAfterAFreshExchangeIsNotASignOut() async {
+    let fake = FakeHTTP { request in
+      request.url?.path == "/v1/client/dpop-token" ? (200, RelayFixture.token) : (401, RelayFixture.authInvalid)
+    }
+    await #expect(throws: ConnectError.relay(status: 401, code: "auth_invalid", reason: "invalid_dpop")) {
+      try await client(fake).connect("env-1", deviceId: "device-1")
+    }
   }
 
   @Test func signedOutStopsBeforeTheNetwork() async {

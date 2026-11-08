@@ -11,10 +11,12 @@ import SWCWire
   nonisolated static let deviceId = "device-1"
   nonisolated static let tunnel = "https://env-1.tunnels.example.com"
   nonisolated static let removed = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"device_removed","traceId":"t"}"#
+  /// The relay no longer accepts the Clerk session, fresh token or not.
+  nonisolated static let expired = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"invalid_bearer","traceId":"t"}"#
 
   /// What the fake relay refuses with `device_removed`, changeable mid-test.
   final class RelayRules: Sendable {
-    enum Refusal { case none, connect, tokenExchange }
+    enum Refusal { case none, connect, tokenExchange, sessionRejected }
     /// What `POST /v1/client/removal-status` answers; `unreachable` drops the connection.
     enum RemovalStatus { case removed, notRemoved, unreachable }
     private let state = Mutex<(refusal: Refusal, removeCurrent: Bool, removalStatus: RemovalStatus)>((.none, false, .notRemoved))
@@ -62,6 +64,7 @@ import SWCWire
     rules.removalStatus = removalStatus
     let relay = FakeHTTP { request in
       let refusal = rules.refusal
+      if refusal == .sessionRejected, request.url?.path != "/v1/client/removal-status" { return (401, Self.expired) }
       switch request.url?.path {
       case "/v1/client/dpop-token":
         return refusal == .tokenExchange ? (401, Self.removed) : (200, #"{"access_token":"relay-at","token_type":"DPoP","expires_in":300}"#)
@@ -131,6 +134,21 @@ import SWCWire
     let exchange = try #require(h.relay.requests(path: "/v1/client/dpop-token").first)
     let body = String(decoding: exchange.httpBody ?? Data(), as: UTF8.self)
     #expect(body.contains("device_id=\(Self.deviceId)"))
+  }
+
+  /// The account card and the computers read one state: a session the relay
+  /// rejects shows signed out on both, and stays signed out after relaunch.
+  @Test func aRejectedSessionShowsSignedOutEverywhere() async throws {
+    let h = try await harness()
+    #expect(await until { h.model.machines.first?.status == .connected })
+    #expect(h.model.connect?.isSignedIn == true)
+    h.rules.refusal = .sessionRejected
+    await h.engine.connectRefresh()
+    #expect(await until { h.model.connect?.isSignedIn == false })
+    #expect(h.account.currentUser == nil, "Clerk's cached user must not bring 'signed in' back")
+    #expect(h.account.signOutCount == 1)
+    #expect(h.model.connect?.wasRemoved == false)
+    #expect(h.model.machines.count == 1, "The computer stays listed and reconnects after sign-in")
   }
 
   @Test func refusedConnectSignsOutAndSaysWhy() async throws {
