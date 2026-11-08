@@ -879,10 +879,17 @@ export const ru: PhraseCatalog = {
   "About this list: sources and limits": "Об этом списке: источники и ограничения",
   "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.":
     "{value} «Включено» значит, что запись включена в своём файле; вход и доступность сессии не проверяются.",
-  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
-    "{value}Плагины учитываются, только когда включены. Изменения вносятся только в пользовательские файлы, каждое сначала показывается и сохраняется в резервной копии, чтобы его можно было отменить. «Копировать расположение» копирует файл и ключ, но никогда не команду, URL или секреты. Коннекторы claude.ai и другие коннекторы аккаунтов хранятся в аккаунте, а не в файлах, поэтому их нет в списке. Управляемые настройки, конфигурации родительских папок и альтернативные профили клиентов не учитываются. Совпадение имён не доказывает, что серверы или аккаунты совпадают.",
-  "Scanned {value} · Tools pick up changes when they next start":
-    "Просканировано {value} · Инструменты подхватят изменения при следующем запуске",
+  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
+    "{value}Плагины учитываются, только когда включены. Изменения вносятся только в пользовательские файлы, каждое сначала показывается и сохраняется в резервной копии, чтобы его можно было отменить. «Копировать расположение» копирует файл и ключ, но никогда не команду, URL или секреты. Кэшированные приложения аккаунта Codex показаны в списке; их текущий доступ к аккаунту не проверяется. Коннекторов аккаунта без локального объявления или кэша в списке нет. Управляемые настройки, конфигурации родительских папок и альтернативные профили клиентов не учитываются. Совпадение имён не доказывает, что серверы или аккаунты совпадают.",
+  "Scanned {value} · Running sessions may keep their previous configuration":
+    "Просканировано {value} · Запущенные сеансы могут сохранять прежнюю конфигурацию",
+  "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.":
+    "Конфигурация на этой машине. Загруженные инструкции, инструменты среды выполнения и вход не проверяются. У других машин своя конфигурация.",
+  "Account app cached": "Приложение аккаунта в кэше",
+  "Skills enabled": "Навыки включены",
+  "Skills disabled": "Навыки выключены",
+  "Enabled in config": "Включено в конфигурации",
+  "Disabled in config": "Выключено в конфигурации",
   "{value}Connect this machine to inspect its MCP configurations.":
     "{value}Подключите эту машину, чтобы проверить её конфигурации MCP.",
   "Filesystem read access is required to inspect configurations on this machine.":

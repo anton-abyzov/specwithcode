@@ -617,13 +617,17 @@ export function ConnectionMatrix({
     selected?.plugin !== undefined
       ? plugins.find((p) => p.provider === selected.provider && p.label === selected.plugin)
       : undefined;
-  /** An account plugin's switch reaches only its skills, so its state names them. */
+  /** Configuration and cached account entries do not establish runtime availability. */
   const pluginState = (plugin: (typeof plugins)[number]) =>
-    plugin.account && plugin.switchable !== false
-      ? `Skills ${plugin.enabled ? "on" : "off"}`
+    plugin.account
+      ? plugin.switchable === false
+        ? tx("Account app cached")
+        : plugin.enabled
+          ? tx("Skills enabled")
+          : tx("Skills disabled")
       : plugin.enabled
-        ? "On"
-        : "Off";
+        ? tx("Enabled in config")
+        : tx("Disabled in config");
   function pluginButton(plugin: (typeof plugins)[number]) {
     if (!onApply || !manage) return null;
     if (plugin.overridden)
@@ -1068,6 +1072,11 @@ export function ConnectionMatrix({
           <summary className="cursor-pointer">
             {renderRich(tx("Plugins · {length}"), { length: plugins.length })}
           </summary>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {tx(
+              "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.",
+            )}
+          </p>
           <ul className="mt-2 space-y-2">
             {plugins.map((plugin) => (
               <li
@@ -1116,7 +1125,7 @@ export function ConnectionMatrix({
         <p className="mt-2">
           {renderRich(
             tx(
-              "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.",
+              "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.",
             ),
             {
               value: tx(
@@ -1129,9 +1138,12 @@ export function ConnectionMatrix({
         </p>
       </details>
       <p className="text-xs text-muted-foreground">
-        {renderRich(tx("Scanned {value} · Tools pick up changes when they next start"), {
-          value: new Date(snapshot.observedAt).toLocaleString(),
-        })}
+        {renderRich(
+          tx("Scanned {value} · Running sessions may keep their previous configuration"),
+          {
+            value: new Date(snapshot.observedAt).toLocaleString(),
+          },
+        )}
       </p>
     </div>
   );

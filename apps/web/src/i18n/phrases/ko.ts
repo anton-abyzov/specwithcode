@@ -873,10 +873,17 @@ export const ko: PhraseCatalog = {
   "About this list: sources and limits": "이 목록 정보: 출처와 한계",
   "{value} Enabled means the entry is turned on in its file; sign-in and session availability are not checked.":
     "{value} '사용'은 해당 항목이 파일에서 켜져 있다는 뜻이며, 로그인과 세션 사용 가능 여부는 확인하지 않습니다.",
-  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. claude.ai connectors and other account connectors live in your account rather than in files, so they are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
-    "{value}플러그인은 사용 설정된 경우에만 계산됩니다. 변경은 사용자 파일에만 적용되며, 각 변경은 먼저 미리 보고 백업하므로 되돌릴 수 있습니다. '위치 복사'는 파일과 키를 복사하며, 명령, URL, 비밀 값은 절대 복사하지 않습니다. claude.ai 커넥터와 기타 계정 커넥터는 파일이 아닌 계정에 있으므로 목록에 없습니다. 관리형 설정, 상위 폴더 설정, 대체 클라이언트 프로필은 조사하지 않습니다. 이름이 같다고 서버나 계정이 같은 것은 아닙니다.",
-  "Scanned {value} · Tools pick up changes when they next start":
-    "스캔 {value} · 도구는 다음에 시작할 때 변경 사항을 반영합니다",
+  "{value}Plugins count only when enabled. Changes go to user files only, each previewed first and backed up so it can be undone. Copy location copies the file and key, never the command, URL or secrets. Cached Codex account apps are listed; their current account access is not checked. Account connectors without a local declaration or cache are not listed. Managed settings, ancestor configurations and alternate client profiles are not inventoried. Matching names do not prove matching servers or accounts.":
+    "{value}플러그인은 사용 설정된 경우에만 계산됩니다. 변경은 사용자 파일에만 적용되며, 각 변경은 먼저 미리 보고 백업하므로 되돌릴 수 있습니다. '위치 복사'는 파일과 키를 복사하며, 명령, URL, 비밀 값은 절대 복사하지 않습니다. 캐시된 Codex 계정 앱은 목록에 표시되지만 현재 계정 액세스는 확인하지 않습니다. 로컬 선언이나 캐시가 없는 계정 커넥터는 목록에 없습니다. 관리형 설정, 상위 폴더 설정, 대체 클라이언트 프로필은 조사하지 않습니다. 이름이 같다고 서버나 계정이 같은 것은 아닙니다.",
+  "Scanned {value} · Running sessions may keep their previous configuration":
+    "스캔 {value} · 실행 중인 세션은 이전 구성을 유지할 수 있습니다",
+  "Configuration on this machine. Loaded instructions, runtime tools and sign-in are not checked. Other machines keep their own configuration.":
+    "이 컴퓨터의 구성입니다. 로드된 지침, 런타임 도구, 로그인은 확인하지 않습니다. 다른 컴퓨터는 각자의 구성을 사용합니다.",
+  "Account app cached": "캐시된 계정 앱",
+  "Skills enabled": "스킬 사용",
+  "Skills disabled": "스킬 사용 안 함",
+  "Enabled in config": "구성에서 사용",
+  "Disabled in config": "구성에서 사용 안 함",
   "{value}Connect this machine to inspect its MCP configurations.":
     "{value}이 컴퓨터를 연결하면 MCP 설정을 검사할 수 있습니다.",
   "Filesystem read access is required to inspect configurations on this machine.":

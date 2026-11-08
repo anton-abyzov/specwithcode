@@ -246,6 +246,24 @@ export function useEnvironmentQuery(
           observedAt: "2026-10-14T12:00:00Z",
           runtime: "unverified",
           truncated: false,
+          plugins: [
+            { provider: "codex", key: "docs@sample", label: "Documentation", enabled: true },
+            {
+              provider: "codex",
+              key: "drive@sample",
+              label: "Drive",
+              enabled: true,
+              account: true,
+            },
+            {
+              provider: "codex",
+              key: "mail@sample",
+              label: "Mail",
+              enabled: true,
+              account: true,
+              switchable: false,
+            },
+          ],
           sources: [
             { id: sourceId, provider, scope, status: mode === "invalid" ? "invalid" : "read" },
           ],
