@@ -166,6 +166,8 @@ describe("resolveLaunchIncrement", () => {
       expect(brief).toContain('`specweave small-fix "<why>"`');
       expect(brief).toContain(INCREMENT_SIZING_RULE);
     }
+    expect(UNPLANNED_BRIEF).toContain("continues its handoff");
+    expect(UNPLANNED_BRIEF).toContain("only when no increment applies");
     for (const phrase of [
       "a new endpoint or command",
       "a deploy or release",
