@@ -1,5 +1,9 @@
 import * as Cause from "effect/Cause";
-import { codexToolInventory, unknownToolInventory } from "../../project/workflowCapabilities.ts";
+import {
+  codexToolInventory,
+  unknownToolInventory,
+  workflowExecutionPathOf,
+} from "../../project/workflowCapabilities.ts";
 import {
   codexFileChangeApprovalPrompt,
   legacyCodexFileChanges,
@@ -47,7 +51,7 @@ import {
   getModelSelectionStringOptionValue,
   modelSelectionsEqual,
 } from "@specweave-studio/shared/model";
-import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
+import { readEnvPath, resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -6555,7 +6559,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           workflowExecutionPath:
-            resolvedRuntime?.environment.PATH ?? adapterOptions.environment.PATH ?? "",
+            readEnvPath(resolvedRuntime?.environment ?? {}) ??
+            workflowExecutionPathOf(adapterOptions.environment),
           inspectWorkflowTools: (inspection) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(inspection.providerThread);
@@ -6570,24 +6575,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                   ...(cursor ? { cursor } : {}),
                 });
                 pages.push(response);
-                if (!response.nextCursor) return codexToolInventory(inspection.scope, pages);
+                if (!response.nextCursor) return yield* codexToolInventory(inspection.scope, pages);
                 if (seen.has(response.nextCursor)) break;
                 seen.add(response.nextCursor);
                 cursor = response.nextCursor;
               }
               // A bounded or changing inventory cannot establish absence.
-              return codexToolInventory(inspection.scope, pages);
+              return yield* codexToolInventory(inspection.scope, pages);
             }).pipe(
               Effect.timeoutOption(2_000),
-              Effect.map((result) =>
+              Effect.flatMap((result) =>
                 Option.isSome(result)
-                  ? result.value
+                  ? Effect.succeed(result.value)
                   : unknownToolInventory(inspection.scope, "unknown"),
               ),
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
                   ? Effect.interrupt
-                  : Effect.succeed(unknownToolInventory(inspection.scope, "unsupported")),
+                  : unknownToolInventory(inspection.scope, "unsupported"),
               ),
             ),
           canReuseContextUsage: canReuseCodexContextUsage,

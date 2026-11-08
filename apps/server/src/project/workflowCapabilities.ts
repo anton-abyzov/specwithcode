@@ -1,5 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - Node exposes X_OK; Effect FileSystem.access has no executable check.
-import * as NodeFs from "node:fs/promises";
 import * as DateTime from "effect/DateTime";
 /** Execution-host-only checks. Skill declarations never run commands or external probes. */
 import {
@@ -19,6 +17,14 @@ import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
 import { parse } from "yaml";
 import { SKILL_MENTION_PATTERN } from "@specweave-studio/shared/composerInlineTokens";
+import {
+  CommandResolutionCache,
+  readEnvPath,
+  resolveCommandPathForPlatform,
+} from "@specweave-studio/shared/shell";
+
+/** The PATH a provider runs with, read the way Windows env copies spell it too. */
+export const workflowExecutionPathOf = (env: NodeJS.ProcessEnv): string => readEnvPath(env) ?? "";
 
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -114,43 +120,57 @@ export const checkWorkflow = Effect.fn("workflow.check")(function* (input: {
   const declaration = yield* readWorkflowDeclaration(skillPath);
   const platform = input.platform ?? process.platform;
   const binaries = new Map<string, CapabilityState>();
-  for (const binary of declaration.state === "declared"
-    ? (declaration.requires.binaries ?? [])
-    : []) {
-    let state: CapabilityState = "missing";
-    let uncertain = false;
-    const dirs = (input.executionPath ?? process.env.PATH ?? "")
-      .split(platform === "win32" ? ";" : ":")
+  const required = declaration.state === "declared" ? (declaration.requires.binaries ?? []) : [];
+  if (required.length > 0 && input.executionPath === undefined)
+    // No execution PATH reported: nothing on disk can establish presence or absence.
+    for (const binary of required) binaries.set(binary, "unknown");
+  else if (required.length > 0) {
+    const delimiter = platform === "win32" ? ";" : ":";
+    // Relative and empty entries resolve against the execution workspace, never the server's cwd.
+    const dirs = (input.executionPath ?? "")
+      .split(delimiter)
+      .map((entry) => entry.trim().replace(/^"+|"+$/g, ""))
       .map((dir) =>
         path.isAbsolute(dir) ? dir : path.resolve(input.scope.workspaceRoot, dir || "."),
       );
-    const suffixes = platform === "win32" ? ["", ".exe", ".cmd", ".bat", ".com"] : [""];
-    for (const dir of dirs.slice(0, 128)) {
-      for (const suffix of suffixes) {
-        const stat = yield* fs.stat(path.join(dir, binary + suffix)).pipe(
+    const env = { PATH: dirs.join(delimiter), PATHEXT: process.env.PATHEXT };
+    // A fresh cache per check: this is the "last safe check", not a 30-second-old answer.
+    const cache = new Map();
+    for (const binary of required) {
+      if (dirs.length > 128) {
+        binaries.set(binary, "unknown");
+        continue;
+      }
+      const found = yield* resolveCommandPathForPlatform(binary, {
+        env,
+        platform: platform as NodeJS.Platform,
+      }).pipe(
+        Effect.provideService(CommandResolutionCache, cache),
+        Effect.as(true),
+        Effect.catchTag("CommandResolutionError", () => Effect.succeed(false)),
+      );
+      if (found) {
+        binaries.set(binary, "available");
+        continue;
+      }
+      // Not resolvable. Tell a present but non-executable file, or an unreadable
+      // directory, apart from a binary that is truly absent.
+      let state: CapabilityState = "missing";
+      for (const dir of platform === "win32" ? [] : dirs) {
+        const stat = yield* fs.stat(path.join(dir, binary)).pipe(
           Effect.map(Option.some),
           Effect.catch((error) => {
-            if (error.reason._tag !== "NotFound") uncertain = true;
+            if (error.reason._tag !== "NotFound") state = "unknown";
             return Effect.succeed(Option.none());
           }),
         );
         if (Option.isSome(stat) && stat.value.type === "File") {
-          const access = yield* Effect.tryPromise(() =>
-            NodeFs.access(path.join(dir, binary + suffix), NodeFs.constants.X_OK),
-          ).pipe(Effect.option);
-          state = Option.isSome(access) ? "available" : "denied";
-          if (state === "available") break;
+          state = "denied";
+          break;
         }
       }
-      if (state === "available") break;
+      binaries.set(binary, state);
     }
-    binaries.set(
-      binary,
-      input.executionPath === undefined ||
-        (state !== "available" && (uncertain || dirs.length > 128))
-        ? "unknown"
-        : state,
-    );
   }
   return evaluateWorkflow({
     scope: input.scope,
@@ -197,13 +217,13 @@ export const annotateWorkflowSkills = Effect.fn("workflow.annotateSkills")(funct
   );
 });
 
-export function unknownToolInventory(
+export const unknownToolInventory = (
   scope: WorkflowCapabilityScope,
   state: CapabilityState = "unsupported",
-): RuntimeToolInventory {
-  return {
+): Effect.Effect<RuntimeToolInventory> =>
+  Effect.map(Clock.currentTimeMillis, (now) => ({
     scope,
-    observedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+    observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
     complete: false,
     state,
     source:
@@ -214,13 +234,19 @@ export function unknownToolInventory(
           : "No current native tool inventory was returned",
     tools: [],
     servers: [],
-  };
-}
+  }));
 
 /** Drop every SDK field except bounded public ids/states. No error text, endpoints or account ids. */
-export function codexToolInventory(
+export const codexToolInventory = (
   scope: WorkflowCapabilityScope,
   pages: ReadonlyArray<unknown>,
+): Effect.Effect<RuntimeToolInventory> =>
+  Effect.map(Clock.currentTimeMillis, (now) => codexToolInventoryAt(scope, pages, now));
+
+function codexToolInventoryAt(
+  scope: WorkflowCapabilityScope,
+  pages: ReadonlyArray<unknown>,
+  now: number,
 ): RuntimeToolInventory {
   const servers: RuntimeToolInventory["servers"][number][] = [];
   const tools: string[] = [];
@@ -249,7 +275,7 @@ export function codexToolInventory(
     }
   return {
     scope,
-    observedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+    observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
     complete: false,
     state: "available",
     source: "Codex thread MCP inventory (built-in and deferred tools may be omitted)",

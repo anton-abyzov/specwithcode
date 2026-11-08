@@ -1,3 +1,4 @@
+import { workflowExecutionPathOf } from "../../project/workflowCapabilities.ts";
 import {
   ProviderDriverKind,
   TextGenerationError,
@@ -271,7 +272,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   };
   return {
     instanceId,
-    workflowExecutionPath: mergeProviderInstanceEnvironment(input.environment).PATH ?? "",
+    workflowExecutionPath: workflowExecutionPathOf(
+      mergeProviderInstanceEnvironment(input.environment),
+    ),
     driverKind: DRIVER,
     continuationIdentity,
     displayName,

@@ -34,15 +34,22 @@ export const layer = Access.toLayer(ProjectConnectionsToolkit, {
     Effect.gen(function* () {
       const projectId = yield* boundProject(input.projectId);
       const skills = yield* Skills.ProjectSkillsService;
-      const snapshot = yield* skills.read({ projectId }).pipe(
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "invalid_request",
-              message: "Workflow evidence could not be read on this machine.",
-            }),
-        ),
-      );
+      // The caller's own execution folder: a worktree thread reads its worktree, not the root.
+      const thread = (yield* readCaller()).caller;
+      const snapshot = yield* skills
+        .read({
+          projectId,
+          ...(thread?.worktreePath ? { threadId: thread.id, cwd: thread.worktreePath } : {}),
+        })
+        .pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "Workflow evidence could not be read on this machine.",
+              }),
+          ),
+        );
       return snapshot.rows
         .filter(
           (row) =>

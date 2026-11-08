@@ -1,5 +1,8 @@
 import { CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS } from "./claudeReadOnlyMcpTools.ts";
-import { unknownToolInventory } from "../../project/workflowCapabilities.ts";
+import {
+  unknownToolInventory,
+  workflowExecutionPathOf,
+} from "../../project/workflowCapabilities.ts";
 import { nativeChildTerminalReceipt } from "../NativeChildTerminalReceipt.ts";
 import { stringifyJson } from "../../json.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
@@ -92,6 +95,7 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Hex from "effect/encoding/Hex";
 import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -8425,16 +8429,20 @@ export function makeClaudeAdapterV2(
                 message.type === "system" &&
                 message.subtype === "init" &&
                 Array.isArray(message.tools)
-                  ? Ref.update(workflowTools, (current) =>
-                      new Map(current).set(nativeThreadId, {
-                        observedAt: DateTime.formatIso(DateTime.nowUnsafe()),
-                        tools: message.tools
-                          .filter(
-                            (name) =>
-                              typeof name === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(name),
-                          )
-                          .slice(0, 4096),
-                      }),
+                  ? Clock.currentTimeMillis.pipe(
+                      Effect.flatMap((now) =>
+                        Ref.update(workflowTools, (current) =>
+                          new Map(current).set(nativeThreadId, {
+                            observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+                            tools: message.tools
+                              .filter(
+                                (name) =>
+                                  typeof name === "string" && /^[A-Za-z0-9_.:-]{1,160}$/.test(name),
+                              )
+                              .slice(0, 4096),
+                          }),
+                        ),
+                      ),
                     )
                   : Effect.void;
               return capture.pipe(
@@ -8935,15 +8943,15 @@ export function makeClaudeAdapterV2(
               selection,
             ),
           events: Stream.fromEffectRepeat(Queue.take(events)),
-          workflowExecutionPath: adapterOptions.environment.PATH ?? "",
+          workflowExecutionPath: workflowExecutionPathOf(adapterOptions.environment),
           inspectWorkflowTools: (inspection) =>
             Effect.gen(function* () {
               const nativeId = yield* getNativeThreadId(inspection.providerThread);
               const context = yield* Ref.get(queryContext);
               if (context?.nativeThreadId !== nativeId || context.stopping)
-                return unknownToolInventory(inspection.scope, "unknown");
+                return yield* unknownToolInventory(inspection.scope, "unknown");
               const observed = (yield* Ref.get(workflowTools)).get(nativeId);
-              if (!observed) return unknownToolInventory(inspection.scope, "unknown");
+              if (!observed) return yield* unknownToolInventory(inspection.scope, "unknown");
               return {
                 scope: inspection.scope,
                 ...observed,
@@ -8956,7 +8964,7 @@ export function makeClaudeAdapterV2(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
                   ? Effect.interrupt
-                  : Effect.succeed(unknownToolInventory(inspection.scope, "error")),
+                  : unknownToolInventory(inspection.scope, "error"),
               ),
             ),
           hasPendingBackgroundWork: Effect.gen(function* () {

@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import {
   checkWorkflow,
   codexToolInventory,
+  workflowExecutionPathOf,
   explicitlyInvokedSkills,
   hasWorkflowInvocationSyntax,
   parseWorkflowDeclaration,
@@ -54,25 +55,27 @@ describe("workflow declarations", () => {
     expect(hasWorkflowInvocationSyntax("$report")).toBe(true);
   });
   it("sanitizes native metadata without exposing credentials or falsely authenticating tools", () => {
-    const result = codexToolInventory(scope, [
-      {
-        data: [
-          {
-            name: "mail",
-            runtimeStatus: "connected",
-            tools: { read: { description: "secret" } },
-            httpOrigin: "secret",
-            authStatus: "oAuth",
-          },
-          {
-            name: "denied",
-            runtimeStatus: "authenticationRequired",
-            tools: { write: {} },
-            toolsError: "token=secret",
-          },
-        ],
-      },
-    ]);
+    const result = Effect.runSync(
+      codexToolInventory(scope, [
+        {
+          data: [
+            {
+              name: "mail",
+              runtimeStatus: "connected",
+              tools: { read: { description: "secret" } },
+              httpOrigin: "secret",
+              authStatus: "oAuth",
+            },
+            {
+              name: "denied",
+              runtimeStatus: "authenticationRequired",
+              tools: { write: {} },
+              toolsError: "token=secret",
+            },
+          ],
+        },
+      ]),
+    );
     expect(result.tools).toEqual(["mcp__mail__read"]);
     expect(result.servers[1]?.state).toBe("denied");
     expect(JSON.stringify(result)).not.toContain("secret");
@@ -117,6 +120,31 @@ it.effect("checks executable access without running a skill's binary", () =>
       (yield* checkWorkflow({ ...input, executionPath: undefined })).status,
       "unknown",
     );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads a Windows-style Path and PATHEXT names", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped();
+    const skill = path.join(dir, "SKILL.md");
+    yield* fs.writeFileString(
+      skill,
+      "---\nmetadata:\n  specwithcode:\n    requires:\n      binaries: [fixture-tool]\n---\n",
+    );
+    yield* fs.writeFileString(path.join(dir, "fixture-tool.cmd"), "@echo off\r\n");
+    // Env copies on Windows keep the variable as `Path`; PATH alone would read "".
+    const executionPath = workflowExecutionPathOf({ Path: `"${dir}"` });
+    assert.strictEqual(executionPath, `"${dir}"`);
+    const result = yield* checkWorkflow({
+      scope,
+      skill: { path: skill, enabled: true },
+      executionPath,
+      platform: "win32",
+    });
+    assert.strictEqual(result.checks[0]?.state, "available");
+    assert.strictEqual(result.status, "ready");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

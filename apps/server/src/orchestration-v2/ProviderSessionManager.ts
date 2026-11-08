@@ -1753,7 +1753,7 @@ export const layerWithOptions = (
           const scope = workflowScope(runtime, turn.threadId, cwd, turn.providerThread);
           const inventory = yield* (
             runtime.inspectWorkflowTools?.({ scope, providerThread: turn.providerThread }) ??
-              Effect.succeed(unknownToolInventory(scope))
+              unknownToolInventory(scope)
           );
           const notes: string[] = [];
           for (const skill of invoked) {
@@ -2276,7 +2276,7 @@ export const layerWithOptions = (
                 );
                 const inventory = yield* (
                   entry.runtime.inspectWorkflowTools?.({ scope, providerThread }) ??
-                    Effect.succeed(unknownToolInventory(scope))
+                    unknownToolInventory(scope)
                 );
                 // A released/replaced runtime cannot publish late observations into its successor.
                 const current = (yield* Ref.get(sessions)).get(

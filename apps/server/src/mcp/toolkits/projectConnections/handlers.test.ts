@@ -57,7 +57,7 @@ const request = {
   arguments: { value: "hello" },
   commandId: CommandId.make("stable"),
 };
-const fixture = () => {
+const fixture = (shell = caller) => {
   const calls: { operation: string; input: unknown }[] = [];
   const deps = Layer.mergeAll(
     Layer.mock(Skills.ProjectSkillsService)({
@@ -108,7 +108,7 @@ const fixture = () => {
           return { isError: false, content: "Synthetic result" };
         }),
     }),
-    Layer.mock(Threads.ThreadManagementService)({ getThreadShell: () => Effect.succeed(caller) }),
+    Layer.mock(Threads.ThreadManagementService)({ getThreadShell: () => Effect.succeed(shell) }),
     Layer.succeed(Context.McpInvocationContext, scope),
   );
   return {
@@ -265,5 +265,20 @@ it.effect("workflow evidence stays scoped to the calling project", () => {
       .pipe(Stream.unwrap, Stream.runCollect);
     expect(denied.at(-1)?.result).toMatchObject({ code: "capability_denied" });
     expect(calls.length).toBe(before);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("workflow evidence follows a worktree caller's own folder", () => {
+  const worktree = { ...caller, worktreePath: "/fixture/.worktrees/feature" };
+  const { calls, layer } = fixture(worktree);
+  return Effect.gen(function* () {
+    const toolkit = yield* ProjectConnectionsToolkit;
+    yield* toolkit
+      .handle("studio_workflow_capabilities", { skill: "fixture" })
+      .pipe(Stream.unwrap, Stream.runCollect);
+    expect(calls).toContainEqual({
+      operation: "skillsRead",
+      input: { projectId: caller.projectId, threadId: caller.id, cwd: worktree.worktreePath },
+    });
   }).pipe(Effect.provide(layer));
 });

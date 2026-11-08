@@ -446,7 +446,8 @@ export function mergePathValues(
   return merged.length > 0 ? merged.join(delimiter) : undefined;
 }
 
-function readEnvPath(env: NodeJS.ProcessEnv): string | undefined {
+/** PATH as Windows also spells it (`Path`, `path`) in copied environments. */
+export function readEnvPath(env: NodeJS.ProcessEnv): string | undefined {
   return env.PATH ?? env.Path ?? env.path;
 }
 
@@ -696,6 +697,9 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   cacheCommandResolution(cache, cacheKey, null, nowNanos);
   return yield* new CommandResolutionError({ command, reason: "not-found" });
 });
+
+/** Resolve for a named platform: PATH/Path/path, PATHEXT and quoted entries handled. */
+export { resolveCommandPathForPlatform };
 
 export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
   command: string,
