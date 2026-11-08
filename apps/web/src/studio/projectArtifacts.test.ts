@@ -17,8 +17,10 @@ import {
   artifactMatchesType,
   artifactTypesPresent,
   collectProjectArtifacts,
+  isShelfDeliverable,
   projectRelativePath,
   searchArtifacts,
+  shelfArtifacts,
   type ProjectArtifactsInput,
 } from "./projectArtifacts";
 
@@ -361,5 +363,84 @@ describe("helpers", () => {
     expect(titles(DEFAULT_ARTIFACT_SORT)).toEqual(["b.md", "a10.md", "a2.md"]);
     expect(nextArtifactSort(DEFAULT_ARTIFACT_SORT, "modified").descending).toBe(false);
     expect(nextArtifactSort(DEFAULT_ARTIFACT_SORT, "name").descending).toBe(false);
+  });
+});
+
+describe("shelfArtifacts", () => {
+  const output = (path: string, at = "2026-11-08T20:00:00.000Z") => ({
+    path,
+    byteLength: 10,
+    modifiedAt: at,
+    increment: ".specweave/increments/0007-bot",
+  });
+  const collect = (pinned: ReadonlySet<string> = new Set()) =>
+    collectProjectArtifacts(
+      input({
+        pinned,
+        library: library({
+          artifacts: [
+            {
+              id: "h1",
+              title: "Backtest results",
+              location: ".specweave/reports/results.json",
+              kind: "file",
+              intentId: null,
+              createdAt: "2026-11-08T19:00:00.000Z",
+              modifiedAt: "2026-11-08T19:00:00.000Z",
+              byteLength: 40,
+              missing: false,
+            },
+          ],
+          outputs: [
+            output(".specweave/increments/0007-bot/reports/task-T-04.txt"),
+            output(".specweave/increments/0007-bot/reports/build.log"),
+            output(".specweave/increments/0007-bot/reports/metrics.json"),
+            output(".specweave/increments/0007-bot/reports/run.py"),
+            output(".specweave/increments/0007-bot/reports/summary.md"),
+            output(".specweave/increments/0007-bot/reports/report.html"),
+            output(".specweave/increments/0007-bot/reports/equity.png"),
+            output(".specweave/increments/0007-bot/reports/demo.mp4"),
+            output(".specweave/increments/0007-bot/reports/findings.pdf"),
+          ],
+        }),
+      }),
+    );
+  const titles = (pinned?: ReadonlySet<string>) =>
+    shelfArtifacts(collect(pinned)).map((artifact) => artifact.title);
+
+  it("shows deliverables and leaves task logs, code and unregistered data off the shelf", () => {
+    expect(titles().toSorted()).toEqual(
+      [
+        "Backtest results",
+        "demo.mp4",
+        "equity.png",
+        "findings.pdf",
+        "report.html",
+        "summary.md",
+      ].toSorted(),
+    );
+  });
+
+  it("keeps every log in the full list the Library shows", () => {
+    expect(collect().map((artifact) => artifact.title)).toEqual(
+      expect.arrayContaining(["task-T-04.txt", "build.log", "metrics.json", "run.py"]),
+    );
+  });
+
+  it("puts a pinned log back on the shelf", () => {
+    const pinned = new Set(["file:.specweave/increments/0007-bot/reports/task-T-04.txt"]);
+    expect(titles(pinned)[0]).toBe("task-T-04.txt");
+  });
+
+  it("judges a published link and a design by kind, never by path", () => {
+    expect(
+      isShelfDeliverable({
+        ...collect()[0]!,
+        kind: "link",
+        path: null,
+        source: "thread",
+        pinned: false,
+      }),
+    ).toBe(true);
   });
 });

@@ -60,6 +60,7 @@ import {
   artifactAge,
   ARTIFACT_KIND_LABELS,
   ARTIFACT_SHELF_LIMIT,
+  shelfArtifacts,
   type ProjectArtifact,
   type ProjectArtifactKind,
 } from "../../../studio/projectArtifacts";
@@ -617,7 +618,8 @@ export function ProjectArtifactShelf(props: {
   readonly onViewAll: () => void;
   readonly onOpenThread?: ((threadId: ThreadId, environmentId: EnvironmentId) => void) | undefined;
 }) {
-  const { artifacts } = props;
+  // The shelf holds what a person would open; logs, code and data stay in View all.
+  const artifacts = shelfArtifacts(props.artifacts);
   const shown = artifacts.slice(0, ARTIFACT_SHELF_LIMIT);
   const opener = useArtifactOpener(props.environmentId, props.workspaceRoot);
   const rowRef = useRef<HTMLUListElement>(null);
@@ -626,7 +628,8 @@ export function ProjectArtifactShelf(props: {
     true,
     Schema.Boolean,
   );
-  if (artifacts.length === 0) return null;
+  // Only logs or data: the shelf stays, with View all, so they are one click away.
+  if (props.artifacts.length === 0) return null;
   const scroll = (direction: 1 | -1) =>
     rowRef.current?.scrollBy({ left: direction * 360, behavior: "smooth" });
   return (
@@ -688,7 +691,7 @@ export function ProjectArtifactShelf(props: {
             </span>
             <span className="sws-artifact-foot">
               <span className="sws-artifact-title">View all</span>
-              <span className="sws-artifact-age">{artifacts.length}</span>
+              <span className="sws-artifact-age">{props.artifacts.length}</span>
             </span>
           </button>
         </li>

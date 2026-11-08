@@ -26,6 +26,12 @@ export function useRouter() {
 }
 // Fictional file contents for the document page previews.
 const FILES: Record<string, string> = {
+  ".specweave/increments/0007-bot/reports/task-T-04.txt":
+    "$ cd trading-agent && uv run python -m trading_agent.run\n# exit 0 — 2026-10-30T17:40:00.000Z\n\nbacktest done: final equity 9988.44\n",
+  ".specweave/increments/0007-bot/reports/task-T-03.txt":
+    "$ cd trading-agent && uv run python -m trading_agent.run\n# exit 0 — 2026-10-30T17:40:00.000Z\n\nSKIP: no_momentum\n",
+  ".specweave/increments/0007-bot/reports/task-T-02.txt":
+    "$ cd trading-agent && uv run python -m trading_agent.run\n# exit 0 — 2026-10-30T17:40:00.000Z\n\n8 passed in 0.04s\n",
   ".specweave/increments/1140-pricing/reports/metrics.json": `{
   "page": "pricing",
   "visitors": 18204,

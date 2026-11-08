@@ -377,7 +377,9 @@ export function ThreadArtifactsMenu(props: {
   // Entries, not artifacts: a thread that only named a pull request has nothing to list.
   if (entries.length === 0 || props.threadRef === null) return null;
   const index = viewable.findIndex((artifact) => artifact.key === openKey);
-  const visible = entries.filter((entry) => !entry.hidden).length;
+  // Logs fold away and are not counted, unless the thread named nothing else.
+  const listed = entries.filter((entry) => !entry.hidden);
+  const visible = listed.filter((entry) => entry.pinned || !entry.log).length || listed.length;
   return (
     <>
       <Popover

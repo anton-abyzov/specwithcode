@@ -83,9 +83,21 @@ try {
     const shelf = await titles('[data-testid="threads-pane"]');
     assert.equal(shelf[0], "YC demo deck", "the pinned deck leads");
     assert.equal(shelf[1], "shelf-light.png");
-    assert.equal(shelf.length, 7, "every artifact once, and no pull requests");
+    assert.equal(shelf.length, 6, "every deliverable once, and no pull requests");
+    assert.deepEqual(
+      shelf.filter((title) => /\.(?:txt|json)$/.test(title)),
+      [],
+      "task logs and unregistered data stay off the shelf",
+    );
+    assert.equal(
+      await page.locator('[data-testid="threads-pane"] .sws-artifact-shelf-count').textContent(),
+      "6",
+    );
     const library = await titles('[data-testid="library-pane"]');
-    assert.equal(library.length, shelf.length, "the Library lists the same artifacts");
+    assert.equal(library.length, shelf.length + 4, "the Library also lists the logs and data");
+    for (const log of ["task-T-04.txt", "task-T-03.txt", "task-T-02.txt", "metrics.json"]) {
+      assert.ok(library.includes(log), `${log} stays reachable in the Library`);
+    }
     assert.deepEqual(library.slice(0, 2), shelf.slice(0, 2), "in the shelf's order");
     assert.equal(await page.locator('.sws-artifact-card[data-kind="pullRequest"]').count(), 0);
     assert.equal(await page.getByText("Check gh sign-in with an API call").count(), 0);
