@@ -514,9 +514,14 @@
 .studio-notice-action {
   margin-left: auto;
   flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   color: var(--desk-amber);
   font-weight: 600;
   text-decoration: none !important;
+  cursor: pointer;
 }
 .studio-scope {
   display: flex;

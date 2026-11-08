@@ -19,7 +19,15 @@ import type { ModelSelection } from "@specweave-studio/contracts";
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
 import { Link } from "@tanstack/react-router";
 import { ArrowRightIcon, CheckIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { isElectron } from "../../env";
@@ -33,6 +41,10 @@ import {
   useThreadShells,
 } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { RegistryContext } from "@effect/atom-react";
+import { environmentCatalog } from "~/connection/catalog";
+import { environmentShell } from "~/state/shell";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { WhatYouCanDo } from "./WhatYouCanDo";
 import {
@@ -338,6 +350,17 @@ export function StudioOverview() {
           member.environmentId === environment.environmentId && member.freshness !== "live",
       ),
   );
+  const registry = useContext(RegistryContext);
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
+  // Checks each machine the notice names again: a disconnected one retries its
+  // connection now, a connected one reads its chats again from the start.
+  const recheckStaleMachines = () => {
+    for (const environment of staleMachines) {
+      if (environment.connection.phase === "connected")
+        registry.refresh(environmentShell.stateAtom(environment.environmentId));
+      else void retryEnvironment(environment.environmentId);
+    }
+  };
   const machineStatus = (phase: string) =>
     phase === "connected"
       ? tx("Connected")
@@ -542,9 +565,9 @@ export function StudioOverview() {
             <p className="studio-notice studio-stale-notice" role="status">
               <span className="studio-state-dot amber" aria-hidden="true" />
               <span>{staleNotice}</span>
-              <Link to="/settings/connections" className="studio-notice-action">
+              <button type="button" className="studio-notice-action" onClick={recheckStaleMachines}>
                 {tx("Check connection")}
-              </Link>
+              </button>
             </p>
           )}
           <WhatYouCanDo
