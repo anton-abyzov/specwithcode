@@ -127,7 +127,7 @@ provisioning profile.
 These follow [security.md](security.md) where it covers the desktop:
 
 - The embedded server stays on loopback. Reach other devices through
-  SpecWithCode Connect (**Settings → Connections → SpecWithCode Connect**), not
+  SpecWithCode Connect (**Settings → Machines → SpecWithCode Connect**), not
   the `0.0.0.0` exposure mode. Tailscale Serve is optional, as a direct
   route tried first for worker delegation and folder copy.
 - The connection catalog is encrypted with the OS secure store (Keychain on

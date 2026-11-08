@@ -131,7 +131,7 @@ export const en = {
   "wizard.join.pasted": "I pasted it",
   "wizard.joined.title": "This {machine} is ready for your main machine",
   "wizard.joined.description":
-    "It is ready once you paste the line on your main machine under Settings > Machines > Add a machine. Choose Allow workers on its card there to let coordinators start work here, and keep the app running on this {machine}.",
+    "It is ready once you paste the line on your main machine under Settings > Machines > Add a machine. Then choose Allow on its card there, on the line “Agents on … can start work on” this machine, and keep the app running on this {machine}.",
   "wizard.joined.newLine": "Make a new line",
   "wizard.joined.fullSetup": "Set this {machine} up as a main machine instead",
 

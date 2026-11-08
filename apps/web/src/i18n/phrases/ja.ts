@@ -2772,8 +2772,6 @@ export const ja: PhraseCatalog = {
   "Connect automatically": "自動で接続",
   "Let agents on this machine start work on another computer.":
     "このマシンのエージェントが別のコンピューターで作業を開始できるようにします。",
-  "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
-    "すでに接続済みですか？ {link} を開き、その行で「エージェント用に追加」を選んでください。コピーするものはありません。そうでなければ次の手順に従ってください:",
   "Connect command": "接続コマンド",
   "this machine's ID": "このマシンの ID",
   "Without its window, run this command on that machine instead:":
@@ -2783,7 +2781,6 @@ export const ja: PhraseCatalog = {
   "Invitation from the other machine": "別のマシンからの招待",
   "swc-machine-…": "swc-machine-…",
   "Add machine": "マシンを追加",
-  "Choose Allow workers on its card above.": "上のカードで「ワーカーを許可」を選んでください。",
   "Adding a Linux server you rent? Start with the {a}.":
     "レンタルした Linux サーバーを追加しますか？ まず{a}をご覧ください。",
   "Linux worker guide": "Linux ワーカーガイド",

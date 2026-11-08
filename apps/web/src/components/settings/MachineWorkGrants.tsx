@@ -474,7 +474,7 @@ export function MachineWorkGrants({
       const label = grant?.machineLabel ?? "this machine";
       // Fail closed: no mounted confirm host means no revoke.
       const confirmed = await requestConfirmDialog(
-        `Revoke ${label}?\n${label} can no longer start work here. Threads it started here stop in 2 minutes; their worktrees and changes stay. To undo, choose Allow again here, then Allow workers on ${label}.`,
+        `Revoke ${label}?\n${label} can no longer start work here. Threads it started here stop in 2 minutes; their worktrees and changes stay. To undo, choose Allow again here, then, on ${label}, choose Allow on this machine's card.`,
         { variant: "destructive" },
       );
       if (confirmed !== true) return;
@@ -499,7 +499,7 @@ export function MachineWorkGrants({
         );
       else if (next.action === "restore")
         setNotice(
-          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, choose Allow workers on this machine's card in Settings > Machines.`,
+          `${grant.machineLabel} may be allowed again. On ${grant.machineLabel}, open Settings > Machines and choose Allow on this machine's card.`,
         );
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Could not save this change.");

@@ -47,7 +47,7 @@ you grant these permissions; no app can grant them to itself. If macOS asks
 you to quit and reopen the app, choose **Quit & Reopen**; the card offers the
 same button.
 
-Settings → Connections may list a `computer-use` row with Codex showing
+Settings → Integrations may list a `computer-use` row with Codex showing
 **Disabled** and Claude Code **Not found**. Those are the providers' own
 computer-use helpers, not what agents in SpecWithCode use, so nothing there
 needs turning on.

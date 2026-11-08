@@ -2,7 +2,7 @@
 
 The app you use and the server running your agents can be on different machines.
 When a server is behind your web or desktop app, an update notice appears in the
-conversation and **Settings → Connections**. Update the machine named in that
+conversation and **Settings → Machines**. Update the machine named in that
 notice.
 
 ## Before you update

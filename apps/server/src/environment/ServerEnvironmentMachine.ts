@@ -8,7 +8,7 @@ import * as ProcessRunner from "../processRunner.ts";
 /**
  * Best-effort hardware detection for the environment icon. Every probe is
  * allowed to fail: a null result means "no signal", and the client draws a
- * generic server until the user picks something in Settings → Connections.
+ * generic server until the user picks something in Settings → Machines.
  */
 
 const DMI_ROOT = "/sys/class/dmi/id";

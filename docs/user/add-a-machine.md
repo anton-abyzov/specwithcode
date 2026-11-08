@@ -17,16 +17,16 @@ others off.
 
 ## Seeing a machine is not the same as adding it
 
-| Layer               | What it means                                                              | Where                                            |
-| ------------------- | -------------------------------------------------------------------------- | ------------------------------------------------ |
-| **App connection**  | This app window can see the machine and open its chats                     | **Settings → Machines**                          |
-| **Private machine** | This machine's server holds its own key to it, even with the window closed | **Add for agents**, or the steps below           |
-| **Workers allowed** | Agents on this machine may start work there                                | **Allow workers** on its card in **Connections** |
+| Layer               | What it means                                                              | Where                                                                        |
+| ------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **App connection**  | This app window can see the machine and open its chats                     | **Settings → Machines**                                                      |
+| **Private machine** | This machine's server holds its own key to it, even with the window closed | **Add <machine>** on its card, or the steps below                            |
+| **Workers allowed** | Agents on this machine may start work there                                | **Allow** on the line "Agents on <this machine> can start work on <machine>" |
 
 If you only want to use a machine by hand, the app connection is enough.
 
 If the machine already shows as connected under **Settings → Machines**, choose
-**Add for agents** on its row, then **Allow workers**. There is nothing to copy
+**Add <machine>** on its card, then **Allow** on the line "Agents on <this machine> can start work on <machine>". There is nothing to copy
 or paste. Your main machine gets a key to that machine for a year, which can
 manage its access, updates and skills. It needs the desktop app, SpecWithCode
 Connect linked on that machine and a connection with full access to it;
@@ -40,19 +40,19 @@ main machine, **Join a main machine** lists it by name instead.
 
 ## Disconnecting
 
-| To stop                                        | Do this                                                                                |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Agents starting new work there, keeping access | **Stop workers** on its card in **Settings → Connections**                             |
-| The main machine using it at all               | **Remove machine** on its card, or `specwithcode fleet remove`                         |
-| A main machine's work, from the worker's side  | **Revoke** under **Settings → Machines → Who can run work here**                       |
-| This app or phone seeing it                    | **Remove** under **Settings → Connections → Environments**; long-press it on the phone |
-| The machine's public Connect address           | Turn off **Enable SpecWithCode Connect** on that machine                               |
+| To stop                                        | Do this                                                                             |
+| ---------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Agents starting new work there, keeping access | **Stop workers** on its card in **Settings → Machines**                             |
+| The main machine using it at all               | **Remove machine** on its card, or `specwithcode fleet remove`                      |
+| A main machine's work, from the worker's side  | **Revoke** under **Settings → Machines → Who can run work here**                    |
+| This app or phone seeing it                    | **Remove** under **Settings → Machines → Environments**; long-press it on the phone |
+| The machine's public Connect address           | Turn off **Enable SpecWithCode Connect** on that machine                            |
 
 ## Adding a machine by hand
 
 Joining by hand takes the same four steps:
 
-1. On the machine you are adding (the **worker**), open **Settings → Connections**,
+1. On the machine you are adding (the **worker**), open **Settings → Machines**,
    choose **Sign in to SpecWithCode Connect** and turn on **Enable SpecWithCode
    Connect**. On a server without the desktop app, run `specwithcode connect`.
    Only the worker needs Connect: the main machine does not have to be signed
@@ -61,7 +61,7 @@ Joining by hand takes the same four steps:
 2. On the worker, make an invitation line for your main machine's environment
    ID. It starts with `swc-machine-`. **Add a machine** on the main machine
    shows that ID in its steps.
-3. On your **main machine**, paste that line under **Settings → Connections →
+3. On your **main machine**, paste that line under **Settings → Machines →
    Your private machines → Add a machine** within an hour and choose **Add
    machine**.
 4. On the worker's card there, choose **Allow workers**.
@@ -81,7 +81,7 @@ Pick the row that matches it:
 | Nothing yet on a Mac or Linux machine, once a release carries the installer | [The one-line installer](#with-the-one-line-installer)                                               |
 | A Linux server or VPS set up by hand                                        | [Linux worker](./linux-worker.md), then `fleet invite --coordinator '<main-machine-environment-id>'` |
 
-In the commands below, replace `<main-machine-environment-id>` with the environment ID shown under **Settings → Connections** on your main machine. It approves that machine, and only that one, to manage this worker.
+In the commands below, replace `<main-machine-environment-id>` with the environment ID shown under **Settings → Machines** on your main machine. It approves that machine, and only that one, to manage this worker.
 
 The app's version is under **Settings → About**. Installing SpecWithCode in the
 first place is covered in [Install SpecWithCode](./install.md).
@@ -135,8 +135,7 @@ or a shared document.
 setting up agents and projects on the worker. **Start as a main machine** sets
 up agents and projects here instead.
 
-**On a Mac that is already set up**, open **Settings → Connections → Your
-private machines**. Next to **Add this machine to another one**, choose **Invite
+**On a Mac that is already set up**, open **Settings → Machines**. Next to **Add this machine to another one**, choose **Invite
 this machine**.
 
 Then:
@@ -302,7 +301,7 @@ alternative:
 
 ## Add it on the main machine
 
-1. Open **Settings → Connections → Your private machines**. The **Add a
+1. Open **Settings → Machines**. The **Add a
    machine** steps show this machine's environment ID, the one the worker's line
    must be made for.
 2. Paste the line into the **Add a machine** field and choose **Add machine**.
@@ -363,7 +362,7 @@ A line works for a year unless you revoke it (`fleet invite --coordinator '<main
 To turn one off:
 
 - Right after making it in the app, choose **Revoke this line**.
-- Later, on the worker, open **Settings → Connections → Authorized clients** and
+- Later, on the worker, open **Settings → Machines → Authorized clients** and
   revoke **Fleet management (fleet invite)**.
 - A line with a SpecWithCode Connect address that has not been used yet: run
   the `auth pairing revoke …` command `fleet invite` printed.
@@ -433,7 +432,7 @@ Before taking it off the list, the main machine gives up what it holds on that
 machine: it revokes its worker grant and the management token from the
 invitation line there. If that machine is off or unreachable, the main machine
 still removes it here and says what stays valid there. On that machine, revoke
-it under **Settings → Connections → Authorized clients**, or with the
+it under **Settings → Machines → Authorized clients**, or with the
 `auth session revoke` command the message prints.
 
 If a folder copy sent secret files to that machine, removing it lists them with
@@ -450,7 +449,7 @@ Messages may be worded slightly differently in older releases.
 | "Could not reach Tailscale on this machine."                                                    | Open the Tailscale app and check that it is connected.                                                                                                                                                                                                                                                      |
 | "This machine has no Tailscale name yet."                                                       | Sign in to Tailscale and turn on MagicDNS in the admin console under **DNS**.                                                                                                                                                                                                                               |
 | "Tailscale could not publish this machine on HTTPS port 443."                                   | Enable **DNS → HTTPS Certificates** in the Tailscale admin console, then try again.                                                                                                                                                                                                                         |
-| "HTTPS port 443 on this machine's Tailscale name is already used by another app"                | Something else already uses that port, and the app will not replace it. Choose another port under **Tailscale HTTPS** in **Settings → Connections**, or run `fleet invite --coordinator '<main-machine-environment-id>' --tailscale-serve-port 8443`.                                                       |
+| "HTTPS port 443 on this machine's Tailscale name is already used by another app"                | Something else already uses that port, and the app will not replace it. Choose another port under **Tailscale HTTPS** in **Settings → Machines**, or run `fleet invite --coordinator '<main-machine-environment-id>' --tailscale-serve-port 8443`.                                                          |
 | "HTTPS port 443 on this machine's Tailscale name already shows a different SpecWithCode server" | Another SpecWithCode server on this machine already uses that port. Turn off Tailscale HTTPS for it, or pick another port as above.                                                                                                                                                                         |
 | "Tailscale needs an administrator to sign in on this machine."                                  | Sign in from the Tailscale app, or run `sudo tailscale up` in a terminal yourself.                                                                                                                                                                                                                          |
 | "A SpecWithCode server is already running for …"                                                | SpecWithCode is already running on this machine (often the desktop app); 1.0.43 and 1.0.44 print this for a bare `specwithcode`. Use the running one: run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` to join, or open the app. From 1.0.45 it opens in your browser instead. |

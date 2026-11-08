@@ -1,6 +1,6 @@
 # Connections library
 
-Open **Settings → Connections** and select an execution machine. Each AI tool keeps its own MCP list, so the matrix compares one row per server across Codex, Claude Code and every other tool whose configuration exists on the machine. **Refresh configurations** reads the selected machine again.
+Open **Settings → Integrations** and select an execution machine. Each AI tool keeps its own MCP list, so the matrix compares one row per server across Codex, Claude Code and every other tool whose configuration exists on the machine. **Refresh configurations** reads the selected machine again.
 
 ## Finding a server
 

@@ -397,7 +397,7 @@ export function StudioFleetConnections({
       setInvitation("");
       setAdded(
         result.change === "added"
-          ? `Added ${addedName}. ${autoConnect ? "This browser connects to it on its own." : "Choose Connect machine to use it here."} Choose Allow workers on it to let coordinators start work there.`
+          ? `Added ${addedName}. ${autoConnect ? "This browser connects to it on its own." : "Choose Connect machine to use it here."} Choose Allow on its card, on the line about agents here starting work on it.`
           : result.previousUrl
             ? `${addedName} now answers at its new address. Workers allowed there carry over.`
             : `Renewed ${addedName}.`,
@@ -1138,7 +1138,7 @@ export function StudioFleetRoster({
           <p className="text-xs text-muted-foreground">
             {renderRich(
               tx(
-                "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:",
+                "Already connected to it? Open {link} and choose Add on its card. There is nothing to copy. Otherwise, follow these steps:",
               ),
               {
                 link: (
@@ -1200,7 +1200,11 @@ export function StudioFleetRoster({
               </TeamRulesInert>
             </AddMachineStep>
             <AddMachineStep title={tx("Allow workers")}>
-              <p>{tx("Choose Allow workers on its card above.")}</p>
+              <p>
+                {tx(
+                  "Choose Allow on its card above, on the line about agents here starting work on it.",
+                )}
+              </p>
             </AddMachineStep>
           </ol>
           <p className="text-xs text-muted-foreground">
