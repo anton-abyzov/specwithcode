@@ -13,11 +13,20 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { after, before, describe, it } from "node:test";
 
-import { DEFAULT_SCRIPTS, compareVersions, main, parseArgs, runStep, UsageError } from "./verify-built-app.mjs";
+import {
+  DEFAULT_SCRIPTS,
+  compareVersions,
+  main,
+  parseArgs,
+  runStep,
+  UsageError,
+} from "./verify-built-app.mjs";
 
 const IS_WIN = process.platform === "win32";
 
-const ROOT = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "verify-built-app-test-")));
+const ROOT = NodeFS.realpathSync(
+  NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "verify-built-app-test-")),
+);
 // What failed runs keep for inspection (scratch homes) lands here and goes with it.
 const SAVED_TMPDIR = process.env.TMPDIR;
 process.env.TMPDIR = ROOT;
@@ -153,8 +162,13 @@ const makeApp = (version) => {
     "<plist><dict><key>CFBundleExecutable</key>\n<string>Fake</string></dict></plist>\n",
   );
   // Where the server-entry probe looks on macOS (Resources) and elsewhere (resources).
-  for (const resources of [NodePath.join(dir, "Fake.app", "Contents", "Resources"), NodePath.join(NodePath.dirname(executable), "resources")]) {
-    NodeFS.mkdirSync(NodePath.join(resources, "app", "apps", "server", "dist"), { recursive: true });
+  for (const resources of [
+    NodePath.join(dir, "Fake.app", "Contents", "Resources"),
+    NodePath.join(NodePath.dirname(executable), "resources"),
+  ]) {
+    NodeFS.mkdirSync(NodePath.join(resources, "app", "apps", "server", "dist"), {
+      recursive: true,
+    });
     NodeFS.writeFileSync(NodePath.join(resources, "app", "apps", "server", "dist", "bin.mjs"), "");
   }
   return { bundle: NodePath.join(dir, "Fake.app"), executable };
@@ -162,7 +176,8 @@ const makeApp = (version) => {
 
 const quiet = () => {};
 const run = (args) => main(args, { scripts: SCRIPTS, log: quiet });
-const receiptOf = (out) => JSON.parse(NodeFS.readFileSync(NodePath.join(out, "receipt.json"), "utf8"));
+const receiptOf = (out) =>
+  JSON.parse(NodeFS.readFileSync(NodePath.join(out, "receipt.json"), "utf8"));
 const withBehaviour = async (values, fn) => {
   NodeFS.writeFileSync(BEHAVIOUR, JSON.stringify(values));
   try {
@@ -172,7 +187,8 @@ const withBehaviour = async (values, fn) => {
   }
 };
 // What a mode leaves in this test's TMPDIR: nothing unless --keep.
-const leftScratch = () => NodeFS.readdirSync(ROOT).filter((name) => /^swc-(verify|e2e)-/.test(name));
+const leftScratch = () =>
+  NodeFS.readdirSync(ROOT).filter((name) => /^swc-(verify|e2e)-/.test(name));
 const outDir = (name) => NodePath.join(ROOT, "out", name);
 
 before(() => {
@@ -181,7 +197,16 @@ before(() => {
 });
 
 describe("parseArgs", () => {
-  const base = ["--mode", "fresh", "--app", "/x/SpecWithCode.app", "--version", "1.2.3", "--out", "/tmp/o"];
+  const base = [
+    "--mode",
+    "fresh",
+    "--app",
+    "/x/SpecWithCode.app",
+    "--version",
+    "1.2.3",
+    "--out",
+    "/tmp/o",
+  ];
 
   it("reads a fresh run with platform-supported proofs and default timeouts", () => {
     assert.deepEqual(parseArgs([...base, ...(IS_WIN ? ["--no-proofs"] : [])]), {
@@ -199,25 +224,37 @@ describe("parseArgs", () => {
   it("refuses an upgraded run without the previous release's state: a skipped verify is a failure", () => {
     assert.throws(
       () => parseArgs(["--mode", "upgraded", ...base.slice(2)]),
-      (error) => error instanceof UsageError && /a skipped verify fails the release/.test(error.message),
+      (error) =>
+        error instanceof UsageError && /a skipped verify fails the release/.test(error.message),
     );
     const upgraded = ["--mode", "all", ...base.slice(2), "--fixture", "f.tar.gz"];
     if (IS_WIN) {
-      assert.throws(() => parseArgs([...upgraded, "--no-proofs"]), /the upgraded mode runs on macOS and Linux/);
+      assert.throws(
+        () => parseArgs([...upgraded, "--no-proofs"]),
+        /the upgraded mode runs on macOS and Linux/,
+      );
     } else {
       assert.equal(parseArgs(upgraded).fixture, NodePath.resolve("f.tar.gz"));
     }
   });
 
   it("refuses proofs on Windows", { skip: !IS_WIN }, () => {
-    assert.throws(() => parseArgs(base), (error) =>
-      error instanceof UsageError && error.message === "on Windows give --no-proofs");
+    assert.throws(
+      () => parseArgs(base),
+      (error) => error instanceof UsageError && error.message === "on Windows give --no-proofs",
+    );
   });
 
   it("refuses missing, malformed and conflicting options", () => {
     const refuses = (args, pattern) =>
-      assert.throws(() => parseArgs(args), (error) => error instanceof UsageError && pattern.test(error.message));
-    refuses(base.filter((_, i) => i !== 4 && i !== 5), /--version X\.Y\.Z is required/);
+      assert.throws(
+        () => parseArgs(args),
+        (error) => error instanceof UsageError && pattern.test(error.message),
+      );
+    refuses(
+      base.filter((_, i) => i !== 4 && i !== 5),
+      /--version X\.Y\.Z is required/,
+    );
     refuses([...base.slice(0, 5), "1.2", ...base.slice(6)], /--version X\.Y\.Z is required/);
     refuses(["--mode", "later", ...base.slice(2)], /--mode must be/);
     refuses([...base, "--archive", "a.zip"], /one of --archive or --app/);
@@ -227,12 +264,30 @@ describe("parseArgs", () => {
     refuses([...base, "--out"], /--out needs a value/);
     refuses([...base, "--bogus", "1"], /unknown option --bogus/);
     refuses([...base, "--fixture", "f"], /for the upgraded mode/);
-    refuses(["--mode", "all", ...base.slice(2), "--fixture", "f", "--previous-app", "p"], /one of --fixture/);
-    refuses(["--mode", "upgraded", ...base.slice(2), "--fixture", "f", "--fixture-out", "g"], /--fixture-out needs the fresh mode/);
+    refuses(
+      ["--mode", "all", ...base.slice(2), "--fixture", "f", "--previous-app", "p"],
+      /one of --fixture/,
+    );
+    refuses(
+      ["--mode", "upgraded", ...base.slice(2), "--fixture", "f", "--fixture-out", "g"],
+      /--fixture-out needs the fresh mode/,
+    );
   });
 
   it("returns 2 for a usage error", async () => {
-    assert.equal(await run(["--mode", "upgraded", "--app", "a", "--version", "1.0.0", "--out", outDir("usage")]), 2);
+    assert.equal(
+      await run([
+        "--mode",
+        "upgraded",
+        "--app",
+        "a",
+        "--version",
+        "1.0.0",
+        "--out",
+        outDir("usage"),
+      ]),
+      2,
+    );
     assert.equal(NodeFS.existsSync(outDir("usage")), false);
   });
 
@@ -244,23 +299,31 @@ describe("parseArgs", () => {
 });
 
 describe("runStep", () => {
-  it("stops a step and everything in its group at the deadline", async () => {
-    const pidFile = NodePath.join(ROOT, "step-grandchild.pid");
-    const started = Date.now();
-    const step = await runStep(
-      "sh",
-      ["-c", `sleep 600 & echo $! > '${pidFile}'; wait`],
-      { timeoutMs: 1_500, log: NodePath.join(ROOT, "step.log") },
-    );
-    assert.equal(step.timedOut, true);
-    assert.notEqual(step.code, 0);
-    assert.ok(Date.now() - started < 15_000, "the deadline did not stop the step");
-    const grandchild = Number(NodeFS.readFileSync(pidFile, "utf8"));
-    assert.throws(() => process.kill(grandchild, 0), /ESRCH/);
-  });
+  // Git Bash reports its own pid for the grandchild, not a Windows pid, so the
+  // kill(pid, 0) probe below can hit an unrelated process there.
+  it(
+    "stops a step and everything in its group at the deadline",
+    { skip: IS_WIN && "POSIX process groups" },
+    async () => {
+      const pidFile = NodePath.join(ROOT, "step-grandchild.pid");
+      const started = Date.now();
+      const step = await runStep("sh", ["-c", `sleep 600 & echo $! > '${pidFile}'; wait`], {
+        timeoutMs: 1_500,
+        log: NodePath.join(ROOT, "step.log"),
+      });
+      assert.equal(step.timedOut, true);
+      assert.notEqual(step.code, 0);
+      assert.ok(Date.now() - started < 15_000, "the deadline did not stop the step");
+      const grandchild = Number(NodeFS.readFileSync(pidFile, "utf8"));
+      assert.throws(() => process.kill(grandchild, 0), /ESRCH/);
+    },
+  );
 
   it("reports a command that cannot start", async () => {
-    const step = await runStep(NodePath.join(ROOT, "missing-binary"), [], { timeoutMs: 5_000, log: NodePath.join(ROOT, "missing.log") });
+    const step = await runStep(NodePath.join(ROOT, "missing-binary"), [], {
+      timeoutMs: 5_000,
+      log: NodePath.join(ROOT, "missing.log"),
+    });
     assert.equal(step.timedOut, false);
     assert.match(step.error, /ENOENT/);
   });
@@ -271,7 +334,21 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
     const app = makeApp("1.0.1");
     const out = outDir("fresh-ok");
     const fixture = NodePath.join(ROOT, "fixtures", "state-1.0.1.tar.gz");
-    assert.equal(await run(["--mode", "fresh", "--app", app.bundle, "--version", "1.0.1", "--out", out, "--fixture-out", fixture]), 0);
+    assert.equal(
+      await run([
+        "--mode",
+        "fresh",
+        "--app",
+        app.bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+        "--fixture-out",
+        fixture,
+      ]),
+      0,
+    );
     const receipt = receiptOf(out);
     assert.equal(receipt.result, "passed");
     assert.equal(receipt.executable, app.executable);
@@ -279,7 +356,9 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
     assert.deepEqual(receipt.failures, []);
     const calls = NodeFS.readFileSync(NodePath.join(out, "fresh", "proof-calls.txt"), "utf8");
     assert.match(calls, /--entrypoint \S+bin\.mjs --cli-wrapper \S+studio-cli --report-dir/);
-    const listing = NodeChildProcess.spawnSync("tar", ["-tzf", fixture], { encoding: "utf8" }).stdout;
+    const listing = NodeChildProcess.spawnSync("tar", ["-tzf", fixture], {
+      encoding: "utf8",
+    }).stdout;
     assert.match(listing, /base\/userdata\/statev2\.sqlite/);
     assert.match(listing, /fixture\.json/);
   });
@@ -287,14 +366,30 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
   it("fails when the environment endpoint reports another version", async () => {
     const app = makeApp("1.0.1");
     const out = outDir("fresh-version");
-    assert.equal(await run(["--mode", "fresh", "--app", app.bundle, "--version", "1.0.2", "--out", out]), 1);
-    assert.ok(receiptOf(out).failures.includes("fresh: /.well-known/studio/environment reports 1.0.1, expected 1.0.2"));
+    assert.equal(
+      await run(["--mode", "fresh", "--app", app.bundle, "--version", "1.0.2", "--out", out]),
+      1,
+    );
+    assert.ok(
+      receiptOf(out).failures.includes(
+        "fresh: /.well-known/studio/environment reports 1.0.1, expected 1.0.2",
+      ),
+    );
   });
 
   it("fails on a thread that got no reply and names the check", async () => {
     const out = outDir("fresh-thread");
     const code = await withBehaviour({ e2e: "thread-fails" }, () =>
-      run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out]),
+      run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+      ]),
     );
     assert.equal(code, 1);
     const { failures, result } = receiptOf(out);
@@ -307,19 +402,43 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
   it("leaves installed-e2e the time to write its diagnostics at its own deadline", async () => {
     const out = outDir("fresh-inner-timeout");
     const code = await withBehaviour({ e2e: "inner-timeout" }, () =>
-      run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out, "--timeout-ms", "1500"]),
+      run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+        "--timeout-ms",
+        "1500",
+      ]),
     );
     assert.equal(code, 1);
     const { failures } = receiptOf(out);
     assert.ok(failures.includes("fresh: check timeout failed"), failures.join("; "));
     assert.ok(!failures.some((failure) => /did not finish/.test(failure)), failures.join("; "));
-    assert.equal(JSON.parse(NodeFS.readFileSync(NodePath.join(out, "fresh", "fresh", "results.json"), "utf8")).checks[0].diagnostics, "written");
+    assert.equal(
+      JSON.parse(NodeFS.readFileSync(NodePath.join(out, "fresh", "fresh", "results.json"), "utf8"))
+        .checks[0].diagnostics,
+      "written",
+    );
   });
 
   it("requires the coordinator reply and the fake agent log checks", async () => {
     const out = outDir("fresh-no-coordinator");
     const code = await withBehaviour({ e2e: "no-coordinator" }, () =>
-      run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out]),
+      run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+      ]),
     );
     assert.equal(code, 1);
     assert.ok(receiptOf(out).failures.includes("fresh: check coordinator-reply did not run"));
@@ -327,9 +446,24 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
 
   it("keeps the scratch homes with --keep", async () => {
     const out = outDir("fresh-keep");
-    assert.equal(await run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out, "--keep"]), 0);
+    assert.equal(
+      await run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+        "--keep",
+      ]),
+      0,
+    );
     const kept = receiptOf(out).modes.fresh.scratch;
-    assert.ok(NodeFS.readdirSync(NodePath.join(kept, "tmp")).some((name) => name.startsWith("swc-e2e-")));
+    assert.ok(
+      NodeFS.readdirSync(NodePath.join(kept, "tmp")).some((name) => name.startsWith("swc-e2e-")),
+    );
     NodeFS.rmSync(kept, { recursive: true, force: true });
   });
 
@@ -337,14 +471,31 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
     const out = outDir("fresh-hang");
     const started = Date.now();
     const code = await withBehaviour({ e2e: "hang" }, () =>
-      run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out, "--timeout-ms", "2000"]),
+      run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+        "--timeout-ms",
+        "2000",
+      ]),
     );
     assert.equal(code, 1);
     assert.ok(Date.now() - started < 20_000);
     // Its own deadline, then the headroom for its diagnostics: 2000 + 2000 ms.
-    assert.ok(receiptOf(out).failures.some((failure) => /installed-e2e did not finish within 4000 ms/.test(failure)));
+    assert.ok(
+      receiptOf(out).failures.some((failure) =>
+        /installed-e2e did not finish within 4000 ms/.test(failure),
+      ),
+    );
     assert.deepEqual(leftScratch(), []);
-    const grandchild = Number(NodeFS.readFileSync(NodePath.join(out, "fresh", "fresh", "grandchild.pid"), "utf8"));
+    const grandchild = Number(
+      NodeFS.readFileSync(NodePath.join(out, "fresh", "fresh", "grandchild.pid"), "utf8"),
+    );
     assert.throws(() => process.kill(grandchild, 0), /ESRCH/);
   });
 
@@ -353,19 +504,45 @@ describe("fresh mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
     const tmp = NodeFS.mkdtempSync(NodePath.join(ROOT, "sigterm-tmp-"));
     // The CLI's own wiring (verify-built-app.mjs's entry block), with the fakes as its scripts.
     const driver = NodePath.join(ROOT, "sigterm-driver.mjs");
-    NodeFS.writeFileSync(driver, `import { interrupted, main } from ${JSON.stringify(new URL("./verify-built-app.mjs", import.meta.url).href)};
+    NodeFS.writeFileSync(
+      driver,
+      `import { interrupted, main } from ${JSON.stringify(new URL("./verify-built-app.mjs", import.meta.url).href)};
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => interrupted(sig));
-process.exitCode = await main(process.argv.slice(2), { scripts: ${JSON.stringify(SCRIPTS)}, log: () => {} });\n`);
+process.exitCode = await main(process.argv.slice(2), { scripts: ${JSON.stringify(SCRIPTS)}, log: () => {} });\n`,
+    );
     NodeFS.writeFileSync(BEHAVIOUR, JSON.stringify({ e2e: "hang" }));
     try {
-      const child = NodeChildProcess.spawn(process.execPath, [driver, "--mode", "fresh", "--app", makeApp("1.0.1").bundle,
-        "--version", "1.0.1", "--out", out, "--timeout-ms", "120000"], { env: { ...process.env, TMPDIR: tmp }, stdio: ["ignore", "ignore", "pipe"] });
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        [
+          driver,
+          "--mode",
+          "fresh",
+          "--app",
+          makeApp("1.0.1").bundle,
+          "--version",
+          "1.0.1",
+          "--out",
+          out,
+          "--timeout-ms",
+          "120000",
+        ],
+        { env: { ...process.env, TMPDIR: tmp }, stdio: ["ignore", "ignore", "pipe"] },
+      );
       let stderr = "";
       child.stderr.on("data", (chunk) => (stderr += chunk));
-      const exited = new Promise((resolve) => child.on("exit", (code, signal) => resolve({ code, signal })));
+      const exited = new Promise((resolve) =>
+        child.on("exit", (code, signal) => resolve({ code, signal })),
+      );
       const pidFile = () => {
-        const walk = (dir) => NodeFS.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-          entry.isDirectory() ? walk(NodePath.join(dir, entry.name)) : entry.name === "grandchild.pid" ? [NodePath.join(dir, entry.name)] : []);
+        const walk = (dir) =>
+          NodeFS.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+            entry.isDirectory()
+              ? walk(NodePath.join(dir, entry.name))
+              : entry.name === "grandchild.pid"
+                ? [NodePath.join(dir, entry.name)]
+                : [],
+          );
         return walk(tmp)[0];
       };
       const started = Date.now();
@@ -390,17 +567,42 @@ process.exitCode = await main(process.argv.slice(2), { scripts: ${JSON.stringify
     const out = outDir("fresh-proof");
     const fixture = NodePath.join(ROOT, "fixtures", "state-proof-failed.tar.gz");
     const code = await withBehaviour({ proof: "fail" }, () =>
-      run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out, "--fixture-out", fixture]),
+      run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+        "--fixture-out",
+        fixture,
+      ]),
     );
     assert.equal(code, 1);
-    assert.ok(receiptOf(out).failures.some((failure) => /^fresh: test-startup\.mjs exited 1/.test(failure)));
+    assert.ok(
+      receiptOf(out).failures.some((failure) => /^fresh: test-startup\.mjs exited 1/.test(failure)),
+    );
     assert.equal(NodeFS.existsSync(fixture), false);
     assert.deepEqual(leftScratch(), []);
   });
 
   it("fails on an app that does not exist", async () => {
     const out = outDir("fresh-missing");
-    assert.equal(await run(["--mode", "fresh", "--app", NodePath.join(ROOT, "None.app"), "--version", "1.0.1", "--out", out]), 1);
+    assert.equal(
+      await run([
+        "--mode",
+        "fresh",
+        "--app",
+        NodePath.join(ROOT, "None.app"),
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+      ]),
+      1,
+    );
     assert.match(receiptOf(out).failures[0], /names no main executable|does not exist/);
   });
 });
@@ -409,19 +611,52 @@ describe("upgraded mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
   let fixture;
   before(async () => {
     fixture = NodePath.join(ROOT, "fixtures", "state-1.0.1-upgraded.tar.gz");
-    assert.equal(await run(["--mode", "fresh", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", outDir("make-fixture"), "--fixture-out", fixture]), 0);
+    assert.equal(
+      await run([
+        "--mode",
+        "fresh",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        outDir("make-fixture"),
+        "--fixture-out",
+        fixture,
+      ]),
+      0,
+    );
   });
 
   it("passes the post-update check and the local installed-startup proof on the seeded home", async () => {
     const out = outDir("upgraded-ok");
-    assert.equal(await run(["--mode", "upgraded", "--app", makeApp("1.0.2").bundle, "--version", "1.0.2", "--out", out, "--fixture", fixture]), 0);
+    assert.equal(
+      await run([
+        "--mode",
+        "upgraded",
+        "--app",
+        makeApp("1.0.2").bundle,
+        "--version",
+        "1.0.2",
+        "--out",
+        out,
+        "--fixture",
+        fixture,
+      ]),
+      0,
+    );
     const receipt = receiptOf(out);
     assert.equal(receipt.modes.upgraded.previousVersion, "1.0.1");
     assert.equal(receipt.modes.upgraded.serverVersion, "1.0.2");
-    const check = JSON.parse(NodeFS.readFileSync(NodePath.join(out, "upgraded", "post-update-check.json"), "utf8"));
+    const check = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(out, "upgraded", "post-update-check.json"), "utf8"),
+    );
     assert.equal(check.result, "verified");
     const calls = NodeFS.readFileSync(NodePath.join(out, "upgraded", "proof-calls.txt"), "utf8");
-    assert.match(calls, /^--local --origin http:\/\/127\.0\.0\.1:\d+ --cli-wrapper \S+ --base-dir \S+ --expected \S+before\.json/m);
+    assert.match(
+      calls,
+      /^--local --origin http:\/\/127\.0\.0\.1:\d+ --cli-wrapper \S+ --base-dir \S+ --expected \S+before\.json/m,
+    );
     assert.deepEqual(leftScratch(), []);
   });
 
@@ -429,33 +664,83 @@ describe("upgraded mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
     // python3 on PATH logs the HOME the post-update check gets, then runs the real one.
     const bin = NodePath.join(ROOT, "bin");
     NodeFS.mkdirSync(bin, { recursive: true });
-    const python = NodeChildProcess.spawnSync("sh", ["-c", "command -v python3"], { encoding: "utf8" }).stdout.trim();
-    NodeFS.writeFileSync(NodePath.join(bin, "python3"),
-      `#!/bin/sh\nprintf '{"role":"python3","home":"%s","studioHome":"%s","tmp":"%s"}\\n' "$HOME" "$STUDIO_HOME" "$TMPDIR" >> '${HOMES}'\nexec '${python}' "$@"\n`, { mode: 0o755 });
+    const python = NodeChildProcess.spawnSync("sh", ["-c", "command -v python3"], {
+      encoding: "utf8",
+    }).stdout.trim();
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "python3"),
+      `#!/bin/sh\nprintf '{"role":"python3","home":"%s","studioHome":"%s","tmp":"%s"}\\n' "$HOME" "$STUDIO_HOME" "$TMPDIR" >> '${HOMES}'\nexec '${python}' "$@"\n`,
+      { mode: 0o755 },
+    );
     NodeFS.rmSync(HOMES, { force: true });
     const savedPath = process.env.PATH;
     process.env.PATH = `${bin}${NodePath.delimiter}${savedPath}`;
     const out = outDir("upgraded-homes");
     try {
-      assert.equal(await run(["--mode", "upgraded", "--app", makeApp("1.0.2").bundle, "--version", "1.0.2", "--out", out, "--previous-app", makeApp("1.0.1").bundle]), 0);
+      assert.equal(
+        await run([
+          "--mode",
+          "upgraded",
+          "--app",
+          makeApp("1.0.2").bundle,
+          "--version",
+          "1.0.2",
+          "--out",
+          out,
+          "--previous-app",
+          makeApp("1.0.1").bundle,
+        ]),
+        0,
+      );
     } finally {
       process.env.PATH = savedPath;
     }
-    const seen = NodeFS.readFileSync(HOMES, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-    assert.deepEqual([...new Set(seen.map((entry) => entry.role))].sort(), ["installed-e2e", "proof", "python3", "server"]);
+    const seen = NodeFS.readFileSync(HOMES, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual([...new Set(seen.map((entry) => entry.role))].sort(), [
+      "installed-e2e",
+      "proof",
+      "python3",
+      "server",
+    ]);
     const real = NodeOS.userInfo().homedir;
     for (const entry of seen) {
       assert.notEqual(entry.home, real, `${entry.role} got the real HOME`);
-      assert.match(entry.home, /\/swc-verify-upgraded-[^/]+\/home$/, `${entry.role} HOME ${entry.home}`);
-      assert.match(entry.studioHome, /\/swc-verify-upgraded-[^/]+\/base$/, `${entry.role} STUDIO_HOME ${entry.studioHome}`);
-      assert.match(entry.tmp, /\/swc-verify-upgraded-[^/]+\/tmp$/, `${entry.role} TMPDIR ${entry.tmp}`);
+      assert.match(
+        entry.home,
+        /\/swc-verify-upgraded-[^/]+\/home$/,
+        `${entry.role} HOME ${entry.home}`,
+      );
+      assert.match(
+        entry.studioHome,
+        /\/swc-verify-upgraded-[^/]+\/base$/,
+        `${entry.role} STUDIO_HOME ${entry.studioHome}`,
+      );
+      assert.match(
+        entry.tmp,
+        /\/swc-verify-upgraded-[^/]+\/tmp$/,
+        `${entry.role} TMPDIR ${entry.tmp}`,
+      );
     }
     assert.deepEqual(leftScratch(), []);
   });
 
   it("makes the fixture from the previous app when none is given", async () => {
     const out = outDir("upgraded-previous-app");
-    const code = await run(["--mode", "all", "--app", makeApp("1.0.2").bundle, "--version", "1.0.2", "--out", out, "--previous-app", makeApp("1.0.1").bundle]);
+    const code = await run([
+      "--mode",
+      "all",
+      "--app",
+      makeApp("1.0.2").bundle,
+      "--version",
+      "1.0.2",
+      "--out",
+      out,
+      "--previous-app",
+      makeApp("1.0.1").bundle,
+    ]);
     assert.equal(code, 0);
     const receipt = receiptOf(out);
     assert.deepEqual(Object.keys(receipt.modes), ["fresh", "upgraded"]);
@@ -466,10 +751,30 @@ describe("upgraded mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
     const app = makeApp("1.0.2");
     NodeFS.writeFileSync(NodePath.join(NodePath.dirname(app.executable), "lose-thread"), "");
     const out = outDir("upgraded-lost-thread");
-    assert.equal(await run(["--mode", "upgraded", "--app", app.bundle, "--version", "1.0.2", "--out", out, "--fixture", fixture]), 1);
+    assert.equal(
+      await run([
+        "--mode",
+        "upgraded",
+        "--app",
+        app.bundle,
+        "--version",
+        "1.0.2",
+        "--out",
+        out,
+        "--fixture",
+        fixture,
+      ]),
+      1,
+    );
     const receipt = receiptOf(out);
-    assert.ok(receipt.failures.some((failure) => /post-update check \(update\.py verify --local\) exited 1/.test(failure)));
-    const check = JSON.parse(NodeFS.readFileSync(NodePath.join(out, "upgraded", "post-update-check.json"), "utf8"));
+    assert.ok(
+      receipt.failures.some((failure) =>
+        /post-update check \(update\.py verify --local\) exited 1/.test(failure),
+      ),
+    );
+    const check = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(out, "upgraded", "post-update-check.json"), "utf8"),
+    );
     assert.equal(check.error, "A thread disappeared during migration");
     assert.equal(receipt.modes.upgraded.scratch, undefined);
     assert.deepEqual(leftScratch(), [], "a failed upgrade still removes its scratch home");
@@ -477,13 +782,45 @@ describe("upgraded mode", { skip: IS_WIN && "POSIX shell fakes" }, () => {
 
   it("refuses a fixture that is not from an earlier release", async () => {
     const out = outDir("upgraded-same");
-    assert.equal(await run(["--mode", "upgraded", "--app", makeApp("1.0.1").bundle, "--version", "1.0.1", "--out", out, "--fixture", fixture]), 1);
-    assert.ok(receiptOf(out).failures.includes("upgraded: the fixture is from 1.0.1, not a release before 1.0.1"));
+    assert.equal(
+      await run([
+        "--mode",
+        "upgraded",
+        "--app",
+        makeApp("1.0.1").bundle,
+        "--version",
+        "1.0.1",
+        "--out",
+        out,
+        "--fixture",
+        fixture,
+      ]),
+      1,
+    );
+    assert.ok(
+      receiptOf(out).failures.includes(
+        "upgraded: the fixture is from 1.0.1, not a release before 1.0.1",
+      ),
+    );
   });
 
   it("fails on a fixture file that does not exist", async () => {
     const out = outDir("upgraded-nofixture");
-    assert.equal(await run(["--mode", "upgraded", "--app", makeApp("1.0.2").bundle, "--version", "1.0.2", "--out", out, "--fixture", NodePath.join(ROOT, "none.tar.gz")]), 1);
+    assert.equal(
+      await run([
+        "--mode",
+        "upgraded",
+        "--app",
+        makeApp("1.0.2").bundle,
+        "--version",
+        "1.0.2",
+        "--out",
+        out,
+        "--fixture",
+        NodePath.join(ROOT, "none.tar.gz"),
+      ]),
+      1,
+    );
     assert.ok(receiptOf(out).failures.some((failure) => /does not exist/.test(failure)));
   });
 });
