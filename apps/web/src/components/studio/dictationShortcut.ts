@@ -55,16 +55,20 @@ function visible(element: HTMLElement | null): element is HTMLElement {
 
 /**
  * The composer the shortcut is for: the one dictating, else the one holding
- * focus, else the visible one used last.
+ * focus (which does nothing while blocked), else the visible one used last.
  */
 export function pickDictationTarget(): Target | null {
   const candidates = [...targets].filter((target) => target.control().available);
   const dictating = candidates.find((target) => target.control().active);
   if (dictating) return dictating;
-  const shown = candidates.filter((target) => visible(target.root.current) && !target.disabled());
   const focus = document.activeElement;
-  const focused = shown.find((target) => focus && target.root.current?.contains(focus));
+  // A focused composer keeps the key even while blocked (an approval or a
+  // choice-only question), so it never falls through to another composer.
+  const focused = candidates.find(
+    (target) => focus && visible(target.root.current) && target.root.current?.contains(focus),
+  );
   if (focused) return focused;
+  const shown = candidates.filter((target) => visible(target.root.current) && !target.disabled());
   return shown.sort((a, b) => b.focusedAt - a.focusedAt)[0] ?? null;
 }
 
