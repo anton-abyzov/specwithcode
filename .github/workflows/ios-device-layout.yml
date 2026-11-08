@@ -77,7 +77,7 @@ jobs:
 
       - name: Width class tests
         working-directory: apps/ios/SWCKit
-        run: swift test --filter "LayoutClassTests|ChatKindTests"
+        run: swift test --filter "LayoutClassTests|ChatKindTests|ConnectTests|ConnectEngineTests|PhoneRemoval"
 
       - name: Layout tests at every phone width
         id: layout

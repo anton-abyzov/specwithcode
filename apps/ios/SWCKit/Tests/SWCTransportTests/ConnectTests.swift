@@ -81,6 +81,13 @@ enum RelayFixture {
     #expect(session.refreshes == [false, true])
   }
 
+  @Test func a401WithAFreshTokenMeansSignedOut() async {
+    let session = FakeSession(["stale", "fresh"])
+    let fake = FakeHTTP { _ in (401, RelayFixture.authInvalid) }
+    await #expect(throws: ConnectError.signedOut) { try await client(fake, session: session).environments() }
+    #expect(session.refreshes == [false, true])
+  }
+
   @Test func signedOutStopsBeforeTheNetwork() async {
     let fake = FakeHTTP { _ in (200, RelayFixture.environments) }
     await #expect(throws: ConnectError.signedOut) { try await client(fake, session: FakeSession([nil])).environments() }

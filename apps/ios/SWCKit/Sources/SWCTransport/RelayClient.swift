@@ -422,7 +422,9 @@ public actor RelayClient {
       request.setValue("Bearer " + jwt, forHTTPHeaderField: "Authorization")
       do {
         return try await send(request)
-      } catch let error as ConnectError where error.isRenewable && !refresh {
+      } catch let error as ConnectError where error.isRenewable {
+        // Refused again with a fresh Clerk token: the session is over.
+        guard !refresh else { tokens = [:]; throw ConnectError.signedOut }
         refresh = true
       }
     }
@@ -443,7 +445,9 @@ public actor RelayClient {
       }
       do {
         return try await send(request)
-      } catch let error as ConnectError where error.isRenewable && !refresh {
+      } catch let error as ConnectError where error.isRenewable {
+        // Refused again with a fresh Clerk token: the session is over.
+        guard !refresh else { tokens = [:]; throw ConnectError.signedOut }
         refresh = true
       }
     }

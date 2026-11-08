@@ -32,6 +32,8 @@ public final class ConnectRuntime {
   /// The Clerk session ended without the person signing out here; a
   /// device_removed refusal arriving later still counts.
   var sessionEndedElsewhere = false
+  /// A rejected session is being turned into signed out.
+  var rejectingSession = false
 
   /// The relay said this phone was removed from the account; cleared by the
   /// next successful sign-in.
@@ -226,6 +228,30 @@ extension LiveEngine {
     updateConnect { $0.wasRemoved = true }
   }
 
+  /// The relay refused this phone's Clerk session even after a fresh token,
+  /// from the account screen or from any computer reached through Connect.
+  /// Clerk's saved user is only a cache: it is cleared too, so this phone
+  /// shows signed out everywhere, now and after the next launch, until the
+  /// person signs in again. Computers stay listed and reconnect then.
+  func connectSessionRejected() async {
+    guard let connect, !connect.signingOut, !connect.handlingRemoval, !connect.wasRemoved, !connect.rejectingSession else { return }
+    guard connect.account.currentUser != nil || model?.connect?.user != nil else { return }
+    connect.rejectingSession = true
+    defer { connect.rejectingSession = false }
+    Self.log.info("Connect session rejected; showing signed out")
+    connect.wasSignedIn = true
+    connect.lastRefresh = Date()
+    updateConnect { $0.user = nil; $0.lastError = nil }
+    connect.signingOut = true
+    do {
+      try await connect.account.signOut()
+    } catch {
+      Self.log.error("Clearing the rejected session failed: \(String(describing: error), privacy: .public)")
+    }
+    connect.signingOut = false
+    await connectSessionEnded()
+  }
+
   public func connectDeleteAccount() async throws {
     guard let connect else { return }
     updateConnect { $0.isBusy = true; $0.lastError = nil }
@@ -301,10 +327,10 @@ extension LiveEngine {
         await connectHandleRemoval(error)
         return
       }
-      updateConnect { $0.lastError = error.localizedDescription }
       if Self.isSignedOut(error) {
-        updateConnect { $0.user = nil }
-        await connectSessionEnded()
+        await connectSessionRejected()
+      } else {
+        updateConnect { $0.lastError = error.localizedDescription }
       }
       return
     }

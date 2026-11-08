@@ -318,6 +318,10 @@ public final class LiveEngine: AppEngine {
     entry.status = status
     if case let .connect(error)? = status.lastError, error.isDeviceRemoved {
       Task { await connectHandleRemoval(error) }
+    } else if status.lastError == .connect(.signedOut) {
+      // A computer reached through Connect found the session gone: the
+      // account card must say so too, not keep showing Clerk's cached user.
+      Task { await connectSessionRejected() }
     }
     if let days = status.tokenDaysLeft { entry.tokenDaysLeft = days }
     // Connected, or the attempt really failed: the grace is over for good.

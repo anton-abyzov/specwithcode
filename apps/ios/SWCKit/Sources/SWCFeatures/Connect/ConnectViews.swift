@@ -123,6 +123,11 @@ struct ConnectAccountCard: View {
         }
       }
     }
+    // Shown from Clerk's saved user at first; ask the relay now, so a session
+    // that ended elsewhere turns into Sign in here instead of "signed in".
+    .task(id: state.user?.id) {
+      if state.user != nil { await model.engine.connectRefresh() }
+    }
     .alert("Sign out?", isPresented: $confirmSignOut) {
       Button("Sign out", role: .destructive) { Task { await model.engine.connectSignOut() } }
       Button("Cancel", role: .cancel) {}
