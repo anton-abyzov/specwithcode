@@ -105,6 +105,13 @@ export function MachinesSettingsPanel() {
     [rawGrants.snapshot, environments, machineName],
   );
   const grants = { ...rawGrants, snapshot: labeledSnapshot };
+  const hereLabel = fleet.primaryEnvironmentId
+    ? machineName(
+        fleet.primaryEnvironmentId,
+        environments.find((entry) => entry.environmentId === fleet.primaryEnvironmentId)?.label ??
+          "this machine",
+      )
+    : "this machine";
   const projects = useProjects();
   const configs = useServerConfigs();
   // Read once: the page shows sign-ins, not countdowns, so it never ticks.
@@ -157,6 +164,7 @@ export function MachinesSettingsPanel() {
     <MachineRow
       key={row.environmentId}
       row={row}
+      hereLabel={hereLabel}
       pending={pending}
       onConnect={(machine) => void connect(machine)}
       remoteControl={
@@ -253,6 +261,9 @@ export function MachineListSection({
   renderConnectBothWays?: (row: MachineRowModel) => ReactNode;
 }) {
   const tx = useTx();
+  const name = useMachineNicknames();
+  const thisRow = rows.find((row) => row.seen.state === "this-machine");
+  const hereLabel = thisRow ? name(thisRow.environmentId, thisRow.label) : "this machine";
   return (
     <SettingsSection
       id="machines"
@@ -274,6 +285,7 @@ export function MachineListSection({
             <MachineRow
               key={row.environmentId}
               row={row}
+              hereLabel={hereLabel}
               pending={pending}
               onConnect={onConnect}
               addForAgents={
@@ -594,6 +606,7 @@ export function MachineRow({
   remoteControl,
   details,
   row,
+  hereLabel,
   pending,
   onConnect,
   addForAgents,
@@ -603,6 +616,8 @@ export function MachineRow({
   remoteControl?: ReactNode;
   details?: ReactNode;
   row: MachineRowModel;
+  /** This machine's name, so each grant line names its direction. */
+  hereLabel: string;
   pending: EnvironmentId | null;
   onConnect: (machine: StudioFleetMachine) => void;
   addForAgents?: ReactNode;
@@ -683,12 +698,15 @@ export function MachineRow({
 
       {row.workers ? (
         <DetailLine
-          label={tx("Workers from this machine")}
-          help="Whether agents on this machine may start work there. You decide this for each machine."
+          label={tx("{hereLabel} → {thereLabel}", { hereLabel, thereLabel: nickname })}
+          help={tx("Whether agents on {hereLabel} may start work on {thereLabel}.", {
+            hereLabel,
+            thereLabel: nickname,
+          })}
         >
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={WORKER_BADGE[row.workers.status]}>
-              {row.workers.label}
+              {tx(row.workers.label)}
             </Badge>
             <span>{row.workers.detail}</span>
             {row.workers.status === "not-allowed" ? (
@@ -703,10 +721,10 @@ export function MachineRow({
       {addForAgents}
 
       {row.workHere ? (
-        <DetailLine label={tx("Work it may run here")}>
+        <DetailLine label={tx("{thereLabel} → {hereLabel}", { hereLabel, thereLabel: nickname })}>
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={WORK_HERE_BADGE[row.workHere.status]}>
-              {row.workHere.label}
+              {tx(row.workHere.label)}
             </Badge>
             <span>{row.workHere.detail}</span>
           </p>
@@ -814,10 +832,10 @@ function AllowBack({
   );
   const coordinatorLabel = name(row.environmentId, row.label);
   return (
-    <DetailLine label={tx("Work it may run here")}>
-      <p className="text-xs text-muted-foreground">
-        {tx("{coordinatorLabel} cannot run work here yet.", { coordinatorLabel })}
-      </p>
+    <DetailLine
+      label={tx("{thereLabel} → {hereLabel}", { hereLabel, thereLabel: coordinatorLabel })}
+    >
+      <p className="text-xs text-muted-foreground">{tx("Not allowed yet.")}</p>
       <IncomingWorkerAction
         here={primaryEnvironmentId}
         coordinator={row.environmentId}

@@ -207,14 +207,13 @@ function workerGrant(machine: StudioFleetMachine): MachineWorkerGrant | null {
   const workers = machine.workers;
   if (!workers) return null;
   const detail = fleetWorkersView(workers).summary;
-  if (workers.status === "allowed") return { status: "allowed", label: "Workers allowed", detail };
-  if (workers.status === "expiring")
-    return { status: "expiring", label: "Workers expiring", detail };
-  return { status: "not-allowed", label: "Workers not allowed", detail };
+  if (workers.status === "allowed") return { status: "allowed", label: "Allowed", detail };
+  if (workers.status === "expiring") return { status: "expiring", label: "Expiring", detail };
+  return { status: "not-allowed", label: "Not allowed", detail };
 }
 
 const WORK_HERE_LABELS: Readonly<Record<StudioWorkGrant["status"], string>> = {
-  active: "May run work here",
+  active: "Allowed",
   revoked: "Revoked",
   expired: "Expired",
 };

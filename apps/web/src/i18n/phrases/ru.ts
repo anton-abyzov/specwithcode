@@ -1745,8 +1745,16 @@ export const ru: PhraseCatalog = {
   "Most access for incoming work": "Максимальный доступ для входящей работы",
   "Setting up…": "Настройка…",
   "Allow {coordinatorLabel}": "Разрешить {coordinatorLabel}",
-  "{coordinatorLabel} cannot run work here yet.":
-    "{coordinatorLabel} пока не может запускать работу здесь.",
+  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
+  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
+  "Whether agents on {hereLabel} may start work on {thereLabel}.":
+    "Могут ли агенты на {hereLabel} запускать работу на {thereLabel}.",
+  Allowed: "Разрешено",
+  Expiring: "Скоро истекает",
+  "Not allowed": "Не разрешено",
+  Revoked: "Отозвано",
+  Expired: "Истекло",
+  "Not allowed yet.": "Пока не разрешено.",
   "Let {coordinatorLabel} use this machine too":
     "Разрешить {coordinatorLabel} тоже использовать эту машину",
   "On {coordinatorLabel}: done": "На {coordinatorLabel}: готово",
@@ -1911,8 +1919,6 @@ export const ru: PhraseCatalog = {
   "also on": "также на",
   "Same account on {value}": "Тот же аккаунт на {value}",
   "Connecting…": "Подключение…",
-  "Workers from this machine": "Исполнители с этой машины",
-  "Work it may run here": "Работа, которую она может запускать здесь",
   "rules {fingerprint}": "правила {fingerprint}",
   "No projects of your own here.": "Здесь нет ваших проектов.",
   "Connect to see its projects.": "Подключитесь, чтобы увидеть её проекты.",

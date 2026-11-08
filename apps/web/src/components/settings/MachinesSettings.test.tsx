@@ -299,7 +299,8 @@ describe("Settings > Machines", () => {
     expect(html).toContain("This app can see it");
     expect(html).toContain("not open in this window");
     expect(html).not.toContain("This app cannot see it");
-    expect(html).toContain("Workers allowed");
+    expect(html).toContain("M4MAX → MacBook Pro");
+    expect(html).toContain(">Allowed<");
     expect(html).toContain("EasyChamp");
     expect(html).toContain("Runs workers only");
     // The row keeps the folder short; the button says it in full.
@@ -398,17 +399,26 @@ describe("Settings > Machines", () => {
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain('aria-label="Who can run work here"');
-    expect(html).toContain("May run work here");
+    expect(html).toContain("MacBook Pro → M4MAX");
     expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
-    expect(html.match(/May run work here/g)).toHaveLength(1);
+    expect(html.match(/MacBook Pro → M4MAX/g)).toHaveLength(1);
+    expect(html).not.toContain("use this machine too");
   });
 
   it("offers letting a connected machine without a grant here use this machine too", () => {
     setUp();
     runtime.grants = { grants: [], projects: [], accounts: [] };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    expect(html).toContain("MacBook Pro cannot run work here yet.");
-    expect(html.match(/Let MacBook Pro use this machine too/g)).toHaveLength(1);
+    // Each line names its direction; only the missing one offers a button.
+    expect(html).toContain("M4MAX → MacBook Pro");
+    expect(html).toContain(">Allowed<");
+    expect(html.match(/MacBook Pro → M4MAX/g)).toHaveLength(1);
+    expect(html).toContain("Not allowed yet.");
+    expect(html).not.toContain("cannot run work here yet");
+    expect(html.match(/<button[^>]*>Let MacBook Pro use this machine too<\/button>/g)).toHaveLength(
+      1,
+    );
+    expect(html.match(/use this machine too/g)).toHaveLength(1);
     // Never for this machine itself.
     expect(html).not.toContain("Let M4MAX use this machine too");
   });
