@@ -512,6 +512,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     notOnWindows: true,
   },
   {
+    id: "dictation-language",
+    title: "Dictation language",
+    to: "/settings/general",
+    searchTerms: ["dictation dictate voice speech microphone mic language locale whisper"],
+    desktopOnly: true,
+    notOnWindows: true,
+  },
+  {
+    id: "dictation-mode",
+    title: "Dictation shortcut",
+    to: "/settings/general",
+    searchTerms: ["dictation dictate hotkey shortcut keybinding hold to talk push to talk toggle"],
+    desktopOnly: true,
+    notOnWindows: true,
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

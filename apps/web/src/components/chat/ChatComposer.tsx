@@ -284,6 +284,9 @@ import type { ModelStateHeader } from "./ModelPickerContent";
 import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
 import { MachineLimitsPanel } from "../studio/shell/ProjectUsageIndicator";
+import { useDictationShortcut } from "../studio/dictationShortcut";
+import { VoiceConsentDialog } from "../studio/VoiceCall";
+import { insertDictatedText, useVoiceDictation, VoiceDictationBar } from "../studio/VoiceDictation";
 import { resolveModelPickerSelectedModel } from "./modelPickerOptions";
 import {
   type ComposerCommandItem,
@@ -1126,6 +1129,7 @@ import {
   FileIcon,
   BotIcon,
   CircleAlertIcon,
+  MicIcon,
   PaperclipIcon,
   PencilRulerIcon,
   PlayIcon,
@@ -1703,6 +1707,9 @@ export interface ChatComposerProps {
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
   compactDisabledReason: string | null;
+
+  /** Review, transcript or an overlay owns the keys: the dictation shortcut must not start here. */
+  dictationSuspended?: boolean;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -4205,6 +4212,46 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       contextIds: collectInlineContextIds(promptRef.current),
     };
   }, [composerCursor, promptRef]);
+
+  // ------------------------------------------------------------------
+  // Dictation: the same microphone, shortcut and Settings as the coordinator's
+  // ------------------------------------------------------------------
+  const insertDictation = useCallback(
+    (text: string) => {
+      const form = composerFormRef.current;
+      const active = document.activeElement;
+      const focused = form !== null && active instanceof Node && form.contains(active);
+      const current = promptRef.current;
+      const snapshot = focused ? readComposerSnapshot() : null;
+      const range =
+        snapshot && snapshot.value === current
+          ? composerEditorRef.current?.readSelectionRange()
+          : undefined;
+      const start = range?.start ?? current.length;
+      const end = range?.end ?? start;
+      const next = insertDictatedText(current, text, start, end);
+      applyPromptReplacement(start, end, next.value.slice(start, next.caret), {
+        expandedCursorAfterReplace: next.caret,
+        focusEditorAfterReplace: focused,
+      });
+    },
+    [applyPromptReplacement, promptRef, readComposerSnapshot],
+  );
+  const dictation = useVoiceDictation(
+    (update) => setPrompt(update(promptRef.current)),
+    composerDraftTargetKey,
+    { insert: insertDictation },
+  );
+  const dictationBlocked =
+    isComposerApprovalState || projectSelectionRequired || isChoiceOnlyPendingQuestion;
+  useDictationShortcut({
+    dictation,
+    root: composerFormRef,
+    keybindings,
+    disabled: dictationBlocked || props.dictationSuspended === true,
+  });
+  const dictationShortcutLabel = shortcutLabelForCommand(keybindings, "composer.dictation.toggle");
+  const dictationTip = dictation.active ? tx("Stop dictating") : tx("Dictate into the message");
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -7130,6 +7177,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           {props.accessRequestCard}
         </div>
       ) : null}
+      <VoiceDictationBar dictation={dictation} />
+      {/* Outside the resting toolbar: the shortcut can ask for consent while it rests. */}
+      {dictation.available ? (
+        <VoiceConsentDialog
+          open={dictation.consentOpen}
+          setupBytes={dictation.setupBytes}
+          onCancel={dictation.cancelConsent}
+          onAllow={dictation.allow}
+          allowLabel={tx("Allow and dictate")}
+        />
+      ) : null}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack
@@ -8016,6 +8074,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
+                  {dictation.available && !isComposerResting ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant={dictation.active ? "secondary" : "ghost"}
+                            size="icon-sm"
+                            data-chat-composer-dictate="true"
+                            aria-label={dictationTip}
+                            aria-pressed={dictation.active}
+                            disabled={
+                              dictation.phase === "finishing" ||
+                              (dictationBlocked && !dictation.active)
+                            }
+                            onPointerDown={(event) => event.preventDefault()}
+                            onClick={() =>
+                              void (dictation.active ? dictation.stop() : dictation.start())
+                            }
+                          />
+                        }
+                      >
+                        <MicIcon />
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {dictationShortcutLabel
+                          ? `${dictationTip} (${dictationShortcutLabel})`
+                          : dictationTip}
+                      </TooltipPopup>
+                    </Tooltip>
+                  ) : null}
                   {showComposerAttachAction ? (
                     <>
                       <input

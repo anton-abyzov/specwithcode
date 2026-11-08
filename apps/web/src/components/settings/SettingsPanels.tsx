@@ -176,6 +176,7 @@ import {
   useSettingsSearchTarget,
   useSettingsSearchTargetId,
 } from "./settingsLayout";
+import { DictationSettings } from "./DictationSettings";
 import { searchableSetting } from "./settingsSearch";
 import {
   TIMELINE_DETAIL_DESCRIPTIONS,
@@ -632,6 +633,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.voiceCallsAllowed !== DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed
         ? ["Voice calls with the coordinator"]
         : []),
+      ...(canHostVoiceCall() &&
+      settings.dictationLanguage !== DEFAULT_UNIFIED_SETTINGS.dictationLanguage
+        ? ["Dictation language"]
+        : []),
+      ...(canHostVoiceCall() && settings.dictationMode !== DEFAULT_UNIFIED_SETTINGS.dictationMode
+        ? ["Dictation shortcut"]
+        : []),
       ...(settings.whatYouCanDoDismissed !== DEFAULT_UNIFIED_SETTINGS.whatYouCanDoDismissed
         ? ["Show What you can do"]
         : []),
@@ -795,6 +803,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.inputNeededAlertsEnabled,
       settings.keepAwakeWhileWorking,
       settings.voiceCallsAllowed,
+      settings.dictationLanguage,
+      settings.dictationMode,
       settings.whatYouCanDoDismissed,
       settings.wordWrap,
       followSystem,
@@ -876,6 +886,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       inputNeededAlertsEnabled: DEFAULT_UNIFIED_SETTINGS.inputNeededAlertsEnabled,
       keepAwakeWhileWorking: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileWorking,
       voiceCallsAllowed: DEFAULT_UNIFIED_SETTINGS.voiceCallsAllowed,
+      dictationLanguage: DEFAULT_UNIFIED_SETTINGS.dictationLanguage,
+      dictationMode: DEFAULT_UNIFIED_SETTINGS.dictationMode,
       whatYouCanDoDismissed: DEFAULT_UNIFIED_SETTINGS.whatYouCanDoDismissed,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
@@ -2601,6 +2613,7 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+        {canHostVoiceCall() ? <DictationSettings /> : null}
         <SettingsRow
           {...searchableSetting("what-you-can-do")}
           description="A short checklist on Overview, ticked from what you have set up. It goes away once everything is done."

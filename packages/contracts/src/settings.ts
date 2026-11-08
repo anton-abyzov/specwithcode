@@ -385,6 +385,13 @@ export type TimelineDetail = typeof TimelineDetail.Type;
 export const ThreadTimelineDetail = Schema.Record(TrimmedNonEmptyString, TimelineDetail);
 export type ThreadTimelineDetail = typeof ThreadTimelineDetail.Type;
 
+export const DictationLanguage = Schema.String.check(
+  Schema.isMaxLength(35),
+  Schema.isPattern(/^(?:[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*)?$/),
+);
+export const DictationMode = Schema.Literals(["toggle", "hold"]);
+export type DictationMode = typeof DictationMode.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -403,6 +410,14 @@ export const ClientSettingsSchema = Schema.Struct({
    * allows it, on their first call or here in Settings.
    */
   voiceCallsAllowed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Desktop: the language dictation listens for, as a BCP 47 tag. Empty follows
+   * the system on macOS and detects the language from the speech on Linux.
+   * One value for the whole app, every project and thread.
+   */
+  dictationLanguage: DictationLanguage.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Toggle: the dictation shortcut starts and stops it. Hold: dictate while it is held. */
+  dictationMode: DictationMode.pipe(Schema.withDecodingDefault(Effect.succeed("toggle" as const))),
   /** Pair this browser with reachable private machines from the server's fleet list on load. */
   autoConnectPrivateMachines: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Overview's "What you can do" checklist was dismissed. Settings > General brings it back. */
@@ -2538,6 +2553,8 @@ export const ClientSettingsPatch = Schema.Struct({
   inputNeededAlertsEnabled: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileWorking: Schema.optionalKey(Schema.Boolean),
   voiceCallsAllowed: Schema.optionalKey(Schema.Boolean),
+  dictationLanguage: Schema.optionalKey(DictationLanguage),
+  dictationMode: Schema.optionalKey(DictationMode),
   autoConnectPrivateMachines: Schema.optionalKey(Schema.Boolean),
   whatYouCanDoDismissed: Schema.optionalKey(Schema.Boolean),
   starOnGitHubDismissed: Schema.optionalKey(Schema.Boolean),

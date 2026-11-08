@@ -3,11 +3,11 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { Writable } from "node:stream";
+import * as NodeStream from "node:stream";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { LinuxSpeech, linuxSpeechAssets, type RunCommand } from "./linuxSpeech.ts";
+import { LinuxSpeech, linuxSpeechAssets, type RunCommand, whisperLanguage } from "./linuxSpeech.ts";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFS>();
@@ -110,7 +110,7 @@ describe("assets", () => {
       writeStream.mockClear();
       writeStream.mockImplementationOnce(
         () =>
-          new Writable({
+          new NodeStream.Writable({
             write(_chunk, _encoding, callback) {
               callback(Object.assign(new Error("No space left on device"), { code: "ENOSPC" }));
             },
@@ -198,6 +198,13 @@ describe("running helpers", () => {
     expect(args.slice(args.indexOf("--prompt"))).toEqual(["--prompt", "SpecWeave, Postiz."]);
   });
 
+  it("uses the language chosen in Settings instead of detecting it", async () => {
+    const run = vi.fn<RunCommand>(async () => "");
+    await engine({ run }).transcribe("/a.wav", "", undefined, "ru-RU");
+    const args = run.mock.calls[0]![1];
+    expect(args[args.indexOf("-l") + 1]).toBe("ru");
+  });
+
   it("omits an empty prompt", async () => {
     const run = vi.fn<RunCommand>(async () => "");
     await engine({ run }).transcribe("/a.wav", "");
@@ -261,5 +268,16 @@ describe("running helpers", () => {
     expect(command).toBe(NodePath.join(voiceDir(), "piper", "piper"));
     expect(args.slice(args.indexOf("--length_scale"))).toEqual(["--length_scale", "0.904"]);
     expect(options.stdin).toBe("Hello there\n");
+  });
+});
+
+describe("whisperLanguage", () => {
+  it("takes the bare language code and detects anything else", () => {
+    expect(whisperLanguage("de-DE")).toBe("de");
+    expect(whisperLanguage("pt_BR")).toBe("pt");
+    expect(whisperLanguage("EN")).toBe("en");
+    expect(whisperLanguage("")).toBe("auto");
+    expect(whisperLanguage(undefined)).toBe("auto");
+    expect(whisperLanguage("not a tag")).toBe("auto");
   });
 });

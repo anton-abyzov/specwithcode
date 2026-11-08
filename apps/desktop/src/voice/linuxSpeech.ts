@@ -93,6 +93,12 @@ const TRANSCRIBE_TIMEOUT_MS = 120_000;
 const SPEAK_TIMEOUT_MS = 60_000;
 const NATURAL_RATE = 0.47;
 
+/** Whisper takes the bare language code (`de` for `de-DE`); anything else detects it. */
+export function whisperLanguage(language: string | undefined): string {
+  const code = language?.trim().split(/[-_]/)[0]?.toLowerCase() ?? "";
+  return /^[a-z]{2,3}$/.test(code) ? code : "auto";
+}
+
 export class LinuxSpeechError extends Error {
   override readonly name = "LinuxSpeechError";
 }
@@ -364,8 +370,16 @@ export class LinuxSpeech {
     }
   }
 
-  /** Transcribes a 16 kHz mono WAV; the language is detected from the speech. */
-  transcribe(wavPath: string, prompt: string, signal?: AbortSignal): Promise<string> {
+  /**
+   * Transcribes a 16 kHz mono WAV. The language is detected from the speech
+   * unless one was chosen in Settings (a BCP 47 tag such as `de-DE`).
+   */
+  transcribe(
+    wavPath: string,
+    prompt: string,
+    signal?: AbortSignal,
+    language?: string,
+  ): Promise<string> {
     const job = this.queue.then(async () => {
       signal?.throwIfAborted();
       await this.requireAssets();
@@ -380,7 +394,7 @@ export class LinuxSpeech {
           "-t",
           String(this.threads),
           "-l",
-          "auto",
+          whisperLanguage(language),
           "-nt",
           "-np",
           "-sns",

@@ -43,6 +43,8 @@ export const DesktopVoiceVocabularySaveInputSchema = Schema.Struct({
 export const DesktopVoiceTranscribeInputSchema = Schema.Struct({
   audio: Schema.Uint8Array,
   locale: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(35))),
+  /** The person chose this language in Settings; engines that auto-detect must use it. */
+  pinLanguage: Schema.optionalKey(Schema.Boolean),
 });
 
 const SpokenText = Schema.String.check(
