@@ -1,0 +1,26 @@
+name: Question
+description: Ask how something works or whether SpecWithCode can do something.
+title: "[Question]: "
+labels: ["question", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open-ended questions also fit [Discussions Q&A](https://github.com/anton-abyzov/specwithcode/discussions/categories/q-a).
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What are you trying to do, and what did you try?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: "1.0.218"
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "macOS, desktop app, 2 machines"

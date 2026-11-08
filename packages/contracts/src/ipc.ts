@@ -1062,6 +1062,13 @@ export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInp
 export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
 
+/** Help > Send Feedback menu actions; the renderer opens the matching GitHub issue form. */
+export const DESKTOP_FEEDBACK_ACTIONS = {
+  bug: "send-feedback:bug",
+  idea: "send-feedback:idea",
+  question: "send-feedback:question",
+} as const;
+
 export interface DesktopBridge extends DesktopUpdateBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
