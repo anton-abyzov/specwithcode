@@ -51,6 +51,7 @@ import {
 import { Button } from "../ui/button";
 import { Tip } from "./shell/Tip";
 import { VoiceSettings } from "./VoiceSettings";
+import { markVoiceCallLive } from "./dictationShortcut";
 
 type VoiceBridge = Required<
   Pick<
@@ -376,6 +377,8 @@ export function useVoiceCall(
   }, [bridge]);
 
   const active = state.phase !== "idle" && state.phase !== "ended" && state.phase !== "error";
+  // Dictation elsewhere in the window would end this call's microphone grant.
+  useEffect(() => (active ? markVoiceCallLive() : undefined), [active]);
   return {
     available: bridge !== null,
     unavailableReason,

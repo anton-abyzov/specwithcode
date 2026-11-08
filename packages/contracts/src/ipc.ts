@@ -1150,7 +1150,12 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   /** The window may open the microphone only while its call or dictation is active. */
   setVoiceCallActive?: (state: { active: boolean }) => Promise<void>;
   /** On-device speech to text for a 16 kHz mono WAV. */
-  transcribeVoice?: (input: { audio: Uint8Array; locale?: string }) => Promise<string>;
+  transcribeVoice?: (input: {
+    audio: Uint8Array;
+    locale?: string;
+    /** The language was chosen in Settings, so engines that auto-detect use it. */
+    pinLanguage?: boolean;
+  }) => Promise<string>;
   listLocalVoices?: () => Promise<readonly DesktopLocalVoice[]>;
   /** Voice settings an earlier build saved on this Mac, for a one-time move to the server. */
   readLegacyVoicePreferences?: () => Promise<DesktopLegacyVoicePreferences | null>;

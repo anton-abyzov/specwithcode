@@ -174,6 +174,7 @@ import { ProjectWorkerPane } from "./ProjectWorkerPane";
 import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
 import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar, VoiceCallButton } from "./VoiceCall";
+import { useDictationShortcut } from "./dictationShortcut";
 import { useVoiceDictation, VoiceDictationBar, VoiceDictationButton } from "./VoiceDictation";
 import { ProjectIconButton } from "./ProjectIconEditor";
 import { ProjectMoreMenu } from "./shell/ProjectMoreMenu";
@@ -1151,6 +1152,13 @@ export function ProjectWorkspaceSurface({
           : null),
   );
   const dictation = useVoiceDictation(setPrompt, project.id);
+  const coordinatorPaneRef = useRef<HTMLElement | null>(null);
+  useDictationShortcut({
+    dictation,
+    root: coordinatorPaneRef,
+    keybindings,
+    disabled: voiceCall.active,
+  });
   const hostCapabilities = environment?.serverConfig?.environment.capabilities;
   const uploadsSupported = hostCapabilities?.attachmentUploads === true;
   // Coordinator turns carry files the way thread turns do: the agent gets each one's path.
@@ -1571,6 +1579,7 @@ export function ProjectWorkspaceSurface({
           workerOpen={!!selectedThread}
         >
           <section
+            ref={coordinatorPaneRef}
             className="project-coordinator sws-coordinator"
             aria-label="Project coordinator"
             data-project-pane="coordinator"
@@ -1860,7 +1869,11 @@ export function ProjectWorkspaceSurface({
                 }
                 meta={
                   <>
-                    <VoiceDictationButton dictation={dictation} disabled={voiceCall.active} />
+                    <VoiceDictationButton
+                      dictation={dictation}
+                      disabled={voiceCall.active}
+                      shortcut={shortcutLabelForCommand(keybindings, "composer.dictation.toggle")}
+                    />
                     <VoiceCallButton
                       call={voiceCall}
                       disabled={Boolean(blocked) || (!model && !coordinatorId) || dictation.active}

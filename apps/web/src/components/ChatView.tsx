@@ -15903,6 +15903,7 @@ export default function ChatView(props: ChatViewProps) {
                           <QuestionLiveStatus announcement={answerAnnouncement} />
                           {!composerMounted ? null : (
                             <ChatComposer
+                              dictationSuspended={suspendChatInput}
                               allowManualCodexCredits={!routesViaCoordinator(projectRouting)}
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}

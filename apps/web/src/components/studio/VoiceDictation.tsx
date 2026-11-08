@@ -15,6 +15,7 @@ import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSetti
 import { openCallMicrophone } from "../../studio/voiceCallAudio";
 import { canHostVoiceCall } from "../../studio/voiceCallSupport";
 import { COORDINATOR_PROMPT_ID } from "./CoordinatorQuestionCard";
+import { isVoiceCallLive, stopOtherDictation } from "./dictationShortcut";
 import { Tip } from "./shell/Tip";
 import { useVoiceSetupPercent, VoiceConsentDialog } from "./VoiceCall";
 
@@ -60,6 +61,8 @@ type Session = {
   pending: number;
   wrote: boolean;
   dropped: boolean;
+  /** stop() ran: the microphone is closed and the queue is being written out. */
+  stopping: boolean;
   failures: number;
 };
 
@@ -69,17 +72,24 @@ const NOTHING_HEARD =
 
 export type VoiceDictation = ReturnType<typeof useVoiceDictation>;
 
+/** Puts one finished phrase into a composer, at its caret when it has focus. */
+export type DictationInsert = (text: string) => void;
+
 /**
- * Dictation into the coordinator's message box. Pressing the button opens the
+ * Dictation into a message box: the coordinator's by default, or any composer
+ * that passes `insert`. Pressing the button or the shortcut opens the
  * microphone and each finished phrase lands at the cursor, unsent. Leaving the
  * project or the page closes the microphone and drops anything still queued.
+ * The language comes from Settings, one value for the whole app.
  */
 export function useVoiceDictation(
   setPrompt: (update: (current: string) => string) => void,
   scope: string,
+  options?: { readonly insert?: DictationInsert },
 ) {
   const bridge = dictationBridge();
   const allowed = useClientSettings((settings) => settings.voiceCallsAllowed);
+  const language = useClientSettings((settings) => settings.dictationLanguage);
   const updateSettings = useUpdateClientSettings();
   const [phase, setPhase] = useState<Phase>("idle");
   const [writing, setWriting] = useState(false);
@@ -93,15 +103,24 @@ export function useVoiceDictation(
   const [consentOpen, setConsentOpen] = useState(false);
   const [setupBytes, setSetupBytes] = useState(0);
   const session = useRef<Session | null>(null);
+  const [key] = useState(() => ({}));
   const attempt = useRef(0);
   const levelTarget = useRef<HTMLElement | null>(null);
   const setPromptRef = useRef(setPrompt);
+  const insertRef = useRef(options?.insert);
+  const languageRef = useRef(language);
   useLayoutEffect(() => {
     setPromptRef.current = setPrompt;
+    insertRef.current = options?.insert;
+    languageRef.current = language;
   });
   const setupPercent = useVoiceSetupPercent(bridge, phase === "starting");
 
   const insert = useCallback((text: string) => {
+    if (insertRef.current) {
+      insertRef.current(text);
+      return;
+    }
     const box = document.getElementById(COORDINATOR_PROMPT_ID);
     const focused = box instanceof HTMLTextAreaElement && document.activeElement === box;
     const selection = focused ? [box.selectionStart, box.selectionEnd] : null;
@@ -120,6 +139,15 @@ export function useVoiceDictation(
     }
   }, []);
 
+  // The desktop grants the microphone per window, not per composer: only the
+  // composer that asked for it may hand it back, or it ends another's session.
+  const owns = useRef(false);
+  const release = useCallback(() => {
+    if (!owns.current) return;
+    owns.current = false;
+    void bridge?.setVoiceCallActive({ active: false }).catch(() => undefined);
+  }, [bridge]);
+
   const closeMicrophone = (current: Session) => {
     current.microphone?.close();
     current.microphone = null;
@@ -137,9 +165,9 @@ export function useVoiceDictation(
       setWriting(false);
       setError(message);
       setPhase("error");
-      void bridge?.setVoiceCallActive({ active: false }).catch(() => undefined);
+      release();
     },
-    [bridge],
+    [release],
   );
 
   const enqueue = useCallback(
@@ -154,8 +182,15 @@ export function useVoiceDictation(
       current.queue = current.queue.then(async () => {
         try {
           if (current.dropped) return;
-          const locale = bridge.getSystemLocale?.() ?? undefined;
-          const text = await bridge.transcribeVoice(locale ? { audio, locale } : { audio });
+          const chosen = languageRef.current;
+          const locale = chosen || (bridge.getSystemLocale?.() ?? undefined);
+          const text = await bridge.transcribeVoice(
+            chosen
+              ? { audio, locale: chosen, pinLanguage: true }
+              : locale
+                ? { audio, locale }
+                : { audio },
+          );
           if (current.dropped || !text.trim()) return;
           current.wrote = true;
           current.failures = 0;
@@ -202,10 +237,12 @@ export function useVoiceDictation(
       pending: 0,
       wrote: false,
       dropped: false,
+      stopping: false,
       failures: 0,
     };
     session.current = current;
     try {
+      owns.current = true;
       await bridge.setVoiceCallActive({ active: true });
       if (cancelled()) return;
       const microphone = await openCallMicrophone((frame) => {
@@ -236,14 +273,20 @@ export function useVoiceDictation(
   /** Stops listening, and finishes writing what was already said. */
   const stop = useCallback(async () => {
     const current = session.current;
+    // A second stop while the first writes out waits for it rather than cutting it short.
+    if (current?.stopping) {
+      await current.queue;
+      return;
+    }
     if (!current?.microphone) {
       // Still starting: the attempt must not open the microphone after this.
       attempt.current += 1;
       session.current = null;
       setPhase("idle");
-      void bridge?.setVoiceCallActive({ active: false }).catch(() => undefined);
+      release();
       return;
     }
+    current.stopping = true;
     closeMicrophone(current);
     for (const event of current.detector?.flush() ?? []) {
       if (event.type === "utterance") enqueue(current, event.samples, event.sampleRate);
@@ -253,7 +296,7 @@ export function useVoiceDictation(
     await current.queue;
     if (session.current !== current) return;
     session.current = null;
-    void bridge?.setVoiceCallActive({ active: false }).catch(() => undefined);
+    release();
     setWriting(false);
     if (current.wrote) {
       setPhase("idle");
@@ -261,7 +304,7 @@ export function useVoiceDictation(
       setError(notice.current ?? NOTHING_HEARD);
       setPhase("error");
     }
-  }, [bridge, enqueue]);
+  }, [enqueue, release]);
 
   // Leaving the project or the page: microphone off now, nothing lands afterward.
   useEffect(
@@ -275,15 +318,20 @@ export function useVoiceDictation(
       }
       setPhase("idle");
       setWriting(false);
-      void bridge?.setVoiceCallActive({ active: false }).catch(() => undefined);
+      release();
     },
     [scope],
   );
 
   const start = useCallback(async () => {
-    if (!bridge) return;
+    if (!bridge || isVoiceCallLive()) return;
+    // A stop while this is still checking (a held shortcut let go) wins.
+    const id = attempt.current;
+    // The desktop grants the microphone per window: one composer dictates at a time.
+    await stopOtherDictation(key);
     // A download never starts unasked, even after an earlier yes or the Settings switch.
     const status = await bridge.getVoiceStatus().catch(() => null);
+    if (attempt.current !== id) return;
     const bytes = status?.setupBytes ?? 0;
     setSetupBytes(bytes);
     if (!allowed || status === null || bytes > 0) {
@@ -291,7 +339,7 @@ export function useVoiceDictation(
       return;
     }
     void connect();
-  }, [allowed, bridge, connect]);
+  }, [allowed, bridge, connect, key]);
 
   const allow = useCallback(() => {
     setConsentOpen(false);
@@ -301,6 +349,7 @@ export function useVoiceDictation(
 
   const active = phase === "starting" || phase === "listening" || phase === "finishing";
   return {
+    key,
     available: bridge !== null,
     active,
     phase,
@@ -327,18 +376,22 @@ export function useVoiceDictation(
   };
 }
 
-/** The microphone button beside the call button in the coordinator composer. */
+/** The microphone button in a composer: beside the call button for the coordinator. */
 export function VoiceDictationButton({
   dictation,
   disabled,
+  shortcut = null,
 }: {
   dictation: VoiceDictation;
   disabled: boolean;
+  /** The dictation shortcut's label, shown in the tip. */
+  shortcut?: string | null;
 }) {
   if (!dictation.available) return null;
+  const tip = dictation.active ? "Stop dictating" : "Dictate into the message";
   return (
     <>
-      <Tip label={dictation.active ? "Stop dictating" : "Dictate into the message"}>
+      <Tip label={shortcut ? `${tip} (${shortcut})` : tip}>
         <button
           type="button"
           className={`sws-icon-button sws-voice-dictate-button${dictation.active ? " sws-icon-button-on" : ""}`}

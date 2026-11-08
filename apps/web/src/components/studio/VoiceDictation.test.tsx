@@ -13,7 +13,8 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../hooks/useSettings", () => ({
-  useClientSettings: () => state.allowed,
+  useClientSettings: (select: (settings: Record<string, unknown>) => unknown) =>
+    select({ voiceCallsAllowed: state.allowed, dictationLanguage: "", dictationMode: "toggle" }),
   useUpdateClientSettings: () => state.update,
 }));
 vi.mock("../../studio/voiceCallAudio", () => ({

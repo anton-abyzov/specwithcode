@@ -400,7 +400,7 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
       channel: VOICE_TRANSCRIBE_CHANNEL,
       payload: DesktopVoiceTranscribeInputSchema,
       result: VoiceTextResult,
-      handler: ({ audio, locale }, event) =>
+      handler: ({ audio, locale, pinLanguage }, event) =>
         Effect.promise(async () => {
           if (!isMac && linux === null) {
             return { ok: false as const, error: (await status()).reason ?? "Unsupported." };
@@ -416,7 +416,8 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
             const prompt = linux === null ? "" : whisperPrompt(terms);
             const heard = await withTempFile("wav", async (path) => {
               await NodeFSP.writeFile(path, audio, { mode: 0o600 });
-              if (linux !== null) return linux.transcribe(path, prompt);
+              if (linux !== null)
+                return linux.transcribe(path, prompt, undefined, pinLanguage ? locale : undefined);
               const voice = await getHelper();
               const reply = await voice.request({
                 op: "transcribe",
