@@ -1045,17 +1045,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   // A better route only matters to a live session, and a retry hint only cuts
   // short a backoff, so idle, offline and blocked states ignore both.
-  const waitForSignal = Queue.take(signals).pipe(
-    Effect.repeat({
-      while: (next) =>
-        next._tag === "BetterRouteAvailable" ||
-        (next._tag === "Wakeup" &&
-          (next.reason === "retry-hint" || ConnectionWakeups.isLocalBackendWakeup(next.reason))),
-    }),
-    Effect.map(
-      (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
-    ),
-  );
+  // A restarted backend on this machine wakes only a loopback connection that
+  // it blocked: the refusal may have come from the backend as it stopped or
+  // started, and one fresh attempt tells. An idle or offline state ignores it.
+  const waitForSignalWith = (localBackendWakes: boolean) =>
+    Queue.take(signals).pipe(
+      Effect.repeat({
+        while: (next) =>
+          next._tag === "BetterRouteAvailable" ||
+          (next._tag === "Wakeup" &&
+            (next.reason === "retry-hint" ||
+              (ConnectionWakeups.isLocalBackendWakeup(next.reason) && !localBackendWakes))),
+      }),
+      Effect.map(
+        (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
+      ),
+    );
+  const waitForSignal = waitForSignalWith(false);
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;
@@ -1137,7 +1143,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure: error,
           retryAt: null,
         });
-        const applicationActivated = yield* waitForSignal;
+        const applicationActivated = yield* waitForSignalWith(yield* prefersLoopback);
         if (applicationActivated) {
           resetRetryLadder();
         }
@@ -1181,10 +1187,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         lastFailure: error,
         retryAt: (yield* Clock.currentTimeMillis) + delayMs,
       });
-      const applicationActivated = yield* waitForRetrySignal(
-        delayMs,
-        retryAfterFloorMs(error) > 0,
-      );
+      const applicationActivated = yield* waitForRetrySignal(delayMs, retryAfterFloorMs(error) > 0);
       if (applicationActivated) {
         resetRetryLadder();
       }

@@ -481,12 +481,13 @@ const prove = async () => {
       // running work: the window had not reconnected to the backend the failed install restarted.
       if (await evaluate(answerRestartQuestion).catch(() => false)) {
         restartQuestions += 1;
-        if (strictReconnect)
-          fail("Retry could not check for running work: the window had not reconnected");
         log(`warn: Retry asked before the restart (${restartQuestions}); answered Restart now`);
       }
       return false;
     }).catch(failWithButtons);
+    // Thrown out here: until() would take a throw inside its poll for another try.
+    if (strictReconnect && restartQuestions > 0)
+      fail("Retry could not check for running work: the window had not reconnected");
     if (pkexecRuns() !== passwordRuns) fail("Retry asked for a password");
     log("retry: passed");
   } else if (phases.includes("retry")) {
