@@ -75,3 +75,44 @@ it("offers a missing checkout's replacement by nickname", async () => {
   await click("Use Studio M4 · /scratch/atlas");
   expect(onSelectCheckout).toHaveBeenCalledWith("host:project");
 });
+
+it("names the machine of a coordinator that asks from another machine", async () => {
+  const { shell } = await import("./ProjectWorkspace.test-fixtures");
+  const domain = {
+    id: "atlas-domain",
+    title: "Atlas",
+    coordinatorId: "atlas-coordinator",
+    members: [
+      { environmentId: "host", projectId: "project", coordinatorThreadId: "coord" },
+      { environmentId: "laptop", projectId: "remote-project", coordinatorThreadId: "laptop-coord" },
+    ],
+  };
+  Object.assign(state.project, {
+    workspaceSettings: { logicalProject: domain, coordinatorThreadId: "coord" },
+  });
+  state.pairedHosts = ["laptop"];
+  state.otherCheckouts = [
+    {
+      id: "remote-project",
+      environmentId: "laptop",
+      workspaceRoot: "/w/atlas",
+      workspaceSettings: { logicalProject: domain, coordinatorThreadId: "laptop-coord" },
+    } as never,
+  ];
+  state.shells = [
+    shell("coord"),
+    shell("laptop-coord", {
+      environmentId: "laptop" as never,
+      projectId: "remote-project" as never,
+      hasPendingUserInput: true,
+    }),
+  ];
+  try {
+    await act(async () => root.render(<ProjectWorkspace projectKey="atlas" />));
+    // Answering it opens that machine's coordinator, so the chip says which one.
+    const ask = container.querySelector<HTMLButtonElement>("[data-coordinator-ask]");
+    expect(ask?.textContent).toContain("Anna's Air coordinator · Answer needed");
+  } finally {
+    delete (state.project as { workspaceSettings?: unknown }).workspaceSettings;
+  }
+});

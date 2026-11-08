@@ -467,10 +467,39 @@ export function ThreadsPane({
   const openEverything = searching || showUnplannedOnly;
   const offerStarters =
     allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
-  // The coordinator is not a row here, so a question it asks is offered in the header.
-  const coordinatorAsk = props.attention?.roots.find(
-    (root) => root.coordinator && root.actions.length > 0,
-  )?.actions[0];
+  // The coordinator is not a row here, so a question it asks is offered in the header,
+  // one per asking coordinator. A coordinator on another machine is named, because
+  // answering it opens that machine's coordinator.
+  const coordinatorAsks = (props.attention?.roots ?? []).flatMap((root) => {
+    const action = root.coordinator ? root.actions[0] : undefined;
+    if (!action) return [];
+    const location = locate(root.thread);
+    return [
+      {
+        action,
+        machineId: location.executionMachineId,
+        machine:
+          root.thread.environmentId === props.environmentId && !location.moved
+            ? null
+            : location.label.split(" → ").at(-1)!,
+      },
+    ];
+  });
+  // Under a machine filter the summary keeps the project's count, as the badge does,
+  // and says how many of them the narrowed list and header still show.
+  const filteredMachine =
+    machineFilter === null
+      ? null
+      : (machineRow.find((choice) => choice.machineId === machineFilter)?.label ?? null);
+  const shownWaiting =
+    filteredMachine === null
+      ? undefined
+      : {
+          label: filteredMachine,
+          count:
+            (shownGroups.find((entry) => entry.group === "Needs you")?.threads.length ?? 0) +
+            coordinatorAsks.filter((ask) => ask.machineId === machineFilter).length,
+        };
 
   return (
     <>
@@ -617,25 +646,29 @@ export function ThreadsPane({
                   props.runningSubagents,
                   props.attention,
                   props.unattended,
+                  shownWaiting,
                 )}
           </p>
-          {coordinatorAsk ? (
+          {coordinatorAsks.map(({ action, machine }) => (
             <button
+              key={`${action.environmentId}:${action.threadId}`}
               type="button"
               className="sws-threads-ask"
               data-coordinator-ask
+              data-coordinator-machine={machine ?? undefined}
               onClick={() =>
                 (props.onOpenAction ?? props.onOpen)(
-                  coordinatorAsk.threadId as ThreadId,
-                  coordinatorAsk.environmentId as EnvironmentId,
-                  coordinatorAsk.reason,
+                  action.threadId as ThreadId,
+                  action.environmentId as EnvironmentId,
+                  action.reason,
                 )
               }
             >
               <span className="sws-dot" data-tone="waiting" aria-hidden />
-              Coordinator · {attentionActionWord(coordinatorAsk.reason)}
+              {machine ? `${machine} coordinator` : "Coordinator"} ·{" "}
+              {attentionActionWord(action.reason)}
             </button>
-          ) : null}
+          ))}
           {unplannedCount > 0 && !offerStarters ? (
             <UnplannedThreadsFilter
               count={unplannedCount}
