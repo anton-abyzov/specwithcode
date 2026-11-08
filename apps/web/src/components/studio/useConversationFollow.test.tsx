@@ -11,7 +11,8 @@ import { FOLLOW_ANCHOR_ATTRIBUTE, useConversationFollow } from "./useConversatio
  * reads as 0 tall and scrolled to the top, and it loses its offset.
  */
 const ROW = 100;
-const VIEW = 300;
+// The window's height; a test may resize it.
+let VIEW = 300;
 let container: HTMLDivElement;
 let root: Root;
 
@@ -131,6 +132,7 @@ async function browserScroll(value: number) {
 }
 
 beforeEach(() => {
+  VIEW = 300;
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   HTMLElement.prototype.getBoundingClientRect = rect;
   container = document.createElement("div");
@@ -316,5 +318,50 @@ describe("useConversationFollow keeps following until the reader scrolls up", ()
     await browserScroll(240);
     expect(scroller!.scrollTop).toBe(240);
     expect(view.away).toBe(true);
+  });
+});
+
+describe("useConversationFollow through a window resize", () => {
+  // The window grows past the end, so the browser clamps the offset up to it.
+  async function resizeWindow(height: number) {
+    VIEW = height;
+    const end = Math.max(0, scroller!.scrollHeight - VIEW);
+    if (scroller!.scrollTop > end) await browserScroll(end);
+  }
+
+  it("keeps a paused reader paused when a taller window clamps them to the end", async () => {
+    await show({ count: 10, conversationKey: "resize-clamp" });
+    await scrollTo(650);
+    expect(view.away).toBe(true);
+    await resizeWindow(400);
+    expect(scroller!.scrollTop).toBe(600);
+    expect(view.away).toBe(true);
+    // Shrinking back and new rows leave them on the same message.
+    await resizeWindow(300);
+    await show({ count: 12, conversationKey: "resize-clamp" });
+    expect(scroller!.scrollTop).toBe(600);
+    expect(view.unseen).toBe(true);
+  });
+
+  it("follows again when the clamped reader moves on toward the end", async () => {
+    await show({ count: 10, conversationKey: "resize-resume" });
+    await scrollTo(650);
+    await resizeWindow(400);
+    expect(view.away).toBe(true);
+    await act(async () => {
+      scroller!.dispatchEvent(new WheelEvent("wheel", { deltaY: 40, bubbles: true }));
+    });
+    expect(view.away).toBe(false);
+    await show({ count: 12, conversationKey: "resize-resume" });
+    expect(scroller!.scrollTop).toBe(12 * ROW - VIEW);
+  });
+
+  it("keeps a following reader at the end through a resize", async () => {
+    await show({ count: 10, conversationKey: "resize-following" });
+    await resizeWindow(400);
+    await resizeWindow(250);
+    await show({ count: 11, conversationKey: "resize-following" });
+    expect(scroller!.scrollTop).toBe(11 * ROW - VIEW);
+    expect(view.away).toBe(false);
   });
 });

@@ -37,6 +37,7 @@ import {
   withHistoryGapRow,
   withTurnFoldEnds,
   workingStepLabel,
+  timelineMovedDown,
 } from "./MessagesTimeline.logic";
 import type { WorkLogEntry } from "../../session-logic";
 
@@ -5865,5 +5866,17 @@ describe("workingStepLabel", () => {
   it("says nothing without a plan", () => {
     expect(workingStepLabel(null)).toBeNull();
     expect(workingStepLabel({ completed: 0, total: 0, current: null })).toBeNull();
+  });
+});
+
+describe("timelineMovedDown", () => {
+  it("counts only an offset that grew as moving down", () => {
+    expect(timelineMovedDown(4000, 4800)).toBe(true);
+    // A taller window clamps the offset up to the end.
+    expect(timelineMovedDown(5053, 5003)).toBe(false);
+    // A re-read with no movement.
+    expect(timelineMovedDown(5003, 5003)).toBe(false);
+    expect(timelineMovedDown(undefined, 5003)).toBe(false);
+    expect(timelineMovedDown(5003, undefined)).toBe(false);
   });
 });

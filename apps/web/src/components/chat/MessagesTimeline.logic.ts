@@ -528,6 +528,19 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
   return contentLength - scroll - scrollLength <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
 }
 
+/**
+ * Whether the list's offset grew since the last scroll it reported: the reader
+ * (or a feature acting for them) moved toward the end. A taller window or
+ * shrinking rows reach the end by clamping the offset down instead, and a
+ * report with no movement is a re-read, so neither counts.
+ */
+export function timelineMovedDown(
+  previousScroll: number | undefined,
+  scroll: number | undefined,
+): boolean {
+  return previousScroll !== undefined && scroll !== undefined && scroll > previousScroll + 0.5;
+}
+
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {
   return /^★ Insight(?:\s|─)/mu.test(text);
 }
