@@ -129,6 +129,25 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
   ).pipe(Effect.asVoid),
 );
 
+/**
+ * Reconnects when the desktop's own backend answers again after a restart (a
+ * failed install restarts it). A request or socket opened to the stopping
+ * backend can otherwise hold the attempt until its timeout, and a window in
+ * the background gets no focus change to cut that short.
+ */
+export const backendRestarts = Stream.callback<"application-active-reconnect">((queue) =>
+  Effect.acquireRelease(
+    Effect.sync(() =>
+      typeof window === "undefined"
+        ? undefined
+        : window.desktopBridge?.onBackendReady?.(() =>
+            Queue.offerUnsafe(queue, "application-active-reconnect"),
+          ),
+    ),
+    (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+  ).pipe(Effect.asVoid),
+);
+
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
@@ -162,6 +181,7 @@ const layerWakeups = Wakeups.layer({
             }),
         ).pipe(Effect.asVoid),
       ),
+      backendRestarts,
       managedRelayAccountChanges(appAtomRegistry).pipe(
         Stream.map(() => "credentials-changed" as const),
       ),

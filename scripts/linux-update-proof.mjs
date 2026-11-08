@@ -185,6 +185,16 @@ const evaluate = async (expression, timeoutMs = 60_000) => {
   });
 };
 const updateState = () => evaluate("window.desktopBridge.getUpdateState()");
+/** Clicks the first button whose text matches, and says whether there was one. */
+const pressButton = (pattern) =>
+  `(() => { const b = [...document.querySelectorAll("button")].find((x) => ${pattern}.test(x.textContent.trim())); if (!b) return false; b.click(); return true; })()`;
+/** Fails with what the window offered, so a missing button can be told from a missing window. */
+const failWithButtons = async (error) => {
+  const buttons = await evaluate(
+    `[...document.querySelectorAll("button")].map((x) => x.textContent.trim()).filter(Boolean).join(" | ")`,
+  ).catch(() => "unreadable");
+  fail(`${error.message}. Buttons: ${buttons}`);
+};
 const waitForApp = async (version) => {
   const state = await until(`the app at ${version}`, 180_000, async () => {
     const current = await updateState();
@@ -423,17 +433,25 @@ const prove = async () => {
     if (installedVersion() !== candidate) fail(`dpkg holds ${installedVersion()}`);
     const installsBefore = helperRuns();
     const passwordRuns = pkexecRuns();
-    // The app's own check soon offers the version again, and the button waits for its download.
+    // The failed install restarted the service, and the window reconnects to it on its own
+    // schedule. Until it has, the button may be missing (a window that never got its first
+    // connection shows no sidebar) and a press cannot check what runs, so it asks first.
     await until("the Retry update button", 180_000, async () => {
       const state = await updateState().catch(() => null);
       if (state?.status === "available") {
         await evaluate("window.desktopBridge.downloadUpdate()").catch(() => undefined);
       }
-      return evaluate(
-        `(() => { const b = [...document.querySelectorAll("button")].find((x) => /Retry update/.test(x.textContent)); if (!b) return false; b.click(); return true; })()`,
-      ).catch(() => false);
-    });
-    await until("Retry to reach the helper", 120_000, () => helperRuns() > installsBefore);
+      return evaluate(pressButton(/Retry update/)).catch(() => false);
+    }).catch(failWithButtons);
+    log("clicked Retry update");
+    await until("Retry to reach the helper", 120_000, async () => {
+      if (helperRuns() > installsBefore) return true;
+      // The question a press asks when it could not check for running work: a person answers it.
+      if (await evaluate(pressButton(/^Restart now$/)).catch(() => false)) {
+        log("Retry asked before the restart; answered Restart now");
+      }
+      return false;
+    }).catch(failWithButtons);
     if (pkexecRuns() !== passwordRuns) fail("Retry asked for a password");
     log("retry: passed");
   } else if (phases.includes("retry")) {

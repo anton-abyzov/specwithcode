@@ -7,12 +7,14 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
 } from "@specweave-studio/client-runtime/connection";
 
 import {
+  backendRestarts,
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
   isRejectedBootstrapCredentialError,
@@ -307,4 +309,38 @@ describe("primary topology cache", () => {
       }),
     ).toBeUndefined();
   });
+});
+
+describe("backendRestarts", () => {
+  it.effect(
+    "reconnects each time the desktop backend answers again, and stops listening after",
+    () =>
+      Effect.gen(function* () {
+        let unsubscribed = 0;
+        const previous = (globalThis as { window?: unknown }).window;
+        (globalThis as { window?: unknown }).window = {
+          desktopBridge: {
+            onBackendReady: (listener: () => void) => {
+              listener();
+              listener();
+              return () => {
+                unsubscribed += 1;
+              };
+            },
+          },
+        };
+        const wakeups = yield* Stream.runCollect(Stream.take(backendRestarts, 2)).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              (globalThis as { window?: unknown }).window = previous;
+            }),
+          ),
+        );
+        expect([...wakeups]).toEqual([
+          "application-active-reconnect",
+          "application-active-reconnect",
+        ]);
+        expect(unsubscribed).toBe(1);
+      }),
+  );
 });

@@ -1300,6 +1300,11 @@ export interface DesktopBridge extends DesktopUpdateBridge {
   onMenuAction: (listener: (action: string) => void) => () => void;
   onSnapShotEvent?: (listener: (event: DesktopSnapShotEvent) => void) => () => void;
   /**
+   * The local backend answers again, as after a restart. Optional: older
+   * desktop builds never emit it.
+   */
+  onBackendReady?: (listener: () => void) => () => void;
+  /**
    * Quit-confirmation hint pushes. Optional: older desktop builds never emit
    * them.
    */

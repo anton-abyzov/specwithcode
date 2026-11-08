@@ -50,6 +50,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  BACKEND_READY_CHANNEL,
   MENU_ACTION_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
@@ -1977,6 +1978,31 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(scenario.createCalls), 3);
         assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
       }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("tells every open window that a restarted backend answers again", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const project = makeFakeBrowserWindow();
+      const closed = makeFakeBrowserWindow();
+      closed.window.isDestroyed = () => true;
+      const createCount = yield* Ref.make(0);
+      const layer = layerTest({
+        window: main.window,
+        mainWindow: yield* Ref.make(Option.some(main.window)),
+        createCount,
+        appWindows: [main.window, project.window, closed.window],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* DesktopWindow.DesktopWindow;
+        yield* service.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        assert.deepEqual(main.send.mock.calls, [[BACKEND_READY_CHANNEL]]);
+        assert.deepEqual(project.send.mock.calls, [[BACKEND_READY_CHANNEL]]);
+        assert.deepEqual(closed.send.mock.calls, []);
+        // Windows were open, so no main window is created over them.
+        assert.equal(yield* Ref.get(createCount), 0);
+      }).pipe(Effect.provide(layer));
     }),
   );
 

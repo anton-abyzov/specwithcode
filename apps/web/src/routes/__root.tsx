@@ -422,6 +422,9 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const componentStackLines = useRenderErrorComponentStackLines(error);
+  // A first load that failed while the desktop restarted its backend (a failed
+  // install does) tries again once the backend answers, as Try again would.
+  useEffect(() => window.desktopBridge?.onBackendReady?.(() => void router.invalidate()), [router]);
   const report = useMemo(
     () => errorReport(error, pathname, componentStackLines),
     [componentStackLines, error, pathname],
