@@ -3600,8 +3600,7 @@ it.effect(
             ModelManifest.layerTest,
             layerBackgroundPolicyAlwaysRun,
             ServerConfig.layerTest(process.cwd(), { prefix: "workflow-machine-picker-" }),
-            NodeServices.layer,
-          ),
+          ).pipe(Layer.provideMerge(NodeServices.layer)),
         ),
       );
       yield* Effect.gen(function* () {
