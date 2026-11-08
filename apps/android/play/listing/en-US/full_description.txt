@@ -1,7 +1,7 @@
 SpecWithCode for Android is a companion to SpecWithCode on your computers. Connect your phone once, then follow and steer the coding agents running on your own machines from wherever you are.
 
 Two ways to connect
-Sign in with SpecWithCode Connect, using the same account as on your computer, and reach your machines from anywhere. Or pair directly: on your computer, open SpecWithCode, go to Settings > Connections and choose Pair a phone, then scan the QR code, paste the pairing link or type the address and code. Direct pairing needs no account.
+Sign in with SpecWithCode Connect, using the same account as on your computer, and reach your machines from anywhere. Or pair directly: on your computer, open SpecWithCode, go to Settings > Machines and choose Pair a phone, then scan the QR code, paste the pairing link or type the address and code. Direct pairing needs no account.
 
 Answer approvals
 When an agent wants to run a command or change files, the request shows up on your phone. Approve it once, approve it for the session, or deny it.

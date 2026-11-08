@@ -216,7 +216,7 @@ attached yet. Wait two minutes and try again before reading the deploy log.
 1. Run the release: `gh workflow run release-macos.yml -R $R -f version=<next 1.x.y>`, or
    `bash scripts/release/release.sh <version>` on the M4. The run log prints
    `build: SpecWithCode Connect on (relay https://relay.spec-weave.com)` when it picked up the values.
-2. After the update installs, open SpecWithCode > Settings > Connections > **Use SpecWithCode on
+2. After the update installs, open SpecWithCode > Settings > Machines > **Use SpecWithCode on
    your phone** and sign in with Apple. The Mac publishes itself and starts its tunnel.
 3. In a terminal on the Mac: `specweave-studio connect status`. It should show the account,
    this Mac as linked, and a `https://prod-....spec-weave.com/` endpoint. Then

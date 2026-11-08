@@ -35,7 +35,7 @@ describe("threadRouteProblem", () => {
   });
   it("says when this device cannot connect", () => {
     expect(threadRouteProblem({ ...base, host: "host-refused" }).detail).toContain(
-      "Settings > Connections",
+      "Settings > Machines",
     );
   });
   it("says a thread was deleted", () => {

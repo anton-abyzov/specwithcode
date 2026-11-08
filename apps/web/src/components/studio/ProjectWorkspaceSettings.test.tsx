@@ -639,9 +639,7 @@ describe("project settings and memory", () => {
   it("shows no worker machine choice without other machines", async () => {
     await render();
     expect(container.textContent).not.toContain("Machines for workers");
-    expect(container.textContent).toContain(
-      "add it under Settings > Connections > Your private machines",
-    );
+    expect(container.textContent).toContain("add it under Settings > Machines");
   });
   it("requires an exact typed title before destructive project deletion", async () => {
     await render();

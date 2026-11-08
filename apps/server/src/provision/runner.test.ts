@@ -475,7 +475,7 @@ describe("runProvision", () => {
     expect(join.command).toBe(
       "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
     );
-    expect(join.title).toContain("Settings > Connections on your main machine");
+    expect(join.title).toContain("Settings > Machines on your main machine");
     expect(join.title).toContain("Replace <main-machine-environment-id>");
   });
 

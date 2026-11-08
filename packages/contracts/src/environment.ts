@@ -232,7 +232,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
-  /** Server answers provision.preview and provision.run (Settings > Connections > Provision). */
+  /** Server answers provision.preview and provision.run (Settings > Machines > Provision). */
   machineProvision: Schema.optionalKey(Schema.Boolean),
   /** Server answers gitHubSignIn.* (sign its gh in from another device). Absent on older
       servers, where clients keep the `gh auth login` hint instead. */

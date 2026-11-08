@@ -160,7 +160,7 @@ try {
   receipt.pairing = "fleet invite on each machine, fleet add of the line on the other";
   save();
 
-  // Each machine's own nickname, the way Settings > Connections stores it.
+  // Each machine's own nickname, the way Settings > Machines stores it.
   const stamp = () => new Date().toISOString();
   await A.rpc.call("server.updateSettings", {
     patch: {

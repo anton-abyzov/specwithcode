@@ -478,7 +478,7 @@ export async function addVisibleMachineToStudioFleet(
   machineEnvironmentId: EnvironmentId,
   label: string,
 ): Promise<StudioFleetAddResult> {
-  const manually = `On ${label}, choose Join a main machine under Settings > Connections.`;
+  const manually = `On ${label}, choose Join a main machine under Settings > Machines.`;
   let linked: boolean;
   try {
     linked = (await readStudioFleetTailscale(machineEnvironmentId)).connect?.linked === true;

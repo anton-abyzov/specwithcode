@@ -93,7 +93,7 @@ export class FleetJoinError extends Error {
       message ??
         {
           "invalid-code":
-            "This is not a machine invitation. Make a new line on that machine (Join a main machine in its Settings > Connections, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+            "This is not a machine invitation. Make a new line on that machine (Join a main machine in its Settings > Machines, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine. This explicitly approves that machine to manage access here.",
           "address-in-use": "Another configured machine already uses this address.",
           "id-in-use": "Another configured machine already uses this name.",
           "unknown-machine": "No configured machine has that name.",
@@ -101,11 +101,11 @@ export class FleetJoinError extends Error {
           "invitation-used":
             "This invitation was already used or has expired. On that machine choose Join a main machine again and add the new line here.",
           "wrong-coordinator":
-            "This line was made for a different main machine, so it no longer works. On that machine choose Join a main machine again, paste this machine's environment ID (Settings > Connections) as the main machine environment ID, and add the new line here.",
+            "This line was made for a different main machine, so it no longer works. On that machine choose Join a main machine again, paste this machine's environment ID (Settings > Machines) as the main machine environment ID, and add the new line here.",
           "coordinator-unknown":
             "Start SpecWithCode on this machine first: adding this machine needs its environment ID.",
           "own-machine":
-            "This line came from this machine, so there is nothing to add here. On the machine you want to add, choose Join a main machine in Settings > Connections, then paste its line here.",
+            "This line came from this machine, so there is nothing to add here. On the machine you want to add, choose Join a main machine in Settings > Machines, then paste its line here.",
         }[kind],
     );
     this.kind = kind;

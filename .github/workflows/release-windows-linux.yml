@@ -120,7 +120,7 @@ env:
   GIT_TERMINAL_PROMPT: "0"
   # SpecWithCode Connect, as in release-macos.yml and release.sh: the four public identifiers
   # from repository variables, and hosted services on only when all four are set (an https relay).
-  # Without them the Windows and Linux apps had no Connect section in Settings > Connections.
+  # Without them the Windows and Linux apps had no Connect section in Settings > Machines.
   STUDIO_CLERK_PUBLISHABLE_KEY: ${{ vars.STUDIO_CLERK_PUBLISHABLE_KEY }}
   STUDIO_CLERK_JWT_TEMPLATE: ${{ vars.STUDIO_CLERK_JWT_TEMPLATE }}
   STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID }}

@@ -200,7 +200,7 @@ export function projectContextText(input: {
         ...((input.fleet?.length ?? 0) > 0
           ? [
               'When the user names a machine (for example "use my M1"), pass it as machine to studio_thread_launch; studio_machine_list shows which machines allow workers. Follow a remote worker by its threadLink. Name machines by their label, never by an id.',
-              "Only the user allows workers on another machine, in Settings > Connections. When a machine is not ready, say so in one line and offer to run the work here.",
+              "Only the user allows workers on another machine, in Settings > Machines. When a machine is not ready, say so in one line and offer to run the work here.",
             ]
           : []),
         "Acknowledge a delegated request in one line naming where it went, with each worker's threadLink from the tool result copied verbatim. Never show internal IDs such as taskId or run IDs.",

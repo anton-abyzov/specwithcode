@@ -561,7 +561,7 @@ export const layer = HttpApiBuilder.group(
               yield* refuseByTeamRules((state) => teamRulesReachRefusal(state, "connect"));
             }
             yield* requireInviteMaker(
-              "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Join a main machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+              "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Join a main machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine. This explicitly approves that machine to manage access here.",
             );
             return yield* issueInvitation(payload);
           }),
@@ -765,7 +765,7 @@ export const layer = HttpApiBuilder.group(
             const token = target.managementToken;
             if (token === undefined)
               return yield* new EnvironmentHttpBadRequestError({
-                message: `No management token is saved here for ${target.label}. On ${target.label}, choose Join a main machine in Settings > Connections and add the line here first.`,
+                message: `No management token is saved here for ${target.label}. On ${target.label}, choose Join a main machine in Settings > Machines and add the line here first.`,
               });
             const remote = yield* attempt(async () => {
               const reached = await reachFleetMachine(fleetLink, target, { token });

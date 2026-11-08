@@ -27,7 +27,7 @@ export interface ProvisionOptions {
   readonly serverVersion?: string;
   /** An explicit SpecWithCode home (--base-dir / STUDIO_HOME). */
   readonly baseDir?: string;
-  /** `remote`: started from Settings > Connections inside the running server; never restarts it. */
+  /** `remote`: started from Settings > Machines inside the running server; never restarts it. */
   readonly mode: "cli" | "remote";
   /** macOS: ignore the desktop app and manage a command-line server (install.sh --standalone). */
   readonly standalone?: boolean;

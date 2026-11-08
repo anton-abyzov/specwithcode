@@ -46,13 +46,13 @@ export function remoteControlAvailability(
 ) {
   return {
     disabled: !connected || !canRead,
-    label: canOperate ? "Remote control" : "View",
+    label: canOperate ? "Open projects" : "View projects",
     detail: !connected
       ? "Machine is not connected. Reconnect before opening it."
       : !canRead
         ? "View permission required."
         : canOperate
-          ? "Work stays on this machine."
+          ? "Browse and run its projects yourself. Work stays on that machine and needs no worker permission."
           : "View only. Starting work requires permission on this machine.",
   };
 }

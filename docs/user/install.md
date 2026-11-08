@@ -1,6 +1,6 @@
 # Install SpecWithCode
 
-Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
+Replace `<main-machine-environment-id>` with the environment ID from Settings > Machines on your main machine. This explicitly approves that machine to manage access here.
 
 SpecWithCode runs coding agents on your computer and lets you control them from its
 desktop or web app. Set up the machine where the agents will work first.
@@ -152,7 +152,7 @@ curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download
    publishes this machine on its Tailscale name and prints one line starting with `swc-machine-`.
    On a machine that already runs SpecWithCode, it only prints that line. Treat it like a password.
 3. On your main machine, run the `specwithcode fleet add <line>` it shows, or paste the line into
-   **Settings > Connections > Add a machine**.
+   **Settings > Machines > Add a machine**.
 
 Later you can print a new line with `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` on its own. Every other way to
 join, including over SpecWithCode Connect, the optional Tailscale settings and troubleshooting are in

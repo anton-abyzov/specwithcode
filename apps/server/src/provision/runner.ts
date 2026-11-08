@@ -374,14 +374,14 @@ async function assemble(
         ? {
             id: "join",
             title:
-              "This machine is linked to SpecWithCode Connect, so it already appears under Connections on your other devices. Optional: to also add it to a main machine's fleet, replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine, run this, then paste the line it prints into Settings > Connections > Add a machine.",
+              "This machine is linked to SpecWithCode Connect, so it already appears under Connections on your other devices. Optional: to also add it to a main machine's fleet, replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine, run this, then paste the line it prints into Settings > Machines > Add a machine.",
             command: "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
             optional: true,
           }
         : {
             id: "join",
             title:
-              "Add this machine to your main one, if it is not listed there yet: Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine to approve it to manage access here. Run this, then paste the line it prints into Settings > Connections > Add a machine.",
+              "Add this machine to your main one, if it is not listed there yet: Replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine to approve it to manage access here. Run this, then paste the line it prints into Settings > Machines > Add a machine.",
             command: "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
             optional: false,
           },
@@ -389,7 +389,7 @@ async function assemble(
   userSteps.push({
     id: "allow-workers",
     title:
-      "On your main machine, choose Allow workers on this machine's card in Settings > Connections > Your private machines.",
+      'On your main machine, open Settings > Machines and choose Allow on this machine\'s card, on the line "Agents on … can start work on" followed by this machine\'s name.',
     command: null,
     optional: false,
   });

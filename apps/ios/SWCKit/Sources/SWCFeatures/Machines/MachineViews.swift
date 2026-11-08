@@ -235,7 +235,7 @@ struct MachineDetailView: View {
     } else if machine.needsSignIn {
       Banner("You signed out, so this phone can't reach \(machine.displayName). Sign in again in Settings.", title: "Sign in again", kind: .fail)
     } else if machine.status == .needsRepair, !machine.hasDirectPairing, machine.viaConnect {
-      Banner("SpecWithCode Connect couldn't open a connection to \(machine.displayName). Make sure Connect is on in its Settings > Connections.", title: "Can't reach \(machine.displayName)", kind: .fail)
+      Banner("SpecWithCode Connect couldn't open a connection to \(machine.displayName). Make sure Connect is on in its Settings > Machines.", title: "Can't reach \(machine.displayName)", kind: .fail)
     } else if machine.status == .needsRepair {
       Banner("The pairing for \(machine.label) has expired. Pair again to keep using it from this phone.", title: "Pair again", kind: .fail, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
     } else if machine.status == .unsupported {

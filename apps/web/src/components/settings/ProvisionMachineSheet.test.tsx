@@ -164,7 +164,7 @@ it("shows the readback, the root line and the user's steps, and retries a failed
         { id: "claude", title: "Sign in to Claude Code", command: "claude", optional: false },
         {
           id: "workers",
-          title: "Allow workers in Settings > Connections",
+          title: "Allow workers in Settings > Machines",
           command: null,
           optional: false,
         },
@@ -181,7 +181,7 @@ it("shows the readback, the root line and the user's steps, and retries a failed
   expect(text).toContain("sudo sh '/home/me/.specwithcode/provision/root-steps.sh'");
   expect(text).toContain("SpecWithCode never asks for it");
   expect(text).toContain("Sign in to Claude Code");
-  expect(text).toContain("Allow workers in Settings > Connections");
+  expect(text).toContain("Allow workers in Settings > Machines");
   await act(async () => button("Retry").click());
   expect(state.calls.at(-1)).toEqual({
     command: "run",

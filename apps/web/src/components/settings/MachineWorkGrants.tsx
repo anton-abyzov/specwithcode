@@ -412,7 +412,7 @@ export function MachineWorkGrantsList({
           {loading
             ? tx("Checking who can run work here…")
             : tx(
-                "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.",
+                "No other machine can start work here. To allow one, choose Allow on its card above, on the line that says its agents can start work on this machine.",
               )}
         </p>
       )}

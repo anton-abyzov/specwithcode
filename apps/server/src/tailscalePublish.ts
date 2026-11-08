@@ -2,7 +2,7 @@
  * Publishing a running server on this machine's own Tailscale name.
  *
  * Shared by `specweave-studio pair --tailscale`, `specweave-studio fleet
- * invite` and the in-app invitation (Settings > Connections), so all three
+ * invite` and the in-app invitation (Settings > Machines), so all three
  * decide the same way whether a Serve mapping is safe to (re)configure: only
  * an unreachable port, or a mapping already fronting this exact environment.
  * Any other responder keeps its mapping.

@@ -42,7 +42,7 @@ export function ConnectLinkedMachine({
         {discovery.refreshing ? null : (
           <>
             <Link to="/settings/connections" className="underline underline-offset-2">
-              Settings &gt; Connections
+              Settings &gt; Machines
             </Link>
             .
           </>

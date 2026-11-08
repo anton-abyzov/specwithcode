@@ -29,7 +29,7 @@ Use this when two machines each have their own project for the same work, for
 example an EasyChamp folder on the M4 and another on the M3.
 
 1. Connect both machines to the app you are using, with permission to change
-   settings and run work (**Settings > Connections**). Both must run a version
+   settings and run work (**Settings > Machines**). Both must run a version
    of SpecWithCode that can link projects; an older one shows "Update
    SpecWithCode on <machine> to link projects."
 2. Open **Settings > Project > Machines** for one of the two projects and choose
@@ -60,7 +60,7 @@ readable.
 
 | Message                                                        | What to do                                                                                       |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| "Connect <machine> first."                                     | Connect that machine in **Settings > Connections**, then try again.                              |
+| "Connect <machine> first."                                     | Connect that machine in **Settings > Machines**, then try again.                                 |
 | "Update SpecWithCode on <machine> to link projects."           | Update the app or server on that machine.                                                        |
 | "… needs permission to change settings and run work."          | Pair again with a link that grants those permissions.                                            |
 | "The copy on <machine> is already shared with other machines." | A copy can join only one shared project. Unlink it there first, or keep its coordinator instead. |

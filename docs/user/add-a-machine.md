@@ -274,14 +274,14 @@ What it does:
 
 Options go after `--join`, for example `bash -s -- --join --coordinator '<main-machine-environment-id>' --yes`:
 
-| Option             | What it does                                                                            |
-| ------------------ | --------------------------------------------------------------------------------------- |
-| `--coordinator ID` | Required. Approve the main machine using its environment ID from Settings > Connections |
-| `--yes`            | Install Tailscale without asking                                                        |
-| `--dry-run`        | Show what it would do; changes nothing                                                  |
-| `--standalone`     | Install the command-line build even when the desktop app is on this Mac                 |
-| `--version V`      | Install exactly version `V` instead of the newest release                               |
-| `--no-service`     | Set up the command only, without the background service                                 |
+| Option             | What it does                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `--coordinator ID` | Required. Approve the main machine using its environment ID from Settings > Machines |
+| `--yes`            | Install Tailscale without asking                                                     |
+| `--dry-run`        | Show what it would do; changes nothing                                               |
+| `--standalone`     | Install the command-line build even when the desktop app is on this Mac              |
+| `--version V`      | Install exactly version `V` instead of the newest release                            |
+| `--no-service`     | Set up the command only, without the background service                              |
 
 Run the installer with `--help` for every option.
 

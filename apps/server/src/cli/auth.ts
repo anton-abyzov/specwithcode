@@ -321,7 +321,7 @@ const sessionIssueCommand = Command.make("issue", {
           liveServiceRefusal(
             access.state,
             "Issuing a bearer access token",
-            "Pair the device instead (`pair`, or Settings > Connections), or stop SpecWithCode and run this again.",
+            "Pair the device instead (`pair`, or Settings > Machines), or stop SpecWithCode and run this again.",
           ),
         ),
       {

@@ -255,7 +255,7 @@ export const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairi
 /**
  * Mints the pairing token through the running service, with the credential it
  * published for this machine's CLI: `POST /api/auth/pairing-token`, the call
- * Settings > Connections makes. The live database is never opened here.
+ * Settings > Machines makes. The live database is never opened here.
  * `--ttl` is passed through; left out, the service's tokens last five minutes.
  */
 export const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {

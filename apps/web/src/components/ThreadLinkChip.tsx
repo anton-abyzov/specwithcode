@@ -110,7 +110,7 @@ export function DeadThreadLinkChip(props: {
       : props.reason === "deleted"
         ? "Thread was deleted"
         : props.reason === "elsewhere"
-          ? "Thread on another machine; connect it in Settings > Connections to open it"
+          ? "Thread on another machine; connect it in Settings > Machines to open it"
           : "Thread not found on this machine";
   const title = props.label.trim() || "Thread";
   // The tip only shows on hover: a click or Enter gets the same reason.

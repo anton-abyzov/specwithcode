@@ -66,7 +66,7 @@ try {
     await page.evaluate(() => window.provision.finish());
     await page.getByText("Waiting for root: linger.", { exact: false }).waitFor();
     await page.getByText("sudo sh '/home/anton/.specwithcode/provision/root-steps.sh'").waitFor();
-    await page.getByText("Allow workers in Settings > Connections").waitFor();
+    await page.getByText("Allow workers in Settings > Machines").waitFor();
     await page.screenshot({ path: NodePath.join(output, `${width}-${theme}-readback.png`) });
     await page.getByRole("button", { name: "Retry", exact: true }).click();
     const calls = await page.evaluate(() => window.calls.map((c) => [c.command, c.request.input]));

@@ -59,7 +59,7 @@ const readback = {
     { id: "gh", title: "Sign in to GitHub", command: "gh auth login", optional: false },
     {
       id: "workers",
-      title: "Allow workers in Settings > Connections",
+      title: "Allow workers in Settings > Machines",
       command: null,
       optional: false,
     },

@@ -678,9 +678,7 @@ function ConnectAccountOption({
           <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
             {tx("Connect sign-in did not load, so check this computer's network.")}{" "}
             {optional
-              ? tx(
-                  "Setup works without Connect, and you can add it later in Settings > Connections.",
-                )
+              ? tx("Setup works without Connect, and you can add it later in Settings > Machines.")
               : tx("You can add a computer with a pairing link instead.")}
           </p>
           <Button

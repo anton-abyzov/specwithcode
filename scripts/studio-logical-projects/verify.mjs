@@ -368,7 +368,7 @@ async function verifyWorkGrants() {
     owner: "self",
     accounts: { kind: "listed", instanceIds: ["claudeAgent", "codex"] },
   });
-  // The worker's own Settings > Connections, headless.
+  // The worker's own Settings > Machines, headless.
   const workerBrowser = await browser.newContext({
     viewport: { width: 1400, height: 1400 },
     colorScheme: "light",

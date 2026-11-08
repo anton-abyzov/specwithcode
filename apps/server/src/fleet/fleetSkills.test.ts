@@ -1287,16 +1287,27 @@ describe("the primary asking fleet machines to install a skill", () => {
   });
 
   it("reports unknown when status transport fails after acceptance", async () => {
-    const { link, targets } = await primary([{
-      id: "m1", up: [CONNECT], capabilities: { fleetSkillUpdate: true },
-      answer: ({ method }) => {
-        if (method === "POST") return installing({ phase: "installing" })({ method, path: "", body: undefined });
-        throw new TypeError("connection lost");
+    const { link, targets } = await primary([
+      {
+        id: "m1",
+        up: [CONNECT],
+        capabilities: { fleetSkillUpdate: true },
+        answer: ({ method }) => {
+          if (method === "POST")
+            return installing({ phase: "installing" })({ method, path: "", body: undefined });
+          throw new TypeError("connection lost");
+        },
       },
-    }]);
-    await expect(runFleetSkillInstall({
-      link, target: targets[0]!, coordinatorEnvironmentId: PRIMARY, ask: userAsk, ...fast,
-    })).rejects.toMatchObject({ reason: "outcome_unknown" });
+    ]);
+    await expect(
+      runFleetSkillInstall({
+        link,
+        target: targets[0]!,
+        coordinatorEnvironmentId: PRIMARY,
+        ask: userAsk,
+        ...fast,
+      }),
+    ).rejects.toMatchObject({ reason: "outcome_unknown" });
   });
 
   it("reports unknown when the accepted install outlives the wait", async () => {

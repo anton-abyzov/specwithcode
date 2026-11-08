@@ -46,19 +46,19 @@ describe("remote worker card", () => {
   it("says how to reach a machine this browser is not connected to", () => {
     const html = renderToStaticMarkup(<RemoteWorkerCard worker={worker} onOpen={null} />);
     expect(html).not.toContain("<button");
-    expect(html).toContain("Connect M1 in Settings &gt; Connections");
+    expect(html).toContain("Connect M1 in Settings &gt; Machines");
   });
 
   it("says Checking, never Connect it, while that machine is still being checked", () => {
     const html = renderToStaticMarkup(<RemoteWorkerCard worker={worker} onOpen={null} checking />);
     expect(html).not.toContain("<button");
     expect(html).toContain("Checking M1…");
-    expect(html).not.toContain("Settings &gt; Connections");
+    expect(html).not.toContain("Settings &gt; Machines");
   });
 
   it("the list says Checking while that machine connects or its threads still load", () => {
     const list = () => renderToStaticMarkup(<RemoteWorkerCardList workers={[worker]} />);
-    expect(list()).toContain("Connect M1 in Settings &gt; Connections");
+    expect(list()).toContain("Connect M1 in Settings &gt; Machines");
     state.checking = true;
     try {
       expect(list()).toContain("Checking M1…");
@@ -68,7 +68,7 @@ describe("remote worker card", () => {
     state.bootstrapped = false;
     try {
       expect(list()).toContain("Checking M1…");
-      expect(list()).not.toContain("Settings &gt; Connections");
+      expect(list()).not.toContain("Settings &gt; Machines");
     } finally {
       state.bootstrapped = true;
     }

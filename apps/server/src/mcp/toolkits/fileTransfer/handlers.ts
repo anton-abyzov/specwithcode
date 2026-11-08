@@ -169,7 +169,7 @@ const refuseProtected = (real: string, asked: string) =>
     const config = yield* ServerConfig.ServerConfig;
     if (yield* io(() => isCredentialLocation(real, config.baseDir, config.stateDir)))
       return yield* invalid(
-        `${asked} is in a credential or app folder, which never moves between machines. To reach another machine, the user allows it in Settings > Connections > Your private machines.`,
+        `${asked} is in a credential or app folder, which never moves between machines. To reach another machine, the user chooses Allow on that machine's card in Settings > Machines.`,
       );
   });
 
@@ -182,7 +182,7 @@ const describeProxyFailure = (machineLabel: string) => (error: OrchestratorMcpFa
     : error.code === "machine_not_authorized"
       ? new OrchestratorMcpFailure({
           code: error.code,
-          message: `This machine may not reach ${machineLabel}. Only the user allows that: on ${machineLabel}, open Settings > Machines, find this machine and choose "Let … use this machine too" on its card. Until then, end your turn naming the file and its path: whoever holds access, such as your coordinator, can move it with studio_file_transfer.`,
+          message: `This machine may not reach ${machineLabel}. Only the user allows that: on this machine, open Settings > Machines and choose Allow on ${machineLabel}'s card, on the line "Agents on … can start work on ${machineLabel}". Until then, end your turn naming the file and its path: whoever holds access, such as your coordinator, can move it with studio_file_transfer.`,
         })
       : error;
 

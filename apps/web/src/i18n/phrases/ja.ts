@@ -1746,20 +1746,12 @@ export const ja: PhraseCatalog = {
   "Most access for incoming work": "受け取る作業の最大アクセス",
   "Setting up…": "設定しています…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} を許可",
-  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
-  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
-  "Whether agents on {hereLabel} may start work on {thereLabel}.":
-    "{hereLabel} のエージェントが {thereLabel} で作業を開始できるかどうか。",
   Allowed: "許可済み",
   Expiring: "まもなく期限切れ",
   "Not allowed": "許可されていません",
   Revoked: "取り消し済み",
   Expired: "期限切れ",
-  "Not allowed yet.": "まだ許可されていません。",
-  "Let {coordinatorLabel} use this machine too": "{coordinatorLabel} にもこのマシンを使わせる",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 側: 完了",
-  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
-    "{hereLabel} で「設定」>「接続」>「メインマシンに参加」を開き、{coordinatorLabel} を選んで行をコピーしてください。{coordinatorLabel} で「設定」>「マシン」>「マシンを追加」を開いて貼り付け、{hereLabel} のカードで「ワーカーを許可」を選んでください。",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} はここで作業を実行できます · {access} · {date} まで",
   "{coordinatorLabel} can run work here · {access}":
@@ -1904,13 +1896,8 @@ export const ja: PhraseCatalog = {
   "Could not read who can run work here. Refresh to retry.":
     "ここで作業を実行できるユーザーを読み取れませんでした。更新して再試行してください。",
   "Checking who can run work here…": "ここで作業を実行できるユーザーを確認しています…",
-  "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.":
-    "ここで作業を開始できる他のマシンはありません。下でマシンを選ぶか、そのマシンで「マシン」を開き、このマシンのカードで「ワーカーを許可」を選んでください。",
   "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
     "取り消すと新しい作業はすぐに拒否されます。ここで開始したスレッドは 2 分間続いてから停止します。ワークツリーと変更は残ります。{value}",
-  "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.":
-    "リモート操作では作業は選択したマシンに残ります。スレッドの移動は、確認を伴う別の操作です。",
-  "Access, routes and worker permissions": "アクセス、ルート、ワーカーの権限",
   "Checking your machines…": "マシンを確認しています…",
   "No machines yet.": "マシンはまだありません。",
   "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
@@ -1926,14 +1913,7 @@ export const ja: PhraseCatalog = {
   Accounts: "アカウント",
   "Connect to see its accounts.": "接続するとアカウントを表示できます。",
   "No account reported.": "報告されたアカウントはありません。",
-  "Agents on this machine": "このマシンのエージェント",
-  "Added {machineLabel}. Next, {link} on its card.":
-    "{machineLabel} を追加しました。次に、カードで{link}。",
   "allow workers": "ワーカーを許可してください",
-  "Add for agents": "エージェント用に追加",
-  "Connect both ways": "双方向に接続",
-  "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.":
-    "このアプリには {machineLabel} が表示されています。{machineLabel2} のアプリからこのマシンが見えるようにするには、ここで 1 回限りのリンクを作成し、あちらで開いてください。",
   "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.":
     "{expiresAt} まで 1 回だけ使えます。{machineLabel} の SpecWithCode にのみ貼り付け、チャットには貼り付けないでください。",
   Updates: "アップデート",
@@ -2790,8 +2770,6 @@ export const ja: PhraseCatalog = {
   "No other machines yet. Add another computer or a server you rent below.":
     "ほかのマシンはまだありません。下で別のコンピューターかレンタルサーバーを追加してください。",
   "Connect automatically": "自動で接続",
-  "Pair with reachable machines when SpecWithCode opens. Saved on this device.":
-    "SpecWithCode を開いたときに到達可能なマシンとペアリングします。このデバイスに保存されます。",
   "Let agents on this machine start work on another computer.":
     "このマシンのエージェントが別のコンピューターで作業を開始できるようにします。",
   "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
@@ -4061,8 +4039,6 @@ export const ja: PhraseCatalog = {
   "Sign-in did not load": "サインインを読み込めませんでした",
   "Connect sign-in did not load, so check this computer's network.":
     "Connect のサインインを読み込めませんでした。このコンピューターのネットワークを確認してください。",
-  "Setup works without Connect, and you can add it later in Settings > Connections.":
-    "セットアップは Connect なしでも使えます。あとから 設定 > 接続 で追加できます。",
   "You can add a computer with a pairing link instead.":
     "代わりにペアリングリンクでコンピューターを追加できます。",
   "Continue without an agent": "エージェントなしで続行",

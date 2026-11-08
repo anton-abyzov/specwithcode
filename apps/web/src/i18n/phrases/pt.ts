@@ -1752,21 +1752,12 @@ export const pt: PhraseCatalog = {
   "Most access for incoming work": "Acesso máximo para trabalho recebido",
   "Setting up…": "Configurando…",
   "Allow {coordinatorLabel}": "Permitir {coordinatorLabel}",
-  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
-  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
-  "Whether agents on {hereLabel} may start work on {thereLabel}.":
-    "Se agentes em {hereLabel} podem iniciar trabalho em {thereLabel}.",
   Allowed: "Permitido",
   Expiring: "Expirando",
   "Not allowed": "Não permitido",
   Revoked: "Revogado",
   Expired: "Expirado",
-  "Not allowed yet.": "Ainda não permitido.",
-  "Let {coordinatorLabel} use this machine too":
-    "Deixar {coordinatorLabel} usar esta máquina também",
   "On {coordinatorLabel}: done": "Em {coordinatorLabel}: pronto",
-  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
-    "Em {hereLabel}, abra Configurações > Conexões > Entrar em uma máquina principal, escolha {coordinatorLabel} e copie a linha. Em {coordinatorLabel}, abra Configurações > Máquinas > Adicionar máquina, cole-a e escolha Permitir workers no card de {hereLabel}.",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} pode executar trabalho aqui · {access} · até {date}",
   "{coordinatorLabel} can run work here · {access}":
@@ -1910,13 +1901,8 @@ export const pt: PhraseCatalog = {
   "Could not read who can run work here. Refresh to retry.":
     "Não foi possível ler quem pode executar trabalho aqui. Atualize para tentar de novo.",
   "Checking who can run work here…": "Verificando quem pode executar trabalho aqui…",
-  "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.":
-    "Nenhuma outra máquina pode iniciar trabalho aqui. Escolha uma máquina abaixo, ou abra Máquinas nessa máquina e escolha Permitir workers no cartão desta máquina.",
   "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
     "Revogar recusa trabalho novo na hora. As threads que ela iniciou aqui continuam por 2 minutos e depois param; os worktrees e as alterações ficam.{value}",
-  "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.":
-    "O controle remoto mantém o trabalho na máquina selecionada. Mover uma thread é uma ação separada e revisada.",
-  "Access, routes and worker permissions": "Acesso, rotas e permissões de workers",
   "Checking your machines…": "Verificando suas máquinas…",
   "No machines yet.": "Nenhuma máquina ainda.",
   "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
@@ -1932,14 +1918,7 @@ export const pt: PhraseCatalog = {
   Accounts: "Contas",
   "Connect to see its accounts.": "Conecte para ver as contas dela.",
   "No account reported.": "Nenhuma conta informada.",
-  "Agents on this machine": "Agentes nesta máquina",
-  "Added {machineLabel}. Next, {link} on its card.":
-    "{machineLabel} adicionada. Em seguida, {link} no cartão dela.",
   "allow workers": "permita workers",
-  "Add for agents": "Adicionar para agentes",
-  "Connect both ways": "Conectar nos dois sentidos",
-  "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.":
-    "O app vê {machineLabel}. Para o app de {machineLabel2} ver esta máquina, crie aqui um link de uso único e abra-o lá.",
   "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.":
     "Funciona uma vez, até {expiresAt}. Cole apenas no SpecWithCode em {machineLabel}, não em um chat.",
   Updates: "Atualizações",
@@ -2801,8 +2780,6 @@ export const pt: PhraseCatalog = {
   "No other machines yet. Add another computer or a server you rent below.":
     "Nenhuma outra máquina ainda. Adicione abaixo outro computador ou um servidor alugado.",
   "Connect automatically": "Conectar automaticamente",
-  "Pair with reachable machines when SpecWithCode opens. Saved on this device.":
-    "Parear com máquinas acessíveis quando o SpecWithCode abrir. Salvo neste aparelho.",
   "Let agents on this machine start work on another computer.":
     "Permitir que os agentes desta máquina iniciem trabalho em outro computador.",
   "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
@@ -4072,8 +4049,6 @@ export const pt: PhraseCatalog = {
   "Sign-in did not load": "O login não carregou",
   "Connect sign-in did not load, so check this computer's network.":
     "O login do Connect não carregou; verifique a rede deste computador.",
-  "Setup works without Connect, and you can add it later in Settings > Connections.":
-    "A configuração funciona sem o Connect, e você pode adicioná-lo depois em Configurações > Conexões.",
   "You can add a computer with a pairing link instead.":
     "Você pode adicionar um computador com um link de pareamento.",
   "Continue without an agent": "Continuar sem agente",

@@ -1745,21 +1745,12 @@ export const ru: PhraseCatalog = {
   "Most access for incoming work": "Максимальный доступ для входящей работы",
   "Setting up…": "Настройка…",
   "Allow {coordinatorLabel}": "Разрешить {coordinatorLabel}",
-  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
-  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
-  "Whether agents on {hereLabel} may start work on {thereLabel}.":
-    "Могут ли агенты на {hereLabel} запускать работу на {thereLabel}.",
   Allowed: "Разрешено",
   Expiring: "Скоро истекает",
   "Not allowed": "Не разрешено",
   Revoked: "Отозвано",
   Expired: "Истекло",
-  "Not allowed yet.": "Пока не разрешено.",
-  "Let {coordinatorLabel} use this machine too":
-    "Разрешить {coordinatorLabel} тоже использовать эту машину",
   "On {coordinatorLabel}: done": "На {coordinatorLabel}: готово",
-  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
-    "На {hereLabel} откройте «Настройки» > «Подключения» > «Присоединиться к главной машине», выберите {coordinatorLabel} и скопируйте строку. На {coordinatorLabel} откройте «Настройки» > «Машины» > «Добавить машину», вставьте её и выберите «Разрешить исполнителей» в карточке {hereLabel}.",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} может запускать работу здесь · {access} · до {date}",
   "{coordinatorLabel} can run work here · {access}":
@@ -1903,13 +1894,8 @@ export const ru: PhraseCatalog = {
   "Could not read who can run work here. Refresh to retry.":
     "Не удалось прочитать, кто может запускать работу здесь. Обновите, чтобы повторить.",
   "Checking who can run work here…": "Проверка, кто может запускать работу здесь…",
-  "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.":
-    "Ни одна другая машина не может запускать работу здесь. Выберите машину ниже или откройте «Машины» на той машине и выберите «Разрешить исполнителей» в карточке этой машины.",
   "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
     "Отзыв сразу отклоняет новую работу. Треды, которые она запустила здесь, работают ещё 2 минуты, затем останавливаются; их рабочие деревья и изменения сохраняются.{value}",
-  "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.":
-    "Удалённое управление оставляет работу на выбранной машине. Перенос треда — отдельное действие с проверкой.",
-  "Access, routes and worker permissions": "Доступ, маршруты и права исполнителей",
   "Checking your machines…": "Проверка ваших машин…",
   "No machines yet.": "Машин пока нет.",
   "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
@@ -1925,14 +1911,7 @@ export const ru: PhraseCatalog = {
   Accounts: "Аккаунты",
   "Connect to see its accounts.": "Подключитесь, чтобы увидеть её аккаунты.",
   "No account reported.": "Аккаунты не сообщены.",
-  "Agents on this machine": "Агенты на этой машине",
-  "Added {machineLabel}. Next, {link} on its card.":
-    "Добавлена {machineLabel}. Далее: {link} в её карточке.",
   "allow workers": "разрешите исполнителей",
-  "Add for agents": "Добавить для агентов",
-  "Connect both ways": "Подключить в обе стороны",
-  "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.":
-    "Это приложение видит {machineLabel}. Чтобы приложение на {machineLabel2} видело эту машину, создайте здесь одноразовую ссылку и откройте её там.",
   "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.":
     "Срабатывает один раз, до {expiresAt}. Вставляйте её только в SpecWithCode на {machineLabel}, а не в чат.",
   Updates: "Обновления",
@@ -2786,8 +2765,6 @@ export const ru: PhraseCatalog = {
   "No other machines yet. Add another computer or a server you rent below.":
     "Других машин пока нет. Добавьте ниже ещё один компьютер или арендованный сервер.",
   "Connect automatically": "Подключаться автоматически",
-  "Pair with reachable machines when SpecWithCode opens. Saved on this device.":
-    "Связываться с доступными машинами при запуске SpecWithCode. Сохраняется на этом устройстве.",
   "Let agents on this machine start work on another computer.":
     "Разрешить агентам на этой машине запускать работу на другом компьютере.",
   "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
@@ -4059,8 +4036,6 @@ export const ru: PhraseCatalog = {
   "Sign-in did not load": "Вход не загрузился",
   "Connect sign-in did not load, so check this computer's network.":
     "Вход в Connect не загрузился, проверьте сеть этого компьютера.",
-  "Setup works without Connect, and you can add it later in Settings > Connections.":
-    "Настройка работает и без Connect, его можно добавить позже в Настройки > Подключения.",
   "You can add a computer with a pairing link instead.":
     "Вместо этого можно добавить компьютер по ссылке для сопряжения.",
   "Continue without an agent": "Продолжить без агента",

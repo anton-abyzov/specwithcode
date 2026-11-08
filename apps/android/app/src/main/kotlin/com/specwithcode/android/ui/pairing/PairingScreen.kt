@@ -86,7 +86,7 @@ fun PairingScreen(
             verticalArrangement = Arrangement.spacedBy(WeaveSpacing.s4),
         ) {
             Text(
-                "On ${pairingAgain ?: "your computer"}, open SpecWithCode, go to Settings > Connections and choose Pair a phone. " +
+                "On ${pairingAgain ?: "your computer"}, open SpecWithCode, go to Settings > Machines and choose Pair a phone. " +
                     "Then scan the code, copy the link, or type the address and code it shows.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Weave.colors.muted,

@@ -34,7 +34,7 @@ export function NativeConnectionsPanel({
   const tx = useTx();
   const permitted = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   // Both hooks run every render: inside `&&` the second was skipped while write
-  // access was missing, and the hook count change crashed Settings > Connections.
+  // access was missing, and the hook count change crashed Settings > Machines.
   const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const canOperate = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canEdit = canWrite && canOperate;

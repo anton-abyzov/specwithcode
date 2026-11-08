@@ -69,7 +69,7 @@ x64 PC joins as a worker through the desktop app instead ([Add a machine](./add-
    `swc-machine-` line. Add that line on your main machine under **Settings >
    Connections > Add a machine**.
 4. **Provision.** Either:
-   - on your main machine, open **Settings > Connections**, find the machine
+   - on your main machine, open **Settings > Machines**, find the machine
      under **Your private machines** and press **Provision**; or
    - on the machine itself, run `specwithcode provision`.
 5. **Do your steps** from the readback: run the root line if there is one, sign

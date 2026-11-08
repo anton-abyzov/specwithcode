@@ -519,7 +519,7 @@ export class FolderCopyError extends Schema.TaggedError<FolderCopyError>()("Fold
       busy: "Finish active work in this project before moving it.",
       invalid: "The copy request is invalid.",
       no_private_url:
-        "This machine has no private tailnet address or SpecWithCode Connect address yet. Turn on remote access for it in Settings > Connections, then try again.",
+        "This machine has no private tailnet address or SpecWithCode Connect address yet. Turn on remote access for it in Settings > Machines, then try again.",
       unreachable: "The source machine stopped answering. Check that both machines are online.",
       outdated_source:
         "The source machine runs an older SpecWithCode without folder copy. Update it first.",

@@ -21,7 +21,7 @@ struct PairWelcomeView: View {
 
   static let steps = [
     "Open SpecWithCode on your computer.",
-    "In Settings > Connections, choose Pair a phone. If it offers SpecWithCode Connect first, choose Use a private QR code instead: this build of the app pairs directly, over the same Wi-Fi or Tailscale.",
+    "In Settings > Machines, choose Pair a phone. If it offers SpecWithCode Connect first, choose Use a private QR code instead: this build of the app pairs directly, over the same Wi-Fi or Tailscale.",
     "Scan the code with this phone, or paste the link here.",
   ]
 

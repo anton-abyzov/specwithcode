@@ -132,7 +132,7 @@ describe("worker machine choices", () => {
       environmentId: EnvironmentId.make("env-m1"),
       projectId: null,
     });
-    expect(choices[2]?.label).toContain("Settings > Connections");
+    expect(choices[2]?.label).toContain("Settings > Machines");
   });
 
   it("names each machine by its nickname when one is set", () => {
@@ -185,7 +185,7 @@ describe("removing a machine", () => {
   it("says what stays valid there, and how to revoke it, when that machine was offline", () => {
     const notice = fleetRemoveNotice({ ...removed, managementToken: "kept", workerAccess: "kept" });
     expect(notice).toContain("worker access and management token there stays valid");
-    expect(notice).toContain("On Mac M1, revoke it in Settings > Connections (session session-1)");
+    expect(notice).toContain("On Mac M1, revoke it in Settings > Machines (session session-1)");
   });
 });
 

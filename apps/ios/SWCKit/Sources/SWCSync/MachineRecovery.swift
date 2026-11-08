@@ -35,13 +35,13 @@ extension MachineSummary {
     }
     if status == .needsRepair {
       if viaConnect {
-        return "Check your account in SpecWithCode Connect, and on the computer check that Settings > Connections > Your phones says it is ready for your iPhone. As a fallback, you can pair with a fresh link or QR code from that computer."
+        return "Check your account in SpecWithCode Connect, and on the computer check that Settings > Machines > Your phones says it is ready for your iPhone. As a fallback, you can pair with a fresh link or QR code from that computer."
       }
-      return "Use SpecWithCode Connect to restore access. The fallback pairing is expired or no longer accepted. To refresh that fallback, open Settings > Connections on the computer, choose Pair a phone, then Use a private QR code instead, and use its new link or QR code here."
+      return "Use SpecWithCode Connect to restore access. The fallback pairing is expired or no longer accepted. To refresh that fallback, open Settings > Machines on the computer, choose Pair a phone, then Use a private QR code instead, and use its new link or QR code here."
     }
     if viaConnect {
-      return "SpecWithCode Connect is the primary connection. Check that the computer is awake, SpecWithCode is running, and its Settings > Connections > Your phones says it is ready for your iPhone. A saved Wi-Fi or Tailscale pairing is used only as a fallback."
+      return "SpecWithCode Connect is the primary connection. Check that the computer is awake, SpecWithCode is running, and its Settings > Machines > Your phones says it is ready for your iPhone. A saved Wi-Fi or Tailscale pairing is used only as a fallback."
     }
-    return "Use SpecWithCode Connect to reach this computer. On the computer, open Settings > Connections > Your phones, sign in and turn it on. Then sign in with the same account on this phone. Keep the computer awake with SpecWithCode running. Wi-Fi or Tailscale pairing is only a fallback."
+    return "Use SpecWithCode Connect to reach this computer. On the computer, open Settings > Machines > Your phones, sign in and turn it on. Then sign in with the same account on this phone. Keep the computer awake with SpecWithCode running. Wi-Fi or Tailscale pairing is only a fallback."
   }
 }

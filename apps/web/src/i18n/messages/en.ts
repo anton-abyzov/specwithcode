@@ -120,18 +120,18 @@ export const en = {
     "This {machine} does work for your main machine elsewhere. You link SpecWithCode Connect here, then paste one line on the main machine.",
   "wizard.role.later": "Decide later",
   "wizard.role.laterHint":
-    "Look around or update first. To join later, choose Join a main machine under Settings > Connections.",
+    "Look around or update first. To join later, choose Join a main machine under Settings > Machines.",
   "wizard.join.title": "Connect this {machine} to your main machine",
   "wizard.join.step1": "Sign in to SpecWithCode Connect and link this {machine}.",
   "wizard.join.step2":
-    "Paste your main machine's environment ID (Settings > Connections there) and make the line.",
+    "Paste your main machine's environment ID (Settings > Machines there) and make the line.",
   "wizard.join.step3":
-    "Paste the line on the main machine under Settings > Connections > Add a machine within an hour.",
+    "Paste the line on the main machine under Settings > Machines > Add a machine within an hour.",
   "wizard.join.makeLine": "Make the line",
   "wizard.join.pasted": "I pasted it",
   "wizard.joined.title": "This {machine} is ready for your main machine",
   "wizard.joined.description":
-    "It is ready once you paste the line on your main machine under Settings > Connections > Add a machine. Choose Allow workers on its card there to let coordinators start work here, and keep the app running on this {machine}.",
+    "It is ready once you paste the line on your main machine under Settings > Machines > Add a machine. Choose Allow workers on its card there to let coordinators start work here, and keep the app running on this {machine}.",
   "wizard.joined.newLine": "Make a new line",
   "wizard.joined.fullSetup": "Set this {machine} up as a main machine instead",
 

@@ -1,7 +1,7 @@
 # Studio Connect Relay
 
 > [!NOTE]
-> Sign in to Studio Connect from the app under Settings > Connections.
+> Sign in to Studio Connect from the app under Settings > Machines.
 
 The relay is the hosted control plane for Studio Connect. It helps clients discover and connect to
 remote environments, manages the cloud-side records needed for those connections, and delivers

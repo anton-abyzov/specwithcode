@@ -160,11 +160,12 @@ export function MachinesSettingsPanel() {
     }
   }
 
-  const renderRow = (row: MachineRowModel, details?: ReactNode) => (
+  const renderRow = (row: MachineRowModel, details?: ReactNode, workersControl?: ReactNode) => (
     <MachineRow
       key={row.environmentId}
       row={row}
       hereLabel={hereLabel}
+      workersControl={workersControl}
       pending={pending}
       onConnect={(machine) => void connect(machine)}
       remoteControl={
@@ -199,7 +200,7 @@ export function MachinesSettingsPanel() {
     <SettingsPageContainer width="wide">
       <p className="text-sm text-muted-foreground">
         {tx(
-          "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.",
+          "Each card says, in both directions, whose agents may start work on which machine. Open projects lets you use that machine's projects yourself and needs no worker permission.",
         )}
       </p>
       {error ? (
@@ -216,17 +217,16 @@ export function MachinesSettingsPanel() {
               ),
           )
           .map((row) => renderRow(row))}
-        renderMachine={(environmentId, controls) => {
+        renderMachine={(environmentId, controls, workersControl) => {
           const row = rows.find((item) => item.environmentId === environmentId);
           return row
             ? renderRow(
                 row,
                 <details className="pl-7 text-sm">
-                  <summary className="cursor-pointer">
-                    {tx("Access, routes and worker permissions")}
-                  </summary>
+                  <summary className="cursor-pointer">{tx("Connection details")}</summary>
                   <ul>{controls}</ul>
                 </details>,
+                workersControl,
               )
             : controls;
         }}
@@ -604,6 +604,7 @@ function ProjectList({
 
 export function MachineRow({
   remoteControl,
+  workersControl,
   details,
   row,
   hereLabel,
@@ -614,6 +615,8 @@ export function MachineRow({
   allowBack,
 }: {
   remoteControl?: ReactNode;
+  /** The Allow workers control for agents here; it sits on the first access line. */
+  workersControl?: ReactNode;
   details?: ReactNode;
   row: MachineRowModel;
   /** This machine's name, so each grant line names its direction. */
@@ -698,30 +701,32 @@ export function MachineRow({
 
       {row.workers ? (
         <DetailLine
-          label={tx("{hereLabel} → {thereLabel}", { hereLabel, thereLabel: nickname })}
-          help={tx("Whether agents on {hereLabel} may start work on {thereLabel}.", {
+          label={tx("Agents on {hereLabel} can start work on {thereLabel}", {
             hereLabel,
             thereLabel: nickname,
           })}
+          help="Whether coordinators on this machine, and the workers they start, may start work on that machine. You set it here, for each machine."
         >
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={WORKER_BADGE[row.workers.status]}>
               {tx(row.workers.label)}
             </Badge>
             <span>{row.workers.detail}</span>
-            {row.workers.status === "not-allowed" ? (
-              <Link to="/settings/machines" className="underline underline-offset-2">
-                {tx("Allow workers")}
-              </Link>
-            ) : null}
           </p>
+          {workersControl}
         </DetailLine>
-      ) : null}
-
-      {addForAgents}
+      ) : (
+        addForAgents
+      )}
 
       {row.workHere ? (
-        <DetailLine label={tx("{thereLabel} → {hereLabel}", { hereLabel, thereLabel: nickname })}>
+        <DetailLine
+          label={tx("Agents on {thereLabel} can start work on {hereLabel}", {
+            hereLabel,
+            thereLabel: nickname,
+          })}
+          help="Whether that machine's coordinators may start work on this machine. Its project and sign-in limits are under Who can run work here, below."
+        >
           <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <Badge size="sm" variant={WORK_HERE_BADGE[row.workHere.status]}>
               {tx(row.workHere.label)}
@@ -732,6 +737,8 @@ export function MachineRow({
       ) : (
         allowBack
       )}
+
+      {connectBothWays}
 
       {row.teamRules ? (
         <DetailLine label={tx("Team rules")}>
@@ -800,8 +807,6 @@ export function MachineRow({
           </ul>
         )}
       </DetailLine>
-
-      {connectBothWays}
     </li>
   );
 }
@@ -813,7 +818,7 @@ export function MachineRow({
  * after the same confirmation. Once the grants refresh, the card shows the
  * grant instead.
  */
-function AllowBack({
+export function AllowBack({
   row,
   primaryEnvironmentId,
   onGranted,
@@ -833,9 +838,17 @@ function AllowBack({
   const coordinatorLabel = name(row.environmentId, row.label);
   return (
     <DetailLine
-      label={tx("{thereLabel} → {hereLabel}", { hereLabel, thereLabel: coordinatorLabel })}
+      label={tx("Agents on {thereLabel} can start work on {hereLabel}", {
+        hereLabel,
+        thereLabel: coordinatorLabel,
+      })}
     >
-      <p className="text-xs text-muted-foreground">{tx("Not allowed yet.")}</p>
+      <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <Badge size="sm" variant="outline">
+          {tx("Not allowed")}
+        </Badge>
+        <span>{tx("Not set up yet.")}</span>
+      </p>
       <IncomingWorkerAction
         here={primaryEnvironmentId}
         coordinator={row.environmentId}
@@ -843,7 +856,7 @@ function AllowBack({
         coordinatorLabel={coordinatorLabel}
         connected={row.seen.state === "connected"}
         coordinatorFleetId={row.fleetMachine?.id}
-        actionLabel={tx("Let {coordinatorLabel} use this machine too", { coordinatorLabel })}
+        actionLabel={tx("Allow {coordinatorLabel}", { coordinatorLabel })}
         onGranted={onGranted}
       />
     </DetailLine>
@@ -864,6 +877,13 @@ function AddForAgents({
 }) {
   const canInvite = useEnvironmentScope(row.environmentId, AuthAccessWriteScope);
   const canAdd = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const nickname = useMachineNickname(row.environmentId, row.label);
+  const { environments } = useEnvironments();
+  const hereLabel = useMachineNickname(
+    primaryEnvironmentId,
+    environments.find((entry) => entry.environmentId === primaryEnvironmentId)?.label ??
+      "this machine",
+  );
   const [adding, setAdding] = useState(false);
   const [added, setAdded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -889,7 +909,8 @@ function AddForAgents({
 
   return (
     <AddForAgentsView
-      machineLabel={row.label}
+      machineLabel={nickname}
+      hereLabel={hereLabel}
       allowed={isElectron && canInvite && canAdd}
       adding={adding}
       added={added}
@@ -901,6 +922,7 @@ function AddForAgents({
 
 export function AddForAgentsView({
   machineLabel,
+  hereLabel = "this machine",
   allowed,
   adding,
   added = false,
@@ -908,6 +930,8 @@ export function AddForAgentsView({
   onAdd,
 }: {
   machineLabel: string;
+  /** This machine's name, so the line names its direction. */
+  hereLabel?: string;
   /** The desktop app holding full access to both machines; a browser tab is refused. */
   allowed: boolean;
   adding: boolean;
@@ -918,24 +942,22 @@ export function AddForAgentsView({
   const tx = useTx();
   return (
     <DetailLine
-      label={tx("Agents on this machine")}
+      label={tx("Agents on {hereLabel} can start work on {thereLabel}", {
+        hereLabel,
+        thereLabel: machineLabel,
+      })}
       help="Seeing a machine in this app does not tell this machine's server about it. Adding it gives the server its own key to that machine for a year, which can manage its access, updates and skills, with this window closed. Agents still cannot start work until you allow workers."
     >
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted-foreground">
           {added ? (
             <>
-              {renderRich(tx("Added {machineLabel}. Next, {link} on its card."), {
-                machineLabel: machineLabel,
-                link: (
-                  <Link to="/settings/machines" className="underline underline-offset-2">
-                    {tx("allow workers")}
-                  </Link>
-                ),
+              {tx("Added {machineLabel}. Choose Allow on this line after Refresh.", {
+                machineLabel,
               })}
             </>
           ) : allowed ? (
-            `This app can see ${machineLabel}, but agents on this machine cannot use it yet.`
+            `Not set up yet. Step 1: add ${machineLabel} so this machine's server can reach it. Step 2: Allow.`
           ) : (
             `Adding ${machineLabel} from here needs the desktop app with full access to it. Otherwise, on ${machineLabel}, choose Join a main machine under Settings > Machines.`
           )}
@@ -948,7 +970,7 @@ export function AddForAgentsView({
             disabled={adding}
             onClick={onAdd}
           >
-            {adding ? tx("Adding…") : tx("Add for agents")}
+            {adding ? tx("Adding…") : tx("Add {machineLabel}", { machineLabel })}
           </Button>
         ) : null}
       </div>
@@ -1078,17 +1100,18 @@ export function ConnectBothWaysView({
 }) {
   const tx = useTx();
   return (
-    <DetailLine label={tx("Connect both ways")}>
+    <DetailLine
+      label={tx("Its app sees this machine")}
+      help="Whether the SpecWithCode app on that machine can open this machine's projects. It is about you, the person, not agents, so it does not change who may start work where."
+    >
       {teamRulesLock !== null ? (
         <TeamRulesLockNote lock={teamRulesLock} />
       ) : created === null ? (
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
-            {renderRich(
-              tx(
-                "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.",
-              ),
-              { machineLabel: machineLabel, machineLabel2: machineLabel },
+            {tx(
+              "No. To open this machine's projects from {machineLabel}, make a one-time link here and open it there.",
+              { machineLabel },
             )}
           </p>
           <Button
@@ -1101,7 +1124,7 @@ export function ConnectBothWaysView({
             {creating
               ? tx("Creating…")
               : canCreate
-                ? tx("Connect both ways")
+                ? tx("Make pairing link")
                 : tx("Manage access required")}
           </Button>
         </div>

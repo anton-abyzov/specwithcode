@@ -1,7 +1,7 @@
 /**
  * The machine-to-add side of a fleet: publish this server on its own
  * Tailscale name and make the `swc-machine-…` line another machine's Add a
- * machine accepts. `specweave-studio fleet invite` and Settings > Connections
+ * machine accepts. `specweave-studio fleet invite` and Settings > Machines
  * both end here, so the two never disagree about what the line holds.
  */
 import { EnvironmentId } from "@specweave-studio/contracts";
@@ -265,8 +265,8 @@ export function fleetInviteProblem(error: FleetInviteFailure): {
     case "ConnectUnreachable": {
       const head =
         error._tag === "ConnectNotLinked"
-          ? "This machine is not linked to SpecWithCode Connect. Link it in Settings > Connections > SpecWithCode Connect (or run `specwithcode connect` in a terminal), then try again."
-          : "This machine's SpecWithCode Connect address does not answer right now. Check that SpecWithCode Connect shows it as linked in Settings > Connections, then try again.";
+          ? "This machine is not linked to SpecWithCode Connect. Link it in Settings > Machines > SpecWithCode Connect (or run `specwithcode connect` in a terminal), then try again."
+          : "This machine's SpecWithCode Connect address does not answer right now. Check that SpecWithCode Connect shows it as linked in Settings > Machines, then try again.";
       const tailscale =
         error.tailscale === undefined
           ? ""
@@ -305,12 +305,12 @@ export function fleetInviteProblem(error: FleetInviteFailure): {
     case "ServesOtherEnvironmentError":
       return {
         reason: "serves_other_server",
-        message: `HTTPS port ${String(error.servePort)} on this machine's Tailscale name already shows a different SpecWithCode server, and the app will not replace it. Turn off Tailscale HTTPS for that server, or choose another port under Tailscale HTTPS in Settings > Connections, then try again.`,
+        message: `HTTPS port ${String(error.servePort)} on this machine's Tailscale name already shows a different SpecWithCode server, and the app will not replace it. Turn off Tailscale HTTPS for that server, or choose another port under Tailscale HTTPS in Settings > Machines, then try again.`,
       };
     case "ServePortOccupiedError":
       return {
         reason: "port_occupied",
-        message: `HTTPS port ${String(error.servePort)} on this machine's Tailscale name is already used by another app, and the app will not replace it. Choose another port under Tailscale HTTPS in Settings > Connections, or run \`specwithcode fleet invite --coordinator '<main-machine-environment-id>' --tailscale-serve-port 8443\` in a terminal. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.`,
+        message: `HTTPS port ${String(error.servePort)} on this machine's Tailscale name is already used by another app, and the app will not replace it. Choose another port under Tailscale HTTPS in Settings > Machines, or run \`specwithcode fleet invite --coordinator '<main-machine-environment-id>' --tailscale-serve-port 8443\` in a terminal. Replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine. This explicitly approves that machine to manage access here.`,
       };
     case "TailscaleServeFailedError":
       return {

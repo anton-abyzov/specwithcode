@@ -639,7 +639,7 @@ it("tells a coordinator how to run workers on another machine and where this pro
   });
   // Without a fleet the prompt stays as it was.
   assert.notInclude(coordinator, "studio_machine_list");
-  assert.notInclude(coordinator, "Settings > Connections");
+  assert.notInclude(coordinator, "Settings > Machines");
   const fleet = [{ id: "studio-b", label: "Studio B" }];
   const withFleet = Workspace.projectContextText({
     projectId: "p",
@@ -651,7 +651,7 @@ it("tells a coordinator how to run workers on another machine and where this pro
   });
   assert.include(withFleet, "pass it as machine to studio_thread_launch");
   assert.include(withFleet, "studio_machine_list");
-  assert.include(withFleet, "Settings > Connections");
+  assert.include(withFleet, "Settings > Machines");
   assert.notInclude(withFleet, "This project's workers run on");
   const routed = Workspace.projectContextText({
     projectId: "p",

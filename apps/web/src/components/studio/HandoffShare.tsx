@@ -212,7 +212,7 @@ export function HandoffShare({
         <legend className="text-xs font-medium text-muted-foreground">Machine</legend>
         {!loading && machines.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No other machine is connected. Pair one in Settings › Connections.
+            No other machine is connected. Pair one in Settings › Machines.
           </p>
         ) : (
           <MachineOptionRows

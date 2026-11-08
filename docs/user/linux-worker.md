@@ -202,7 +202,7 @@ Serve: the address persists across restarts and is reachable only on your
 tailnet. When Connect is linked, the line also carries the host's Connect
 address and a one-time code the Mac redeems within an hour. It prints one line starting with `swc-machine-`. Treat it like a password. On
 the Mac, run `specwithcode fleet add <that line>`, or paste it into
-**Settings > Connections > Your private machines > Add a machine**. The Mac
+**Settings > Machines > Add a machine**. The Mac
 checks that the worker answers at its address before saving it; no
 restart is needed. [Add a machine](./add-a-machine.md) covers the details.
 

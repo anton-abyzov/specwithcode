@@ -179,7 +179,7 @@ export function useFleetInvite(
       setProblem({
         reason: "unknown",
         message:
-          "Could not revoke the line. Revoke Fleet management (fleet invite) under Authorized clients in Settings > Connections.",
+          "Could not revoke the line. Revoke Fleet management (fleet invite) under Authorized clients in Settings > Machines.",
       });
     } finally {
       setPending(null);
@@ -373,8 +373,8 @@ export function FleetInvitePanel({
             </Button>
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            Paste this line on your main machine under Settings &gt; Connections &gt; Add a machine.
-            It works like a password, so only paste it there, and it is{" "}
+            Paste this line on your main machine under Settings &gt; Machines &gt; Add a machine. It
+            works like a password, so only paste it there, and it is{" "}
             {fleetInviteValidity(invitation.expiresAt)}.
             {invitation.redeemBy ? tx(" Use it within an hour; it works once.") : null}
           </p>
@@ -824,7 +824,7 @@ function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
   if (isSignedIn)
     return (
       <span className="mt-2 block">
-        Signed in here. Now link this machine under Settings &gt; Connections &gt; SpecWithCode
+        Signed in here. Now link this machine under Settings &gt; Machines &gt; SpecWithCode
         Connect.
       </span>
     );
@@ -838,7 +838,7 @@ function ConnectNextStep({ canManage }: { readonly canManage: boolean }) {
 }
 
 /**
- * Settings > Connections: make this machine's invitation in a dialog. Closing
+ * Settings > Machines: make this machine's invitation in a dialog. Closing
  * it forgets the line, so it is never shown twice.
  */
 export function FleetInviteDialog({

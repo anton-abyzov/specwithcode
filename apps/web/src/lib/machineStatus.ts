@@ -17,7 +17,7 @@ export interface MachineStatus {
 
 /**
  * What the app says about a machine wherever it shows one: the machine picker,
- * a chat's banner, the sidebar and Settings > Connections. A first attempt is
+ * a chat's banner, the sidebar and Settings > Machines. A first attempt is
  * "Connecting…"; once an attempt has failed the machine is unreachable and the
  * picker says so, with the reason, instead of looking like it is about to connect.
  */
@@ -117,7 +117,7 @@ export function machineUnavailableTitle(
 }
 
 /**
- * The short status on a saved machine's row in Settings > Connections. The
+ * The short status on a saved machine's row in Settings > Machines. The
  * reason ("why it failed, what to do") is returned apart so the row can show it
  * on its own wrapped line instead of cutting it off. This machine reads
  * "Catching up" while its server is busy.
