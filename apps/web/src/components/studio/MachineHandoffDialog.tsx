@@ -344,7 +344,11 @@ export function MachineHandoffDialog({
                   disabled={busy || !target || !!target.unavailable}
                   onClick={onReview}
                 >
-                  {busy ? "Checking…" : machineLabel ? `Move project to ${machineLabel}` : "Hand off"}
+                  {busy
+                    ? "Checking…"
+                    : machineLabel
+                      ? `Move project to ${machineLabel}`
+                      : "Hand off"}
                 </Button>
               </>
             )}
@@ -403,7 +407,7 @@ function GitWhere({
         <legend className="mb-2 text-sm font-medium">Machine</legend>
         {machines.length === 0 && !loading ? (
           <p className="text-sm text-muted-foreground">
-            No other machine is connected. Pair one in Settings › Connections.
+            No other machine is connected. Pair one in Settings › Machines.
           </p>
         ) : (
           <MachineOptionRows

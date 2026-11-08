@@ -33,13 +33,13 @@ export function threadRouteProblem(input: {
   // A device learns its other machines shortly after it starts: not yet listed is a wait.
   if (input.host === "host-unknown" && input.waitedMs >= THREAD_ROUTE_SLOW_MS)
     return unreachable(
-      "This device is not connected to the machine that holds this thread. Connect it under Settings > Connections.",
+      "This device is not connected to the machine that holds this thread. Connect it under Settings > Machines.",
     );
   if (input.host === "host-unknown")
     return { kind: "opening", title: "Opening thread...", detail: null };
   if (input.host === "host-refused")
     return unreachable(
-      `This device cannot connect to ${machine}. Check it under Settings > Connections.`,
+      `This device cannot connect to ${machine}. Check it under Settings > Machines.`,
     );
   if (input.host === "host-offline")
     return unreachable(`${machine} is offline. This thread opens when it reconnects.`);

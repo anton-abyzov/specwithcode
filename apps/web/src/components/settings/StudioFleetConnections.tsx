@@ -155,8 +155,11 @@ export function FleetWorkersRow({
   draft,
   onDraftChange,
   onAction,
+  bare = false,
 }: {
   machine: StudioFleetMachine;
+  /** The card already names the direction and shows the status, so only the controls render. */
+  bare?: boolean;
   disabled: boolean;
   canManage: boolean;
   draft: WorkerDraft;
@@ -174,18 +177,26 @@ export function FleetWorkersRow({
   const codeNeeded = allowed ? changed && view.changeCodeNeeded : view.codeNeeded;
   return (
     <div className="min-w-0 space-y-1.5" aria-label={`Workers on ${machine.label}`}>
-      <p className="text-xs text-muted-foreground">
-        <span className="text-foreground/80">{tx("Workers")}</span>{" "}
-        <SettingHelp label={tx("workers")}>
-          <div className="space-y-1.5">
-            {fleetWorkersHelp(machine.label).map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-          </div>
-        </SettingHelp>{" "}
-        · {view.summary}
-        {view.action === "allow" && !canManage ? tx(" Allowing them needs Manage access.") : null}
-      </p>
+      {bare ? (
+        view.action === "allow" && !canManage ? (
+          <p className="text-xs text-muted-foreground">
+            {tx("Allowing them needs Manage access on this machine.")}
+          </p>
+        ) : null
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          <span className="text-foreground/80">{tx("Workers")}</span>{" "}
+          <SettingHelp label={tx("workers")}>
+            <div className="space-y-1.5">
+              {fleetWorkersHelp(machine.label).map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          </SettingHelp>{" "}
+          · {view.summary}
+          {view.action === "allow" && !canManage ? tx(" Allowing them needs Manage access.") : null}
+        </p>
+      )}
       {view.accessHint ? <p className="text-xs text-muted-foreground">{view.accessHint}</p> : null}
       {view.problem ? <p className="text-xs text-warning-foreground">{view.problem}</p> : null}
       {canManage ? (
@@ -265,7 +276,7 @@ export function FleetWorkersRow({
               title={`Let coordinators on this machine start threads on ${machine.label}`}
               onClick={() => onAction("allow")}
             >
-              {tx("Allow workers")}
+              {bare ? tx("Allow") : tx("Allow workers")}
             </Button>
           )}
         </div>
@@ -275,7 +286,16 @@ export function FleetWorkersRow({
 }
 
 export interface FleetInventoryComposition {
-  renderMachine?: (environmentId: EnvironmentId, controls: ReactNode) => ReactNode;
+  /**
+   * Wraps a machine's controls. `workers` is that machine's Allow workers
+   * control: when composed, the card shows it on its own access line, so it
+   * is left out of `controls`.
+   */
+  renderMachine?: (
+    environmentId: EnvironmentId,
+    controls: ReactNode,
+    workers: ReactNode,
+  ) => ReactNode;
   additionalMachines?: ReactNode;
 }
 
@@ -850,6 +870,20 @@ export function StudioFleetRoster({
                     fingerprint: machine.teamRules?.fingerprint,
                   })
                 : linkLock;
+            const workersRow =
+              !current && onWorkers && onWorkerDraftChange && machine.workers ? (
+                <TeamRulesInert lock={machineLock}>
+                  <FleetWorkersRow
+                    machine={machine}
+                    bare={renderMachine !== undefined}
+                    disabled={busy}
+                    canManage={canManageWorkers}
+                    draft={fleetWorkerDraft(machine, workerDrafts, defaultWorkerDraft)}
+                    onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
+                    onAction={(action) => onWorkers(machine, action)}
+                  />
+                </TeamRulesInert>
+              ) : null;
             const controls = (
               <li
                 key={machine.id}
@@ -973,20 +1007,7 @@ export function StudioFleetRoster({
                     ) : null}
                   </div>
                 </div>
-                {!current && onWorkers && onWorkerDraftChange && machine.workers ? (
-                  <div className="pl-7">
-                    <TeamRulesInert lock={machineLock}>
-                      <FleetWorkersRow
-                        machine={machine}
-                        disabled={busy}
-                        canManage={canManageWorkers}
-                        draft={fleetWorkerDraft(machine, workerDrafts, defaultWorkerDraft)}
-                        onDraftChange={(draft) => onWorkerDraftChange(machine.id, draft)}
-                        onAction={(action) => onWorkers(machine, action)}
-                      />
-                    </TeamRulesInert>
-                  </div>
-                ) : null}
+                {workersRow && !renderMachine ? <div className="pl-7">{workersRow}</div> : null}
                 {connected ? (
                   <div className="flex flex-wrap items-center gap-1.5 pl-7 empty:hidden">
                     {ready ? (
@@ -1040,7 +1061,9 @@ export function StudioFleetRoster({
                 ) : null}
               </li>
             );
-            return renderMachine ? renderMachine(machine.environmentId, controls) : controls;
+            return renderMachine
+              ? renderMachine(machine.environmentId, controls, workersRow)
+              : controls;
           })}
         </ul>
       ) : renderMachine ? null : (
@@ -1083,7 +1106,9 @@ export function StudioFleetRoster({
           <span className="min-w-0">
             <span className="block text-sm">{tx("Connect automatically")}</span>
             <span className="block text-xs text-muted-foreground">
-              {tx("Pair with reachable machines when SpecWithCode opens. Saved on this device.")}
+              {tx(
+                "When this app opens, connect it to your machines that answer, so their projects show here without Connect machine. It changes no agent permissions. Saved on this device.",
+              )}
             </span>
           </span>
           <TeamRulesInert lock={linkLock}>

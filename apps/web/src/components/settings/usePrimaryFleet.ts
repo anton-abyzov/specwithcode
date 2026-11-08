@@ -20,7 +20,7 @@ const NO_ENVIRONMENT = "" as EnvironmentId;
 
 /**
  * The primary server's private machines, which of them this app cannot see,
- * and Connect for those: the same scoped pairing as Settings > Connections >
+ * and Connect for those: the same scoped pairing as Settings > Machines >
  * Connect machine.
  */
 export function usePrimaryFleet() {

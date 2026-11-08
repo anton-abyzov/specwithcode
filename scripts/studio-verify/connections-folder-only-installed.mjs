@@ -2,7 +2,7 @@
 // Runs the INSTALLED app's bundled server (ELECTRON_RUN_AS_NODE) with a private
 // state folder and a fixture HOME, so it never reads the user's ~/.claude.json,
 // credentials or live app state. Checks the inventory payload and project
-// scoping over RPC, then Settings > Connections in headless Chrome, light and dark.
+// scoping over RPC, then Settings > Machines in headless Chrome, light and dark.
 // Usage: node scripts/studio-verify/connections-folder-only-installed.mjs <report-dir>
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChild from "node:child_process";
@@ -256,7 +256,7 @@ try {
   );
   receipt.checks.push({ name: "project-scoped-inventory", local: local.map((c) => c.name) });
 
-  // AC-01 and AC-05: Settings > Connections, light and dark.
+  // AC-01 and AC-05: Settings > Machines, light and dark.
   for (const theme of ["light", "dark"]) {
     page = await context.newPage();
     page.setDefaultTimeout(30000);

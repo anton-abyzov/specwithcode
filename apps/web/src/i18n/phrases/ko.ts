@@ -1734,20 +1734,12 @@ export const ko: PhraseCatalog = {
   "Most access for incoming work": "들어오는 작업의 최대 액세스",
   "Setting up…": "설정하는 중…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} 허용",
-  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
-  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
-  "Whether agents on {hereLabel} may start work on {thereLabel}.":
-    "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있는지 여부입니다.",
   Allowed: "허용됨",
   Expiring: "곧 만료",
   "Not allowed": "허용 안 됨",
   Revoked: "취소됨",
   Expired: "만료됨",
-  "Not allowed yet.": "아직 허용되지 않았습니다.",
-  "Let {coordinatorLabel} use this machine too": "{coordinatorLabel}도 이 컴퓨터를 사용하도록 허용",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 쪽: 완료",
-  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
-    "{hereLabel}에서 설정 > 연결 > 메인 컴퓨터에 참여를 열고 {coordinatorLabel}을(를) 선택한 다음 줄을 복사하세요. {coordinatorLabel}에서 설정 > 컴퓨터 > 컴퓨터 추가를 열어 붙여 넣은 다음 {hereLabel} 카드에서 워커 허용을 선택하세요.",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel}에서 이곳의 작업을 실행할 수 있음 · {access} · {date}까지",
   "{coordinatorLabel} can run work here · {access}":
@@ -1888,13 +1880,8 @@ export const ko: PhraseCatalog = {
   "Could not read who can run work here. Refresh to retry.":
     "여기서 작업을 실행할 수 있는 대상을 읽지 못했습니다. 새로 고쳐 다시 시도하세요.",
   "Checking who can run work here…": "여기서 작업을 실행할 수 있는 대상을 확인하는 중…",
-  "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.":
-    "여기서 작업을 시작할 수 있는 다른 컴퓨터가 없습니다. 아래에서 컴퓨터를 고르거나, 그 컴퓨터에서 컴퓨터를 열고 이 컴퓨터의 카드에서 워커 허용을 선택하세요.",
   "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
     "취소하면 새 작업이 즉시 거부됩니다. 여기서 시작한 스레드는 2분 동안 계속 실행된 뒤 중지되며, 워크트리와 변경 사항은 남습니다.{value}",
-  "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.":
-    "원격 제어는 작업을 선택한 컴퓨터에 둡니다. 스레드를 옮기는 것은 검토를 거치는 별도의 작업입니다.",
-  "Access, routes and worker permissions": "액세스, 경로 및 워커 권한",
   "Checking your machines…": "컴퓨터를 확인하는 중…",
   "No machines yet.": "아직 컴퓨터가 없습니다.",
   "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
@@ -1910,14 +1897,7 @@ export const ko: PhraseCatalog = {
   Accounts: "계정",
   "Connect to see its accounts.": "연결하면 계정을 볼 수 있습니다.",
   "No account reported.": "보고된 계정이 없습니다.",
-  "Agents on this machine": "이 컴퓨터의 에이전트",
-  "Added {machineLabel}. Next, {link} on its card.":
-    "{machineLabel}을(를) 추가했습니다. 다음으로 카드에서 {link}.",
   "allow workers": "워커를 허용하세요",
-  "Add for agents": "에이전트용으로 추가",
-  "Connect both ways": "양방향 연결",
-  "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.":
-    "이 앱에서는 {machineLabel}이(가) 보입니다. {machineLabel2}의 앱에서 이 컴퓨터가 보이게 하려면 여기서 일회용 링크를 만들어 그곳에서 여세요.",
   "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.":
     "{expiresAt}까지 한 번만 작동합니다. {machineLabel}의 SpecWithCode에만 붙여 넣고 채팅에는 붙여 넣지 마세요.",
   Updates: "업데이트",
@@ -2765,8 +2745,6 @@ export const ko: PhraseCatalog = {
   "No other machines yet. Add another computer or a server you rent below.":
     "아직 다른 컴퓨터가 없습니다. 아래에서 다른 컴퓨터나 임대한 서버를 추가하세요.",
   "Connect automatically": "자동으로 연결",
-  "Pair with reachable machines when SpecWithCode opens. Saved on this device.":
-    "SpecWithCode를 열 때 연결 가능한 컴퓨터와 페어링합니다. 이 기기에 저장됩니다.",
   "Let agents on this machine start work on another computer.":
     "이 컴퓨터의 에이전트가 다른 컴퓨터에서 작업을 시작하도록 허용합니다.",
   "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
@@ -4020,8 +3998,6 @@ export const ko: PhraseCatalog = {
   "Sign-in did not load": "로그인을 불러오지 못했습니다",
   "Connect sign-in did not load, so check this computer's network.":
     "Connect 로그인을 불러오지 못했습니다. 이 컴퓨터의 네트워크를 확인하세요.",
-  "Setup works without Connect, and you can add it later in Settings > Connections.":
-    "설정은 Connect 없이도 됩니다. 나중에 설정 > 연결에서 추가할 수 있습니다.",
   "You can add a computer with a pairing link instead.":
     "대신 페어링 링크로 컴퓨터를 추가할 수 있습니다.",
   "Continue without an agent": "에이전트 없이 계속",

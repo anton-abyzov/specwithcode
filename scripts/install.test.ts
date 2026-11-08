@@ -410,7 +410,7 @@ describe.skipIf(
     expect(reused.stderr).toContain("To add this machine to your main one, run ");
     expect(reused.stderr).toContain("ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode ");
     expect(reused.stderr).toContain("fleet invite --coordinator '<main-machine-environment-id>'");
-    expect(reused.stderr).toContain("Settings > Connections on your main machine");
+    expect(reused.stderr).toContain("Settings > Machines on your main machine");
     expect(fixture.requests).toEqual([]);
 
     const standalone = await runInstaller(fixture, ["--standalone", "--no-service"]);

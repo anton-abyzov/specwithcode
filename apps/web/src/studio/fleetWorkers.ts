@@ -128,7 +128,7 @@ export function fleetWorkersView(workers: StudioFleetWorkers): FleetWorkersView 
       };
     case "not_allowed":
       return {
-        summary: "Coordinators here cannot start workers on this machine.",
+        summary: "Not set up yet.",
         problem,
         action: "allow",
         codeNeeded,
@@ -188,7 +188,7 @@ export function workerMachineChoices(
     const name = machineName?.(machine.environmentId, machine.label) ?? machine.label;
     choices.push({
       value: machine.id,
-      label: allowed ? name : `${name} (allow workers in Settings > Connections)`,
+      label: allowed ? name : `${name} (allow workers in Settings > Machines)`,
       disabled: !allowed && !chosen,
       machine: {
         machineId: machine.id,
@@ -268,7 +268,7 @@ export function fleetRemoveNotice(removed: StudioFleetRemoveResult): string {
   ].filter((part) => part !== null);
   if (kept.length === 0)
     return `Removed ${removed.label} and revoked what this machine held there.`;
-  return `Removed ${removed.label} here. ${removed.label} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. On ${removed.label}, revoke it in Settings > Connections${removed.managementSessionId ? ` (session ${removed.managementSessionId})` : ""}.`;
+  return `Removed ${removed.label} here. ${removed.label} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. On ${removed.label}, revoke it in Settings > Machines${removed.managementSessionId ? ` (session ${removed.managementSessionId})` : ""}.`;
 }
 
 /** Secret files a folder copy sent to a machine; names only, never contents. */

@@ -12,7 +12,7 @@ import { InlineButton } from "../ui/button";
 const CLAMP_AFTER = 300;
 
 /**
- * Why a machine in Settings > Connections is not connected and what to do,
+ * Why a machine in Settings > Machines is not connected and what to do,
  * on its own wrapped line under the row's short status, so the instruction is
  * readable without hovering. Retry asks the machine's supervisor to try now; it
  * is left out when the reason says the machine has to be paired again, since

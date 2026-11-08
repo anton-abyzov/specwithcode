@@ -1687,20 +1687,12 @@ export const zh: PhraseCatalog = {
   "Most access for incoming work": "传入工作的最高访问权限",
   "Setting up…": "正在设置…",
   "Allow {coordinatorLabel}": "允许 {coordinatorLabel}",
-  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
-  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
-  "Whether agents on {hereLabel} may start work on {thereLabel}.":
-    "{hereLabel} 上的代理是否可以在 {thereLabel} 上开始工作。",
   Allowed: "已允许",
   Expiring: "即将到期",
   "Not allowed": "未允许",
   Revoked: "已撤销",
   Expired: "已过期",
-  "Not allowed yet.": "尚未允许。",
-  "Let {coordinatorLabel} use this machine too": "也让 {coordinatorLabel} 使用这台电脑",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 上：已完成",
-  "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
-    "在 {hereLabel} 上打开“设置 > 连接 > 加入主电脑”，选择 {coordinatorLabel} 并复制这一行。在 {coordinatorLabel} 上打开“设置 > 电脑 > 添加电脑”，粘贴后在 {hereLabel} 卡片上选择“允许工作节点”。",
   "{coordinatorLabel} can run work here · {access} · until {date}":
     "{coordinatorLabel} 可以在这里运行工作 · {access} · 有效期至 {date}",
   "{coordinatorLabel} can run work here · {access}":
@@ -1836,13 +1828,8 @@ export const zh: PhraseCatalog = {
   "Could not read who can run work here. Refresh to retry.":
     "无法读取谁可以在这里运行工作。请刷新重试。",
   "Checking who can run work here…": "正在检查谁可以在这里运行工作…",
-  "No other machine can start work here. Choose a machine below, or open Machines on that machine and choose Allow workers on this machine’s card.":
-    "没有其他电脑可以在这里开始工作。请在下方选择一台电脑，或在那台电脑上打开“电脑”，并在这台电脑的卡片上选择“允许工作者”。",
   "Revoke refuses new work at once. Threads it started here keep running for 2 minutes, then stop; their worktrees and changes stay.{value}":
     "撤销会立即拒绝新工作。它在这里启动的会话会继续运行 2 分钟然后停止；它们的工作树和更改会保留。{value}",
-  "Remote control keeps work on the selected machine. Moving a thread is a separate, reviewed action.":
-    "远程控制让工作留在所选电脑上。转移会话是另一项需要审核的操作。",
-  "Access, routes and worker permissions": "访问、路由和工作者权限",
   "Checking your machines…": "正在检查你的电脑…",
   "No machines yet.": "还没有电脑。",
   "Add a machine, manage its routes and allow or stop workers in {link}. Machines that may run work here are under Who can run work here. To disconnect one, use its card there: Remove machine stops agents here from using it, and Remove under Environments stops this app seeing it.":
@@ -1858,14 +1845,7 @@ export const zh: PhraseCatalog = {
   Accounts: "账户",
   "Connect to see its accounts.": "连接后可查看其账户。",
   "No account reported.": "未报告任何账户。",
-  "Agents on this machine": "这台电脑上的智能体",
-  "Added {machineLabel}. Next, {link} on its card.":
-    "已添加 {machineLabel}。接下来，在它的卡片上{link}。",
   "allow workers": "允许工作者",
-  "Add for agents": "添加给智能体",
-  "Connect both ways": "双向连接",
-  "This app sees {machineLabel}. To let {machineLabel2}’s app see this machine, make a one-time link here and open it there.":
-    "此应用可以看到 {machineLabel}。要让 {machineLabel2} 的应用看到这台电脑，请在这里生成一次性链接并在那里打开。",
   "Works once, until {expiresAt}. Paste it only into SpecWithCode on {machineLabel}, not into a chat.":
     "仅可使用一次，有效期至 {expiresAt}。只能粘贴到 {machineLabel} 上的 SpecWithCode 中，不要粘贴到对话里。",
   Updates: "更新",
@@ -2690,8 +2670,6 @@ export const zh: PhraseCatalog = {
   "No other machines yet. Add another computer or a server you rent below.":
     "还没有其他电脑。在下方添加另一台电脑或租用的服务器。",
   "Connect automatically": "自动连接",
-  "Pair with reachable machines when SpecWithCode opens. Saved on this device.":
-    "SpecWithCode 打开时与可访问的电脑配对。保存在此设备上。",
   "Let agents on this machine start work on another computer.":
     "允许此电脑上的智能体在另一台电脑上开始工作。",
   "Already connected to it? Open {link} and choose Add for agents on its row. There is nothing to copy. Otherwise, follow these steps:":
@@ -3911,8 +3889,6 @@ export const zh: PhraseCatalog = {
   "Sign-in did not load": "登录未能加载",
   "Connect sign-in did not load, so check this computer's network.":
     "Connect 登录未能加载，请检查这台电脑的网络。",
-  "Setup works without Connect, and you can add it later in Settings > Connections.":
-    "不使用 Connect 也能完成设置，之后可以在 设置 > 连接 中添加。",
   "You can add a computer with a pairing link instead.": "你也可以改用配对链接添加电脑。",
   "Continue without an agent": "不使用智能体继续",
   "Checking which agents can run…": "正在检查哪些智能体可以运行…",

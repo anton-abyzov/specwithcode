@@ -372,7 +372,7 @@ function checkoutUnavailableText(reason: CheckoutUnavailableReason, machine: str
     case "host-offline":
       return `${machine} is offline. Its projects show again when it reconnects.`;
     case "host-refused":
-      return `This device cannot connect to ${machine}. Check it under Settings > Connections.`;
+      return `This device cannot connect to ${machine}. Check it under Settings > Machines.`;
     case "host-unknown":
       return "This device is not paired with the machine that holds this checkout.";
     case "host-loading":

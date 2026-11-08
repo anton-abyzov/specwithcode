@@ -84,13 +84,15 @@ it("opens only the target machine's view, including when no shared project exist
   );
   expect(document.body.textContent).toContain("No projects on Remote PC yet.");
   expect(state.openPalette).not.toHaveBeenCalled();
-  expect(document.body.textContent).toContain("Work stays on this machine.");
+  expect(document.body.textContent).toContain(
+    "Work stays on that machine and needs no worker permission.",
+  );
   expect(document.body.textContent).not.toContain("Viewing does not move");
 });
 it("labels a read-only grant View", async () => {
   state.operate = false;
   await render();
-  expect(document.querySelector("button")?.textContent).toBe("View");
+  expect(document.querySelector("button")?.textContent).toBe("View projects");
   await act(async () => document.querySelector<HTMLButtonElement>("button")!.click());
   expect(document.body.textContent).toContain("View only");
 });
@@ -113,7 +115,7 @@ it("closes the view without changing the selected machine or thread", async () =
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
   );
   expect(document.querySelector('[role="dialog"]')).toBeNull();
-  expect(document.querySelector("button")?.textContent).toBe("Remote control");
+  expect(document.querySelector("button")?.textContent).toBe("Open projects");
 });
 
 it("starts explicit project setup on the remote without creating work on open", async () => {

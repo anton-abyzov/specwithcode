@@ -23,8 +23,8 @@ struct PairMachineView: View {
 
   private var instructions: String {
     let steps = model.connect == nil
-      ? "open SpecWithCode, go to Settings > Connections and choose Pair a phone. If it offers SpecWithCode Connect first, choose Use a private QR code instead. Then scan the code or copy the link."
-      : "open SpecWithCode, go to Settings > Connections and choose Pair a phone, then Use a private QR code instead. Then scan the code or copy the link."
+      ? "open SpecWithCode, go to Settings > Machines and choose Pair a phone. If it offers SpecWithCode Connect first, choose Use a private QR code instead. Then scan the code or copy the link."
+      : "open SpecWithCode, go to Settings > Machines and choose Pair a phone, then Use a private QR code instead. Then scan the code or copy the link."
     let place: String
     if let id = expectedMachineId, let machine = model.machine(id) {
       place = "On \(machine.label), \(steps)"

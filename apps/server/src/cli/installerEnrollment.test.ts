@@ -122,7 +122,7 @@ it("requires explicit approval before any installer work and uses the same nonbl
     const result = runInstallerContract(`setup_output() { exit 91; }\nmain "$@"`, args);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("--coordinator");
-    expect(result.stderr).toContain("Settings > Connections on your main machine");
+    expect(result.stderr).toContain("Settings > Machines on your main machine");
   }
   const valid = runInstallerContract(
     "setup_output() { exit 91; }\nmain --join --coordinator ' approved main environment '",
@@ -150,7 +150,7 @@ main "$@"`,
     expect(result.stderr).toContain(
       `then run \`'/nonexistent-installer-contract-home/.local/bin/specwithcode' fleet invite --coordinator 'approved main'\\''s environment'\``,
     );
-    expect(result.stderr).toContain("Settings > Connections on your main machine");
+    expect(result.stderr).toContain("Settings > Machines on your main machine");
   } finally {
     NodeFS.rmSync(scratch, { recursive: true, force: true });
   }

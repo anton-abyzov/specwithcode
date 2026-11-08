@@ -279,7 +279,10 @@ describe("pull request toolkit handlers", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
       expect(
-        yield* harness.call("unwatch_pull_request", { repository: "studiotools/studio", number: 3 }),
+        yield* harness.call("unwatch_pull_request", {
+          repository: "studiotools/studio",
+          number: 3,
+        }),
       ).toMatchObject({ wasWatching: true });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.watch", number: 3, watching: false },

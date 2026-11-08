@@ -267,7 +267,7 @@ function AddToMachineBody({
         setScan({
           state: "failed",
           message: isCopyError(cause, "no_private_url")
-            ? `${sourceName} has no private address yet, so files can't be copied from it. Turn on remote access for ${sourceName} in Settings > Connections, then try again.`
+            ? `${sourceName} has no private address yet, so files can't be copied from it. Turn on remote access for ${sourceName} in Settings > Machines, then try again.`
             : messageOf(cause, `${sourceName} could not list the project's files.`),
         });
       },

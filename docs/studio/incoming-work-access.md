@@ -4,6 +4,6 @@ In SpecWithCode on the destination machine, open Settings > Machines > Who can r
 
 For example, on M4, choosing M1 sets up M1 → M4. The existing M1 card under M4's Connections page instead controls M4 → M1. A connected app or an update permission does not imply a worker grant in either direction.
 
-The setup uses the existing machine invitation and worker-grant flow. Existing project and sign-in limits remain enforced. If adding the machine succeeds but granting work fails, the page reports partial setup. On the sending machine, open Settings > Connections > Your private machines and choose Allow workers on the destination's card. Existing or revoked incoming grants retain their controls above the setup section.
+The setup uses the existing machine invitation and worker-grant flow. Existing project and sign-in limits remain enforced. If adding the machine succeeds but granting work fails, the page reports partial setup. On the sending machine, open Settings > Machines and choose Allow workers on the destination's card. Existing or revoked incoming grants retain their controls above the setup section.
 
 Signing keys and other secret files still need a separate owner approval for each studio_file_transfer. A worker started by another machine cannot initiate fleet transfers: its coordinator sends the file. Approved project folders and secret-transfer restrictions still apply. Allowing workers does not authorize reading every file on the destination.

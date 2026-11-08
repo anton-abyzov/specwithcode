@@ -360,12 +360,12 @@ describe("RemoteWorkers", () => {
           environmentId: "env-m3",
           status: "needs_reverse_grant",
           allow:
-            'On the machine that sends work here, open Settings > Machines, find M4 and choose "Let M4 use this machine too" (if the machine that sends work here lists M4 as revoked or expired under Who can run work here, allow it again there).',
+            'On the machine that sends work here, open Settings > Machines and choose "Allow M4" on M4\'s card, on the line "Agents on M4 can start work on the machine that sends work here" (if the machine that sends work here lists M4 as revoked or expired under Who can run work here, allow it again there).',
         },
       ]);
       const asked = yield* workers.resolveMachine("env-m3").pipe(Effect.flip);
       expect(asked.code).toBe("machine_not_authorized");
-      expect(asked.message).toContain("Let M4 use this machine too");
+      expect(asked.message).toContain('"Allow M4"');
       const unknown = yield* workers.resolveMachine("laptop").pipe(Effect.flip);
       expect(unknown.code).toBe("unknown_machine");
       expect(unknown.message).toContain("under incoming");

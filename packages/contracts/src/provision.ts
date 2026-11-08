@@ -8,7 +8,7 @@ import { EnvironmentAuthorizationError } from "./auth.ts";
  * service, installed or verified on the machine itself. Tailscale is optional:
  * checked when present, installed only when SpecWithCode Connect does not
  * already reach the machine (otherwise its item is `skipped`). The readback is
- * what `specwithcode provision --json` prints and what Settings > Connections
+ * what `specwithcode provision --json` prints and what Settings > Machines
  * shows; it never carries a credential, only whether a sign-in exists.
  */
 const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));

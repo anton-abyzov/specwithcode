@@ -123,7 +123,7 @@ const fleetHomeWithoutServer = (explicit: Option.Option<string>) =>
   });
 
 /**
- * Makes the invitation in the running service, as Settings > Connections >
+ * Makes the invitation in the running service, as Settings > Machines >
  * Join a main machine does (`POST /api/studio/fleet/invite`), with the
  * credential the service published for this machine's CLI. The live database
  * is never opened here: the management session is issued by the service.
@@ -246,7 +246,7 @@ const inviteCommand = Command.make("invite", {
           "",
           `  ${cliName()} fleet add ${code}`,
           "",
-          "or paste the line below into Settings > Connections > Add a machine there.",
+          "or paste the line below into Settings > Machines > Add a machine there.",
           "",
           code,
           "",
@@ -307,7 +307,7 @@ const addCommand = Command.make("add", {
               : `Renewed ${added.label} at ${added.url}.`,
           "",
           added.change === "added"
-            ? "Open Settings > Connections: with Connect automatically on, your browser pairs with it within a minute. Choose Allow workers there to let coordinators start work on it."
+            ? "Open Settings > Machines: with Connect automatically on, your browser pairs with it within a minute. Choose Allow workers there to let coordinators start work on it."
             : "Browsers add the new address on their own. Workers already allowed there carry over the next time a coordinator uses them.",
           "",
         ].join("\n"),
@@ -356,7 +356,7 @@ const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
           return;
         }
         yield* Console.log(
-          `No other machines are configured. Run \`${cliName()} fleet invite --coordinator '<main-machine-environment-id>'\` on one. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here. Then \`fleet add\` here.\n`,
+          `No other machines are configured. Run \`${cliName()} fleet invite --coordinator '<main-machine-environment-id>'\` on one. Replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine. This explicitly approves that machine to manage access here. Then \`fleet add\` here.\n`,
         );
         return;
       }

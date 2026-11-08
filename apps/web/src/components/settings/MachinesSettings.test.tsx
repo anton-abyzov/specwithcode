@@ -299,7 +299,9 @@ describe("Settings > Machines", () => {
     expect(html).toContain("This app can see it");
     expect(html).toContain("not open in this window");
     expect(html).not.toContain("This app cannot see it");
-    expect(html).toContain("M4MAX → MacBook Pro");
+    expect(html).toContain("Agents on M4MAX can start work on MacBook Pro");
+    expect(html).not.toContain('href="/settings/machines"');
+    expect(html).toContain("Connection details");
     expect(html).toContain(">Allowed<");
     expect(html).toContain("EasyChamp");
     expect(html).toContain("Runs workers only");
@@ -311,7 +313,7 @@ describe("Settings > Machines", () => {
     expect(html).toContain("someone@example.com");
     expect(html).toContain('<span class="sr-only">also on M4MAX</span>');
     expect(html).toContain("Connect to see its accounts.");
-    expect(html).toContain("Connect both ways");
+    expect(html).toContain("Make pairing link");
   });
 
   it("names two other machines as chips, folds the rest into +N and reads them all aloud", () => {
@@ -399,9 +401,9 @@ describe("Settings > Machines", () => {
     };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
     expect(html).toContain('aria-label="Who can run work here"');
-    expect(html).toContain("MacBook Pro → M4MAX");
+    expect(html).toContain("Agents on MacBook Pro can start work on M4MAX");
     expect(html).toContain("Projects linked to MacBook Pro: easychamp · Active · 1 running thread");
-    expect(html.match(/MacBook Pro → M4MAX/g)).toHaveLength(1);
+    expect(html.match(/>Agents on MacBook Pro can start work on M4MAX</g)).toHaveLength(1);
     expect(html).not.toContain("use this machine too");
   });
 
@@ -409,23 +411,17 @@ describe("Settings > Machines", () => {
     setUp();
     runtime.grants = { grants: [], projects: [], accounts: [] };
     const html = renderToStaticMarkup(<MachinesSettingsPanel />);
-    // Each line names its direction; only the missing one offers a button.
-    expect(html).toContain("M4MAX → MacBook Pro");
-    expect(html).toContain(">Allowed<");
-    expect(html.match(/MacBook Pro → M4MAX/g)).toHaveLength(1);
-    expect(html).toContain("Not allowed yet.");
-    expect(html).not.toContain("cannot run work here yet");
-    expect(html.match(/<button[^>]*>Let MacBook Pro use this machine too<\/button>/g)).toHaveLength(
-      1,
-    );
-    expect(html.match(/use this machine too/g)).toHaveLength(1);
+    expect(html).toContain("Agents on MacBook Pro can start work on M4MAX");
+    expect(html.match(/>Allow MacBook Pro</g)).toHaveLength(1);
+    expect(html).toContain("Not set up yet.");
+    expect(html).not.toContain("use this machine too");
     // Never for this machine itself.
-    expect(html).not.toContain("Let M4MAX use this machine too");
+    expect(html).not.toContain(">Allow M4MAX<");
   });
 
   it("shows no allow-back step before the grants load or once that machine holds a grant", () => {
     setUp();
-    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("use this machine too");
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain(">Allow MacBook Pro<");
     runtime.grants = {
       grants: [
         {
@@ -447,7 +443,7 @@ describe("Settings > Machines", () => {
       projects: [],
       accounts: [],
     };
-    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain("use this machine too");
+    expect(renderToStaticMarkup(<MachinesSettingsPanel />)).not.toContain(">Allow MacBook Pro<");
   });
 
   it("names a coordinator the server sends only by id, never printing the raw id", () => {
@@ -499,7 +495,7 @@ describe("Settings > Machines", () => {
     });
     const bothWays = rendered!.root
       .findAllByType("button")
-      .find((button) => button.props.children === "Connect both ways");
+      .find((button) => button.props.children === "Make pairing link");
     await act(async () => bothWays!.props.onClick());
     expect(runtime.createCredential).toHaveBeenCalledWith(
       expect.objectContaining({ label: "App on MacBook Pro" }),
@@ -541,13 +537,13 @@ describe("Add for agents", () => {
 
   it("offers the button when this app can reach both machines", () => {
     const html = view(true);
-    expect(html).toContain("Add for agents");
-    expect(html).toContain("agents on this machine cannot use it yet");
+    expect(html).toContain(">Add Windows<");
+    expect(html).toContain("Step 1: add Windows");
   });
 
   it("names the manual route, with no button, when the connection cannot add it", () => {
     const html = view(false);
-    expect(html).not.toContain(">Add for agents<");
+    expect(html).not.toContain(">Add Windows<");
     expect(html).toContain("choose Join a main machine");
   });
 
@@ -563,8 +559,8 @@ describe("Add for agents", () => {
       />,
     );
     expect(html).toContain("Added Windows");
-    expect(html).toContain("allow workers");
-    expect(html).not.toContain(">Add for agents<");
+    expect(html).toContain("Choose Allow on this line after Refresh.");
+    expect(html).not.toContain(">Add Windows<");
   });
 
   it("shows why adding failed", () => {

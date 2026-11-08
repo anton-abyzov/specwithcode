@@ -47,7 +47,7 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
   const attempted = useRef(new Map<string, number>());
   // Saved machines that turned this browser down and could not be paired
   // again: retrying would mint a pairing there every minute to no effect, so
-  // Approve again in Settings > Connections is left to the user.
+  // Approve again in Settings > Machines is left to the user.
   const reapprovalFailed = useRef(new Set<string>());
   const running = useRef(false);
   const [failedAt, setFailedAt] = useState(0);
@@ -98,7 +98,7 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
             });
             if (result._tag === "Failure") throw new Error("Pairing was not saved.");
           } catch {
-            // Connect machine stays available in Settings > Connections meanwhile.
+            // Connect machine stays available in Settings > Machines meanwhile.
             attempted.current.set(machine.environmentId, Date.now());
             if (rejected.has(machine.environmentId))
               reapprovalFailed.current.add(machine.environmentId);

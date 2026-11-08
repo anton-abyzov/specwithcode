@@ -36,7 +36,7 @@ pinned, checksum-verified versions), run `specwithcode provision` afterwards.
                   page if needed) and print the invitation for the explicitly approved main machine
                   to paste on your main machine
   --coordinator ID  environment ID of the main machine you approve to manage this machine;
-                    required with --join. Copy it from Settings > Connections on your main machine
+                    required with --join. Copy it from Settings > Machines on your main machine
   -y, --yes       install Tailscale for --join without asking
   --no-service    set up the command only; leave the background service alone
   --standalone    install the command-line build even when the desktop app is on this Mac
@@ -97,7 +97,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --join) join=true ;;
-      --coordinator) [ $# -ge 2 ] || fail "--coordinator needs the environment ID from Settings > Connections on your main machine"; coordinator="$2"; shift ;;
+      --coordinator) [ $# -ge 2 ] || fail "--coordinator needs the environment ID from Settings > Machines on your main machine"; coordinator="$2"; shift ;;
       --coordinator=*) coordinator="${1#*=}" ;;
       --no-service) service=false ;;
       --standalone) standalone=true ;;
@@ -112,7 +112,7 @@ main() {
     esac
     shift
   done
-  coordinator_help="Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here."
+  coordinator_help="Replace <main-machine-environment-id> with the environment ID from Settings > Machines on your main machine. This explicitly approves that machine to manage access here."
   # EnvironmentId is a trimmed, nonblank string, not a UUID. The CLI trims the value.
   if "$join" || [ -n "$coordinator" ]; then
     is_environment_id "$coordinator" || fail "--join requires --coordinator with a nonblank environment ID. ${coordinator_help}"
@@ -904,7 +904,7 @@ run_invite() {
 
 print_join_next_step() {
   printf '  Next: on your main machine, run the %sfleet add%s command above, or paste the line\n' "$bold" "$reset" >&2
-  printf '  into Settings > Connections > Add a machine.\n\n' >&2
+  printf '  into Settings > Machines > Add a machine.\n\n' >&2
 }
 
 print_next_steps() {

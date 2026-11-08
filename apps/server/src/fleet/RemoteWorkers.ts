@@ -370,10 +370,10 @@ export function remoteFailure(
       return failure(
         "machine_not_authorized",
         error.grant === "revoked"
-          ? `${label} revoked this machine's worker access. If it was revoked under "Who can run work here" there, allow this machine again on ${label} first; then allow workers again here in Settings > Connections.`
+          ? `${label} revoked this machine's worker access. If it was revoked under "Who can run work here" there, allow this machine again on ${label} first. Then, on this machine, the user opens Settings > Machines and chooses Allow on ${label}'s card, on the line "Agents on … can start work on ${label}".`
           : error.grant === "expired"
-            ? `Worker access on ${label} expired. The user can allow workers again in Settings > Connections.`
-            : `Workers are not allowed on ${label}. The user allows them in Settings > Connections.`,
+            ? `Worker access on ${label} expired. On this machine, the user opens Settings > Machines and chooses Allow on ${label}'s card, on the line "Agents on … can start work on ${label}".`
+            : `Workers are not allowed on ${label} yet. On this machine (not on ${label}), the user opens Settings > Machines and chooses Allow on ${label}'s card, on the line "Agents on … can start work on ${label}".`,
       );
     case "unreachable":
       return failure("machine_unreachable", `${label} is unavailable right now.`);

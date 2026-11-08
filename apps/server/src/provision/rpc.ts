@@ -1,5 +1,5 @@
 /**
- * Provision from Settings > Connections: the machine's own server runs the
+ * Provision from Settings > Machines: the machine's own server runs the
  * same runner as `specwithcode provision` and streams its progress. It never
  * restarts or replaces the server it runs in, and root steps run only with
  * passwordless sudo; otherwise the readback carries the one line to run there.

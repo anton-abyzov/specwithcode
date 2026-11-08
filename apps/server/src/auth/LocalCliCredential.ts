@@ -22,7 +22,7 @@
  *   post-restart auth proof (scripts/studio-fleet/auth_heartbeat.py) sees the
  *   same rows, and a file that cannot be written leaves no orphan session;
  * - "Sign out other devices" cannot revoke it, and it is not listed in
- *   Settings > Connections, so no other session can pass itself off as it;
+ *   Settings > Machines, so no other session can pass itself off as it;
  * - a token copied from the file stops working when that service exits, so
  *   the file a crash leaves behind is worth nothing.
  * The file is removed again when the service stops.

@@ -54,7 +54,7 @@ struct ConnectWelcomeContent: View {
 
   static let signedInSteps = [
     "Open SpecWithCode on your Mac.",
-    "Open the account button at the bottom of the sidebar and sign in to SpecWithCode Connect. Then turn it on in Settings > Connections, under Your phones.",
+    "Open the account button at the bottom of the sidebar and sign in to SpecWithCode Connect. Then turn it on in Settings > Machines, under Your phones.",
     "Your Mac appears here. Tap it to start.",
   ]
 

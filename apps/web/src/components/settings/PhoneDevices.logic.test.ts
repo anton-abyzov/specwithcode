@@ -44,9 +44,7 @@ describe("lastSeenLabel", () => {
 
 describe("phoneDetail", () => {
   it("pairs the model with when it was last seen", () => {
-    expect(phoneDetail(phone(), now)).toBe(
-      "iPhone 16 Pro · App 0.1.1 · Last seen 30 minutes ago",
-    );
+    expect(phoneDetail(phone(), now)).toBe("iPhone 16 Pro · App 0.1.1 · Last seen 30 minutes ago");
   });
 
   it("says when the app did not report a model", () => {
@@ -82,7 +80,12 @@ describe("visiblePhones", () => {
 
 describe("phone identity", () => {
   it("names a phone by its model when it can only report iPhone", () => {
-    const duo = phone({ label: "iPhone", model: "iPhone Duo", iosMajorVersion: 27, appVersion: "0.1.4" });
+    const duo = phone({
+      label: "iPhone",
+      model: "iPhone Duo",
+      iosMajorVersion: 27,
+      appVersion: "0.1.4",
+    });
     expect(phoneTitle(duo)).toBe("iPhone Duo");
     expect(phoneDetail(duo, now)).toBe("iOS 27 · App 0.1.4 · Last seen 30 minutes ago");
   });
@@ -97,7 +100,9 @@ describe("phone identity", () => {
     for (const model of [null, "iPhone"]) {
       const old = phone({ label: "iPhone", model, appVersion: null });
       expect(phoneTitle(old)).toBe("iPhone");
-      expect(phoneDetail(old, now)).toBe("Model shows after the app updates · Last seen 30 minutes ago");
+      expect(phoneDetail(old, now)).toBe(
+        "Model shows after the app updates · Last seen 30 minutes ago",
+      );
     }
   });
 

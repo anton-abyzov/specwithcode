@@ -1,4 +1,4 @@
-// Headless screenshots of folder-only Claude Code entries in Settings > Connections, light and dark.
+// Headless screenshots of folder-only Claude Code entries in Settings > Machines, light and dark.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeHttp from "node:http";
 import * as NodeFSP from "node:fs/promises";

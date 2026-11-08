@@ -249,7 +249,7 @@ it("decides later: opens the app with nothing chosen or set up", async () => {
   await act(async () =>
     root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={onDone} />),
   );
-  expect(document.body.textContent).toContain("Join a main machine under Settings > Connections");
+  expect(document.body.textContent).toContain("Join a main machine under Settings > Machines");
   await click("Decide later");
   expect(mocks.complete).toHaveBeenCalledOnce();
   expect(onDone).toHaveBeenCalledExactlyOnceWith(undefined);
@@ -320,7 +320,7 @@ it("joins existing machines: makes the line once, then opens to this machine's s
   });
   expect(line()?.value).toBe("swc-machine-synthetic-line");
   expect(machineRole.onChange).toHaveBeenCalledExactlyOnceWith("joined");
-  expect(document.body.textContent).toContain("Settings > Connections > Add a machine");
+  expect(document.body.textContent).toContain("Settings > Machines > Add a machine");
   await click("Copy");
   expect(mocks.copy).toHaveBeenCalledWith("swc-machine-synthetic-line", undefined);
   await click("I pasted it");
@@ -529,7 +529,7 @@ it("tells a signed-in person to turn on Connect for this machine in Settings", a
     );
     await choose("Connect to an existing one");
     expect(document.body.textContent).toContain(
-      "Now link this machine under Settings > Connections > SpecWithCode Connect.",
+      "Now link this machine under Settings > Machines > SpecWithCode Connect.",
     );
   } finally {
     cloud.configured = false;

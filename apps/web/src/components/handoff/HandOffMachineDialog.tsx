@@ -200,7 +200,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                   ) : null}
                   {noneOnline ? (
                     <p className="text-sm text-muted-foreground">
-                      No other machine is online. Pair one in Settings › Connections.
+                      No other machine is online. Pair one in Settings › Machines.
                     </p>
                   ) : null}
                 </fieldset>

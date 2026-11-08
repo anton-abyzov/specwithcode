@@ -204,7 +204,7 @@ it("shows offline machines disabled with a reason, and says when none is online"
   expect(row?.getAttribute("data-tone")).toBe("off");
   expect(row?.textContent).toContain("Offline");
   expect(document.body.textContent).toContain(
-    "No other machine is online. Pair one in Settings › Connections.",
+    "No other machine is online. Pair one in Settings › Machines.",
   );
 });
 

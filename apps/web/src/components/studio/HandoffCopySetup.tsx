@@ -94,7 +94,7 @@ export function HandoffCopySetup({
         <legend className="mb-2 text-sm font-medium">Machine</legend>
         {machines.length === 0 && !loading ? (
           <p className="text-sm text-muted-foreground">
-            No other machine is connected. Pair one in Settings › Connections.
+            No other machine is connected. Pair one in Settings › Machines.
           </p>
         ) : (
           <MachineOptionRows

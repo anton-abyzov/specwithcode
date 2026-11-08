@@ -133,7 +133,7 @@ describe("inviting this machine to another one", () => {
     const onCopy = vi.fn();
     const shown = panel(render(), { onCopy });
     expect(line(shown)!.props.value).toBe("swc-machine-synthetic-line");
-    expect(text(shown)).toContain("Settings > Connections > Add a machine");
+    expect(text(shown)).toContain("Settings > Machines > Add a machine");
     expect(text(shown)).toContain("works like a password");
     expect(text(shown)).toContain("valid for");
     button(shown, "Copy")!.props.onClick();

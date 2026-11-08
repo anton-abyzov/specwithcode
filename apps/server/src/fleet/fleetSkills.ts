@@ -1068,11 +1068,21 @@ export async function runFleetSkillInstall(
         { method: "GET", token, idempotent: true, timeoutMs: 75_000 },
       ));
     } catch (error) {
-      throw new FleetSkillFailure("outcome_unknown", "The install was accepted, but its outcome could not be read. Check availability before retrying.");
+      throw new FleetSkillFailure(
+        "outcome_unknown",
+        "The install was accepted, but its outcome could not be read. Check availability before retrying.",
+      );
     }
-    if (!statusResponse.ok) throw new FleetSkillFailure("outcome_unknown", "The install was accepted, but its status is unavailable. Check availability before retrying.");
+    if (!statusResponse.ok)
+      throw new FleetSkillFailure(
+        "outcome_unknown",
+        "The install was accepted, but its status is unavailable. Check availability before retrying.",
+      );
     const status = await answerOf(statusResponse).catch(() => {
-      throw new FleetSkillFailure("outcome_unknown", "The install status could not be read. Check availability before retrying.");
+      throw new FleetSkillFailure(
+        "outcome_unknown",
+        "The install status could not be read. Check availability before retrying.",
+      );
     });
     if (!record(status) || typeof status.phase !== "string")
       throw new FleetSkillFailure("outcome_unknown", "The machine gave no skill install status.");

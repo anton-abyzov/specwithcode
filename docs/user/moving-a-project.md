@@ -358,7 +358,7 @@ After a copy finishes, the done screen shows the destination's readiness
 checklist: whether the project folder is there, whether Git and each enabled
 provider work, and whether each provider is signed in. **Sign in on <machine>**
 opens the provider sign-in for that machine. You can open the same checklist any
-time from **Settings > Connections**, with **Check readiness** on a machine card.
+time from **Settings > Machines**, with **Check readiness** on a machine card.
 A machine that runs an older SpecWithCode shows as not checkable; update it
 first.
 

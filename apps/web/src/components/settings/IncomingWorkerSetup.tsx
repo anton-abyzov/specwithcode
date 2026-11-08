@@ -278,7 +278,7 @@ export function IncomingWorkerAction({
         ? tx("Manage access is needed on {hereLabel}.", { hereLabel })
         : !manageThere && coordinatorFleetId === undefined
           ? tx(
-              "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.",
+              "On {hereLabel}, open Settings > Machines > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.",
               { hereLabel, coordinatorLabel },
             )
           : null;

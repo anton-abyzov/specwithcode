@@ -15,7 +15,7 @@ export const UNNAMED_INCOMING_LABEL = "the machine that sends work here";
 
 /** The one step on `there` that lets `here` use it, as the user sees it. */
 export const reverseGrantStep = (here: string, there: string) =>
-  `On ${there}, open Settings > Machines, find ${here} and choose "Let ${here} use this machine too" (if ${there} lists ${here} as revoked or expired under Who can run work here, allow it again there).`;
+  `On ${there}, open Settings > Machines and choose "Allow ${here}" on ${here}'s card, on the line "Agents on ${here} can start work on ${there}" (if ${there} lists ${here} as revoked or expired under Who can run work here, allow it again there).`;
 
 /** Why a thread here cannot reach `there` yet, and what to do meanwhile. */
 export const reverseGrantMessage = (here: string, there: string) =>

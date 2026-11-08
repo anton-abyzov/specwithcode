@@ -28,7 +28,7 @@ export function ProjectWorkerMachines(props: {
     return (
       <p className="project-muted">
         Workers run on this machine. To run them on a second Mac or your own Linux VPS, add it under
-        Settings &gt; Connections &gt; Your private machines.
+        Settings &gt; Machines &gt; Your private machines.
       </p>
     );
   const includesHere = list.some(isLocalWorkerMachine);

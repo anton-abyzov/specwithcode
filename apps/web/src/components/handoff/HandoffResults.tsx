@@ -35,7 +35,7 @@ export function HandoffDestinationSelect(props: {
   if (props.destinations.length === 0)
     return (
       <p className="text-sm text-muted-foreground">
-        No other machine is paired with this one. Pair one in Settings &gt; Connections.
+        No other machine is paired with this one. Pair one in Settings &gt; Machines.
       </p>
     );
   return (

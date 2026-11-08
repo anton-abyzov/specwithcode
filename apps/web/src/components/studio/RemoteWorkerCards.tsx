@@ -142,7 +142,7 @@ export function RemoteWorkerCard({
           </span>
         ) : (
           <span className="sws-thread-card-status">
-            Connect {worker.machineLabel} in Settings &gt; Connections to open it here.
+            Connect {worker.machineLabel} in Settings &gt; Machines to open it here.
           </span>
         )}
       </span>

@@ -213,7 +213,7 @@ describe("incoming worker setup view", () => {
     expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
     expect(html).toContain("m1 → m4");
     expect(html).toContain(
-      "On m4, open Settings &gt; Connections &gt; Join a main machine, pick m1 and copy the line. On m1, open Settings &gt; Machines &gt; Add a machine, paste it, then choose Allow workers on m4&#x27;s card.",
+      "On m4, open Settings &gt; Machines &gt; Join a main machine, pick m1 and copy the line. On m1, open Settings &gt; Machines &gt; Add a machine, paste it, then choose Allow workers on m4&#x27;s card.",
     );
     // One plain step: no second hint pointing at a card m1 does not have.
     expect(html).not.toContain("not set up yet");

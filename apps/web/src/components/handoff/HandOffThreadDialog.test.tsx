@@ -153,7 +153,7 @@ it("says so when no other machine is online", async () => {
       preflight: { state: "idle" },
     }),
   );
-  expect(text()).toContain("No other machine is online. Pair one in Settings › Connections.");
+  expect(text()).toContain("No other machine is online. Pair one in Settings › Machines.");
   expect(button("Move")!.disabled).toBe(true);
 });
 
