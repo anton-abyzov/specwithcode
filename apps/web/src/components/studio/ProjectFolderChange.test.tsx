@@ -305,6 +305,34 @@ describe("ProjectFolderChange", () => {
     expect(button("Change folder").disabled).toBe(false);
   });
 
+  it("says an empty new folder leaves the code behind and labels archived overlaps", async () => {
+    state.folderCheck.mockResolvedValue({
+      _tag: "Success",
+      value: check({
+        sameRepository: false,
+        targetEmpty: true,
+        nestedProjects: [
+          {
+            id: "p9",
+            title: "Projects",
+            workspaceRoot: "/Users/test/Projects",
+            relation: "contains",
+            deleted: false,
+            archived: true,
+          },
+        ],
+      } as unknown as Partial<ProjectFolderCheck>),
+    });
+    render();
+    await typeFolder(parent);
+    await click("Check");
+    const empty = container.querySelector("[data-folder-empty-target]")?.textContent ?? "";
+    expect(empty).toContain("The new folder is empty. Changing the folder moves no files");
+    expect(empty).toContain("including uncommitted work, stays there");
+    expect(container.querySelector("[data-folder-nested-projects]")?.textContent).toContain(
+      '"Projects" (contains it, archived)',
+    );
+  });
   it("says new worktrees come from the umbrella's own repository, not its nested ones", async () => {
     state.folderCheck.mockResolvedValue({
       _tag: "Success",
