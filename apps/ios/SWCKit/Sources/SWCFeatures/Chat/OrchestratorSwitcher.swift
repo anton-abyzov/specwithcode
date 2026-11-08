@@ -21,7 +21,13 @@ struct OrchestratorSwitcher: View {
           ForEach(members) { member in
             Button {
               if member.ref != current {
-                router.chooseCoordinator(member.ref, besideThread: isBesideCoordinator, in: model)
+                // After the menu closes: the switch replaces the chat that
+                // holds this menu, so it must not happen inside its action.
+                let beside = isBesideCoordinator
+                Task { @MainActor in
+                  await Task.yield()
+                  router.chooseCoordinator(member.ref, besideThread: beside, in: model)
+                }
               }
             } label: {
               if member.ref == current {

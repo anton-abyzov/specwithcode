@@ -16,6 +16,7 @@ public struct ComposerBar: View {
   let onStop: (() -> Void)?
   let onAttach: (() -> Void)?
   let onMic: (() -> Void)?
+  let isDictating: Bool
   private var attachmentControl: AnyView?
   let onAcceptSuggestion: ((String) -> Void)?
 
@@ -31,6 +32,7 @@ public struct ComposerBar: View {
   ///   - onStop: Hides the stop button when nil.
   ///   - onAttach: Hides the attach button when nil.
   ///   - onMic: Hides the mic button when nil.
+  ///   - isDictating: The mic is listening; it stays shown, filled, to stop it.
   ///   - onAcceptSuggestion: Fills the draft with the suggestion; hides it when nil.
   public init(
     text: Binding<String>,
@@ -44,6 +46,7 @@ public struct ComposerBar: View {
     onStop: (() -> Void)? = nil,
     onAttach: (() -> Void)? = nil,
     onMic: (() -> Void)? = nil,
+    isDictating: Bool = false,
     onAcceptSuggestion: ((String) -> Void)? = nil
   ) {
     self._text = text
@@ -57,6 +60,7 @@ public struct ComposerBar: View {
     self.onStop = onStop
     self.onAttach = onAttach
     self.onMic = onMic
+    self.isDictating = isDictating
     self.onAcceptSuggestion = onAcceptSuggestion
   }
 
@@ -135,10 +139,11 @@ public struct ComposerBar: View {
           .padding(.leading, onAttach == nil && attachmentControl == nil ? WeaveSpacing.s2 : 0)
           .frame(minHeight: WeaveSize.innerControl)
           .accessibilityLabel("Message")
-        if let onMic, isEmpty, !showsStop {
-          WeaveIconButton("mic", label: "Dictate", style: .sunken, size: WeaveSize.innerControl, action: onMic)
+        if let onMic, isDictating || (isEmpty && !showsStop) {
+          WeaveIconButton(isDictating ? "mic.fill" : "mic", label: isDictating ? "Stop dictation" : "Dictate", style: isDictating ? .filled : .sunken, size: WeaveSize.innerControl, action: onMic)
             .frame(width: WeaveSize.innerControl, height: WeaveSize.innerControl)
-            .disabled(isBlocked)
+            .disabled(isBlocked && !isDictating)
+            .accessibilityIdentifier("composer.mic")
         }
         trailingButton
           .frame(width: WeaveSize.innerControl, height: WeaveSize.innerControl)

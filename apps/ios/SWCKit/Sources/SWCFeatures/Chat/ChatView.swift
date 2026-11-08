@@ -60,6 +60,9 @@ private struct ChatScreen: View {
   /// How many of the newest transcript rows are laid out; "Show earlier"
   /// adds more.
   @State private var rowLimit = TranscriptWindow.step
+  /// The composer's mic; words land in the draft unsent.
+  @State private var dictation = SpeechDictation()
+  @AppStorage(AppDefaults.dictationLanguage) private var dictationLanguage = ""
   @State private var choosingAttachment = false
   /// Turn folds the person opened, by fold row id.
   @State private var expandedFolds: Set<String> = []
@@ -121,6 +124,7 @@ private struct ChatScreen: View {
         // Navigation must not restore a keyboard over a hidden safe-area bar.
         // The draft belongs to the router and survives losing focus.
         composerFocused = false
+        dictation.stop()
         model.closeSession(session)
       }
       .task(id: router.pendingComposerFocus) {
@@ -822,6 +826,9 @@ private struct ChatScreen: View {
       if let error = session.lastError {
         Banner(error, kind: .fail, onDismiss: { session.lastError = nil })
       }
+      if let error = dictation.error {
+        Banner(error, kind: .fail, onDismiss: { dictation.clearError() })
+      }
       if let request = pendingAccess {
         request.card(agent: agentName, style: .composer, isBusy: busyRequests.contains(request.itemId), maxHeight: accessCardMaxHeight, waitingCount: pendingAccesses.count) { answer in
           answerAccess(request, answer)
@@ -845,6 +852,8 @@ private struct ChatScreen: View {
         focus: $composerFocused,
         onSend: { send() },
         onStop: session.isStale ? nil : { stop() },
+        onMic: { dictation.toggle(language: dictationLanguage, draft: draft) },
+        isDictating: dictation.isActive,
         onAcceptSuggestion: { draft.wrappedValue = $0 }
       )
       .attachmentControl {
@@ -1004,6 +1013,7 @@ private struct ChatScreen: View {
 
   private func send() {
     guard !photosPending else { return }
+    dictation.stop()
     let original = router.drafts[target] ?? ""
     let text = original.trimmingCharacters(in: .whitespacesAndNewlines)
     let images = pendingImages

@@ -132,6 +132,8 @@ nonisolated enum AppLinks {
 nonisolated enum AppDefaults {
   /// The name computers list this phone by; the app reads it at each pairing.
   static let deviceLabel = "deviceLabel"
+  /// The language the composer's mic hears; "" follows the phone.
+  static let dictationLanguage = "dictationLanguage"
 }
 
 /// A specwithcode:// link the app was opened with.
