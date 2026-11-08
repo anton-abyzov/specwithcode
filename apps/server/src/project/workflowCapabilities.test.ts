@@ -82,45 +82,48 @@ describe("workflow declarations", () => {
     expect(result.complete).toBe(false);
   });
 });
-it.effect("checks executable access without running a skill's binary", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const dir = yield* fs.makeTempDirectoryScoped();
-    const skill = path.join(dir, "SKILL.md");
-    const binary = path.join(dir, "fixture-tool");
-    const marker = path.join(dir, "marker");
-    yield* fs.writeFileString(
-      skill,
-      "---\nmetadata:\n  specwithcode:\n    requires:\n      binaries: [fixture-tool]\n---\n",
-    );
-    yield* fs.writeFileString(binary, `#!/bin/sh\ntouch '${marker}'\n`);
-    yield* fs.chmod(binary, 0o700);
-    const input = { scope, skill: { path: skill, enabled: true }, executionPath: dir };
-    assert.strictEqual((yield* checkWorkflow(input)).status, "ready");
-    assert.strictEqual(yield* fs.exists(marker), false);
-    yield* fs.chmod(binary, 0o600);
-    assert.strictEqual((yield* checkWorkflow(input)).checks[0]?.state, "denied");
-    yield* fs.chmod(binary, 0o700);
-    const relativeScope = { ...scope, workspaceRoot: dir };
-    assert.strictEqual(
-      (yield* checkWorkflow({ ...input, scope: relativeScope, executionPath: "." })).status,
-      "ready",
-    );
-    assert.strictEqual(
-      (yield* checkWorkflow({
-        ...input,
-        executionPath: Array(129).fill("/definitely-absent-workflow-dir").join(":"),
-      })).checks[0]?.state,
-      "unknown",
-    );
-    yield* fs.remove(binary);
-    assert.strictEqual((yield* checkWorkflow(input)).checks[0]?.state, "missing");
-    assert.strictEqual(
-      (yield* checkWorkflow({ ...input, executionPath: undefined })).status,
-      "unknown",
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+// POSIX execute bits and an extensionless binary; the Windows Path case follows.
+it.effect.skipIf(process.platform === "win32")(
+  "checks executable access without running a skill's binary",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const skill = path.join(dir, "SKILL.md");
+      const binary = path.join(dir, "fixture-tool");
+      const marker = path.join(dir, "marker");
+      yield* fs.writeFileString(
+        skill,
+        "---\nmetadata:\n  specwithcode:\n    requires:\n      binaries: [fixture-tool]\n---\n",
+      );
+      yield* fs.writeFileString(binary, `#!/bin/sh\ntouch '${marker}'\n`);
+      yield* fs.chmod(binary, 0o700);
+      const input = { scope, skill: { path: skill, enabled: true }, executionPath: dir };
+      assert.strictEqual((yield* checkWorkflow(input)).status, "ready");
+      assert.strictEqual(yield* fs.exists(marker), false);
+      yield* fs.chmod(binary, 0o600);
+      assert.strictEqual((yield* checkWorkflow(input)).checks[0]?.state, "denied");
+      yield* fs.chmod(binary, 0o700);
+      const relativeScope = { ...scope, workspaceRoot: dir };
+      assert.strictEqual(
+        (yield* checkWorkflow({ ...input, scope: relativeScope, executionPath: "." })).status,
+        "ready",
+      );
+      assert.strictEqual(
+        (yield* checkWorkflow({
+          ...input,
+          executionPath: Array(129).fill("/definitely-absent-workflow-dir").join(":"),
+        })).checks[0]?.state,
+        "unknown",
+      );
+      yield* fs.remove(binary);
+      assert.strictEqual((yield* checkWorkflow(input)).checks[0]?.state, "missing");
+      assert.strictEqual(
+        (yield* checkWorkflow({ ...input, executionPath: undefined })).status,
+        "unknown",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("reads a Windows-style Path and PATHEXT names", () =>
