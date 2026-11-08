@@ -276,6 +276,7 @@ import {
   liveWorkEntryLabel,
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
+  timelineMovedDown,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
@@ -753,7 +754,12 @@ interface MessagesTimelineProps {
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
   contentInsetEndAdjustment: number;
-  onIsAtEndChange: (isAtEnd: boolean) => void;
+  /**
+   * `reachedByScrolling` is true only when the list itself moved down to the
+   * end. A window growing or rows shrinking also leaves it at the end, but by
+   * moving the offset up (a clamp); that is not the reader arriving there.
+   */
+  onIsAtEndChange: (isAtEnd: boolean, reachedByScrolling: boolean) => void;
   /**
    * Whether the timeline should keep pinning to the live edge as content
    * grows. Off while the user is reading history; LegendList's own
@@ -1423,10 +1429,20 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onContentOverflowChange?.(measureContentOverflow());
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
+  // The last offset seen for this list, to tell scrolling down from a clamp.
+  const lastScrollRef = useRef<{ readonly key: string; readonly offset: number } | null>(null);
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    const previousScroll = lastScrollRef.current;
+    const reachedByScrolling = timelineMovedDown(
+      previousScroll?.key === listIdentityKey ? previousScroll.offset : undefined,
+      state?.scroll,
+    );
+    if (state?.scroll !== undefined) {
+      lastScrollRef.current = { key: listIdentityKey, offset: state.scroll };
+    }
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && state && isAtEnd !== undefined) {
       const index = state.indexByKey(position.rowId);
@@ -1450,7 +1466,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
     }
     if (isAtEnd !== undefined && !citationPositioning) {
-      onIsAtEndChange(isAtEnd);
+      onIsAtEndChange(isAtEnd, reachedByScrolling);
     }
     reportContentOverflow();
     if (!state || minimapItems.length === 0) {

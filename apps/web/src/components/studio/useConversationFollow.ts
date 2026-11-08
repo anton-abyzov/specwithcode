@@ -21,6 +21,9 @@ export function conversationIsAtEnd(scroller: HTMLElement): boolean {
  */
 const READER_SCROLL_MS = 400;
 
+const KEY_OWNER_ROLES =
+  '[role="menu"],[role="listbox"],[role="tree"],[role="grid"],[role="tablist"],[role="radiogroup"],[role="slider"],[role="combobox"]';
+
 function stickToEnd(scroller: HTMLElement): void {
   scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
 }
@@ -208,10 +211,19 @@ export function useConversationFollow(
       pressed === "moved" ||
       fingerScrolling ||
       performance.now() - readerScrollAskedAt(scroller) < READER_SCROLL_MS;
+    // A clamp can leave a paused reader at the end with nothing left to scroll;
+    // moving on toward it is their resume.
+    const resumeAtEnd = () => {
+      if (following.current || !conversationIsAtEnd(scroller)) return;
+      following.current = true;
+      setUnseen(false);
+      setAway(false);
+    };
     const onWheel = (event: WheelEvent) => {
       endAutoscroll();
       if (event.deltaY < 0 && !event.ctrlKey && isTimelineScrollTarget(event.target, scroller, -1))
         noteReaderScroll(scroller);
+      if (event.deltaY > 0 && !event.ctrlKey) resumeAtEnd();
     };
     const onKeyDown = (event: KeyboardEvent) => {
       endAutoscroll();
@@ -220,16 +232,27 @@ export function useConversationFollow(
         event.key === "PageUp" ||
         event.key === "Home" ||
         (event.key === " " && event.shiftKey);
-      if (!upward || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey)
+      const downward = event.key === "ArrowDown" || event.key === "PageDown" || event.key === "End";
+      if (
+        !(upward || downward) ||
+        event.defaultPrevented ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
         return;
       const target = event.target;
       if (
         target instanceof Node &&
         (scroller.contains(target) || target === document.body) &&
         !(target instanceof HTMLElement && target.isContentEditable) &&
-        !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)
-      )
-        noteReaderScroll(scroller);
+        !(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) &&
+        // A menu or list inside the conversation keeps its own arrow keys.
+        !(downward && target instanceof Element && target.closest(KEY_OWNER_ROLES) !== null)
+      ) {
+        if (upward) noteReaderScroll(scroller);
+        else resumeAtEnd();
+      }
     };
     // Touch is read from touch events alone: its pointer events are cancelled
     // as soon as the browser takes the pan over.
@@ -259,6 +282,8 @@ export function useConversationFollow(
     const onTouchMove = (event: TouchEvent) => {
       const y = event.touches[0]?.clientY;
       if (touchY !== null && y !== undefined && y - touchY >= 8) fingerScrolling = true;
+      // A finger moving up pushes toward the end.
+      if (touchY !== null && y !== undefined && touchY - y >= 8) resumeAtEnd();
     };
     // A fling keeps moving after the finger lifts: theirs from the lift on.
     const onTouchEnd = () => {
@@ -275,12 +300,20 @@ export function useConversationFollow(
       if (isShown(scroller) && pendingPlace.current === null)
         readingPlaces.set(resetKey, readPlace(scroller, following.current));
     };
+    // The last offset seen, to tell moving down to the end from a clamp: a
+    // taller window or shrinking content reaches the end by lowering it.
+    let lastScrollTop = scroller.scrollTop;
     const onScroll = () => {
       // Hidden, it reads as the top and the end at once: not the reader's doing.
       if (!isShown(scroller)) return;
+      const movedDown = scroller.scrollTop > lastScrollTop + 0.5;
+      lastScrollTop = scroller.scrollTop;
       if (conversationIsAtEnd(scroller)) {
-        following.current = true;
-        setUnseen(false);
+        // A paused reader resumes only by moving down to the end.
+        if (following.current || movedDown) {
+          following.current = true;
+          setUnseen(false);
+        }
       } else if (following.current && !readerIsScrolling()) {
         stickToEnd(scroller);
       } else {

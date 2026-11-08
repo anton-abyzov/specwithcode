@@ -8001,6 +8001,10 @@ function useChatViewActions(
       legendListRef,
     ],
   );
+  const scrollToEndRef = useRef(scrollToEnd);
+  useEffect(() => {
+    scrollToEndRef.current = scrollToEnd;
+  }, [scrollToEnd]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -8032,6 +8036,16 @@ function useChatViewActions(
         // otherwise break follow with no scroll event left to re-arm it.
         const viewportIsAwayFromEnd = () =>
           resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
+        // A clamp can leave a paused reader at the end with nothing left to
+        // scroll; moving on toward it is their resume.
+        const resumeWhenPausedAtEnd = () => {
+          if (
+            !isAtEndRef.current &&
+            resolveTimelineIsAtEnd(legendListRef.current?.getState()) === true
+          ) {
+            scrollToEndRef.current();
+          }
+        };
         // Only an upward wheel is a navigation intent; wheeling down while
         // following either does nothing (at the end) or moves toward it.
         const handleWheel = (event: WheelEvent) => {
@@ -8039,6 +8053,7 @@ function useChatViewActions(
             return;
           if (event.deltaY > 0) {
             timelineScrollIntentRef.current = "toward-end";
+            resumeWhenPausedAtEnd();
             if (isAtEndRef.current) {
               composerRef.current?.restoreAfterTimelineReachedEnd();
             }
@@ -8059,6 +8074,9 @@ function useChatViewActions(
         };
         const handleTouchMove = (event: TouchEvent) => {
           const y = event.touches[0]?.clientY;
+          if (touchStartY !== null && y !== undefined && touchStartY - y >= 8) {
+            resumeWhenPausedAtEnd();
+          }
           if (touchStartY === null || y === undefined || y - touchStartY < 8) return;
           if (viewportIsAwayFromEnd()) {
             handleManualNavigation();
@@ -8144,6 +8162,9 @@ function useChatViewActions(
               if (isTimelineAtLogicalEnd()) {
                 composerRef.current?.restoreAfterTimelineReachedEnd();
               }
+              resumeWhenPausedAtEnd();
+              // A collapsing composer can clamp the list to the end after this key.
+              requestAnimationFrame(resumeWhenPausedAtEnd);
               break;
             default:
               break;
@@ -8294,7 +8315,7 @@ function useChatViewActions(
   }, [composerRef]);
 
   const onIsAtEndChange = useCallback(
-    (isAtEnd: boolean) => {
+    (isAtEnd: boolean, reachedByScrolling: boolean) => {
       if (
         !isAtEnd &&
         liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
@@ -8304,6 +8325,10 @@ function useChatViewActions(
         return;
       }
       if (isAtEndRef.current === isAtEnd) return;
+      // A paused reader resumes only by moving down to the end. A taller window
+      // or folded rows clamp the list there too; following then would pin it to
+      // the end when the window shrinks back.
+      if (isAtEnd && !reachedByScrolling) return;
       isAtEndRef.current = isAtEnd;
       if (isAtEnd) {
         if (timelineScrollIntentRef.current === "toward-end") {
