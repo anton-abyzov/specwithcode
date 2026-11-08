@@ -862,6 +862,25 @@ it.effect("rejects relative, missing and file parents without creating them", ()
     }),
   ),
 );
+it.effect(
+  "makes the advertised projects folder at start and accepts it as an explicit parent",
+  () =>
+    withScratch(() =>
+      Effect.gen(function* () {
+        const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Browsing the advertised default must never hit a missing folder.
+        assert.isTrue(yield* fs.exists(folders.namedProjectsRoot));
+        yield* fs.remove(folders.namedProjectsRoot, { recursive: true });
+        const result = yield* folders.createNamedProject({
+          name: "Example",
+          parentPath: `${folders.namedProjectsRoot}${path.sep}`,
+        });
+        assert.equal(result.workspaceRoot, path.join(folders.namedProjectsRoot, "example"));
+      }),
+    ),
+);
 it.effect("keeps Personal storage managed even when a parent is supplied", () =>
   withScratch(() =>
     Effect.gen(function* () {

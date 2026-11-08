@@ -37,6 +37,8 @@ export function useProjectFolderChoice(
   options: {
     readonly remember?: boolean;
     readonly defaultPath?: string | null;
+    /** The machine being browsed, named in the picker so its folders are never taken for this device's. */
+    readonly machineLabel?: string | null;
     readonly nativePicker?: {
       readonly label: string;
       readonly pick: (initialPath: string | null) => Promise<string | null>;
@@ -63,6 +65,7 @@ export function useProjectFolderChoice(
           environmentId={environmentId}
           selectedPath={path}
           defaultPath={options.defaultPath ?? null}
+          machineLabel={options.machineLabel ?? null}
           nativePickerLabel={options.nativePicker?.label ?? null}
           disabled={busy}
           onSelect={(chosen) => select(environmentId, chosen)}

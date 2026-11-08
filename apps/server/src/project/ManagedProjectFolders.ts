@@ -454,14 +454,21 @@ const make = Effect.gen(function* () {
   // Personal and legacy name-only requests retain managed storage. Code
   // projects can explicitly choose an existing parent on this machine.
   const namedProjectsRoot = path.resolve(config.baseDir, "projects");
+  // serverConfig advertises this folder to every client, so it must exist before anyone browses it.
+  yield* fileSystem.makeDirectory(namedProjectsRoot, { recursive: true }).pipe(Effect.ignore);
 
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
     name: string,
     parentPath?: string,
   ) {
-    const root = parentPath ?? namedProjectsRoot;
-    if (parentPath !== undefined) {
-      if (!path.isAbsolute(parentPath)) {
+    // The advertised default folder may not exist yet; it is made like the implicit one.
+    const explicitParent =
+      parentPath !== undefined && path.resolve(parentPath) !== namedProjectsRoot
+        ? parentPath
+        : undefined;
+    const root = explicitParent ?? namedProjectsRoot;
+    if (explicitParent !== undefined) {
+      if (!path.isAbsolute(explicitParent)) {
         return yield* new NamedProjectFolderError({
           folder: root,
           cause: "Choose an absolute parent folder on this machine.",

@@ -246,3 +246,58 @@ it("chooses a folder with the system dialog when it is offered", async () => {
   expect(pick).toHaveBeenCalledWith("/Users/test");
   expect(onSelect).toHaveBeenCalledWith("/Users/test/Code");
 });
+
+it("names the machine it browses in the header and the listed folder", async () => {
+  await act(async () =>
+    root.render(
+      <NewProjectFolderPicker
+        environmentId={machine}
+        selectedPath={null}
+        machineLabel="m1"
+        disabled={false}
+        onSelect={vi.fn()}
+      />,
+    ),
+  );
+  expect(container.textContent).toContain("Project location on m1");
+  expect(container.textContent).toContain("/Users/test on m1");
+});
+it("offers a default folder that does not exist yet instead of a browse error", async () => {
+  state.error =
+    "The folder '/Users/test/.specwithcode/m1/projects' does not exist on this machine.";
+  const onSelect = vi.fn();
+  await act(async () =>
+    root.render(
+      <NewProjectFolderPicker
+        environmentId={machine}
+        selectedPath={null}
+        defaultPath="/Users/test/.specwithcode/m1/projects"
+        machineLabel="m1"
+        disabled={false}
+        onSelect={onSelect}
+      />,
+    ),
+  );
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.textContent).toContain("does not exist yet");
+  await act(async () => button("Use this folder").click());
+  expect(onSelect).toHaveBeenCalledWith("/Users/test/.specwithcode/m1/projects");
+});
+it("shows a browse error in its own words with the machine it came from", async () => {
+  state.error = "The folder '/nope' does not exist on this machine.";
+  await act(async () =>
+    root.render(
+      <NewProjectFolderPicker
+        environmentId={machine}
+        selectedPath="/nope"
+        machineLabel="m3"
+        disabled={false}
+        onSelect={vi.fn()}
+      />,
+    ),
+  );
+  await act(async () => button("Change").click());
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+    "The folder '/nope' does not exist on m3.",
+  );
+});
