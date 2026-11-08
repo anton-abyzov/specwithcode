@@ -12,7 +12,7 @@ import SWCWire
   nonisolated static let tunnel = "https://env-1.tunnels.example.com"
   nonisolated static let removed = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"device_removed","traceId":"t"}"#
   /// The relay no longer accepts the Clerk session, fresh token or not.
-  nonisolated static let expired = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"invalid_token","traceId":"t"}"#
+  nonisolated static let expired = #"{"_tag":"RelayAuthInvalidError","code":"auth_invalid","reason":"invalid_bearer","traceId":"t"}"#
 
   /// What the fake relay refuses with `device_removed`, changeable mid-test.
   final class RelayRules: Sendable {
@@ -146,6 +146,7 @@ import SWCWire
     await h.engine.connectRefresh()
     #expect(await until { h.model.connect?.isSignedIn == false })
     #expect(h.account.currentUser == nil, "Clerk's cached user must not bring 'signed in' back")
+    #expect(h.account.signOutCount == 1)
     #expect(h.model.connect?.wasRemoved == false)
     #expect(h.model.machines.count == 1, "The computer stays listed and reconnects after sign-in")
   }

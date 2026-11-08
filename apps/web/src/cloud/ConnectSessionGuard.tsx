@@ -37,6 +37,7 @@ export function ConnectSessionGuard() {
 
   useEffect(() => {
     if (!rejected || discovery.refreshing || checking.current) return;
+    const trigger = Option.getOrNull(discovery.error);
     checking.current = true;
     void (async () => {
       try {
@@ -47,7 +48,14 @@ export function ConnectSessionGuard() {
         }
         await refresh();
         const after = appAtomRegistry.get(relayEnvironmentDiscovery.stateValueAtom);
-        if (relaySessionRejected(after.error)) {
+        // Only a refusal from the listing this guard just asked for counts: an
+        // offline or unfinished refresh leaves the old error in place.
+        if (
+          !after.offline &&
+          !after.refreshing &&
+          relaySessionRejected(after.error) &&
+          Option.getOrNull(after.error) !== trigger
+        ) {
           console.warn("[studio-cloud] Relay rejected the Connect session; signing out");
           await signOut();
         }
@@ -55,7 +63,7 @@ export function ConnectSessionGuard() {
         checking.current = false;
       }
     })();
-  }, [rejected, discovery.refreshing, getToken, refresh, signOut]);
+  }, [rejected, discovery.refreshing, discovery.error, getToken, refresh, signOut]);
 
   return null;
 }
