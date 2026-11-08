@@ -12,6 +12,10 @@ const state = vi.hoisted(() => ({
   folderCheck: null as unknown,
   checkedProject: undefined as unknown,
   groups: [] as unknown[],
+  providers: [] as unknown[],
+  picker: null as null | {
+    onInstanceModelChange: (instanceId: string, model: string) => void;
+  },
 }));
 vi.mock("./useSettingsProjectGroups", () => ({ useSettingsProjectGroups: () => state.groups }));
 vi.mock("../../teamRules/useFolderTeamRules", () => ({
@@ -27,7 +31,10 @@ vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     environments: [
-      { environmentId: "worker", serverConfig: { settings: state.environment, providers: [] } },
+      {
+        environmentId: "worker",
+        serverConfig: { settings: state.environment, providers: state.providers },
+      },
     ],
   }),
 }));
@@ -56,11 +63,18 @@ vi.mock("./useScopedSettings", () => ({
   useScopedSettingSource: () => "environment",
   useUpdateScopedSettings: () => state.update,
 }));
-vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
+vi.mock("../chat/ProviderModelPicker", () => ({
+  // The Model row renders the first picker; Model lanes below render their own.
+  ProviderModelPicker: (props: NonNullable<typeof state.picker>) => {
+    state.picker ??= props;
+    return null;
+  },
+}));
 vi.mock("../chat/TraitsPicker", () => ({ TraitsPicker: () => null }));
 vi.mock("./ProviderLimitSettings", () => ({ ProviderLimitSettings: () => null }));
 vi.mock("./TaskRoutingSettings", () => ({ TaskRoutingSettings: () => null }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+const toastAdd = vi.hoisted(() => vi.fn());
+vi.mock("../ui/toast", () => ({ toastManager: { add: toastAdd } }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",
   SettingsSection: ({ children }: { children: ReactNode }) => children,
@@ -131,6 +145,9 @@ beforeEach(() => {
   state.folderCheck = null;
   state.checkedProject = undefined;
   state.groups = [];
+  state.providers = [];
+  state.picker = null;
+  toastAdd.mockClear();
 });
 afterEach(() => {
   act(() => renderer?.unmount());
@@ -323,5 +340,110 @@ describe("Use worktrees recommendation", () => {
     state.scope = "project";
     renderUseWorktrees();
     expect(text()).not.toContain("Recommended for this folder");
+  });
+});
+
+const provider = (instanceId: string, driver: string, displayName: string, models: unknown[]) => ({
+  instanceId,
+  driver,
+  displayName,
+  enabled: true,
+  installed: true,
+  version: "test",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-11-08T00:00:00.000Z",
+  models,
+  slashCommands: [],
+  skills: [],
+});
+const level = (id: string, label = id) => ({ id, label });
+const CLAUDE = provider("claudeAgent", "claudeAgent", "Claude Code", [
+  {
+    slug: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Effort",
+          type: "select",
+          options: [level("high", "High"), level("xhigh", "Extra High"), level("max", "Max")],
+        },
+        { id: "fastMode", label: "Fast Mode", type: "boolean" },
+        { id: "ultracode", label: "Ultracode", type: "boolean" },
+      ],
+    },
+  },
+]);
+const COPILOT = provider("acpRegistry_copilot", "acpRegistry", "GitHub Copilot", [
+  {
+    slug: "claude-opus-5.5",
+    name: "Claude Opus 5.5",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoning_effort",
+          label: "Reasoning effort",
+          type: "select",
+          options: [level("medium"), level("high"), level("xhigh")],
+        },
+      ],
+    },
+  },
+]);
+
+describe("default model options", () => {
+  const unsupportedLine = () =>
+    renderer!.root.findAll((node) => node.props["data-default-model-unsupported"] !== undefined);
+  const withDefault = (selection: unknown) => {
+    state.providers = [CLAUDE, COPILOT];
+    state.environment = {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: selection,
+    } as typeof DEFAULT_SERVER_SETTINGS;
+    state.target = resolveProjectSettings(state.environment, project, null, null);
+  };
+
+  it("keeps effort and names Ultracode and Fast mode when the default moves to Copilot", () => {
+    withDefault({
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      options: [
+        { id: "effort", value: "xhigh" },
+        { id: "fastMode", value: true },
+        { id: "ultracode", value: true },
+      ],
+    });
+    render();
+    // Claude offers every common option, so nothing is named as missing.
+    expect(unsupportedLine()).toHaveLength(0);
+    act(() => state.picker!.onInstanceModelChange("acpRegistry_copilot", "claude-opus-5.5"));
+    expect(state.update).toHaveBeenCalledWith({
+      defaultModelSelection: {
+        instanceId: "acpRegistry_copilot",
+        model: "claude-opus-5.5",
+        options: [{ id: "reasoning_effort", value: "xhigh" }],
+      },
+    });
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "info",
+        description: "GitHub Copilot has no Ultracode or Fast mode, so they were left off.",
+      }),
+    );
+  });
+
+  it("names the options the chosen provider lacks on the row", () => {
+    withDefault({
+      instanceId: "acpRegistry_copilot",
+      model: "claude-opus-5.5",
+      options: [{ id: "reasoning_effort", value: "high" }],
+    });
+    render();
+    const [line] = unsupportedLine();
+    expect(line?.children.join("")).toBe("GitHub Copilot has no Fast mode or Ultracode.");
   });
 });

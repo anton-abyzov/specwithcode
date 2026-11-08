@@ -68,6 +68,10 @@
       "types": "./src/effortLevel.ts",
       "import": "./src/effortLevel.ts"
     },
+    "./modelOptionCarry": {
+      "types": "./src/modelOptionCarry.ts",
+      "import": "./src/modelOptionCarry.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"

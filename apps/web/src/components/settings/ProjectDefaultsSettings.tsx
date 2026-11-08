@@ -8,10 +8,17 @@ import {
   type WorktreeSubmodules,
 } from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
+import {
+  carryModelOptions,
+  describeCarriedOptions,
+  joinLabels,
+  missingCommonOptions,
+} from "@specweave-studio/shared/modelOptionCarry";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { getProviderModelCapabilities } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -180,14 +187,47 @@ export function ProjectDefaultsSettings({
     return null;
   }
 
-  const setModel = (value: ModelSelection | null) => {
+  const setModel = (value: ModelSelection | null): boolean => {
     const reason = value ? modelDisabledReason(value.instanceId, value.model) : null;
     if (reason) {
       toastManager.add({ type: "error", title: "Default model not saved", description: reason });
-      return;
+      return false;
     }
     updateSettings({ defaultModelSelection: value });
+    return true;
   };
+
+  const descriptorsFor = (
+    instanceId: ProviderInstanceId | undefined,
+    model: string | undefined,
+  ) => {
+    const entry = entries.find((candidate) => candidate.instanceId === instanceId);
+    return entry && model
+      ? getProviderModelCapabilities(
+          entry.models,
+          model,
+          entry.driverKind,
+          settings.planModeEnabled,
+        ).optionDescriptors
+      : undefined;
+  };
+  // A new provider or model keeps the options it can run; the rest are named, not lost.
+  const changeModel = (instanceId: ProviderInstanceId, model: string) => {
+    const carried = carryModelOptions({
+      previous: selection?.options,
+      previousDescriptors: descriptorsFor(selection?.instanceId, selection?.model),
+      nextDescriptors: descriptorsFor(instanceId, model),
+    });
+    if (!setModel(createModelSelection(instanceId, model, carried.options))) return;
+    const providerName =
+      entries.find((candidate) => candidate.instanceId === instanceId)?.displayName ?? model;
+    const note = describeCarriedOptions(carried, providerName);
+    if (note) toastManager.add({ type: "info", title: "Default model options", description: note });
+  };
+  const missingOptions =
+    selection && activeEntry && !mixedModel
+      ? missingCommonOptions(descriptorsFor(selection.instanceId, selection.model))
+      : [];
 
   const modelRow = (
     <SettingsRow
@@ -197,9 +237,16 @@ export function ProjectDefaultsSettings({
       id="default-model"
       title="Model"
       description={
-        isProjectScope
-          ? tx("Model for new threads in this project.")
-          : tx("Default model for new threads. Projects can override it.")
+        <>
+          {isProjectScope
+            ? tx("Model for new threads in this project.")
+            : tx("Default model for new threads. Projects can override it.")}
+          {missingOptions.length > 0 && activeEntry ? (
+            <span className="block" data-default-model-unsupported>
+              {`${activeEntry.displayName} has no ${joinLabels(missingOptions)}.`}
+            </span>
+          ) : null}
+        </>
       }
       status={
         unavailable || mixedModel || modelSource === "project"
@@ -232,9 +279,7 @@ export function ProjectDefaultsSettings({
                     search: { environmentId: representative.environmentId, instanceId },
                   });
               }}
-              onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
-              }
+              onInstanceModelChange={changeModel}
             />
             {!mixedModel ? (
               <TraitsPicker
