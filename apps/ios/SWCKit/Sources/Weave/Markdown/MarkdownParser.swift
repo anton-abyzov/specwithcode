@@ -58,8 +58,15 @@ public nonisolated enum MarkdownParser {
   private struct Parser {
     let lines: [String]
     var i = 0
+    /// How many quotes this parser sits inside. Deeper quotes stay text, so a
+    /// line of a thousand ">" cannot recurse the main thread off its stack.
+    let depth: Int
+    static let maxQuoteDepth = 8
 
-    init(lines: [String]) { self.lines = lines }
+    init(lines: [String], depth: Int = 0) {
+      self.lines = lines
+      self.depth = depth
+    }
 
     mutating func parseBlocks() -> [MarkdownBlock] {
       var blocks: [MarkdownBlock] = []
@@ -215,7 +222,8 @@ public nonisolated enum MarkdownParser {
         inner.append(String(rest))
         i += 1
       }
-      var nested = Parser(lines: inner)
+      guard depth < Self.maxQuoteDepth else { return .paragraph(inner.joined(separator: "\n")) }
+      var nested = Parser(lines: inner, depth: depth + 1)
       return .quote(nested.parseBlocks())
     }
 

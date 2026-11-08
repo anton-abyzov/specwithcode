@@ -427,8 +427,14 @@ public nonisolated enum MarkdownCollapse {
         used += size
         continue
       }
-      if let short = shortened(block, to: budget - used) { kept.append(short) }
-      return (kept.isEmpty ? [blocks[index]] : kept, true)
+      if let short = shortened(block, to: budget - used) {
+        kept.append(short)
+      } else if kept.isEmpty {
+        // A huge table, quote or list leads the reply: show its text, cut,
+        // rather than laying all of it out to clip it.
+        kept.append(.paragraph(cutText(plainText(blocks[index]), to: budget)))
+      }
+      return (kept, true)
     }
     return (kept, false)
   }
@@ -443,15 +449,28 @@ public nonisolated enum MarkdownCollapse {
     }
   }
 
+  static func plainText(_ block: MarkdownBlock) -> String {
+    switch block {
+    case let .heading(_, text), let .paragraph(text), let .code(_, text): text
+    case let .list(items): items.map(\.text).joined(separator: "\n")
+    case let .quote(blocks): blocks.map(plainText).joined(separator: "\n")
+    case let .table(header, rows): ([header] + rows).map { $0.joined(separator: " | ") }.joined(separator: "\n")
+    case .rule: ""
+    }
+  }
+
+  static func cutText(_ text: String, to room: Int) -> String {
+    let head = text.prefix(max(0, room))
+    guard head.endIndex < text.endIndex else { return String(head) }
+    let end = head.lastIndex(of: "\n") ?? head.lastIndex(of: " ") ?? head.endIndex
+    return String(head[..<end])
+  }
+
   /// A paragraph or code block cut at a line or word boundary, or nil when
   /// too little room is left to be worth showing.
   static func shortened(_ block: MarkdownBlock, to room: Int) -> MarkdownBlock? {
     guard room >= 200 else { return nil }
-    func cut(_ text: String) -> String {
-      let head = text.prefix(room)
-      let end = head.lastIndex(of: "\n") ?? head.lastIndex(of: " ") ?? head.endIndex
-      return String(head[..<end])
-    }
+    func cut(_ text: String) -> String { cutText(text, to: room) }
     switch block {
     case let .paragraph(text): return .paragraph(cut(text))
     case let .code(language, text): return .code(language: language, text: cut(text))

@@ -10,6 +10,8 @@ public struct MessageBubble: View {
 
   @Environment(\.colorScheme) private var colorScheme
 
+  public static let collapseThreshold = 1_200
+
   /// - Parameters:
   ///   - footnote: A short line under the bubble, for example "Queued".
   ///   - isPending: Dims the bubble while the message is not confirmed.
@@ -22,7 +24,9 @@ public struct MessageBubble: View {
 
   public var body: some View {
     VStack(alignment: .trailing, spacing: WeaveSpacing.s1) {
-      MarkdownText(text, onOpenLink: onOpenLink)
+      // A pasted log or a routed brief can run to tens of thousands of
+      // characters; like a long reply, it collapses behind "Show more".
+      MarkdownText(text, collapsible: text.count > Self.collapseThreshold, collapsedHeight: 320, onOpenLink: onOpenLink)
         .weaveFont(.body)
         .foregroundStyle(Color.weave.ink)
         .tint(Color.weave.iris)

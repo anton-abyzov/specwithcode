@@ -14,7 +14,7 @@ settings:
     DEVELOPMENT_TEAM: ${STUDIO_APPLE_TEAM_ID}
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.5"
-    CURRENT_PROJECT_VERSION: "37"
+    CURRENT_PROJECT_VERSION: "38"
 packages:
   SWCKit:
     path: SWCKit
@@ -60,6 +60,8 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing QR code shown by SpecWithCode on your computer, and take photos you choose to attach to a message.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to SpecWithCode on computers in your home or office network.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Dictate messages to your coordinator and threads. Audio stays on this iPhone when on-device recognition supports your language.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turns what you say into message text with Apple's speech recognition, on this iPhone when your language allows.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         # SpecWithCode Connect. Public values, read from the environment when
         # the project is generated; empty uses the hosted service. See README.md.

@@ -22,6 +22,7 @@ private struct GlobalSettingsRoot: View {
   @Environment(StackNavigator.self) private var nav
   @Environment(\.openURL) private var openURL
   @AppStorage(AppDefaults.deviceLabel) private var deviceLabel = ""
+  @AppStorage(AppDefaults.dictationLanguage) private var dictationLanguage = ""
 
   var body: some View {
     ScrollView {
@@ -37,6 +38,7 @@ private struct GlobalSettingsRoot: View {
         }
         appearance
         replies
+        dictationSection
         deviceName
         about
       }
@@ -89,6 +91,34 @@ private struct GlobalSettingsRoot: View {
           symbol: "rectangle.split.2x1",
           isOn: Binding(get: { router.showsCoordinatorBeside }, set: { router.showsCoordinatorBeside = $0 })
         )
+      }
+    }
+  }
+
+  /// The language the composer's mic hears. Kept on this phone, like the
+  /// same setting on each computer.
+  private var dictationSection: some View {
+    GroupedCard(label: "Dictation", footer: "Tap the mic in any chat. Words appear in the message unsent. Recognition stays on this iPhone when your language allows. Keyboard dictation, Wispr Flow included, works too.") {
+      WeaveRow("Language", stacksTrailing: true) {
+        WeaveRowSymbol("mic")
+      } trailing: {
+        Menu {
+          Picker("Language", selection: $dictationLanguage) {
+            ForEach(DictationText.languages, id: \.value) { Text($0.label).tag($0.value) }
+          }
+        } label: {
+          HStack(spacing: WeaveSpacing.s1) {
+            Text(DictationText.label(dictationLanguage)).lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+              .font(.system(size: 12, weight: .medium))
+              .accessibilityHidden(true)
+          }
+          .font(.weave(.body))
+          .foregroundStyle(Color.weave.muted)
+          .frame(minHeight: WeaveSize.minTap)
+          .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Dictation language, \(DictationText.label(dictationLanguage))")
       }
     }
   }
