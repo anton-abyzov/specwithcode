@@ -47,7 +47,8 @@ export function effortRank(value: string): number | undefined {
 const choiceRank = (choice: { readonly id: string; readonly label: string }) =>
   effortRank(choice.id) ?? effortRank(choice.label);
 
-function isEffortId(id: string): boolean {
+/** Whether an option id names reasoning effort on some provider. */
+export function isEffortId(id: string): boolean {
   return EFFORT_OPTION_IDS.has(normalize(id));
 }
 
