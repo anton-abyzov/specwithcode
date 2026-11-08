@@ -30,10 +30,15 @@ public struct MarkdownText: View {
   /// How far above "Show more" a collapsed reply starts to fade.
   static let fadeHeight: CGFloat = 64
 
-  private var isClipped: Bool { collapsible && !expanded && fullHeight > collapsedHeight + 80 }
+  /// A collapsed reply lays out only its opening, not thousands of points it
+  /// would then clip: a coordinator's transcript is mostly long replies.
+  private var parsed: [MarkdownBlock] { streaming ? MarkdownParser.parse(markdown) : MarkdownParser.cachedParse(markdown) }
 
   public var body: some View {
-    let blocks = streaming ? MarkdownParser.parse(markdown) : MarkdownParser.cachedParse(markdown)
+    let all = parsed
+    let opening = collapsible && !expanded ? MarkdownCollapse.opening(all, budget: MarkdownCollapse.budget) : (blocks: all, cut: false)
+    let blocks = opening.blocks
+    let isClipped = collapsible && !expanded && (opening.cut || fullHeight > collapsedHeight + 80)
     VStack(alignment: .leading, spacing: isClipped ? 0 : WeaveSpacing.s2) {
       content(blocks)
         .fixedSize(horizontal: false, vertical: true)
@@ -51,7 +56,7 @@ public struct MarkdownText: View {
             Rectangle()
           }
         }
-      if collapsible, fullHeight > collapsedHeight + 80 {
+      if collapsible, opening.cut || fullHeight > collapsedHeight + 80 {
         Button(expanded ? "Show less" : "Show more") {
           // No animation: animating thousands of points of selectable text
           // stalls a phone for many seconds.
@@ -404,4 +409,60 @@ enum MarkdownSample {
 
   Want me to re-run the workflow once the secret is updated?
   """
+}
+
+/// The opening of a long reply: whole blocks up to a character budget, the
+/// last one shortened when it alone runs past it.
+public nonisolated enum MarkdownCollapse {
+  /// Enough text to fill a collapsed reply (420 points) at any width.
+  public static let budget = 1_600
+
+  public static func opening(_ blocks: [MarkdownBlock], budget: Int) -> (blocks: [MarkdownBlock], cut: Bool) {
+    var kept: [MarkdownBlock] = []
+    var used = 0
+    for (index, block) in blocks.enumerated() {
+      let size = length(block)
+      if used + size <= budget {
+        kept.append(block)
+        used += size
+        continue
+      }
+      if let short = shortened(block, to: budget - used) { kept.append(short) }
+      return (kept.isEmpty ? [blocks[index]] : kept, true)
+    }
+    return (kept, false)
+  }
+
+  static func length(_ block: MarkdownBlock) -> Int {
+    switch block {
+    case let .heading(_, text), let .paragraph(text), let .code(_, text): text.count
+    case let .list(items): items.reduce(0) { $0 + $1.text.count }
+    case let .quote(blocks): blocks.reduce(0) { $0 + length($1) }
+    case let .table(header, rows): (header + rows.flatMap { $0 }).reduce(0) { $0 + $1.count }
+    case .rule: 1
+    }
+  }
+
+  /// A paragraph or code block cut at a line or word boundary, or nil when
+  /// too little room is left to be worth showing.
+  static func shortened(_ block: MarkdownBlock, to room: Int) -> MarkdownBlock? {
+    guard room >= 200 else { return nil }
+    func cut(_ text: String) -> String {
+      let head = text.prefix(room)
+      let end = head.lastIndex(of: "\n") ?? head.lastIndex(of: " ") ?? head.endIndex
+      return String(head[..<end])
+    }
+    switch block {
+    case let .paragraph(text): return .paragraph(cut(text))
+    case let .code(language, text): return .code(language: language, text: cut(text))
+    case let .list(items):
+      var room = room
+      let shown = items.prefix { item in
+        room -= item.text.count
+        return room >= 0
+      }
+      return shown.isEmpty ? nil : .list(Array(shown))
+    default: return nil
+    }
+  }
 }
