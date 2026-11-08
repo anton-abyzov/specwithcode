@@ -14,6 +14,7 @@ import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useAtomCommand } from "../state/use-atom-command";
 import { ConnectRouteReconciler } from "./ConnectRouteReconciler";
+import { ConnectSessionGuard } from "./ConnectSessionGuard";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
 import { ManagedTunnelPolicyContext } from "./managedTunnelPolicy";
 
@@ -146,6 +147,7 @@ export function ManagedRelayAuthProvider({ children }: { readonly children: Reac
     >
       {children}
       {isLoaded && isSignedIn && userId ? <ConnectRouteReconciler key={userId} /> : null}
+      {isLoaded && isSignedIn && userId ? <ConnectSessionGuard key={`guard-${userId}`} /> : null}
     </ManagedTunnelPolicyContext>
   );
 }
