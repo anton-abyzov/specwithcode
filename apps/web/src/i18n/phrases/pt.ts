@@ -1752,8 +1752,16 @@ export const pt: PhraseCatalog = {
   "Most access for incoming work": "Acesso máximo para trabalho recebido",
   "Setting up…": "Configurando…",
   "Allow {coordinatorLabel}": "Permitir {coordinatorLabel}",
-  "{coordinatorLabel} cannot run work here yet.":
-    "{coordinatorLabel} ainda não pode executar trabalho aqui.",
+  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
+  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
+  "Whether agents on {hereLabel} may start work on {thereLabel}.":
+    "Se agentes em {hereLabel} podem iniciar trabalho em {thereLabel}.",
+  Allowed: "Permitido",
+  Expiring: "Expirando",
+  "Not allowed": "Não permitido",
+  Revoked: "Revogado",
+  Expired: "Expirado",
+  "Not allowed yet.": "Ainda não permitido.",
   "Let {coordinatorLabel} use this machine too":
     "Deixar {coordinatorLabel} usar esta máquina também",
   "On {coordinatorLabel}: done": "Em {coordinatorLabel}: pronto",
@@ -1918,8 +1926,6 @@ export const pt: PhraseCatalog = {
   "also on": "também em",
   "Same account on {value}": "Mesma conta em {value}",
   "Connecting…": "Conectando…",
-  "Workers from this machine": "Workers desta máquina",
-  "Work it may run here": "Trabalho que ela pode executar aqui",
   "rules {fingerprint}": "regras {fingerprint}",
   "No projects of your own here.": "Nenhum projeto seu aqui.",
   "Connect to see its projects.": "Conecte para ver os projetos dela.",

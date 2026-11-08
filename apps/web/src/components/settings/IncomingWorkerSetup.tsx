@@ -316,9 +316,12 @@ export function IncomingWorkerAction({
   }
   return (
     <div className="space-y-2">
-      <p className="text-xs">
-        {coordinatorLabel} → {hereLabel}
-      </p>
+      {/* A caller's own label already names the direction. */}
+      {actionLabel ? null : (
+        <p className="text-xs">
+          {coordinatorLabel} → {hereLabel}
+        </p>
+      )}
       <label className="flex flex-wrap items-center gap-2 text-xs">
         {renderRich(tx("Most access for this work{select}"), {
           select: (

@@ -211,6 +211,7 @@ describe("incoming worker setup view", () => {
     vi.mocked(useEnvironmentScope).mockImplementation((environmentId) => environmentId === here);
     const html = action();
     expect(html).toMatch(/<button[^>]* disabled=""[^>]*>Allow m1<\/button>/);
+    expect(html).toContain("m1 → m4");
     expect(html).toContain(
       "On m4, open Settings &gt; Connections &gt; Join a main machine, pick m1 and copy the line. On m1, open Settings &gt; Machines &gt; Add a machine, paste it, then choose Allow workers on m4&#x27;s card.",
     );
@@ -264,6 +265,8 @@ describe("incoming worker setup view", () => {
     const button = renderer!.root.findByType("button");
     expect(JSON.stringify(renderer!.toJSON())).toContain("Let m1 use this machine too");
     expect(JSON.stringify(renderer!.toJSON())).not.toContain("Allow m1");
+    // The card's own label already names the direction.
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain("m1 → m4");
     await act(async () => button.props.onClick());
     expect(requestConfirmDialog).toHaveBeenCalledTimes(1);
     // This machine is added on the other one, which then allows its workers here.

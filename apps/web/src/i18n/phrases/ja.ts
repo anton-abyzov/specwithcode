@@ -1746,8 +1746,16 @@ export const ja: PhraseCatalog = {
   "Most access for incoming work": "受け取る作業の最大アクセス",
   "Setting up…": "設定しています…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} を許可",
-  "{coordinatorLabel} cannot run work here yet.":
-    "{coordinatorLabel} はまだここで作業を実行できません。",
+  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
+  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
+  "Whether agents on {hereLabel} may start work on {thereLabel}.":
+    "{hereLabel} のエージェントが {thereLabel} で作業を開始できるかどうか。",
+  Allowed: "許可済み",
+  Expiring: "まもなく期限切れ",
+  "Not allowed": "許可されていません",
+  Revoked: "取り消し済み",
+  Expired: "期限切れ",
+  "Not allowed yet.": "まだ許可されていません。",
   "Let {coordinatorLabel} use this machine too": "{coordinatorLabel} にもこのマシンを使わせる",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 側: 完了",
   "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
@@ -1912,8 +1920,6 @@ export const ja: PhraseCatalog = {
   "also on": "ほかにもあり:",
   "Same account on {value}": "{value} でも同じアカウント",
   "Connecting…": "接続しています…",
-  "Workers from this machine": "このマシンからのワーカー",
-  "Work it may run here": "ここで実行できる作業",
   "rules {fingerprint}": "ルール {fingerprint}",
   "No projects of your own here.": "ここにはあなたのプロジェクトがありません。",
   "Connect to see its projects.": "接続するとプロジェクトを表示できます。",

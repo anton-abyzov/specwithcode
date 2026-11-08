@@ -179,8 +179,8 @@ describe("machine rows", () => {
       "expiring",
       "not-allowed",
     ]);
-    expect(rows[1]?.workers?.label).toBe("Workers allowed");
-    expect(rows[3]?.workers?.label).toBe("Workers not allowed");
+    expect(rows[1]?.workers?.label).toBe("Allowed");
+    expect(rows[3]?.workers?.label).toBe("Not allowed");
   });
 
   it("lists shared projects with role and folder, and names them on a hidden machine without guessing", () => {

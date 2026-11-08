@@ -1734,8 +1734,16 @@ export const ko: PhraseCatalog = {
   "Most access for incoming work": "들어오는 작업의 최대 액세스",
   "Setting up…": "설정하는 중…",
   "Allow {coordinatorLabel}": "{coordinatorLabel} 허용",
-  "{coordinatorLabel} cannot run work here yet.":
-    "{coordinatorLabel}은(는) 아직 여기에서 작업을 실행할 수 없습니다.",
+  "{hereLabel} → {thereLabel}": "{hereLabel} → {thereLabel}",
+  "{thereLabel} → {hereLabel}": "{thereLabel} → {hereLabel}",
+  "Whether agents on {hereLabel} may start work on {thereLabel}.":
+    "{hereLabel}의 에이전트가 {thereLabel}에서 작업을 시작할 수 있는지 여부입니다.",
+  Allowed: "허용됨",
+  Expiring: "곧 만료",
+  "Not allowed": "허용 안 됨",
+  Revoked: "취소됨",
+  Expired: "만료됨",
+  "Not allowed yet.": "아직 허용되지 않았습니다.",
   "Let {coordinatorLabel} use this machine too": "{coordinatorLabel}도 이 컴퓨터를 사용하도록 허용",
   "On {coordinatorLabel}: done": "{coordinatorLabel} 쪽: 완료",
   "On {hereLabel}, open Settings > Connections > Join a main machine, pick {coordinatorLabel} and copy the line. On {coordinatorLabel}, open Settings > Machines > Add a machine, paste it, then choose Allow workers on {hereLabel}'s card.":
@@ -1896,8 +1904,6 @@ export const ko: PhraseCatalog = {
   "also on": "다른 위치:",
   "Same account on {value}": "{value}의 같은 계정",
   "Connecting…": "연결하는 중…",
-  "Workers from this machine": "이 컴퓨터의 워커",
-  "Work it may run here": "여기서 실행할 수 있는 작업",
   "rules {fingerprint}": "규칙 {fingerprint}",
   "No projects of your own here.": "여기에는 내 프로젝트가 없습니다.",
   "Connect to see its projects.": "연결하면 프로젝트를 볼 수 있습니다.",
