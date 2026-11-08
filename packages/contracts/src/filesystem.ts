@@ -54,6 +54,8 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     readonly failure: FilesystemBrowseFailure;
     readonly parentPath?: string;
     readonly platform?: string;
+    /** What went wrong in words; older servers leave it out and get the generic message. */
+    readonly message?: string;
     readonly cause?: unknown;
   }) {
     const cwd = props.cwd === undefined ? "" : ` from '${props.cwd}'`;

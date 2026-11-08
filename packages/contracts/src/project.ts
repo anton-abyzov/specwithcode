@@ -373,9 +373,17 @@ export const ProjectFolderCheck = Schema.Struct({
         /** "same": a deleted project used exactly this folder. */
         relation: Schema.Literals(["inside", "contains", "same"]),
         deleted: Schema.Boolean,
+        /** Archived: hidden from the sidebar, so easy to forget. Older servers omit it. */
+        archived: Schema.optional(Schema.Boolean),
       }),
     ),
   ),
+  /**
+   * The new folder exists and holds nothing (Finder's .DS_Store aside). Changing
+   * the folder moves no files, so the project's code stays in the current one.
+   * Optional: older servers do not send it.
+   */
+  targetEmpty: Schema.optional(Schema.Boolean),
 });
 export type ProjectFolderCheck = typeof ProjectFolderCheck.Type;
 

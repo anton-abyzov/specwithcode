@@ -61,6 +61,9 @@ const child = NodeChildProcess.spawn(
   },
 );
 let browser;
+// The picker names the machine after the folder it lists: "<folder> on <machine>".
+const browsed = (folder) =>
+  new RegExp(`^${folder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}( on .+)?$`);
 const receipt = {
   headless: true,
   realBuiltServer: true,
@@ -68,7 +71,12 @@ const receipt = {
   pid: child.pid,
   nativeTurns: 0,
   checks: [],
-  screenshots: ["new-project-1440.png", "new-project-390.png", "clone-destination.png"],
+  screenshots: [
+    "new-project-1440x1100.png",
+    "new-project-390x844.png",
+    "new-project-1280x560.png",
+    "clone-destination.png",
+  ],
 };
 try {
   const credential = await new Promise((done, reject) => {
@@ -120,7 +128,8 @@ try {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  const parent = NodePath.join(state, "Projects");
+  // Not "Projects": on a case-insensitive disk that is the server's own <base>/projects.
+  const parent = NodePath.join(state, "Workspace");
   NodeFS.mkdirSync(parent);
   const cloneSource = NodePath.join(state, "clone-fixture.git");
   NodeChildProcess.execFileSync("/usr/bin/git", ["init", "--bare", cloneSource], {
@@ -128,23 +137,35 @@ try {
   });
   try {
     await page.goto(origin);
-    await page.getByText("1/1", { exact: true }).waitFor({ timeout: 20000 });
+    await page
+      .getByRole("button", { name: "Add project", exact: true })
+      .waitFor({ timeout: 20000 });
     await page.getByRole("button", { name: "Add project", exact: true }).click();
     await page.getByRole("option", { name: /^New project/ }).click();
     const dialog = page.getByTestId("command-palette");
     await page.getByText("Enter a project name at the top.", { exact: true }).waitFor();
     await dialog.getByRole("combobox", { name: "Project name" }).fill("Folder proof");
     NodeAssert.equal(await page.getByText("Project type", { exact: true }).count(), 0);
+    // A new project starts on this device, named above the location it browses.
+    NodeAssert.match(await dialog.getByRole("radio", { checked: true }).innerText(), /This device/);
+    await dialog.getByText(/^Project location on /).waitFor();
+    // Use SpecWeave starts ticked, with the file list behind a disclosure.
+    const specweave = dialog.getByRole("option", { name: /Use SpecWeave/ });
+    NodeAssert.equal(await specweave.locator("[data-slot=checkbox][data-checked]").count(), 1);
+    await dialog.getByText("What Use SpecWeave adds", { exact: true }).waitFor();
+    // This run stays offline, so it creates without running specweave init.
+    await specweave.click();
+    NodeAssert.equal(await specweave.locator("[data-slot=checkbox][data-checked]").count(), 0);
     NodeAssert.equal(
       await page.getByRole("button", { name: "Create project", exact: true }).isDisabled(),
       true,
     );
     await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
     await page.getByRole("textbox", { name: "Parent folder path", exact: true }).press("Enter");
-    await page.getByText(parent, { exact: true }).waitFor();
+    await page.getByText(browsed(parent)).waitFor();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     // Reselecting the current machine must not discard the confirmed location.
-    await page.getByRole("option", { name: /This device/ }).click();
+    await dialog.getByRole("radio", { name: /This device/ }).click();
     NodeAssert.equal(
       await page.getByRole("button", { name: "Create project", exact: true }).isEnabled(),
       true,
@@ -167,6 +188,7 @@ try {
     for (const [width, height] of [
       [1440, 1100],
       [390, 844],
+      [1280, 560],
     ]) {
       await page.setViewportSize({ width, height });
       const button = page.getByRole("button", { name: "Create project", exact: true });
@@ -179,12 +201,25 @@ try {
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
         true,
       );
+      // The form scrolls to its last option while Create stays pinned.
+      const last = dialog.getByRole("button", { name: "Add existing project", exact: true });
+      await last.scrollIntoViewIfNeeded();
+      const lastBox = await last.boundingBox();
+      const after = await button.boundingBox();
+      NodeAssert.ok(
+        lastBox && after && lastBox.y >= 0 && lastBox.y + lastBox.height <= after.y,
+        "Last option scrolls into view above the pinned Create button",
+      );
+      await dialog.getByText("What Use SpecWeave adds", { exact: true }).click();
+      await last.scrollIntoViewIfNeeded();
       await page.screenshot({
-        path: NodePath.join(out, `new-project-${width}.png`),
+        path: NodePath.join(out, `new-project-${width}x${height}.png`),
         fullPage: true,
       });
     }
     await page.setViewportSize({ width: 1440, height: 1100 });
+    // Creates stay offline: no specweave init in this run.
+    await dialog.getByRole("option", { name: /Use SpecWeave/ }).click();
     // Returning to the name clears the machine highlight without editing it.
     await dialog.getByRole("combobox", { name: "Project name" }).click();
     await dialog.getByRole("combobox", { name: "Project name" }).press("Enter");
@@ -202,7 +237,8 @@ try {
     );
     await dialog.getByRole("combobox", { name: "Project name" }).fill("Keyboard button proof");
     // The folder chosen last time on this machine is offered again.
-    await page.getByText(parent, { exact: true }).waitFor();
+    await page.getByText(browsed(parent)).waitFor();
+    await dialog.getByRole("option", { name: /Use SpecWeave/ }).click();
     await page.getByRole("button", { name: "Create project", exact: true }).focus();
     await page.getByRole("button", { name: "Create project", exact: true }).press("Enter");
     await dialog.waitFor({ state: "hidden" });
@@ -233,7 +269,7 @@ try {
     );
     await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
     await page.getByRole("button", { name: "Browse", exact: true }).click();
-    await page.getByText(parent, { exact: true }).waitFor();
+    await page.getByText(browsed(parent)).waitFor();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     await page.getByText(`Clone into ${parent}/clone-fixture`, { exact: true }).waitFor();
     NodeAssert.equal(
@@ -258,7 +294,7 @@ try {
     );
     await page.getByRole("textbox", { name: "Parent folder path", exact: true }).fill(parent);
     await page.getByRole("button", { name: "Browse", exact: true }).click();
-    await page.getByText(parent, { exact: true }).waitFor();
+    await page.getByText(browsed(parent)).waitFor();
     await page.getByRole("button", { name: "Use this folder", exact: true }).click();
     await page.getByRole("button", { name: "Clone repository", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
@@ -277,7 +313,11 @@ try {
     await page.getByRole("button", { name: /^Personal assistant/ }).click();
     await page.getByRole("button", { name: "Create personal assistant", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
-    await page.getByRole("button", { name: /^Personal assistant/ }).click();
+    // Once set up, the sidebar entry carries the assistant's name.
+    await page
+      .getByRole("link", { name: /^Aide\b/ })
+      .first()
+      .click();
     await page.waitForURL(/projects/);
     NodeAssert.equal(await dialog.count(), 0);
     receipt.checks.push(

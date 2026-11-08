@@ -54,6 +54,21 @@ export class WorkspaceEntriesCurrentProjectRequiredError extends Schema.TaggedEr
   }
 }
 
+/** Says why a folder could not be listed, from the readdir error code. */
+export function readDirectoryFailureMessage(folder: string, cause: unknown): string | undefined {
+  const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+  switch (code) {
+    case "ENOENT":
+      return `The folder '${folder}' does not exist on this machine.`;
+    case "ENOTDIR":
+      return `'${folder}' is a file, not a folder.`;
+    case "ELOOP":
+      return `'${folder}' is a symbolic link that loops.`;
+    default:
+      return code === undefined ? undefined : `Could not read the folder '${folder}' (${code}).`;
+  }
+}
+
 export class WorkspaceEntriesReadDirectoryError extends Schema.TaggedError<WorkspaceEntriesReadDirectoryError>()(
   "WorkspaceEntriesReadDirectoryError",
   {

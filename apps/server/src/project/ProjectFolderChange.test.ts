@@ -400,6 +400,27 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("reports an empty new folder, ignoring Finder's .DS_Store", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { scenario } = yield* makeScenario;
+        const empty = path.join(scenario.root, "empty-target");
+        yield* fs.makeDirectory(empty);
+        yield* fs.writeFileString(path.join(empty, ".DS_Store"), "");
+        const checked = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: empty }),
+        );
+        expect(checked.targetEmpty).toBe(true);
+        yield* fs.writeFileString(path.join(empty, "README.md"), "x");
+        const filled = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: empty }),
+        );
+        expect(filled.targetEmpty).toBe(false);
+      }),
+    ),
+  );
   it.effect("rebinds thread checkouts inside the old folder that exist in the new one", () =>
     Effect.scoped(
       Effect.gen(function* () {

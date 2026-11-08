@@ -236,6 +236,13 @@ export const make = Effect.gen(function* () {
 
   const checkFailure = (message: string) => new ProjectFolderCheckError({ message });
 
+  /** Holds nothing a person put there; Finder's .DS_Store does not count. */
+  const isEmptyFolder = (folder: string) =>
+    fs.readDirectory(folder).pipe(
+      Effect.map((names) => names.every((name) => name === ".DS_Store")),
+      Effect.orElseSucceed(() => false),
+    );
+
   const isDirectory = (folder: string) =>
     fs.stat(folder).pipe(
       Effect.map((stat) => stat.type === "Directory"),
@@ -318,6 +325,7 @@ export const make = Effect.gen(function* () {
                       workspaceRoot: row.workspaceRoot,
                       relation,
                       deleted: row.deletedAt !== null,
+                      ...(row.workspaceSettings?.archived === true ? { archived: true } : {}),
                     },
                   ];
             }),
@@ -587,6 +595,7 @@ export const make = Effect.gen(function* () {
           usable && (yield* isDirectory(path.join(normalized.root, ".specweave"))),
         ...(refusal === undefined ? {} : { refusal }),
         ...(nestedProjects === null ? {} : { nestedProjects }),
+        ...(usable && !unchanged ? { targetEmpty: yield* isEmptyFolder(normalized.root) } : {}),
         ...(usable
           ? yield* folderDetails(project.id, currentRoot, normalized, unchanged, shells)
           : {}),

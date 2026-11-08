@@ -1,29 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { projectCreationGroups } from "./ProjectCreation";
-import type { CommandPaletteActionItem } from "../CommandPalette.logic";
+import { projectCreationGroups, SPECWEAVE_SETUP_SUMMARY } from "./ProjectCreation";
 
-const machine: CommandPaletteActionItem = {
-  kind: "action",
-  value: "host",
-  icon: null,
-  title: "This machine",
-  searchTerms: [],
-  run: async () => {},
-};
 const input = () => ({
   kind: "personal" as const,
   busy: false,
-  machines: [{ item: machine, selected: true }],
   github: { description: "Private repository", checked: true, toggle: vi.fn() },
   specweave: { checked: false, toggle: vi.fn() },
-  addExisting: vi.fn(),
 });
 describe("project creation choices", () => {
-  it("keeps a one-machine selector explicit and omits GitHub publishing for Personal", () => {
+  it("leaves the machine to the row above the form and omits GitHub publishing for Personal", () => {
     const groups = projectCreationGroups(input());
-    expect(
-      groups.find((g) => g.value === "new-project-machines")?.items.map((i) => i.value),
-    ).toEqual(["host"]);
+    expect(groups.some((g) => g.value === "new-project-machines")).toBe(false);
     expect(groups.some((g) => g.value === "new-project-options")).toBe(false);
   });
   it("keeps code publishing opt-in and blocks every choice during creation", () => {
@@ -31,19 +18,19 @@ describe("project creation choices", () => {
     expect(groups.some((g) => g.value === "new-project-options")).toBe(true);
     expect(groups.flatMap((g) => g.items).every((i) => i.disabled)).toBe(true);
   });
-  it("offers Use SpecWeave unchecked for code projects only, even without GitHub", () => {
+  it("offers Use SpecWeave for code projects only, even without GitHub, in one sentence", () => {
     const toggle = vi.fn();
     const groups = projectCreationGroups({
       ...input(),
       kind: "code",
       github: null,
-      specweave: { checked: false, toggle },
+      specweave: { checked: true, toggle },
     });
     const option = groups
       .find((g) => g.value === "new-project-options")
       ?.items.find((i) => i.value === "new-project:specweave");
     expect(option?.title).toBe("Use SpecWeave");
-    expect(option?.description).toContain("specweave init");
+    expect(option?.description).toBe(SPECWEAVE_SETUP_SUMMARY);
     if (option?.kind === "action") void option.run();
     expect(toggle).toHaveBeenCalledOnce();
     expect(

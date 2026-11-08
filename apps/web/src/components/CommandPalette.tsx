@@ -157,6 +157,9 @@ import {
   projectCreationGroups,
   projectMachineGroup,
   ProjectCreationPreview,
+  AddExistingProjectLink,
+  ProjectMachineChoice,
+  SpecweaveSetupDetails,
 } from "./studio/ProjectCreation";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
@@ -1027,7 +1030,7 @@ function OpenCommandPaletteDialog(props: {
     readonly kind: NewProjectKind;
   } | null>(null);
   const [newProjectPublishesToGitHub, setNewProjectPublishesToGitHub] = useState(false);
-  const [newProjectUsesSpecweave, setNewProjectUsesSpecweave] = useState(false);
+  const [newProjectUsesSpecweave, setNewProjectUsesSpecweave] = useState(true);
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
@@ -1037,8 +1040,18 @@ function OpenCommandPaletteDialog(props: {
   const newProjectSupportsSpecweave =
     environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
       ?.serverConfig?.specweaveSetUp === true;
+  const nickname = useMachineNicknames();
   const folderChoice = useProjectFolderChoice(newProjectEnvironmentId, isCreatingNewProject, {
     remember: true,
+    machineLabel:
+      newProjectEnvironmentId === null
+        ? null
+        : nickname(
+            newProjectEnvironmentId,
+            environments.find(
+              (environment) => environment.environmentId === newProjectEnvironmentId,
+            )?.label ?? newProjectEnvironmentId,
+          ),
     defaultPath:
       environments.find((environment) => environment.environmentId === newProjectEnvironmentId)
         ?.serverConfig?.newProjectsRoot ?? null,
@@ -1063,6 +1076,17 @@ function OpenCommandPaletteDialog(props: {
   const cloneFolderChoice = useProjectFolderChoice(
     addProjectCloneFlow?.step === "confirm" ? addProjectCloneFlow.environmentId : null,
     isRemoteProjectCloning,
+    {
+      machineLabel:
+        addProjectCloneFlow?.step === "confirm"
+          ? nickname(
+              addProjectCloneFlow.environmentId,
+              environments.find(
+                (environment) => environment.environmentId === addProjectCloneFlow.environmentId,
+              )?.label ?? addProjectCloneFlow.environmentId,
+            )
+          : null,
+    },
   );
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
@@ -1071,7 +1095,6 @@ function OpenCommandPaletteDialog(props: {
     [clientSettings],
   );
 
-  const nickname = useMachineNicknames();
   const environmentLabelById = useMemo(
     () =>
       new Map(
@@ -1810,7 +1833,7 @@ function OpenCommandPaletteDialog(props: {
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId, kind });
       setNewProjectPublishesToGitHub(false);
-      setNewProjectUsesSpecweave(false);
+      setNewProjectUsesSpecweave(true);
       pushPaletteView({
         addonIcon:
           kind === "personal" ? (
@@ -3201,7 +3224,11 @@ function OpenCommandPaletteDialog(props: {
         environmentId: newProjectFlow.environmentId,
         name: newProjectName,
         kind: newProjectFlow.kind,
-        ...(newProjectFlow.kind === "code" && folderChoice.path
+        // The machine's own default folder goes as no parent, so a server that has not
+        // made it yet creates it instead of refusing a missing parent.
+        ...(newProjectFlow.kind === "code" &&
+        folderChoice.path &&
+        folderChoice.path !== newProjectsRootFor(newProjectFlow.environmentId)
           ? { parentPath: folderChoice.path }
           : {}),
         github:
@@ -3534,24 +3561,27 @@ function OpenCommandPaletteDialog(props: {
       : (selectedNewProjectEnvironment?.label ??
         environmentLabelById.get(newProjectFlow.environmentId) ??
         null);
+  const newProjectMachines =
+    newProjectFlow === null
+      ? []
+      : addProjectEnvironmentOptions
+          .filter(
+            (option) =>
+              newProjectFlow.kind === "code" ||
+              option.environmentId === newProjectFlow.environmentId,
+          )
+          .map((option) => ({
+            environmentId: option.environmentId,
+            label: option.label,
+            isPrimary: option.isPrimary,
+            isConnected: option.isConnected,
+            icon: <EnvironmentMachineIcon kind={option.machine} className="size-3.5" />,
+          }));
   let displayedGroups: CommandPaletteView["groups"] = filteredGroups;
   if (newProjectFlow !== null) {
     displayedGroups = projectCreationGroups({
       kind: newProjectFlow.kind,
       busy: isCreatingNewProject,
-      machines: addProjectEnvironmentOptions
-        .filter(
-          (option) =>
-            newProjectFlow.kind === "code" || option.environmentId === newProjectFlow.environmentId,
-        )
-        .map((option) => ({
-          item: buildEnvironmentItem(
-            option,
-            `new-project:environment:${option.environmentId}`,
-            switchNewProjectEnvironment,
-          ),
-          selected: option.environmentId === newProjectFlow.environmentId,
-        })),
       github:
         newProjectGitHubTarget && newProjectPathPreview
           ? {
@@ -3568,7 +3598,6 @@ function OpenCommandPaletteDialog(props: {
             toggle: () => setNewProjectUsesSpecweave((value) => !value),
           }
         : null,
-      addExisting: () => showExistingProjectSources(newProjectFlow.environmentId),
     });
   } else if (addProjectCloneFlow?.step === "repository") {
     displayedGroups = [];
@@ -4021,7 +4050,8 @@ function OpenCommandPaletteDialog(props: {
     newProjectFlow !== null
       ? highlightedItemValue === null
         ? "Create"
-        : highlightedItemValue === newProjectGitHubToggleValue
+        : highlightedItemValue === newProjectGitHubToggleValue ||
+            highlightedItemValue === "new-project:specweave"
           ? "Toggle"
           : "Select"
       : addProjectCloneFlow?.step === "repository"
@@ -4126,6 +4156,14 @@ function OpenCommandPaletteDialog(props: {
           machine={newProjectEnvironmentLabel}
         />
       ) : null}
+      {newProjectFlow !== null ? (
+        <ProjectMachineChoice
+          machines={newProjectMachines}
+          selectedId={newProjectFlow.environmentId}
+          busy={isCreatingNewProject}
+          onSelect={(environmentId) => switchNewProjectEnvironment(environmentId as EnvironmentId)}
+        />
+      ) : null}
       {newProjectFlow?.kind === "code" ? folderChoice.picker : null}
       {remoteProjectContext ? (
         <div className="p-2 pb-0">
@@ -4172,13 +4210,24 @@ function OpenCommandPaletteDialog(props: {
       ) : null}
       {isCloneDestinationStep || newProjectFlow !== null ? (
         <CommandPaletteResults
+          inline
           groups={displayedGroups}
           highlightedItemValue={highlightedItemValue}
           isActionsOnly={false}
           keybindings={keybindings}
           onExecuteItem={executeItem}
         />
-      ) : (
+      ) : null}
+      {newProjectFlow?.kind === "code" && newProjectSupportsSpecweave ? (
+        <SpecweaveSetupDetails />
+      ) : null}
+      {newProjectFlow !== null ? (
+        <AddExistingProjectLink
+          busy={isCreatingNewProject}
+          onClick={() => showExistingProjectSources(newProjectFlow.environmentId)}
+        />
+      ) : null}
+      {isCloneDestinationStep || newProjectFlow !== null ? null : (
         <CommandPaletteVirtualizedResults
           rows={resultRows.rows}
           listRef={resultListRef}

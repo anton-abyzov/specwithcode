@@ -55,12 +55,14 @@ export function resolveNewProjectName(kind: NewProjectKind, typed: string): stri
 }
 
 /**
- * The machine a new project starts on, shown preselected and still changeable
- * in the creation step. The machine being worked on wins. Otherwise the choice
- * follows the load-balancing preferences when balancing is on: a "Manual only"
- * machine is never chosen for the person, "Prefer" beats "Normal" beats "Less
- * often", and this computer breaks a tie. Null only when nothing is eligible
- * or every eligible machine is manual-only and there is more than one.
+ * The machine a new project starts on, shown preselected and one tap from any
+ * other in the creation step. This device wins, even while a thread or project
+ * on another machine is open: a new project is not part of that work. With
+ * load balancing on, the choice follows its preferences instead: a "Manual
+ * only" machine is never chosen for the person, "Prefer" beats "Normal" beats
+ * "Less often", and this device breaks a tie. Without this device, the machine
+ * being worked on, then the first eligible one. Null only when nothing is
+ * eligible or every eligible machine is manual-only and there is more than one.
  */
 export function suggestProjectMachine<T extends string>(input: {
   readonly current: T | null;
@@ -72,8 +74,12 @@ export function suggestProjectMachine<T extends string>(input: {
   };
 }): T | null {
   const { current, eligible, primary, loadBalancing } = input;
-  if (current !== null && eligible.includes(current)) return current;
-  const weight = (id: T) => (loadBalancing.enabled ? (loadBalancing.weights[id] ?? 50) : 50);
+  if (!loadBalancing.enabled) {
+    if (primary !== null && eligible.includes(primary)) return primary;
+    if (current !== null && eligible.includes(current)) return current;
+    return eligible[0] ?? null;
+  }
+  const weight = (id: T) => loadBalancing.weights[id] ?? 50;
   const automatic = eligible.filter((id) => weight(id) > 0);
   if (automatic.length === 0) return eligible.length === 1 ? eligible[0]! : null;
   let best = automatic[0]!;

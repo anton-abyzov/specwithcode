@@ -16,11 +16,24 @@ export function parentFolderOf(path: string): string | null {
 
 const withSeparator = (path: string) => (/[\\/]$/.test(path) ? path : `${path}/`);
 
+/** The error's own words; String() of an error object would prefix its class name. */
+function browseErrorText(error: unknown): string {
+  if (
+    error instanceof Error ||
+    (typeof error === "object" && error !== null && "message" in error)
+  ) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return String(error);
+}
+
 /** Browses only the selected machine. Selecting a parent never creates anything. */
 export function NewProjectFolderPicker({
   environmentId,
   selectedPath,
   defaultPath = null,
+  machineLabel = null,
   nativePickerLabel = null,
   disabled,
   onSelect,
@@ -30,6 +43,8 @@ export function NewProjectFolderPicker({
   selectedPath: string | null;
   /** The machine's own folder for new projects, offered as a one-click choice. */
   defaultPath?: string | null;
+  /** The machine whose folders are listed; null names no machine. */
+  machineLabel?: string | null;
   /** Shown when this machine is the device in front of the person, e.g. "Choose in Finder…". */
   nativePickerLabel?: string | null;
   disabled: boolean;
@@ -79,6 +94,14 @@ export function NewProjectFolderPicker({
     : entries.filter((entry) => !entry.name.startsWith("."));
   const hiddenCount = entries.length - visibleEntries.length;
   const parentOfCurrent = query.data ? parentFolderOf(query.data.parentPath) : null;
+  const onMachine = machineLabel ? ` on ${machineLabel}` : "";
+  // The machine's own default folder may not exist until its first project; it is
+  // still a valid choice, because creating there makes it.
+  const browsingMissingDefault =
+    query.error !== undefined &&
+    query.error !== null &&
+    defaultPath !== null &&
+    withSeparator(defaultPath) === browsePath;
   const nativeButton =
     nativePickerLabel && onPickNatively ? (
       <Button
@@ -100,7 +123,7 @@ export function NewProjectFolderPicker({
     >
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium">Project location</p>
+          <p className="text-sm font-medium">Project location{onMachine}</p>
           <p className="break-all text-xs text-muted-foreground">
             {selectedPath ?? "Choose the folder that will hold the new project"}
           </p>
@@ -176,16 +199,31 @@ export function NewProjectFolderPicker({
               Loading folders…
             </p>
           )}
-          {(query.error || access.error) && (
-            <p role="alert" className="text-xs text-destructive-foreground">
-              {String(query.error ?? access.error)}
-            </p>
+          {browsingMissingDefault ? (
+            <div className="space-y-2">
+              <p role="status" className="text-xs text-muted-foreground">
+                The default projects folder{onMachine} does not exist yet. It is made when you
+                create the project.
+              </p>
+              <Button size="sm" disabled={disabled} onClick={() => choose(defaultPath)}>
+                Use this folder
+              </Button>
+            </div>
+          ) : (
+            (query.error || access.error) && (
+              <p role="alert" className="text-xs text-destructive-foreground">
+                {query.error && machineLabel
+                  ? browseErrorText(query.error).replace("on this machine", `on ${machineLabel}`)
+                  : browseErrorText(query.error ?? access.error)}
+              </p>
+            )
           )}
           {query.data && !query.isPending && !query.error && access.canReadFiles && (
             <>
               <div className="flex items-center justify-between gap-2">
                 <p className="min-w-0 break-all text-xs text-muted-foreground">
                   {query.data.parentPath}
+                  {onMachine}
                 </p>
                 {(hiddenCount > 0 || showHidden) && (
                   <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">

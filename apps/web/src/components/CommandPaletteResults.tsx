@@ -25,6 +25,8 @@ import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
+  /** Inside a panel that already scrolls: no inner scroller, so the last rows stay reachable. */
+  inline?: boolean;
   groups: ReadonlyArray<CommandPaletteGroup>;
   highlightedItemValue?: string | null;
   isActionsOnly: boolean;
@@ -49,7 +51,7 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
   }
 
   return (
-    <CommandList>
+    <CommandList contained={props.inline !== true}>
       {props.groups.map((group) => (
         <CommandGroup items={group.items} key={group.value}>
           {group.label ? <CommandGroupLabel>{group.label}</CommandGroupLabel> : null}

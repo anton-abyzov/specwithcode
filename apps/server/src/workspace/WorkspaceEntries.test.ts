@@ -891,3 +891,19 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
     );
   });
 });
+
+describe("readDirectoryFailureMessage", () => {
+  const error = (code: string) => Object.assign(new Error(code), { code });
+  it("says what went wrong instead of a generic browse failure", () => {
+    expect(WorkspaceEntries.readDirectoryFailureMessage("/a/b", error("ENOENT"))).toBe(
+      "The folder '/a/b' does not exist on this machine.",
+    );
+    expect(WorkspaceEntries.readDirectoryFailureMessage("/a/f", error("ENOTDIR"))).toBe(
+      "'/a/f' is a file, not a folder.",
+    );
+    expect(WorkspaceEntries.readDirectoryFailureMessage("/a", error("EIO"))).toBe(
+      "Could not read the folder '/a' (EIO).",
+    );
+    expect(WorkspaceEntries.readDirectoryFailureMessage("/a", new Error("x"))).toBeUndefined();
+  });
+});

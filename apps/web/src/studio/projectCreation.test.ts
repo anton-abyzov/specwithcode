@@ -39,12 +39,13 @@ describe("new project machine suggestion", () => {
     loadBalancing: { enabled: boolean; weights: Record<string, number> } = off,
     primary: string | null = "local",
   ) => suggestProjectMachine({ current, eligible, primary, loadBalancing });
-  it("keeps the machine being worked on", () => {
-    expect(suggest("remote", ["local", "remote"])).toBe("remote");
-  });
-  it("falls back to this computer when the current machine cannot take the project", () => {
-    expect(suggest("offline", ["remote", "local"])).toBe("local");
+  it("starts on this device even while work on another machine is open", () => {
+    expect(suggest("remote", ["local", "remote"])).toBe("local");
     expect(suggest(null, ["remote", "local"])).toBe("local");
+  });
+  it("falls back to the machine being worked on when this device cannot take the project", () => {
+    expect(suggest("remote", ["other", "remote"])).toBe("remote");
+    expect(suggest("offline", ["remote"])).toBe("remote");
   });
   it("takes the first eligible machine when this computer is not one of them", () => {
     expect(suggest(null, ["a", "b"], off, null)).toBe("a");
@@ -62,8 +63,6 @@ describe("new project machine suggestion", () => {
       suggest(null, ["local", "remote"], { enabled: true, weights: { local: 0, remote: 0 } }),
     ).toBeNull();
     expect(suggest(null, ["local"], { enabled: true, weights: { local: 0 } })).toBe("local");
-    // Choosing it by working on it is still the person's choice.
-    expect(suggest("local", ["local", "remote"], { enabled: true, weights })).toBe("local");
   });
 });
 

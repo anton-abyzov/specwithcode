@@ -19,6 +19,16 @@ describe("FilesystemBrowseError", () => {
     expect(error.cause).toBe(cause);
   });
 
+  it("keeps the server's own words for what went wrong", () => {
+    const error = new FilesystemBrowseError({
+      partialPath: "/missing/",
+      failure: "read_directory_failed",
+      parentPath: "/missing",
+      message: "The folder '/missing' does not exist on this machine.",
+    });
+    expect(error.message).toBe("The folder '/missing' does not exist on this machine.");
+  });
+
   it("decodes legacy message-only errors during rolling upgrades", () => {
     const decodeError = Schema.decodeUnknownSync(FilesystemBrowseError);
     const error = decodeError({

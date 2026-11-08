@@ -193,14 +193,25 @@ function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.
   );
 }
 
-function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
+function AutocompleteList({
+  className,
+  contained = true,
+  ...props
+}: AutocompletePrimitive.List.Props & {
+  /** False when an outer panel already scrolls; a second scroller there clips the last rows. */
+  contained?: boolean;
+}) {
+  const list = (
+    <AutocompletePrimitive.List
+      className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
+      data-slot="autocomplete-list"
+      {...props}
+    />
+  );
+  if (!contained) return list;
   return (
     <ScrollArea scrollbarGutter scrollFade>
-      <AutocompletePrimitive.List
-        className={cn("not-empty:scroll-py-1 not-empty:p-1", className)}
-        data-slot="autocomplete-list"
-        {...props}
-      />
+      {list}
     </ScrollArea>
   );
 }

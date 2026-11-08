@@ -62,7 +62,7 @@ export function CommandPaletteContent({
         <CommandPanel
           className={
             panelSize === "form"
-              ? "min-h-0 flex-1 overflow-y-auto"
+              ? "min-h-0 flex-1 overflow-y-auto overscroll-contain scroll-py-2"
               : panelSize === "fill"
                 ? "flex min-h-0 flex-1 flex-col"
                 : panelSize === "tall-list"

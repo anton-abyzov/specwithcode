@@ -127,7 +127,7 @@ export function nestedProjectsSummary(
     .slice(0, NESTED_SHOWN)
     .map(
       (other) =>
-        `"${other.title}" (${RELATION_LABEL[other.relation]}${other.deleted ? ", deleted" : ""})`,
+        `"${other.title}" (${RELATION_LABEL[other.relation]}${other.deleted ? ", deleted" : other.archived ? ", archived" : ""})`,
     )
     .join(", ");
   const more = nested.length > NESTED_SHOWN ? ` and ${nested.length - NESTED_SHOWN} more` : "";
@@ -135,6 +135,17 @@ export function nestedProjectsSummary(
     ? " A deleted project's threads, memory and routines do not come back with this change."
     : "";
   return `Other projects overlap this folder: ${shown}${more}. They keep their own folders and threads.${deleted}`;
+}
+
+/**
+ * Changing the folder never moves files. Said plainly when the new folder is
+ * empty, since the project's code then stays behind. Exported for tests.
+ */
+export function emptyTargetSummary(
+  check: Pick<ProjectFolderCheck, "targetEmpty" | "currentRoot" | "unchanged">,
+): string | null {
+  if (check.unchanged || check.targetEmpty !== true) return null;
+  return `The new folder is empty. Changing the folder moves no files: everything in ${check.currentRoot}, including uncommitted work, stays there. To bring the code along, move it into the new folder first, then change the folder.`;
 }
 
 /**
@@ -317,6 +328,7 @@ export function ProjectFolderChange({
   const planning = check === null ? null : planningSummary(check);
   const refusal = check === null ? null : refusalSummary(check);
   const nested = check === null ? null : nestedProjectsSummary(check);
+  const emptyTarget = check === null ? null : emptyTargetSummary(check);
   const worktreeSource = check === null ? null : worktreeSourceSummary(check);
   const workspaceAdvice = check?.layout ? workspaceRecommendationLine(check.layout) : null;
   const blocked =
@@ -434,6 +446,11 @@ export function ProjectFolderChange({
                     />
                     This is the right folder for this project
                   </label>
+                ) : null}
+                {emptyTarget ? (
+                  <CheckLine tone="warn">
+                    <span data-folder-empty-target>{emptyTarget}</span>
+                  </CheckLine>
                 ) : null}
                 {check.layout ? (
                   <CheckLine tone="info">
