@@ -14,6 +14,8 @@ const state = vi.hoisted(() => ({
   validateDraft: vi.fn(() => true),
   /** The worker project's coordinator, which routes its other threads to its page. */
   workerCoordinator: null as string | null,
+  retryNow: vi.fn(async (_environmentId: string) => ({ _tag: "Success" })),
+  refreshAtom: vi.fn(),
   workerArchived: false,
   /** The worker project is a personal assistant, and whether Settings shows Aide. */
   workerPersonal: false,
@@ -41,6 +43,16 @@ const state = vi.hoisted(() => ({
 }));
 // Attention transport is isolated; root selection and aggregation remain real.
 vi.mock("./WhatYouCanDo", () => ({ WhatYouCanDo: () => null }));
+vi.mock("~/connection/catalog", () => ({ environmentCatalog: { retryNow: "retry-now" } }));
+vi.mock("~/state/shell", () => ({
+  environmentShell: { stateAtom: (environmentId: string) => `shell:${environmentId}` },
+}));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => state.retryNow }));
+vi.mock("@effect/atom-react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@effect/atom-react")>();
+  const { createContext } = await import("react");
+  return { ...actual, RegistryContext: createContext({ refresh: state.refreshAtom }) };
+});
 vi.mock("../../studio/fleet", () => ({ projectRemoteAttentionAtom: {} }));
 vi.mock("../../studio/useProjectAttention", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../studio/useProjectAttention")>();
@@ -359,7 +371,13 @@ describe("deliberate native session entry", () => {
       // The notice names the machine that is behind and links to its connection.
       const notice = container.querySelector(".studio-stale-notice");
       expect(notice?.textContent).toContain("Worker Mac is offline");
-      expect(notice?.querySelector('a[href="/settings/connections"]')).not.toBeNull();
+      // Check connection retries the offline machine now instead of only opening settings.
+      const check = [...(notice?.querySelectorAll("button") ?? [])].find(
+        (button) => button.textContent === "Check connection",
+      );
+      await act(async () => check?.click());
+      expect(state.retryNow).toHaveBeenCalledWith("host-worker");
+      expect(state.refreshAtom).not.toHaveBeenCalled();
     } finally {
       state.projects = projects;
       state.environments = environments;

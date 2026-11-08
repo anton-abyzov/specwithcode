@@ -4,7 +4,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { EnvironmentId } from "@specweave-studio/contracts";
-import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
+import type {
+  EnvironmentShellState,
+  EnvironmentThreadShell,
+} from "@specweave-studio/client-runtime/state/shell";
 import {
   aggregateProjectAttention,
   type AttentionMember,
@@ -18,6 +21,23 @@ import {
 import { useUnreachableHosts } from "./unreachableHosts";
 
 export { expandAttentionProjects, projectAttentionRoots, type AttentionProjectMember };
+
+/**
+ * How current a machine's view of one project is. A machine whose project list
+ * is live has reported every project it has, so a project missing from that list
+ * (deleted there, or a linked member that was never added) has nothing left to
+ * wait for. Reading it as "empty" kept the machine "catching up" forever.
+ */
+export function memberFreshness(
+  shell: Pick<EnvironmentShellState, "snapshot" | "status">,
+  projectId: string,
+  unreachable: boolean,
+): AttentionMember["freshness"] {
+  if (unreachable) return "offline";
+  if (Option.isNone(shell.snapshot)) return "empty";
+  if (shell.snapshot.value.projects.some((p) => p.id === projectId)) return shell.status;
+  return shell.status === "live" ? "live" : "empty";
+}
 
 export function useAttentionMembers(projects: readonly AttentionProjectMember[]) {
   const unreachable = useUnreachableHosts();
@@ -41,12 +61,7 @@ export function useAttentionMembers(projects: readonly AttentionProjectMember[])
             projectId: project.id,
             coordinatorThreadId:
               project.workspaceSettings?.coordinatorThreadId ?? `project-coordinator:${project.id}`,
-            freshness: unreachable.has(project.environmentId)
-              ? "offline"
-              : Option.isNone(shell.snapshot) ||
-                  !shell.snapshot.value.projects.some((p) => p.id === project.id)
-                ? "empty"
-                : shell.status,
+            freshness: memberFreshness(shell, project.id, unreachable.has(project.environmentId)),
           };
         }),
       ),
