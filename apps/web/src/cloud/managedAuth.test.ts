@@ -25,6 +25,10 @@ vi.mock("./ConnectRouteReconciler", () => ({
   ConnectRouteReconciler: () => null,
 }));
 
+vi.mock("./ConnectSessionGuard", () => ({
+  ConnectSessionGuard: () => null,
+}));
+
 vi.mock("../connection/catalog", () => ({
   environmentCatalog: {
     removeRelayEnvironments: {},
