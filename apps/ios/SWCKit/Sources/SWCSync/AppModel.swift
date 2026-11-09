@@ -255,6 +255,9 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var isPinned: Bool
   public var isResolved: Bool
   public var isUnread: Bool
+  /// A coordinator started it: its project lists it, the recents leave it
+  /// out, as the desktop's chats do.
+  public var isCoordinatorWorker = false
   public var machineLabel: String
   public var machineOnline: Bool
   /// The machine is still on its first attempt; see `MachineSummary.isSettling`.
