@@ -6,6 +6,8 @@ import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
 
+import { DESKTOP_FEEDBACK_ACTIONS } from "@specweave-studio/contracts";
+
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
@@ -135,6 +137,9 @@ export const make = Effect.gen(function* () {
     const checkForUpdatesClick = () => {
       runMenuEffect("check-for-updates", handleCheckForUpdatesMenuClick);
     };
+    const feedbackClick = (action: string) => () => {
+      runMenuEffect(action, dispatchMenuAction(action));
+    };
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
@@ -167,6 +172,18 @@ export const make = Effect.gen(function* () {
           {
             label: "Check for Updates...",
             click: checkForUpdatesClick,
+          },
+          { type: "separator" },
+          {
+            label: "Send Feedback",
+            submenu: [
+              { label: "Report a Bug...", click: feedbackClick(DESKTOP_FEEDBACK_ACTIONS.bug) },
+              { label: "Suggest an Idea...", click: feedbackClick(DESKTOP_FEEDBACK_ACTIONS.idea) },
+              {
+                label: "Ask a Question...",
+                click: feedbackClick(DESKTOP_FEEDBACK_ACTIONS.question),
+              },
+            ],
           },
           { type: "separator" },
           {
