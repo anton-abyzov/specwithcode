@@ -1070,6 +1070,7 @@ import {
   projectDelegationTarget,
   callerWorkerModel,
   withProjectWorkerModel,
+  workerModelUnderGrant,
   needsExplicitWorkerTarget,
 } from "../project/ProjectDelegation.ts";
 import { type WorkerLaunch, workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
@@ -1242,16 +1243,34 @@ const make = Effect.gen(function* () {
           Effect.orElseSucceed(() => undefined),
         );
 
-  /** The project with its worker model resolved from Project settings (override key first). */
+  /**
+   * The project with its worker model resolved from Project settings (override
+   * key first). A caller other than the coordinator working under a grant that
+   * excludes that model's sign-in keeps its own model, as before.
+   */
   const workerProjectOf = <P extends Effect.Success<ReturnType<typeof requireProject>>>(
     project: P,
+    callerThreadId: ThreadId,
+    work:
+      | { readonly grant: { readonly accounts: Parameters<typeof workerModelUnderGrant>[2] & {} } }
+      | undefined,
   ) =>
-    Option.isNone(serverSettings)
+    (Option.isNone(serverSettings)
       ? Effect.succeed(project)
       : serverSettings.value.getSettings.pipe(
           Effect.map((settings) => withProjectWorkerModel(settings, project)),
           Effect.orElseSucceed(() => project),
-        );
+        )
+    ).pipe(
+      Effect.map((resolved) => ({
+        ...resolved,
+        defaultModelSelection: workerModelUnderGrant(
+          resolved.defaultModelSelection,
+          project.workspaceSettings?.coordinatorThreadId === callerThreadId,
+          work?.grant.accounts,
+        ),
+      })),
+    );
 
   /** A client has no thread to inherit a model from, so it falls back to the project default. */
   const projectDefaultModelSelection = (
@@ -2746,7 +2765,8 @@ const make = Effect.gen(function* () {
         const parentRun = yield* callerRun(scope, parent, "delegate");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
-        const workerProject = yield* workerProjectOf(project);
+        const work = yield* workGrantOf({ scope, caller: parent.thread });
+        const workerProject = yield* workerProjectOf(project, parent.thread.id, work);
         const providers = yield* loadProviders;
         const hostDefault = defaultWorkerModelSelection(providers);
         if (needsExplicitWorkerTarget(workerProject, parent.thread.id, input.target, hostDefault))
@@ -2790,10 +2810,7 @@ const make = Effect.gen(function* () {
           target,
         );
         // Whatever picked the model, a grant's work runs only on the sign-ins it allows.
-        yield* assertAccountInGrant(
-          yield* workGrantOf({ scope, caller: parent.thread }),
-          target.modelSelection.instanceId,
-        );
+        yield* assertAccountInGrant(work, target.modelSelection.instanceId);
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
         const interactionMode = yield* resolveInteractionMode(
           parent.thread.interactionMode,
@@ -3122,7 +3139,7 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               const increment = increments[index]!;
               const latest = yield* requireProject(project.id);
-              const workerProject = yield* workerProjectOf(latest);
+              const workerProject = yield* workerProjectOf(latest, parent.thread.id, work);
               if (latest.workspaceSettings?.paused || latest.workspaceSettings?.archived)
                 return yield* failure(
                   "invalid_request",

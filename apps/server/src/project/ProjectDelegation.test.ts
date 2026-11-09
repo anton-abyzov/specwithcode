@@ -10,6 +10,7 @@ import {
   projectDelegationTarget,
   needsExplicitWorkerTarget,
   projectWorkerModel,
+  workerModelUnderGrant,
 } from "./ProjectDelegation.ts";
 it("uses the project's worker model for any caller without an explicit target", () => {
   const coordinator = ThreadId.make("coordinator");
@@ -99,4 +100,14 @@ it("reads the project's worker model from its override before the saved field, n
   ).toEqual(override);
   expect(projectWorkerModel(settings, { id, defaultModelSelection: saved })).toEqual(saved);
   expect(projectWorkerModel(settings, { id, defaultModelSelection: null })).toBeNull();
+});
+
+it("keeps a non-coordinator under a grant without the project model's sign-in on its own model", () => {
+  const model = { instanceId: ProviderInstanceId.make("claude-main"), model: "claude-opus-5-5" };
+  const codexOnly = { kind: "listed" as const, instanceIds: [ProviderInstanceId.make("codex-1")] };
+  expect(workerModelUnderGrant(model, false, codexOnly)).toBeNull();
+  expect(workerModelUnderGrant(model, false, { kind: "all" })).toEqual(model);
+  expect(workerModelUnderGrant(model, false, undefined)).toEqual(model);
+  // The coordinator's own rule is unchanged: its launch is checked against the grant later.
+  expect(workerModelUnderGrant(model, true, codexOnly)).toEqual(model);
 });

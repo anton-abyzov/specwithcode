@@ -6,6 +6,7 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 
 /**
  * The project's own thread and worker model: its Project settings override,
@@ -20,6 +21,25 @@ export function projectWorkerModel(
   return resolved.sources.defaultModelSelection === "project"
     ? resolved.settings.defaultModelSelection
     : null;
+}
+
+/**
+ * The project model a caller's unnamed worker takes under its work grant. A
+ * caller other than the coordinator whose grant excludes that model's sign-in
+ * keeps its own model instead (null here), as it did before the project model
+ * applied to every caller.
+ */
+export function workerModelUnderGrant(
+  model: ModelSelection | null,
+  isCoordinator: boolean,
+  accounts: Parameters<typeof accountInGrant>[0] | undefined,
+): ModelSelection | null {
+  return model !== null &&
+    !isCoordinator &&
+    accounts !== undefined &&
+    !accountInGrant(accounts, model.instanceId)
+    ? null
+    : model;
 }
 
 /** The project as worker launches read it: its model is the one `projectWorkerModel` names. */

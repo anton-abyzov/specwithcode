@@ -46,7 +46,7 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
-import { projectWorkerModel } from "../../../project/ProjectDelegation.ts";
+import { projectWorkerModel, workerModelUnderGrant } from "../../../project/ProjectDelegation.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   launchIncrementFields,
@@ -605,10 +605,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // launches it; a coordinator falls back to this host's default worker
         // model (the same pick delegate_task makes). Either is moved off a
         // provider with no room (see workerLaunchWithRoom).
-        const projectModel =
+        const ownProjectModel =
           namedSelection === undefined && project !== undefined
             ? yield* projectWorkerModelOf(project)
             : null;
+        // Under a grant that excludes its sign-in, a non-coordinator keeps its own model.
+        const projectModel = workerModelUnderGrant(
+          ownProjectModel,
+          isCoordinator,
+          work?.grant.accounts,
+        );
         const appPicks =
           namedSelection === undefined &&
           project !== undefined &&
