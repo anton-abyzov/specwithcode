@@ -6,21 +6,27 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import { isModelSelectionProviderEnabled } from "@specweave-studio/shared/serverSettings";
 import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 
 /**
  * The project's own thread and worker model: its Project settings override,
- * else the project's saved field. Null when only the machine default would
- * apply, so a project that never chose a model keeps lanes and Auto.
+ * else the project's saved field, which the Project settings dialog writes
+ * ("Recommended model for threads"). Once an install has folded its legacy
+ * project fields, the settings resolver no longer reads that field, so it is
+ * read here directly. Null when only the machine default would apply, so a
+ * project that never chose a model keeps lanes and Auto.
  */
 export function projectWorkerModel(
   settings: ServerSettings,
   project: Pick<Project, "id" | "defaultModelSelection">,
 ): ModelSelection | null {
   const resolved = resolveProjectSettings(settings, project.id, project);
-  return resolved.sources.defaultModelSelection === "project"
-    ? resolved.settings.defaultModelSelection
-    : null;
+  if (resolved.sources.defaultModelSelection === "project")
+    return resolved.settings.defaultModelSelection;
+  // Like an override, a saved model on a disabled provider does not count.
+  const saved = project.defaultModelSelection;
+  return saved !== null && isModelSelectionProviderEnabled(settings, saved) ? saved : null;
 }
 
 /**
