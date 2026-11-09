@@ -622,7 +622,18 @@ public enum ShellSummaries {
     summary.isDone = thread.status == .completed
     summary.waitReason = attention.dependencyWait
     summary.asksForAccess = thread.pendingRuntimeRequest?.isAccessRequest == true
+    summary.traits = traits(thread.modelSelection, providers: providers)
+    summary.runtimeMode = RuntimeModeChoice(rawValue: thread.runtimeMode.rawValue)
     return summary
+  }
+
+  /// The options the thread's model takes, or nil when its machine lists none.
+  static func traits(_ selection: ModelSelection, providers: [ServerProviderSummary]) -> ModelTraits? {
+    guard let provider = providers.first(where: { $0.instanceId == selection.instanceId }),
+          let model = provider.models.first(where: { $0.slug == selection.model || ($0.aliases ?? []).contains(selection.model) }),
+          !model.optionDescriptors.isEmpty
+    else { return nil }
+    return ModelTraits(selection: selection, descriptors: model.optionDescriptors)
   }
 
   // MARK: - Projects

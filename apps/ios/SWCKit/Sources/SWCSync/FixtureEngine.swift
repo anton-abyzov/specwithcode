@@ -1,4 +1,5 @@
 import Foundation
+import SWCWire
 
 // Sample data for previews, UI tests and simulator screenshots. Nothing here
 // talks to a machine: sends echo and stream a short canned reply, actions
@@ -352,6 +353,15 @@ public final class FixtureEngine: AppEngine {
 
   public func close(_ session: ChatSession) {
     openSessions[session.id] = nil
+  }
+
+  public func send(_ text: String, images: [OutgoingImage], modelSelection: ModelSelection?, to target: ChatTarget) async throws {
+    if case let .thread(ref) = target, let modelSelection {
+      updateThread(ref) { thread in
+        thread.traits = thread.traits.map { ModelTraits(selection: modelSelection, descriptors: $0.descriptors) }
+      }
+    }
+    try await send(text, images: images, to: target)
   }
 
   public func send(_ text: String, images: [OutgoingImage], to target: ChatTarget) async throws {
@@ -908,6 +918,20 @@ private struct FixtureFailure: LocalizedError {
 // MARK: - Sample data
 
 private enum FixtureSample {
+  /// Opus's options as a machine lists them.
+  static let claudeOptions: [ProviderOptionDescriptor] = [
+    ProviderOptionDescriptor(id: "contextWindow", label: "Context window", kind: .select([
+      .init(id: "200k", label: "200K"), .init(id: "1m", label: "1M", isDefault: true),
+    ])),
+    ProviderOptionDescriptor(id: "effort", label: "Reasoning", kind: .select([
+      .init(id: "low", label: "Low"), .init(id: "medium", label: "Medium"), .init(id: "high", label: "High", isDefault: true),
+      .init(id: "xhigh", label: "Extra High"), .init(id: "max", label: "Max"),
+    ])),
+    ProviderOptionDescriptor(id: "ultracode", label: "Ultracode", description: "Multi-agent workflows on every task, at any effort", kind: .boolean),
+    ProviderOptionDescriptor(id: "thinking", label: "Thinking", kind: .boolean, currentValue: .bool(true)),
+    ProviderOptionDescriptor(id: "fastMode", label: "Fast Mode", kind: .boolean),
+  ]
+
   static let studio = "env-studio-mac"
   static let buildBox = "env-build-box"
   static let travel = "env-travel-laptop"
@@ -985,6 +1009,13 @@ private enum FixtureSample {
           : ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude", modelBrand: "claude")
       )
       summary.isDone = activity == .idle
+      summary.runtimeMode = .fullAccess
+      if id != "t-handoff", id != "t-ledger" {
+        summary.traits = ModelTraits(
+          selection: ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5", options: [ModelOption(id: "effort", value: .string("high"))]),
+          descriptors: FixtureSample.claudeOptions
+        )
+      }
       // Handed to the build box, so the project's threads span two machines.
       if id == "t-flaky" { summary.placement.runsOn = "Build box" }
       return summary

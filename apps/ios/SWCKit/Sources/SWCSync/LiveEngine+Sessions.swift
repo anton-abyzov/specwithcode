@@ -529,6 +529,10 @@ extension LiveEngine {
   // MARK: - Commands
 
   public func send(_ text: String, images: [OutgoingImage], to target: ChatTarget) async throws {
+    try await send(text, images: images, modelSelection: nil, to: target)
+  }
+
+  public func send(_ text: String, images: [OutgoingImage], modelSelection: ModelSelection?, to target: ChatTarget) async throws {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty || !images.isEmpty else { throw SyncError.emptyMessage }
     guard images.reduce(0, { $0 + $1.data.count }) <= PhotoAttachmentEncoder.maximumTotalBytes else {
@@ -556,7 +560,8 @@ extension LiveEngine {
             messageId: messageId,
             text: text,
             dispatchMode: running ? .queueAfterActive : .startImmediately,
-            attachments: try await upload(images, to: entry)
+            attachments: try await upload(images, to: entry),
+            modelSelection: modelSelection
           ))
           try await dispatch(command, on: ref.environmentId)
         } catch {
