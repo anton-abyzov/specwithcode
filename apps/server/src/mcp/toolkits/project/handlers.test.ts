@@ -445,6 +445,119 @@ it.effect("a coordinator's launch falls back to the host's worker model like del
   }).pipe(Effect.scoped),
 );
 
+it.effect("any caller's unnamed launch starts on the project's own model, not its own", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-project-model-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const sourceThreadId = ThreadId.make("worker-thread");
+    const projectId = ProjectId.make("project");
+    const claude = ProviderInstanceId.make("claude");
+    // The calling worker runs on another model, e.g. after a fallback.
+    const callerModel = { instanceId: claude, model: "claude-haiku" };
+    const projectModel = { instanceId: claude, model: "claude-opus" };
+    const ready = {
+      instanceId: claude,
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "claude-opus", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+        { slug: "claude-haiku", name: "Claude Haiku 5.5", isCustom: false, capabilities: null },
+      ],
+    } as unknown as ServerProvider;
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      title: "Worker",
+      branch: null,
+      worktreePath: null,
+      providerInstanceId: claude,
+      modelSelection: callerModel,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as unknown as OrchestrationV2ThreadShell;
+    const launched: ThreadLaunch.ThreadLaunchInput[] = [];
+    const layerDependencies = (providers: ReadonlyArray<ServerProvider>) =>
+      Layer.mergeAll(
+        NodeCrypto.layer,
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("environment"),
+          requestNamespace: "session",
+          thread: {
+            threadId: sourceThreadId,
+            providerSessionId: "session",
+            providerInstanceId: claude,
+          },
+          client: undefined,
+          issuedAt: 0,
+          capabilities: new Set(["orchestration" as const]),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(caller),
+        }),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          launch: (input) => {
+            launched.push(input);
+            return Effect.succeed({
+              threadId: input.threadId,
+              projection: {
+                thread: { id: input.threadId, projectId, modelSelection: input.modelSelection },
+                runs: [],
+              },
+              resumed: false,
+            } as unknown as ThreadLaunch.ThreadLaunchResult);
+          },
+        }),
+        Layer.mock(Project.ProjectService)({
+          getById: (id) =>
+            Effect.succeed(
+              Option.some(
+                projectFixture(id, {
+                  workspaceRoot: root,
+                  defaultModelSelection: projectModel,
+                  workspaceSettings: {
+                    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                    coordinatorThreadId: ThreadId.make("coordinator-thread"),
+                  },
+                }),
+              ),
+            ),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+        NodeServices.layer,
+        ServerConfig.layerTest(process.cwd(), { prefix: "studio-launch-project-model-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+      );
+    const launch = (providers: ReadonlyArray<ServerProvider>) =>
+      Effect.gen(function* () {
+        const dependencies = layerDependencies(providers);
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        return yield* toolkit
+          .handle("studio_thread_launch", { title: "Docs", message: "Update the docs." })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      });
+
+    yield* launch([ready]);
+    expect(launched[0]?.modelSelection).toMatchObject(projectModel);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("launches a scratch thread into the Scratch project", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");

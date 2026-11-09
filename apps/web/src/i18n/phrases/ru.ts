@@ -3706,7 +3706,9 @@ export const ru: PhraseCatalog = {
     "Выбранное окружение: локальная трассировка выключена; внешний экспорт диагностики настроен.",
   "Selected environment: local tracing off; external diagnostic export off.":
     "Выбранное окружение: локальная трассировка выключена; внешний экспорт диагностики выключен.",
-  "Model for new threads in this project.": "Модель для новых тредов в этом проекте.",
+  "Thread and worker model": "Модель тредов и воркеров",
+  "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.":
+    "Новые треды в этом проекте и все воркеры, запущенные здесь без указанной модели. Полосы моделей и Auto работают, только когда это не задано; воркер, ушедший с этой модели из-за лимита, помечается в своём треде.",
   "Default model for new threads. Projects can override it.":
     "Модель по умолчанию для новых тредов. Проекты могут её переопределить.",
   "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate.":

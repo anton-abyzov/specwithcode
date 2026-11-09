@@ -160,6 +160,8 @@ interface Harness {
   readonly modelLanes?: ModelLanes;
   readonly learnedModelPreferences?: ReadonlyArray<LearnedModelPreference>;
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** The project's own model; lanes and Auto apply only without one. */
+  readonly projectModel?: typeof opus;
 }
 
 type Dispatched = {
@@ -251,7 +253,7 @@ const run = <A, E>(
           Effect.sync(() =>
             Option.some(
               projectFixture(id, {
-                defaultModelSelection: opus,
+                defaultModelSelection: harness.projectModel ?? null,
                 workspaceSettings: {
                   ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
                   ...(harness.coordinator === false ? {} : { coordinatorThreadId: parentThreadId }),
@@ -671,6 +673,55 @@ describe("OrchestratorMcpService task routing", () => {
       ),
     );
   }
+
+  it.effect(
+    "keeps every unnamed worker on the project's own model, over Auto, lanes and the parent",
+    () =>
+      run(
+        {
+          policy: { mode: "auto" },
+          coordinator: false,
+          projectModel: opus,
+          // The calling worker runs on another model; its own workers still start on the project's.
+          parentModel: { instanceId: claude, model: "claude-haiku-5-5" },
+          modelLanes: {
+            complex: [{ instanceId: claude, model: "claude-opus-5-5" }],
+            routine: [{ instanceId: claude, model: "claude-haiku-5-5" }],
+          },
+        },
+        (service, dispatched) =>
+          Effect.gen(function* () {
+            yield* service.delegateTask(scope, {
+              task: "Fix a typo in README.md and update changelog.",
+              taskClass: "translation",
+              mode: "async",
+              clientRequestId: "project-model-delegate",
+            });
+            const request = yield* delegated(dispatched);
+            assert.deepInclude(request.modelSelection, opus);
+            assert.isUndefined(request.routing);
+            yield* Ref.set(dispatched, []);
+            yield* service.createThreads(scope, {
+              threads: [{ prompt: "Make a first draft of the promo storyboard.", title: "Draft" }],
+              clientRequestId: "project-model-create",
+            });
+            const create = (yield* Ref.get(dispatched)).find(
+              (command) => command.type === "thread.create",
+            );
+            assert.deepInclude(create?.modelSelection, opus);
+            assert.isUndefined(create?.routing);
+            // A named model still wins.
+            yield* Ref.set(dispatched, []);
+            yield* service.delegateTask(scope, {
+              task: "Translate the emails.",
+              target: { providerInstanceId: claude, model: "claude-sonnet-5-5" },
+              mode: "async",
+              clientRequestId: "project-model-named",
+            });
+            assert.equal((yield* delegated(dispatched)).modelSelection?.model, "claude-sonnet-5-5");
+          }),
+      ),
+  );
 
   it.effect("routes create_threads per thread and keeps the decision on the thread", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>

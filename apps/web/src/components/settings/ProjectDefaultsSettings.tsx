@@ -254,11 +254,13 @@ export function ProjectDefaultsSettings({
       settingKeys={["defaultModelSelection"]}
       mixed={mixedModel}
       id="default-model"
-      title="Model"
+      title={isProjectScope ? "Thread and worker model" : "Model"}
       description={
         <>
           {isProjectScope
-            ? tx("Model for new threads in this project.")
+            ? tx(
+                "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.",
+              )
             : tx("Default model for new threads. Projects can override it.")}
           {missingOptions.length > 0 && selection ? (
             <span className="block" data-default-model-unsupported>

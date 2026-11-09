@@ -3580,7 +3580,9 @@ export const zh: PhraseCatalog = {
     "所选环境：本地追踪关闭；外部诊断导出已配置。",
   "Selected environment: local tracing off; external diagnostic export off.":
     "所选环境：本地追踪关闭；外部诊断导出关闭。",
-  "Model for new threads in this project.": "此项目中新线程使用的模型。",
+  "Thread and worker model": "线程和工作线程模型",
+  "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.":
+    "此项目中的新线程，以及在此启动且未指定模型的每个工作线程。仅当此项未设置时才应用模型通道和 Auto；因用量上限而改用其他模型的工作线程会在其线程中标明。",
   "Default model for new threads. Projects can override it.": "新线程的默认模型。项目可以覆盖它。",
   "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate.":
     "此项目中所有现有和未来聊天的权限。活动的提供方轮次会在重启前结束。应用审批保持独立。",

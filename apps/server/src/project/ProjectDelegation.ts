@@ -2,8 +2,33 @@ import type {
   ModelSelection,
   OrchestratorMcpTarget,
   Project,
+  ServerSettings,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+
+/**
+ * The project's own thread and worker model: its Project settings override,
+ * else the project's saved field. Null when only the machine default would
+ * apply, so a project that never chose a model keeps lanes and Auto.
+ */
+export function projectWorkerModel(
+  settings: ServerSettings,
+  project: Pick<Project, "id" | "defaultModelSelection">,
+): ModelSelection | null {
+  const resolved = resolveProjectSettings(settings, project.id, project);
+  return resolved.sources.defaultModelSelection === "project"
+    ? resolved.settings.defaultModelSelection
+    : null;
+}
+
+/** The project as worker launches read it: its model is the one `projectWorkerModel` names. */
+export function withProjectWorkerModel<P extends Pick<Project, "id" | "defaultModelSelection">>(
+  settings: ServerSettings,
+  project: P,
+): P {
+  return { ...project, defaultModelSelection: projectWorkerModel(settings, project) };
+}
 
 /**
  * The model a coordinator's worker starts on when the coordinator names none:
@@ -16,6 +41,22 @@ export function projectWorkerDefault(
   hostDefault: ModelSelection | null,
 ): ModelSelection | null {
   return project.defaultModelSelection ?? hostDefault;
+}
+
+/**
+ * The model a worker started by `callerThreadId` takes when it names none. The
+ * project's own model wins for every caller in the project, so a worker never
+ * inherits a parent that fell back to another provider. Only the coordinator
+ * also falls back to the host default; any other caller keeps its own model.
+ */
+export function callerWorkerModel(
+  project: Pick<Project, "workspaceSettings" | "defaultModelSelection">,
+  callerThreadId: ThreadId,
+  hostDefault: ModelSelection | null = null,
+): ModelSelection | null {
+  return project.workspaceSettings?.coordinatorThreadId === callerThreadId
+    ? projectWorkerDefault(project, hostDefault)
+    : project.defaultModelSelection;
 }
 
 function namesModel(target: OrchestratorMcpTarget | undefined): boolean {
@@ -34,13 +75,8 @@ export function projectDelegationTarget(
   hostDefault: ModelSelection | null = null,
   launchSelection?: ModelSelection | null,
 ): OrchestratorMcpTarget | undefined {
-  const preferred = projectWorkerDefault(project, hostDefault);
-  if (
-    project.workspaceSettings?.coordinatorThreadId !== callerThreadId ||
-    !preferred ||
-    namesModel(target)
-  )
-    return target;
+  const preferred = callerWorkerModel(project, callerThreadId, hostDefault);
+  if (!preferred || namesModel(target)) return target;
   const selected = launchSelection ?? preferred;
   return {
     providerInstanceId: selected.instanceId,
