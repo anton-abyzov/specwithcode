@@ -441,6 +441,46 @@ describe("default model options", () => {
     );
   });
 
+  it("brings Fast mode and Ultracode back after a round trip through a model without them", () => {
+    const opus = [
+      { id: "effort", value: "xhigh" },
+      { id: "fastMode", value: true },
+      { id: "ultracode", value: true },
+    ];
+    withDefault({ instanceId: "claudeAgent", model: "claude-opus-5-5", options: opus });
+    state.providers = [
+      {
+        ...CLAUDE,
+        models: [
+          ...CLAUDE.models,
+          {
+            slug: "claude-haiku-4-5",
+            name: "Claude Haiku 4.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [{ id: "thinking", label: "Thinking", type: "boolean" }],
+            },
+          },
+        ],
+      },
+      COPILOT,
+    ];
+    render();
+    act(() => state.picker!.onInstanceModelChange("claudeAgent", "claude-haiku-4-5"));
+    const toHaiku = state.update.mock.calls.at(-1)![0].defaultModelSelection;
+    expect(toHaiku.options ?? []).toEqual([]);
+    // The row now shows what was saved.
+    state.environment = { ...state.environment, defaultModelSelection: toHaiku };
+    state.target = resolveProjectSettings(state.environment, project, null, null);
+    state.picker = null;
+    act(() => renderer!.update(<ProjectDefaultsSettings category="project" />));
+    act(() => state.picker!.onInstanceModelChange("claudeAgent", "claude-opus-5-5"));
+    const back = state.update.mock.calls.at(-1)![0].defaultModelSelection;
+    expect(back.model).toBe("claude-opus-5-5");
+    expect(back.options).toEqual(expect.arrayContaining(opus));
+    expect(back.options).toHaveLength(3);
+  });
+
   it("carries no options when machines with different defaults are edited together", () => {
     withDefault({
       instanceId: "claudeAgent",
