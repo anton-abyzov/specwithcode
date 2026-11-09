@@ -217,6 +217,28 @@ export function describeCarriedOptions(
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+/**
+ * Options the current model cannot express, kept from earlier models so a
+ * round trip (Opus with Fast and Ultracode → Haiku → Opus) brings them back.
+ * Anything the current model can express is its own setting and wins.
+ */
+export function heldModelOptions(
+  held: Selections,
+  current: Selections,
+  currentDescriptors: Descriptors,
+): ReadonlyArray<ProviderOptionSelection> {
+  const own = new Set((current ?? []).map((selection) => selection.id));
+  return (held ?? []).filter((selection) => {
+    if (own.has(selection.id)) return false;
+    if (selection.id === "ultracode") return !hasUltracode(currentDescriptors);
+    if (selection.id === "fastMode" || selection.id === "serviceTier")
+      return !hasFast(currentDescriptors);
+    if (typeof selection.value === "string" && isEffortId(selection.id))
+      return !findEffortDescriptor(currentDescriptors);
+    return !currentDescriptors?.some((descriptor) => descriptor.id === selection.id);
+  });
+}
+
 export function joinLabels(labels: ReadonlyArray<string>): string {
   if (labels.length <= 1) return labels[0] ?? "";
   return `${labels.slice(0, -1).join(", ")} or ${labels.at(-1)}`;

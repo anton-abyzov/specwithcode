@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   carryModelOptions,
   describeCarriedOptions,
+  heldModelOptions,
   missingCommonOptions,
 } from "./modelOptionCarry.ts";
 
@@ -255,5 +256,44 @@ describe("missingCommonOptions", () => {
     expect(missingCommonOptions(COPILOT)).toEqual(["Fast mode", "Ultracode"]);
     expect(missingCommonOptions(CODEX)).toEqual(["Ultracode"]);
     expect(missingCommonOptions([])).toEqual(["Effort", "Fast mode", "Ultracode"]);
+  });
+});
+
+describe("heldModelOptions", () => {
+  const HAIKU: ReadonlyArray<ProviderOptionDescriptor> = [
+    { id: "thinking", label: "Thinking", type: "boolean" },
+  ];
+
+  it("brings Fast and Ultracode back after a round trip through a model without them", () => {
+    const opus = [
+      { id: "effort", value: "xhigh" },
+      { id: "fastMode", value: true },
+      { id: "ultracode", value: true },
+    ];
+    const toHaiku = carryModelOptions({
+      previous: opus,
+      previousDescriptors: CLAUDE,
+      nextDescriptors: HAIKU,
+    });
+    const held = heldModelOptions(opus, toHaiku.options, HAIKU);
+    expect(held).toEqual(opus);
+    const back = carryModelOptions({
+      previous: [...toHaiku.options, ...held],
+      previousDescriptors: HAIKU,
+      nextDescriptors: CLAUDE,
+    });
+    expect(back.options).toEqual(expect.arrayContaining(opus));
+  });
+
+  it("lets the current model's own settings win over held ones", () => {
+    const held = [
+      { id: "fastMode", value: true },
+      { id: "ultracode", value: true },
+      { id: "effort", value: "max" },
+    ];
+    // Claude offers all three, so what is set on it now stands.
+    expect(heldModelOptions(held, [{ id: "fastMode", value: false }], CLAUDE)).toEqual([]);
+    // Codex has a Fast tier and effort, but no Ultracode.
+    expect(heldModelOptions(held, [], CODEX)).toEqual([{ id: "ultracode", value: true }]);
   });
 });
