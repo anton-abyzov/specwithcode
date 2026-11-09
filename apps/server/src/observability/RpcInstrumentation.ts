@@ -153,6 +153,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.projectsConnectionSave]: "projects",
   [WS_METHODS.projectsConnectionCheck]: "projects",
   [WS_METHODS.projectsConnectionRevoke]: "projects",
+  [WS_METHODS.projectsConnectionCredentialSet]: "projects",
   [WS_METHODS.projectsMemoryRead]: "projects",
   [WS_METHODS.projectsLibraryRead]: "projects",
   [WS_METHODS.projectsLibraryAddArtifact]: "projects",

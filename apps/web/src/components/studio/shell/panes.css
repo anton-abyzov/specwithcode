@@ -1627,3 +1627,56 @@ button.sws-subagent-row:focus-visible {
   text-underline-offset: 2px;
   cursor: pointer;
 }
+
+/* The personal assistant's Services tab. */
+.assistant-services ul {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+}
+.assistant-services h3 {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.assistant-service {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.625rem 0;
+  border-top: 1px solid var(--border);
+}
+.assistant-service > div:first-child {
+  display: flex;
+  flex: 1 1 14rem;
+  flex-direction: column;
+  min-width: 0;
+}
+.assistant-service strong {
+  font-weight: 500;
+}
+.assistant-service-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.assistant-service-form,
+.assistant-service-tools {
+  display: flex;
+  flex: 1 0 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.375rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.assistant-service-form input {
+  width: min(100%, 26rem);
+}

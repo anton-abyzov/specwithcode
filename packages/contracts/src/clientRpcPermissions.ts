@@ -173,6 +173,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsConnectionSave]: AuthTerminalOperateScope,
   [WS_METHODS.projectsConnectionCheck]: AuthTerminalOperateScope,
   [WS_METHODS.projectsConnectionRevoke]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectsConnectionCredentialSet]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryDelete]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCoordinatorStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCoordinatorSend]: AuthOrchestrationOperateScope,
@@ -378,7 +379,11 @@ export function clientRpcRequiredScopes(
     return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
   // A subscription, so not in the unary map.
   if (method === WS_METHODS.designWatch) return [AuthFilesystemReadScope];
-  if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
+  if (
+    method === WS_METHODS.projectsConnectionSave ||
+    method === WS_METHODS.projectsConnectionCheck ||
+    method === WS_METHODS.projectsConnectionCredentialSet
+  )
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
   if (method === WS_METHODS.projectsSkillAuthoring) {
     const operation = (input as { operation?: string } | null)?.operation;

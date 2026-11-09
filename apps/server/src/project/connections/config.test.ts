@@ -1,5 +1,5 @@
 import { expect, it, vi, afterEach } from "vite-plus/test";
-import { validConnectionConfig, redactConnectionValue } from "./config.ts";
+import { validConnectionConfig, redactConnectionText, redactConnectionValue } from "./config.ts";
 
 const key = "STUDIO_CONNECTION_TEST_SECRET";
 const config = { name: "Synthetic", command: "synthetic-mcp", args: [], envKeys: [key] };
@@ -58,4 +58,13 @@ it("refuses relative commands and script paths an agent could replace in the pro
   expect(validConnectionConfig({ ...config, command: "npx", args: ["-y", "@scope/server"] })).toBe(
     true,
   );
+});
+
+it("redacts stored token values from text and nested tool output", () => {
+  expect(redactConnectionText("token synthetic-stored here", [], ["synthetic-stored"])).toBe(
+    "token [redacted] here",
+  );
+  expect(
+    redactConnectionValue({ "synthetic-stored": ["a synthetic-stored"] }, [], ["synthetic-stored"]),
+  ).toEqual({ "[redacted]": ["a [redacted]"] });
 });

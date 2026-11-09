@@ -18,6 +18,9 @@ export const layerNativeApplyHandlers = WsNativeConnectionsRpcGroup.middleware(
 ).toLayer(
   Effect.gen(function* () {
     const service = yield* Connections.ProjectConnectionService;
-    return { [WS_METHODS.nativeConnectionApply]: service.applyNative };
+    return {
+      [WS_METHODS.nativeConnectionApply]: service.applyNative,
+      [WS_METHODS.projectsConnectionCredentialSet]: service.setCredential,
+    };
   }),
 );
