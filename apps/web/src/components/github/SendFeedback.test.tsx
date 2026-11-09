@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
-  openExternal: vi.fn(async () => undefined),
+  openExternal: vi.fn(async (_url: string) => undefined),
 }));
 vi.mock("../../i18n", () => ({ useTx: () => (text: string) => text }));
 vi.mock("../../localApi", () => ({
@@ -52,7 +52,7 @@ async function choose(item: string) {
 
 it("opens a prefilled bug form with the machine count", async () => {
   await choose("Report a bug");
-  const url = new URL(mocks.openExternal.mock.calls[0]![0] as string);
+  const url = new URL(mocks.openExternal.mock.calls[0]![0]);
   expect(url.pathname).toBe("/anton-abyzov/specwithcode/issues/new");
   expect(url.searchParams.get("template")).toBe("bug_report.yml");
   expect(url.searchParams.get("environment")).toMatch(/, web app, 2 machines$/);
