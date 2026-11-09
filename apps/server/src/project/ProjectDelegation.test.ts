@@ -111,3 +111,18 @@ it("keeps a non-coordinator under a grant without the project model's sign-in on
   // The coordinator's own rule is unchanged: its launch is checked against the grant later.
   expect(workerModelUnderGrant(model, true, codexOnly)).toEqual(model);
 });
+
+it("reads the Project settings dialog's model on an install that folded its project fields", () => {
+  const id = ProjectId.make("aide");
+  const dialog = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const override = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const folded = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
+  expect(projectWorkerModel(folded, { id, defaultModelSelection: dialog })).toEqual(dialog);
+  expect(
+    projectWorkerModel(
+      { ...folded, projectSettingsOverrides: { [id]: { defaultModelSelection: override } } },
+      { id, defaultModelSelection: dialog },
+    ),
+  ).toEqual(override);
+  expect(projectWorkerModel(folded, { id, defaultModelSelection: null })).toBeNull();
+});
