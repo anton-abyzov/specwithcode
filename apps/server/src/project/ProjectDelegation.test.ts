@@ -1,11 +1,18 @@
 import { expect, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { projectDelegationTarget, needsExplicitWorkerTarget } from "./ProjectDelegation.ts";
-it("uses the saved worker default only for coordinator requests without an explicit target", () => {
+import {
+  projectDelegationTarget,
+  needsExplicitWorkerTarget,
+  projectWorkerModel,
+  workerModelUnderGrant,
+} from "./ProjectDelegation.ts";
+it("uses the project's worker model for any caller without an explicit target", () => {
   const coordinator = ThreadId.make("coordinator");
   const model = {
     instanceId: ProviderInstanceId.make("claude"),
@@ -23,7 +30,13 @@ it("uses the saved worker default only for coordinator requests without an expli
   });
   const explicit = { providerInstanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
   expect(projectDelegationTarget(project, coordinator, explicit)).toBe(explicit);
-  expect(projectDelegationTarget(project, ThreadId.make("worker"), undefined)).toBeUndefined();
+  // A worker's own worker takes the project model, not the worker's (possibly fallback) model.
+  expect(projectDelegationTarget(project, ThreadId.make("worker"), undefined)).toEqual({
+    providerInstanceId: model.instanceId,
+    model: "opus",
+    options: model.options,
+  });
+  expect(projectDelegationTarget(project, ThreadId.make("worker"), explicit)).toBe(explicit);
   expect(
     projectDelegationTarget({ ...project, defaultModelSelection: null }, coordinator, undefined),
   ).toBeUndefined();
@@ -67,8 +80,34 @@ it("starts a coordinator's worker on the host default when the project saved no 
   ).toEqual({ providerInstanceId: saved.instanceId, model: saved.model });
   const named = { model: "explicit-model" };
   expect(projectDelegationTarget(project, coordinator, named, hostDefault)).toBe(named);
-  // Non-coordinator callers inherit their own model as before.
+  // Without a project model, non-coordinator callers inherit their own model as before.
   expect(
     projectDelegationTarget(project, ThreadId.make("worker"), undefined, hostDefault),
   ).toBeUndefined();
+});
+
+it("reads the project's worker model from its override before the saved field, never the machine default", () => {
+  const id = ProjectId.make("aide");
+  const saved = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const override = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
+  const machine = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+  const settings = { ...DEFAULT_SERVER_SETTINGS, defaultModelSelection: machine };
+  expect(
+    projectWorkerModel(
+      { ...settings, projectSettingsOverrides: { [id]: { defaultModelSelection: override } } },
+      { id, defaultModelSelection: saved },
+    ),
+  ).toEqual(override);
+  expect(projectWorkerModel(settings, { id, defaultModelSelection: saved })).toEqual(saved);
+  expect(projectWorkerModel(settings, { id, defaultModelSelection: null })).toBeNull();
+});
+
+it("keeps a non-coordinator under a grant without the project model's sign-in on its own model", () => {
+  const model = { instanceId: ProviderInstanceId.make("claude-main"), model: "claude-opus-5-5" };
+  const codexOnly = { kind: "listed" as const, instanceIds: [ProviderInstanceId.make("codex-1")] };
+  expect(workerModelUnderGrant(model, false, codexOnly)).toBeNull();
+  expect(workerModelUnderGrant(model, false, { kind: "all" })).toEqual(model);
+  expect(workerModelUnderGrant(model, false, undefined)).toEqual(model);
+  // The coordinator's own rule is unchanged: its launch is checked against the grant later.
+  expect(workerModelUnderGrant(model, true, codexOnly)).toEqual(model);
 });

@@ -5,11 +5,13 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   type ModelSelection,
   type ProviderInstanceId,
+  type ProviderOptionSelection,
   type WorktreeSubmodules,
 } from "@specweave-studio/contracts";
 import { createModelSelection, resolveSelectableModel } from "@specweave-studio/shared/model";
 import {
   carryModelOptions,
+  heldModelOptions,
   describeCarriedOptions,
   joinLabels,
   missingCommonOptions,
@@ -70,7 +72,7 @@ import {
 } from "../../teamRules/teamRulesView";
 import { useFolderTeamRulesSummary } from "../../teamRules/useFolderTeamRules";
 import { TeamRulesInert } from "./TeamRulesLock";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -228,6 +230,8 @@ export function ProjectDefaultsSettings({
       ? `${name} on ${provider}`
       : name;
   };
+  // Options left off on the way through a model without them, until a model can run them again.
+  const heldOptions = useRef<ReadonlyArray<ProviderOptionSelection>>([]);
   // A new provider or model keeps the options it can run; the rest are named, not lost.
   const changeModel = (instanceId: ProviderInstanceId, model: string) => {
     // Several machines with different defaults: no one machine's options speak for the rest.
@@ -235,12 +239,19 @@ export function ProjectDefaultsSettings({
       setModel(createModelSelection(instanceId, model));
       return;
     }
+    const previousDescriptors = descriptorsFor(selection?.instanceId, selection?.model);
+    const current = selection?.options ?? [];
+    const previous = [
+      ...current,
+      ...heldModelOptions(heldOptions.current, current, previousDescriptors),
+    ];
     const carried = carryModelOptions({
-      previous: selection?.options,
-      previousDescriptors: descriptorsFor(selection?.instanceId, selection?.model),
+      previous,
+      previousDescriptors,
       nextDescriptors: descriptorsFor(instanceId, model),
     });
     if (!setModel(createModelSelection(instanceId, model, carried.options))) return;
+    heldOptions.current = previous;
     const note = describeCarriedOptions(carried, modelLabel(instanceId, model));
     if (note) toastManager.add({ type: "info", title: "Default model options", description: note });
   };
@@ -254,11 +265,13 @@ export function ProjectDefaultsSettings({
       settingKeys={["defaultModelSelection"]}
       mixed={mixedModel}
       id="default-model"
-      title="Model"
+      title={isProjectScope ? "Thread and worker model" : "Model"}
       description={
         <>
           {isProjectScope
-            ? tx("Model for new threads in this project.")
+            ? tx(
+                "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.",
+              )
             : tx("Default model for new threads. Projects can override it.")}
           {missingOptions.length > 0 && selection ? (
             <span className="block" data-default-model-unsupported>

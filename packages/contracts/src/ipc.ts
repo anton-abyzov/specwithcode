@@ -1067,6 +1067,13 @@ export const DESKTOP_AWAY_BACK_ACTION = "away-mode:back";
 /** The Mac woke after work left while it slept: show the wake card (Bring back). */
 export const DESKTOP_AWAY_WAKE_ACTION = "away-mode:wake";
 
+/** Help > Send Feedback menu actions; the renderer opens the matching GitHub issue form. */
+export const DESKTOP_FEEDBACK_ACTIONS = {
+  bug: "send-feedback:bug",
+  idea: "send-feedback:idea",
+  question: "send-feedback:question",
+} as const;
+
 export interface DesktopBridge extends DesktopUpdateBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */

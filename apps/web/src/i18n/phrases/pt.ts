@@ -3709,7 +3709,9 @@ export const pt: PhraseCatalog = {
     "Ambiente selecionado: rastreamento local desativado; exportação externa de diagnóstico configurada.",
   "Selected environment: local tracing off; external diagnostic export off.":
     "Ambiente selecionado: rastreamento local desativado; exportação externa de diagnóstico desativada.",
-  "Model for new threads in this project.": "Modelo para novas threads neste projeto.",
+  "Thread and worker model": "Modelo de threads e workers",
+  "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.":
+    "Novas threads neste projeto e cada worker iniciado aqui sem um modelo indicado. As faixas de modelo e o Auto só se aplicam quando isto não está definido; um worker tirado dele por um limite de uso fica marcado na sua thread.",
   "Default model for new threads. Projects can override it.":
     "Modelo padrão para novas threads. Os projetos podem substituí-lo.",
   "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate.":

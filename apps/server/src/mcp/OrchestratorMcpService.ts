@@ -196,6 +196,21 @@ interface ResolvedTarget {
 }
 
 /**
+ * A project that set its own model keeps unnamed workers on it: model lanes,
+ * learned preferences and Auto apply only when it has none.
+ */
+function projectModelOptions(
+  workerProject: Pick<Project, "defaultModelSelection">,
+  requested: OrchestratorMcpTarget | undefined,
+  delegationTarget: OrchestratorMcpTarget | undefined,
+  options: WorkerRoutingOptions | undefined,
+): WorkerRoutingOptions | undefined {
+  return workerProject.defaultModelSelection !== null && delegationTarget !== requested
+    ? { ...options, autoRouting: false }
+    : options;
+}
+
+/**
  * The model a new worker stands in for: the project worker model the room
  * check moved it off, while the worker starts where that launch put it, else
  * the one its parent stands in for when it inherits the parent's model.
@@ -1056,7 +1071,9 @@ function timelineItem(input: {
 
 import {
   projectDelegationTarget,
-  projectWorkerDefault,
+  callerWorkerModel,
+  withProjectWorkerModel,
+  workerModelUnderGrant,
   needsExplicitWorkerTarget,
 } from "../project/ProjectDelegation.ts";
 import { type WorkerLaunch, workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
@@ -1228,6 +1245,35 @@ const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => undefined),
         );
+
+  /**
+   * The project with its worker model resolved from Project settings (override
+   * key first). A caller other than the coordinator working under a grant that
+   * excludes that model's sign-in keeps its own model, as before.
+   */
+  const workerProjectOf = <P extends Effect.Success<ReturnType<typeof requireProject>>>(
+    project: P,
+    callerThreadId: ThreadId,
+    work:
+      | { readonly grant: { readonly accounts: Parameters<typeof workerModelUnderGrant>[2] & {} } }
+      | undefined,
+  ) =>
+    (Option.isNone(serverSettings)
+      ? Effect.succeed(project)
+      : serverSettings.value.getSettings.pipe(
+          Effect.map((settings) => withProjectWorkerModel(settings, project)),
+          Effect.orElseSucceed(() => project),
+        )
+    ).pipe(
+      Effect.map((resolved) => ({
+        ...resolved,
+        defaultModelSelection: workerModelUnderGrant(
+          resolved.defaultModelSelection,
+          project.workspaceSettings?.coordinatorThreadId === callerThreadId,
+          work?.grant.accounts,
+        ),
+      })),
+    );
 
   /** A client has no thread to inherit a model from, so it falls back to the project default. */
   const projectDefaultModelSelection = (
@@ -1674,9 +1720,9 @@ const make = Effect.gen(function* () {
   const loadProviders = providerRegistry.getProviders;
 
   /**
-   * The worker model a project coordinator's new thread starts on, moved off
-   * a provider with no room (see workerLaunchWithRoom). Null for any other
-   * caller, or when nothing names a worker model.
+   * The worker model a new thread in the project starts on when its caller
+   * names none, moved off a provider with no room (see workerLaunchWithRoom).
+   * Null when neither the project nor (for its coordinator) the host names one.
    */
   const coordinatorWorkerLaunch = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
@@ -1687,8 +1733,8 @@ const make = Effect.gen(function* () {
     providers: ReadonlyArray<ServerProvider>,
     hostDefault: ModelSelection | null,
   ) => {
-    const preferred = projectWorkerDefault(project, hostDefault);
-    return project.workspaceSettings?.coordinatorThreadId !== caller.id || preferred === null
+    const preferred = callerWorkerModel(project, caller.id, hostDefault);
+    return preferred === null
       ? Effect.succeed(null)
       : workerLaunchWithRoom({
           project,
@@ -2782,21 +2828,23 @@ const make = Effect.gen(function* () {
         const parentRun = yield* callerRun(scope, parent, "delegate");
         const parentNodeId = parentRun.rootNodeId;
         const project = yield* requireProject(parent.thread.projectId);
+        const work = yield* workGrantOf({ scope, caller: parent.thread });
+        const workerProject = yield* workerProjectOf(project, parent.thread.id, work);
         const providers = yield* loadProviders;
         const hostDefault = defaultWorkerModelSelection(providers);
-        if (needsExplicitWorkerTarget(project, parent.thread.id, input.target, hostDefault))
+        if (needsExplicitWorkerTarget(workerProject, parent.thread.id, input.target, hostDefault))
           return yield* failure(
             "invalid_request",
             "Choose a project worker model or pass an explicit target.",
           );
         const launch = yield* coordinatorWorkerLaunch(
-          project,
+          workerProject,
           parent.thread,
           providers,
           hostDefault,
         );
         const delegationTarget = projectDelegationTarget(
-          project,
+          workerProject,
           parent.thread.id,
           input.target,
           hostDefault,
@@ -2810,7 +2858,7 @@ const make = Effect.gen(function* () {
           taskLane: input.taskLane,
           task: { text: input.task, title: input.title },
           providers,
-          options,
+          options: projectModelOptions(workerProject, input.target, delegationTarget, options),
           baseline: yield* resolveTargetRechecking({
             parent,
             target: delegationTarget,
@@ -2825,10 +2873,7 @@ const make = Effect.gen(function* () {
           target,
         );
         // Whatever picked the model, a grant's work runs only on the sign-ins it allows.
-        yield* assertAccountInGrant(
-          yield* workGrantOf({ scope, caller: parent.thread }),
-          target.modelSelection.instanceId,
-        );
+        yield* assertAccountInGrant(work, target.modelSelection.instanceId);
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
         const interactionMode = yield* resolveInteractionMode(
           parent.thread.interactionMode,
@@ -3157,24 +3202,32 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               const increment = increments[index]!;
               const latest = yield* requireProject(project.id);
+              const workerProject = yield* workerProjectOf(latest, parent.thread.id, work);
               if (latest.workspaceSettings?.paused || latest.workspaceSettings?.archived)
                 return yield* failure(
                   "invalid_request",
                   "Resume or restore the project before creating threads.",
                 );
-              if (needsExplicitWorkerTarget(latest, parent.thread.id, request.target, hostDefault))
+              if (
+                needsExplicitWorkerTarget(
+                  workerProject,
+                  parent.thread.id,
+                  request.target,
+                  hostDefault,
+                )
+              )
                 return yield* failure(
                   "invalid_request",
                   "Choose a project worker model or pass an explicit target.",
                 );
               const launch = yield* coordinatorWorkerLaunch(
-                latest,
+                workerProject,
                 parent.thread,
                 providers,
                 hostDefault,
               );
               const delegationTarget = projectDelegationTarget(
-                latest,
+                workerProject,
                 parent.thread.id,
                 request.target,
                 hostDefault,
@@ -3188,7 +3241,12 @@ const make = Effect.gen(function* () {
                 taskLane: request.taskLane,
                 task: { text: request.prompt ?? "", title: request.title },
                 providers,
-                options,
+                options: projectModelOptions(
+                  workerProject,
+                  request.target,
+                  delegationTarget,
+                  options,
+                ),
                 baseline: yield* resolveTargetRechecking({
                   parent,
                   target: delegationTarget,

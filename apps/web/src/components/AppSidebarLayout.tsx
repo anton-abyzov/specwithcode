@@ -1,5 +1,6 @@
 import { useTx } from "../i18n";
 import { useAtomValue } from "@effect/atom-react";
+import { DESKTOP_FEEDBACK_ACTIONS } from "@specweave-studio/contracts";
 import { useSettingsOriginTracker } from "./settings/useSettingsOriginTracker";
 import * as Schema from "effect/Schema";
 import {
@@ -48,6 +49,8 @@ import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { MainAppLocationTracker } from "./sidebar/mainAppLocation";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { useProjects } from "../state/entities";
+import { useOpenFeedback } from "./github/SendFeedback";
+import type { FeedbackKind } from "./github/feedback";
 import { FolderCopyWatchers } from "./studio/FolderCopyWatchers";
 import {
   clampThreadSidebarWidth,
@@ -292,6 +295,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, [isMacosDesktop]);
 
+  const openFeedback = useOpenFeedback();
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
     if (typeof onMenuAction !== "function") {
@@ -305,12 +309,16 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           void navigate({ to: "/settings" });
         }
       }
+      const feedbackKind = (Object.keys(DESKTOP_FEEDBACK_ACTIONS) as FeedbackKind[]).find(
+        (kind) => DESKTOP_FEEDBACK_ACTIONS[kind] === action,
+      );
+      if (feedbackKind) openFeedback(feedbackKind);
     });
 
     return () => {
       unsubscribe?.();
     };
-  }, [navigate, pathname]);
+  }, [navigate, openFeedback, pathname]);
 
   return (
     <UnreachableHostsProvider>

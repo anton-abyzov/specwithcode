@@ -727,6 +727,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["github star repository source code open source mit license contribute"],
   },
   {
+    id: "send-feedback",
+    title: "Send feedback",
+    to: "/settings/general",
+    searchTerms: ["feedback bug report issue idea feature request question help support contact"],
+  },
+  {
     id: "usage-data",
     title: "Usage data",
     to: "/settings/general",

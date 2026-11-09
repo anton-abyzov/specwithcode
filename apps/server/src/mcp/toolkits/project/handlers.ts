@@ -46,6 +46,7 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
+import { projectWorkerModel, workerModelUnderGrant } from "../../../project/ProjectDelegation.ts";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   launchIncrementFields,
@@ -181,6 +182,17 @@ const providerTierSelection = Effect.fn("mcp.providerTierSelection")(function* (
     });
   const selection: ModelSelection = { instanceId: provider.instanceId, model };
   return selection;
+});
+
+/** The project's own thread and worker model (see projectWorkerModel), else null. */
+const projectWorkerModelOf = Effect.fn("mcp.projectWorkerModelOf")(function* (
+  project: ProjectRecord,
+) {
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const settings = Option.isNone(settingsService)
+    ? null
+    : yield* settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null));
+  return settings === null ? project.defaultModelSelection : projectWorkerModel(settings, project);
 });
 
 /** Whether the project's own "Use worktrees" switch is on. */
@@ -589,24 +601,36 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 tier: input.tier,
                 taskLane: input.taskLane,
               }));
-        // A coordinator's thread starts on the project's worker model, else this
-        // host's default worker model (the same pick delegate_task makes), moved
-        // off a provider with no room (see workerLaunchWithRoom).
-        const coordinatorPicks = isCoordinator && namedSelection === undefined && project;
-        const workerProviders = coordinatorPicks
+        // A thread named no model starts on the project's own model, whoever
+        // launches it; a coordinator falls back to this host's default worker
+        // model (the same pick delegate_task makes). Either is moved off a
+        // provider with no room (see workerLaunchWithRoom).
+        const ownProjectModel =
+          namedSelection === undefined && project !== undefined
+            ? yield* projectWorkerModelOf(project)
+            : null;
+        // Under a grant that excludes its sign-in, a non-coordinator keeps its own model.
+        const projectModel = workerModelUnderGrant(
+          ownProjectModel,
+          isCoordinator,
+          work?.grant.accounts,
+        );
+        const appPicks =
+          namedSelection === undefined &&
+          project !== undefined &&
+          (isCoordinator || projectModel !== null);
+        const workerProviders = appPicks
           ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
           : [];
-        const preferredWorker = coordinatorPicks
-          ? (project.defaultModelSelection ??
-            defaultWorkerModelSelection(workerProviders) ??
-            undefined)
+        const preferredWorker = appPicks
+          ? (projectModel ?? defaultWorkerModelSelection(workerProviders) ?? undefined)
           : undefined;
         const workerLaunch =
-          coordinatorPicks && preferredWorker
+          appPicks && preferredWorker
             ? yield* workerLaunchWithRoom({
                 project,
                 preferred: preferredWorker,
-                coordinator: caller.modelSelection,
+                coordinator: caller?.modelSelection ?? null,
                 providers: workerProviders,
                 runtimePolicy: { runtimeMode, interactionMode },
               })
@@ -617,7 +641,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             : workerLaunch.selection;
         const modelSelection =
           namedSelection ??
-          (isCoordinator
+          (appPicks
             ? workerSelection
             : (caller?.modelSelection ?? project?.defaultModelSelection)) ??
           undefined;
@@ -626,7 +650,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const standsInFor =
           namedSelection !== undefined
             ? null
-            : isCoordinator
+            : appPicks
               ? (workerLaunch?.fallbackFrom ?? null)
               : caller?.modelSelection !== undefined && caller.modelIdentity?.kind === "fallback"
                 ? caller.modelIdentity.preferred
@@ -643,7 +667,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           project !== undefined &&
           (work === undefined || work.grant.accounts.kind === "all") &&
           autoRoutingApplies({
-            pinned: namedSelection !== undefined,
+            // A project's own model is not moved by lanes or Auto.
+            pinned: namedSelection !== undefined || projectModel !== null,
             isCoordinator,
             taskClass: input.taskClass,
             taskLane: input.taskLane,

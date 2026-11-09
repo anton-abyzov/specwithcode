@@ -3702,7 +3702,9 @@ export const ja: PhraseCatalog = {
     "選択した環境: ローカルトレースはオフ、外部診断エクスポートは設定済みです。",
   "Selected environment: local tracing off; external diagnostic export off.":
     "選択した環境: ローカルトレースはオフ、外部診断エクスポートはオフです。",
-  "Model for new threads in this project.": "このプロジェクトの新しいスレッドで使うモデル。",
+  "Thread and worker model": "スレッドとワーカーのモデル",
+  "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.":
+    "このプロジェクトの新しいスレッドと、モデルを指定せずにここで起動するすべてのワーカーで使うモデル。モデルレーンと Auto は未設定のときだけ適用されます。使用上限でこのモデルから外れたワーカーはスレッドに表示されます。",
   "Default model for new threads. Projects can override it.":
     "新しいスレッドの既定のモデル。プロジェクトで上書きできます。",
   "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate.":

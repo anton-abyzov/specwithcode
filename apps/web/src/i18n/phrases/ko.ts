@@ -3671,7 +3671,9 @@ export const ko: PhraseCatalog = {
     "선택한 환경: 로컬 추적 꺼짐, 외부 진단 내보내기 구성됨.",
   "Selected environment: local tracing off; external diagnostic export off.":
     "선택한 환경: 로컬 추적 꺼짐, 외부 진단 내보내기 꺼짐.",
-  "Model for new threads in this project.": "이 프로젝트의 새 스레드에 쓸 모델입니다.",
+  "Thread and worker model": "스레드 및 워커 모델",
+  "New threads in this project, and every worker started here without a named model. Model lanes and Auto apply only when this is unset; a worker moved off it at a usage limit is marked on its thread.":
+    "이 프로젝트의 새 스레드와, 모델을 지정하지 않고 여기서 시작하는 모든 워커에 쓸 모델입니다. 모델 레인과 Auto는 이 값이 비어 있을 때만 적용됩니다. 사용 한도 때문에 다른 모델로 옮겨진 워커는 스레드에 표시됩니다.",
   "Default model for new threads. Projects can override it.":
     "새 스레드의 기본 모델입니다. 프로젝트에서 재정의할 수 있습니다.",
   "Permissions for all existing and future chats in this project. Active provider turns finish before restarting. App approvals remain separate.":

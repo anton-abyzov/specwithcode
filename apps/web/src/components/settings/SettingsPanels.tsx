@@ -186,6 +186,7 @@ import {
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { LanguageSettingRow } from "./LanguageSettingRow";
+import { SendFeedbackButton } from "../github/SendFeedback";
 import { StarOnGitHubButton } from "../github/StarOnGitHub";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
@@ -3592,6 +3593,11 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("star-on-github")}
           description="SpecWithCode is open source under the MIT License. A star helps other developers find it."
           control={<StarOnGitHubButton />}
+        />
+        <SettingsRow
+          {...searchableSetting("send-feedback")}
+          description="Report a bug, suggest an idea or ask a question. Opens a GitHub issue form with the app version, OS and machine count filled in; nothing else is sent."
+          control={<SendFeedbackButton />}
         />
         <SettingsRow
           {...searchableSetting("usage-data")}
