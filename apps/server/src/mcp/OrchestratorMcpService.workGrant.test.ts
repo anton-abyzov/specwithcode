@@ -114,6 +114,7 @@ const linkedOnly: EffectiveWorkGrant = {
   owner: "self",
   hopLimit: 2,
   revoked: false,
+  routines: false,
 };
 
 /** A grant store that knows M4MAX's grant and which thread its work started. */

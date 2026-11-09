@@ -111,8 +111,9 @@ function deliveryReporter(scope: McpInvocationContext.McpInvocationScope): strin
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
-      // Another machine's work does not run this machine's routines.
-      yield* refuseGrantRoutineChange(yield* readCaller());
+      // Another machine's work runs this machine's routines only when its grant allows routines,
+      // and then only in a project the grant covers.
+      yield* refuseGrantRoutineChange(yield* readCaller(), undefined);
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
       const task = tasks.find((task) => task.id === input.taskId);
@@ -121,6 +122,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      yield* refuseGrantRoutineChange(yield* readCaller(), task.projectId);
       const { caller } = yield* readCaller();
       yield* assertPersonalChatBoundary(caller?.projectId, task.projectId);
       const { task: started } = yield* scheduler

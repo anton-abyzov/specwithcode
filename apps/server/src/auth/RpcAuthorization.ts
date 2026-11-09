@@ -6,6 +6,8 @@ import {
   AssetCreateUrlInput,
   assetResourceReadsHostFiles,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
+  type AuthPrincipal,
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
@@ -325,9 +327,30 @@ const requiredScopesForRpcCall = (
   return [requiredScopeForRpcMethod(method)];
 };
 
+/**
+ * Methods only this machine's own people may call: they change who may run
+ * work here, so another machine's coordinator key is refused even when it
+ * holds the scope (as Settings > Machines > Who can run work here is).
+ */
+const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([WS_METHODS.awayDecideAccess]);
+
+export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
+  principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
-export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+export const layer = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  principal?: AuthPrincipal | undefined,
+) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    if (refusesOwnerOnlyRpc(rpc._tag, principal)) {
+      return Effect.fail(
+        new EnvironmentAuthorizationError({
+          message: "Only this machine's owner can approve access here.",
+          requiredScope: AuthAccessWriteScope,
+        }),
+      );
+    }
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));

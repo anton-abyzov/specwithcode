@@ -34,6 +34,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import {
   Select,
   SelectGroup,
@@ -342,6 +343,22 @@ export function MachineWorkGrantRow({
               onChange={(instanceIds) => update({ accounts: { kind: "listed", instanceIds } })}
             />
           ) : null}
+        </dd>
+        <dt className="text-muted-foreground">{tx("Routines")}</dt>
+        <dd className="flex min-w-0 flex-wrap items-center gap-2">
+          <Switch
+            aria-label={`Let ${grant.machineLabel} manage scheduled routines`}
+            checked={grant.routines}
+            disabled={busy}
+            onCheckedChange={(checked) => update({ routines: Boolean(checked) })}
+          />
+          <span className="min-w-0 text-muted-foreground">
+            {tx(
+              grant.routines
+                ? "Manage scheduled routines: it may create, change, run and delete routines in its projects here"
+                : "Manage scheduled routines: off",
+            )}
+          </span>
         </dd>
         <dt className="text-muted-foreground">{tx("Most access")}</dt>
         <dd className="text-muted-foreground">{runtimeCapLabel(grant)}</dd>

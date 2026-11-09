@@ -8,6 +8,8 @@ import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import type * as Electron from "electron";
 
+import { DESKTOP_AWAY_BACK_ACTION, DESKTOP_AWAY_START_ACTION } from "@specweave-studio/contracts";
+
 import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -258,6 +260,23 @@ export const make = DesktopLifecycle.of({
             onQuit: () => {
               void runEffect(electronApp.quit.pipe(Effect.withSpan("desktop.lifecycle.trayQuit")));
             },
+            // Away mode: opens the window and its Away dialog, which plans before anything moves.
+            items: [
+              { label: "Leave This Machine...", action: DESKTOP_AWAY_START_ACTION },
+              { label: "Bring Work Back", action: DESKTOP_AWAY_BACK_ACTION },
+            ].map(({ label, action }) => ({
+              label,
+              onClick: () => {
+                void runEffect(
+                  desktopWindow.dispatchMenuAction(action, { reveal: true, target: "main" }).pipe(
+                    Effect.catchCause((cause) =>
+                      logLifecycleError("failed to open Away mode from the tray", { cause }),
+                    ),
+                    Effect.withSpan("desktop.lifecycle.trayAway"),
+                  ),
+                );
+              },
+            })),
           }),
         catch: (cause) => new DesktopLifecycleTrayError({ cause }),
       }).pipe(

@@ -59,6 +59,7 @@ import {
 } from "./machinesSettings.logic";
 import { withReadableGrantLabels } from "./machineWorkGrants.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
+import { AwayAccessRequests } from "../away/AwayAccessRequests";
 import { HandoffModeSettings } from "./HandoffModeSettings";
 import { IncomingWorkerAction } from "./IncomingWorkerSetup";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
@@ -231,6 +232,9 @@ export function MachinesSettingsPanel() {
             : controls;
         }}
       />
+      {fleet.primaryEnvironmentId ? (
+        <AwayAccessRequests environmentId={fleet.primaryEnvironmentId} />
+      ) : null}
       {fleet.primaryEnvironmentId ? (
         <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
       ) : null}

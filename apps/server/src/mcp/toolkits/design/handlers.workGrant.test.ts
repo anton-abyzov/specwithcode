@@ -42,6 +42,7 @@ const linkedOnly = (revoked = false): EffectiveWorkGrant => ({
   owner: "self",
   hopLimit: 2,
   revoked,
+  routines: false,
 });
 
 const grantStore = (revoked: boolean): WorkGrants.WorkGrantsShape => ({

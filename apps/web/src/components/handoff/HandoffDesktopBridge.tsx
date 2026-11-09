@@ -6,6 +6,7 @@ import {
 import { useEffect } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { awayIntentForMenuAction, requestAway } from "../../studio/awayRequest";
 import { handoffMode, runHandoffMode } from "../../studio/handoffMode";
 import { handleHandoffSleep } from "../../studio/handoffSleep";
 import { requestHandOffMachine } from "./HandOffMachineDialog";
@@ -24,10 +25,20 @@ export function runHandoffSleep(environmentId: EnvironmentId) {
 /**
  * Desktop menu actions: "Move Running Threads..." opens the dialog, and the
  * Mac's 'suspend' asks the local server to move running threads to the sleep
- * target, with no dialog.
+ * target, with no dialog. "Leave This Machine..." and "Bring Work Back", from
+ * the File menu or the tray, open the Away dialog.
  */
 export function HandoffDesktopBridge() {
   const environmentId = usePrimaryEnvironmentId();
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") return;
+    const unsubscribe = onMenuAction((action) => {
+      const intent = awayIntentForMenuAction(action);
+      if (intent !== null) requestAway(intent);
+    });
+    return () => unsubscribe?.();
+  }, []);
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
     if (typeof onMenuAction !== "function" || environmentId === null) return;

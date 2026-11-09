@@ -504,6 +504,7 @@ describe("buildMachineRows project lists", () => {
           interruptAt: null,
           runningThreads: 0,
           legacy: false,
+          routines: false,
         },
       ],
       projects: [],

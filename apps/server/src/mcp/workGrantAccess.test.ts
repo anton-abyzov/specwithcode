@@ -527,6 +527,7 @@ describe("claimCoordinatorEpoch with a standby registration", () => {
             owner: "self",
             hopLimit: 1,
             revoked: false,
+            routines: false,
           } satisfies WorkGrantContext["grant"]),
         originOf: () => Effect.succeed(undefined),
       }),

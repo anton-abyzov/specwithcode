@@ -47,6 +47,8 @@ export interface EffectiveWorkGrant {
   readonly owner: StudioWorkGrantOwner;
   readonly hopLimit: number;
   readonly revoked: boolean;
+  /** Whether its coordinator may manage scheduled routines in the grant's projects. */
+  readonly routines: boolean;
   /**
    * A grant this machine kept for a coordinator already allowed before grants
    * existed (the owner's own machines): its work keeps steering this
@@ -63,6 +65,7 @@ export const unscopedGrant = (coordinatorEnvironmentId: EnvironmentId): Effectiv
   owner: "self",
   hopLimit: workGrantHopLimit("self"),
   revoked: false,
+  routines: true,
 });
 
 /** A coordinator's first grant: its linked projects; another person's gets no sign-ins. */
@@ -70,6 +73,7 @@ export const newGrantDefaults = (owner: StudioWorkGrantOwner) => ({
   projects: { kind: "linked" } as StudioWorkGrantProjects,
   accounts: (owner === "self" ? { kind: "all" } : { kind: "none" }) as StudioWorkGrantAccounts,
   owner,
+  routines: false,
 });
 
 /** Names each machine on a path, by label where this machine knows one. */

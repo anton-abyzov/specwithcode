@@ -509,6 +509,10 @@ describe("DesktopLifecycle", () => {
             const tray = yield* Effect.promise(() => trayCreated.promise);
             assert.equal(tray.iconPath, platform === "win32" ? "C:/app/icon.ico" : "/app/icon.png");
             assert.equal(tray.quitLabel, "Quit SpecWithCode");
+            assert.deepEqual(
+              tray.items?.map((item) => item.label),
+              ["Leave This Machine...", "Bring Work Back"],
+            );
             assert.equal(yield* Queue.size(quits), 0, "the backend and its threads keep running");
 
             // Closing the reopened window again reuses the one tray icon.

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
+  AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthFilesystemWriteScope,
@@ -87,6 +88,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.handoffModeContinueHere]: AuthOrchestrationOperateScope,
   [WS_METHODS.handoffModeResumeFenced]: AuthOrchestrationOperateScope,
   [WS_METHODS.handoffModePreflight]: AuthOrchestrationReadScope,
+  // Away mode: the plan only reads; a request asks another machine; deciding changes a grant here.
+  [WS_METHODS.awayPreflight]: AuthOrchestrationReadScope,
+  [WS_METHODS.awayRequestAccess]: AuthOrchestrationOperateScope,
+  [WS_METHODS.awayAccessStatus]: AuthOrchestrationReadScope,
+  [WS_METHODS.awayAccessRequests]: AuthAccessReadScope,
+  [WS_METHODS.awayDecideAccess]: AuthAccessWriteScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,

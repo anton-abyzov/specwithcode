@@ -61,6 +61,12 @@ export const REMOTE_TOOL_ALLOWLIST = [
   "studio_file_chunk",
   // After an automatic takeover: claims the project's coordinator epoch there.
   "studio_coordinator_claim_epoch",
+  // Routines there, refused unless that machine's grant allows routines in the project.
+  "schedule_task",
+  "list_scheduled_tasks",
+  "update_scheduled_task",
+  "delete_scheduled_task",
+  "run_scheduled_task_now",
 ] as const;
 export type RemoteTool = (typeof REMOTE_TOOL_ALLOWLIST)[number];
 
@@ -72,6 +78,9 @@ const REMOTE_WORK_TOOLS: ReadonlySet<string> = new Set<RemoteTool>([
   "studio_thread_send",
   "studio_file_offer",
   "studio_file_chunk",
+  "schedule_task",
+  "update_scheduled_task",
+  "run_scheduled_task_now",
 ]);
 
 // A Chrome screenshot comes back as base64, twice (structured and text); chrome_peer

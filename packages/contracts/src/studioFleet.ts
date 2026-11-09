@@ -413,6 +413,12 @@ export const StudioWorkGrant = Schema.Struct({
   runningThreads: Schema.Int,
   /** Allowed before grants had scopes: all projects, all sign-ins until edited. */
   legacy: Schema.Boolean,
+  /**
+   * Whether its coordinator may create, change, run and delete scheduled
+   * routines in the grant's projects. Off until the owner turns it on; a
+   * legacy grant allows it.
+   */
+  routines: Schema.Boolean,
 });
 export type StudioWorkGrant = typeof StudioWorkGrant.Type;
 
@@ -455,6 +461,7 @@ export const StudioWorkGrantUpdateInput = exactStruct({
   projects: Schema.optionalKey(StudioWorkGrantProjects),
   accounts: Schema.optionalKey(StudioWorkGrantAccounts),
   owner: Schema.optionalKey(StudioWorkGrantOwner),
+  routines: Schema.optionalKey(Schema.Boolean),
 });
 export type StudioWorkGrantUpdateInput = typeof StudioWorkGrantUpdateInput.Type;
 

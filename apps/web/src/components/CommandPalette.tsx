@@ -63,6 +63,7 @@ import * as Option from "effect/Option";
 import {
   ArrowRightLeftIcon,
   ActivityIcon,
+  ArrowDownToLineIcon,
   AppWindowIcon,
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -74,6 +75,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  LaptopMinimalIcon,
   ListCollapseIcon,
   ListTodoIcon,
   MessageSquareDashedIcon,
@@ -90,6 +92,7 @@ import {
   SunIcon,
   TextSearchIcon,
 } from "lucide-react";
+import { requestAway } from "../studio/awayRequest";
 import { requestHandOffMachine } from "./handoff/HandOffMachineDialog";
 import { useModsStore } from "../mods/modsStore";
 import {
@@ -668,6 +671,14 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         event.stopPropagation();
         setOpen(false);
         void navigate({ to: "/design" });
+        return;
+      }
+      if (command === "away.start") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return;
+        setOpen(false);
+        requestAway("away");
         return;
       }
       const mode = overlayModeForCommand(command);
@@ -2788,6 +2799,37 @@ function OpenCommandPaletteDialog(props: {
     icon: <ArrowRightLeftIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       requestHandOffMachine();
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:away",
+    searchTerms: [
+      "away",
+      "leave this machine",
+      "go away",
+      "close laptop",
+      "routines",
+      "coordinator",
+      "always on",
+    ],
+    title: "Leave this machine…",
+    icon: <LaptopMinimalIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "away.start",
+    run: async () => {
+      requestAway("away");
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:away-back",
+    searchTerms: ["back", "bring work back", "return", "away"],
+    title: "Bring work back",
+    icon: <ArrowDownToLineIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      requestAway("back");
     },
   });
 

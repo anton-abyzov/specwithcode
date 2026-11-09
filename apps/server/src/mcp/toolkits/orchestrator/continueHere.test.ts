@@ -287,6 +287,7 @@ it.effect("refuses continuing a handoff to a thread another machine's grant star
     owner: "self",
     hopLimit: 2,
     revoked: false,
+    routines: false,
   } as const;
   const grants: WorkGrants.WorkGrantsShape = {
     ...WorkGrants.WorkGrants.defaultValue(),

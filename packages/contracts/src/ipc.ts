@@ -1061,6 +1061,9 @@ export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInp
 /** Handoff mode menu actions the desktop sends over `onMenuAction`. */
 export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
+/** Away mode menu and tray actions: open the Away dialog to leave, or to bring work back. */
+export const DESKTOP_AWAY_START_ACTION = "away-mode:leave";
+export const DESKTOP_AWAY_BACK_ACTION = "away-mode:back";
 
 export interface DesktopBridge extends DesktopUpdateBridge {
   getAppBranding: () => DesktopAppBranding | null;

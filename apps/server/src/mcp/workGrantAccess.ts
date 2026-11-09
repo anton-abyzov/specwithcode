@@ -436,21 +436,37 @@ export const assertThreadChangeable = Effect.fn("mcp.assertThreadChangeable")(fu
   return work;
 });
 
+/** Where the user lets another machine's coordinator manage routines here. */
+export const ROUTINES_GRANT_HINT =
+  "The user can allow it with Manage scheduled routines in Settings > Machines > Who can run work here.";
+
 /**
- * Routines are refused to another machine's work until a routine records the
- * grant it was made under: a routine runs later as this machine's own work,
- * outside the grant's projects, sign-ins and revocation. A legacy grant (the
- * owner's own machines, from before grants) keeps managing routines as it did.
+ * Another machine's work may create, change, delete or run this machine's
+ * scheduled routines only when its grant allows routines, and only in a
+ * project the grant covers. A routine made or changed that way records the
+ * grant (see ScheduledTaskGrantGate), so it stops when the grant does. A
+ * legacy grant (the owner's own machines, from before grants) keeps managing
+ * routines as it did. Without a project only the capability is checked, so a
+ * caller refused anyway learns nothing about this machine's routines. Returns
+ * the grant the change is made under, if any.
  */
 export const refuseGrantRoutineChange = Effect.fn("mcp.refuseGrantRoutineChange")(function* (
   context: GrantCaller,
+  projectId: ProjectId | undefined,
 ) {
   const work = yield* workGrantOf(context);
-  if (work === undefined || work.grant.legacy === true) return;
-  return yield* new OrchestratorMcpFailure({
-    code: "outside_grant_scope",
-    message: `This machine does not let ${work.coordinatorLabel}'s work create, change, delete or run its scheduled routines. Ask the user here to set up the routine, or schedule it on ${work.coordinatorLabel}.`,
-  });
+  if (work === undefined || work.grant.legacy === true) return undefined;
+  yield* refuseRevoked(work);
+  if (!work.grant.routines)
+    return yield* new OrchestratorMcpFailure({
+      code: "outside_grant_scope",
+      message: `This machine does not let ${work.coordinatorLabel}'s work create, change, delete or run its scheduled routines. Ask the user here to set up the routine, or schedule it on ${work.coordinatorLabel}. ${ROUTINES_GRANT_HINT}`,
+    });
+  if (projectId === undefined) return work;
+  const project = yield* findProject(projectId);
+  if (project === undefined) return yield* unreachable(work, "project");
+  yield* assertProjectInGrant(work, project);
+  return work;
 });
 
 /** At most this many threads' origins come back from one claim, as many as a lease reports. */

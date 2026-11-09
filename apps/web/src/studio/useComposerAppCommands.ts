@@ -1,6 +1,6 @@
 /**
  * Runs a composer's app commands (`/stop`, `/continue`, `/stop-all`,
- * `/continue-all`, `/status`) locally, with no model turn.
+ * `/continue-all`, `/status`, `/away`, `/back`) locally, with no model turn.
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { useCallback } from "react";
@@ -13,6 +13,7 @@ import {
   interruptedRunId,
   threadIsRunning,
 } from "./bulkThreadControl";
+import { requestAway } from "./awayRequest";
 import type { ComposerAppCommand } from "./composerAppCommands";
 import { useBulkThreadControl } from "./useBulkThreadControl";
 
@@ -89,6 +90,12 @@ export function useComposerAppCommands(scope: ComposerAppCommandScope) {
         }
         case "status": {
           notice("Project threads", bulkStatusSummary(bulkThreadTargets(threads())));
+          return;
+        }
+        case "away":
+        case "back": {
+          // The Away dialog plans the move and asks before anything changes.
+          requestAway(command);
           return;
         }
       }

@@ -243,6 +243,10 @@ import * as LinkedMemoryPeers from "./project/LinkedMemoryPeers.ts";
 import * as LinkedPeerRoute from "./project/LinkedPeerRoute.ts";
 import * as LinkedPeerSync from "./project/LinkedPeerSync.ts";
 import * as HandoffRoute from "./handoff/handoffRoute.ts";
+import * as AwayAccessRoute from "./away/awayAccessRoute.ts";
+import * as AwayAccess from "./away/AwayAccessRequest.ts";
+import * as AwayPlanner from "./away/AwayPlanner.ts";
+import * as AwayRpc from "./away/AwayRpc.ts";
 import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
 import * as TemporaryProjects from "./project/TemporaryProjects.ts";
@@ -726,6 +730,13 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(HandoffReceiver.layer),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
+  // Away mode: the read-only preflight, and access requests between machines.
+  // Its RPC handlers live here for the reason the computer-use ones do (see below).
+  AwayRpc.layerRpcHandlers.pipe(
+    Layer.provideMerge(AwayPlanner.layer),
+    Layer.provideMerge(AwayAccess.layer.pipe(Layer.provide(FleetTargets.layer))),
+    Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+  ),
   // Linked copies kept in step between machines without an open app window:
   // the peer route's side, and the loop that drives the pairs this server owns.
   LinkedMemoryPeers.layerReceiver,
@@ -1004,6 +1015,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAttachmentUploadRoute,
     FolderTransferRoute.layer,
     HandoffRoute.layer,
+    AwayAccessRoute.layer,
     CoordinatorSuspendRoute.layer,
     MachineNicknameSync.routeLayer,
     GitHubCredentialRoute.routeLayer,

@@ -58,9 +58,11 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
 import * as CoordinatorRole from "../project/CoordinatorRole.ts";
 import { CoordinatorWakeGate } from "../project/CoordinatorWakeGate.ts";
+import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
 import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
+import { makeRoutineGrantGate, recordRoutineGrant } from "./ScheduledTaskGrantGate.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
@@ -191,6 +193,14 @@ export class ScheduledTaskService extends Context.Service<
       readonly requestedAt: DateTime.DateTime;
       readonly error: string;
     }) => Effect.Effect<"recorded" | "running" | "stale", ScheduledTaskError>;
+    /**
+     * Records that another machine's coordinator made or changed the routine
+     * under its work grant, so it stops when that grant does (ScheduledTaskGrantGate).
+     */
+    readonly recordGrant?: (input: {
+      readonly id: ScheduledTaskId;
+      readonly coordinatorEnvironmentId: string;
+    }) => Effect.Effect<void, ScheduledTaskError>;
     /** The routines a coordinator sends its standby, and the standby keeps (ScheduledTaskCopies). */
     readonly routineCopies?: () => Effect.Effect<RoutineCopies["Service"]>;
     /**
@@ -247,6 +257,12 @@ export const layer = Layer.effect(
     const coordinatorHold = makeRoutineCoordinatorGate({
       role,
       wakeGate: yield* CoordinatorWakeGate,
+      projects,
+    });
+    // A routine made under another machine's grant stops when that grant does.
+    const grantHold = makeRoutineGrantGate({
+      sql,
+      grants: yield* WorkGrants.WorkGrants,
       projects,
     });
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
@@ -756,6 +772,14 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
+        const grantNote = yield* grantHold(active);
+        if (grantNote !== null) {
+          yield* notifyChanged;
+          if (trigger === "scheduled") return { ...active, enabled: false, nextRunAt: null };
+          if (webhook !== undefined)
+            return yield* new WebhookDeliverySkipped({ reason: grantNote });
+          return yield* taskError(grantNote, { taskId: active.id });
+        }
         const hold = yield* coordinatorHold(active);
         if (hold !== null) {
           // A copy at rest never writes `running`; one that waits stays due.
@@ -1717,6 +1741,11 @@ export const layer = Layer.effect(
           Effect.provideService(SqlClient.SqlClient, sql),
         );
         // Refused here with its own reason, not wrapped as a failed run below.
+        const grantNote = yield* grantHold(task);
+        if (grantNote !== null) {
+          yield* notifyChanged;
+          return yield* taskError(grantNote, { taskId: task.id });
+        }
         const hold = yield* coordinatorHold(task);
         if (hold !== null)
           return yield* taskError(hold.kind === "rest" ? hold.note : hold.reason, {
@@ -1808,6 +1837,13 @@ export const layer = Layer.effect(
       getWebhookDelivery: webhooks.getWebhookDelivery,
       triggerWebhook: webhooks.triggerWebhook,
       recordTurnFailure,
+      recordGrant: (input) =>
+        recordRoutineGrant(input.id, input.coordinatorEnvironmentId).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError((cause) =>
+            taskError("Could not record the routine's work grant.", { taskId: input.id, cause }),
+          ),
+        ),
       routineCopies: () => Effect.succeed(routineCopies),
     });
   }),

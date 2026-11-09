@@ -170,6 +170,11 @@ const ScheduledTaskRunPolicy = Schema.Struct({
    * this; see ScheduledTaskExpiry.
    */
   finishedAt: Schema.optional(Schema.String),
+  /**
+   * The work grant another machine's coordinator made or last changed the
+   * routine under; absent for the owner's own. See ScheduledTaskGrantGate.
+   */
+  grantedBy: Schema.optional(Schema.Struct({ coordinatorEnvironmentId: Schema.String })),
 });
 const decodeRunPolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskRunPolicy));
 const decodeRunPolicyJson = (json: string | null) =>
