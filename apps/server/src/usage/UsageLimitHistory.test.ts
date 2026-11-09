@@ -7,6 +7,7 @@ import {
   UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -98,8 +99,9 @@ const lifetime = (stateDir: string) =>
   });
 
 // History keeps fourteen days by the real clock, so readings sit an hour ago.
-const base = Math.floor(Date.now() / 60_000) * 60_000 - 60 * 60_000;
-const at = (minutes: number) => new Date(base + minutes * 60_000).toISOString();
+const base =
+  Math.floor(DateTime.toEpochMillis(DateTime.nowUnsafe()) / 60_000) * 60_000 - 60 * 60_000;
+const at = (minutes: number) => DateTime.formatIso(DateTime.makeUnsafe(base + minutes * 60_000));
 
 describe("UsageLimitHistory", () => {
   it.live("records native and hub reads, serves them, and keeps them across a restart", () =>
