@@ -6,7 +6,11 @@ import * as Schema from "effect/Schema";
 
 import type * as Electron from "electron";
 
-import { DESKTOP_FEEDBACK_ACTIONS } from "@specweave-studio/contracts";
+import {
+  DESKTOP_AWAY_BACK_ACTION,
+  DESKTOP_AWAY_START_ACTION,
+  DESKTOP_FEEDBACK_ACTIONS,
+} from "@specweave-studio/contracts";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -146,6 +150,9 @@ export const make = Effect.gen(function* () {
     const handOffMachineClick = () => {
       runMenuEffect(HANDOFF_MACHINE_ACTION, dispatchMenuAction(HANDOFF_MACHINE_ACTION));
     };
+    const awayClick = (action: string) => () => {
+      runMenuEffect(action, dispatchMenuAction(action));
+    };
     // Chromium already pastes as plain text for this chord, so the accelerator
     // needs nothing from the menu: the composer and the terminal each arm
     // themselves from the same keydown. Routing it through the renderer anyway
@@ -218,6 +225,8 @@ export const make = Effect.gen(function* () {
                 { type: "separator" as const },
               ]),
           { label: "Move Running Threads...", click: handOffMachineClick },
+          { label: "Leave This Machine...", click: awayClick(DESKTOP_AWAY_START_ACTION) },
+          { label: "Bring Work Back", click: awayClick(DESKTOP_AWAY_BACK_ACTION) },
           { type: "separator" as const },
           { role: environment.platform === "darwin" ? "close" : "quit" },
         ],

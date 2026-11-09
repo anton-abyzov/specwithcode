@@ -11,6 +11,7 @@ import {
 import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
 import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
+import { AWAY_RPC_METHODS, awayRpcs } from "./awayRpc.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
 import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
@@ -436,6 +437,7 @@ export const WS_METHODS = {
   ...PROJECT_LINK_RPC_METHODS,
   ...LINKED_MEMORY_RPC_METHODS,
   ...HANDOFF_MODE_RPC_METHODS,
+  ...AWAY_RPC_METHODS,
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
   ...USAGE_LIMIT_HISTORY_RPC_METHODS,
@@ -2388,6 +2390,9 @@ export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middlewar
   RpcScopeAuthorization,
 );
 
+/** Away mode preflight and access requests; its own group for the same depth reason. */
+export const WsAwayRpcGroup = RpcGroup.make(...awayRpcs).middleware(RpcScopeAuthorization);
+
 /** Provisioning a fleet machine's packages and service; its own group for the same depth reason. */
 export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
   RpcScopeAuthorization,
@@ -2415,6 +2420,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectPlanningRpcGroup)
   .merge(WsProjectSkillsActionsRpcGroup)
   .merge(WsHandoffModeRpcGroup)
+  .merge(WsAwayRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup)
   .merge(WsGitHubSignInRpcGroup)

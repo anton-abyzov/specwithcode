@@ -70,6 +70,7 @@ const grant = (overrides: Partial<StudioWorkGrant> = {}): StudioWorkGrant => ({
   interruptAt: null,
   runningThreads: 0,
   legacy: false,
+  routines: false,
   ...overrides,
 });
 const member = (environmentId: string, projectId: string) => ({

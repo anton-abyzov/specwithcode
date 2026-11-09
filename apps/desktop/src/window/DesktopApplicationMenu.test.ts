@@ -162,6 +162,32 @@ describe("DesktopApplicationMenu", () => {
     }),
   );
 
+  it.effect.each([
+    ["Leave This Machine...", "away-mode:leave"],
+    ["Bring Work Back", "away-mode:back"],
+  ] as const)("routes File > %s to the renderer's Away dialog", ([label, action]) =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* configureMenu(selectedAction, applicationMenuTemplate);
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const fileMenu = template.find((item) => item.label === "File");
+      if (!Array.isArray(fileMenu?.submenu)) {
+        throw new Error("Expected File menu submenu to be an array.");
+      }
+      const item = fileMenu.submenu.find((entry) => entry.label === label);
+      if (typeof item?.click !== "function") {
+        throw new Error(`Expected ${label} to have a click handler.`);
+      }
+
+      item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), action);
+    }),
+  );
+
   it.effect("owns Paste as Text and routes it through the renderer", () =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();

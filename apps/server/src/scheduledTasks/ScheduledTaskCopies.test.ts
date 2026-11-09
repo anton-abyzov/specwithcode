@@ -1,5 +1,10 @@
 import { assert, it } from "@effect/vitest";
-import { COORDINATOR_ROUTINE_COPIES_MAX, type ProjectId } from "@specweave-studio/contracts";
+import {
+  COORDINATOR_ROUTINE_COPIES_MAX,
+  type ProjectId,
+  ProviderInstanceId,
+  type ScheduledTaskGrantedBy,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Sqlite from "../persistence/Sqlite.ts";
@@ -190,3 +195,60 @@ it("treats a full list as possibly cut, so nothing is removed", () => {
     routineCopiesComplete(Array.from({ length: COORDINATOR_ROUTINE_COPIES_MAX }) as never),
   );
 });
+
+it.effect("carries the work grant a routine was made under to the standby's copy", () =>
+  Effect.gen(function* () {
+    const { run, sql } = yield* harness;
+    yield* TestClock.setTime(Date.parse("2026-11-03T12:00:00.000Z"));
+    const grantedBy: ScheduledTaskGrantedBy = {
+      coordinatorEnvironmentId: "env-m4",
+      runtimeCap: "auto",
+      accounts: { kind: "listed", instanceIds: [ProviderInstanceId.make("codex")] },
+    };
+    yield* run((service) =>
+      Effect.gen(function* () {
+        const copies = yield* service.routineCopies!();
+        yield* service.upsert(taskInput({ id: "granted" }), { grantedBy });
+        yield* service.upsert(taskInput({ id: "owned" }));
+        const sent = yield* snapshotOf(copies);
+        assert.deepEqual(
+          sent.routines.map((copy): ReadonlyArray<unknown> => [copy.id, copy.grantedBy]),
+          [
+            ["granted", grantedBy],
+            ["owned", undefined],
+          ],
+        );
+        yield* sql`DELETE FROM scheduled_tasks WHERE project_id = ${PROJECT}`;
+        // The standby already held "owned" as a grant's routine: the owner's copy clears that.
+        yield* service.upsert(taskInput({ id: "owned", projectId: STANDBY_PROJECT }), {
+          grantedBy,
+        });
+
+        yield* copies.replace({
+          projectId: STANDBY_PROJECT,
+          logicalProjectId: "logical-a",
+          routines: sent.routines,
+        });
+        const kept = yield* sql<{ task_id: string; granted: string | null }>`
+          SELECT task_id, json_extract(run_policy_json, '$.grantedBy') AS granted
+          FROM scheduled_tasks WHERE project_id = ${STANDBY_PROJECT} ORDER BY task_id`;
+        assert.deepEqual(
+          kept.map((row) => [row.task_id, row.granted === null ? null : JSON.parse(row.granted)]),
+          [
+            ["granted", grantedBy],
+            ["owned", null],
+          ],
+        );
+        // Sent again unchanged: the copy is the same, grant included.
+        const resent = yield* copies.snapshot({
+          projectId: STANDBY_PROJECT,
+          logicalProjectId: "logical-a",
+        });
+        assert.deepEqual(
+          resent?.routines.find((copy) => copy.id === "granted")?.grantedBy,
+          grantedBy,
+        );
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);

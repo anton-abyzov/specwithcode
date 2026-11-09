@@ -4,6 +4,7 @@ import {
   ScheduledTaskCheck,
   ScheduledTaskId,
   ScheduledTaskError,
+  ScheduledTaskGrantedBy,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -170,6 +171,11 @@ const ScheduledTaskRunPolicy = Schema.Struct({
    * this; see ScheduledTaskExpiry.
    */
   finishedAt: Schema.optional(Schema.String),
+  /**
+   * The work grant another machine's coordinator made or last changed the
+   * routine under; absent for the owner's own. See ScheduledTaskGrantGate.
+   */
+  grantedBy: Schema.optional(ScheduledTaskGrantedBy),
 });
 const decodeRunPolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskRunPolicy));
 const decodeRunPolicyJson = (json: string | null) =>
@@ -182,6 +188,8 @@ export const encodeRunPolicyJson = (
     readonly check?: ScheduledTaskCheck | null | undefined;
     readonly brief?: ScheduledTaskBrief | null | undefined;
     readonly ownThread?: boolean | undefined;
+    /** Kept with the rest, so a save never drops the grant a routine runs under. */
+    readonly grantedBy?: ScheduledTaskGrantedBy | null | undefined;
   },
   onceGeneration = 0,
 ): string | null =>
@@ -189,6 +197,7 @@ export const encodeRunPolicyJson = (
   !task.check &&
   !task.brief &&
   !task.ownThread &&
+  !task.grantedBy &&
   onceGeneration === 0
     ? null
     : JSON.stringify({
@@ -197,7 +206,12 @@ export const encodeRunPolicyJson = (
         ...(task.brief ? { brief: task.brief } : {}),
         ...(task.ownThread ? { ownThread: true } : {}),
         ...(onceGeneration === 0 ? {} : { onceGeneration }),
+        ...(task.grantedBy ? { grantedBy: task.grantedBy } : {}),
       });
+
+/** The grant recorded on a routine's run policy column, if any (see ScheduledTaskGrantGate). */
+export const decodeRoutineGrantJson = (json: string | null) =>
+  decodeRunPolicyJson(json).pipe(Effect.map((policy) => policy.grantedBy));
 
 /** A task's one-time arming (see ScheduledTaskRunPolicy); 0 when never re-armed. */
 export const readOnceGeneration = Effect.fn("ScheduledTaskService.readOnceGeneration")(

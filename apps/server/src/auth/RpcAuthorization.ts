@@ -6,6 +6,8 @@ import {
   AssetCreateUrlInput,
   assetResourceReadsHostFiles,
   AuthAccessReadScope,
+  AuthAccessWriteScope,
+  type AuthPrincipal,
   ServerSettingsPatch,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
@@ -325,9 +327,55 @@ const requiredScopesForRpcCall = (
   return [requiredScopeForRpcMethod(method)];
 };
 
+/**
+ * Methods only this machine's own people may call: they change who may run
+ * work here, so another machine's coordinator key is refused even when it
+ * holds the scope (as Settings > Machines > Who can run work here is).
+ *
+ * This meets the bar HTTP grant changes set (requireGrantManager in
+ * studioFleetHttp.ts: access:write, a trusted request, never a coordinator
+ * principal). The scope is checked per call below. The trusted request is
+ * checked once, when the socket opens: a cookie session may open one only
+ * from this server's own origin (EnvironmentAuth.authenticateSameOriginRequest),
+ * and any other socket comes from a bearer or DPoP credential or a ticket one
+ * minted, which the HTTP check also lets through without an Origin. So a
+ * socket from the owner's own app is the same-origin request HTTP asks for.
+ */
+const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
+  WS_METHODS.awayDecideAccess,
+  // Away moves this machine's threads, routines and coordinator to another
+  // machine, asks that machine for access, or changes when that happens: the
+  // owner decides, never a coordinator key that reached this socket.
+  WS_METHODS.awayRequestAccess,
+  WS_METHODS.awayStart,
+  WS_METHODS.awayBringBack,
+  WS_METHODS.awayUpdateConfig,
+  // Run here anyway may let two machines run one coordinator: the owner's call alone.
+  WS_METHODS.awayForceLocal,
+]);
+
+const ownerOnlyRpcMessage = (method: string) =>
+  method === WS_METHODS.awayDecideAccess
+    ? "Only this machine's owner can approve access here."
+    : "Only this machine's owner can start, stop or change Away here.";
+
+export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
+  principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
+
 /** Authorizes every RPC on one connection against that connection's session scopes. */
-export const layer = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+export const layer = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  principal?: AuthPrincipal | undefined,
+) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
+    if (refusesOwnerOnlyRpc(rpc._tag, principal)) {
+      return Effect.fail(
+        new EnvironmentAuthorizationError({
+          message: ownerOnlyRpcMessage(rpc._tag),
+          requiredScope: AuthAccessWriteScope,
+        }),
+      );
+    }
     const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
     const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
     return requiredScope === undefined ? effect : Effect.fail(rpcAuthorizationError(requiredScope));

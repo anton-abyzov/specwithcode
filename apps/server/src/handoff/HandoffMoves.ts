@@ -47,6 +47,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ThreadShell,
   type ProjectId,
+  type RunId,
   type ThreadId,
   appendThreadExecutionHistory,
 } from "@specweave-studio/contracts";
@@ -62,8 +63,10 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import { RemoteStudioMcpClient } from "../fleet/RemoteStudioMcpClient.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import { queuedRunsInDeliveryOrder } from "../orchestration-v2/QueuedRunOrder.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import {
   autoContinueMinutes,
@@ -121,6 +124,56 @@ export const REPLICATE_RETRY_MAX_MS = 10 * 60_000;
 export function replicateRetryDelay(failures: number): number {
   const doublings = Math.max(0, Math.min(failures - 1, 20));
   return Math.min(REPLICATE_RETRY_BASE_MS * 2 ** doublings, REPLICATE_RETRY_MAX_MS);
+}
+
+/** A queued message Away mode carries to the continuation. */
+export interface QueuedMessage {
+  readonly runId: RunId;
+  readonly text: string;
+  readonly attachments: number;
+}
+
+/** A thread's queued messages in delivery order. A delegated child's completion stays here. */
+export function queuedMessagesFrom(
+  records: Parameters<typeof queuedRunsInDeliveryOrder>[0],
+): ReadonlyArray<QueuedMessage> {
+  return queuedRunsInDeliveryOrder(records).flatMap((run) => {
+    const message = records.messages.find((entry) => entry.id === run.userMessageId);
+    if (message === undefined || message.delegatedCompletion !== undefined) return [];
+    return [{ runId: run.id, text: message.text, attachments: message.attachments.length }];
+  });
+}
+
+/**
+ * Sends queued messages to a continuation in order, each under an id a retry
+ * reuses, and cancels each here once it is there. Stops at the first that
+ * does not go (or carries attachments); the rest stay queued here.
+ */
+export const carryQueuedMessages = (input: {
+  readonly queued: ReadonlyArray<QueuedMessage>;
+  readonly send: (message: QueuedMessage) => Effect.Effect<boolean>;
+  readonly cancel: (message: QueuedMessage) => Effect.Effect<void>;
+}) =>
+  Effect.gen(function* () {
+    let sent = 0;
+    for (const message of input.queued) {
+      if (message.attachments > 0 || message.text.trim().length === 0) break;
+      if (!(yield* input.send(message))) break;
+      yield* input.cancel(message);
+      sent += 1;
+    }
+    return queuedCarryText(sent, input.queued.length);
+  });
+
+/** What a move says about the queued messages that went with it. */
+export function queuedCarryText(sent: number, total: number): string {
+  if (total === 0) return "";
+  if (sent === total)
+    return total === 1 ? "Its queued message went too." : `Its ${total} queued messages went too.`;
+  const left = total - sent;
+  return sent === 0
+    ? `Its ${total === 1 ? "queued message stays" : `${total} queued messages stay`} here; send ${total === 1 ? "it" : "them"} again on the other machine.`
+    : `${sent} of ${total} queued messages went; ${left} stay${left === 1 ? "s" : ""} here.`;
 }
 
 const failed = (code: HandoffModeErrorCode, message: string) =>
@@ -858,6 +911,54 @@ export const make = Effect.gen(function* () {
       return out;
     });
 
+  /** The thread's queued messages, for Away mode to carry; none when they cannot be read. */
+  const queuedMessagesOf = (threadId: ThreadId) =>
+    projections.getThreadRecords(threadId, ["runs", "messages"]).pipe(
+      Effect.map(queuedMessagesFrom),
+      Effect.catchCause(() => Effect.succeed<ReadonlyArray<QueuedMessage>>([])),
+    );
+
+  /** Sends the queued messages to the continuation on `destination` (see carryQueuedMessages). */
+  const carryQueue = (
+    sourceThreadId: ThreadId,
+    destination: EnvironmentId,
+    continuedThreadId: ThreadId,
+    queued: ReadonlyArray<QueuedMessage>,
+  ) =>
+    Effect.gen(function* () {
+      const remote = yield* Effect.serviceOption(RemoteStudioMcpClient);
+      const target = yield* peers.target(destination).pipe(Effect.option);
+      if (Option.isNone(remote) || Option.isNone(target)) return queuedCarryText(0, queued.length);
+      return yield* carryQueuedMessages({
+        queued,
+        send: (message) =>
+          remote.value
+            .call({
+              machineId: target.value.machineId,
+              tool: "studio_thread_send",
+              arguments: {
+                threadId: continuedThreadId,
+                message: message.text,
+                mode: "queue",
+                clientRequestId: `away-queue:${message.runId}`,
+              },
+            })
+            .pipe(
+              Effect.as(true),
+              Effect.catchCause(() => Effect.succeed(false)),
+            ),
+        cancel: (message) =>
+          orchestrator
+            .dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make(`away-queue-cancel:${message.runId}`),
+              threadId: sourceThreadId,
+              runId: message.runId,
+            })
+            .pipe(Effect.ignore),
+      });
+    });
+
   const handOffMachine = (input: HandOffMachineInput) =>
     Effect.gen(function* () {
       const destination = input.destinationEnvironmentId;
@@ -869,20 +970,31 @@ export const make = Effect.gen(function* () {
       const document = yield* handoff.document;
       const threadIds = input.threadIds ?? (yield* runningHandoffThreads(document));
       const reason: TakeoverReason = input.reason === "sleep" ? "sleep" : "machine-handoff";
+      // Away mode names its threads, whatever their handoff mode, and their queues go too.
+      const carriesQueue = input.reason === "away" || input.reason === "back";
       const results: Array<HandoffMachineThreadResult> = [];
       for (const threadId of threadIds) {
         const shell = yield* shellOf(threadId).pipe(Effect.option);
         const title = Option.isSome(shell) ? shell.value.title.slice(0, 500) : String(threadId);
+        const queued = carriesQueue ? yield* queuedMessagesOf(threadId) : [];
         const moved = yield* handOffAs(
           { threadId, destinationEnvironmentId: destination },
           reason,
         ).pipe(Effect.result);
         if (moved._tag === "Success") {
+          const carried =
+            queued.length === 0
+              ? null
+              : yield* carryQueue(threadId, destination, moved.success.threadId, queued);
           results.push({
             threadId,
             title,
             outcome: "moved",
-            detail: moved.success.notice,
+            detail:
+              [moved.success.notice, carried]
+                .filter((part): part is string => part !== null && part !== "")
+                .join(" ")
+                .slice(0, 500) || null,
             continuedThreadId: moved.success.threadId,
             resumed: Option.isSome(shell) && shell.value.activeRunId !== null,
           });
@@ -905,7 +1017,8 @@ export const make = Effect.gen(function* () {
       const run: HandoffMachineRun = {
         destinationEnvironmentId: destination,
         destinationLabel: label.slice(0, 120),
-        reason: input.reason,
+        // The saved run keeps the reasons older servers read; Away keeps its own session.
+        reason: input.reason === "sleep" ? "sleep" : "manual",
         startedAt,
         finishedAt: yield* nowIso,
         results,

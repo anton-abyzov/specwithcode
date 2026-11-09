@@ -104,6 +104,8 @@ export const harness = Effect.gen(function* () {
     role: ACTIVE,
     fence: null as string | null,
     launches: 0,
+    /** What each own-thread launch asked for, in order. */
+    launched: [] as Array<{ readonly threadId?: string | undefined }>,
     sends: 0,
     due: Effect.void as Effect.Effect<void, never, SqlClient.SqlClient>,
   };
@@ -120,9 +122,10 @@ export const harness = Effect.gen(function* () {
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       // A routine with a thread of its own starts it here.
-      launch: () =>
+      launch: (input) =>
         Effect.sync(() => {
           state.launches++;
+          state.launched.push({ threadId: input.threadId });
           return { threadId: "synthetic", resumed: false } as never;
         }),
     }),

@@ -10,6 +10,7 @@ import {
   isProviderAvailable,
   MessageId,
   type ModelSelection,
+  type ScheduledTaskGrantedBy,
   NodeId,
   RuntimeRequestId,
   TurnItemId,
@@ -156,8 +157,10 @@ import {
   recordLaunchOrigin,
   refuseGrantRoutineChange,
   refuseRevoked,
+  type WorkGrantContext,
   workGrantOf,
 } from "./workGrantAccess.ts";
+import { refuseOthersRoutine as refuseOthersRoutineFor } from "./routineOwnership.ts";
 import { launchOriginOf } from "./threadOrigin.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -1504,14 +1507,68 @@ const make = Effect.gen(function* () {
     });
 
   /**
-   * Another machine's work under its grant: routines are refused to it, and a
-   * bulk call reaches only a project the grant covers and, in it, only the
-   * threads the grant's own coordinator owns. A caller without a grant passes.
+   * Another machine's work under its grant: routines only when the grant
+   * allows them, in a project it covers, and a bulk call reaches only a
+   * project the grant covers and, in it, only the threads the grant's own
+   * coordinator owns. A caller without a grant passes.
    */
   const refuseGrantRoutines = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
-  ) => refuseGrantRoutineChange({ scope, caller: parent?.thread });
+    projectId: ProjectId | undefined,
+  ) =>
+    refuseGrantRoutineChange({ scope, caller: parent?.thread }, projectId).pipe(
+      Effect.provideService(ProjectService.ProjectService, projects),
+    );
+  /**
+   * What a routine saved under another machine's grant records, in the same
+   * save: the grant, the sign-ins it allowed and the most the caller could run
+   * with (no more than the grant's cap). The routine runs only within them
+   * (ScheduledTaskGrantGate). Undefined for a caller without a grant.
+   */
+  const routineGrantOf = (
+    work: WorkGrantContext | undefined,
+    limits: { readonly runtimeMode: RuntimeMode },
+    modelSelection: ModelSelection,
+  ) =>
+    work === undefined
+      ? Effect.succeed(undefined)
+      : assertAccountInGrant(work, modelSelection.instanceId).pipe(
+          Effect.as({
+            grantedBy: {
+              coordinatorEnvironmentId: work.grant.coordinatorEnvironmentId,
+              runtimeCap: limits.runtimeMode,
+              accounts: work.grant.accounts,
+            } satisfies ScheduledTaskGrantedBy,
+          }),
+        );
+  /**
+   * A grantee changes only routines its own grant made: the owner's routines
+   * here stay the owner's, and another machine's stay that machine's.
+   */
+  const refuseOthersRoutine = (
+    work: WorkGrantContext | undefined,
+    task: Pick<ScheduledTask, "id" | "title">,
+  ) =>
+    Effect.gen(function* () {
+      if (work === undefined) return;
+      const readGrant = scheduledTasks.readGrant;
+      const grantedBy =
+        readGrant === undefined
+          ? undefined
+          : yield* readGrant(task.id).pipe(
+              Effect.mapError((error) =>
+                failure("orchestration_error", `Could not load scheduled task: ${error.message}`),
+              ),
+            );
+      if (grantedBy?.coordinatorEnvironmentId === work.grant.coordinatorEnvironmentId) return;
+      return yield* failure(
+        "outside_grant_scope",
+        grantedBy === undefined
+          ? `Routine "${task.title}" was set up on this machine, so ${work.coordinatorLabel}'s work can't change it. Ask the user here to change it, or schedule a new routine.`
+          : `Routine "${task.title}" was set up by another machine's work, so ${work.coordinatorLabel}'s work can't change it. Ask the user here to change it, or schedule a new routine.`,
+      );
+    });
   const grantForProject = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
@@ -2275,7 +2332,6 @@ const make = Effect.gen(function* () {
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
-        yield* refuseGrantRoutines(scope, parent);
         // A routine holds no origin, so it would outlive the ceiling this work carries.
         const carried = parent?.thread.origin?.carried;
         if (carried !== undefined) {
@@ -2285,6 +2341,7 @@ const make = Effect.gen(function* () {
           );
         }
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        const work = yield* refuseGrantRoutines(scope, parent, projectId);
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const project = yield* requireProject(projectId);
         yield* assertCheckAllowed(input.check, [limits]);
@@ -2347,7 +2404,7 @@ const make = Effect.gen(function* () {
               }),
         };
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+          .upsert(upsertInput, yield* routineGrantOf(work, limits, modelSelection))
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not schedule task: ${error.message}`),
@@ -2389,8 +2446,11 @@ const make = Effect.gen(function* () {
     updateScheduledTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
-        yield* refuseGrantRoutines(scope, parent);
+        // The capability first, so a refused caller reads nothing; then the routine's project.
+        yield* refuseGrantRoutines(scope, parent, undefined);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
+        const work = yield* refuseGrantRoutines(scope, parent, existing.projectId);
+        yield* refuseOthersRoutine(work, existing);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* assertCheckAllowed(input.check, [limits, existing]);
         // A coordinator cannot bind a routine to itself; it keeps its own thread.
@@ -2449,7 +2509,7 @@ const make = Effect.gen(function* () {
           ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
         };
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+          .upsert(upsertInput, yield* routineGrantOf(work, limits, upsertInput.modelSelection))
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
@@ -2460,8 +2520,11 @@ const make = Effect.gen(function* () {
     deleteScheduledTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
-        yield* refuseGrantRoutines(scope, parent);
+        yield* refuseGrantRoutines(scope, parent, undefined);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
+        const work = yield* refuseGrantRoutines(scope, parent, existing.projectId);
+        // Under a grant, only a routine that grant made; the owner's stay the owner's.
+        yield* refuseOthersRoutineFor(scheduledTasks.readGrant, work, existing, "delete");
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
           .delete({ id: existing.id })

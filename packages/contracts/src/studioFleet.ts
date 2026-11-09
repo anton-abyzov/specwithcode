@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AuthGrantScope } from "./auth.ts";
 import { AuthSessionId, EnvironmentId, IsoDateTime, ProjectId, ThreadId } from "./baseSchemas.ts";
@@ -413,6 +414,15 @@ export const StudioWorkGrant = Schema.Struct({
   runningThreads: Schema.Int,
   /** Allowed before grants had scopes: all projects, all sign-ins until edited. */
   legacy: Schema.Boolean,
+  /**
+   * Whether its coordinator may create, change, run and delete scheduled
+   * routines in the grant's projects. Off until the owner turns it on; a
+   * legacy grant allows it. Optional on the wire: a server from before it
+   * sends none, which reads as off.
+   */
+  routines: Schema.optionalKey(Schema.Boolean).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
 });
 export type StudioWorkGrant = typeof StudioWorkGrant.Type;
 
@@ -455,6 +465,7 @@ export const StudioWorkGrantUpdateInput = exactStruct({
   projects: Schema.optionalKey(StudioWorkGrantProjects),
   accounts: Schema.optionalKey(StudioWorkGrantAccounts),
   owner: Schema.optionalKey(StudioWorkGrantOwner),
+  routines: Schema.optionalKey(Schema.Boolean),
 });
 export type StudioWorkGrantUpdateInput = typeof StudioWorkGrantUpdateInput.Type;
 

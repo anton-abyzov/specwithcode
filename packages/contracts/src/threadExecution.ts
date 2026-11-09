@@ -38,6 +38,9 @@ export const ThreadExecutionReason = Schema.Literals([
   "usage-limit",
   "continue-here",
   "auto-takeover",
+  // Away mode (1267): left for an always-on machine, and brought back.
+  "away",
+  "back",
 ]);
 export type ThreadExecutionReason = typeof ThreadExecutionReason.Type;
 

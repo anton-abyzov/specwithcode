@@ -17,6 +17,7 @@ import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
+  assertTargetWithinLimits,
   dispatchFailure,
   newCommandId,
   readCaller,
@@ -35,6 +36,7 @@ import {
   refuseGrantRoutineChange,
   workGrantOf,
 } from "../../workGrantAccess.ts";
+import { refuseOthersRoutine } from "../../routineOwnership.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -111,8 +113,9 @@ function deliveryReporter(scope: McpInvocationContext.McpInvocationScope): strin
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
-      // Another machine's work does not run this machine's routines.
-      yield* refuseGrantRoutineChange(yield* readCaller());
+      // Another machine's work runs this machine's routines only when its grant allows routines,
+      // and then only in a project the grant covers.
+      yield* refuseGrantRoutineChange(yield* readCaller(), undefined);
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
       const task = tasks.find((task) => task.id === input.taskId);
@@ -121,7 +124,25 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
-      const { caller } = yield* readCaller();
+      const context = yield* readCaller();
+      const work = yield* refuseGrantRoutineChange(context, task.projectId);
+      // Under a grant, only a routine that grant made: the owner's routines here stay the owner's.
+      yield* refuseOthersRoutine(scheduler.readGrant, work, task, "run");
+      // Under a grant a run starts no broader than the caller may work: the
+      // routine's modes, and a bound thread's modes as they are now, as for an
+      // update. writesEnvironment already asks for a full-access caller; this
+      // keeps the bar if that ever loosens.
+      if (work !== undefined) {
+        yield* assertTargetWithinLimits(context.limits, task);
+        if (task.threadId !== null) {
+          const bound = yield* context.threads
+            .getThreadShell(ThreadId.make(task.threadId))
+            .pipe(Effect.mapError(unavailable));
+          if (bound !== null && bound.deletedAt === null)
+            yield* assertTargetWithinLimits(context.limits, bound);
+        }
+      }
+      const { caller } = context;
       yield* assertPersonalChatBoundary(caller?.projectId, task.projectId);
       const { task: started } = yield* scheduler
         .runNow({ id: input.taskId })

@@ -1,5 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
-import { COORDINATOR_SUSPEND_PATH } from "@specweave-studio/contracts";
+import {
+  AWAY_SLEEP_PATH,
+  AWAY_WAKE_PATH,
+  COORDINATOR_SUSPEND_PATH,
+} from "@specweave-studio/contracts";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -7,8 +11,13 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import {
+  AWAY_WAKE_ACTION,
+  DesktopSuspendNoticeError,
   HANDOFF_SLEEP_ACTION,
+  notifyServerOfAwaySleep,
+  notifyServerOfAwayWake,
   notifyServerOfSuspend,
+  registerAwayWakeNotice,
   registerHandoffSleepNotice,
 } from "./DesktopHandoffSleep.ts";
 
@@ -148,6 +157,135 @@ describe("the suspend notice to the server", () => {
       );
       assert.isTrue(Exit.isFailure(missing));
       assert.deepEqual(seen, []);
+    }),
+  );
+});
+
+describe("Away's lid-close trigger (AC-09)", () => {
+  const settle = Effect.gen(function* () {
+    for (let index = 0; index < 5; index++) yield* Effect.yieldNow;
+  });
+
+  it.effect("when Away takes the sleep, the window is not asked to move threads", () =>
+    Effect.gen(function* () {
+      const monitor = fakePowerMonitor();
+      const sent: string[] = [];
+      yield* registerHandoffSleepNotice(
+        monitor,
+        (action) => Effect.sync(() => void sent.push(action)),
+        Effect.sync(() => void sent.push("server")),
+        Effect.sync(() => (sent.push("away"), true)),
+      );
+      monitor.emit("suspend");
+      yield* settle;
+      assert.sameMembers(sent, ["away", "server"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("when Away skips or refuses, the old path runs; a timeout does not move twice", () =>
+    Effect.gen(function* () {
+      const run = (away: Effect.Effect<boolean, DesktopSuspendNoticeError>) =>
+        Effect.gen(function* () {
+          const monitor = fakePowerMonitor();
+          const sent: string[] = [];
+          yield* registerHandoffSleepNotice(
+            monitor,
+            (action) => Effect.sync(() => void sent.push(action)),
+            undefined,
+            away,
+          );
+          monitor.emit("suspend");
+          yield* settle;
+          return sent;
+        });
+      assert.deepEqual(yield* run(Effect.succeed(false)), [HANDOFF_SLEEP_ACTION]);
+      assert.deepEqual(
+        yield* run(
+          Effect.fail(new DesktopSuspendNoticeError({ reason: "the server answered 404" })),
+        ),
+        [HANDOFF_SLEEP_ACTION],
+      );
+      assert.deepEqual(
+        yield* run(
+          Effect.fail(
+            new DesktopSuspendNoticeError({ reason: "no answer in time", uncertain: true }),
+          ),
+        ),
+        [],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("wake and unlock ask the server; the card shows only when work moved", () =>
+    Effect.gen(function* () {
+      const monitor = fakePowerMonitor();
+      const sent: string[] = [];
+      let moved = false;
+      let asked = 0;
+      yield* registerAwayWakeNotice(
+        monitor,
+        (action) => Effect.sync(() => void sent.push(action)),
+        Effect.sync(() => (asked++, moved)),
+      );
+      monitor.emit("resume");
+      yield* settle;
+      assert.deepEqual(sent, []);
+      moved = true;
+      monitor.emit("unlock-screen");
+      yield* settle;
+      assert.deepEqual(sent, [AWAY_WAKE_ACTION]);
+      monitor.emit("lock-screen");
+      monitor.emit("suspend");
+      yield* settle;
+      assert.strictEqual(asked, 2);
+    }).pipe(Effect.scoped),
+  );
+
+  const answering = (body: unknown, seen: Array<{ url: string; body: unknown }>) =>
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        const raw =
+          request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
+        seen.push({ url: request.url, body: raw === "" ? null : JSON.parse(raw) });
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(JSON.stringify(body), { status: 200 }),
+        );
+      }),
+    );
+  const local = Effect.succeed({
+    httpBaseUrl: new URL("http://127.0.0.1:3773/"),
+    bearerToken: "desktop-service-bearer",
+  });
+
+  it.effect("the sleep notice sends the battery state and reads the server's decision", () =>
+    Effect.gen(function* () {
+      const seen: Array<{ url: string; body: unknown }> = [];
+      const left = yield* notifyServerOfAwaySleep(local, true).pipe(
+        Effect.provideService(HttpClient.HttpClient, answering({ outcome: "left" }, seen)),
+      );
+      assert.isTrue(left);
+      assert.deepEqual(seen, [
+        { url: `http://127.0.0.1:3773${AWAY_SLEEP_PATH}`, body: { onBattery: true } },
+      ]);
+      const skipped = yield* notifyServerOfAwaySleep(local, false).pipe(
+        Effect.provideService(HttpClient.HttpClient, answering({ outcome: "skipped" }, [])),
+      );
+      assert.isFalse(skipped);
+    }),
+  );
+
+  it.effect("the wake notice shows the card on prompt or auto, not on none", () =>
+    Effect.gen(function* () {
+      const seen: Array<{ url: string; body: unknown }> = [];
+      const ask = (outcome: string) =>
+        notifyServerOfAwayWake(local, false).pipe(
+          Effect.provideService(HttpClient.HttpClient, answering({ outcome }, seen)),
+        );
+      assert.isTrue(yield* ask("prompt"));
+      assert.isTrue(yield* ask("auto"));
+      assert.isFalse(yield* ask("none"));
+      assert.strictEqual(seen[0]?.url, `http://127.0.0.1:3773${AWAY_WAKE_PATH}`);
     }),
   );
 });

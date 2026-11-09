@@ -318,10 +318,6 @@ export const fr: PhraseCatalog = {
   "WSL only": "WSL uniquement",
   "Warn when the app folder is large": "Avertir quand le dossier de l’app est volumineux",
   "When a thread finishes": "Quand un fil se termine",
-  "When this machine sleeps, move running threads":
-    "Quand cette machine se met en veille, déplacer les fils actifs",
-  "When this machine sleeps, move running threads to":
-    "Quand cette machine se met en veille, déplacer les fils actifs vers",
   "Who can run work here": "Qui peut lancer du travail ici",
   "Word wrap": "Retour à la ligne",
   "Working section (beta)": "Section En cours (bêta)",
@@ -467,8 +463,6 @@ export const fr: PhraseCatalog = {
   "Monospace font": "Police à chasse fixe",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "Nombre maximal de simulateurs et d’émulateurs pouvant tourner en même temps sur chaque hôte d’appareils. En démarrer un autre échoue tant qu’aucun n’est arrêté. Les appareils physiques ne comptent pas.",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "Déplace les fils prêts à être déplacés. Au mieux, et seulement à la mise en veille. Verrouiller l’écran ne compte pas.",
   "No coding agent is installed and enabled there.":
     "Aucun agent de code n’y est installé et activé.",
   "No routines match this machine and project selection.":
@@ -1737,8 +1731,6 @@ export const fr: PhraseCatalog = {
   "Projects set differently": "Projets configurés différemment",
   "A removed project": "Un projet supprimé",
   "Use default": "Utiliser la valeur par défaut",
-  "Machine to move running threads to when this machine sleeps":
-    "Machine vers laquelle déplacer les fils en cours quand cette machine se met en veille",
   "A removed machine": "Une machine supprimée",
   "More options": "Plus d'options",
   "Automatic takeover": "Reprise automatique",

@@ -1061,6 +1061,11 @@ export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInp
 /** Handoff mode menu actions the desktop sends over `onMenuAction`. */
 export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
+/** Away mode menu and tray actions: open the Away dialog to leave, or to bring work back. */
+export const DESKTOP_AWAY_START_ACTION = "away-mode:leave";
+export const DESKTOP_AWAY_BACK_ACTION = "away-mode:back";
+/** The Mac woke after work left while it slept: show the wake card (Bring back). */
+export const DESKTOP_AWAY_WAKE_ACTION = "away-mode:wake";
 
 /** Help > Send Feedback menu actions; the renderer opens the matching GitHub issue form. */
 export const DESKTOP_FEEDBACK_ACTIONS = {

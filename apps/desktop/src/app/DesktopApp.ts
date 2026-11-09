@@ -23,7 +23,10 @@ import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import {
   DesktopSuspendNoticeError,
+  notifyServerOfAwaySleep,
+  notifyServerOfAwayWake,
   notifyServerOfSuspend,
+  registerAwayWakeNotice,
   registerHandoffSleepNotice,
 } from "./DesktopHandoffSleep.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
@@ -670,13 +673,37 @@ const startup = Effect.gen(function* () {
     Effect.forever,
     Effect.forkScoped,
   );
+  // Away mode's lid-close trigger (1267 AC-09), macOS only: the main process
+  // asks its own server, which decides from the Away settings and the battery
+  // and sends the target an away intent. When Away takes the sleep, the
+  // renderer's "move running threads" path is skipped. On wake or unlock the
+  // server cancels an intent still in its grace, or the wake card shows.
+  const awayOnMac = environment.platform === "darwin";
+  const handoffDispatch = (action: string) =>
+    handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" });
   yield* registerHandoffSleepNotice(
     powerMonitor,
-    (action) => handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" }),
+    handoffDispatch,
     notifyServerOfSuspend(localServer).pipe(
       Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
     ),
+    awayOnMac
+      ? powerMonitor.isOnBatteryPower.pipe(
+          Effect.flatMap((onBattery) => notifyServerOfAwaySleep(localServer, onBattery)),
+          Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
+        )
+      : undefined,
   );
+  if (awayOnMac) {
+    yield* registerAwayWakeNotice(
+      powerMonitor,
+      handoffDispatch,
+      powerMonitor.isOnBatteryPower.pipe(
+        Effect.flatMap((onBattery) => notifyServerOfAwayWake(localServer, onBattery)),
+        Effect.provideService(HttpClient.HttpClient, sleepHttpClient),
+      ),
+    );
+  }
   yield* electronApp.on("browser-window-focus", checkIfStale("focus"));
   yield* DesktopRemoteUpdates.listen;
   yield* linuxUrlHandler.register;

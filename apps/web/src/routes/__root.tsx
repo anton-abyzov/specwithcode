@@ -27,6 +27,7 @@ import { UsageSheetHost } from "../components/usage/UsageSheet";
 import { HandoffDesktopBridge } from "../components/handoff/HandoffDesktopBridge";
 import { HandOffMachineDialogHost } from "../components/handoff/HandOffMachineDialog";
 import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDialog";
+import { AwayDialogHost } from "../components/away/AwayDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -204,6 +205,7 @@ function RootRouteView() {
           <ThreadMoveDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
+          <AwayDialogHost />
           {/* Setup can start Restart to update, which asks before stopping running work. */}
           <ConfirmDialogHost />
           <CommandPalette>
@@ -274,6 +276,7 @@ function RootRouteView() {
           <ThreadMoveDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
+          <AwayDialogHost />
           <UsageSheetHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />

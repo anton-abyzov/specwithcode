@@ -315,8 +315,6 @@ export const zh: PhraseCatalog = {
   "WSL only": "仅 WSL",
   "Warn when the app folder is large": "应用文件夹过大时提醒",
   "When a thread finishes": "会话完成时",
-  "When this machine sleeps, move running threads": "这台电脑休眠时迁移运行中的会话",
-  "When this machine sleeps, move running threads to": "这台电脑休眠时将运行中的会话迁移到",
   "Who can run work here": "谁可以在这里运行工作",
   "Word wrap": "自动换行",
   "Working section (beta)": "进行中分区（测试版）",
@@ -448,8 +446,6 @@ export const zh: PhraseCatalog = {
   "Monospace font": "等宽字体",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "每个设备主机上可同时运行的模拟器数量上限。达到上限后，需关闭一个才能再启动。实体设备不计入。",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "迁移已准备好迁移的会话。尽力而为，仅在休眠时进行。锁屏不算。",
   "No coding agent is installed and enabled there.": "那里没有安装并启用任何编程智能体。",
   "No routines match this machine and project selection.": "没有符合此电脑和项目选择的例行任务。",
   "No task routes below this tier, whatever its class allows.":
@@ -1667,8 +1663,6 @@ export const zh: PhraseCatalog = {
   "Projects set differently": "设置不同的项目",
   "A removed project": "已移除的项目",
   "Use default": "使用默认值",
-  "Machine to move running threads to when this machine sleeps":
-    "这台电脑睡眠时，将正在运行的会话转移到的电脑",
   "A removed machine": "已移除的电脑",
   "More options": "更多选项",
   "Automatic takeover": "自动接管",

@@ -181,6 +181,21 @@ export function applyLease(
   };
 }
 
+/**
+ * Whether the coordinator was heard awake after `sinceMs`: its last lease came
+ * later and was not the one it sends as it goes to sleep. An away intent the
+ * source recorded before then is cancelled by it (Away mode, AC-09).
+ */
+export function heardAwakeSince(
+  record: Pick<CoordinatorStandbyRecord, "lastLeaseAt" | "coordinatorSleptAt">,
+  sinceMs: number,
+): boolean {
+  const lastLeaseMs = record.lastLeaseAt === null ? Number.NaN : Date.parse(record.lastLeaseAt);
+  return (
+    Number.isFinite(lastLeaseMs) && lastLeaseMs > sinceMs && record.coordinatorSleptAt === null
+  );
+}
+
 /** Starts a fresh watch: no earlier lease counts until a new one arrives. */
 export function restartWatch(
   record: CoordinatorStandbyRecord,

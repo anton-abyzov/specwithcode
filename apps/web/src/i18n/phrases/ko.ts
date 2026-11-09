@@ -316,10 +316,6 @@ export const ko: PhraseCatalog = {
   "WSL only": "WSL만",
   "Warn when the app folder is large": "앱 폴더가 클 때 경고",
   "When a thread finishes": "스레드가 끝나면",
-  "When this machine sleeps, move running threads":
-    "이 컴퓨터가 잠자기 상태가 되면 실행 중인 스레드 이동",
-  "When this machine sleeps, move running threads to":
-    "이 컴퓨터가 잠자기 상태가 되면 실행 중인 스레드를 이동할 곳",
   "Who can run work here": "여기서 작업을 실행할 수 있는 사람",
   "Word wrap": "자동 줄바꿈",
   "Working section (beta)": "진행 중 섹션(베타)",
@@ -463,8 +459,6 @@ export const ko: PhraseCatalog = {
   "Monospace font": "고정폭 글꼴",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "각 기기 호스트에서 동시에 실행할 수 있는 시뮬레이터와 에뮬레이터의 최대 수입니다. 하나를 종료하기 전까지는 다른 것을 시작할 수 없습니다. 실제 기기는 세지 않습니다.",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "이동할 준비가 된 스레드를 옮깁니다. 가능한 범위에서 잠자기할 때만 동작합니다. 화면 잠금은 해당하지 않습니다.",
   "No coding agent is installed and enabled there.":
     "그곳에는 설치되어 사용 설정된 코딩 에이전트가 없습니다.",
   "No routines match this machine and project selection.":
@@ -1714,8 +1708,6 @@ export const ko: PhraseCatalog = {
   "Projects set differently": "설정이 다른 프로젝트",
   "A removed project": "제거된 프로젝트",
   "Use default": "기본값 사용",
-  "Machine to move running threads to when this machine sleeps":
-    "이 컴퓨터가 잠자기 상태가 될 때 실행 중인 스레드를 옮길 컴퓨터",
   "A removed machine": "제거된 컴퓨터",
   "More options": "추가 옵션",
   "Automatic takeover": "자동 인계",

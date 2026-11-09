@@ -2,6 +2,11 @@ import * as Context from "effect/Context";
 
 import * as Electron from "electron";
 
+export interface ElectronTrayItem {
+  readonly label: string;
+  readonly onClick: () => void;
+}
+
 export interface ElectronTrayInput {
   readonly iconPath: string;
   readonly tooltip: string;
@@ -9,6 +14,8 @@ export interface ElectronTrayInput {
   readonly quitLabel: string;
   readonly onOpen: () => void;
   readonly onQuit: () => void;
+  /** Shown between Open and Quit, such as Away mode's Leave and Bring back. */
+  readonly items?: ReadonlyArray<ElectronTrayItem>;
 }
 
 export interface ElectronTrayHandle {
@@ -23,6 +30,12 @@ const createElectronTray: ElectronTrayFactory = (input) => {
   tray.setContextMenu(
     Electron.Menu.buildFromTemplate([
       { label: input.openLabel, click: input.onOpen },
+      ...(input.items && input.items.length > 0
+        ? [
+            { type: "separator" as const },
+            ...input.items.map((item) => ({ label: item.label, click: item.onClick })),
+          ]
+        : []),
       { type: "separator" },
       { label: input.quitLabel, click: input.onQuit },
     ]),

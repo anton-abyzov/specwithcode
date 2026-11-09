@@ -97,7 +97,11 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
-import { COMPOSER_APP_COMMANDS, type ComposerAppCommand } from "../../studio/composerAppCommands";
+import {
+  COMPOSER_APP_COMMANDS,
+  matchAwaySkillCommands,
+  type ComposerAppCommand,
+} from "../../studio/composerAppCommands";
 import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
   deriveComposerSendState,
@@ -3046,17 +3050,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return searchSlashCommandItems(slashCommandItems, query);
     }
     if (composerTrigger.kind === "skill") {
-      return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
-        id: `skill:${selectedProvider}:${skill.name}`,
-        type: "skill" as const,
-        provider: selectedProvider,
-        skill,
-        label: providerSkillInvocation(skill),
-        description:
-          skill.shortDescription ??
-          skill.description ??
-          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-      }));
+      // `$away` and `$back` at the start of a message are the app's Away commands in every harness.
+      const awayItems =
+        hasAppCommands && composerTrigger.rangeStart === 0
+          ? matchAwaySkillCommands(composerTrigger.query).map((entry) => ({
+              id: `app-skill:${entry.command}`,
+              type: "app-command" as const,
+              command: entry.command,
+              label: `$${entry.command}`,
+              description: entry.description,
+            }))
+          : [];
+      const awayNames = new Set<string>(awayItems.map((item) => item.command));
+      const skillMenuItems = searchProviderSkills(selectedProviderSkills, composerTrigger.query)
+        .filter((skill) => !awayNames.has(skill.name))
+        .map((skill) => ({
+          id: `skill:${selectedProvider}:${skill.name}`,
+          type: "skill" as const,
+          provider: selectedProvider,
+          skill,
+          label: providerSkillInvocation(skill),
+          description:
+            skill.shortDescription ??
+            skill.description ??
+            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+        }));
+      return [...awayItems, ...skillMenuItems];
     }
     if (
       composerTrigger.kind === "pull-request" &&

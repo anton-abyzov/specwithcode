@@ -317,10 +317,6 @@ export const ja: PhraseCatalog = {
   "WSL only": "WSL のみ",
   "Warn when the app folder is large": "アプリフォルダーが大きいときに警告",
   "When a thread finishes": "スレッドが終了したとき",
-  "When this machine sleeps, move running threads":
-    "このマシンがスリープしたら実行中のスレッドを移動",
-  "When this machine sleeps, move running threads to":
-    "このマシンがスリープしたら実行中のスレッドの移動先",
   "Who can run work here": "ここで作業を実行できるユーザー",
   "Word wrap": "折り返し",
   "Working section (beta)": "作業中セクション（ベータ）",
@@ -464,8 +460,6 @@ export const ja: PhraseCatalog = {
   "Monospace font": "等幅フォント",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "各デバイスホストで同時に実行できるシミュレーターとエミュレーターの最大数です。上限に達すると、どれかを終了するまで次は起動できません。実機は数えません。",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "移動の準備ができたスレッドを移動します。可能な範囲で、スリープ時のみ行います。画面ロックは対象外です。",
   "No coding agent is installed and enabled there.":
     "そこにはコーディングエージェントがインストールされておらず、有効にもなっていません。",
   "No routines match this machine and project selection.":
@@ -1726,8 +1720,6 @@ export const ja: PhraseCatalog = {
   "Projects set differently": "設定が異なるプロジェクト",
   "A removed project": "削除されたプロジェクト",
   "Use default": "既定を使う",
-  "Machine to move running threads to when this machine sleeps":
-    "このマシンがスリープしたときに実行中のスレッドを移すマシン",
   "A removed machine": "削除されたマシン",
   "More options": "その他のオプション",
   "Automatic takeover": "自動引き継ぎ",

@@ -1722,3 +1722,50 @@ describe("timeline detail shortcut", () => {
     );
   });
 });
+
+describe("away shortcut", () => {
+  it("opens Away mode with Cmd+Option+L outside the terminal", () => {
+    // macOS reports Option+L as "¬"; the physical key still resolves.
+    const macEvent = event({ key: "¬", code: "KeyL", metaKey: true, altKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(macEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "away.start",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "l", code: "KeyL", ctrlKey: true, altKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { terminalFocus: false } },
+      ),
+      "away.start",
+    );
+    assert.notStrictEqual(
+      resolveShortcutCommand(macEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "away.start",
+    );
+  });
+
+  it("does not share its default chord with another command", () => {
+    const chord = DEFAULT_RESOLVED_KEYBINDINGS.filter(
+      (binding) =>
+        binding.shortcut.key === "l" &&
+        binding.shortcut.modKey &&
+        binding.shortcut.altKey &&
+        !binding.shortcut.shiftKey,
+    );
+    assert.deepStrictEqual(
+      chord.map((binding) => binding.command),
+      ["away.start"],
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "away.start", "MacIntel"),
+      "⌥⌘L",
+    );
+  });
+});

@@ -170,6 +170,7 @@ export const workGrantsSnapshot = (input: {
             running.has(origin.threadId),
         ).length,
         legacy: policy.legacy,
+        routines: policy.legacy || policy.routines === true,
       };
     });
     const projects = yield* ProjectService.ProjectService;

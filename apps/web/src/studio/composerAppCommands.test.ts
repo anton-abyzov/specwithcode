@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isAwayAppCommand,
   leadingSlashQuery,
+  matchAwaySkillCommands,
   matchComposerAppCommands,
+  parseAwayAppCommand,
   parseComposerAppCommand,
 } from "./composerAppCommands";
 
@@ -20,6 +23,25 @@ describe("parseComposerAppCommand", () => {
     expect(parseComposerAppCommand("please /stop")).toBeNull();
     expect(parseComposerAppCommand("/stopall")).toBeNull();
   });
+
+  it("reads /away and /back, and their $ forms, as the whole message", () => {
+    expect(parseComposerAppCommand("/away")).toBe("away");
+    expect(parseComposerAppCommand(" /AWAY ")).toBe("away");
+    expect(parseComposerAppCommand("/back\n")).toBe("back");
+    expect(parseComposerAppCommand("$away")).toBe("away");
+    expect(parseComposerAppCommand(" $Back ")).toBe("back");
+    expect(isAwayAppCommand("away")).toBe(true);
+    expect(isAwayAppCommand("status")).toBe(false);
+  });
+
+  it("leaves longer away messages and other $ skills for the agent", () => {
+    expect(parseComposerAppCommand("/away now")).toBeNull();
+    expect(parseComposerAppCommand("$away now")).toBeNull();
+    expect(parseComposerAppCommand("I am /away")).toBeNull();
+    expect(parseComposerAppCommand("$stop")).toBeNull();
+    expect(parseComposerAppCommand("$review")).toBeNull();
+    expect(parseComposerAppCommand("$awayday")).toBeNull();
+  });
 });
 
 describe("matchComposerAppCommands", () => {
@@ -33,7 +55,18 @@ describe("matchComposerAppCommands", () => {
       "stop-all",
       "continue-all",
     ]);
-    expect(matchComposerAppCommands("")).toHaveLength(5);
+    expect(matchComposerAppCommands("")).toHaveLength(7);
+    expect(matchComposerAppCommands("aw").map((entry) => entry.command)).toEqual(["away"]);
+    expect(matchComposerAppCommands("back").map((entry) => entry.command)).toEqual(["back"]);
+  });
+});
+
+describe("matchAwaySkillCommands", () => {
+  it("offers $away and $back in the skill menu by prefix", () => {
+    expect(matchAwaySkillCommands("").map((entry) => entry.command)).toEqual(["away", "back"]);
+    expect(matchAwaySkillCommands("AW").map((entry) => entry.command)).toEqual(["away"]);
+    expect(matchAwaySkillCommands("b").map((entry) => entry.command)).toEqual(["back"]);
+    expect(matchAwaySkillCommands("review")).toEqual([]);
   });
 });
 
@@ -45,5 +78,15 @@ describe("leadingSlashQuery", () => {
     expect(leadingSlashQuery("hi /sto", 7)).toBeNull();
     expect(leadingSlashQuery("/stop now", 9)).toBeNull();
     expect(leadingSlashQuery("/stop now", 5)).toBeNull();
+  });
+});
+
+describe("parseAwayAppCommand", () => {
+  it("reads only the Away commands, slash or dollar form", () => {
+    expect(parseAwayAppCommand("/away")).toBe("away");
+    expect(parseAwayAppCommand(" $Back ")).toBe("back");
+    expect(parseAwayAppCommand("/stop")).toBeNull();
+    expect(parseAwayAppCommand("/away now")).toBeNull();
+    expect(parseAwayAppCommand("hello")).toBeNull();
   });
 });

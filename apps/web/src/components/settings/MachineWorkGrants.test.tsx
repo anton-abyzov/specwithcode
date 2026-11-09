@@ -45,6 +45,7 @@ const grant: StudioWorkGrant = {
   interruptAt: null,
   runningThreads: 0,
   legacy: false,
+  routines: false,
 };
 const snapshot: StudioWorkGrantsSnapshot = {
   grants: [grant],
@@ -178,6 +179,24 @@ describe("who can run work on this Mac", () => {
         accounts: { kind: "listed", instanceIds: [claude, codex] },
       },
     });
+  });
+
+  it("toggles Manage scheduled routines, off for a new grant and locked when read-only", () => {
+    const onChange = vi.fn();
+    const routinesSwitch = (value: StudioWorkGrant, canManage = true) =>
+      visitElements(
+        MachineWorkGrantRow({ grant: value, snapshot, canManage, pending: false, onChange }),
+        (element) => element.props["aria-label"] === "Let M4MAX manage scheduled routines",
+      );
+    const off = routinesSwitch(grant);
+    expect(off?.props.checked).toBe(false);
+    (off!.props.onCheckedChange as (checked: boolean) => void)(true);
+    expect(onChange).toHaveBeenLastCalledWith({
+      action: "update",
+      input: { coordinatorEnvironmentId: m4, routines: true },
+    });
+    expect(routinesSwitch({ ...grant, routines: true })?.props.checked).toBe(true);
+    expect(routinesSwitch(grant, false)?.props.disabled).toBe(true);
   });
 
   it("lists an archived, automated or No project choice only while the grant names it", () => {

@@ -318,10 +318,6 @@ export const de: PhraseCatalog = {
   "WSL only": "Nur WSL",
   "Warn when the app folder is large": "Warnen, wenn der App-Ordner groß ist",
   "When a thread finishes": "Wenn ein Thread fertig ist",
-  "When this machine sleeps, move running threads":
-    "Wenn dieser Rechner schläft, laufende Threads verschieben",
-  "When this machine sleeps, move running threads to":
-    "Wenn dieser Rechner schläft, laufende Threads verschieben nach",
   "Who can run work here": "Wer hier Arbeit ausführen darf",
   "Word wrap": "Zeilenumbruch",
   "Working section (beta)": "Bereich „In Arbeit“ (Beta)",
@@ -468,8 +464,6 @@ export const de: PhraseCatalog = {
   "Monospace font": "Nichtproportionale Schrift",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "Höchstzahl an Simulatoren und Emulatoren, die auf jedem Geräte-Host gleichzeitig laufen dürfen. Ein weiterer Start schlägt fehl, bis einer beendet wird. Physische Geräte zählen nicht.",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "Verschiebt die Threads, die umzugsbereit sind. Nach Möglichkeit und nur beim Ruhezustand. Bildschirmsperre zählt nicht.",
   "No coding agent is installed and enabled there.":
     "Dort ist kein Coding-Agent installiert und aktiviert.",
   "No routines match this machine and project selection.":
@@ -1740,8 +1734,6 @@ export const de: PhraseCatalog = {
   "Projects set differently": "Anders eingestellte Projekte",
   "A removed project": "Ein entferntes Projekt",
   "Use default": "Standard nutzen",
-  "Machine to move running threads to when this machine sleeps":
-    "Rechner, auf den laufende Threads verschoben werden, wenn dieser Rechner schläft",
   "A removed machine": "Ein entfernter Rechner",
   "More options": "Weitere Optionen",
   "Automatic takeover": "Automatische Übernahme",

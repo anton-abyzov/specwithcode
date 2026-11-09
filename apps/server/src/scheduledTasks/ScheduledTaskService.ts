@@ -28,6 +28,7 @@ import {
   type ScheduledTaskRunNowResult,
   type ScheduledTaskSetEnabledInput,
   type ScheduledTaskUpsertInput,
+  type ScheduledTaskGrantedBy,
   DEFAULT_SERVER_SETTINGS,
   type RuntimeMode,
   ProjectId,
@@ -58,9 +59,17 @@ import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
 import * as CoordinatorRole from "../project/CoordinatorRole.ts";
 import { CoordinatorWakeGate } from "../project/CoordinatorWakeGate.ts";
+import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
 import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
+import {
+  makeRoutineGrantGate,
+  readRoutineGrant,
+  type RoutineGrantHold,
+  routineWorkOrigin,
+} from "./ScheduledTaskGrantGate.ts";
+import { accountInGrant } from "../fleet/workGrantPolicy.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
@@ -158,8 +167,14 @@ export class ScheduledTaskService extends Context.Service<
     readonly list: () => Effect.Effect<ScheduledTaskListResult, ScheduledTaskError>;
     /** Emits the full task list on subscribe and again after every change (CRUD, run transitions, reschedules). */
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
+    /**
+     * `options.grantedBy` is for the server only, never a client: the work
+     * grant another machine's coordinator saves the routine under, written in
+     * the same save. Omitted, the routine keeps the grant it has; null clears it.
+     */
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      options?: { readonly grantedBy?: ScheduledTaskGrantedBy | null | undefined },
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     /** Partial update flipping only the enabled flag; never touches other fields. */
     readonly setEnabled: (
@@ -191,6 +206,10 @@ export class ScheduledTaskService extends Context.Service<
       readonly requestedAt: DateTime.DateTime;
       readonly error: string;
     }) => Effect.Effect<"recorded" | "running" | "stale", ScheduledTaskError>;
+    /** The work grant the routine was saved under, if any (ScheduledTaskGrantGate). */
+    readonly readGrant?: (
+      id: ScheduledTaskId,
+    ) => Effect.Effect<ScheduledTaskGrantedBy | undefined, ScheduledTaskError>;
     /** The routines a coordinator sends its standby, and the standby keeps (ScheduledTaskCopies). */
     readonly routineCopies?: () => Effect.Effect<RoutineCopies["Service"]>;
     /**
@@ -249,6 +268,40 @@ export const layer = Layer.effect(
       wakeGate: yield* CoordinatorWakeGate,
       projects,
     });
+    // A routine made under another machine's grant runs only within that grant.
+    const workGrants = yield* WorkGrants.WorkGrants;
+    const grantHold = makeRoutineGrantGate({ sql, grants: workGrants, projects });
+    /**
+     * A grant routine's own thread runs as that grant's work: its origin is
+     * recorded under a stable id before the thread exists, so its first turn,
+     * and anything it starts, is already held to the grant (and interrupted
+     * when the grant is revoked). Undefined for any other routine.
+     */
+    const grantedLaunch = (
+      runsUnder: Extract<RoutineGrantHold, { kind: "run" }> | null,
+      task: Pick<ScheduledTask, "id" | "createdAt">,
+      replacing: string | null,
+    ): Effect.Effect<ThreadId | undefined, ScheduledTaskError> =>
+      runsUnder === null
+        ? Effect.succeed(undefined)
+        : Effect.gen(function* () {
+            const threadId = ThreadId.make(
+              ["thread", "routine", task.id, task.createdAt, replacing ?? "first"]
+                .map(encodeURIComponent)
+                .join(":"),
+            );
+            yield* workGrants
+              .recordOrigin(threadId, routineWorkOrigin(runsUnder.coordinatorEnvironmentId))
+              .pipe(
+                Effect.mapError((cause) =>
+                  taskError("Could not start the routine under its work grant.", {
+                    taskId: task.id,
+                    cause,
+                  }),
+                ),
+              );
+            return threadId;
+          });
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
@@ -392,6 +445,13 @@ export const layer = Layer.effect(
     // concurrent settings save must not overwrite an in-flight increment.
     // Check existence in the write itself so an edit cannot undo a deletion
     // that landed after upsert loaded the previous task.
+    // The saved policy with the copy mark the row already has.
+    const copiedPolicy = sql`CASE
+      WHEN json_extract(scheduled_tasks.run_policy_json, '$.copiedFrom') IS NULL
+        THEN excluded.run_policy_json
+      ELSE json_set(COALESCE(excluded.run_policy_json, '{}'), '$.copiedFrom',
+        json_extract(scheduled_tasks.run_policy_json, '$.copiedFrom'))
+    END`;
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
@@ -402,6 +462,8 @@ export const layer = Layer.effect(
         readonly secretChanged: boolean;
       },
       onceGeneration: number,
+      /** Undefined keeps the grant the row has; null clears it. */
+      grantedBy: ScheduledTaskGrantedBy | null | undefined,
     ) =>
       sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
@@ -452,7 +514,7 @@ export const layer = Layer.effect(
           ${task.runCount},
           ${webhook.token},
           ${webhook.secret},
-          ${encodeRunPolicyJson(task, onceGeneration)}
+          ${encodeRunPolicyJson({ ...task, grantedBy }, onceGeneration)}
         WHERE ${requireExisting ? 0 : 1} = 1
            OR EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${task.id})
         ON CONFLICT (task_id)
@@ -465,12 +527,14 @@ export const layer = Layer.effect(
           thread_id = excluded.thread_id,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
-          -- A copy kept from the coordinator (ScheduledTaskCopies) stays one across edits.
+          -- A copy kept from the coordinator (ScheduledTaskCopies) stays one across
+          -- edits, and a save that names no grant keeps the one the routine has.
           run_policy_json = CASE
-            WHEN json_extract(scheduled_tasks.run_policy_json, '$.copiedFrom') IS NULL
-              THEN excluded.run_policy_json
-            ELSE json_set(COALESCE(excluded.run_policy_json, '{}'), '$.copiedFrom',
-              json_extract(scheduled_tasks.run_policy_json, '$.copiedFrom'))
+            WHEN ${grantedBy === undefined ? 1 : 0} = 1
+              AND json_extract(scheduled_tasks.run_policy_json, '$.grantedBy') IS NOT NULL
+              THEN json_set(COALESCE(${copiedPolicy}, '{}'), '$.grantedBy',
+                json(json_extract(scheduled_tasks.run_policy_json, '$.grantedBy')))
+            ELSE ${copiedPolicy}
           END,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
@@ -765,6 +829,19 @@ export const layer = Layer.effect(
             taskId: active.id,
           });
         }
+        // After the coordinator gate, so a copy at rest is never turned off here.
+        const grant = yield* grantHold(active);
+        if (grant !== null && grant.kind !== "run") {
+          if (grant.kind === "off") yield* notifyChanged;
+          if (trigger === "scheduled")
+            return grant.kind === "off"
+              ? { ...active, enabled: false, nextRunAt: null }
+              : yield* restRun(active, grant.note, startedAt);
+          if (webhook !== undefined)
+            return yield* new WebhookDeliverySkipped({ reason: grant.note });
+          return yield* taskError(grant.note, { taskId: active.id });
+        }
+        const runsUnder = grant?.kind === "run" ? grant : null;
 
         const suspended = yield* assertTaskAdmission(active).pipe(
           withAideSetting,
@@ -997,8 +1074,15 @@ export const layer = Layer.effect(
         const providerSkip =
           route?.type === "defer" && deferral === null ? `Skipped: ${route.reason}` : null;
         // The model a moved fire dispatches on; undefined dispatches as before.
+        // A grant's routine never moves to a sign-in its grant does not allow.
         const routedModel =
-          route?.type === "fire" && route.note !== null ? route.modelSelection : undefined;
+          route?.type === "fire" &&
+          route.note !== null &&
+          (runsUnder === null ||
+            (route.modelSelection !== undefined &&
+              accountInGrant(runsUnder.accounts, route.modelSelection.instanceId)))
+            ? route.modelSelection
+            : undefined;
         if (route?.type === "fire" && route.note !== null)
           yield* Effect.logInfo("Scheduled task run moved to another provider", {
             taskId: active.id,
@@ -1098,8 +1182,10 @@ export const layer = Layer.effect(
         // routine, and binds it; a launch resumed after an interrupted run
         // gets this run's prompt as a follow-up.
         const launchOwnThreadUnchecked = (replacing: string | null) =>
-          threadLaunch
-            .launch({
+          Effect.gen(function* () {
+            const threadId = yield* grantedLaunch(runsUnder, active, replacing);
+            return yield* threadLaunch.launch({
+              ...(threadId === undefined ? {} : { threadId }),
               commandId: ownThreadLaunchCommandId(active, replacing),
               projectId: active.projectId,
               title: active.title,
@@ -1115,24 +1201,24 @@ export const layer = Layer.effect(
               },
               createdBy: active.createdBy,
               creationSource: active.creationSource,
-            })
-            .pipe(
-              Effect.tap(({ threadId }) =>
-                bindOwnThread({
-                  taskId: active.id,
-                  replacing,
-                  threadId,
-                  updatedAt: startedAtIso,
-                }).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
-              ),
-              Effect.tap(({ threadId }) => recordDispatch(threadId)),
-              // Resumed by a later run: its prompt is not in the thread yet.
-              Effect.flatMap(({ threadId, resumed, projection }) =>
-                resumed && !projection.messages.some((message) => message.id === messageId)
-                  ? sendTo(threadId, prompt)
-                  : Effect.void,
-              ),
-            );
+            });
+          }).pipe(
+            Effect.tap(({ threadId }) =>
+              bindOwnThread({
+                taskId: active.id,
+                replacing,
+                threadId,
+                updatedAt: startedAtIso,
+              }).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+            ),
+            Effect.tap(({ threadId }) => recordDispatch(threadId)),
+            // Resumed by a later run: its prompt is not in the thread yet.
+            Effect.flatMap(({ threadId, resumed, projection }) =>
+              resumed && !projection.messages.some((message) => message.id === messageId)
+                ? sendTo(threadId, prompt)
+                : Effect.void,
+            ),
+          );
 
         // A pre-run check can outlive a project handoff. Recheck ownership at
         // dispatch, under the same reentrant lock used by bound-thread sends.
@@ -1457,7 +1543,7 @@ export const layer = Layer.effect(
         }),
       );
 
-    const upsert: ScheduledTaskService["Service"]["upsert"] = (input) =>
+    const upsert: ScheduledTaskService["Service"]["upsert"] = (input, options) =>
       Effect.gen(function* () {
         // A turned-off routine runs nothing, so one saved before the rules can
         // still be edited or switched off. Every enabled save is judged.
@@ -1630,7 +1716,13 @@ export const layer = Layer.effect(
         // Saved as it will run: a routine left without a thread, or pointed at
         // the coordinator, gets a thread of its own.
         const task = yield* ownThreadRoutine(saved);
-        yield* saveTask(task, input.requireExisting === true, webhook, onceGeneration);
+        yield* saveTask(
+          task,
+          input.requireExisting === true,
+          webhook,
+          onceGeneration,
+          options?.grantedBy,
+        );
         yield* notifyChanged;
         return { task: (yield* findTask(id)) ?? task };
       });
@@ -1722,6 +1814,11 @@ export const layer = Layer.effect(
           return yield* taskError(hold.kind === "rest" ? hold.note : hold.reason, {
             taskId: task.id,
           });
+        const grant = yield* grantHold(task);
+        if (grant !== null && grant.kind !== "run") {
+          if (grant.kind === "off") yield* notifyChanged;
+          return yield* taskError(grant.note, { taskId: task.id });
+        }
         // Before the receipt below: nothing is written while an update is in progress.
         yield* refuseWhileUpdating(task.id);
         if (input.commandId !== undefined) {
@@ -1808,6 +1905,13 @@ export const layer = Layer.effect(
       getWebhookDelivery: webhooks.getWebhookDelivery,
       triggerWebhook: webhooks.triggerWebhook,
       recordTurnFailure,
+      readGrant: (id) =>
+        readRoutineGrant(id).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+          Effect.mapError((cause) =>
+            taskError("Could not read the routine's work grant.", { taskId: id, cause }),
+          ),
+        ),
       routineCopies: () => Effect.succeed(routineCopies),
     });
   }),

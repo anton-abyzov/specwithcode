@@ -51,6 +51,11 @@ export const WorkGrantPolicyRecord = Schema.Struct({
   owner: StudioWorkGrantOwner,
   /** Allowed before grants had scopes; unscoped until the user edits it. */
   legacy: Schema.Boolean,
+  /**
+   * Whether its coordinator may manage scheduled routines in the grant's
+   * projects. Absent in files written before it existed: off, unless legacy.
+   */
+  routines: Schema.optionalKey(Schema.Boolean),
   runtimeCap: Schema.NullOr(StudioFleetWorkerAccess),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -178,6 +183,7 @@ export const effectiveGrant = (record: WorkGrantPolicyRecord): EffectiveWorkGran
         owner: record.owner,
         hopLimit: workGrantHopLimit(record.owner),
         revoked: record.revokedAt !== null,
+        routines: record.routines === true,
       };
 
 const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
@@ -395,11 +401,14 @@ export const make = Effect.gen(function* () {
           (owner === "other" && record.owner !== "other"
             ? ({ kind: "none" } as const)
             : record.accounts);
+        // A legacy grant allowed routines, so leaving legacy keeps them unless turned off.
+        const routines = input.routines ?? (record.legacy || record.routines === true);
         return {
           ...record,
           projects: input.projects ?? record.projects,
           accounts,
           owner,
+          routines,
           legacy: false,
           updatedAt: isoOf(now),
         };

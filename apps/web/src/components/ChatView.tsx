@@ -768,7 +768,12 @@ import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { projectEnvironment } from "../state/projects";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { parseComposerAppCommand } from "../studio/composerAppCommands";
+import {
+  isAwayAppCommand,
+  parseAwayAppCommand,
+  parseComposerAppCommand,
+} from "../studio/composerAppCommands";
+import { requestAway } from "../studio/awayRequest";
 import { useComposerAppCommands } from "../studio/useComposerAppCommands";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
@@ -12399,6 +12404,19 @@ export default function ChatView(props: ChatViewProps) {
     manualCodexCreditIntent?: ManualCodexCreditIntent,
   ) => {
     e?.preventDefault();
+    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open the
+    // Away dialog from any draft, before a project check or thread creation.
+    const awayCommand =
+      !appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
+        ? parseAwayAppCommand(promptRef.current)
+        : null;
+    if (awayCommand !== null) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      requestAway(awayCommand);
+      return;
+    }
     if (projectDraftSendGuard.preventSend()) return;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
@@ -12416,14 +12434,18 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    // `/stop`, `/continue`, `/stop-all`, `/continue-all` and `/status` typed out in full
-    // run in the app, never as a model turn.
+    // `/stop`, `/continue`, `/stop-all`, `/continue-all`, `/status`, `/away` and `/back`
+    // typed out in full run in the app, never as a model turn.
     const appCommand =
       appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
         ? parseComposerAppCommand(promptRef.current)
         : null;
-    // A machine that is down cannot act on one, so the draft stays; `/status` reads what is here.
-    if (appCommand !== null && (appCommand === "status" || !activeEnvironmentUnavailable)) {
+    // A machine that is down cannot act on one, so the draft stays; `/status` reads what is here,
+    // and `/away` and `/back` (or `$away`, `$back`) open the Away dialog in this window.
+    if (
+      appCommand !== null &&
+      (appCommand === "status" || isAwayAppCommand(appCommand) || !activeEnvironmentUnavailable)
+    ) {
       promptRef.current = "";
       setComposerDraftPrompt(composerDraftTarget, "");
       composerRef.current?.resetCursorState();
