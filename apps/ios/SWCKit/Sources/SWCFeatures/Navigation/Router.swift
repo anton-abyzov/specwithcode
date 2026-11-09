@@ -343,8 +343,8 @@ final class AppRouter {
   func sidebarScope(in model: AppModel) -> ProjectRef? {
     guard !sidebarShowsAllProjects else { return nil }
     if let project = followedProject(in: model) { return project }
-    // Aide's chats show the whole tree, except beside Aide's coordinator:
-    // there the screen holds Aide's own threads.
+    // Aide's own chat shows the whole tree, except beside Aide's
+    // coordinator: there the screen holds Aide's own threads.
     if showsCoordinatorBeside, !isDrawerSearching, case let .aide(ref)? = landingCoordinator(in: model) { return ref }
     return nil
   }
@@ -354,7 +354,7 @@ final class AppRouter {
     for route in main.path.reversed() {
       switch route {
       case let .chat(.thread(thread)):
-        if let project = model.thread(thread)?.projectRef { return listScope(of: project, in: model) }
+        if let project = model.thread(thread)?.projectRef { return listScope(of: project, aideThreads: true, in: model) }
       case .chat(.aide):
         return nil
       case let .chat(.project(project)), let .overview(project):
@@ -365,14 +365,17 @@ final class AppRouter {
     }
     switch landing(in: model) {
     case let .project(project)?: return listScope(of: project, in: model)
-    case let .thread(thread)?: return model.thread(thread)?.projectRef.flatMap { listScope(of: $0, in: model) }
+    case let .thread(thread)?: return model.thread(thread)?.projectRef.flatMap { listScope(of: $0, aideThreads: true, in: model) }
     case .aide?, nil: return nil
     }
   }
 
-  /// The row a project's chats scope the list to. Aide is no project in the picker, so its chats show the whole tree.
-  private func listScope(of project: ProjectRef, in model: AppModel) -> ProjectRef? {
-    guard let row = model.project(project), row.ref != model.aide?.ref else { return nil }
+  /// The row a project's chats scope the list to. Aide's own chat is the
+  /// home screen and keeps the whole tree; one of its threads lists Aide's
+  /// threads, as a project's thread lists the project's.
+  private func listScope(of project: ProjectRef, aideThreads: Bool = false, in model: AppModel) -> ProjectRef? {
+    guard let row = model.project(project) else { return nil }
+    if row.ref == model.aide?.ref, !aideThreads { return nil }
     return row.ref
   }
 

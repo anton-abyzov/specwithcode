@@ -34,7 +34,7 @@ struct FixtureEngineTests {
     #expect(specweave.workingCount == 2)
     #expect(specweave.hasUnread)
     #expect(model.projects.first { $0.title == "Docs site" }?.machineOnline == false)
-    #expect(model.threadsByProject.values.map(\.count).reduce(0, +) == 14)
+    #expect(model.threadsByProject.values.map(\.count).reduce(0, +) == 15)
     #expect(model.recentThreads.count == 10)
     #expect(model.recentThreads.first?.isPinned == true)
     let statuses = Set(model.threadsByProject.values.flatMap { $0 }.map(\.activity))

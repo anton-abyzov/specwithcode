@@ -801,6 +801,7 @@ public final class FixtureEngine: AppEngine {
       return [row("u", .user(text: "What's the status?")), row("a", .assistant(markdown: summary, streaming: false))]
     case let .thread(ref):
       if ref.threadId == "t-release" { return FixtureSample.releaseTranscript.map { row("r", $0) } }
+      if ref.threadId == "t-aide-research" { return FixtureSample.aideResearchTranscript.map { row("ar", $0) } }
       guard let thread = model?.thread(ref) else {
         return [row("n", .notice(text: "No messages yet."))]
       }
@@ -1003,6 +1004,8 @@ private enum FixtureSample {
       thread("t-images", recipes, "Recipe app", "Build box", "Shrink the image cache", .idle, "Cache now capped at 200 MB", updated: 1500),
       thread("t-search-index", docs, "Docs site", "Travel laptop", "Rebuild the search index", .idle, "Index rebuilt; 1,284 pages", updated: 2880),
       thread("t-links", docs, "Docs site", "Travel laptop", "Fix broken links after the move", .idle, "12 links fixed; 3 need a decision", updated: 5760),
+      // Aide's own thread: a long research prompt and a reply with a table.
+      thread("t-aide-research", aide.ref, "Aide", "Office Mac", "Rail pass research", .idle, "Compared five rail passes", updated: 15),
     ]
   }
 
@@ -1068,6 +1071,40 @@ private enum FixtureSample {
     rows.append(.assistant(markdown: report, streaming: false))
     return rows
   }()
+
+  /// The shape that hung build 38 on an iPhone Duo: a long prompt that
+  /// collapses, a fold of searches, and a reply with a heading and a table.
+  static let aideResearchTranscript: [TranscriptRow.Kind] = [
+    .user(text: "Research rail passes for a three-week trip through Europe this spring. Use the operators' own sites and recent traveller reports, and keep the answer in this thread, and don't mention it anywhere else. " + String(repeating: "Compare what each pass covers, how seat reservations work on high-speed lines, which countries charge extra, how the mobile pass behaves offline, and when point-to-point tickets are cheaper for the route Lisbon, Madrid, Barcelona, Lyon, Geneva, Milan, Venice, Vienna, Prague and Berlin. ", count: 4)),
+    .tool(title: "Searched the web", detail: "Eurail Global Pass coverage 2027", symbol: "magnifyingglass", status: .completed),
+    .tool(title: "Searched the web", detail: "high-speed seat reservation fees Spain France Italy", symbol: "magnifyingglass", status: .completed),
+    .tool(title: "Searched the web", detail: "Rail Europe mobile pass offline", symbol: "magnifyingglass", status: .completed),
+    .tool(title: "Searched the web", detail: "point-to-point vs pass three weeks", symbol: "magnifyingglass", status: .completed),
+    .tool(title: "Read eurail.com/en/eurail-passes", detail: nil, symbol: "doc.text", status: .completed),
+    .assistant(markdown: """
+      **Not a booking.** This is a general guide from the operators' sites and recent traveller reports. Prices change weekly, so check them before you buy.
+
+      ## Passes and how far they go
+
+      | Pass | What it covers | Typical price |
+      | --- | --- | --- |
+      | Global Pass, 15 days in 2 months | Trains in 33 countries, most ferries between Italy and Greece, discounts on some buses and boats | About €520 second class, more for first class and for travellers over 27 |
+      | Global Pass, 22 days continuous | Unlimited travel every day for three weeks, good when you move almost every day | About €600 second class |
+      | One Country Pass, Spain | Up to 8 days in a month on Renfe, reservations extra on AVE trains | About €230 for 4 days |
+      | Swiss Travel Pass | Trains, buses, boats and city transport, with half price on most mountain railways | About CHF 390 for 8 days |
+      | Point-to-point tickets | Each journey bought on its own, cheapest when booked 60 to 90 days ahead | €25 to €120 per leg |
+
+      ### Reservations
+
+      High-speed trains in Spain, France and Italy need a seat reservation on top of the pass. Budget **€10 to €35 per train**, and book TGV seats early because pass quotas sell out.
+
+      ### What I'd do
+
+      1. Buy point-to-point tickets for the Spanish and French legs.
+      2. Use a 7-day flexi pass from Milan onwards.
+      3. Keep the mobile pass synced before each journey, since it needs a connection to activate a day.
+      """, streaming: false),
+  ]
 
   static let releaseTranscript: [TranscriptRow.Kind] = [
     .user(text: "Prepare the 3.1 release. Run the full checks, update the changelog and publish to the next tag when everything passes."),

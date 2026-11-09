@@ -633,6 +633,17 @@ private struct ThreadLine: View {
             .font(.weave(.footnote))
             .foregroundStyle(Color.weave.muted)
             .lineLimit(1)
+        } else if let model {
+          // What runs the thread, as the desktop's model badge shows it.
+          HStack(spacing: 4) {
+            ProviderMark(thread.identity.providerBrand, size: 12)
+              .accessibilityHidden(true)
+            Text(model)
+              .font(.weave(.footnote))
+              .foregroundStyle(Color.weave.muted)
+              .lineLimit(1)
+          }
+          .accessibilityIdentifier("sidebar.thread-model")
         }
       }
       Spacer(minLength: 0)
@@ -648,7 +659,12 @@ private struct ThreadLine: View {
     .contentShape(Rectangle())
     .accessibilityElement(children: .combine)
     .accessibilityLabel(thread.title)
-    .accessibilityValue(([ThreadStatusMark.state(of: thread).label, machine ?? detail, thread.isUnread ? "Unread" : nil] as [String?]).compactMap { $0 }.joined(separator: ", "))
+    .accessibilityValue(([ThreadStatusMark.state(of: thread).label, detail?.isEmpty == false ? detail : model, machine, thread.isUnread ? "Unread" : nil] as [String?]).compactMap { $0 }.joined(separator: ", "))
+  }
+
+  /// The model, or nil when the thread does not say which one runs it.
+  private var model: String? {
+    thread.identity == .unknown ? nil : thread.identity.label
   }
 }
 

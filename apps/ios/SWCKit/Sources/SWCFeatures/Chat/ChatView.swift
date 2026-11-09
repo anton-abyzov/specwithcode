@@ -99,11 +99,15 @@ private struct ChatScreen: View {
 
   var body: some View {
     transcript
+      // Over the transcript, not in the bar under it: the bar's height is
+      // the transcript's inset, so a button there would move what it measures.
+      .overlay(alignment: .bottom) { scrollToLatest }
       .edgeBar(.bottom) { composerArea }
       .screenChrome { header }
       .overlay(alignment: .topTrailing) { rail }
-      .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing } action: { railWidth = $0 }
-      .onGeometryChange(for: CGFloat.self) { max(0, $0.size.height - $0.safeAreaInsets.top - $0.safeAreaInsets.bottom) } action: { availableHeight = $0 }
+      // Whole points only, so a sub-point change never starts another pass.
+      .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.trailing.rounded() } action: { railWidth = $0 }
+      .onGeometryChange(for: CGFloat.self) { max(0, $0.size.height - $0.safeAreaInsets.top - $0.safeAreaInsets.bottom).rounded() } action: { availableHeight = $0 }
       .sheet(isPresented: $showingHandoff) {
         if let thread = target.threadRef {
           HandoffSheet(thread: thread) { next in nav.push(.chat(.thread(next))) }
@@ -245,10 +249,16 @@ private struct ChatScreen: View {
     // A tap on the conversation puts the keyboard away, even when there is
     // too little to scroll.
     .simultaneousGesture(TapGesture().onEnded { if composerFocused { composerFocused = false } })
-    .onScrollGeometryChange(for: Bool.self) { geometry in
-      geometry.visibleRect.maxY >= geometry.contentSize.height - 120
-    } action: { _, nearBottom in
-      isNearBottom = nearBottom
+    // How far the newest line is below the screen, in 10 pt steps, from
+    // what is visible above the composer, so nothing the composer shows or
+    // hides moves it. The button comes past 200 pt and goes under 80, so a
+    // reply resting near either edge never flips it back and forth.
+    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+      let visibleBottom = geometry.visibleRect.maxY - geometry.contentInsets.bottom
+      return (max(0, geometry.contentSize.height - visibleBottom) / 10).rounded() * 10
+    } action: { _, distance in
+      if isNearBottom, distance > 200 { isNearBottom = false }
+      else if !isNearBottom, distance < 80 { isNearBottom = true }
     }
     .onChange(of: tailSignature) {
       guard isNearBottom else { return }
@@ -257,6 +267,24 @@ private struct ChatScreen: View {
   }
 
   private static let typingId = "typing-indicator"
+
+  /// Back to the newest line, once the reader is well above it.
+  @ViewBuilder private var scrollToLatest: some View {
+    HStack {
+      Spacer()
+      if !isNearBottom {
+        WeaveIconButton("arrow.down", label: "Scroll to latest") {
+          withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+        }
+        .transition(.opacity)
+      }
+    }
+    .frame(maxWidth: WeaveSize.readableColumn)
+    .frame(maxWidth: .infinity)
+    .padding(.horizontal, WeaveSpacing.gutter)
+    .padding(.bottom, WeaveSpacing.s2)
+    .animation(.snappy, value: isNearBottom)
+  }
 
   /// A new conversation: the spark and a serif question, as in Claude.
   private var emptyTranscript: some View {
@@ -808,15 +836,6 @@ private struct ChatScreen: View {
           }
         }
       }
-      if !isNearBottom {
-        HStack {
-          Spacer()
-          WeaveIconButton("arrow.down", label: "Scroll to latest") {
-            withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
-          }
-        }
-        .transition(.opacity)
-      }
       if let notice = connectionNotice {
         Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : notice.actionTitle, action: notice.action, lineLimit: isShort ? 2 : nil)
       }
@@ -874,7 +893,6 @@ private struct ChatScreen: View {
     .padding(.bottom, composerFocused ? WeaveSpacing.s2 : 0)
     .animation(.snappy, value: session.plan)
     .animation(.snappy, value: increment)
-    .animation(.snappy, value: isNearBottom)
     .animation(.snappy, value: session.lastError)
     .animation(.snappy, value: pendingAccess?.itemId)
     .animation(.snappy, value: composerFocused)
