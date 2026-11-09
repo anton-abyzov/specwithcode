@@ -50,6 +50,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
+  BACKEND_READY_CHANNEL,
   MENU_ACTION_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
   TRACKPAD_SCROLL_END_CHANNEL,
@@ -1977,6 +1978,54 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(scenario.createCalls), 3);
         assert.deepEqual(main.send.mock.calls, [[MENU_ACTION_CHANNEL, "open-settings"]]);
       }).pipe(Effect.provide(scenario.layer));
+    }),
+  );
+
+  it.effect("tells every open window that a restarted backend answers again", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const project = makeFakeBrowserWindow();
+      const closed = makeFakeBrowserWindow();
+      closed.window.isDestroyed = () => true;
+      const createCount = yield* Ref.make(0);
+      const layer = layerTest({
+        window: main.window,
+        mainWindow: yield* Ref.make(Option.some(main.window)),
+        createCount,
+        appWindows: [main.window, project.window, closed.window],
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* DesktopWindow.DesktopWindow;
+        yield* service.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        assert.deepEqual(main.send.mock.calls, [[BACKEND_READY_CHANNEL]]);
+        assert.deepEqual(project.send.mock.calls, [[BACKEND_READY_CHANNEL]]);
+        assert.deepEqual(closed.send.mock.calls, []);
+        // Windows were open, so no main window is created over them.
+        assert.equal(yield* Ref.get(createCount), 0);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("finishes backend-ready handling when a window's frame is gone", () =>
+    Effect.gen(function* () {
+      const disposed = makeFakeBrowserWindow();
+      disposed.send.mockImplementation(() => {
+        throw new Error("Render frame was disposed before WebFrameMain could be accessed");
+      });
+      const created = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const appWindows: Electron.BrowserWindow[] = [disposed.window];
+      const layer = layerTest({
+        window: created.window,
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        createCount,
+        appWindows,
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* DesktopWindow.DesktopWindow;
+        yield* service.handleBackendReady(new URL("http://127.0.0.1:8319"));
+        assert.equal(disposed.send.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
     }),
   );
 

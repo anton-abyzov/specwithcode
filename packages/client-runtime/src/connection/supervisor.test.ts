@@ -1241,6 +1241,135 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("starts a fresh attempt to this machine when its backend restarts mid-setup", () =>
+    Effect.gen(function* () {
+      const firstAttemptStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1
+            ? Deferred.succeed(firstAttemptStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(firstAttemptStarted);
+      yield* harness.wake("local-backend-ready");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("cuts the backoff to this machine short when its backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* harness.wake("local-backend-ready");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("tries a blocked connection to this machine again when its backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1 ? Effect.fail(blocked()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "blocked");
+      yield* harness.wake("local-backend-ready");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps a session to another machine when this machine's backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("local-backend-ready");
+      yield* TestClock.adjust("1 second");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps setup to another machine going when this machine's backend restarts", () =>
+    Effect.gen(function* () {
+      const firstAttemptStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: () =>
+          Deferred.succeed(firstAttemptStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      });
+      yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(firstAttemptStarted);
+      yield* harness.wake("local-backend-ready");
+      yield* TestClock.adjust("1 second");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps the backoff to another machine when this machine's backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: () => Effect.fail(transient()) });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+      yield* harness.wake("local-backend-ready");
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("500 millis");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "backoff",
+        attempt: 1,
+      });
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect(
+    "keeps a blocked connection to another machine blocked when this machine's backend restarts",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ prepare: () => Effect.fail(blocked()) });
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        yield* awaitState(supervisor.state, (state) => state.phase === "blocked");
+        yield* harness.wake("local-backend-ready");
+        yield* TestClock.adjust("1 second");
+        expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("blocked");
+        expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("restarts the retry ladder when a long resume interrupts connection setup", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
@@ -2386,6 +2515,24 @@ describe("EnvironmentSupervisor routes", () => {
 describe("EnvironmentSupervisor for a server on this machine", () => {
   const preparedForTarget = (_attempt: number, target: ConnectionTarget) =>
     Effect.succeed(preparedFor(target));
+
+  it.effect("replaces a session to this machine when its backend restarts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ prepare: preparedForTarget });
+      const supervisor = yield* EnvironmentSupervisor.make(LOOPBACK_ENTRY, {
+        initiallyDesired: true,
+        thisMachine: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("local-backend-ready");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
   it.effect("connects to the desktop primary while the network reports offline", () =>
     Effect.gen(function* () {

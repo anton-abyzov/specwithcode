@@ -28,6 +28,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
 import * as WindowPlacement from "./windowPlacement.ts";
 import {
+  BACKEND_READY_CHANNEL,
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
   SNAP_SHOT_EVENT_CHANNEL,
@@ -1549,9 +1550,22 @@ export const make = Effect.gen(function* () {
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       yield* Ref.set(backendReadyRef, true);
       yield* logWindowInfo("backend ready", { source: "http", url: httpBaseUrl.href });
+      const windows = yield* electronWindow.appWindows;
+      // A window that lost the restarted backend would otherwise wait out its
+      // retry timers, or a focus change that a window in the background never gets.
+      yield* Effect.sync(() => {
+        for (const window of windows) {
+          // A frame disposed mid-reload must not keep the main window from opening.
+          try {
+            if (!window.isDestroyed()) window.webContents.send(BACKEND_READY_CHANNEL);
+          } catch {
+            // That window reconnects when it loads again.
+          }
+        }
+      });
       // A backend that restarts while someone works in a project window with
       // the main window closed must not open the main window over them.
-      if ((yield* electronWindow.appWindows).length > 0) return;
+      if (windows.length > 0) return;
       yield* createMainIfBackendReady;
     }),
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(

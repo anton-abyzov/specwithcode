@@ -7,16 +7,21 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Stream from "effect/Stream";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
+  Wakeups,
 } from "@specweave-studio/client-runtime/connection";
 
 import {
+  backendRestarts,
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
+  layerWakeups,
   nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
   provisionDesktopSshEnvironment,
@@ -306,5 +311,83 @@ describe("primary topology cache", () => {
         target: null,
       }),
     ).toBeUndefined();
+  });
+});
+
+/** A desktop bridge whose backend-ready event the test fires, and how many listen. */
+function stubBackendReadyBridge() {
+  const listeners = new Set<() => void>();
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  const previousDocument = (globalThis as { document?: unknown }).document;
+  (globalThis as { window?: unknown }).window = {
+    desktopBridge: {
+      onBackendReady: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  };
+  (globalThis as { document?: unknown }).document = {
+    visibilityState: "visible",
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  };
+  return {
+    listeners,
+    // Lets the forked subscribers reach the bridge before the test fires it.
+    subscribed: Effect.gen(function* () {
+      for (let turn = 0; turn < 100 && listeners.size === 0; turn++) yield* Effect.yieldNow;
+      for (let turn = 0; turn < 10; turn++) yield* Effect.yieldNow;
+    }),
+    fire: () => {
+      for (const listener of [...listeners]) listener();
+    },
+    restore: Effect.sync(() => {
+      (globalThis as { window?: unknown }).window = previousWindow;
+      (globalThis as { document?: unknown }).document = previousDocument;
+    }),
+  };
+}
+
+describe("backendRestarts", () => {
+  it.effect("wakes connections to this machine each time the desktop backend answers again", () => {
+    const bridge = stubBackendReadyBridge();
+    return Effect.gen(function* () {
+      const first = yield* Stream.take(backendRestarts, 2).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      const second = yield* Stream.take(backendRestarts, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* bridge.subscribed;
+      // Every subscriber shares one bridge listener.
+      expect(bridge.listeners.size).toBe(1);
+      bridge.fire();
+      bridge.fire();
+      expect([...(yield* Fiber.join(first))]).toEqual([
+        "local-backend-ready",
+        "local-backend-ready",
+      ]);
+      expect([...(yield* Fiber.join(second))]).toEqual(["local-backend-ready"]);
+      expect(bridge.listeners.size).toBe(0);
+    }).pipe(Effect.ensuring(bridge.restore));
+  });
+
+  it.effect("reaches the connection wakeups of the platform layer", () => {
+    const bridge = stubBackendReadyBridge();
+    return Effect.gen(function* () {
+      const wakeups = yield* Wakeups.ConnectionWakeups;
+      const next = yield* Stream.take(wakeups.changes, 1).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* bridge.subscribed;
+      bridge.fire();
+      expect([...(yield* Fiber.join(next))]).toEqual(["local-backend-ready"]);
+    }).pipe(Effect.provide(layerWakeups), Effect.ensuring(bridge.restore));
   });
 });

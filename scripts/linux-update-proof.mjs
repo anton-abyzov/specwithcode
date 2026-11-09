@@ -185,6 +185,25 @@ const evaluate = async (expression, timeoutMs = 60_000) => {
   });
 };
 const updateState = () => evaluate("window.desktopBridge.getUpdateState()");
+/** Clicks the first button whose text matches, and says whether there was one. */
+const pressButton = (pattern) =>
+  `(() => { const b = [...document.querySelectorAll("button")].find((x) => ${pattern}.test(x.textContent.trim())); if (!b) return false; b.click(); return true; })()`;
+/** "Restart now" in the question an app restart asks when it could not check for running work. */
+const answerRestartQuestion = `(() => {
+  const dialog = [...document.querySelectorAll('[role="alertdialog"], [role="dialog"]')].find((x) =>
+    /could not check for running work/.test(x.textContent));
+  const b = dialog && [...dialog.querySelectorAll("button")].find((x) => x.textContent.trim() === "Restart now");
+  if (!b) return false;
+  b.click();
+  return true;
+})()`;
+/** Fails with what the window offered, so a missing button can be told from a missing window. */
+const failWithButtons = async (error) => {
+  const buttons = await evaluate(
+    `[...document.querySelectorAll("button")].map((x) => x.textContent.trim()).filter(Boolean).join(" | ")`,
+  ).catch(() => "unreadable");
+  fail(`${error.message}. Buttons: ${buttons}`);
+};
 const waitForApp = async (version) => {
   const state = await until(`the app at ${version}`, 180_000, async () => {
     const current = await updateState();
@@ -302,13 +321,34 @@ const firstDifference = candidateParts.findIndex((part, index) => part !== FIRST
 const hasRetry =
   firstDifference === -1 || candidateParts[firstDifference] > FIRST_WITH_RETRY[firstDifference];
 const candidateHasHelper = hasHelper(candidateDeb);
+// A candidate whose windows reconnect when the desktop restarts its backend must have reconnected
+// before Retry is pressed; an older one may still ask first, which only warns.
+const reconnectsOnBackendReady = (deb) => {
+  const found = spawnSync(
+    "bash",
+    [
+      "-c",
+      'dpkg-deb --fsys-tarfile "$1" | tar -xO ./opt/SpecWithCode/resources/app.asar | grep -c desktop:backend-ready',
+      "bash",
+      deb,
+    ],
+    { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+  );
+  return Number(found.stdout.trim()) > 0;
+};
+const strictReconnect =
+  process.env.PROOF_STRICT_RECONNECT === undefined
+    ? reconnectsOnBackendReady(candidateDeb)
+    : process.env.PROOF_STRICT_RECONNECT === "1";
 const phases = (
   hasRetry ? requestedPhases : requestedPhases.filter((phase) => phase === "update")
 ).filter((phase) => phase !== "signed" || candidateHasHelper);
 const previous = debVersion(previousDeb);
 const parts = candidate.split(".");
 const next = [parts[0], parts[1], Number(parts[2]) + 1].join(".");
-log(`previous ${previous}, candidate ${candidate}, phases ${phases.join(" ")}`);
+log(
+  `previous ${previous}, candidate ${candidate}, phases ${phases.join(" ")}, strict reconnect ${strictReconnect}`,
+);
 
 /**
  * The app reads its feed config at launch, and each package install restores the real one. A
@@ -423,17 +463,31 @@ const prove = async () => {
     if (installedVersion() !== candidate) fail(`dpkg holds ${installedVersion()}`);
     const installsBefore = helperRuns();
     const passwordRuns = pkexecRuns();
-    // The app's own check soon offers the version again, and the button waits for its download.
+    // The failed install restarted the service, and the window reconnects to it on its own
+    // schedule. Until it has, the button may be missing (a window that never got its first
+    // connection shows no sidebar) and a press cannot check what runs, so it asks first.
     await until("the Retry update button", 180_000, async () => {
       const state = await updateState().catch(() => null);
       if (state?.status === "available") {
         await evaluate("window.desktopBridge.downloadUpdate()").catch(() => undefined);
       }
-      return evaluate(
-        `(() => { const b = [...document.querySelectorAll("button")].find((x) => /Retry update/.test(x.textContent)); if (!b) return false; b.click(); return true; })()`,
-      ).catch(() => false);
-    });
-    await until("Retry to reach the helper", 120_000, () => helperRuns() > installsBefore);
+      return evaluate(pressButton(/Retry update/)).catch(() => false);
+    }).catch(failWithButtons);
+    log("clicked Retry update");
+    let restartQuestions = 0;
+    await until("Retry to reach the helper", 120_000, async () => {
+      if (helperRuns() > installsBefore) return true;
+      // The question a press asks when the window could not reach the service to check for
+      // running work: the window had not reconnected to the backend the failed install restarted.
+      if (await evaluate(answerRestartQuestion).catch(() => false)) {
+        restartQuestions += 1;
+        log(`warn: Retry asked before the restart (${restartQuestions}); answered Restart now`);
+      }
+      return false;
+    }).catch(failWithButtons);
+    // Thrown out here: until() would take a throw inside its poll for another try.
+    if (strictReconnect && restartQuestions > 0)
+      fail("Retry could not check for running work: the window had not reconnected");
     if (pkexecRuns() !== passwordRuns) fail("Retry asked for a password");
     log("retry: passed");
   } else if (phases.includes("retry")) {

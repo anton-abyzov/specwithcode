@@ -10,9 +10,10 @@ import {
   useLocation,
   useNavigate,
   useRouter,
+  useRouterState,
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
@@ -96,6 +97,7 @@ import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 import { useRenderErrorComponentStackLines } from "../lib/renderErrorDiagnostics";
+import { useRetryLoadOnBackendReady } from "../lib/retryLoadOnBackendReady";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -422,6 +424,12 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
   const pathname = useLocation({ select: (location) => location.pathname });
   const componentStackLines = useRenderErrorComponentStackLines(error);
+  // Only a failed load sets a match's status; a render error leaves it as it was.
+  const loadFailed = useRouterState({
+    select: (state) => state.matches.some((match) => match.status === "error"),
+  });
+  const retryLoad = useCallback(() => void router.invalidate(), [router]);
+  useRetryLoadOnBackendReady(loadFailed, retryLoad);
   const report = useMemo(
     () => errorReport(error, pathname, componentStackLines),
     [componentStackLines, error, pathname],

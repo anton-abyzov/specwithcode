@@ -637,6 +637,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (next.reason === "application-active-reconnect") {
             return true;
           }
+          // An attempt to this machine may hold a request to the backend that
+          // just restarted; others are not affected.
+          if (ConnectionWakeups.isLocalBackendWakeup(next.reason) && loopback) {
+            return true;
+          }
           if (next.reason === "credentials-changed" && usesRelay) {
             yield* logManagedRelayAccountChange;
             return false;
@@ -671,6 +676,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // Mobile operating systems often kill a suspended socket without a close
       // event. A probe would show a dead socket as "Resuming" until it times
       // out, so a long background resume replaces the session at once.
+      return "reset" as const;
+    }
+    // A session to this machine predates the backend's restart: its socket is
+    // gone or about to be. A remote session keeps going.
+    if (ConnectionWakeups.isLocalBackendWakeup(next.reason) && (yield* leaseIsLoopback(lease))) {
       return "reset" as const;
     }
     // Only a session over Studio Connect holds the old account's credential.
@@ -1017,6 +1027,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           switch (next._tag) {
             case "Wakeup":
               if (ignoreRetryHints && next.reason === "retry-hint") break;
+              if (ConnectionWakeups.isLocalBackendWakeup(next.reason) && !(yield* prefersLoopback))
+                break;
               return ConnectionWakeups.resetsRetryBackoff(next.reason);
             case "ConnectRequested":
             case "DisconnectRequested":
@@ -1033,16 +1045,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   // A better route only matters to a live session, and a retry hint only cuts
   // short a backoff, so idle, offline and blocked states ignore both.
-  const waitForSignal = Queue.take(signals).pipe(
-    Effect.repeat({
-      while: (next) =>
-        next._tag === "BetterRouteAvailable" ||
-        (next._tag === "Wakeup" && next.reason === "retry-hint"),
-    }),
-    Effect.map(
-      (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
-    ),
-  );
+  // A restarted backend on this machine wakes only a loopback connection that
+  // it blocked: the refusal may have come from the backend as it stopped or
+  // started, and one fresh attempt tells. An idle or offline state ignores it.
+  const waitForSignalWith = (localBackendWakes: boolean) =>
+    Queue.take(signals).pipe(
+      Effect.repeat({
+        while: (next) =>
+          next._tag === "BetterRouteAvailable" ||
+          (next._tag === "Wakeup" &&
+            (next.reason === "retry-hint" ||
+              (ConnectionWakeups.isLocalBackendWakeup(next.reason) && !localBackendWakes))),
+      }),
+      Effect.map(
+        (next) => next._tag === "Wakeup" && ConnectionWakeups.resetsRetryBackoff(next.reason),
+      ),
+    );
+  const waitForSignal = waitForSignalWith(false);
 
   const run = Effect.fnUntraced(function* () {
     let failureCount = 0;
@@ -1124,7 +1143,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           lastFailure: error,
           retryAt: null,
         });
-        const applicationActivated = yield* waitForSignal;
+        const applicationActivated = yield* waitForSignalWith(yield* prefersLoopback);
         if (applicationActivated) {
           resetRetryLadder();
         }
@@ -1168,10 +1187,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         lastFailure: error,
         retryAt: (yield* Clock.currentTimeMillis) + delayMs,
       });
-      const applicationActivated = yield* waitForRetrySignal(
-        delayMs,
-        retryAfterFloorMs(error) > 0,
-      );
+      const applicationActivated = yield* waitForRetrySignal(delayMs, retryAfterFloorMs(error) > 0);
       if (applicationActivated) {
         resetRetryLadder();
       }

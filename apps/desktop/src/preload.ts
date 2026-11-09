@@ -381,6 +381,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.MENU_ACTION_CHANNEL, wrappedListener);
     };
   },
+  onBackendReady: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.BACKEND_READY_CHANNEL, wrappedListener);
+    };
+  },
   onSnapShotEvent: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, event: unknown) => {
       if (!isSnapShotEvent(event)) return;
