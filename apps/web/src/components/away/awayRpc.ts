@@ -47,6 +47,10 @@ export const awayRpc = {
     label: "away:update-config",
     tag: WS_METHODS.awayUpdateConfig,
   }),
+  forceLocal: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "away:force-local",
+    tag: WS_METHODS.awayForceLocal,
+  }),
 };
 
 /** Runs one Away RPC outside React and words a failure for the user. */

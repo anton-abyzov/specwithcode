@@ -48,8 +48,15 @@ const setup = (options: {
     const port: SleepSessionPort = {
       mayStart: Effect.succeed(options.mayStart ?? true),
       begin: (sleep) => Effect.sync(() => void log.push(`begin:${sleep.threadIds.join(",")}`)),
-      nothingMoved: Effect.sync(() => void log.push("nothingMoved")),
-      moved: Effect.sync(() => void log.push("moved")),
+      nothingMoved: Effect.sync(() => {
+        log.push("nothingMoved");
+        return true;
+      }),
+      moved: () =>
+        Effect.sync(() => {
+          log.push("moved");
+          return true;
+        }),
     };
     const post: AwayPeerPost = (_target, path) =>
       Effect.sync(() => {

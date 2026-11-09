@@ -3,7 +3,8 @@
  * `POST /api/away/v1/intent` records the source's away intent, and
  * `POST /api/away/v1/intent/cancel` cancels it once the source is back, and
  * `POST /api/away/v1/intent/status` answers, per project, whether this
- * machine took it over from the source (1267 AC-09, the wake check). Only
+ * machine took it over from the source (1267 AC-09, the wake check), and per
+ * asked thread whether it continued it, with whether more may still be. Only
  * a machine with a live work grant here gets in (`awayPeerCaller`); the body
  * must name that same machine, and only projects its grant covers are kept.
  */
@@ -31,6 +32,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectInGrant } from "../fleet/workGrantPolicy.ts";
+import { HandoffMode } from "../handoff/HandoffMode.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { parseJson } from "../json.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -136,11 +138,14 @@ export const cancelIntent = (
  * caller's copy as its predecessor.
  */
 export const intentStatus = (
-  intents: Pick<AwayIntentsShape, "latestState">,
+  intents: Pick<AwayIntentsShape, "latestState"> &
+    Partial<Pick<AwayIntentsShape, "followUpRunning">>,
   caller: ReceiverCaller,
   raw: unknown,
   projects: ReadonlyArray<Project>,
   selfEnvironmentId: string,
+  /** The thread here that continues the caller's thread, or null (handoff mode's incoming record). */
+  continuedOf: (sourceThreadId: string) => string | null = () => null,
 ): Effect.Effect<IntentAnswer> =>
   Effect.gen(function* () {
     const body = decodeStatus(raw);
@@ -150,11 +155,25 @@ export const intentStatus = (
       return { status: 403, body: { error: "A machine may ask only about its own projects." } };
     const state = yield* intents.latestState(caller.sourceEnvironmentId).pipe(Effect.result);
     if (state._tag === "Failure") return { status: 500, body: { error: state.failure.message } };
+    const following =
+      intents.followUpRunning === undefined
+        ? false
+        : yield* intents.followUpRunning(caller.sourceEnvironmentId);
+    const asked = body.value.threadIds;
     const answer: AwayIntentStatusAnswer = {
       intentState: state.success,
       projects: body.value.projectIds.map((projectId) =>
         projectStatus(projects, selfEnvironmentId, caller.sourceEnvironmentId, projectId),
       ),
+      ...(asked === undefined
+        ? {}
+        : {
+            threads: asked.map((threadId) => ({
+              threadId,
+              continuedThreadId: continuedOf(threadId),
+            })),
+            threadsSettled: state.success !== "waiting" && state.success !== "acting" && !following,
+          }),
       receivedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
     };
     return { status: 200, body: encodeStatusAnswer(answer) };
@@ -205,12 +224,25 @@ const statusRoute = HttpRouter.add(
       Effect.orElseSucceed(() => []),
     );
     const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
+    const handoff = yield* Effect.serviceOption(HandoffMode);
+    const incoming = Option.isNone(handoff)
+      ? []
+      : yield* handoff.value.document.pipe(
+          Effect.map((document) => document.incoming),
+          Effect.orElseSucceed(() => []),
+        );
     const answer = yield* intentStatus(
       yield* AwayIntents,
       who.caller,
       body.raw,
       projects,
       selfEnvironmentId,
+      (sourceThreadId) =>
+        incoming.find(
+          (entry) =>
+            entry.sourceEnvironmentId === who.caller.sourceEnvironmentId &&
+            entry.sourceThreadId === sourceThreadId,
+        )?.continuedThreadId ?? null,
     );
     return answerJson(answer.status, answer.body);
   }),

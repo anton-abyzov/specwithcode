@@ -58,13 +58,26 @@ const TASKS = [
   task("r-free", {}),
 ];
 
-function harness(options: { pauseFails?: ReadonlySet<string>; coordinates?: boolean } = {}) {
+function harness(
+  options: {
+    pauseFails?: ReadonlySet<string>;
+    coordinates?: boolean;
+    queued?: ReadonlySet<string>;
+  } = {},
+) {
   let saved: AwaySession | null = null;
   const log: string[] = [];
+  const writes = { count: 0, fail: false };
   let ids = 0;
   const deps: SleepSessionDeps = {
     load: Effect.sync(() => saved),
-    update: (change) => Effect.sync(() => void (saved = change(saved) ?? saved)),
+    update: (change) =>
+      Effect.sync(() => {
+        writes.count += 1;
+        if (writes.fail) return false;
+        saved = change(saved) ?? saved;
+        return true;
+      }),
     now: Effect.succeed("2026-11-09T22:30:00.000Z"),
     newId: Effect.sync(() => `s-${(ids += 1)}`),
     targetLabel: () => Effect.succeed("Ministorm"),
@@ -86,8 +99,12 @@ function harness(options: { pauseFails?: ReadonlySet<string>; coordinates?: bool
     heartbeat: Effect.sync(() => void log.push("heartbeat")),
     continuedOn: () => Effect.succeed(new Map([["t1", "t1-there"]])),
     coordinates: () => Effect.succeed(options.coordinates ?? false),
+    routineThreads: Effect.succeed(
+      new Map(TASKS.map((entry) => [entry.id as string, entry.threadId])),
+    ),
+    queued: Effect.succeed(options.queued ?? new Set<string>()),
   };
-  return { deps, port: makeSleepSessionPort(deps), log, saved: () => saved };
+  return { deps, port: makeSleepSessionPort(deps), log, saved: () => saved, writes };
 }
 
 const item = (session: AwaySession, kind: string, id: string) =>
@@ -182,7 +199,7 @@ describe("a lid close records a normal Away session (#4)", () => {
         const h = harness({ coordinates: false });
         yield* h.port.begin(SLEEP, "live");
         h.log.length = 0;
-        yield* h.port.moved;
+        yield* h.port.moved();
         const session = h.saved()!;
         expect(h.log).toEqual(["heartbeat"]);
         expect(session.stage).toBe("done");
@@ -206,8 +223,68 @@ describe("a lid close records a normal Away session (#4)", () => {
     Effect.gen(function* () {
       const h = harness({ coordinates: true });
       yield* h.port.begin(SLEEP, "live");
-      yield* h.port.moved;
+      yield* h.port.moved();
       expect(item(h.saved()!, "coordinator", "p1")?.outcome).toBe("stayed");
+    }),
+  );
+
+  it.effect(
+    "a project the target did not take turns its coordinator routines on here now (N4)",
+    () =>
+      Effect.gen(function* () {
+        const h = harness({ coordinates: true });
+        yield* h.port.begin(SLEEP, "live");
+        h.log.length = 0;
+        expect(yield* h.port.moved()).toBe(true);
+        const session = h.saved()!;
+        // The coordinator's own routine runs here again; the worker's waits for its thread.
+        expect(h.log).toEqual(["heartbeat", "on:r-own"]);
+        expect(item(session, "routine", "r-own")).toMatchObject({
+          outcome: "stayed",
+          detail: "Ministorm did not take this project, so its routines stayed here.",
+        });
+        expect(item(session, "routine", "r-own")?.via).toBeUndefined();
+        expect(item(session, "routine", "r-worker")?.outcome).toBe("paused");
+      }),
+  );
+
+  it.effect("the stage and the wake prompt are one write; a failed write says so (N2)", () =>
+    Effect.gen(function* () {
+      const h = harness({ coordinates: false });
+      yield* h.port.begin(SLEEP, "live");
+      h.writes.fail = true;
+      const before = h.writes.count;
+      expect(yield* h.port.moved({ ...SLEEP, state: "wake-prompt" })).toBe(false);
+      expect(h.saved()!.stage).toBe("pending-intent");
+      h.writes.fail = false;
+      const counted = h.writes.count;
+      expect(yield* h.port.moved({ ...SLEEP, state: "wake-prompt" })).toBe(true);
+      expect(h.writes.count - counted).toBe(1);
+      expect(counted - before).toBe(1);
+      expect(h.saved()).toMatchObject({ stage: "done", sleep: { state: "wake-prompt" } });
+    }),
+  );
+
+  it.effect("nothing moved closes the session and drops its sleep record in one write (N2)", () =>
+    Effect.gen(function* () {
+      const h = harness();
+      yield* h.port.begin(SLEEP, "live");
+      const counted = h.writes.count;
+      expect(yield* h.port.nothingMoved).toBe(true);
+      expect(h.writes.count - counted).toBe(1);
+      expect(h.saved()!.stage).toBe("done");
+      expect(h.saved()!.sleep).toBeUndefined();
+    }),
+  );
+
+  it.effect("a thread that continued there lists its queued messages as held here (#13)", () =>
+    Effect.gen(function* () {
+      const h = harness({ queued: new Set(["t1"]) });
+      yield* h.port.begin(SLEEP, "live");
+      yield* h.port.moved();
+      expect(item(h.saved()!, "thread", "t1")?.detail).toBe(
+        "Continued on Ministorm while this machine slept. Its queued messages are held here; open it on Ministorm and send them there.",
+      );
     }),
   );
 });

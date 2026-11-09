@@ -7,6 +7,7 @@ import {
   type AwayProjectFact,
   type AwayThreadFact,
   buildAwayPlan,
+  inDoubtHandover,
   isAwayCandidate,
 } from "./AwayPlanner.ts";
 
@@ -374,5 +375,36 @@ describe("isAwayCandidate", () => {
       isAwayCandidate({ ...running, archivedAt: "2026-11-09T10:00:00.000Z" as never }, M4),
     ).toBeNull();
     expect(isAwayCandidate({ ...running, executionMachineId: MINI as never }, M4)).toBeNull();
+  });
+});
+
+describe("an in-doubt handover in the next plan (N1)", () => {
+  it("lists it to finish even with no live work under the live scope", () => {
+    const plan = buildAwayPlan(facts({ projects: [project({ id: P1, inDoubt: true })] }));
+    expect(item(plan, "coordinator", P1)).toMatchObject({
+      action: "move",
+      reason:
+        "Finishes the handover to Ministorm, which it has not confirmed yet. No machine coordinates it until then.",
+    });
+  });
+
+  it("takes a transferred copy only when the target is its successor and the session says in doubt", () => {
+    const transferred = (successor: string) => ({
+      id: "p1",
+      workspaceSettings: {
+        coordinatorBinding: { state: "transferred", successor: { environmentId: successor } },
+      },
+    });
+    const target = { environmentId: MINI };
+    expect(inDoubtHandover(transferred(MINI), new Set(["p1"]), target)).toBe(true);
+    expect(inDoubtHandover(transferred(MINI), new Set(), target)).toBe(false);
+    expect(inDoubtHandover(transferred("env-other"), new Set(["p1"]), target)).toBe(false);
+    expect(
+      inDoubtHandover(
+        { id: "p1", workspaceSettings: { coordinatorBinding: { state: "active" } } },
+        new Set(["p1"]),
+        target,
+      ),
+    ).toBe(false);
   });
 });

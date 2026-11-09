@@ -36,6 +36,7 @@ export const layerRpcHandlers = WsAwayRpcGroup.middleware(RpcInstrumentation).to
       [WS_METHODS.awayBringBack]: (input) => runner.bringBack(input),
       [WS_METHODS.awaySnapshot]: () => runner.snapshot,
       [WS_METHODS.awayUpdateConfig]: (input) => runner.updateConfig(input),
+      [WS_METHODS.awayForceLocal]: (input) => runner.forceLocal(input),
     };
   }),
 );

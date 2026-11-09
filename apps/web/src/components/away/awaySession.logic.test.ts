@@ -4,7 +4,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   awayItemLabel,
   awaySessionHeadline,
+  canBringBackSession,
+  runHereAnywayConfirmText,
   showAwayWakeCard,
+  showRunHereAnyway,
   summarizeAwaySession,
 } from "./awaySession.logic";
 
@@ -160,6 +163,66 @@ describe("the wake card after a lid close (#4)", () => {
     expect(showAwayWakeCard(snapshot({ session: pending }), null)).toBe(false);
     expect(awaySessionHeadline(pending, false)).toBe(
       "Work goes to Ministorm if this machine stays asleep. Checking what moved…",
+    );
+  });
+});
+
+describe("an in-doubt coordinator (N1)", () => {
+  it("reads Not confirmed, waits, and keeps Bring back open", () => {
+    const doubt: AwaySession = {
+      ...session,
+      items: [
+        {
+          kind: "coordinator",
+          id: "p1",
+          title: "Insta",
+          outcome: "in-doubt",
+          detail: "Ministorm did not confirm the handover.",
+        },
+      ],
+    };
+    expect(awayItemLabel(doubt.items[0]!, "Ministorm")).toEqual({
+      label: "Not confirmed",
+      tone: "attention",
+    });
+    expect(summarizeAwaySession(doubt, M4).map((group) => group.key)).toEqual(["waiting"]);
+    expect(canBringBackSession(doubt, false)).toBe(true);
+  });
+});
+
+describe("the lid-close escape and Run here anyway (N2)", () => {
+  const pending: AwaySession = {
+    ...session,
+    stage: "pending-intent",
+    finishedAt: null,
+    sleep: {
+      state: "pending-intent",
+      targetEnvironmentId: MINI,
+      graceMinutes: 2,
+      projectIds: [],
+      threadIds: [],
+      sentAt: "2026-11-09T22:00:00.000Z",
+      dueAt: "2026-11-09T22:02:00.000Z",
+      wokeAt: "2026-11-09T22:30:00.000Z",
+      unreachableSince: "2026-11-09T22:30:00.000Z",
+    },
+  };
+  const at = (iso: string) => Date.parse(iso);
+
+  it("lets Bring back run the wake check on a session still waiting for it", () => {
+    expect(canBringBackSession(pending, false)).toBe(true);
+    expect(canBringBackSession(pending, true)).toBe(false);
+  });
+
+  it("offers Run here anyway only after ten silent minutes, with a clear confirm", () => {
+    const snap = snapshot({ session: pending });
+    expect(showRunHereAnyway(snap, at("2026-11-09T22:39:00.000Z"))).toBe(false);
+    expect(showRunHereAnyway(snap, at("2026-11-09T22:40:00.000Z"))).toBe(true);
+    expect(showRunHereAnyway({ ...snap, running: true }, at("2026-11-09T22:50:00.000Z"))).toBe(
+      false,
+    );
+    expect(runHereAnywayConfirmText("Ministorm")).toContain(
+      "If Ministorm already took over, both machines may run those coordinators and threads",
     );
   });
 });

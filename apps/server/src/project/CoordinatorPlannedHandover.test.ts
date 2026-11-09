@@ -249,7 +249,11 @@ const pair = Effect.gen(function* () {
     statusPause: Effect.void,
   });
   const handOver = (
-    input: { readonly targetEnvironmentId?: string; readonly operationId?: string } = {},
+    input: {
+      readonly targetEnvironmentId?: string;
+      readonly operationId?: string;
+      readonly resumeOnly?: boolean;
+    } = {},
   ) =>
     handover
       .handOver({
@@ -257,6 +261,7 @@ const pair = Effect.gen(function* () {
         targetEnvironmentId: EnvironmentId.make(input.targetEnvironmentId ?? "ministorm"),
         reason: "away",
         ...(input.operationId === undefined ? {} : { operationId: input.operationId }),
+        ...(input.resumeOnly === undefined ? {} : { resumeOnly: input.resumeOnly }),
       })
       .pipe(Effect.tap(() => check("result")));
   yield* check("linked");
@@ -354,7 +359,7 @@ describe("planned coordinator handover", () => {
       const doubt = yield* fleet.handOver();
       expect(doubt.outcome).toBe("in-doubt");
       expect(doubt.detail).toContain("did not confirm");
-      expect(doubt.detail).toContain("choose Leave again");
+      expect(doubt.detail).toContain("Leave or Bring back finishes it sooner");
       expect(isActive(fleet.source())).toBe(false);
       expect(isActive(fleet.target())).toBe(false);
       const finished = yield* fleet.handOver();
@@ -405,6 +410,65 @@ describe("planned coordinator handover", () => {
       expect(doubt.outcome).toBe("in-doubt");
       expect(fleet.statusAsks.count).toBe(3);
       expect(isActive(fleet.source())).toBe(false);
+    }),
+  );
+
+  it.effect("an in-doubt handover the target never got reverts here on the next try (N1)", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      fleet.network.answers.push("lose", "lose");
+      const doubt = yield* fleet.handOver();
+      expect(doubt.outcome).toBe("in-doubt");
+      expect(doubt.operationId).toBeDefined();
+      expect(doubt.detail).toContain("If Ministorm confirms it never received it");
+      // The replay is refused and Ministorm's status says it never took over.
+      fleet.network.answers.push("refuse");
+      const finished = yield* fleet.handOver({
+        operationId: doubt.operationId!,
+        resumeOnly: true,
+      });
+      expect(finished).toMatchObject({ outcome: "failed", reverted: true });
+      expect(finished.detail).toBe(
+        "Ministorm confirmed it never received the handover, so this machine coordinates this project again.",
+      );
+      expect(isActive(fleet.source())).toBe(true);
+      expect(isActive(fleet.target())).toBe(false);
+      // Asked again, it reports the revert and starts nothing.
+      const sentBefore = fleet.network.sent;
+      const again = yield* fleet.handOver({ operationId: doubt.operationId!, resumeOnly: true });
+      expect(again).toMatchObject({ outcome: "failed", reverted: true });
+      expect(fleet.network.sent).toBe(sentBefore);
+    }),
+  );
+
+  it.effect(
+    "finishing stays in doubt while the target is silent or a call goes unanswered (N1)",
+    () =>
+      Effect.gen(function* () {
+        const fleet = yield* pair;
+        fleet.network.answers.push("lose", "lose");
+        const doubt = yield* fleet.handOver();
+        fleet.reach.ministorm = false;
+        const silent = yield* fleet.handOver({ operationId: doubt.operationId!, resumeOnly: true });
+        expect(silent.outcome).toBe("in-doubt");
+        expect(isActive(fleet.source())).toBe(false);
+        fleet.reach.ministorm = true;
+        // This call's first try goes unanswered: never revert, even if the retry is refused.
+        fleet.network.answers.push("lose", "refuse");
+        const unsure = yield* fleet.handOver({ operationId: doubt.operationId!, resumeOnly: true });
+        expect(unsure.outcome).toBe("in-doubt");
+        expect(isActive(fleet.source())).toBe(false);
+        expect(fleet.seen.some((state) => state.step === "revert")).toBe(false);
+      }),
+  );
+
+  it.effect("resumeOnly never starts a new handover from an active copy (N1)", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      const result = yield* fleet.handOver({ operationId: "handover:other", resumeOnly: true });
+      expect(result.outcome).toBe("failed");
+      expect(fleet.network.sent).toBe(0);
+      expect(isActive(fleet.source())).toBe(true);
     }),
   );
 

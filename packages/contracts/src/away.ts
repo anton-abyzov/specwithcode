@@ -206,6 +206,11 @@ export const AwayHandoverInput = Schema.Struct({
   reason: AwayHandoverReason,
   /** Names the handover so a retry replays it; derived from the epoch when absent. */
   operationId: Schema.optionalKey(bounded(128)),
+  /**
+   * Only finish a handover this copy already gave way for (an in-doubt one);
+   * never start a new one. Away's retry of an in-doubt handover sets it.
+   */
+  resumeOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type AwayHandoverInput = typeof AwayHandoverInput.Type;
 
@@ -230,6 +235,10 @@ export const AwayHandoverResult = Schema.Struct({
   detail: bounded(500),
   /** The coordinator epoch the target took over at. */
   epoch: Schema.optionalKey(Schema.Int),
+  /** The handover's operation, so an in-doubt one is finished under the same id. */
+  operationId: Schema.optionalKey(bounded(128)),
+  /** This copy coordinates again: the target confirmed it never took the handover. */
+  reverted: Schema.optionalKey(Schema.Boolean),
 });
 export type AwayHandoverResult = typeof AwayHandoverResult.Type;
 
@@ -296,6 +305,10 @@ export const AwayIntentStatusRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
   /** The source's copies to report on. */
   projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(AWAY_PLAN_MAX_ITEMS)),
+  /** The source's threads to report on: whether the target continued each. */
+  threadIds: Schema.optionalKey(
+    Schema.Array(bounded(512)).check(Schema.isMaxLength(AWAY_PLAN_MAX_ITEMS)),
+  ),
 });
 export type AwayIntentStatusRequest = typeof AwayIntentStatusRequest.Type;
 
@@ -312,10 +325,24 @@ export const AwayIntentProjectStatus = Schema.Struct({
 });
 export type AwayIntentProjectStatus = typeof AwayIntentProjectStatus.Type;
 
+/** One source thread: the thread that continues it on the target, or null. */
+export const AwayIntentThreadStatus = Schema.Struct({
+  threadId: bounded(512),
+  continuedThreadId: Schema.NullOr(bounded(512)),
+});
+export type AwayIntentThreadStatus = typeof AwayIntentThreadStatus.Type;
+
 export const AwayIntentStatusAnswer = Schema.Struct({
   /** The state of the source's latest intent here, or null without one. */
   intentState: Schema.NullOr(AwayIntentState),
   projects: Schema.Array(AwayIntentProjectStatus),
+  /** The asked threads; absent from targets that predate it. */
+  threads: Schema.optionalKey(Schema.Array(AwayIntentThreadStatus)),
+  /**
+   * Nothing more will continue: the latest intent is settled and its
+   * follow-up finished, so a thread not continued now never will be.
+   */
+  threadsSettled: Schema.optionalKey(Schema.Boolean),
   /** The target's own receive time. */
   receivedAt: IsoDateTime,
 });
@@ -414,6 +441,11 @@ export const AwaySleepSession = Schema.Struct({
   dueAt: IsoDateTime,
   wokeAt: Schema.optionalKey(IsoDateTime),
   detail: Schema.optionalKey(bounded(500)),
+  /** Since when the wake check gets no answer from the target; cleared by one. */
+  unreachableSince: Schema.optionalKey(IsoDateTime),
+  /** The owner chose Run here anyway: the hold was lifted for these projects. */
+  forcedLocalAt: Schema.optionalKey(IsoDateTime),
+  forcedProjectIds: Schema.optionalKey(Schema.Array(ProjectId)),
 });
 export type AwaySleepSession = typeof AwaySleepSession.Type;
 
@@ -438,6 +470,9 @@ export type AwayTrigger = typeof AwayTrigger.Type;
  * - `stayed`: never leaves (a worktree set, the personal assistant, no link).
  * - `paused`: paused here while away (a webhook routine).
  * - `failed`: the move did not finish; `detail` says what is left.
+ * - `in-doubt`: a coordinator this copy gave way for and the target did not
+ *   confirm; no copy coordinates until the same handover is finished (Leave
+ *   again, or the retry every minute) or the target confirms it never got it.
  */
 export const AwayItemOutcome = Schema.Literals([
   "pending",
@@ -446,6 +481,7 @@ export const AwayItemOutcome = Schema.Literals([
   "stayed",
   "paused",
   "failed",
+  "in-doubt",
 ]);
 export type AwayItemOutcome = typeof AwayItemOutcome.Type;
 
@@ -478,6 +514,8 @@ export const AwayItemResult = Schema.Struct({
   wasEnabled: Schema.optionalKey(Schema.Boolean),
   /** Coordinators: the standby this copy had before it left, re-armed on Bring back. */
   standbyAfterMinutes: Schema.optionalKey(Schema.Int),
+  /** Coordinators: the planned handover's operation, finished under the same id. */
+  operationId: Schema.optionalKey(bounded(128)),
   back: Schema.optionalKey(AwayItemBack),
 });
 export type AwayItemResult = typeof AwayItemResult.Type;
@@ -528,6 +566,29 @@ export const AwayBringBackInput = Schema.Struct({
   /** The session to bring back; the latest when absent. */
   sessionId: Schema.optionalKey(bounded(128)),
 });
+
+/** Run here anyway: lifts the wake hold for projects whose status is unknown. */
+export const AwayForceLocalInput = Schema.Struct({
+  sessionId: Schema.optionalKey(bounded(128)),
+});
+export type AwayForceLocalInput = typeof AwayForceLocalInput.Type;
+
+/** How long the target must stay silent after a wake before Run here anyway is offered. */
+export const AWAY_FORCE_LOCAL_AFTER_MS = 10 * 60_000;
+
+/**
+ * Whether the wake card and the Away dialog offer Run here anyway: a lid
+ * close still waits for its target's answer, and the target has not answered
+ * for `AWAY_FORCE_LOCAL_AFTER_MS`.
+ */
+export function canRunHereAnyway(session: AwaySession | null, nowMs: number): boolean {
+  const since = session?.sleep?.unreachableSince;
+  if (session === null || session.stage !== "pending-intent" || since === undefined) return false;
+  // Already chosen for this session: nothing is held any more.
+  if (session.sleep?.forcedLocalAt !== undefined) return false;
+  const at = Date.parse(since);
+  return Number.isFinite(at) && nowMs - at >= AWAY_FORCE_LOCAL_AFTER_MS;
+}
 export type AwayBringBackInput = typeof AwayBringBackInput.Type;
 
 /** Away's settings as clients read and change them (D-01 to D-04). */
@@ -565,6 +626,9 @@ export function awaitsBringBack(session: AwaySession | null): boolean {
   return (
     session !== null &&
     session.broughtBackAt === null &&
-    session.items.some((item) => item.outcome === "moved" || item.outcome === "paused")
+    session.items.some(
+      (item) =>
+        item.outcome === "moved" || item.outcome === "paused" || item.outcome === "in-doubt",
+    )
   );
 }

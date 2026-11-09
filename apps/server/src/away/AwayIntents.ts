@@ -133,6 +133,11 @@ export interface AwayIntentsShape {
   ) => Effect.Effect<void>;
   /** Every intent this machine acted on, as it acts. */
   readonly due: Stream.Stream<AwayIntentRecord>;
+  /**
+   * Whether the follow-up of the source's acted intent (continuing its
+   * threads) still runs here, so a thread not continued yet may still be.
+   */
+  readonly followUpRunning: (sourceEnvironmentId: EnvironmentId) => Effect.Effect<boolean>;
 }
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -142,6 +147,8 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
     const lock = yield* Semaphore.make(1);
     const published = yield* PubSub.unbounded<AwayIntentRecord>();
     const handlers: Array<(intent: AwayIntentRecord) => Effect.Effect<void>> = [];
+    /** Sources whose acted intent's follow-up (the hooks) runs now. */
+    const following = new Map<string, number>();
 
     const modify = <A>(change: (current: StoreFile) => readonly [A, StoreFile | undefined]) =>
       lock.withPermit(
@@ -275,6 +282,12 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
         // Takeovers replay by their operation ids, so a restart before the
         // intent is marked done only repeats them.
         const results = yield* deps.act(acting);
+        // Counted before the done write, so a status read in between never sees
+        // a done intent with no follow-up running and calls its threads settled.
+        following.set(
+          acting.sourceEnvironmentId,
+          (following.get(acting.sourceEnvironmentId) ?? 0) + 1,
+        );
         const done =
           (yield* settle(intent.intentId, "acting", (held) => ({
             ...held,
@@ -286,12 +299,24 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
           ({ ...acting, state: "done", results: [...results] } satisfies AwayIntentRecord);
         settled.push(done);
         yield* PubSub.publish(published, done);
-        for (const handler of handlers)
-          yield* handler(done).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("An away intent hook failed", { intentId: done.intentId, cause }),
+        yield* Effect.forEach(
+          handlers,
+          (handler) =>
+            handler(done).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("An away intent hook failed", { intentId: done.intentId, cause }),
+              ),
             ),
-          );
+          { discard: true },
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              const left = (following.get(done.sourceEnvironmentId) ?? 1) - 1;
+              if (left <= 0) following.delete(done.sourceEnvironmentId);
+              else following.set(done.sourceEnvironmentId, left);
+            }),
+          ),
+        );
       }
       return settled;
     }).pipe(
@@ -311,6 +336,8 @@ export const makeAwayIntents = (deps: AwayIntentsDeps) =>
       tick,
       onIntentDue: (handler) => Effect.sync(() => void handlers.push(handler)),
       due: Stream.fromPubSub(published),
+      followUpRunning: (sourceEnvironmentId) =>
+        Effect.sync(() => (following.get(sourceEnvironmentId) ?? 0) > 0),
     } satisfies AwayIntentsShape;
   });
 

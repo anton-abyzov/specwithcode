@@ -26,8 +26,10 @@
  *
  * And after a lid-close Away (`AwayWakeHold`): the coordinators of the
  * projects the away intent named start no turn until the target said it did
- * not take them over, or the intent was confirmed cancelled. Unlike the
- * resume hold this one never times out: an intent may have fired.
+ * not take them over, or the intent was confirmed cancelled. Worker threads
+ * the intent named wait the same way, their queues kept, until the target
+ * says it did not continue them. Unlike the resume hold this one never times
+ * out by itself: an intent may have fired (the owner's Run here anyway lifts it).
  */
 import type { Project, ThreadId } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -38,8 +40,7 @@ import * as Layer from "effect/Layer";
 
 import {
   type AwayWakeHoldStore,
-  COORDINATOR_AWAY_HOLD_REFUSAL,
-  heldThread,
+  awayHoldRefusal,
   makeFileWakeHoldStore,
 } from "../away/AwayWakeHold.ts";
 import { LinkedPeerSyncState, layer as LinkedPeerSyncStateLayer } from "./LinkedPeerSyncState.ts";
@@ -281,11 +282,10 @@ export const makeCheck = (
     awayHold === undefined
       ? decideNow(threadId)
       : awayHold.read.pipe(
-          Effect.flatMap((hold) =>
-            heldThread(hold, threadId)
-              ? Effect.succeed(COORDINATOR_AWAY_HOLD_REFUSAL)
-              : decideNow(threadId),
-          ),
+          Effect.flatMap((hold) => {
+            const refusal = awayHoldRefusal(hold, threadId);
+            return refusal !== null ? Effect.succeed(refusal) : decideNow(threadId);
+          }),
         );
   return (threadId) =>
     awayCheck(threadId).pipe(

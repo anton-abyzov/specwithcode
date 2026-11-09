@@ -51,7 +51,12 @@ import {
 } from "./awayDialog.logic";
 import { AwayAccessRequestsWatcher } from "./AwayAccessRequests";
 import { awayRpc, runAway } from "./awayRpc";
-import { AWAY_SESSION_POLL_MS } from "./awaySession.logic";
+import {
+  AWAY_SESSION_POLL_MS,
+  canBringBackSession,
+  runHereAnywayConfirmText,
+  showRunHereAnyway,
+} from "./awaySession.logic";
 import { AwaySessionSummary } from "./AwaySessionSummary";
 import { AwayWakeCard } from "./AwayWakeCard";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -103,6 +108,8 @@ function AwayDialog(props: {
   const [requestError, setRequestError] = useState<string | null>(null);
   const router = useRouter();
   const [away, setAway] = useState<AwaySnapshot | null>(null);
+  // When the snapshot was read: Run here anyway is judged against it, not during render.
+  const [awayReadAt, setAwayReadAt] = useState(0);
   const [started, setStarted] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [acting, setActing] = useState(false);
@@ -114,7 +121,9 @@ function AwayDialog(props: {
     let live = true;
     const read = () =>
       void runAway(awayRpc.snapshot, { environmentId, input: {} }).then((next) => {
-        if (live && next.ok) setAway(next.value);
+        if (!live || !next.ok) return;
+        setAway(next.value);
+        setAwayReadAt(Date.now());
       });
     read();
     if (!following) return () => void (live = false);
@@ -162,6 +171,23 @@ function AwayDialog(props: {
       setAway((current) =>
         current === null ? current : { ...current, session: next.value, running: true },
       );
+    });
+  };
+  const forceLocal = () => {
+    const session = away?.session;
+    if (!session) return;
+    setActing(true);
+    setActError(null);
+    void runAway(awayRpc.forceLocal, {
+      environmentId,
+      input: { sessionId: session.sessionId },
+    }).then((next) => {
+      setActing(false);
+      if (!next.ok) {
+        setActError(next.error);
+        return;
+      }
+      setAway((current) => (current === null ? current : { ...current, session: next.value }));
     });
   };
   const session = away?.session ?? null;
@@ -261,6 +287,8 @@ function AwayDialog(props: {
       onCancelLeave={() => setConfirming(false)}
       onConfirmLeave={leave}
       onBringBack={bringBack}
+      runHereAnyway={showRunHereAnyway(away, awayReadAt)}
+      onRunHereAnyway={forceLocal}
       onOpenThread={(threadId, environment) => {
         props.onClose();
         void router.navigate({
@@ -298,6 +326,9 @@ export interface AwayDialogViewProps {
   onCancelLeave?: () => void;
   onConfirmLeave?: () => void;
   onBringBack?: () => void;
+  /** The target stayed silent ten minutes after a wake: offer Run here anyway. */
+  runHereAnyway?: boolean;
+  onRunHereAnyway?: () => void;
   onOpenThread?: (threadId: string, environmentId: EnvironmentId) => void;
 }
 
@@ -324,6 +355,42 @@ function PlanRow({ item }: { item: AwayPlanItem }) {
   );
 }
 
+/** Run here anyway, behind a confirm that says both machines may then run the coordinator. */
+export function RunHereAnyway(props: {
+  targetLabel: string;
+  onConfirm: () => void;
+  className?: string;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div
+      className={cn("flex flex-col gap-2 text-sm", props.className ?? "px-6")}
+      data-testid="away-run-here-anyway"
+    >
+      {confirming ? (
+        <p role="status" className="text-warning-foreground">
+          {runHereAnywayConfirmText(props.targetLabel)}
+        </p>
+      ) : null}
+      <div className="flex justify-end gap-2">
+        {confirming ? (
+          <Button type="button" size="sm" variant="outline" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive-outline"
+          onClick={() => (confirming ? props.onConfirm() : setConfirming(true))}
+        >
+          {confirming ? "Run here anyway" : "Run here anyway…"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function AwayDialogView(props: AwayDialogViewProps) {
   const groups = useMemo(() => (props.plan ? groupAwayPlan(props.plan) : []), [props.plan]);
   const targetLabel =
@@ -336,8 +403,7 @@ export function AwayDialogView(props: AwayDialogViewProps) {
 
   if (props.intent === "back" || props.session) {
     const session = props.session ?? null;
-    const canBringBack =
-      session !== null && !props.running && session.finishedAt !== null && awaitsBringBack(session);
+    const canBringBack = canBringBackSession(session, props.running === true);
     return (
       <Dialog open onOpenChange={(open) => (open ? undefined : props.onClose())}>
         <DialogPopup className="sm:max-w-xl" data-testid="away-session-dialog">
@@ -370,6 +436,9 @@ export function AwayDialogView(props: AwayDialogViewProps) {
             <p role="alert" className="px-6 text-sm text-destructive-foreground">
               {props.actError}
             </p>
+          ) : null}
+          {session !== null && props.runHereAnyway && props.onRunHereAnyway ? (
+            <RunHereAnyway targetLabel={session.targetLabel} onConfirm={props.onRunHereAnyway} />
           ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={props.onClose}>

@@ -56,6 +56,11 @@ export interface AwayProjectFact {
    * project listed only for its enabled routines gets no coordinator row.
    */
   readonly coordinated?: boolean;
+  /**
+   * This copy gave way to the target in a handover the target did not
+   * confirm (the session's item is in-doubt): it is listed to finish it.
+   */
+  readonly inDoubt?: boolean;
 }
 
 /** The handoff preflight's answer for one thread, or why it could not run. */
@@ -342,6 +347,14 @@ export function coordinatorItem(facts: AwayPlanFacts, project: AwayProjectFact):
       reason: clip(`Not linked with a copy on ${facts.target.label}, so it stays here.`),
     };
   }
+  if (project.inDoubt === true)
+    return {
+      ...withProject,
+      action: "move",
+      reason: clip(
+        `Finishes the handover to ${facts.target.label}, which it has not confirmed yet. No machine coordinates it until then.`,
+      ),
+    };
   const blocked = targetBlocker(facts.target);
   if (blocked !== null) return { ...withProject, action: "handoff-ready", reason: clip(blocked) };
   if (project.notInGrant) {
@@ -475,7 +488,8 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
   const coordinators: Array<AwayPlanItem> = [];
   for (const project of facts.projects) {
     if (project.coordinated === false) continue;
-    if (facts.coordinatorScope === "live" && !isLive(facts, project.id)) continue;
+    if (project.inDoubt !== true && facts.coordinatorScope === "live" && !isLive(facts, project.id))
+      continue;
     coordinators.push(coordinatorItem(facts, project));
     addGap(projectGap(facts, project));
   }
@@ -496,6 +510,35 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
 }
 
 const ACTIVE_RUN_STATUSES = new Set(["preparing", "queued", "starting", "running", "waiting"]);
+
+/**
+ * A copy that gave way to `target` in a handover the latest session lists as
+ * in doubt: transferred, its successor the target.
+ */
+export function inDoubtHandover(
+  project: {
+    readonly id: string;
+    readonly workspaceSettings?:
+      | {
+          readonly coordinatorBinding?:
+            | {
+                readonly state: string;
+                readonly successor?: { readonly environmentId: string } | undefined;
+              }
+            | undefined;
+        }
+      | undefined;
+  },
+  inDoubt: ReadonlySet<string>,
+  target: { readonly environmentId: string },
+): boolean {
+  const binding = project.workspaceSettings?.coordinatorBinding;
+  return (
+    inDoubt.has(project.id) &&
+    binding?.state === "transferred" &&
+    binding.successor?.environmentId === target.environmentId
+  );
+}
 
 /** A live top-level thread with a turn running or messages queued. */
 export function isAwayCandidate(
@@ -530,7 +573,14 @@ const PREFLIGHT_BATCH = 100;
 export class AwayPlanner extends Context.Service<
   AwayPlanner,
   {
-    readonly preflight: (input: AwayPreflightInput) => Effect.Effect<AwayPlan, AwayError>;
+    /**
+     * `inDoubtProjectIds`: copies the latest session handed over in doubt;
+     * a transferred one whose successor is the target is listed to finish it.
+     */
+    readonly preflight: (
+      input: AwayPreflightInput,
+      options?: { readonly inDoubtProjectIds?: ReadonlyArray<ProjectId> },
+    ) => Effect.Effect<AwayPlan, AwayError>;
   }
 >()("specweave-studio/away/AwayPlanner") {}
 
@@ -542,8 +592,12 @@ export const make = Effect.gen(function* () {
   const access = yield* AwayAccess;
   const remote = yield* RemoteWorkers.RemoteWorkers;
 
-  const preflight = (input: AwayPreflightInput) =>
+  const preflight = (
+    input: AwayPreflightInput,
+    options?: { readonly inDoubtProjectIds?: ReadonlyArray<ProjectId> },
+  ) =>
     Effect.gen(function* () {
+      const inDoubt = new Set<string>(options?.inDoubtProjectIds ?? []);
       const self = handoff.environmentId;
       if (input.targetEnvironmentId === self) {
         return yield* new AwayError({
@@ -578,7 +632,9 @@ export const make = Effect.gen(function* () {
         ),
       );
       const coordinated = snapshot.projects.filter(
-        (project) => project.deletedAt === null && coordinatorRoleOf(project).active,
+        (project) =>
+          project.deletedAt === null &&
+          (coordinatorRoleOf(project).active || inDoubtHandover(project, inDoubt, target)),
       );
       const byId = new Map(coordinated.map((project) => [project.id, project]));
       const everyProject = new Map(snapshot.projects.map((project) => [project.id, project]));
@@ -611,6 +667,7 @@ export const make = Effect.gen(function* () {
           targetProjectId: member?.projectId ?? null,
           notInGrant,
           ...(isCoordinated ? {} : { coordinated: false }),
+          ...(inDoubtHandover(project, inDoubt, target) ? { inDoubt: true } : {}),
         } satisfies AwayProjectFact;
       });
       for (const project of coordinated) projectFacts.push(yield* factFor(project, true));

@@ -350,6 +350,8 @@ const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
   WS_METHODS.awayStart,
   WS_METHODS.awayBringBack,
   WS_METHODS.awayUpdateConfig,
+  // Run here anyway may let two machines run one coordinator: the owner's call alone.
+  WS_METHODS.awayForceLocal,
 ]);
 
 const ownerOnlyRpcMessage = (method: string) =>

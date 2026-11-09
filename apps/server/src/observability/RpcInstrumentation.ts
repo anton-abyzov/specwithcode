@@ -56,6 +56,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.awayBringBack]: "handoffMode",
   [WS_METHODS.awaySnapshot]: "handoffMode",
   [WS_METHODS.awayUpdateConfig]: "handoffMode",
+  [WS_METHODS.awayForceLocal]: "handoffMode",
   [WS_METHODS.machineHandoffPrepare]: "projects",
   [WS_METHODS.machineHandoffReceive]: "projects",
   [WS_METHODS.projectsFingerprint]: "projects",

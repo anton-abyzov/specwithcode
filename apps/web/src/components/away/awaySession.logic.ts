@@ -8,6 +8,7 @@ import {
   type AwaySession,
   type AwaySnapshot,
   awaitsBringBack,
+  canRunHereAnyway,
   type EnvironmentId,
 } from "@specweave-studio/contracts";
 
@@ -40,6 +41,8 @@ function groupOf(item: AwayItemResult): AwaySummaryKey {
   if (item.outcome === "paused") return "paused";
   // Not reached yet while Leave runs; it has not stayed.
   if (item.outcome === "pending") return "waiting";
+  // A handover the target has not confirmed: neither here nor there yet.
+  if (item.outcome === "in-doubt") return "waiting";
   return "stayed";
 }
 
@@ -71,6 +74,8 @@ export function awayItemLabel(
       return { label: "Stays here", tone: "muted" };
     case "failed":
       return { label: "Not moved", tone: "attention" };
+    case "in-doubt":
+      return { label: "Not confirmed", tone: "attention" };
   }
 }
 
@@ -139,6 +144,26 @@ export function awaySessionHeadline(session: AwaySession, running: boolean): str
   return left === 0
     ? `${movedText} to ${session.targetLabel}.`
     : `${movedText} to ${session.targetLabel}. ${left} stayed here.`;
+}
+
+/**
+ * Run here anyway: offered on the wake card and in the Away dialog once the
+ * target stayed silent for ten minutes after a wake (`canRunHereAnyway`).
+ */
+export function showRunHereAnyway(snapshot: AwaySnapshot | null, nowMs: number): boolean {
+  return snapshot !== null && !snapshot.running && canRunHereAnyway(snapshot.session, nowMs);
+}
+
+/** What the owner confirms before Run here anyway lifts the hold. */
+export function runHereAnywayConfirmText(targetLabel: string): string {
+  return `${targetLabel} has not answered for 10 minutes. Run here anyway lifts the hold on the projects and threads whose status is unknown. If ${targetLabel} already took over, both machines may run those coordinators and threads, and a thread's queued messages may start here too, until it answers; this machine then gives way.`;
+}
+
+/** Whether Bring back can be pressed: work is away, or a lid close still waits for its check. */
+export function canBringBackSession(session: AwaySession | null, running: boolean): boolean {
+  if (session === null || running || session.broughtBackAt !== null) return false;
+  if (session.stage === "pending-intent") return true;
+  return session.finishedAt !== null && awaitsBringBack(session);
 }
 
 /**

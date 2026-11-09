@@ -55,6 +55,7 @@ describe("Away owner-only methods over the socket", () => {
     WS_METHODS.awayBringBack,
     WS_METHODS.awayUpdateConfig,
     WS_METHODS.awayRequestAccess,
+    WS_METHODS.awayForceLocal,
   ];
 
   it.each(ownerOnly)("refuses a coordinator principal for %s", (method) => {

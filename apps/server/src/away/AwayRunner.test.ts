@@ -511,3 +511,249 @@ describe("AwayRunner with a lid-close session (#4, #13)", () => {
     }),
   );
 });
+
+describe("AwayRunner in-doubt handovers (N1)", () => {
+  const inDoubtHandOver =
+    (calls: Array<AwayHandoverInput>, answers: Array<"in-doubt" | "handed-over" | "reverted">) =>
+    (input: AwayHandoverInput) =>
+      Effect.sync(() => {
+        calls.push(input);
+        const answer = answers.shift() ?? "handed-over";
+        return answer === "in-doubt"
+          ? {
+              projectId: input.projectId,
+              outcome: "in-doubt" as const,
+              detail: "Ministorm did not confirm the handover.",
+              operationId: "handover:p1:5",
+            }
+          : answer === "reverted"
+            ? {
+                projectId: input.projectId,
+                outcome: "failed" as const,
+                detail:
+                  "Ministorm confirmed it never received the handover, so this machine coordinates this project again.",
+                operationId: "handover:p1:5",
+                reverted: true,
+              }
+            : {
+                projectId: input.projectId,
+                outcome: "handed-over" as const,
+                detail: "Done.",
+                epoch: 5,
+                operationId: "handover:p1:5",
+              };
+      });
+
+  /** A finished Leave whose only work away is the in-doubt coordinator p1. */
+  const leftInDoubt = Effect.gen(function* () {
+    const calls: Array<AwayHandoverInput> = [];
+    const h = harness({ moveResults: [] });
+    const plan: AwayPlan = {
+      ...PLAN,
+      items: PLAN.items.filter((entry) => entry.kind === "coordinator"),
+    };
+    const answers: Array<"in-doubt" | "handed-over" | "reverted"> = ["in-doubt"];
+    const plans: Array<unknown> = [];
+    const deps: AwayRunnerDeps = {
+      ...h.deps,
+      plan: (_input, options) => Effect.sync(() => (plans.push(options), plan)),
+      handOver: inDoubtHandOver(calls, answers),
+    };
+    const runner = makeAwayRunner(deps);
+    yield* runner.start({ targetEnvironmentId: TARGET });
+    return { h, runner, calls, answers, plans, deps };
+  });
+
+  it.effect("records the coordinator as in-doubt, with its operation, and counts it as away", () =>
+    Effect.gen(function* () {
+      const { h } = yield* leftInDoubt;
+      const session = h.saved()!;
+      expect(item(session, "coordinator", "p1")).toMatchObject({
+        outcome: "in-doubt",
+        operationId: "handover:p1:5",
+      });
+      expect(hasWorkAway(session)).toBe(true);
+    }),
+  );
+
+  it.effect("the next Leave finishes it under the same operation id via resumeOnly", () =>
+    Effect.gen(function* () {
+      const { h, runner, calls, plans } = yield* leftInDoubt;
+      yield* runner.start({ targetEnvironmentId: TARGET });
+      expect(plans.at(-1)).toEqual({ inDoubtProjectIds: ["p1"] });
+      expect(calls.at(-1)).toMatchObject({
+        projectId: "p1",
+        operationId: "handover:p1:5",
+        resumeOnly: true,
+      });
+      expect(item(h.saved()!, "coordinator", "p1").outcome).toBe("moved");
+    }),
+  );
+
+  it.effect("a Leave to another machine is refused until it is finished", () =>
+    Effect.gen(function* () {
+      const { runner } = yield* leftInDoubt;
+      const refused = yield* runner
+        .start({ targetEnvironmentId: EnvironmentId.make("env-other") })
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("has not confirmed the handover of 1 project");
+    }),
+  );
+
+  it.effect("the retry takes it back here once the target confirms it never got it", () =>
+    Effect.gen(function* () {
+      const { h, runner, calls, answers } = yield* leftInDoubt;
+      answers.push("reverted");
+      expect(yield* runner.retryInDoubt).toBe(true);
+      expect(calls.at(-1)).toMatchObject({ operationId: "handover:p1:5", resumeOnly: true });
+      const session = h.saved()!;
+      expect(item(session, "coordinator", "p1")).toMatchObject({
+        outcome: "stayed",
+        detail:
+          "Ministorm confirmed it never received the handover, so this machine coordinates this project again.",
+      });
+      expect(hasWorkAway(session)).toBe(false);
+      // Nothing left in doubt: the next retry does nothing.
+      expect(yield* runner.retryInDoubt).toBe(false);
+    }),
+  );
+
+  it.effect("Bring back finishes it first, then brings the coordinator back", () =>
+    Effect.gen(function* () {
+      const { h, runner } = yield* leftInDoubt;
+      yield* runner.bringBack({});
+      const session = h.saved()!;
+      expect(item(session, "coordinator", "p1")).toMatchObject({
+        outcome: "moved",
+        back: { outcome: "returned" },
+      });
+      expect(session.broughtBackAt).not.toBeNull();
+    }),
+  );
+});
+
+describe("AwayRunner resume and the lid-close escape (N2, N3)", () => {
+  it.effect("a Bring back cut off before leaving finished resumes as Bring back (N3)", () =>
+    Effect.gen(function* () {
+      const base = sessionFromPlan({
+        sessionId: "s1",
+        plan: PLAN,
+        trigger: "manual",
+        coordinatorScope: "live",
+        startedAt: "2026-11-09T22:00:00.000Z",
+      });
+      const h = harness({
+        saved: { ...base, bringBackStartedAt: "2026-11-09T22:05:00.000Z" },
+      });
+      expect(yield* makeAwayRunner(h.deps).resume).toBe(true);
+      const session = h.saved()!;
+      // Leaving finished first, then everything came back; no new plan was made.
+      expect(h.log).not.toContain("plan");
+      expect(h.log).toContain("askReturn:t1-on-target:-");
+      expect(session.finishedAt).not.toBeNull();
+      expect(session.broughtBackAt).not.toBeNull();
+    }),
+  );
+
+  it.effect("Bring back on a lid close waiting for its wake runs the wake check first (N2)", () =>
+    Effect.gen(function* () {
+      const pending: AwaySession = {
+        sessionId: "s-sleep",
+        targetEnvironmentId: TARGET,
+        targetLabel: "Ministorm",
+        trigger: "sleep",
+        coordinatorScope: "live",
+        startedAt: "2026-11-09T22:00:00.000Z",
+        finishedAt: null,
+        stage: "pending-intent",
+        bringBackStartedAt: null,
+        broughtBackAt: null,
+        items: [
+          {
+            kind: "coordinator",
+            id: "p1",
+            projectId: "p1" as never,
+            title: "P",
+            outcome: "pending",
+            detail: "Due.",
+          },
+        ],
+      };
+      const h = harness({ saved: pending });
+      let checks = 0;
+      // The check finds nothing moved and closes the session.
+      const runner = makeAwayRunner({
+        ...h.deps,
+        wakeCheck: Effect.gen(function* () {
+          checks += 1;
+          yield* h.deps.saveSession({
+            ...pending,
+            stage: "done",
+            finishedAt: "2026-11-09T22:30:00.000Z",
+            broughtBackAt: "2026-11-09T22:30:00.000Z",
+            items: pending.items.map((entry) => ({ ...entry, outcome: "stayed" as const })),
+          });
+        }),
+      });
+      const answered = yield* runner.bringBack({});
+      expect(checks).toBe(1);
+      expect(answered.broughtBackAt).not.toBeNull();
+      // Still silent: the check runs and the answer says what to do.
+      const silent = harness({ saved: pending });
+      const refused = yield* makeAwayRunner({ ...silent.deps, wakeCheck: Effect.void })
+        .bringBack({})
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("Run here anyway");
+    }),
+  );
+
+  it.effect("Run here anyway needs ten silent minutes after a wake, then lifts the hold", () =>
+    Effect.gen(function* () {
+      const pending: AwaySession = {
+        sessionId: "s-sleep",
+        targetEnvironmentId: TARGET,
+        targetLabel: "Ministorm",
+        trigger: "sleep",
+        coordinatorScope: "live",
+        startedAt: "2026-11-09T21:00:00.000Z",
+        finishedAt: null,
+        stage: "pending-intent",
+        bringBackStartedAt: null,
+        broughtBackAt: null,
+        items: [],
+        sleep: {
+          state: "pending-intent",
+          targetEnvironmentId: TARGET,
+          graceMinutes: 2,
+          projectIds: [],
+          threadIds: [],
+          sentAt: "2026-11-09T21:00:00.000Z",
+          dueAt: "2026-11-09T21:02:00.000Z",
+          wokeAt: "2026-11-09T21:45:00.000Z",
+          unreachableSince: "2026-11-09T21:45:00.000Z",
+        },
+      };
+      let forced = 0;
+      const early = harness({
+        saved: {
+          ...pending,
+          sleep: { ...pending.sleep!, unreachableSince: "2026-11-09T21:58:00.000Z" },
+        },
+      });
+      const tooSoon = yield* makeAwayRunner({
+        ...early.deps,
+        forceLocal: Effect.sync(() => ((forced += 1), null)),
+      })
+        .forceLocal({})
+        .pipe(Effect.flip);
+      expect(tooSoon.message).toContain("10 minutes");
+      expect(forced).toBe(0);
+      const h = harness({ saved: pending });
+      yield* makeAwayRunner({
+        ...h.deps,
+        forceLocal: Effect.sync(() => ((forced += 1), null)),
+      }).forceLocal({});
+      expect(forced).toBe(1);
+    }),
+  );
+});

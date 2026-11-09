@@ -12,6 +12,7 @@ import {
   AwayBringBackInput,
   AwayEmptyInput,
   AwayError,
+  AwayForceLocalInput,
   AwayPlan,
   AwayPreflightInput,
   AwaySession,
@@ -30,6 +31,7 @@ export const AWAY_RPC_METHODS = {
   awayBringBack: "away.bringBack",
   awaySnapshot: "away.snapshot",
   awayUpdateConfig: "away.updateConfig",
+  awayForceLocal: "away.forceLocal",
 } as const;
 
 const M = AWAY_RPC_METHODS;
@@ -63,4 +65,6 @@ export const awayRpcs = [
   Rpc.make(M.awayBringBack, { payload: AwayBringBackInput, success: AwaySession, error }),
   Rpc.make(M.awaySnapshot, { payload: AwayEmptyInput, success: AwaySnapshot, error }),
   Rpc.make(M.awayUpdateConfig, { payload: AwaySettingsPatch, success: AwaySnapshot, error }),
+  // Run here anyway: lifts the wake hold for projects the silent target may or may not hold.
+  Rpc.make(M.awayForceLocal, { payload: AwayForceLocalInput, success: AwaySession, error }),
 ] as const;

@@ -255,6 +255,7 @@ import * as AwayHandoverRoute from "./away/awayHandoverRoute.ts";
 import * as AwayIntents from "./away/AwayIntents.ts";
 import * as AwayIntentRoute from "./away/awayIntentRoute.ts";
 import * as AwaySleepRoute from "./away/awaySleepRoute.ts";
+import * as AwaySleepBridge from "./away/awaySleepBridge.ts";
 import * as CoordinatorPlannedHandover from "./project/CoordinatorPlannedHandover.ts";
 import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
@@ -755,6 +756,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       ),
     ),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+    // The same bridge value as the sleep trigger's below, so one instance (Bring back's wake check).
+    Layer.provide(AwaySleepBridge.layer),
   ),
   // Away mode: the planned coordinator handover, and the away intents a
   // sleeping machine leaves here; their routes serve the target's side.
@@ -765,6 +768,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provideMerge(CoordinatorPlannedHandover.layer),
     Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+    Layer.provide(AwaySleepBridge.layer),
   ),
   // Linked copies kept in step between machines without an open app window:
   // the peer route's side, and the loop that drives the pairs this server owns.

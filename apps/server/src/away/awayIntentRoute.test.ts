@@ -11,7 +11,9 @@ import {
   type Project,
 } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 import * as Option from "effect/Option";
@@ -29,7 +31,7 @@ import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import { checkout, machine, removeCheckouts } from "../project/ProjectLink.testkit.ts";
 import { linkedCopyOf, makeAwayIntents, memoryIntentStore } from "./AwayIntents.ts";
-import { cancelIntent, recordIntent } from "./awayIntentRoute.ts";
+import { cancelIntent, intentStatus, recordIntent } from "./awayIntentRoute.ts";
 
 const MINUTE = 60_000;
 const T0 = Date.parse("2026-11-09T22:00:00.000Z");
@@ -355,4 +357,52 @@ describe("heardAwakeSince", () => {
     ).toBe(false);
     expect(heardAwakeSince({ lastLeaseAt: null, coordinatorSleptAt: null }, since)).toBe(false);
   });
+});
+
+describe("intent status for threads (#13)", () => {
+  it.effect("names each asked thread's continuation, settled only once the follow-up ended", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-09T22:00:00.000Z"));
+      const gate = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<void>();
+      const intents = yield* makeAwayIntents({
+        store: memoryIntentStore(),
+        newId: Effect.succeed("intent-1"),
+        heardAwake: () => Effect.succeed(false),
+        act: () => Effect.succeed([]),
+      });
+      yield* intents.onIntentDue(() =>
+        Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(gate))),
+      );
+      const caller = callerFrom("m4");
+      yield* recordIntent(intents, caller, intentBody({ projectIds: [] }), []);
+      const continued = new Map<string, string>();
+      const ask = intentStatus(
+        intents,
+        caller,
+        { sourceEnvironmentId: "m4", projectIds: [], threadIds: ["thread-reel"] },
+        [],
+        "ms",
+        (threadId) => continued.get(threadId) ?? null,
+      ).pipe(Effect.map((answer) => answer.body as Record<string, unknown>));
+      expect(yield* ask).toMatchObject({
+        intentState: "waiting",
+        threads: [{ threadId: "thread-reel", continuedThreadId: null }],
+        threadsSettled: false,
+      });
+      yield* TestClock.setTime(Date.parse("2026-11-09T22:03:00.000Z"));
+      const ticking = yield* Effect.forkChild(intents.tick);
+      yield* Deferred.await(entered);
+      // Done, but the follow-up that continues threads still runs.
+      expect(yield* ask).toMatchObject({ intentState: "done", threadsSettled: false });
+      continued.set("thread-reel", "thread-reel-ms");
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(ticking);
+      expect(yield* ask).toMatchObject({
+        intentState: "done",
+        threads: [{ threadId: "thread-reel", continuedThreadId: "thread-reel-ms" }],
+        threadsSettled: true,
+      });
+    }),
+  );
 });

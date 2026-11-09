@@ -20,6 +20,9 @@
  *    the target whether it took over (`AWAY_INTENT_STATUS_PATH`); otherwise
  *    the project is `in-doubt`, with no active coordinator, never two, and
  *    the same call later finishes it.
+ * 5. Finishing an in-doubt handover (`resuming`): when every call this time
+ *    got an answer, the replay was refused and the target says its copy did
+ *    not take over, the target never got it, so this copy coordinates again.
  *
  * The caller is the coordinator itself, so this deliberately skips the
  * app's ten-minute unreachable gate on a person's takeover. Re-arming this
@@ -77,6 +80,7 @@ import { ProjectLink } from "./ProjectLink.ts";
 import {
   CoordinatorReleaseGuard,
   plannedHandoverOperationId,
+  plannedRevertOperationId,
   type ProjectLinkStandbyMethods,
 } from "./ProjectLinkStandby.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -176,21 +180,29 @@ export interface PlannedHandoverDeps {
   readonly statusPause?: Effect.Effect<void> | undefined;
 }
 
+/** What an in-doubt handover tells the user, word for word in the Away summary. */
+export const inDoubtDetail = (label: string) =>
+  `${label} did not confirm the handover, so no machine coordinates this project now. This machine tries again every minute; Leave or Bring back finishes it sooner. If ${label} confirms it never received it, this machine coordinates it again.`;
+
 /** How many times an unanswered handover asks the target whether it took over. */
 const STATUS_ASKS = 3;
 
 export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
   const handOver = (input: AwayHandoverInput): Effect.Effect<AwayHandoverResult> =>
     Effect.gen(function* () {
+      let named: string | undefined = input.operationId;
       const result = (
         outcome: AwayHandoverResult["outcome"],
         detail: string,
         epoch?: number,
+        reverted?: boolean,
       ): AwayHandoverResult => ({
         projectId: input.projectId,
         outcome,
         detail: detail.slice(0, 500),
         ...(epoch === undefined ? {} : { epoch }),
+        ...(named === undefined ? {} : { operationId: named }),
+        ...(reverted === true ? { reverted } : {}),
       });
       const label = yield* deps.labelOf(input.targetEnvironmentId);
       const project = yield* deps.loadProject(input.projectId);
@@ -211,6 +223,24 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
         binding.operationId !== undefined &&
         (input.operationId === undefined || input.operationId === binding.operationId) &&
         binding.operationId.startsWith("handover:");
+      if (resuming) named = binding.operationId;
+      if (!resuming && input.resumeOnly === true) {
+        // Only finishing: never start a new handover from here.
+        if (
+          binding.state === "active" &&
+          input.operationId !== undefined &&
+          binding.operationId === plannedRevertOperationId(input.operationId)
+        )
+          return result(
+            "failed",
+            `${label} never took the handover, so this machine coordinates this project again.`,
+            undefined,
+            true,
+          );
+        return binding.state === "active"
+          ? result("failed", "This machine coordinates this project again.", undefined, true)
+          : result("failed", "This handover is no longer open here; nothing changed.");
+      }
       if (!resuming && binding.state === "transferring")
         return result("failed", "This project is moving to another machine. Try again after.");
       if (!resuming && binding.state !== "active")
@@ -218,16 +248,14 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
       if (!identity.members.some((member) => member.environmentId === input.targetEnvironmentId))
         return result("failed", `This project has no linked copy on ${label}. Link it first.`);
       if (!(yield* deps.reachable(input.targetEnvironmentId)))
-        return result(
-          "failed",
-          resuming
-            ? `${label} did not answer. No machine coordinates this project until you try again.`
-            : `${label} did not answer. Nothing changed.`,
-        );
+        return resuming
+          ? result("in-doubt", inDoubtDetail(label))
+          : result("failed", `${label} did not answer. Nothing changed.`);
       const gathered = yield* deps.gather(project, identity.id);
       const operationId = resuming
         ? binding.operationId!
         : (input.operationId ?? plannedHandoverOperationId(identity.id, binding.epoch + 1));
+      named = operationId;
       if (!resuming && deps.releaseStandby !== undefined) {
         const successor = identity.members.find(
           (member) => member.environmentId === input.targetEnvironmentId,
@@ -258,6 +286,8 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
       };
       // Set once a call may have reached the target without an answer: from then on, never revert.
       let inDoubt = resuming;
+      // A call this time went unanswered: even a resumed handover then stays in doubt.
+      let unansweredNow = false;
       const sent = yield* deps.send(input.targetEnvironmentId, request).pipe(
         // The target replays the same operation, so one more try is safe.
         Effect.catchIf(
@@ -265,6 +295,7 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
           () =>
             Effect.suspend(() => {
               inDoubt = true;
+              unansweredNow = true;
               return deps.send(input.targetEnvironmentId, request);
             }),
         ),
@@ -284,26 +315,44 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
           sent.success.epoch,
         );
       const error = sent.failure;
-      if (error.uncertain) inDoubt = true;
+      if (error.uncertain) {
+        inDoubt = true;
+        unansweredNow = true;
+      }
       if (inDoubt || !error.refused) {
-        // Never revert here: an unanswered call may still take over on the target.
+        // Never revert on a doubt from this call: an unanswered call may still take over there.
+        let notTaken = false;
         for (let ask = 0; ask < STATUS_ASKS && deps.status !== undefined; ask += 1) {
           if (ask > 0) yield* deps.statusPause ?? Effect.sleep(Duration.seconds(2));
           const status = yield* deps.status(input.targetEnvironmentId, input.projectId);
           if (status?.takenOver === true)
             return yield* handedOver(`${label} coordinates this project now.`, status.epoch);
-          if (status !== undefined) break;
+          if (status !== undefined) {
+            notTaken = true;
+            break;
+          }
         }
-        return result(
-          inDoubt ? "in-doubt" : "failed",
-          `${label} did not confirm the handover, so no machine coordinates this project now. Open Away and choose Leave again to finish it; ${label} replays the same handover.`,
-        );
+        // Finishing an old doubt: the replay was refused and the target says it never took over.
+        if (resuming && !unansweredNow && error.refused && notTaken) {
+          const reverted = yield* deps
+            .revert({ projectId: project.id, operationId })
+            .pipe(Effect.result);
+          return reverted._tag === "Success"
+            ? result(
+                "failed",
+                `${label} confirmed it never received the handover, so this machine coordinates this project again.`,
+                undefined,
+                true,
+              )
+            : result("in-doubt", inDoubtDetail(label));
+        }
+        return result(inDoubt ? "in-doubt" : "failed", inDoubtDetail(label));
       }
       const reverted = yield* deps
         .revert({ projectId: project.id, operationId })
         .pipe(Effect.result);
       return reverted._tag === "Success"
-        ? result("failed", `${error.message}. This machine coordinates it again.`)
+        ? result("failed", `${error.message}. This machine coordinates it again.`, undefined, true)
         : result(
             "failed",
             `${error.message}. This machine could not take it back: ${linkErrorText(reverted.failure)}`,

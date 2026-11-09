@@ -15,7 +15,10 @@
  * On wake: back before the target acted, everything stays and the routines
  * turn on again. After it, coordinators read what the target took over and
  * threads read the continuation the handoff heartbeat recorded (which also
- * fences the copy here); the session then waits for Bring back.
+ * fences the copy here); the session then waits for Bring back. The
+ * coordinator routines of a project the target did not take turn on here at
+ * once. Each outcome is one write of the session together with its `sleep`
+ * record, retried when it fails, so a session never stays `pending-intent`.
  */
 import {
   AWAY_SESSION_MAX_ITEMS,
@@ -31,8 +34,10 @@ import {
 } from "@specweave-studio/contracts";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -259,10 +264,24 @@ export function settleSleepMoved(
   now: string,
   takenOver: ReadonlyArray<string> | null,
   continued: ReadonlyMap<string, string>,
+  more: {
+    /** Coordinator routines of a project the target did not take: whether each runs here again. */
+    readonly resumed?: ReadonlyMap<string, boolean>;
+    /** Threads with queued messages here, kept and listed when the thread continued there. */
+    readonly queued?: ReadonlySet<string>;
+  } = {},
 ): AwaySession {
   const label = session.targetLabel;
   const taken = takenOver === null ? null : new Set(takenOver);
   const items = session.items.map((item): AwayItemResult => {
+    if (item.kind === "routine" && more.resumed?.get(item.id) === true) {
+      const { via: _via, wasEnabled: _wasEnabled, ...rest } = item;
+      return {
+        ...rest,
+        outcome: "stayed",
+        detail: clip(`${label} did not take this project, so its routines stayed here.`),
+      };
+    }
     if (item.kind === "thread" && item.outcome === "pending") {
       const there = continued.get(item.id);
       return there === undefined
@@ -271,7 +290,11 @@ export function settleSleepMoved(
             ...item,
             outcome: "moved",
             targetId: there,
-            detail: clip(`Continued on ${label} while this machine slept.`),
+            detail: clip(
+              more.queued?.has(item.id) === true
+                ? `Continued on ${label} while this machine slept. Its queued messages are held here; open it on ${label} and send them there.`
+                : `Continued on ${label} while this machine slept.`,
+            ),
           };
     }
     if (item.kind !== "coordinator" || item.outcome !== "pending") return item;
@@ -307,13 +330,18 @@ export interface SleepSessionPort {
     sleep: AwaySleepSession,
     coordinatorScope: AwayCoordinatorScope,
   ) => Effect.Effect<void>;
-  /** The wake found nothing moved: routines on again, the session closed. */
-  readonly nothingMoved: Effect.Effect<void>;
+  /**
+   * The wake found nothing moved: routines on again, the session closed and
+   * its `sleep` record dropped, in one write. False when it could not be saved.
+   */
+  readonly nothingMoved: Effect.Effect<boolean>;
   /**
    * The wake found work moved, after this machine gave way where the target
-   * took over (so a copy that no longer coordinates was taken over).
+   * took over (so a copy that no longer coordinates was taken over). Saves the
+   * items, the stage and `sleep` (the wake prompt) in one write; false when
+   * it could not be saved, so the check runs again.
    */
-  readonly moved: Effect.Effect<void>;
+  readonly moved: (sleep?: AwaySleepSession) => Effect.Effect<boolean>;
 }
 
 export interface SleepSessionDeps {
@@ -321,7 +349,7 @@ export interface SleepSessionDeps {
   /** Changes the saved session in one write; null removes nothing. */
   readonly update: (
     change: (session: AwaySession | null) => AwaySession | null,
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<boolean | void>;
   readonly now: Effect.Effect<string>;
   readonly newId: Effect.Effect<string>;
   readonly targetLabel: (target: EnvironmentId) => Effect.Effect<string>;
@@ -338,7 +366,17 @@ export interface SleepSessionDeps {
   readonly continuedOn: (target: EnvironmentId) => Effect.Effect<ReadonlyMap<string, string>>;
   /** Whether this copy still coordinates the project (it gave way where the target took over). */
   readonly coordinates: (projectId: string) => Effect.Effect<boolean>;
+  /** Each routine's worker thread, or null for a coordinator's own; absent: none turn on early. */
+  readonly routineThreads?: Effect.Effect<ReadonlyMap<string, string | null>> | undefined;
+  /** Threads with queued messages here. */
+  readonly queued?: Effect.Effect<ReadonlySet<string>> | undefined;
 }
+
+/** Without its `sleep` record: the wake was handled. */
+const withoutSleep = (session: AwaySession): AwaySession => {
+  const { sleep: _sleep, ...rest } = session;
+  return rest;
+};
 
 export const makeSleepSessionPort = (deps: SleepSessionDeps): SleepSessionPort => {
   const begin: SleepSessionPort["begin"] = (sleep, coordinatorScope) =>
@@ -398,9 +436,12 @@ export const makeSleepSessionPort = (deps: SleepSessionDeps): SleepSessionPort =
       ),
     );
 
+  const saved = (change: (session: AwaySession | null) => AwaySession | null) =>
+    deps.update(change).pipe(Effect.map((result) => result !== false));
+
   const nothingMoved = Effect.gen(function* () {
     const session = yield* deps.load;
-    if (!isPendingSleep(session)) return;
+    if (!isPendingSleep(session)) return true;
     const resumed = new Map<string, boolean>();
     for (const item of session.items)
       if (item.kind === "routine" && item.outcome === "paused")
@@ -409,38 +450,73 @@ export const makeSleepSessionPort = (deps: SleepSessionDeps): SleepSessionPort =
           item.wasEnabled === false ? true : yield* deps.pauseHere(item.id, null),
         );
     const now = yield* deps.now;
-    yield* deps.update((current) =>
+    // The items, the stage and the dropped `sleep` record in one write.
+    return yield* saved((current) =>
       current?.sessionId === session.sessionId && isPendingSleep(current)
-        ? settleSleepNothingMoved(current, now, resumed)
+        ? withoutSleep(settleSleepNothingMoved(current, now, resumed))
         : current,
     );
   }).pipe(
     Effect.catchCause((cause) =>
-      Effect.logWarning("Away: could not close the lid-close session", { cause }),
+      Effect.logWarning("Away: could not close the lid-close session", { cause }).pipe(
+        Effect.as(false),
+      ),
     ),
   );
 
-  const moved: SleepSessionPort["moved"] = Effect.gen(function* () {
-    const session = yield* deps.load;
-    if (!isPendingSleep(session)) return;
-    // A thread the target continued is fenced here on this heartbeat, not 30 seconds later.
-    yield* deps.heartbeat;
-    const continued = yield* deps.continuedOn(session.targetEnvironmentId);
-    const now = yield* deps.now;
-    const taken: string[] = [];
-    for (const item of session.items)
-      if (item.kind === "coordinator" && !(yield* deps.coordinates(item.projectId ?? item.id)))
-        taken.push(item.projectId ?? item.id);
-    yield* deps.update((current) =>
-      current?.sessionId === session.sessionId && isPendingSleep(current)
-        ? settleSleepMoved(current, now, taken, continued)
-        : current,
+  const moved: SleepSessionPort["moved"] = (sleep) =>
+    Effect.gen(function* () {
+      const session = yield* deps.load;
+      if (!isPendingSleep(session)) return true;
+      // A thread the target continued is fenced here on this heartbeat, not 30 seconds later.
+      yield* deps.heartbeat;
+      const continued = yield* deps.continuedOn(session.targetEnvironmentId);
+      const now = yield* deps.now;
+      const taken: string[] = [];
+      const kept = new Set<string>();
+      for (const item of session.items) {
+        if (item.kind !== "coordinator") continue;
+        const projectId = item.projectId ?? item.id;
+        if (!(yield* deps.coordinates(projectId))) taken.push(projectId);
+        else kept.add(projectId);
+      }
+      // The coordinator's own routines of a project the target did not take run here again now.
+      const threadOf =
+        deps.routineThreads === undefined
+          ? new Map<string, string | null>()
+          : yield* deps.routineThreads;
+      const resumed = new Map<string, boolean>();
+      for (const item of session.items)
+        if (
+          item.kind === "routine" &&
+          item.outcome === "paused" &&
+          item.back === undefined &&
+          item.projectId !== undefined &&
+          kept.has(item.projectId) &&
+          threadOf.has(item.id) &&
+          threadOf.get(item.id) === null
+        )
+          resumed.set(
+            item.id,
+            item.wasEnabled === false ? true : yield* deps.pauseHere(item.id, null),
+          );
+      const queued = deps.queued === undefined ? new Set<string>() : yield* deps.queued;
+      // The items, the stage and the wake prompt in one write.
+      return yield* saved((current) =>
+        current?.sessionId === session.sessionId && isPendingSleep(current)
+          ? {
+              ...settleSleepMoved(current, now, taken, continued, { resumed, queued }),
+              ...(sleep === undefined ? {} : { sleep }),
+            }
+          : current,
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Away: could not record what moved while asleep", { cause }).pipe(
+          Effect.as(false),
+        ),
+      ),
     );
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("Away: could not record what moved while asleep", { cause }),
-    ),
-  );
 
   return {
     mayStart: deps.load.pipe(
@@ -525,6 +601,7 @@ export const handoffOffFor =
 
 const encodeSession = Schema.encodeSync(AwaySession);
 const HEARTBEAT_WAIT_MS = 8_000;
+const UPDATE_RETRY = { times: 4, schedule: Schedule.exponential(Duration.millis(100)) } as const;
 
 /** The store and the port over this server's handoff document, projects, threads and routines. */
 export const makeLiveSleepSession = Effect.gen(function* () {
@@ -541,6 +618,7 @@ export const makeLiveSleepSession = Effect.gen(function* () {
     Effect.map((document) => readAwaySession(document.awaySession)),
     Effect.orElseSucceed(() => null),
   );
+  // One write per change, retried; false when it still failed, so the caller tries again later.
   const update = (change: (session: AwaySession | null) => AwaySession | null) =>
     handoff
       .updateDocument((document) => {
@@ -554,8 +632,10 @@ export const makeLiveSleepSession = Effect.gen(function* () {
         ] as const;
       })
       .pipe(
+        Effect.retry(UPDATE_RETRY),
+        Effect.as(true),
         Effect.catchCause((cause) =>
-          Effect.logWarning("Away could not save its session", { cause }),
+          Effect.logWarning("Away could not save its session", { cause }).pipe(Effect.as(false)),
         ),
       );
   const newId = crypto.randomUUIDv4.pipe(Effect.orDie);
@@ -636,6 +716,24 @@ export const makeLiveSleepSession = Effect.gen(function* () {
         // Unknown counts as still here: the summary then never claims it moved.
         Effect.orElseSucceed(() => true),
       ),
+    routineThreads: scheduled.list().pipe(
+      Effect.map(
+        (listed) =>
+          new Map(listed.tasks.map((task) => [task.id as string, task.threadId as string | null])),
+      ),
+      Effect.orElseSucceed(() => new Map<string, string | null>()),
+    ),
+    queued: projections.getShellSnapshot({ unsettledOnly: false }).pipe(
+      Effect.map(
+        (snapshot) =>
+          new Set(
+            snapshot.threads
+              .filter((shell) => isAwayCandidate(shell, self)?.queued === true)
+              .map((shell) => shell.id as string),
+          ),
+      ),
+      Effect.orElseSucceed(() => new Set<string>()),
+    ),
   };
   return {
     store: sleepStoreOver(deps),

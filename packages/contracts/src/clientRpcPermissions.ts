@@ -99,6 +99,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.awayBringBack]: AuthOrchestrationOperateScope,
   [WS_METHODS.awaySnapshot]: AuthOrchestrationReadScope,
   [WS_METHODS.awayUpdateConfig]: AuthSettingsWriteScope,
+  [WS_METHODS.awayForceLocal]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,

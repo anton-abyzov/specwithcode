@@ -8,8 +8,9 @@ import { useEffect, useState } from "react";
 
 import { requestAway } from "../../studio/awayRequest";
 import { Button } from "../ui/button";
+import { RunHereAnyway } from "./AwayDialog";
 import { awayRpc, runAway } from "./awayRpc";
-import { AWAY_WAKE_POLL_MS, showAwayWakeCard } from "./awaySession.logic";
+import { AWAY_WAKE_POLL_MS, showAwayWakeCard, showRunHereAnyway } from "./awaySession.logic";
 
 const DISMISSED_KEY = "specwithcode:away-wake-dismissed";
 
@@ -24,6 +25,8 @@ function readDismissed(): string | null {
 export function AwayWakeCard(props: { environmentId: EnvironmentId; hidden?: boolean }) {
   const { environmentId } = props;
   const [snapshot, setSnapshot] = useState<AwaySnapshot | null>(null);
+  // When the snapshot was read: Run here anyway is judged against it, not during render.
+  const [readAt, setReadAt] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(() => readDismissed());
   const [bringing, setBringing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +35,9 @@ export function AwayWakeCard(props: { environmentId: EnvironmentId; hidden?: boo
     let live = true;
     const read = () =>
       void runAway(awayRpc.snapshot, { environmentId, input: {} }).then((next) => {
-        if (live && next.ok) setSnapshot(next.value);
+        if (!live || !next.ok) return;
+        setSnapshot(next.value);
+        setReadAt(Date.now());
       });
     read();
     const timer = setInterval(read, AWAY_WAKE_POLL_MS);
@@ -48,7 +53,47 @@ export function AwayWakeCard(props: { environmentId: EnvironmentId; hidden?: boo
     };
   }, [environmentId]);
 
-  if (props.hidden || !showAwayWakeCard(snapshot, dismissed)) return null;
+  if (props.hidden) return null;
+  // The target stayed silent ten minutes after a wake: the owner may run the held work here.
+  if (showRunHereAnyway(snapshot, readAt)) {
+    const waiting = snapshot!.session!;
+    return (
+      <section
+        role="dialog"
+        aria-label="The other machine has not answered"
+        data-testid="away-wake-card-silent"
+        className="fixed right-4 bottom-4 z-50 flex w-80 flex-col gap-2 rounded-xl border border-border bg-popover py-4 text-sm shadow-lg"
+      >
+        <p className="px-4 font-medium">{`${waiting.targetLabel} has not answered`}</p>
+        <p className="px-4 text-muted-foreground">
+          {`This machine holds the work it handed to ${waiting.targetLabel} until it answers.`}
+        </p>
+        {error ? (
+          <p role="alert" className="px-4 text-xs text-destructive-foreground">
+            {error}
+          </p>
+        ) : null}
+        <RunHereAnyway
+          className="px-4"
+          targetLabel={waiting.targetLabel}
+          onConfirm={() => {
+            setError(null);
+            void runAway(awayRpc.forceLocal, {
+              environmentId,
+              input: { sessionId: waiting.sessionId },
+            }).then((next) => {
+              if (!next.ok) {
+                setError(next.error);
+                return;
+              }
+              setSnapshot({ ...snapshot!, session: next.value });
+            });
+          }}
+        />
+      </section>
+    );
+  }
+  if (!showAwayWakeCard(snapshot, dismissed)) return null;
   const session = snapshot!.session!;
   return (
     <AwayWakeCardView

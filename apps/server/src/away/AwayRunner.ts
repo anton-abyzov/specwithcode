@@ -18,6 +18,11 @@
  * resumed handover finishes the one it started, and an item already settled
  * is skipped.
  *
+ * A coordinator handover the target did not confirm is `in-doubt`: no copy
+ * coordinates it. It counts as work away; the next Leave, Bring back, and a
+ * retry every minute while the session is open finish it under the same
+ * operation id, or take it back here once the target confirms it never got it.
+ *
  * Bring back reverses a session: the target hands the threads it continued
  * back, routines return with their state (paused ones turn on again),
  * coordinators come back by planned handover, and the target is re-armed as
@@ -41,6 +46,7 @@ import {
   type AwayStartInput,
   AWAY_RETURN_PATH,
   awayConfigOf,
+  canRunHereAnyway,
   type CoordinatorRoutineCopy,
   DEFAULT_COORDINATOR_STANDBY_AFTER_MINUTES,
   type EnvironmentId,
@@ -56,6 +62,7 @@ import {
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -79,6 +86,7 @@ import {
 import { AwayIntents } from "./AwayIntents.ts";
 import { AwayPeerError, type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPlanner } from "./AwayPlanner.ts";
+import { AwaySleepBridge } from "./awaySleepBridge.ts";
 import { fillSleepThreads } from "./awaySleepSession.ts";
 import {
   AWAY_RETURN_PROTOCOL_VERSION,
@@ -145,6 +153,10 @@ export function sessionFromPlan(input: {
 const awaitsReturn = (item: AwayItemResult) =>
   item.back === undefined || item.back.outcome === "failed";
 
+/** A coordinator handover the target did not confirm, still open. */
+export const isInDoubt = (item: AwayItemResult) =>
+  item.kind === "coordinator" && item.outcome === "in-doubt" && awaitsReturn(item);
+
 /** Whether a session still has work on the target that Bring back must undo. */
 export function hasWorkAway(session: AwaySession): boolean {
   return session.items.some(
@@ -152,8 +164,36 @@ export function hasWorkAway(session: AwaySession): boolean {
       awaitsReturn(item) &&
       (item.outcome === "moved" ||
         item.outcome === "paused" ||
+        item.outcome === "in-doubt" ||
         (item.outcome === "failed" && item.via === "transfer" && item.wasEnabled === true)),
   );
+}
+
+/** A coordinator item after a planned handover answered. */
+function handedItem(
+  item: AwayItemResult,
+  handed: AwayHandoverResult,
+  minutes: number | undefined,
+): AwayItemResult {
+  const outcome: AwayItemResult["outcome"] =
+    handed.outcome === "handed-over"
+      ? "moved"
+      : handed.outcome === "skipped"
+        ? "stayed"
+        : handed.outcome === "in-doubt"
+          ? "in-doubt"
+          : // The target never took it and this copy coordinates again: it stayed.
+            handed.reverted === true && item.outcome === "in-doubt"
+            ? "stayed"
+            : "failed";
+  return {
+    ...item,
+    outcome,
+    detail: clip(handed.detail),
+    ...(handed.epoch === undefined ? {} : { targetId: String(handed.epoch) }),
+    ...(minutes === undefined ? {} : { standbyAfterMinutes: minutes }),
+    ...(handed.operationId === undefined ? {} : { operationId: handed.operationId }),
+  };
 }
 
 const standbyMinutes = (value: number | undefined): CoordinatorStandbyAfterMinutes =>
@@ -174,7 +214,10 @@ export interface AwayRunnerDeps {
   readonly selfEnvironmentId: EnvironmentId;
   readonly loadSession: Effect.Effect<AwaySession | null>;
   readonly saveSession: (session: AwaySession) => Effect.Effect<void>;
-  readonly plan: (input: AwayPreflightInput) => Effect.Effect<AwayPlan, AwayError>;
+  readonly plan: (
+    input: AwayPreflightInput,
+    options?: { readonly inDoubtProjectIds?: ReadonlyArray<ProjectId> },
+  ) => Effect.Effect<AwayPlan, AwayError>;
   readonly now: Effect.Effect<string>;
   readonly newId: Effect.Effect<string>;
   /** Runs leaving or Bring back after the call answered. Tests run it in place. */
@@ -224,6 +267,10 @@ export interface AwayRunnerDeps {
     target: EnvironmentId,
     request: AwayReturnRequest,
   ) => Effect.Effect<AwayReturnResponse, AwayPeerError>;
+  /** The lid-close wake check (`AwaySleepBridge`); absent: Bring back waits for the wake. */
+  readonly wakeCheck?: Effect.Effect<void> | undefined;
+  /** Run here anyway (`AwaySleepBridge`); null when done, else why not. */
+  readonly forceLocal?: Effect.Effect<string | null> | undefined;
 }
 
 const THREAD_BATCH = 100;
@@ -259,26 +306,48 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
       for (const item of session.current.items) {
         if (item.kind !== "coordinator" || item.outcome !== "pending") continue;
         const projectId = (item.projectId ?? item.id) as ProjectId;
-        const minutes = yield* deps.standbyMinutesOf(projectId);
+        // Carried from an in-doubt handover: its standby was read when it first left.
+        const minutes =
+          item.operationId === undefined
+            ? yield* deps.standbyMinutesOf(projectId)
+            : item.standbyAfterMinutes;
         const handed = yield* deps.handOver({
           projectId,
           targetEnvironmentId: target,
           reason: "away",
+          // An in-doubt handover carried into this Leave finishes under its own id.
+          ...(item.operationId === undefined
+            ? {}
+            : { operationId: item.operationId, resumeOnly: true }),
         });
-        yield* settle(session, isItem("coordinator", item.id), (current) => ({
-          ...current,
-          outcome:
-            handed.outcome === "handed-over"
-              ? "moved"
-              : handed.outcome === "skipped"
-                ? "stayed"
-                : "failed",
-          detail: clip(handed.detail),
-          ...(handed.epoch === undefined ? {} : { targetId: String(handed.epoch) }),
-          ...(minutes === undefined ? {} : { standbyAfterMinutes: minutes }),
-        }));
+        yield* settle(session, isItem("coordinator", item.id), (current) =>
+          handedItem(
+            item.operationId === undefined ? current : { ...current, outcome: "in-doubt" },
+            handed,
+            minutes,
+          ),
+        );
       }
       yield* stage(session, "routines");
+    });
+
+  /** Finishes every in-doubt handover under its own operation id (Bring back, the retry). */
+  const finishInDoubt = (session: { current: AwaySession }) =>
+    Effect.gen(function* () {
+      const target = session.current.targetEnvironmentId;
+      for (const item of session.current.items) {
+        if (!isInDoubt(item)) continue;
+        const handed = yield* deps.handOver({
+          projectId: (item.projectId ?? item.id) as ProjectId,
+          targetEnvironmentId: target,
+          reason: "away",
+          resumeOnly: true,
+          ...(item.operationId === undefined ? {} : { operationId: item.operationId }),
+        });
+        yield* settle(session, isItem("coordinator", item.id), (current) =>
+          handedItem(current, handed, current.standbyAfterMinutes),
+        );
+      }
     });
 
   /** Whether the item's routine follows a coordinator that moved, stayed, or is elsewhere. */
@@ -513,24 +582,74 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
           yield* deps.fork(guarded(runLeaving(latest).pipe(Effect.asVoid)));
           return { session: latest, forked: true };
         }
-        if (latest !== null && latest.broughtBackAt === null && hasWorkAway(latest))
+        // An in-doubt handover alone does not block a Leave to the same machine: it finishes it.
+        const doubts =
+          latest === null || latest.broughtBackAt !== null ? [] : latest.items.filter(isInDoubt);
+        const elseAway =
+          latest !== null &&
+          latest.broughtBackAt === null &&
+          hasWorkAway({ ...latest, items: latest.items.filter((item) => !isInDoubt(item)) });
+        if (latest !== null && elseAway)
           return yield* new AwayError({
             code: "failed",
             message: `Work is still on ${latest.targetLabel}. Bring it back before you leave again.`,
           });
-        const plan = yield* deps.plan({
-          targetEnvironmentId: input.targetEnvironmentId,
-          ...(input.coordinatorScope === undefined
-            ? {}
-            : { coordinatorScope: input.coordinatorScope }),
-        });
-        const session = sessionFromPlan({
+        if (
+          latest !== null &&
+          doubts.length > 0 &&
+          latest.targetEnvironmentId !== input.targetEnvironmentId
+        )
+          return yield* new AwayError({
+            code: "failed",
+            message: `${latest.targetLabel} has not confirmed the handover of ${doubts.length === 1 ? "1 project" : `${doubts.length} projects`}. Leave for ${latest.targetLabel} again, or bring it back, to finish it first.`,
+          });
+        const plan = yield* deps.plan(
+          {
+            targetEnvironmentId: input.targetEnvironmentId,
+            ...(input.coordinatorScope === undefined
+              ? {}
+              : { coordinatorScope: input.coordinatorScope }),
+          },
+          doubts.length === 0
+            ? undefined
+            : { inDoubtProjectIds: doubts.map((item) => (item.projectId ?? item.id) as ProjectId) },
+        );
+        const planned = sessionFromPlan({
           sessionId: yield* deps.newId,
           plan,
           trigger: input.trigger ?? "manual",
           coordinatorScope: input.coordinatorScope ?? "live",
           startedAt: yield* deps.now,
         });
+        // Each in-doubt handover rides this Leave under its own operation id, listed or not.
+        const carried = (doubt: AwayItemResult): AwayItemResult => {
+          const { back: _back, ...rest } = doubt;
+          return { ...rest, outcome: "pending" };
+        };
+        const session: AwaySession =
+          doubts.length === 0
+            ? planned
+            : {
+                ...planned,
+                items: [
+                  ...planned.items.map((item) => {
+                    const doubt = doubts.find(
+                      (entry) => item.kind === "coordinator" && entry.id === item.id,
+                    );
+                    return doubt === undefined
+                      ? item
+                      : { ...item, ...carried(doubt), title: item.title };
+                  }),
+                  ...doubts
+                    .filter(
+                      (doubt) =>
+                        !planned.items.some(
+                          (item) => item.kind === "coordinator" && item.id === doubt.id,
+                        ),
+                    )
+                    .map(carried),
+                ],
+              };
         yield* deps.saveSession(session);
         yield* deps.fork(guarded(runLeaving(session).pipe(Effect.asVoid)));
         return { session, forked: true };
@@ -560,6 +679,8 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
           yield* deps.saveSession(filled);
         }
       }
+      // An in-doubt handover is finished (or taken back) first, so it can come back too.
+      yield* finishInDoubt(session);
       const open = (kind: AwayItemResult["kind"]) =>
         session.current.items.filter((item) => item.kind === kind && awaitsReturn(item));
 
@@ -725,8 +846,19 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
       return session.current;
     });
 
-  /** Starts Bring back for the latest session; answers once it is saved. */
+  /**
+   * Starts Bring back for the latest session; answers once it is saved. A lid
+   * close still waiting for its wake runs the wake check first (the escape
+   * from `pending-intent`), then brings back what it found moved.
+   */
   const bringBack = (input: { readonly sessionId?: string | undefined }) =>
+    Effect.gen(function* () {
+      const first = yield* deps.loadSession;
+      if (first?.stage === "pending-intent" && deps.wakeCheck !== undefined) yield* deps.wakeCheck;
+      return yield* bringBackNow(input);
+    });
+
+  const bringBackNow = (input: { readonly sessionId?: string | undefined }) =>
     claimed(
       Effect.gen(function* () {
         const latest = yield* deps.loadSession;
@@ -739,7 +871,7 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
         if (latest.stage === "pending-intent")
           return yield* new AwayError({
             code: "failed",
-            message: `This machine is still checking what ${latest.targetLabel} took over while it slept. Try again in a moment.`,
+            message: `${latest.targetLabel} has not answered, so this machine cannot tell yet what it took over while it slept. It keeps checking; if ${latest.targetLabel} stays silent for 10 minutes you can choose Run here anyway.`,
           });
         const started: AwaySession = {
           ...latest,
@@ -768,6 +900,12 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
   const resume = Effect.gen(function* () {
     const latest = yield* deps.loadSession;
     if (latest === null || latest.stage === "pending-intent") return false;
+    // A Bring back the restart cut off resumes as Bring back (it finishes leaving first).
+    if (latest.bringBackStartedAt !== null && latest.broughtBackAt === null)
+      return yield* bringBackNow({ sessionId: latest.sessionId }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
     if (latest.finishedAt === null)
       return yield* start({
         targetEnvironmentId: latest.targetEnvironmentId,
@@ -777,18 +915,61 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
         Effect.as(true),
         Effect.orElseSucceed(() => false),
       );
-    if (latest.bringBackStartedAt !== null && latest.broughtBackAt === null)
-      return yield* bringBack({ sessionId: latest.sessionId }).pipe(
-        Effect.as(true),
-        Effect.orElseSucceed(() => false),
-      );
     return false;
   });
+
+  /**
+   * The retry every minute while a session is open: finishes its in-doubt
+   * handovers, or takes them back once the target confirms it never got them.
+   */
+  const retryInDoubt = Effect.gen(function* () {
+    const latest = yield* deps.loadSession;
+    if (latest === null || latest.broughtBackAt !== null || latest.finishedAt === null)
+      return false;
+    if (!latest.items.some(isInDoubt)) return false;
+    yield* claimed(
+      Effect.gen(function* () {
+        const current = yield* deps.loadSession;
+        if (current === null || current.sessionId !== latest.sessionId)
+          return { session: latest, forked: false };
+        const session = { current };
+        yield* finishInDoubt(session);
+        return { session: session.current, forked: false };
+      }),
+    );
+    return true;
+  }).pipe(Effect.orElseSucceed(() => false));
+
+  /** Run here anyway: the owner lifts the wake hold after the target stayed silent. */
+  const forceLocal = (input: { readonly sessionId?: string | undefined }) =>
+    Effect.gen(function* () {
+      const latest = yield* deps.loadSession;
+      if (
+        latest === null ||
+        (input.sessionId !== undefined && latest.sessionId !== input.sessionId)
+      )
+        return yield* new AwayError({ code: "not_found", message: "Nothing left this machine." });
+      if (!canRunHereAnyway(latest, Date.parse(yield* deps.now)))
+        return yield* new AwayError({
+          code: "failed",
+          message: `Run here anyway is offered once ${latest.targetLabel} has not answered for 10 minutes after a wake.`,
+        });
+      if (deps.forceLocal === undefined)
+        return yield* new AwayError({
+          code: "failed",
+          message: "This machine cannot lift the hold now. Restart SpecWithCode and try again.",
+        });
+      const refused = yield* deps.forceLocal;
+      if (refused !== null) return yield* new AwayError({ code: "failed", message: refused });
+      return (yield* deps.loadSession) ?? latest;
+    });
 
   return {
     start,
     bringBack,
     resume,
+    retryInDoubt,
+    forceLocal,
     isRunning: Effect.sync(() => running),
     /** For tests: the stages without the fork. */
     runLeaving,
@@ -807,6 +988,9 @@ export class AwayRunner extends Context.Service<
     }) => Effect.Effect<AwaySession, AwayError>;
     readonly snapshot: Effect.Effect<AwaySnapshot, AwayError>;
     readonly updateConfig: (patch: AwaySettingsPatch) => Effect.Effect<AwaySnapshot, AwayError>;
+    readonly forceLocal: (input: {
+      readonly sessionId?: string | undefined;
+    }) => Effect.Effect<AwaySession, AwayError>;
   }
 >()("specweave-studio/away/AwayRunner") {}
 
@@ -846,6 +1030,7 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const link = yield* ProjectLink;
   const intents = yield* AwayIntents;
+  const bridge = Option.getOrUndefined(yield* Effect.serviceOption(AwaySleepBridge));
   const crypto = yield* Crypto.Crypto;
   const post: AwayPeerPost = yield* makeAwayPeerPost;
   const runScope = yield* Scope.make("sequential");
@@ -881,7 +1066,7 @@ export const make = Effect.gen(function* () {
     selfEnvironmentId: handoff.environmentId,
     loadSession,
     saveSession,
-    plan: planner.preflight,
+    plan: (input, options) => planner.preflight(input, options),
     now: nowIso,
     newId: crypto.randomUUIDv4.pipe(Effect.orDie),
     fork: (effect) =>
@@ -965,6 +1150,24 @@ export const make = Effect.gen(function* () {
         Effect.map((run) => run.results),
         Effect.mapError((error) => away(error.message)),
       ),
+    ...(bridge === undefined
+      ? {}
+      : {
+          wakeCheck: bridge.handlers.pipe(
+            Effect.flatMap((handlers) => handlers?.wakeCheck ?? Effect.void),
+          ),
+          forceLocal: bridge.handlers.pipe(
+            Effect.flatMap((handlers) =>
+              handlers === null
+                ? Effect.succeed<string | null>(
+                    "This machine cannot lift the hold now. Restart SpecWithCode and try again.",
+                  )
+                : handlers.forceLocal.pipe(
+                    Effect.map((result) => (result.ok ? null : result.message)),
+                  ),
+            ),
+          ),
+        }),
     askReturn: (target, request) =>
       post(target, AWAY_RETURN_PATH, request, RETURN_TIMEOUT_MS).pipe(
         Effect.flatMap((answer) => {
@@ -1022,10 +1225,20 @@ export const make = Effect.gen(function* () {
     Effect.catchCause((cause) => Effect.logWarning("Away could not resume on start", { cause })),
     Effect.forkIn(runScope),
   );
+  // An in-doubt handover is tried again every minute while its session is open.
+  yield* Effect.sleep(Duration.minutes(1)).pipe(
+    Effect.andThen(core.retryInDoubt),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Away could not finish an in-doubt handover", { cause }),
+    ),
+    Effect.forever,
+    Effect.forkIn(runScope),
+  );
 
   return AwayRunner.of({
     start: core.start,
     bringBack: core.bringBack,
+    forceLocal: core.forceLocal,
     snapshot,
     updateConfig: (patch) =>
       handoff.updateConfig(handoffPatchOf(patch)).pipe(

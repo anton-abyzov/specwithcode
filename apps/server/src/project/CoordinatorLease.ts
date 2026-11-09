@@ -221,6 +221,8 @@ export interface CoordinatorLeaseShape {
    */
   readonly acceptAwayTakeover: (input: {
     readonly projectId: ProjectId;
+    /** The away target the lid close recorded; its member here is who the answer must come from. */
+    readonly targetEnvironmentId: string;
     readonly takenOver: NonNullable<CoordinatorLeaseResponse["takenOver"]>;
     /** The target's receive time and this machine's send and answer times. */
     readonly receivedAt: string;
@@ -803,9 +805,15 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
 
   const acceptAwayTakeover: CoordinatorLeaseShape["acceptAwayTakeover"] = (input) =>
     Effect.gen(function* () {
+      // Verified against the recorded target's member here, never against the answer itself.
+      const listed = (yield* deps.loadProject(input.projectId))?.workspaceSettings?.logicalProject;
+      const sentTo = listed?.members.find(
+        (member) => member.environmentId === input.targetEnvironmentId,
+      );
+      if (sentTo === undefined) return false;
       yield* giveWay(
         input.projectId,
-        input.takenOver.successor,
+        sentTo,
         {
           takenOver: input.takenOver,
           wantsContent: false,

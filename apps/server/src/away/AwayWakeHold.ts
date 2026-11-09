@@ -9,6 +9,11 @@
  * rest. The lease (`CoordinatorLease`) also reads the recorded target, so a
  * takeover answer from it is accepted like one from the armed standby.
  *
+ * Worker threads the intent named are held the same way (`threads`): the
+ * target may have continued them, so their queued messages start here only
+ * once it says it did not. One it did continue is fenced by handoff mode's
+ * own record (`continuedOn`) before it leaves this hold, and keeps its queue.
+ *
  * Kept as a file in the state directory, so a restart keeps the hold. It
  * imports nothing from the project layer, so the gate and the lease can read
  * it without a cycle.
@@ -38,6 +43,8 @@ export const AwayWakeHoldRecord = Schema.Struct({
   /** When the intent was sent, on this machine's clock. */
   since: Schema.String,
   projects: Schema.Array(AwayWakeHoldProject),
+  /** Worker threads the intent named; absent from holds written before it. */
+  threads: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type AwayWakeHoldRecord = typeof AwayWakeHoldRecord.Type;
 
@@ -61,10 +68,24 @@ export const memoryWakeHoldStore = (
   };
 };
 
-/** Whether `threadId` is a coordinator the hold keeps from starting a turn. */
+export const AWAY_THREAD_HOLD_REFUSAL =
+  "This machine handed this thread to another machine before it slept, and is checking whether that machine continued it. Its queued messages wait here until that machine answers. Send again in a minute.";
+
+/** Whether `threadId` is a coordinator or a worker the hold keeps from starting a turn. */
 export function heldThread(hold: AwayWakeHoldRecord | null, threadId: string): boolean {
-  return hold !== null && hold.projects.some((project) => project.threadIds.includes(threadId));
+  return awayHoldRefusal(hold, threadId) !== null;
 }
+
+/** Why the hold keeps `threadId` from starting a turn, or null when it does not. */
+export function awayHoldRefusal(hold: AwayWakeHoldRecord | null, threadId: string): string | null {
+  if (hold === null) return null;
+  if (hold.projects.some((project) => project.threadIds.includes(threadId)))
+    return COORDINATOR_AWAY_HOLD_REFUSAL;
+  return (hold.threads ?? []).includes(threadId) ? AWAY_THREAD_HOLD_REFUSAL : null;
+}
+
+const settledHold = (hold: AwayWakeHoldRecord): AwayWakeHoldRecord | null =>
+  hold.projects.length === 0 && (hold.threads ?? []).length === 0 ? null : hold;
 
 /** The hold without `projectIds`; null once nothing is held. */
 export function releaseProjects(
@@ -73,8 +94,22 @@ export function releaseProjects(
 ): AwayWakeHoldRecord | null {
   if (hold === null) return null;
   const released = new Set(projectIds);
-  const projects = hold.projects.filter((project) => !released.has(project.projectId));
-  return projects.length === 0 ? null : { ...hold, projects };
+  return settledHold({
+    ...hold,
+    projects: hold.projects.filter((project) => !released.has(project.projectId)),
+  });
+}
+
+/** The hold without the worker `threadIds`; null once nothing is held. */
+export function releaseThreads(
+  hold: AwayWakeHoldRecord | null,
+  threadIds: ReadonlyArray<string>,
+): AwayWakeHoldRecord | null {
+  if (hold === null) return null;
+  const released = new Set(threadIds);
+  const threads = (hold.threads ?? []).filter((threadId) => !released.has(threadId));
+  const { threads: _threads, ...rest } = hold;
+  return settledHold(threads.length === 0 ? rest : { ...rest, threads });
 }
 
 /** The coordinator thread ids of a copy. */

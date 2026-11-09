@@ -36,7 +36,11 @@ import { linkedCopyOf, makeAwayIntents, memoryIntentStore } from "./AwayIntents.
 import { cancelIntent, intentStatus, recordIntent } from "./awayIntentRoute.ts";
 import { AwayPeerError, type AwayPeerPost } from "./awayPeerCall.ts";
 import { makeAwaySleep, memorySleepStore } from "./awaySleepRoute.ts";
-import { COORDINATOR_AWAY_HOLD_REFUSAL, memoryWakeHoldStore } from "./AwayWakeHold.ts";
+import {
+  AWAY_THREAD_HOLD_REFUSAL,
+  COORDINATOR_AWAY_HOLD_REFUSAL,
+  memoryWakeHoldStore,
+} from "./AwayWakeHold.ts";
 
 const MINUTE = 60_000;
 const T0 = Date.parse("2026-11-09T22:00:00.000Z");
@@ -150,6 +154,11 @@ const fleet = Effect.gen(function* () {
   });
   yield* intents.onIntentDue((intent) => Effect.sync(() => void dueHooks.push(intent)));
   const projectsOnMs = (): ReadonlyArray<Project> => [...ms.projects.values()];
+  /** Source threads Ministorm continued, as its handoff record lists them. */
+  const continuedOnMs = new Map<string, string>();
+  /** Threads the M4's handoff record shows as continued there (fenced here). */
+  const fencedOnM4 = new Set<string>();
+  const resumedQueues: string[] = [];
 
   // --- the network between them ---
   const network = {
@@ -165,7 +174,14 @@ const fleet = Effect.gen(function* () {
         return yield* recordIntent(intents, caller, body, projectsOnMs());
       if (path === AWAY_INTENT_CANCEL_PATH) return yield* cancelIntent(intents, caller, body);
       if (path === AWAY_INTENT_STATUS_PATH)
-        return yield* intentStatus(intents, caller, body, projectsOnMs(), "ministorm");
+        return yield* intentStatus(
+          intents,
+          caller,
+          body,
+          projectsOnMs(),
+          "ministorm",
+          (threadId) => continuedOnMs.get(threadId) ?? null,
+        );
       return { status: 404, body: { error: "not found" } };
     });
   const post: AwayPeerPost = (_target, path, body) =>
@@ -260,6 +276,7 @@ const fleet = Effect.gen(function* () {
         ? Effect.succeed(false)
         : lease.acceptAwayTakeover({
             projectId: input.projectId,
+            targetEnvironmentId: input.targetEnvironmentId,
             takenOver: {
               coordinatorBinding: input.status.coordinatorBinding,
               successor: input.status.successor,
@@ -269,6 +286,9 @@ const fleet = Effect.gen(function* () {
             answeredAtMs: input.answeredAtMs,
           }),
     stopCoordinator: lease.stopCoordinatorOf,
+    confirmContinued: (threadIds) =>
+      Effect.sync(() => new Set(threadIds.filter((threadId) => fencedOnM4.has(threadId)))),
+    resumeQueues: (threadIds) => Effect.sync(() => void resumedQueues.push(...threadIds)),
   });
 
   /** Copies that would start a coordinator turn now: active and not held by the gate. */
@@ -324,6 +344,10 @@ const fleet = Effect.gen(function* () {
     members,
     coordinatorThread,
     m4ProjectId,
+    lease,
+    continuedOnMs,
+    fencedOnM4,
+    resumedQueues,
   };
 });
 
@@ -572,4 +596,166 @@ describe("verifyTakenOver from the recorded away target (#1b)", () => {
       } as never),
     ).toBe("the sender is not the standby");
   });
+});
+
+describe("worker threads in the intent wait for the target's word (#13)", () => {
+  it.effect("held while the target is silent; not continued, they run here again", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      yield* f.lidClose;
+      expect(yield* f.gate("thread-reel" as never)).toBe(AWAY_THREAD_HOLD_REFUSAL);
+      yield* TestClock.setTime(T0 + 2 * MINUTE);
+      yield* f.intents.tick;
+      yield* TestClock.setTime(T0 + 30 * MINUTE);
+      f.network.down = true;
+      expect(yield* f.away.wake({ onBattery: true })).toEqual({ outcome: "none" });
+      // Its queue must not start here while the target may have continued it.
+      expect(yield* f.gate("thread-reel" as never)).toBe(AWAY_THREAD_HOLD_REFUSAL);
+      expect(f.resumedQueues).toEqual([]);
+      f.network.down = false;
+      expect(yield* f.away.retry).toBe("moved");
+      // The target settled and never continued it: it runs here, its queue started.
+      expect(yield* f.gate("thread-reel" as never)).toBeNull();
+      expect(f.resumedQueues).toEqual(["thread-reel"]);
+      expect(f.hold.current()).toBeNull();
+    }),
+  );
+
+  it.effect("continued there: released only once handoff mode fences it here, queue kept", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      yield* f.lidClose;
+      yield* TestClock.setTime(T0 + 2 * MINUTE);
+      yield* f.intents.tick;
+      f.continuedOnMs.set("thread-reel", "thread-reel-ms");
+      yield* TestClock.setTime(T0 + 30 * MINUTE);
+      // Not fenced here yet: the hold keeps it.
+      expect(yield* f.away.wake({ onBattery: true })).toEqual({ outcome: "none" });
+      expect(yield* f.gate("thread-reel" as never)).toBe(AWAY_THREAD_HOLD_REFUSAL);
+      f.fencedOnM4.add("thread-reel");
+      expect(yield* f.away.retry).toBe("moved");
+      expect(f.hold.current()).toBeNull();
+      // Its queue is not started here; the fence keeps it for the machine that runs it.
+      expect(f.resumedQueues).toEqual([]);
+    }),
+  );
+});
+
+describe("the boot is a wake (N2)", () => {
+  it.effect("a lid close the restart cut off after the target acted gives way on start", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      yield* f.lidClose;
+      yield* TestClock.setTime(T0 + 2 * MINUTE);
+      yield* f.intents.tick;
+      yield* TestClock.setTime(T0 + 5 * MINUTE);
+      expect(yield* f.away.boot).toEqual({ outcome: "prompt" });
+      expect(f.binding("m4")?.state).toBe("transferred");
+      expect(f.session.current()?.state).toBe("wake-prompt");
+      yield* f.settled("boot-gave-way");
+    }),
+  );
+
+  it.effect("a send-failed lid close is settled as nothing moved on start", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      f.network.modes.set(AWAY_INTENT_PATH, ["refuse"]);
+      yield* f.lidClose;
+      expect(f.session.current()?.state).toBe("send-failed");
+      expect(yield* f.away.boot).toEqual({ outcome: "none" });
+      expect(f.session.current()).toBeNull();
+      expect(f.hold.current()).toBeNull();
+      yield* f.settled("boot-nothing-moved");
+    }),
+  );
+});
+
+describe("Run here anyway (hold never lifts)", () => {
+  it.effect(
+    "offered after ten silent minutes; lifts the unknown hold and still gives way later",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fleet;
+        yield* f.lidClose;
+        yield* TestClock.setTime(T0 + 2 * MINUTE);
+        yield* f.intents.tick;
+        yield* TestClock.setTime(T0 + 30 * MINUTE);
+        f.network.down = true;
+        yield* f.away.wake({ onBattery: true });
+        expect(f.session.current()?.unreachableSince).toBe("2026-11-09T22:30:00.000Z");
+        yield* TestClock.setTime(T0 + 35 * MINUTE);
+        expect((yield* f.away.forceLocal).ok).toBe(false);
+        expect(f.hold.current()).not.toBeNull();
+        yield* TestClock.setTime(T0 + 41 * MINUTE);
+        const forced = yield* f.away.forceLocal;
+        expect(forced).toEqual({
+          ok: true,
+          projectIds: [f.m4ProjectId],
+          threadIds: ["thread-reel"],
+        });
+        expect(f.hold.current()).toBeNull();
+        expect(f.session.current()).toMatchObject({
+          forcedLocalAt: "2026-11-09T22:41:00.000Z",
+          forcedProjectIds: [f.m4ProjectId],
+        });
+        expect(f.resumedQueues).toEqual(["thread-reel"]);
+        // The owner accepted it: both may run until the target answers.
+        expect(yield* f.gate(f.coordinatorThread as never)).toBeNull();
+        // Once it answers, this copy still gives way to its takeover.
+        f.network.down = false;
+        expect(yield* f.away.retry).toBe("moved");
+        expect(f.binding("m4")?.state).toBe("transferred");
+        yield* f.settled("forced-then-gave-way");
+      }),
+  );
+});
+
+describe("acceptAwayTakeover checks the recorded target's member (LOW)", () => {
+  it.effect("a target that is not listed here, or an answer from another member, is refused", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      yield* f.lidClose;
+      yield* TestClock.setTime(T0 + 2 * MINUTE);
+      yield* f.intents.tick;
+      const status = (yield* intentStatus(
+        f.intents,
+        callerFrom("m4"),
+        { sourceEnvironmentId: "m4", projectIds: [f.m4ProjectId] },
+        [],
+        "ministorm",
+      )).body as { projects: ReadonlyArray<{ takenOver: boolean }> };
+      expect(status.projects[0]?.takenOver).toBe(false);
+      // A takeover claimed under a machine this copy does not list is not accepted.
+      const answer = {
+        coordinatorBinding: {
+          epoch: 9,
+          state: "active" as const,
+          operationId: "away:x:9",
+          predecessor: f.members.m4,
+          takenOverAt: "2026-11-09T22:02:00.000Z",
+        },
+        successor: { ...f.members.ms, environmentId: EnvironmentId.make("stranger") },
+      };
+      const accepted = yield* f.lease.acceptAwayTakeover({
+        projectId: f.m4ProjectId,
+        targetEnvironmentId: "stranger",
+        takenOver: answer as never,
+        receivedAt: "2026-11-09T22:30:00.000Z",
+        sentAtMs: T0,
+        answeredAtMs: T0,
+      });
+      expect(accepted).toBe(false);
+      // The recorded target is listed, but the answer names another member: refused too.
+      const refused = yield* f.lease.acceptAwayTakeover({
+        projectId: f.m4ProjectId,
+        targetEnvironmentId: "ministorm",
+        takenOver: answer as never,
+        receivedAt: "2026-11-09T22:30:00.000Z",
+        sentAtMs: T0,
+        answeredAtMs: T0,
+      });
+      expect(refused).toBe(false);
+      expect(f.binding("m4")?.state ?? "active").toBe("active");
+    }),
+  );
 });
