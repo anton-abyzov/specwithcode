@@ -5,6 +5,12 @@
  * that came from that machine are handed, and only to it. It also asks for
  * the coordinators it handed here: this machine hands each linked copy back
  * by the same planned handover (reason `back`), so two never coordinate.
+ *
+ * A thread goes back only when the caller's grant here could send it there
+ * (`mayReturnToOrigin`) and covers its project. A coordinator goes back only
+ * when this copy took it from the caller by Away or a planned handover and the
+ * grant covers the project; a coordinator this machine runs for itself, or
+ * took from a third machine, stays.
  */
 import {
   AWAY_RETURN_PATH,
@@ -12,6 +18,7 @@ import {
   type EnvironmentId,
   type HandoffMachineThreadResult,
   NonNegativeInt,
+  type Project,
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -23,6 +30,11 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
+import {
+  type EffectiveWorkGrant,
+  mayReturnToOrigin,
+  projectInGrant,
+} from "../fleet/workGrantPolicy.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 import { parseJson } from "../json.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -77,22 +89,41 @@ export const readAwayBody = (maxBytes: number) =>
     return { kind: "body", value } as const;
   });
 
-/** Which of `threadIds` came here from `caller`; the rest stay, with why. */
+type ReturnGrant = Pick<EffectiveWorkGrant, "owner" | "revoked">;
+
+/** Whether `grant` lets work that came from `caller` go back there. */
+const mayGoBack = (grant: ReturnGrant | null, caller: EnvironmentId) =>
+  grant === null ||
+  mayReturnToOrigin({
+    grant,
+    origin: { coordinatorEnvironmentId: caller, path: [caller], hops: 1 },
+    targetEnvironmentId: caller,
+  });
+
+/**
+ * Which of `threadIds` came here from `caller` and may go back under its
+ * grant; the rest stay, with why. `projectCovered` is whether the caller's
+ * grant covers the thread's project here (absent: covered).
+ */
 export function returnable(
   threads: ReadonlyArray<{
     readonly id: string;
     readonly sourceEnvironmentId: string | null;
     readonly found: boolean;
+    readonly projectCovered?: boolean;
   }>,
-  caller: string,
+  caller: EnvironmentId,
+  grant: ReturnGrant | null = null,
 ): {
   readonly ok: ReadonlyArray<string>;
   readonly refused: ReadonlyArray<HandoffMachineThreadResult>;
 } {
   const ok: Array<string> = [];
   const refused: Array<HandoffMachineThreadResult> = [];
+  const allowed = mayGoBack(grant, caller);
   for (const thread of threads) {
-    if (thread.found && thread.sourceEnvironmentId === caller) {
+    const fromCaller = thread.found && thread.sourceEnvironmentId === caller;
+    if (fromCaller && allowed && thread.projectCovered !== false) {
       ok.push(thread.id);
       continue;
     }
@@ -100,14 +131,42 @@ export function returnable(
       threadId: ThreadId.make(thread.id),
       title: thread.id.slice(0, 500),
       outcome: "skipped",
-      detail: thread.found
-        ? "That thread did not come here from your machine, so it stays."
-        : "That thread is not on this machine any more.",
+      detail: !thread.found
+        ? "That thread is not on this machine any more."
+        : !fromCaller
+          ? "That thread did not come here from your machine, so it stays."
+          : "Your machine's work grant here does not cover that thread, so it stays.",
       continuedThreadId: null,
       resumed: false,
     });
   }
   return { ok, refused };
+}
+
+/**
+ * Why the linked copy `copy` here may not hand its coordinator back to
+ * `caller`, or null when it may: this copy coordinates, it took over from the
+ * caller by Away (`away:`) or a planned handover (`handover:`), and the
+ * caller's grant covers the project.
+ */
+export function coordinatorReturnRefusal(
+  copy: Pick<Project, "id" | "workspaceSettings">,
+  caller: EnvironmentId,
+  grant: (ReturnGrant & Pick<EffectiveWorkGrant, "projects">) | null,
+): string | null {
+  const binding = copy.workspaceSettings?.coordinatorBinding;
+  const operationId = binding?.operationId ?? "";
+  const handedHere =
+    binding?.state === "active" &&
+    binding.predecessor?.environmentId === caller &&
+    (operationId.startsWith("away:") || operationId.startsWith("handover:"));
+  if (!handedHere) return "This machine did not take this coordinator from yours, so it stays.";
+  if (
+    grant !== null &&
+    (!mayGoBack(grant, caller) || !projectInGrant(grant.projects, caller, copy))
+  )
+    return "Your machine's work grant here does not cover this project, so its coordinator stays.";
+  return null;
 }
 
 const decodeRequest = Schema.decodeUnknownOption(AwayReturnRequest);
@@ -127,17 +186,29 @@ const returnHandler = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const handoff = yield* HandoffMode;
   const caller: EnvironmentId = who.caller.sourceEnvironmentId;
+  const grant = who.caller.grant;
+  const projects = yield* ProjectService.ProjectService;
+  const all: ReadonlyArray<Project> = yield* projects.snapshot.pipe(
+    Effect.map((snapshot) => snapshot.projects),
+    Effect.orElseSucceed(() => []),
+  );
+  const covers = (projectId: string) => {
+    if (grant === null) return true;
+    const project = all.find((entry) => entry.id === projectId);
+    return project !== undefined && projectInGrant(grant.projects, caller, project);
+  };
   const threads = yield* Effect.forEach(body.value.threadIds, (threadId) =>
     projections.getThread(threadId).pipe(
       Effect.map((thread) => ({
         id: threadId,
         sourceEnvironmentId: thread.execution?.sourceRoot?.environmentId ?? null,
         found: thread.deletedAt === null,
+        projectCovered: covers(thread.projectId),
       })),
       Effect.orElseSucceed(() => ({ id: threadId, sourceEnvironmentId: null, found: false })),
     ),
   );
-  const { ok, refused } = returnable(threads, caller);
+  const { ok, refused } = returnable(threads, caller, grant);
   const run =
     ok.length === 0
       ? null
@@ -158,12 +229,7 @@ const returnHandler = Effect.gen(function* () {
   }));
   const coordinators: Array<AwayHandoverResult> = [];
   if ((body.value.projectIds ?? []).length > 0) {
-    const projects = yield* ProjectService.ProjectService;
     const handover = yield* CoordinatorPlannedHandover;
-    const all = yield* projects.snapshot.pipe(
-      Effect.map((snapshot) => snapshot.projects),
-      Effect.orElseSucceed(() => []),
-    );
     for (const sourceProjectId of body.value.projectIds ?? []) {
       const copy = linkedCopyOf(all, caller, sourceProjectId);
       if (copy === undefined) {
@@ -172,6 +238,11 @@ const returnHandler = Effect.gen(function* () {
           outcome: "failed",
           detail: "This project has no linked copy on this machine.",
         });
+        continue;
+      }
+      const refusal = coordinatorReturnRefusal(copy, caller, grant);
+      if (refusal !== null) {
+        coordinators.push({ projectId: sourceProjectId, outcome: "skipped", detail: refusal });
         continue;
       }
       const handed = yield* handover.handOver({

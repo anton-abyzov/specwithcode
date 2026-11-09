@@ -8,6 +8,7 @@
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, IsoDateTime, ProjectId } from "./baseSchemas.ts";
+import { LogicalProjectMember, ProjectCoordinatorBinding } from "./logicalProject.ts";
 
 const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 
@@ -188,6 +189,8 @@ export const AWAY_HANDOVER_PATH = "/api/away/v1/handover";
 export const AWAY_INTENT_PATH = "/api/away/v1/intent";
 /** Where the source, back before the grace ran out, cancels its away intent. */
 export const AWAY_INTENT_CANCEL_PATH = "/api/away/v1/intent/cancel";
+/** Where the source, back, asks whether the target took over its projects (POST). */
+export const AWAY_INTENT_STATUS_PATH = "/api/away/v1/intent/status";
 
 /** The longest grace an away intent may ask for. */
 export const AWAY_INTENT_MAX_GRACE_MINUTES = 240;
@@ -209,9 +212,16 @@ export type AwayHandoverInput = typeof AwayHandoverInput.Type;
 /**
  * - `handed-over`: the target coordinates now and this copy gave way.
  * - `skipped`: nothing to hand over (this copy does not coordinate the project).
- * - `failed`: the coordinator did not move; `detail` says why and whether it is in doubt.
+ * - `failed`: the coordinator did not move; `detail` says why.
+ * - `in-doubt`: this copy gave way and the target may have taken over; no copy
+ *   coordinates until the same handover is tried again (`detail` says how).
  */
-export const AwayHandoverOutcome = Schema.Literals(["handed-over", "skipped", "failed"]);
+export const AwayHandoverOutcome = Schema.Literals([
+  "handed-over",
+  "skipped",
+  "failed",
+  "in-doubt",
+]);
 export type AwayHandoverOutcome = typeof AwayHandoverOutcome.Type;
 
 export const AwayHandoverResult = Schema.Struct({
@@ -245,9 +255,10 @@ export type AwayIntentCancelRequest = typeof AwayIntentCancelRequest.Type;
 /**
  * - `waiting`: the grace runs.
  * - `cancelled`: the source came back first; nothing was done.
+ * - `acting`: the grace ran out and the target is taking over; it can no longer be cancelled.
  * - `done`: the grace ran out and the target acted (see `results`).
  */
-export const AwayIntentState = Schema.Literals(["waiting", "cancelled", "done"]);
+export const AwayIntentState = Schema.Literals(["waiting", "cancelled", "acting", "done"]);
 export type AwayIntentState = typeof AwayIntentState.Type;
 
 export const AwayIntentRecord = Schema.Struct({
@@ -268,6 +279,47 @@ export const AwayIntentRecord = Schema.Struct({
   results: Schema.optionalKey(Schema.Array(AwayHandoverResult)),
 });
 export type AwayIntentRecord = typeof AwayIntentRecord.Type;
+
+/**
+ * The target's answer to a cancel. `cancelled` counts the waiting intents it
+ * cancelled; when the latest intent is already `acting` or `done` nothing is
+ * cancelled and the source must ask `AWAY_INTENT_STATUS_PATH` and give way.
+ */
+export const AwayIntentCancelAnswer = Schema.Struct({
+  cancelled: Schema.Int,
+  state: Schema.optionalKey(Schema.NullOr(AwayIntentState)),
+  takenOver: Schema.optionalKey(Schema.Array(ProjectId)),
+});
+export type AwayIntentCancelAnswer = typeof AwayIntentCancelAnswer.Type;
+
+export const AwayIntentStatusRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+  /** The source's copies to report on. */
+  projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(AWAY_PLAN_MAX_ITEMS)),
+});
+export type AwayIntentStatusRequest = typeof AwayIntentStatusRequest.Type;
+
+/**
+ * One source project: whether the target's copy took over from the source.
+ * When it did, the binding and the target's member let the source give way.
+ */
+export const AwayIntentProjectStatus = Schema.Struct({
+  projectId: ProjectId,
+  takenOver: Schema.Boolean,
+  epoch: Schema.optionalKey(Schema.Int),
+  coordinatorBinding: Schema.optionalKey(ProjectCoordinatorBinding),
+  successor: Schema.optionalKey(LogicalProjectMember),
+});
+export type AwayIntentProjectStatus = typeof AwayIntentProjectStatus.Type;
+
+export const AwayIntentStatusAnswer = Schema.Struct({
+  /** The state of the source's latest intent here, or null without one. */
+  intentState: Schema.NullOr(AwayIntentState),
+  projects: Schema.Array(AwayIntentProjectStatus),
+  /** The target's own receive time. */
+  receivedAt: IsoDateTime,
+});
+export type AwayIntentStatusAnswer = typeof AwayIntentStatusAnswer.Type;
 
 // --- The sleep trigger and the wake prompt (1267 T-06, AC-09, D-01, D-02) ---
 
@@ -339,11 +391,13 @@ export type AwayWakeAnswer = typeof AwayWakeAnswer.Type;
 /**
  * This machine's own record of a lid-close Away:
  * - `pending-intent`: the intent was sent; the target acts after `dueAt`.
- * - `send-failed`: the target never got it; nothing moves.
+ * - `send-uncertain`: the send got no answer; the target may hold the intent.
+ * - `send-failed`: the target refused it; nothing moves.
  * - `wake-prompt`: back after the grace; work moved and waits for Bring back.
  */
 export const AwaySleepSessionState = Schema.Literals([
   "pending-intent",
+  "send-uncertain",
   "send-failed",
   "wake-prompt",
 ]);
@@ -429,7 +483,14 @@ export const AwayItemResult = Schema.Struct({
 export type AwayItemResult = typeof AwayItemResult.Type;
 
 /** The stage a session reached; each stage resumes from the items it saved. */
-export const AwayStage = Schema.Literals(["coordinators", "routines", "threads", "done"]);
+export const AwayStage = Schema.Literals([
+  "coordinators",
+  "routines",
+  "threads",
+  "done",
+  // A lid close: the intent is with the target and nothing ran here yet (`sleep` says more).
+  "pending-intent",
+]);
 export type AwayStage = typeof AwayStage.Type;
 
 /**
@@ -449,6 +510,10 @@ export const AwaySession = Schema.Struct({
   items: Schema.Array(AwayItemResult).check(Schema.isMaxLength(AWAY_SESSION_MAX_ITEMS)),
   bringBackStartedAt: Schema.NullOr(IsoDateTime),
   broughtBackAt: Schema.NullOr(IsoDateTime),
+  /** A lid close (`trigger: "sleep"`): the intent sent, its grace and what the wake found. */
+  sleep: Schema.optionalKey(AwaySleepSession),
+  /** Only on an answer: another start or Bring back was already running; this is its session. */
+  alreadyRunning: Schema.optionalKey(Schema.Boolean),
 });
 export type AwaySession = typeof AwaySession.Type;
 

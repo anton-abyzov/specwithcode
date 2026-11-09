@@ -109,6 +109,7 @@ const world = (grants: Record<string, ScheduledTaskGrantedBy | undefined>) => {
     readonly input: ScheduledTaskUpsertInput;
     readonly grantedBy: ScheduledTaskGrantedBy | null | undefined;
   }> = [];
+  const deleted: Array<string> = [];
   const tasks = ["owner-made", "m4-made", "m1-made"].map(task);
   const layer = OrchestratorMcpService.layer.pipe(
     Layer.provide(
@@ -124,6 +125,11 @@ const world = (grants: Record<string, ScheduledTaskGrantedBy | undefined>) => {
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks } as never),
           readGrant: (id) => Effect.succeed(grants[id]),
+          delete: (input) =>
+            Effect.sync(() => {
+              deleted.push(input.id);
+              return undefined as never;
+            }),
           upsert: (input, options) =>
             Effect.sync(() => {
               saved.push({ input, grantedBy: options?.grantedBy });
@@ -158,7 +164,7 @@ const world = (grants: Record<string, ScheduledTaskGrantedBy | undefined>) => {
       }),
       Effect.runPromise,
     );
-  return { run, saved };
+  return { run, saved, deleted };
 };
 
 const m4Grant: ScheduledTaskGrantedBy = {
@@ -244,5 +250,38 @@ describe("routines under a grant that allows them", () => {
     expect(other.code).toBe("outside_grant_scope");
     expect(other.message).toContain("another machine's work");
     expect(saved).toEqual([]);
+  });
+});
+
+describe("delete_scheduled_task under a grant that allows routines", () => {
+  it("deletes a routine its own grant made", async () => {
+    const { run, deleted } = world({ "m4-made": m4Grant });
+    await run((service) =>
+      service.deleteScheduledTask(fromM4, { scheduledTaskId: ScheduledTaskId.make("m4-made") }),
+    );
+    expect(deleted).toEqual(["m4-made"]);
+  });
+
+  it("refuses to delete the owner's routine or another machine's", async () => {
+    const { run, deleted } = world({
+      "m1-made": { coordinatorEnvironmentId: M1, runtimeCap: "auto", accounts: { kind: "all" } },
+    });
+    const owner = await run((service) =>
+      service
+        .deleteScheduledTask(fromM4, { scheduledTaskId: ScheduledTaskId.make("owner-made") })
+        .pipe(Effect.flip),
+    );
+    expect(owner.code).toBe("outside_grant_scope");
+    expect(owner.message).toBe(
+      `Routine "Routine owner-made" was set up on this machine, so M4MAX's work can't delete it. Ask the user here to delete it, or schedule a new routine.`,
+    );
+    const other = await run((service) =>
+      service
+        .deleteScheduledTask(fromM4, { scheduledTaskId: ScheduledTaskId.make("m1-made") })
+        .pipe(Effect.flip),
+    );
+    expect(other.code).toBe("outside_grant_scope");
+    expect(other.message).toContain("another machine's work");
+    expect(deleted).toEqual([]);
   });
 });

@@ -160,6 +160,7 @@ import {
   type WorkGrantContext,
   workGrantOf,
 } from "./workGrantAccess.ts";
+import { refuseOthersRoutine as refuseOthersRoutineFor } from "./routineOwnership.ts";
 import { launchOriginOf } from "./threadOrigin.ts";
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -2475,7 +2476,9 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         yield* refuseGrantRoutines(scope, parent, undefined);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
-        yield* refuseGrantRoutines(scope, parent, existing.projectId);
+        const work = yield* refuseGrantRoutines(scope, parent, existing.projectId);
+        // Under a grant, only a routine that grant made; the owner's stay the owner's.
+        yield* refuseOthersRoutineFor(scheduledTasks.readGrant, work, existing, "delete");
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
           .delete({ id: existing.id })

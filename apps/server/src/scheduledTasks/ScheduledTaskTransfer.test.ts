@@ -65,7 +65,10 @@ const STATE: TransferRunState & { running: boolean } = {
   running: false,
 };
 
-function out(answers: Record<string, () => Effect.Effect<unknown, AwayPeerError>>) {
+function out(
+  answers: Record<string, () => Effect.Effect<unknown, AwayPeerError>>,
+  here: { readonly offWorks?: boolean; readonly readsEnabled?: boolean } = {},
+) {
   const log: Array<string> = [];
   const post: AwayPeerPost = (_target, _path, body) => {
     const request = body as RoutineTransferRequest;
@@ -76,9 +79,14 @@ function out(answers: Record<string, () => Effect.Effect<unknown, AwayPeerError>
   };
   const transfer = makeTransferOut({
     post,
-    readState: () => Effect.succeed(STATE),
-    setEnabled: (id, enabled) =>
-      Effect.sync(() => (log.push(`here:${enabled ? "on" : "off"}`), true)),
+    readState: () =>
+      Effect.succeed(
+        here.readsEnabled === undefined ? STATE : { ...STATE, enabled: here.readsEnabled },
+      ),
+    setEnabled: (_id, enabled) =>
+      Effect.sync(
+        () => (log.push(`here:${enabled ? "on" : "off"}`), enabled || here.offWorks !== false),
+      ),
     note: (_id, note) => Effect.sync(() => void log.push(`note:${note ?? "clear"}`)),
     writeState: (_task, state) => Effect.sync(() => void log.push(`state:${state.nextRunAt}`)),
     nowMs: Effect.succeed(Date.parse("2026-11-09T22:30:00.000Z")),
@@ -149,6 +157,31 @@ describe("routine transfer, this machine's side", () => {
       const moved = yield* transfer.moveOut(moveInput);
       expect(moved).toMatchObject({ kind: "failed", offHere: false });
       expect(log).toEqual(["post:stage"]);
+    }),
+  );
+
+  it.effect("never turns it on there when turning it off here failed", () =>
+    Effect.gen(function* () {
+      const { transfer, log } = out(
+        { stage: () => Effect.succeed({ routineId: TASK.id, enabled: false }) },
+        { offWorks: false },
+      );
+      const moved = yield* transfer.moveOut(moveInput);
+      expect(moved).toMatchObject({ kind: "failed", offHere: false });
+      expect(log).toEqual(["post:stage", "here:off", "post:release"]);
+    }),
+  );
+
+  it.effect("never turns it on there when its row here still reads on", () =>
+    Effect.gen(function* () {
+      const { transfer, log } = out(
+        { stage: () => Effect.succeed({ routineId: TASK.id, enabled: false }) },
+        { readsEnabled: true },
+      );
+      const moved = yield* transfer.moveOut(moveInput);
+      expect(moved).toMatchObject({ kind: "failed", offHere: false });
+      expect(log).not.toContain("post:enable");
+      expect(log).toContain("post:release");
     }),
   );
 

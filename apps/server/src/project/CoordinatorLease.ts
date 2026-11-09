@@ -19,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
+import { makeFileWakeHoldStore } from "../away/AwayWakeHold.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RemoteWorkerStore } from "../fleet/RemoteWorkerStore.ts";
 import { type HandoffPeerError, HandoffPeers } from "../handoff/handoffPeers.ts";
@@ -112,13 +113,18 @@ export function desiredLeaseTarget(project: Project): CoordinatorLeaseTarget | n
 /**
  * Whether a standby's `takenOver` answer may make this copy give way (AC-09):
  * the binding is active above this copy's epoch, names this copy as its
- * predecessor, and comes from the standby this copy sent to.
+ * predecessor, and comes from the standby this copy sent to, or from the
+ * machine a lid-close Away recorded as its target (`alsoFrom`, 1267 AC-09).
  */
 export function verifyTakenOver(input: {
   readonly own: ProjectCoordinatorBinding;
   readonly self: LogicalProjectMember;
   readonly sentTo: LogicalProjectMember;
   readonly answer: NonNullable<CoordinatorLeaseResponse["takenOver"]>;
+  /** Environments whose own takeover is accepted too: the recorded away target. */
+  readonly alsoFrom?: ReadonlyArray<string> | undefined;
+  /** This copy's listed members; an `alsoFrom` successor must be one of them. */
+  readonly members?: ReadonlyArray<LogicalProjectMember> | undefined;
 }): string | null {
   const incoming = input.answer.coordinatorBinding;
   if (input.own.state !== "active") return "this copy no longer coordinates";
@@ -126,7 +132,15 @@ export function verifyTakenOver(input: {
   if (!(incoming.epoch > input.own.epoch)) return "the epoch is not above this copy's";
   if (incoming.predecessor === undefined || !sameMember(incoming.predecessor, input.self))
     return "the predecessor is not this copy";
-  if (!sameMember(input.answer.successor, input.sentTo)) return "the sender is not the standby";
+  const fromAwayTarget =
+    input.alsoFrom !== undefined &&
+    input.alsoFrom.includes(input.answer.successor.environmentId) &&
+    (input.members ?? []).some(
+      (member) =>
+        logicalProjectMemberKey(member) === logicalProjectMemberKey(input.answer.successor),
+    );
+  if (!fromAwayTarget && !sameMember(input.answer.successor, input.sentTo))
+    return "the sender is not the standby";
   if (incoming.operationId === undefined || incoming.takenOverAt === undefined)
     return "the takeover has no operation or time";
   return null;
@@ -179,6 +193,11 @@ export interface CoordinatorLeaseDeps {
   readonly routines?:
     | ((project: Project) => Effect.Effect<RoutineCopiesSnapshot | null>)
     | undefined;
+  /**
+   * The machine a lid-close Away recorded as its target (`AwayWakeHold`); its
+   * takeover answer is accepted like the standby's. Absent: none.
+   */
+  readonly awayTargets?: Effect.Effect<ReadonlyArray<string>> | undefined;
   /** Runs after every tick with the records it left; the wake gate fences from them. */
   readonly afterTick?: (records: ReadonlyArray<CoordinatorLeaseRecord>) => Effect.Effect<void>;
 }
@@ -194,6 +213,22 @@ export interface CoordinatorLeaseShape {
   readonly pause: (input: PauseInput) => Effect.Effect<number>;
   readonly releaseBefore: CoordinatorReleaseGuard["Service"]["releaseBefore"];
   readonly records: Effect.Effect<ReadonlyArray<CoordinatorLeaseRecord>>;
+  /**
+   * Lid-close Away, back (1267 AC-09): the away target says it took this copy
+   * over. Verified as a standby's answer, then this copy stops its coordinator
+   * and its workers and gives way, under the project lock. True once this copy
+   * no longer coordinates (now or already). Never fails.
+   */
+  readonly acceptAwayTakeover: (input: {
+    readonly projectId: ProjectId;
+    readonly takenOver: NonNullable<CoordinatorLeaseResponse["takenOver"]>;
+    /** The target's receive time and this machine's send and answer times. */
+    readonly receivedAt: string;
+    readonly sentAtMs: number;
+    readonly answeredAtMs: number;
+  }) => Effect.Effect<boolean>;
+  /** Interrupts the project's coordinator turn and its local children. Never fails. */
+  readonly stopCoordinatorOf: (projectId: ProjectId, reason: string) => Effect.Effect<void>;
 }
 
 export class CoordinatorLease extends Context.Service<CoordinatorLease, CoordinatorLeaseShape>()(
@@ -409,6 +444,7 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
     answer: CoordinatorLeaseResponse,
     sentAtMs: number,
     answeredAtMs: number,
+    reason = "Another machine took over this project's coordinator while this one was quiet.",
   ) =>
     admission
       .withLock(
@@ -428,10 +464,21 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
             own.operationId === takenOver.coordinatorBinding.operationId
           )
             return;
+          const alsoFrom =
+            deps.awayTargets === undefined
+              ? []
+              : yield* deps.awayTargets.pipe(Effect.orElseSucceed(() => []));
           const refusal =
             project === undefined || self === undefined || identity === undefined
               ? "this copy is no longer linked"
-              : verifyTakenOver({ own, self, sentTo, answer: takenOver });
+              : verifyTakenOver({
+                  own,
+                  self,
+                  sentTo,
+                  answer: takenOver,
+                  alsoFrom,
+                  members: identity.members,
+                });
           if (refusal !== null || project === undefined || identity === undefined) {
             yield* Effect.logWarning("Coordinator ignored a takeover it could not verify", {
               projectId,
@@ -451,8 +498,6 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
             answeredAtMs,
             lastSuccessfulLeaseAt: record?.lastSuccessfulLeaseAt ?? null,
           });
-          const reason =
-            "Another machine took over this project's coordinator while this one was quiet.";
           yield* deps.stopCoordinator(project, reason);
           const superseded = yield* link.supersede({
             projectId,
@@ -756,7 +801,42 @@ export const makeCoordinatorLease = (deps: CoordinatorLeaseDeps): CoordinatorLea
       );
     });
 
-  return { tick, pause, releaseBefore, records };
+  const acceptAwayTakeover: CoordinatorLeaseShape["acceptAwayTakeover"] = (input) =>
+    Effect.gen(function* () {
+      yield* giveWay(
+        input.projectId,
+        input.takenOver.successor,
+        {
+          takenOver: input.takenOver,
+          wantsContent: false,
+          standbySleeping: false,
+          receivedAt: input.receivedAt,
+        },
+        input.sentAtMs,
+        input.answeredAtMs,
+        "Another machine took over this project's coordinator while this one slept.",
+      );
+      const project = yield* deps.loadProject(input.projectId);
+      return project?.workspaceSettings?.coordinatorBinding?.state === "transferred";
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Coordinator could not give way to the away target", { cause }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
+
+  const stopCoordinatorOf: CoordinatorLeaseShape["stopCoordinatorOf"] = (projectId, reason) =>
+    Effect.gen(function* () {
+      const project = yield* deps.loadProject(projectId);
+      if (project !== undefined) yield* deps.stopCoordinator(project, reason);
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Could not stop a coordinator held after Away", { cause }),
+      ),
+    );
+
+  return { tick, pause, releaseBefore, records, acceptAwayTakeover, stopCoordinatorOf };
 };
 
 const TERMINAL_WORKER_STATES = new Set(["stopped", "disposed"]);
@@ -774,6 +854,7 @@ const makeLive = Effect.gen(function* () {
   const workerRows = yield* RemoteWorkerStore;
   const hold = yield* Effect.serviceOption(ServiceUpdateHold.ServiceUpdateHold);
   const selfEnvironmentId = yield* environment.getEnvironmentId;
+  const awayHold = yield* makeFileWakeHoldStore;
 
   const shells = projections.getShellSnapshot({ maxAgeMs: 5_000 }).pipe(
     Effect.map((snapshot) => snapshot.threads),
@@ -898,6 +979,9 @@ const makeLive = Effect.gen(function* () {
         return stopped;
       }).pipe(Effect.orElseSucceed(() => 0)),
     afterTick: makeFenceSweep({ store, loadProject, stopCoordinator }),
+    awayTargets: awayHold.read.pipe(
+      Effect.map((hold) => (hold === null ? [] : [hold.targetEnvironmentId])),
+    ),
     plannedPauseUntil: Option.match(hold, {
       onNone: () => Effect.succeed(null),
       onSome: (service) =>

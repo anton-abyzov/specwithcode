@@ -8,10 +8,15 @@
  * main process uses the answer to skip the old "move running threads" path,
  * so a sleep never moves work twice. Nothing here depends on a window.
  *
- * `POST /api/away/v1/wake`: the Mac woke or was unlocked. Back before the
- * grace ran out, the intent is cancelled and nothing moved. After it, the
- * session waits for Bring back: the answer tells the main process to show the
- * wake card, or that bringing back started on its own (on power, when set).
+ * `POST /api/away/v1/wake`: the Mac woke or was unlocked. From the sleep
+ * notice on, the coordinators the intent names are held (`AwayWakeHold`):
+ * they start no turn until the target answers. Waking cancels the intent;
+ * when the target already acted, this machine asks it which projects it took
+ * over, gives way for those and releases the rest. Without an answer the
+ * hold stays and the check repeats; it never resumes at the old epoch while
+ * an intent may have fired. When work moved, the session waits for Bring
+ * back: the answer tells the main process to show the wake card, or that
+ * bringing back started on its own (on power, when set).
  *
  * Both routes accept only this machine's own desktop bearer, like
  * `COORDINATOR_SUSPEND_PATH`.
@@ -19,13 +24,15 @@
 import {
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_PATH,
+  AWAY_INTENT_STATUS_PATH,
   AWAY_PLAN_MAX_ITEMS,
   AWAY_SLEEP_PATH,
   AWAY_WAKE_PATH,
   type AwayConfig,
   type AwayIntentRequest,
+  AwayIntentStatusAnswer,
   AwaySleepRequest,
-  AwaySleepSession,
+  type AwaySleepSession,
   type AwaySleepAnswer,
   type AwayWakeAnswer,
   AwayWakeRequest,
@@ -40,33 +47,50 @@ import {
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as ServerConfig from "../config.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
-import { parseJson, stringifyJson } from "../json.ts";
+import { parseJson } from "../json.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { coordinatorRoleOf } from "../project/CoordinatorRole.ts";
+import { CoordinatorLease } from "../project/CoordinatorLease.ts";
 import { maySuspend } from "../project/CoordinatorSuspendRoute.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
+import { forkParked } from "../serverActivation.ts";
 import { isAwayCandidate } from "./AwayPlanner.ts";
+import { AwayRunner } from "./AwayRunner.ts";
 import { type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
+import { makeLiveSleepSession, type SleepSessionPort } from "./awaySleepSession.ts";
+import {
+  type AwayWakeHoldProject,
+  type AwayWakeHoldStore,
+  coordinatorThreadIdsOf,
+  makeFileWakeHoldStore,
+  memoryWakeHoldStore,
+  releaseProjects,
+} from "./AwayWakeHold.ts";
 
-const FILE_NAME = "away-sleep.json";
 /** The Mac may sleep within seconds; a slower target is not waited for. */
 export const AWAY_SLEEP_SEND_TIMEOUT_MS = 4_000;
 const MINUTE_MS = 60_000;
+/** How often an unresolved wake check is tried again. */
+export const AWAY_WAKE_RETRY_MS = 30_000;
+/**
+ * Without a wake notice (the app restarted), the check runs on its own this
+ * long after the grace ran out: the target has acted or cancelled by then.
+ */
+const UNNOTICED_WAKE_MARGIN_MS = 2 * MINUTE_MS;
+const decodeStatusAnswer = Schema.decodeUnknownOption(AwayIntentStatusAnswer);
 
 // --- decisions, apart from HTTP and storage ------------------------------------
 
@@ -88,6 +112,8 @@ export interface SleepIntentFacts {
   readonly projects: ReadonlyArray<Project>;
   readonly shells: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly tasks: ReadonlyArray<Pick<ScheduledTask, "projectId" | "enabled">>;
+  /** Handoff mode is off for the thread: the target has no copy of it to continue. */
+  readonly handoffOff?: ((shell: OrchestrationV2ThreadShell) => boolean) | undefined;
 }
 
 /**
@@ -110,6 +136,7 @@ export function sleepIntentIds(
     busy.add(project.id);
     if (isPersonalAssistantProject(project.workspaceSettings)) continue;
     if (isProjectCoordinatorThreadId(shell.id, project)) continue;
+    if (facts.handoffOff?.(shell) === true) continue;
     threadIds.push(shell.id);
   }
   for (const task of facts.tasks) if (task.enabled) busy.add(task.projectId);
@@ -157,7 +184,46 @@ export interface AwaySleepDeps {
     config: AwayConfig & { readonly target: EnvironmentId },
   ) => Effect.Effect<Pick<AwayIntentRequest, "projectIds" | "threadIds">>;
   readonly post: AwayPeerPost;
+  /**
+   * The Away session this lid close records (`awaySleepSession`): items,
+   * routines paused here, and what the wake found. Absent in tests of the
+   * trigger alone.
+   */
+  readonly away?: SleepSessionPort | undefined;
+  /** The coordinators held from the sleep notice until the target answers; memory by default. */
+  readonly hold?: AwayWakeHoldStore | undefined;
+  /** The coordinator thread ids of each project the intent names. */
+  readonly holdProjects?:
+    | ((projectIds: ReadonlyArray<ProjectId>) => Effect.Effect<ReadonlyArray<AwayWakeHoldProject>>)
+    | undefined;
+  /**
+   * The target took `projectId` over: verify, stop this copy's coordinator and
+   * its workers, and give way (`CoordinatorLease.acceptAwayTakeover`). True
+   * once this copy no longer coordinates. Absent: the hold stays.
+   */
+  readonly giveWay?:
+    | ((input: {
+        readonly projectId: ProjectId;
+        readonly status: AwayIntentStatusAnswer["projects"][number];
+        readonly receivedAt: string;
+        readonly sentAtMs: number;
+        readonly answeredAtMs: number;
+      }) => Effect.Effect<boolean>)
+    | undefined;
+  /** Interrupts a held project's coordinator turn, which may have resumed with the machine. */
+  readonly stopCoordinator?:
+    | ((projectId: ProjectId, reason: string) => Effect.Effect<void>)
+    | undefined;
 }
+
+/** What one wake check found. */
+export type WakeCheck =
+  /** The intent was cancelled, or the target took nothing over: nothing moved. */
+  | "nothing-moved"
+  /** The target acted: this machine gave way where it took over. */
+  | "moved"
+  /** No sure answer yet: the hold stays and the check repeats. */
+  | "unresolved";
 
 export interface AwaySleepDecision {
   readonly answer: AwaySleepAnswer;
@@ -177,6 +243,11 @@ export interface AwaySleepShape {
    * bring back). Without one, waking on power prompts instead.
    */
   readonly onAutoBringBack: (handler: Effect.Effect<void>) => Effect.Effect<void>;
+  /**
+   * Repeats an unresolved wake check (`AWAY_WAKE_RETRY_MS`): after a wake
+   * whose check got no answer, or long after the grace with no wake notice.
+   */
+  readonly retry: Effect.Effect<WakeCheck | null>;
 }
 
 const isoAt = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
@@ -193,12 +264,157 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
   Effect.gen(function* () {
     const lock = yield* Semaphore.make(1);
     let autoBringBack: Effect.Effect<void> | null = null;
+    const hold = deps.hold ?? memoryWakeHoldStore();
+    const holdProjects =
+      deps.holdProjects ??
+      ((projectIds: ReadonlyArray<ProjectId>) =>
+        Effect.succeed(
+          projectIds.map((projectId) => ({
+            projectId,
+            threadIds: coordinatorThreadIdsOf({ id: projectId }),
+          })),
+        ));
+    const release = (projectIds: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        yield* hold.write(releaseProjects(yield* hold.read, projectIds));
+      });
+    const releaseAll = hold.write(null);
+    const stopHeld = (reason: string) =>
+      Effect.gen(function* () {
+        if (deps.stopCoordinator === undefined) return;
+        const held = yield* hold.read;
+        for (const project of held?.projects ?? [])
+          yield* deps.stopCoordinator(project.projectId as ProjectId, reason);
+      });
+
+    /**
+     * Cancels the intent, then asks the target what it took over. Gives way
+     * for each project taken over and releases each project the target did
+     * not take and will not (its latest intent is cancelled, done, or gone).
+     * Anything else keeps the hold.
+     */
+    const check = (session: AwaySleepSession) =>
+      Effect.gen(function* () {
+        const target = session.targetEnvironmentId;
+        const cancel = yield* deps
+          .post(
+            target,
+            AWAY_INTENT_CANCEL_PATH,
+            { sourceEnvironmentId: deps.self },
+            AWAY_SLEEP_SEND_TIMEOUT_MS,
+          )
+          .pipe(Effect.result);
+        if (cancel._tag === "Success" && cancelledCount(cancel.success.json) > 0) {
+          yield* releaseAll;
+          return "nothing-moved" as const;
+        }
+        const held = yield* hold.read;
+        const heldIds = (held?.projects ?? []).map((project) => project.projectId as ProjectId);
+        const sentAtMs = yield* Clock.currentTimeMillis;
+        const asked = yield* deps
+          .post(
+            target,
+            AWAY_INTENT_STATUS_PATH,
+            { sourceEnvironmentId: deps.self, projectIds: heldIds },
+            AWAY_SLEEP_SEND_TIMEOUT_MS,
+          )
+          .pipe(Effect.result);
+        const answeredAtMs = yield* Clock.currentTimeMillis;
+        const status = asked._tag === "Success" ? decodeStatusAnswer(asked.success.json) : null;
+        if (status === null || Option.isNone(status)) {
+          yield* stopHeld(
+            "This machine is checking whether another machine took over its coordinator.",
+          );
+          return "unresolved" as const;
+        }
+        const answer = status.value;
+        // A waiting intent may still fire; an acting one is taking projects over now.
+        const settled = answer.intentState !== "waiting" && answer.intentState !== "acting";
+        let moved = answer.intentState === "done";
+        const released: string[] = [];
+        for (const projectId of heldIds) {
+          const project = answer.projects.find((entry) => entry.projectId === projectId);
+          if (project?.takenOver === true) {
+            moved = true;
+            const gave =
+              deps.giveWay === undefined
+                ? false
+                : yield* deps.giveWay({
+                    projectId,
+                    status: project,
+                    receivedAt: answer.receivedAt,
+                    sentAtMs,
+                    answeredAtMs,
+                  });
+            if (gave) released.push(projectId);
+            continue;
+          }
+          if (settled && project !== undefined) released.push(projectId);
+        }
+        yield* release(released);
+        if ((yield* hold.read) !== null) {
+          yield* stopHeld(
+            "This machine is checking whether another machine took over its coordinator.",
+          );
+          return "unresolved" as const;
+        }
+        if (!settled) return "unresolved" as const;
+        return moved ? ("moved" as const) : ("nothing-moved" as const);
+      });
+
+    /** Where a check leaves the session; returns the wake answer. */
+    const afterCheck = (
+      session: AwaySleepSession,
+      outcome: WakeCheck,
+      request: AwayWakeRequest | null,
+    ) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (outcome === "unresolved") {
+          if (session.wokeAt === undefined && request !== null)
+            yield* deps.store.write({ ...session, wokeAt: isoAt(now) });
+          return { outcome: "none" } satisfies AwayWakeAnswer;
+        }
+        if (outcome === "nothing-moved") {
+          if (deps.away !== undefined) yield* deps.away.nothingMoved;
+          yield* deps.store.write(null);
+          return { outcome: "none" } satisfies AwayWakeAnswer;
+        }
+        yield* deps.store.write({
+          ...session,
+          state: "wake-prompt",
+          wokeAt: session.wokeAt ?? isoAt(now),
+        });
+        // Before the answer: auto bring back and the card read the filled session.
+        if (deps.away !== undefined) yield* deps.away.moved;
+        // A repeated check found the move after the wake; the card reads the session.
+        if (request === null) return { outcome: "none" } satisfies AwayWakeAnswer;
+        const config = yield* deps.config;
+        if (config.bringBack === "manual") return { outcome: "none" } satisfies AwayWakeAnswer;
+        if (config.bringBack === "auto-on-power" && !request.onBattery && autoBringBack !== null) {
+          yield* Effect.forkDetach(
+            autoBringBack.pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Away: automatic bring back failed", { cause }),
+              ),
+            ),
+          );
+          return { outcome: "auto" } satisfies AwayWakeAnswer;
+        }
+        return { outcome: "prompt" } satisfies AwayWakeAnswer;
+      });
 
     const sleep = (request: AwaySleepRequest) =>
       lock.withPermit(
         Effect.gen(function* () {
           const config = yield* deps.config;
           if (!sleepTriggerFires(config, deps.self, request.onBattery))
+            return {
+              answer: { outcome: "skipped" },
+              send: Effect.void,
+            } satisfies AwaySleepDecision;
+          // Work already away, or another Away still open: this sleep leaves nothing new.
+          if (deps.away !== undefined && !(yield* deps.away.mayStart))
             return {
               answer: { outcome: "skipped" },
               send: Effect.void,
@@ -216,6 +432,27 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
             dueAt: isoAt(now + config.graceMinutes * MINUTE_MS),
           };
           yield* deps.store.write(session);
+          if (deps.away !== undefined) yield* deps.away.begin(session, config.coordinatorScope);
+          // Held from now: once the intent may reach the target, this copy must not run beside it.
+          // A hold an earlier sleep left unresolved stays: that intent may have fired.
+          const earlier = yield* hold.read;
+          const heldProjects = [
+            ...(earlier?.projects ?? []),
+            ...(yield* holdProjects(ids.projectIds)).filter(
+              (project) =>
+                !(earlier?.projects ?? []).some((kept) => kept.projectId === project.projectId),
+            ),
+          ];
+          yield* hold.write(
+            heldProjects.length === 0
+              ? null
+              : {
+                  version: 1,
+                  targetEnvironmentId: target,
+                  since: earlier?.since ?? session.sentAt,
+                  projects: heldProjects,
+                },
+          );
           const body: AwayIntentRequest = {
             sourceEnvironmentId: deps.self,
             graceMinutes: config.graceMinutes,
@@ -230,11 +467,22 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
                   // A wake that already settled the session wins.
                   if (current?.sentAt !== session.sentAt || current.state !== "pending-intent")
                     return;
+                  // No answer: the target may hold the intent, so the hold stays for the wake check.
+                  // So too with an earlier unresolved hold: only the target's answer settles it.
+                  if (error.uncertain || earlier !== null) {
+                    yield* deps.store.write({
+                      ...current,
+                      state: "send-uncertain",
+                      detail: `The other machine did not answer: ${error.message}`.slice(0, 500),
+                    });
+                    return;
+                  }
                   yield* deps.store.write({
                     ...current,
                     state: "send-failed",
                     detail: `Work stayed here: ${error.message}`.slice(0, 500),
                   });
+                  yield* releaseAll;
                 }),
               ),
             ),
@@ -252,50 +500,35 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
           const session = yield* deps.store.read;
           if (session === null) return { outcome: "none" } satisfies AwayWakeAnswer;
           if (session.state === "send-failed") {
+            if (deps.away !== undefined) yield* deps.away.nothingMoved;
             yield* deps.store.write(null);
+            yield* releaseAll;
             return { outcome: "none" } satisfies AwayWakeAnswer;
           }
           // Already prompted on an earlier wake or unlock; the card reads the session.
           if (session.state === "wake-prompt") return { outcome: "none" } satisfies AwayWakeAnswer;
-          const cancelled = yield* deps
-            .post(
-              session.targetEnvironmentId,
-              AWAY_INTENT_CANCEL_PATH,
-              { sourceEnvironmentId: deps.self },
-              AWAY_SLEEP_SEND_TIMEOUT_MS,
-            )
-            .pipe(
-              Effect.map((answer) => cancelledCount(answer.json)),
-              Effect.orElseSucceed(() => 0),
-            );
-          const now = yield* Clock.currentTimeMillis;
-          // Back before the grace ran out, or the target still held the intent:
-          // nothing moved. A target that missed the cancel finds this machine
-          // answering when the grace ends, and cancels on its own.
-          if (cancelled > 0 || now < Date.parse(session.dueAt)) {
-            yield* deps.store.write(null);
-            return { outcome: "none" } satisfies AwayWakeAnswer;
-          }
-          yield* deps.store.write({ ...session, state: "wake-prompt", wokeAt: isoAt(now) });
-          const config = yield* deps.config;
-          if (config.bringBack === "manual") return { outcome: "none" } satisfies AwayWakeAnswer;
-          if (
-            config.bringBack === "auto-on-power" &&
-            !request.onBattery &&
-            autoBringBack !== null
-          ) {
-            yield* Effect.forkDetach(
-              autoBringBack.pipe(
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Away: automatic bring back failed", { cause }),
-                ),
-              ),
-            );
-            return { outcome: "auto" } satisfies AwayWakeAnswer;
-          }
-          return { outcome: "prompt" } satisfies AwayWakeAnswer;
+          // pending-intent or send-uncertain: the target may hold the intent, or have acted.
+          return yield* afterCheck(session, yield* check(session), request);
         }),
       );
+
+    const retry: AwaySleepShape["retry"] = lock.withPermit(
+      Effect.gen(function* () {
+        const session = yield* deps.store.read;
+        if (session === null) return null;
+        if (session.state === "send-failed" || session.state === "wake-prompt") return null;
+        const now = yield* Clock.currentTimeMillis;
+        // Before a wake notice the machine may be about to sleep: cancelling then would leave nothing covered.
+        if (
+          session.wokeAt === undefined &&
+          now < Date.parse(session.dueAt) + UNNOTICED_WAKE_MARGIN_MS
+        )
+          return null;
+        const outcome = yield* check(session);
+        yield* afterCheck(session, outcome, null);
+        return outcome;
+      }),
+    );
 
     return {
       sleep,
@@ -303,14 +536,13 @@ export const makeAwaySleep = (deps: AwaySleepDeps) =>
       session: deps.store.read,
       clear: lock.withPermit(deps.store.write(null)),
       onAutoBringBack: (handler) => Effect.sync(() => void (autoBringBack = handler)),
+      retry,
     } satisfies AwaySleepShape;
   });
 
 export class AwaySleep extends Context.Service<AwaySleep, AwaySleepShape>()(
   "specweave-studio/away/awaySleepRoute/AwaySleep",
 ) {}
-
-const decodeSession = Schema.decodeUnknownOption(AwaySleepSession);
 
 function parseOrNull(text: string): unknown {
   try {
@@ -319,41 +551,19 @@ function parseOrNull(text: string): unknown {
     return null;
   }
 }
-const encodeSession = Schema.encodeSync(AwaySleepSession);
 
 export const make = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const crypto = yield* Crypto.Crypto;
-  const serverConfig = yield* ServerConfig.ServerConfig;
   const handoff = yield* HandoffMode;
   const projects = yield* ProjectService.ProjectService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const scheduled = yield* ScheduledTaskService;
   const post = yield* makeAwayPeerPost;
-  const file = path.join(serverConfig.stateDir, FILE_NAME);
+  const hold = yield* makeFileWakeHoldStore;
+  const lease = Option.getOrUndefined(yield* Effect.serviceOption(CoordinatorLease));
 
-  const store: AwaySleepStore = {
-    read: Effect.gen(function* () {
-      if (!(yield* fs.exists(file))) return null;
-      return Option.getOrNull(decodeSession(parseOrNull(yield* fs.readFileString(file))));
-    }).pipe(Effect.orElseSucceed(() => null)),
-    write: (next) =>
-      Effect.gen(function* () {
-        if (next === null) {
-          if (yield* fs.exists(file)) yield* fs.remove(file);
-          return;
-        }
-        yield* fs.makeDirectory(serverConfig.stateDir, { recursive: true, mode: 0o700 });
-        const temporary = `${file}.${yield* crypto.randomUUIDv4}.tmp`;
-        yield* fs.writeFileString(temporary, stringifyJson(encodeSession(next)), { mode: 0o600 });
-        yield* fs.rename(temporary, file);
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Away: could not save the sleep session", { cause }),
-        ),
-      ),
-  };
+  // The lid close lives in the Away session in handoff-mode.json; this is a pointer into it.
+  const live = yield* makeLiveSleepSession;
+  const store: AwaySleepStore = live.store;
 
   const core = yield* makeAwaySleep({
     self: handoff.environmentId,
@@ -390,10 +600,50 @@ export const make = Effect.gen(function* () {
           projects: projectList,
           shells,
           tasks,
+          handoffOff: yield* live.handoffOff,
         });
       }),
     post,
+    away: live.port,
+    hold,
+    holdProjects: (projectIds) =>
+      Effect.forEach(projectIds, (projectId) =>
+        projects.getById(projectId).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+          Effect.map((project) => ({
+            projectId,
+            threadIds: coordinatorThreadIdsOf(project ?? { id: projectId }),
+          })),
+        ),
+      ),
+    ...(lease === undefined
+      ? {}
+      : {
+          giveWay: (input) =>
+            input.status.coordinatorBinding === undefined || input.status.successor === undefined
+              ? Effect.succeed(false)
+              : lease.acceptAwayTakeover({
+                  projectId: input.projectId,
+                  takenOver: {
+                    coordinatorBinding: input.status.coordinatorBinding,
+                    successor: input.status.successor,
+                  },
+                  receivedAt: input.receivedAt,
+                  sentAtMs: input.sentAtMs,
+                  answeredAtMs: input.answeredAtMs,
+                }),
+          stopCoordinator: lease.stopCoordinatorOf,
+        }),
   });
+  // Repeats a wake check that got no answer, until the target answers.
+  yield* forkParked(
+    core.retry.pipe(
+      Effect.catchCause((cause) => Effect.logWarning("Away: the wake check failed", { cause })),
+      Effect.repeat(Schedule.spaced(Duration.millis(AWAY_WAKE_RETRY_MS))),
+      Effect.asVoid,
+    ),
+  );
   return AwaySleep.of(core);
 });
 
@@ -443,7 +693,12 @@ const wakeRoute = HttpRouter.add(
   Effect.gen(function* () {
     const call = yield* localCall(decodeWake);
     if ("refused" in call) return call.refused;
-    return json(200, yield* (yield* AwaySleep).wake(call.body));
+    const sleep = yield* AwaySleep;
+    // "Bring back automatically on power" (D-02) runs the runner's Bring back.
+    const runner = yield* Effect.serviceOption(AwayRunner);
+    if (Option.isSome(runner))
+      yield* sleep.onAutoBringBack(runner.value.bringBack({}).pipe(Effect.asVoid, Effect.ignore));
+    return json(200, yield* sleep.wake(call.body));
   }),
 );
 

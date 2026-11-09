@@ -12,11 +12,14 @@
  *    coordinator-owned routines with their run state. The target keeps the
  *    routines, takes over, then claims the epoch on every other machine and
  *    adopts the workers, as an automatic takeover's follow-up does.
- * 4. A refusal the target answered means it never took over: this copy
- *    coordinates again (`plannedRevert`). A call without an answer is tried
- *    once more under the same operation id, which the target replays; still
- *    no answer leaves the project without an active coordinator, never with
- *    two, and the same call later finishes it.
+ * 4. A refusal the target answered, with no call before it left in doubt,
+ *    means it never took over: this copy coordinates again (`plannedRevert`).
+ *    A call without an answer is tried once more under the same operation
+ *    id, which the target replays. Once any call went unanswered this copy
+ *    never reverts: the unanswered call may still take over there. It asks
+ *    the target whether it took over (`AWAY_INTENT_STATUS_PATH`); otherwise
+ *    the project is `in-doubt`, with no active coordinator, never two, and
+ *    the same call later finishes it.
  *
  * The caller is the coordinator itself, so this deliberately skips the
  * app's ten-minute unreachable gate on a person's takeover. Re-arming this
@@ -24,9 +27,11 @@
  */
 import {
   AWAY_HANDOVER_PATH,
+  AWAY_INTENT_STATUS_PATH,
   type AwayHandoverInput,
   AwayHandoverReason,
   type AwayHandoverResult,
+  AwayIntentStatusAnswer,
   CoordinatorRoutineCopies,
   type CoordinatorRoutineCopy,
   type EnvironmentId,
@@ -45,6 +50,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -156,7 +162,22 @@ export interface PlannedHandoverDeps {
     | undefined;
   /** This machine stops following the workers the target adopted. */
   readonly releaseWorkers?: ((project: Project, reason: string) => Effect.Effect<void>) | undefined;
+  /**
+   * Asks the target whether its copy took this project over from this copy;
+   * undefined without an answer. Absent: an unanswered handover stays in doubt.
+   */
+  readonly status?:
+    | ((
+        environmentId: EnvironmentId,
+        projectId: ProjectId,
+      ) => Effect.Effect<{ readonly takenOver: boolean; readonly epoch?: number } | undefined>)
+    | undefined;
+  /** The wait between two status asks; two seconds by default. */
+  readonly statusPause?: Effect.Effect<void> | undefined;
 }
+
+/** How many times an unanswered handover asks the target whether it took over. */
+const STATUS_ASKS = 3;
 
 export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
   const handOver = (input: AwayHandoverInput): Effect.Effect<AwayHandoverResult> =>
@@ -235,31 +256,49 @@ export const makePlannedHandover = (deps: PlannedHandoverDeps) => {
         ...(gathered.routines === undefined ? {} : { routines: gathered.routines }),
         ...(gathered.runStates === undefined ? {} : { runStates: gathered.runStates }),
       };
+      // Set once a call may have reached the target without an answer: from then on, never revert.
+      let inDoubt = resuming;
       const sent = yield* deps.send(input.targetEnvironmentId, request).pipe(
         // The target replays the same operation, so one more try is safe.
         Effect.catchIf(
           (error) => error.uncertain,
-          () => deps.send(input.targetEnvironmentId, request),
+          () =>
+            Effect.suspend(() => {
+              inDoubt = true;
+              return deps.send(input.targetEnvironmentId, request);
+            }),
         ),
         Effect.result,
       );
-      if (sent._tag === "Success") {
-        if (deps.releaseWorkers !== undefined)
-          yield* deps.releaseWorkers(project, `Handed to ${label} for Away.`);
-        return result(
-          "handed-over",
+      const handedOver = (detail: string, epoch: number | undefined) =>
+        Effect.gen(function* () {
+          if (deps.releaseWorkers !== undefined)
+            yield* deps.releaseWorkers(project, `Handed to ${label} for Away.`);
+          return result("handed-over", detail, epoch);
+        });
+      if (sent._tag === "Success")
+        return yield* handedOver(
           sent.success.unclaimed.length === 0
             ? `${label} coordinates this project now.`
             : `${label} coordinates this project now. ${sent.success.unclaimed.length} other machine(s) have not confirmed yet.`,
           sent.success.epoch,
         );
-      }
       const error = sent.failure;
-      if (!error.refused)
+      if (error.uncertain) inDoubt = true;
+      if (inDoubt || !error.refused) {
+        // Never revert here: an unanswered call may still take over on the target.
+        for (let ask = 0; ask < STATUS_ASKS && deps.status !== undefined; ask += 1) {
+          if (ask > 0) yield* deps.statusPause ?? Effect.sleep(Duration.seconds(2));
+          const status = yield* deps.status(input.targetEnvironmentId, input.projectId);
+          if (status?.takenOver === true)
+            return yield* handedOver(`${label} coordinates this project now.`, status.epoch);
+          if (status !== undefined) break;
+        }
         return result(
-          "failed",
-          `${label} did not confirm. No machine coordinates this project until you try again.`,
+          inDoubt ? "in-doubt" : "failed",
+          `${label} did not confirm the handover, so no machine coordinates this project now. Open Away and choose Leave again to finish it; ${label} replays the same handover.`,
         );
+      }
       const reverted = yield* deps
         .revert({ projectId: project.id, operationId })
         .pipe(Effect.result);
@@ -496,6 +535,7 @@ export const make = Effect.gen(function* () {
   const sql = Option.getOrUndefined(yield* Effect.serviceOption(SqlClient.SqlClient));
   const post: AwayPeerPost = yield* makeAwayPeerPost;
   const selfEnvironmentId = yield* environment.getEnvironmentId;
+  const decodeStatus = Schema.decodeUnknownOption(AwayIntentStatusAnswer);
 
   const loadProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -570,6 +610,26 @@ export const make = Effect.gen(function* () {
                 }),
               );
         }),
+      ),
+    status: (environmentId, projectId) =>
+      post(
+        environmentId,
+        AWAY_INTENT_STATUS_PATH,
+        { sourceEnvironmentId: selfEnvironmentId, projectIds: [projectId] },
+        10_000,
+      ).pipe(
+        Effect.map((answer) => {
+          const decoded = decodeStatus(answer.json);
+          if (Option.isNone(decoded)) return undefined;
+          const entry = decoded.value.projects.find((project) => project.projectId === projectId);
+          return entry === undefined
+            ? undefined
+            : {
+                takenOver: entry.takenOver,
+                ...(entry.epoch === undefined ? {} : { epoch: entry.epoch }),
+              };
+        }),
+        Effect.orElseSucceed(() => undefined),
       ),
     ...(releaseGuard === undefined
       ? {}

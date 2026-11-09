@@ -36,6 +36,7 @@ import {
   refuseGrantRoutineChange,
   workGrantOf,
 } from "../../workGrantAccess.ts";
+import { refuseOthersRoutine } from "../../routineOwnership.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -125,6 +126,8 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         });
       const context = yield* readCaller();
       const work = yield* refuseGrantRoutineChange(context, task.projectId);
+      // Under a grant, only a routine that grant made: the owner's routines here stay the owner's.
+      yield* refuseOthersRoutine(scheduler.readGrant, work, task, "run");
       // Under a grant a run starts no broader than the caller may work: the
       // routine's modes, and a bound thread's modes as they are now, as for an
       // update. writesEnvironment already asks for a full-access caller; this

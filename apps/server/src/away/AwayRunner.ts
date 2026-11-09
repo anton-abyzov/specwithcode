@@ -79,6 +79,7 @@ import {
 import { AwayIntents } from "./AwayIntents.ts";
 import { AwayPeerError, type AwayPeerPost, makeAwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPlanner } from "./AwayPlanner.ts";
+import { fillSleepThreads } from "./awaySleepSession.ts";
 import {
   AWAY_RETURN_PROTOCOL_VERSION,
   AwayReturnResponse,
@@ -213,6 +214,11 @@ export interface AwayRunnerDeps {
     target: EnvironmentId,
     threadIds: ReadonlyArray<ThreadId>,
   ) => Effect.Effect<ReadonlyArray<HandoffMachineThreadResult>, AwayError>;
+  /**
+   * Source thread id to the thread that continues it on `target`, from the
+   * handoff record (a lid close: the heartbeat records what the target continued).
+   */
+  readonly continuedOn?: (target: EnvironmentId) => Effect.Effect<ReadonlyMap<string, string>>;
   /** Asks the target to hand back threads and coordinators it holds for this machine. */
   readonly askReturn: (
     target: EnvironmentId,
@@ -448,58 +454,88 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
       return session.current;
     });
 
+  /** The forked stages; they hold the claim until they end. */
   const guarded = <A>(effect: Effect.Effect<A>) =>
-    Effect.gen(function* () {
-      running = true;
-      return yield* effect;
-    }).pipe(Effect.ensuring(Effect.sync(() => void (running = false))));
+    effect.pipe(Effect.ensuring(Effect.sync(() => void (running = false))));
 
   const busy = new AwayError({
     code: "failed",
     message: "Away is already moving work. Wait for it to finish.",
   });
 
+  /** The session the run in progress saved, marked; a call made while one runs answers this. */
+  const alreadyRunning = Effect.gen(function* () {
+    const latest = yield* deps.loadSession;
+    if (latest === null) return yield* busy;
+    return { ...latest, alreadyRunning: true } satisfies AwaySession;
+  });
+
+  /**
+   * Runs `body` holding the claim, taken before anything waits, so a second
+   * start or Bring back never slips in. `body` returns whether it forked the
+   * stages, which then release the claim when they end.
+   */
+  const claimed = <E>(
+    body: Effect.Effect<{ readonly session: AwaySession; readonly forked: boolean }, E>,
+  ): Effect.Effect<AwaySession, E | AwayError> =>
+    Effect.suspend((): Effect.Effect<AwaySession, E | AwayError> => {
+      if (running) return alreadyRunning;
+      running = true;
+      let forked = false;
+      return body.pipe(
+        Effect.map((result) => {
+          forked = result.forked;
+          return result.session;
+        }),
+        Effect.ensuring(Effect.sync(() => void (forked || (running = false)))),
+      );
+    });
+
   /**
    * Starts leaving, or resumes the unfinished session for the same target.
    * Answers once the session is saved; the stages run after.
    */
   const start = (input: AwayStartInput) =>
-    Effect.gen(function* () {
-      if (running) return yield* busy;
-      const latest = yield* deps.loadSession;
-      if (latest !== null && latest.finishedAt === null) {
-        if (latest.targetEnvironmentId !== input.targetEnvironmentId)
+    claimed(
+      Effect.gen(function* () {
+        const latest = yield* deps.loadSession;
+        if (latest !== null && latest.stage === "pending-intent")
           return yield* new AwayError({
             code: "failed",
-            message: `Leaving for ${latest.targetLabel} did not finish. Leave for ${latest.targetLabel} again to finish it.`,
+            message: `This machine left for ${latest.targetLabel} when it went to sleep. Wait a moment while it checks what moved, then try again.`,
           });
-        running = true;
-        yield* deps.fork(guarded(runLeaving(latest).pipe(Effect.asVoid)));
-        return latest;
-      }
-      if (latest !== null && latest.broughtBackAt === null && hasWorkAway(latest))
-        return yield* new AwayError({
-          code: "failed",
-          message: `Work is still on ${latest.targetLabel}. Bring it back before you leave again.`,
+        if (latest !== null && latest.finishedAt === null) {
+          if (latest.targetEnvironmentId !== input.targetEnvironmentId)
+            return yield* new AwayError({
+              code: "failed",
+              message: `Leaving for ${latest.targetLabel} did not finish. Leave for ${latest.targetLabel} again to finish it.`,
+            });
+          yield* deps.fork(guarded(runLeaving(latest).pipe(Effect.asVoid)));
+          return { session: latest, forked: true };
+        }
+        if (latest !== null && latest.broughtBackAt === null && hasWorkAway(latest))
+          return yield* new AwayError({
+            code: "failed",
+            message: `Work is still on ${latest.targetLabel}. Bring it back before you leave again.`,
+          });
+        const plan = yield* deps.plan({
+          targetEnvironmentId: input.targetEnvironmentId,
+          ...(input.coordinatorScope === undefined
+            ? {}
+            : { coordinatorScope: input.coordinatorScope }),
         });
-      const plan = yield* deps.plan({
-        targetEnvironmentId: input.targetEnvironmentId,
-        ...(input.coordinatorScope === undefined
-          ? {}
-          : { coordinatorScope: input.coordinatorScope }),
-      });
-      const session = sessionFromPlan({
-        sessionId: yield* deps.newId,
-        plan,
-        trigger: input.trigger ?? "manual",
-        coordinatorScope: input.coordinatorScope ?? "live",
-        startedAt: yield* deps.now,
-      });
-      yield* deps.saveSession(session);
-      running = true;
-      yield* deps.fork(guarded(runLeaving(session).pipe(Effect.asVoid)));
-      return session;
-    });
+        const session = sessionFromPlan({
+          sessionId: yield* deps.newId,
+          plan,
+          trigger: input.trigger ?? "manual",
+          coordinatorScope: input.coordinatorScope ?? "live",
+          startedAt: yield* deps.now,
+        });
+        yield* deps.saveSession(session);
+        yield* deps.fork(guarded(runLeaving(session).pipe(Effect.asVoid)));
+        return { session, forked: true };
+      }),
+    );
 
   // --- Bring back -------------------------------------------------------------------------
 
@@ -516,6 +552,14 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
       const session = { current: start };
       const target = session.current.targetEnvironmentId;
       const label = session.current.targetLabel;
+      // A lid close: threads the wake could not place yet read the handoff record now.
+      if (session.current.trigger === "sleep" && deps.continuedOn !== undefined) {
+        const filled = fillSleepThreads(session.current, yield* deps.continuedOn(target), true);
+        if (filled !== session.current) {
+          session.current = filled;
+          yield* deps.saveSession(filled);
+        }
+      }
       const open = (kind: AwayItemResult["kind"]) =>
         session.current.items.filter((item) => item.kind === kind && awaitsReturn(item));
 
@@ -617,7 +661,18 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
               ? (asked.success.coordinators ?? []).find((result) => result.projectId === projectId)
               : undefined;
           let result: AwayItemBack;
-          if (answer?.outcome === "handed-over") {
+          // A lid close with no word of a takeover: the target never coordinated it, so it is here.
+          if (
+            answer?.outcome === "skipped" &&
+            session.current.trigger === "sleep" &&
+            item.targetId === undefined
+          ) {
+            result = back(
+              "returned",
+              `${label} was not coordinating it, so it coordinates here.`,
+              at,
+            );
+          } else if (answer?.outcome === "handed-over") {
             const rearmed = yield* deps.rearm(
               projectId,
               target,
@@ -672,36 +727,68 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
 
   /** Starts Bring back for the latest session; answers once it is saved. */
   const bringBack = (input: { readonly sessionId?: string | undefined }) =>
-    Effect.gen(function* () {
-      if (running) return yield* busy;
-      const latest = yield* deps.loadSession;
-      if (
-        latest === null ||
-        (input.sessionId !== undefined && latest.sessionId !== input.sessionId)
-      )
-        return yield* new AwayError({ code: "not_found", message: "Nothing left this machine." });
-      if (latest.broughtBackAt !== null) return latest;
-      const started: AwaySession = {
-        ...latest,
-        bringBackStartedAt: latest.bringBackStartedAt ?? (yield* deps.now),
-      };
-      yield* deps.saveSession(started);
-      running = true;
-      // An unfinished leave is finished first, so nothing is left half moved.
-      yield* deps.fork(
-        guarded(
-          (started.finishedAt === null ? runLeaving(started) : Effect.succeed(started)).pipe(
-            Effect.flatMap(runBringBack),
-            Effect.asVoid,
+    claimed(
+      Effect.gen(function* () {
+        const latest = yield* deps.loadSession;
+        if (
+          latest === null ||
+          (input.sessionId !== undefined && latest.sessionId !== input.sessionId)
+        )
+          return yield* new AwayError({ code: "not_found", message: "Nothing left this machine." });
+        if (latest.broughtBackAt !== null) return { session: latest, forked: false };
+        if (latest.stage === "pending-intent")
+          return yield* new AwayError({
+            code: "failed",
+            message: `This machine is still checking what ${latest.targetLabel} took over while it slept. Try again in a moment.`,
+          });
+        const started: AwaySession = {
+          ...latest,
+          bringBackStartedAt: latest.bringBackStartedAt ?? (yield* deps.now),
+        };
+        yield* deps.saveSession(started);
+        // An unfinished leave is finished first, so nothing is left half moved.
+        yield* deps.fork(
+          guarded(
+            (started.finishedAt === null ? runLeaving(started) : Effect.succeed(started)).pipe(
+              Effect.flatMap(runBringBack),
+              Effect.asVoid,
+            ),
           ),
-        ),
+        );
+        return { session: started, forked: true };
+      }),
+    );
+
+  /**
+   * On server start: an unfinished leave, or a Bring back that did not
+   * finish, carries on in the background. Every stage is idempotent, so a
+   * second resume only answers "already continued". A lid close waiting for
+   * its wake is left alone.
+   */
+  const resume = Effect.gen(function* () {
+    const latest = yield* deps.loadSession;
+    if (latest === null || latest.stage === "pending-intent") return false;
+    if (latest.finishedAt === null)
+      return yield* start({
+        targetEnvironmentId: latest.targetEnvironmentId,
+        coordinatorScope: latest.coordinatorScope,
+        trigger: latest.trigger,
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
       );
-      return started;
-    });
+    if (latest.bringBackStartedAt !== null && latest.broughtBackAt === null)
+      return yield* bringBack({ sessionId: latest.sessionId }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+    return false;
+  });
 
   return {
     start,
     bringBack,
+    resume,
     isRunning: Effect.sync(() => running),
     /** For tests: the stages without the fork. */
     runLeaving,
@@ -859,6 +946,20 @@ export const make = Effect.gen(function* () {
           Effect.logWarning("Away could not point a routine at its returned thread", { cause }),
         ),
       ),
+    continuedOn: (target) =>
+      handoff.document.pipe(
+        Effect.map(
+          (document) =>
+            new Map(
+              Object.entries(document.threads).flatMap(([id, record]) =>
+                record.continuedOn?.environmentId === target
+                  ? [[id, record.continuedOn.threadId as string] as const]
+                  : [],
+              ),
+            ),
+        ),
+        Effect.orElseSucceed(() => new Map<string, string>()),
+      ),
     moveThreads: (target, threadIds) =>
       handoff.handOffMachine({ destinationEnvironmentId: target, reason: "away", threadIds }).pipe(
         Effect.map((run) => run.results),
@@ -914,6 +1015,12 @@ export const make = Effect.gen(function* () {
           ),
       { concurrency: 1, discard: true },
     ),
+  );
+
+  // An Away a restart cut off carries on by itself.
+  yield* core.resume.pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Away could not resume on start", { cause })),
+    Effect.forkIn(runScope),
   );
 
   return AwayRunner.of({

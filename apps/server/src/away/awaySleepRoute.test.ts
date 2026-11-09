@@ -6,6 +6,7 @@
 import {
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_PATH,
+  AWAY_INTENT_STATUS_PATH,
   type AwayConfig,
   EnvironmentId,
   type OrchestrationV2ThreadShell,
@@ -18,6 +19,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import type { AwayPeerPost } from "./awayPeerCall.ts";
 import { AwayPeerError } from "./awayPeerCall.ts";
+import { memoryWakeHoldStore } from "./AwayWakeHold.ts";
 import {
   makeAwaySleep,
   memorySleepStore,
@@ -44,9 +46,21 @@ interface Sent {
   readonly body: unknown;
 }
 
-const peer = (
-  answer: (path: string) => Effect.Effect<unknown, AwayPeerError> = () => Effect.succeed({}),
-) => {
+/** The target acted: the cancel came too late and the status names the takeover. */
+const movedAnswer = (path: string): Effect.Effect<unknown, AwayPeerError> =>
+  Effect.succeed(
+    path === AWAY_INTENT_CANCEL_PATH
+      ? { cancelled: 0, state: "done", takenOver: ["easychamp"] }
+      : path === AWAY_INTENT_STATUS_PATH
+        ? {
+            intentState: "done",
+            projects: [{ projectId: "easychamp", takenOver: true, epoch: 2 }],
+            receivedAt: "2026-11-09T22:10:00.000Z",
+          }
+        : {},
+  );
+
+const peer = (answer: (path: string) => Effect.Effect<unknown, AwayPeerError> = movedAnswer) => {
   const sent: Sent[] = [];
   const post: AwayPeerPost = (_target, path, body) =>
     Effect.gen(function* () {
@@ -63,17 +77,32 @@ const setup = (
   Effect.gen(function* () {
     yield* TestClock.setTime(T0);
     const store = memorySleepStore();
+    const hold = memoryWakeHoldStore();
     const remote = peer(answer);
+    const gaveWay: string[] = [];
     let current = config(patch);
     const away = yield* makeAwaySleep({
       self: M4,
       store,
+      hold,
       config: Effect.sync(() => current),
       ids: () =>
         Effect.succeed({ projectIds: [ProjectId.make("easychamp")], threadIds: ["thread-1"] }),
       post: remote.post,
+      giveWay: (input) =>
+        Effect.sync(() => {
+          gaveWay.push(input.projectId);
+          return true;
+        }),
     });
-    return { away, store, remote, setConfig: (next: AwayConfig) => void (current = next) };
+    return {
+      away,
+      store,
+      hold,
+      remote,
+      gaveWay,
+      setConfig: (next: AwayConfig) => void (current = next),
+    };
   });
 
 describe("sleepTriggerFires (D-01)", () => {
@@ -127,25 +156,60 @@ describe("the sleep notice", () => {
       }),
   );
 
-  it.effect("a failed send leaves the session as send-failed; the next wake clears it", () =>
+  it.effect("a refused send leaves the session as send-failed; the next wake clears it", () =>
     Effect.gen(function* () {
-      const { away, store, remote } = yield* setup({}, () =>
+      const { away, store, hold, remote } = yield* setup({}, () =>
         Effect.fail(
           new AwayPeerError({
-            message: "Ministorm did not answer.",
-            refused: false,
-            uncertain: true,
+            message: "Ministorm: no work grant",
+            refused: true,
+            uncertain: false,
+            status: 403,
           }),
         ),
       );
       const decision = yield* away.sleep({ onBattery: true });
+      assert.isNotNull(hold.current());
       yield* decision.send;
       assert.strictEqual(store.current()?.state, "send-failed");
+      // The target never recorded it: the coordinator runs here again at once.
+      assert.isNull(hold.current());
       const woke = yield* away.wake({ onBattery: true });
       assert.deepEqual(woke, { outcome: "none" });
       assert.isNull(store.current());
       assert.lengthOf(remote.sent, 1);
     }),
+  );
+
+  it.effect(
+    "an unanswered send is send-uncertain: the hold stays and the wake asks the target",
+    () =>
+      Effect.gen(function* () {
+        let failIntent = true;
+        const { away, store, hold, remote, gaveWay } = yield* setup({}, (path) =>
+          path === AWAY_INTENT_PATH && failIntent
+            ? Effect.fail(
+                new AwayPeerError({
+                  message: "Ministorm did not answer.",
+                  refused: false,
+                  uncertain: true,
+                }),
+              )
+            : movedAnswer(path),
+        );
+        yield* (yield* away.sleep({ onBattery: true })).send;
+        failIntent = false;
+        assert.strictEqual(store.current()?.state, "send-uncertain");
+        assert.isNotNull(hold.current());
+        yield* TestClock.adjust(10 * MINUTE);
+        assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "prompt" });
+        assert.deepEqual(
+          remote.sent.map((call) => call.path),
+          [AWAY_INTENT_PATH, AWAY_INTENT_CANCEL_PATH, AWAY_INTENT_STATUS_PATH],
+        );
+        assert.deepEqual(gaveWay, ["easychamp"]);
+        assert.isNull(hold.current());
+      }),
   );
 });
 
@@ -166,9 +230,7 @@ describe("waking (D-02)", () => {
 
   it.effect("back after the grace with the work moved: prompts once, then stays quiet", () =>
     Effect.gen(function* () {
-      const { away, store } = yield* setup({}, (path) =>
-        Effect.succeed(path === AWAY_INTENT_CANCEL_PATH ? { cancelled: 0 } : {}),
-      );
+      const { away, store } = yield* setup();
       yield* (yield* away.sleep({ onBattery: true })).send;
       yield* TestClock.adjust(10 * MINUTE);
       assert.deepEqual(yield* away.wake({ onBattery: true }), { outcome: "prompt" });

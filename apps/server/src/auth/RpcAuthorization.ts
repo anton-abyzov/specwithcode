@@ -341,7 +341,21 @@ const requiredScopesForRpcCall = (
  * minted, which the HTTP check also lets through without an Origin. So a
  * socket from the owner's own app is the same-origin request HTTP asks for.
  */
-const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([WS_METHODS.awayDecideAccess]);
+const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([
+  WS_METHODS.awayDecideAccess,
+  // Away moves this machine's threads, routines and coordinator to another
+  // machine, asks that machine for access, or changes when that happens: the
+  // owner decides, never a coordinator key that reached this socket.
+  WS_METHODS.awayRequestAccess,
+  WS_METHODS.awayStart,
+  WS_METHODS.awayBringBack,
+  WS_METHODS.awayUpdateConfig,
+]);
+
+const ownerOnlyRpcMessage = (method: string) =>
+  method === WS_METHODS.awayDecideAccess
+    ? "Only this machine's owner can approve access here."
+    : "Only this machine's owner can start, stop or change Away here.";
 
 export const refusesOwnerOnlyRpc = (method: string, principal: AuthPrincipal | undefined) =>
   principal?.kind === "coordinator" && OWNER_ONLY_RPC_METHODS.has(method);
@@ -355,7 +369,7 @@ export const layer = (
     if (refusesOwnerOnlyRpc(rpc._tag, principal)) {
       return Effect.fail(
         new EnvironmentAuthorizationError({
-          message: "Only this machine's owner can approve access here.",
+          message: ownerOnlyRpcMessage(rpc._tag),
           requiredScope: AuthAccessWriteScope,
         }),
       );

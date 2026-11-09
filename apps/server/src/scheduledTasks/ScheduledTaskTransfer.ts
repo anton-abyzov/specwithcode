@@ -139,10 +139,12 @@ export function settledRunState(
 
 export interface TransferOutDeps {
   readonly post: AwayPeerPost;
-  /** The routine's run state here now, and whether a run is going. */
+  /** The routine's run state here now, whether a run is going and, when read, whether it is on. */
   readonly readState: (
     taskId: ScheduledTask["id"],
-  ) => Effect.Effect<(TransferRunState & { readonly running: boolean }) | null>;
+  ) => Effect.Effect<
+    (TransferRunState & { readonly running: boolean; readonly enabled?: boolean }) | null
+  >;
   readonly setEnabled: (taskId: ScheduledTask["id"], enabled: boolean) => Effect.Effect<boolean>;
   /** Writes the note the routine shows while Away keeps it off; null clears it. */
   readonly note: (taskId: ScheduledTask["id"], note: string | null) => Effect.Effect<void>;
@@ -210,10 +212,25 @@ export const makeTransferOut = (deps: TransferOutDeps) => {
           detail: `Stays here: ${staged.failure.message}`.slice(0, 500),
           offHere: false,
         } as const;
-      // 2. Off here, then the state as it is now.
-      yield* deps.setEnabled(task.id, false);
+      // 2. Off here, then the state as it is now. It is turned on there only once
+      //    this machine's row reads off: otherwise it could fire on both.
+      const off = yield* deps.setEnabled(task.id, false);
+      const after = off ? yield* deps.readState(task.id) : null;
+      if (!off || after === null || after.enabled === true) {
+        // The staged copy there is off; take it away again so nothing is left behind.
+        yield* call(target, {
+          protocolVersion: ROUTINE_TRANSFER_PROTOCOL_VERSION,
+          op: "release",
+          routineId: task.id,
+        }).pipe(Effect.ignore);
+        return {
+          kind: "failed",
+          detail:
+            "Stays here: it could not be turned off on this machine, so it was not turned on there.",
+          offHere: false,
+        } as const;
+      }
       yield* deps.note(task.id, awayPausedNote(targetLabel));
-      const after = yield* deps.readState(task.id);
       const state = settledRunState(
         task,
         before,
@@ -478,8 +495,9 @@ const readStateRow = (id: string) =>
       readonly last_run_status: string | null;
       readonly run_count: number;
       readonly once_generation: number | null;
+      readonly enabled: number | boolean | null;
     }>`
-      SELECT next_run_at, last_run_at, last_run_status, run_count,
+      SELECT next_run_at, last_run_at, last_run_status, run_count, enabled,
         json_extract(run_policy_json, '$.onceGeneration') AS once_generation
       FROM scheduled_tasks WHERE task_id = ${id}
     `;
@@ -494,6 +512,7 @@ const readStateRow = (id: string) =>
           ? Math.trunc(row.once_generation)
           : 0,
       running: row.last_run_status === "running",
+      enabled: row.enabled === true || row.enabled === 1,
     };
   });
 
@@ -511,6 +530,34 @@ const writeStateRow = (projectId: string, id: string, state: TransferRunState) =
         AND last_run_status <> 'running'
     `;
   });
+
+// --- pausing here ----------------------------------------------------------------------------
+
+/**
+ * Turns a routine off here with `note` shown on it, or, with null, back on
+ * with the note cleared. True only when the row reads as asked afterwards.
+ * Local and fast: the lid-close path runs it inside the five-second window.
+ */
+export const makePauseHere =
+  (scheduled: Pick<ScheduledTaskService["Service"], "setEnabled">, sql: SqlClient.SqlClient) =>
+  (taskId: string, note: string | null): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const id = ScheduledTaskId.make(taskId);
+      const enabled = note === null;
+      yield* scheduled.setEnabled({ id, enabled });
+      yield* sql`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${id}`;
+      const rows = yield* sql<{ readonly enabled: number | boolean | null }>`
+        SELECT enabled FROM scheduled_tasks WHERE task_id = ${id}
+      `;
+      const row = rows[0];
+      return row !== undefined && (row.enabled === true || row.enabled === 1) === enabled;
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Away could not pause or resume a routine", { cause }).pipe(
+          Effect.as(false),
+        ),
+      ),
+    );
 
 // --- the service ------------------------------------------------------------------------------
 
@@ -616,20 +663,7 @@ export const make = Effect.gen(function* () {
       withSql(writeStateRow(projectId, id, state)).pipe(logged("write run state")(undefined)),
   });
 
-  const writeNote = (id: string, note: string | null) =>
-    withSql(
-      Effect.gen(function* () {
-        const db = yield* SqlClient.SqlClient;
-        yield* db`UPDATE scheduled_tasks SET last_run_error = ${note} WHERE task_id = ${id}`;
-      }),
-    );
-  const pauseHere = (taskId: string, note: string | null) =>
-    Effect.gen(function* () {
-      const id = ScheduledTaskId.make(taskId);
-      yield* scheduled.setEnabled({ id, enabled: note === null });
-      yield* writeNote(id, note);
-      return true;
-    }).pipe(logged("pause or resume a routine")(false));
+  const pauseHere = makePauseHere(scheduled, sql);
 
   return ScheduledTaskTransfer.of({ ...out, receive: into.receive, pauseHere });
 });

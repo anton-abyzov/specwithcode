@@ -217,7 +217,10 @@ describe("away intent route", () => {
       const cancelled = yield* cancelIntent(f.intents, callerFrom("m4"), {
         sourceEnvironmentId: "m4",
       });
-      expect(cancelled).toEqual({ status: 200, body: { cancelled: 1 } });
+      expect(cancelled).toEqual({
+        status: 200,
+        body: { cancelled: 1, state: "cancelled", takenOver: [] },
+      });
       yield* TestClock.setTime(T0 + 10 * MINUTE);
       expect(yield* f.intents.tick).toEqual([]);
       expect(f.binding("ms")?.state).toBe("transferred");
@@ -269,6 +272,26 @@ describe("away intent route", () => {
       expect(settled[0]).toMatchObject({ state: "cancelled", cancelReason: "heard-awake" });
       expect(f.binding("ms")?.state).toBe("transferred");
       expect(f.dueHooks).toEqual([]);
+    }),
+  );
+
+  it.effect("an intent left acting by a restart is finished, and cannot be cancelled", () =>
+    Effect.gen(function* () {
+      const f = yield* fleet;
+      yield* recordIntent(f.intents, callerFrom("m4"), intentBody(), f.projectsHere());
+      const [held] = f.store.current().intents;
+      // The process stopped after marking it acting, before the takeover.
+      yield* f.store.write({ version: 1, intents: [{ ...held!, state: "acting" }] });
+      const refused = yield* cancelIntent(f.intents, callerFrom("m4"), {
+        sourceEnvironmentId: "m4",
+      });
+      expect(refused.body).toEqual({ cancelled: 0, state: "acting", takenOver: [] });
+      f.awake.m4 = true;
+      const settled = yield* f.intents.tick;
+      // Heard awake no longer cancels it: the takeover may be under way.
+      expect(settled[0]).toMatchObject({ state: "done" });
+      expect(f.binding("ms")?.state).toBe("active");
+      expect(f.dueHooks).toHaveLength(1);
     }),
   );
 

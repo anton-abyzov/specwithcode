@@ -1,20 +1,27 @@
 /**
  * The target's routes for Away mode's sleep trigger (1267 AC-09):
  * `POST /api/away/v1/intent` records the source's away intent, and
- * `POST /api/away/v1/intent/cancel` cancels it once the source is back. Only
+ * `POST /api/away/v1/intent/cancel` cancels it once the source is back, and
+ * `POST /api/away/v1/intent/status` answers, per project, whether this
+ * machine took it over from the source (1267 AC-09, the wake check). Only
  * a machine with a live work grant here gets in (`awayPeerCaller`); the body
  * must name that same machine, and only projects its grant covers are kept.
  */
 import {
   AWAY_INTENT_CANCEL_PATH,
   AWAY_INTENT_PATH,
+  AWAY_INTENT_STATUS_PATH,
   AwayIntentCancelRequest,
   type AwayIntentRecord,
   AwayIntentRequest,
+  AwayIntentStatusAnswer,
+  AwayIntentStatusRequest,
   type Project,
   type ProjectId,
 } from "@specweave-studio/contracts";
 import * as ByteSize from "effect/ByteSize";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -22,16 +29,19 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectInGrant } from "../fleet/workGrantPolicy.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
 import { parseJson } from "../json.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { AwayIntents, type AwayIntentsShape, linkedCopyOf } from "./AwayIntents.ts";
+import { AwayIntents, type AwayIntentsShape, linkedCopyOf, projectStatus } from "./AwayIntents.ts";
 import { answerJson, awayPeerCaller } from "./awayPeerCall.ts";
 
 const MAX_BODY_BYTES = 128 * 1024;
 const decodeIntent = Schema.decodeUnknownOption(AwayIntentRequest);
 const decodeCancel = Schema.decodeUnknownOption(AwayIntentCancelRequest);
+const decodeStatus = Schema.decodeUnknownOption(AwayIntentStatusRequest);
+const encodeStatusAnswer = Schema.encodeSync(AwayIntentStatusAnswer);
 
 export interface IntentAnswer {
   readonly status: number;
@@ -119,6 +129,37 @@ export const cancelIntent = (
       : { status: 200, body: cancelled.success };
   });
 
+/**
+ * Whether this machine took over each of the caller's projects. Answered from
+ * the bindings here, not only from the intents: a planned handover in doubt
+ * and an intent that acted both show as a copy that coordinates with the
+ * caller's copy as its predecessor.
+ */
+export const intentStatus = (
+  intents: Pick<AwayIntentsShape, "latestState">,
+  caller: ReceiverCaller,
+  raw: unknown,
+  projects: ReadonlyArray<Project>,
+  selfEnvironmentId: string,
+): Effect.Effect<IntentAnswer> =>
+  Effect.gen(function* () {
+    const body = decodeStatus(raw);
+    if (Option.isNone(body))
+      return { status: 400, body: { error: "The request does not match this version." } };
+    if (body.value.sourceEnvironmentId !== caller.sourceEnvironmentId)
+      return { status: 403, body: { error: "A machine may ask only about its own projects." } };
+    const state = yield* intents.latestState(caller.sourceEnvironmentId).pipe(Effect.result);
+    if (state._tag === "Failure") return { status: 500, body: { error: state.failure.message } };
+    const answer: AwayIntentStatusAnswer = {
+      intentState: state.success,
+      projects: body.value.projectIds.map((projectId) =>
+        projectStatus(projects, selfEnvironmentId, caller.sourceEnvironmentId, projectId),
+      ),
+      receivedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
+    };
+    return { status: 200, body: encodeStatusAnswer(answer) };
+  });
+
 const tooLarge = answerJson(413, { error: "The request is too large." });
 
 const intentRoute = HttpRouter.add(
@@ -151,4 +192,28 @@ const cancelRoute = HttpRouter.add(
   }),
 );
 
-export const layer = Layer.mergeAll(intentRoute, cancelRoute);
+const statusRoute = HttpRouter.add(
+  "POST",
+  AWAY_INTENT_STATUS_PATH,
+  Effect.gen(function* () {
+    const who = yield* awayPeerCaller;
+    if ("refused" in who) return who.refused;
+    const body = yield* readBody;
+    if (body === undefined) return tooLarge;
+    const projects = yield* (yield* ProjectService.ProjectService).snapshot.pipe(
+      Effect.map((snapshot) => snapshot.projects),
+      Effect.orElseSucceed(() => []),
+    );
+    const selfEnvironmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
+    const answer = yield* intentStatus(
+      yield* AwayIntents,
+      who.caller,
+      body.raw,
+      projects,
+      selfEnvironmentId,
+    );
+    return answerJson(answer.status, answer.body);
+  }),
+);
+
+export const layer = Layer.mergeAll(intentRoute, cancelRoute, statusRoute);

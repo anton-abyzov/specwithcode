@@ -5,6 +5,7 @@
  * routines, then coordinators, and re-arms the standby.
  */
 import {
+  AwayError,
   type AwayHandoverInput,
   type AwayPlan,
   type AwaySession,
@@ -325,4 +326,188 @@ describe("awaySessionOf", () => {
     expect(awaySessionOf({ ...session, stage: "from-a-newer-version" })).toBeNull();
     expect(awaySessionOf(null)).toBeNull();
   });
+});
+
+describe("AwayRunner one run at a time (#10)", () => {
+  it.effect("a second start while the first one runs answers its session, marked", () =>
+    Effect.gen(function* () {
+      const h = harness({});
+      const held: Array<Effect.Effect<void>> = [];
+      // The stages wait, as they would while moving work.
+      const runner = makeAwayRunner({
+        ...h.deps,
+        fork: (effect) => Effect.sync(() => void held.push(effect)),
+      });
+      const first = yield* runner.start({ targetEnvironmentId: TARGET });
+      expect(first.alreadyRunning).toBeUndefined();
+      const second = yield* runner.start({ targetEnvironmentId: TARGET });
+      expect(second).toMatchObject({ sessionId: first.sessionId, alreadyRunning: true });
+      const back = yield* runner.bringBack({});
+      expect(back.alreadyRunning).toBe(true);
+      // Only one plan, one session.
+      expect(h.log.filter((line) => line === "plan")).toHaveLength(1);
+      yield* held[0]!;
+      expect(yield* runner.isRunning).toBe(false);
+    }),
+  );
+
+  it.effect("the claim is taken before anything waits", () =>
+    Effect.gen(function* () {
+      const h = harness({});
+      const runner = makeAwayRunner({
+        ...h.deps,
+        plan: (input) => Effect.yieldNow.pipe(Effect.andThen(h.deps.plan(input))),
+      });
+      const [a, b] = yield* Effect.all(
+        [
+          runner.start({ targetEnvironmentId: TARGET }).pipe(Effect.result),
+          runner.start({ targetEnvironmentId: TARGET }).pipe(Effect.result),
+        ],
+        { concurrency: "unbounded" },
+      );
+      // One leaves; the other found it planning, with nothing saved yet, and was refused.
+      expect([a._tag, b._tag].toSorted()).toEqual(["Failure", "Success"]);
+      expect(h.log.filter((line) => line === "plan")).toHaveLength(1);
+    }),
+  );
+
+  it.effect("a failure before the stages releases the claim", () =>
+    Effect.gen(function* () {
+      const h = harness({});
+      let fail = true;
+      const runner = makeAwayRunner({
+        ...h.deps,
+        plan: (input) =>
+          fail
+            ? Effect.fail(new AwayError({ code: "unreachable", message: "No answer." }))
+            : h.deps.plan(input),
+      });
+      yield* runner.start({ targetEnvironmentId: TARGET }).pipe(Effect.flip);
+      fail = false;
+      const again = yield* runner.start({ targetEnvironmentId: TARGET });
+      expect(again.alreadyRunning).toBeUndefined();
+    }),
+  );
+});
+
+describe("AwayRunner resume on start (#12)", () => {
+  const base = sessionFromPlan({
+    sessionId: "s1",
+    plan: PLAN,
+    trigger: "manual",
+    coordinatorScope: "live",
+    startedAt: "2026-11-09T22:00:00.000Z",
+  });
+
+  it.effect("carries on an unfinished leave, once", () =>
+    Effect.gen(function* () {
+      const h = harness({ saved: base });
+      const runner = makeAwayRunner(h.deps);
+      expect(yield* runner.resume).toBe(true);
+      expect(h.saved()!.stage).toBe("done");
+      h.log.length = 0;
+      expect(yield* runner.resume).toBe(false);
+      expect(h.log).toEqual([]);
+    }),
+  );
+
+  it.effect("carries on a Bring back that did not finish", () =>
+    Effect.gen(function* () {
+      const h = harness({});
+      const runner = makeAwayRunner(h.deps);
+      yield* runner.start({ targetEnvironmentId: TARGET });
+      const left = h.saved()!;
+      const h2 = harness({ saved: { ...left, bringBackStartedAt: "2026-11-09T22:05:00.000Z" } });
+      expect(yield* makeAwayRunner(h2.deps).resume).toBe(true);
+      expect(h2.saved()!.broughtBackAt).not.toBeNull();
+    }),
+  );
+
+  it.effect("leaves a lid close waiting for its wake alone", () =>
+    Effect.gen(function* () {
+      const h = harness({ saved: { ...base, trigger: "sleep", stage: "pending-intent" } });
+      expect(yield* makeAwayRunner(h.deps).resume).toBe(false);
+      expect(h.log).toEqual([]);
+    }),
+  );
+});
+
+describe("AwayRunner with a lid-close session (#4, #13)", () => {
+  const sleeping: AwaySession = {
+    sessionId: "s-sleep",
+    targetEnvironmentId: TARGET,
+    targetLabel: "Ministorm",
+    trigger: "sleep",
+    coordinatorScope: "live",
+    startedAt: "2026-11-09T22:00:00.000Z",
+    finishedAt: "2026-11-09T22:30:00.000Z",
+    stage: "done",
+    bringBackStartedAt: null,
+    broughtBackAt: null,
+    items: [
+      {
+        kind: "coordinator",
+        id: "p1",
+        projectId: "p1" as never,
+        title: "P",
+        outcome: "moved",
+        detail: "Due.",
+      },
+      { kind: "thread", id: "t1", title: "T1", outcome: "pending", detail: "Checking." },
+      { kind: "thread", id: "t2", title: "T2", outcome: "pending", detail: "Checking." },
+      {
+        kind: "routine",
+        id: "r-bound",
+        title: "R",
+        outcome: "paused",
+        via: "paused",
+        wasEnabled: true,
+        detail: "Paused while away on Ministorm.",
+      },
+    ],
+  };
+
+  it.effect("Bring back places threads from the handoff record, then asks for them", () =>
+    Effect.gen(function* () {
+      const h = harness({
+        saved: sleeping,
+        returnAnswer: (request) => ({
+          results: request.threadIds.map((threadId) => ({
+            threadId,
+            outcome: "moved" as const,
+            detail: "Continues here.",
+            continuedThreadId: `${threadId}-back`,
+          })),
+          coordinators: (request.projectIds ?? []).map((projectId) => ({
+            projectId,
+            outcome: "skipped" as const,
+            detail: "Not coordinating it.",
+          })),
+        }),
+      });
+      const runner = makeAwayRunner({
+        ...h.deps,
+        continuedOn: () => Effect.succeed(new Map([["t1", "t1-there"]])),
+      });
+      yield* runner.bringBack({});
+      const back = h.saved()!;
+      expect(h.log).toContain("askReturn:t1-there:-");
+      expect(h.log).toContain("resume:r-bound");
+      expect(item(back, "thread", "t1")).toMatchObject({ outcome: "moved", targetId: "t1-there" });
+      expect(item(back, "thread", "t2").outcome).toBe("stayed");
+      // No word of a takeover and the target does not coordinate it: it is here.
+      expect(item(back, "coordinator", "p1").back?.outcome).toBe("returned");
+      expect(back.broughtBackAt).not.toBeNull();
+    }),
+  );
+
+  it.effect("refuses to leave while the wake check runs", () =>
+    Effect.gen(function* () {
+      const h = harness({ saved: { ...sleeping, stage: "pending-intent", finishedAt: null } });
+      const refused = yield* makeAwayRunner(h.deps)
+        .start({ targetEnvironmentId: TARGET })
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("went to sleep");
+    }),
+  );
 });

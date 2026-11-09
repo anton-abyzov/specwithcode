@@ -125,6 +125,8 @@ export function awaySessionHeadline(session: AwaySession, running: boolean): str
   const moved = count("moved");
   const left = session.items.length - moved - count("paused");
   if (session.broughtBackAt !== null) return `Your work is back from ${session.targetLabel}.`;
+  if (session.stage === "pending-intent")
+    return `Work goes to ${session.targetLabel} if this machine stays asleep. Checking what moved…`;
   if (session.bringBackStartedAt !== null)
     return running
       ? `Bringing work back from ${session.targetLabel}…`
@@ -139,13 +141,18 @@ export function awaySessionHeadline(session: AwaySession, running: boolean): str
     : `${movedText} to ${session.targetLabel}. ${left} stayed here.`;
 }
 
-/** Whether the wake card asks to bring work back (D-02 `prompt`), unless dismissed for this session. */
+/**
+ * Whether the wake card asks to bring work back, unless dismissed for this
+ * session: with `prompt`, and with `auto-on-power` when it woke on battery
+ * (Bring back did not start on its own). It reads the saved session, so a wake
+ * with no window open shows the card when a window opens.
+ */
 export function showAwayWakeCard(
   snapshot: AwaySnapshot | null,
   dismissedSessionId: string | null,
 ): boolean {
   if (snapshot === null || snapshot.running) return false;
-  if (snapshot.settings.bringBack !== "prompt") return false;
+  if (snapshot.settings.bringBack === "manual") return false;
   const session = snapshot.session;
   if (session === null || session.finishedAt === null) return false;
   if (session.sessionId === dismissedSessionId) return false;

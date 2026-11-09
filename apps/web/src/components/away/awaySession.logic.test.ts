@@ -135,3 +135,31 @@ describe("pending items while Leave runs", () => {
     expect(groups.map((group) => group.title)).toEqual(["Stayed here (1)", "Waiting (1)"]);
   });
 });
+
+describe("the wake card after a lid close (#4)", () => {
+  const sleepSession: AwaySession = {
+    ...session,
+    trigger: "sleep",
+  };
+
+  it("shows for a lid close that moved work, with prompt or auto on power, from a fresh mount", () => {
+    expect(showAwayWakeCard(snapshot({ session: sleepSession }), null)).toBe(true);
+    expect(
+      showAwayWakeCard(
+        snapshot({
+          session: sleepSession,
+          settings: { ...snapshot().settings, bringBack: "auto-on-power" },
+        }),
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("waits while the wake check runs, and words it", () => {
+    const pending: AwaySession = { ...sleepSession, stage: "pending-intent", finishedAt: null };
+    expect(showAwayWakeCard(snapshot({ session: pending }), null)).toBe(false);
+    expect(awaySessionHeadline(pending, false)).toBe(
+      "Work goes to Ministorm if this machine stays asleep. Checking what moved…",
+    );
+  });
+});

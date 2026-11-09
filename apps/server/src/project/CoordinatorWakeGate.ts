@@ -23,6 +23,11 @@
  * Meanwhile a turn is refused as for a fence (a queue stays queued), never
  * waited for under the thread's lock, which giving way may need. Copies that
  * are not linked, or have no other copy, are never held.
+ *
+ * And after a lid-close Away (`AwayWakeHold`): the coordinators of the
+ * projects the away intent named start no turn until the target said it did
+ * not take them over, or the intent was confirmed cancelled. Unlike the
+ * resume hold this one never times out: an intent may have fired.
  */
 import type { Project, ThreadId } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
@@ -31,6 +36,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import {
+  type AwayWakeHoldStore,
+  COORDINATOR_AWAY_HOLD_REFUSAL,
+  heldThread,
+  makeFileWakeHoldStore,
+} from "../away/AwayWakeHold.ts";
 import { LinkedPeerSyncState, layer as LinkedPeerSyncStateLayer } from "./LinkedPeerSyncState.ts";
 import {
   type CoordinatorLeaseRecord,
@@ -225,6 +236,7 @@ export const makeCheck = (
   store: CoordinatorLeaseStore["Service"],
   superseded?: LinkedPeerSyncState["Service"]["supersededFor"],
   resume?: ResumeWatch,
+  awayHold?: Pick<AwayWakeHoldStore, "read">,
 ): CoordinatorWakeGateShape["check"] => {
   let lastRead: ReadonlyArray<CoordinatorLeaseRecord> | null = null;
   const decide = (
@@ -265,8 +277,18 @@ export const makeCheck = (
               : Effect.succeed(COORDINATOR_SUPERSEDED_REFUSAL),
           ),
         );
+  const awayCheck = (threadId: ThreadId) =>
+    awayHold === undefined
+      ? decideNow(threadId)
+      : awayHold.read.pipe(
+          Effect.flatMap((hold) =>
+            heldThread(hold, threadId)
+              ? Effect.succeed(COORDINATOR_AWAY_HOLD_REFUSAL)
+              : decideNow(threadId),
+          ),
+        );
   return (threadId) =>
-    decideNow(threadId).pipe(
+    awayCheck(threadId).pipe(
       Effect.flatMap((refusal) =>
         refusal !== null || resume === undefined
           ? Effect.succeed(refusal)
@@ -347,6 +369,7 @@ export const layer = Layer.effect(
     const store = yield* CoordinatorLeaseStore;
     const state = yield* LinkedPeerSyncState;
     const watch = makeResumeWatch({ state });
+    const awayHold = yield* makeFileWakeHoldStore;
     const run = Effect.runForkWith(yield* Effect.context<never>());
     // A real timer, not the effect clock: a pause is what the process itself lived through,
     // and a test clock set years ahead must not replay a look for every second in between.
@@ -359,6 +382,6 @@ export const layer = Layer.effect(
       }),
       (timer) => Effect.sync(() => clearInterval(timer)),
     );
-    return { check: makeCheck(store, state.supersededFor, watch) };
+    return { check: makeCheck(store, state.supersededFor, watch, awayHold) };
   }),
 ).pipe(Layer.provide(CoordinatorLeaseStoreLayer), Layer.provide(LinkedPeerSyncStateLayer));

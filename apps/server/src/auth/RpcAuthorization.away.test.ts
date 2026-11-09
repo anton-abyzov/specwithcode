@@ -42,3 +42,37 @@ describe("away.decideAccess over the socket", () => {
     ).toBe(false);
   });
 });
+
+/**
+ * Starting Away, bringing work back, asking another machine for access and
+ * changing the Away triggers move this machine's work, so another machine's
+ * coordinator key is refused for them even when it holds the scope.
+ */
+describe("Away owner-only methods over the socket", () => {
+  const coordinator = { kind: "coordinator", environmentId: EnvironmentId.make("env-m4") } as const;
+  const ownerOnly = [
+    WS_METHODS.awayStart,
+    WS_METHODS.awayBringBack,
+    WS_METHODS.awayUpdateConfig,
+    WS_METHODS.awayRequestAccess,
+  ];
+
+  it.each(ownerOnly)("refuses a coordinator principal for %s", (method) => {
+    expect(refusesOwnerOnlyRpc(method, coordinator)).toBe(true);
+  });
+
+  it.each(ownerOnly)("lets the owner's device or session through for %s", (method) => {
+    expect(refusesOwnerOnlyRpc(method, { kind: "device", id: "owner-mac" })).toBe(false);
+    expect(refusesOwnerOnlyRpc(method, undefined)).toBe(false);
+  });
+
+  it("leaves reads to their scopes", () => {
+    for (const method of [
+      WS_METHODS.awaySnapshot,
+      WS_METHODS.awayAccessStatus,
+      WS_METHODS.awayPreflight,
+    ]) {
+      expect(refusesOwnerOnlyRpc(method, coordinator)).toBe(false);
+    }
+  });
+});

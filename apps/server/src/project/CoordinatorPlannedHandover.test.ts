@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import { projectStatus } from "../away/AwayIntents.ts";
 import { AwayPeerError } from "../away/awayPeerCall.ts";
 import type { EffectiveWorkGrant } from "../fleet/workGrantPolicy.ts";
 import type { ReceiverCaller } from "../handoff/HandoffReceiver.ts";
@@ -192,6 +193,7 @@ const pair = Effect.gen(function* () {
     });
 
   const reach = { ministorm: true };
+  const statusAsks = { count: 0, answers: true };
   const released: string[] = [];
   const routineRuns: ReadonlyArray<RoutineRunState> = [
     {
@@ -233,6 +235,18 @@ const pair = Effect.gen(function* () {
       }),
     send,
     releaseWorkers: (_project, reason) => Effect.sync(() => void released.push(reason)),
+    // Ministorm's status route, read from its copy's binding.
+    status: (_environmentId, projectId) =>
+      Effect.sync(() => {
+        statusAsks.count += 1;
+        if (!statusAsks.answers) return undefined;
+        const status = projectStatus([...ms.projects.values()], "ministorm", "m4", projectId);
+        return {
+          takenOver: status.takenOver,
+          ...(status.epoch === undefined ? {} : { epoch: status.epoch }),
+        };
+      }).pipe(Effect.tap(() => check("status"))),
+    statusPause: Effect.void,
   });
   const handOver = (
     input: { readonly targetEnvironmentId?: string; readonly operationId?: string } = {},
@@ -246,7 +260,20 @@ const pair = Effect.gen(function* () {
       })
       .pipe(Effect.tap(() => check("result")));
   yield* check("linked");
-  return { m4, ms, members, source, target, seen, kept, network, reach, released, handOver };
+  return {
+    m4,
+    ms,
+    members,
+    source,
+    target,
+    seen,
+    kept,
+    network,
+    reach,
+    released,
+    handOver,
+    statusAsks,
+  };
 });
 
 const binding = (project: Project | undefined) => project?.workspaceSettings?.coordinatorBinding;
@@ -325,13 +352,59 @@ describe("planned coordinator handover", () => {
       const fleet = yield* pair;
       fleet.network.answers.push("lose", "lose");
       const doubt = yield* fleet.handOver();
-      expect(doubt.outcome).toBe("failed");
+      expect(doubt.outcome).toBe("in-doubt");
       expect(doubt.detail).toContain("did not confirm");
+      expect(doubt.detail).toContain("choose Leave again");
       expect(isActive(fleet.source())).toBe(false);
       expect(isActive(fleet.target())).toBe(false);
       const finished = yield* fleet.handOver();
       expect(finished.outcome).toBe("handed-over");
       expect(isActive(fleet.target())).toBe(true);
+    }),
+  );
+
+  it.effect("never reverts after an unanswered call, even if the retry is refused (#7)", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      // The first call may have reached Ministorm; the retry is refused.
+      fleet.network.answers.push("lose", "refuse");
+      const doubt = yield* fleet.handOver();
+      expect(doubt.outcome).toBe("in-doubt");
+      expect(fleet.statusAsks.count).toBe(1);
+      // In doubt: no copy coordinates, never two, and this copy did not take it back.
+      expect(isActive(fleet.source())).toBe(false);
+      expect(isActive(fleet.target())).toBe(false);
+      expect(fleet.seen.some((state) => state.step === "revert")).toBe(false);
+      const finished = yield* fleet.handOver();
+      expect(finished.outcome).toBe("handed-over");
+      expect(isActive(fleet.target())).toBe(true);
+      expect(isActive(fleet.source())).toBe(false);
+    }),
+  );
+
+  it.effect("an unanswered call that took over is confirmed by the target's status (#7)", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      // Delivered and taken over, the answer lost; the retry is refused on the way.
+      fleet.network.answers.push("lose-after", "refuse");
+      const result = yield* fleet.handOver();
+      expect(result.outcome).toBe("handed-over");
+      expect(result.epoch).toBe(fleet.target()?.workspaceSettings?.coordinatorBinding?.epoch);
+      expect(isActive(fleet.target())).toBe(true);
+      expect(isActive(fleet.source())).toBe(false);
+      expect(fleet.released).toEqual(["Handed to Ministorm for Away."]);
+    }),
+  );
+
+  it.effect("asks the target a few times when its status does not answer (#7)", () =>
+    Effect.gen(function* () {
+      const fleet = yield* pair;
+      fleet.statusAsks.answers = false;
+      fleet.network.answers.push("lose", "lose");
+      const doubt = yield* fleet.handOver();
+      expect(doubt.outcome).toBe("in-doubt");
+      expect(fleet.statusAsks.count).toBe(3);
+      expect(isActive(fleet.source())).toBe(false);
     }),
   );
 

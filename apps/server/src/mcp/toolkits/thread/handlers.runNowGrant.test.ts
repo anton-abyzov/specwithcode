@@ -49,6 +49,7 @@ const grant: EffectiveWorkGrant = {
 
 const routine = (id: string, overrides: Record<string, unknown> = {}) => ({
   id: ScheduledTaskId.make(id),
+  title: id,
   projectId,
   threadId: null,
   runtimeMode: "auto",
@@ -108,8 +109,21 @@ const runNow = (taskId: string, access: "auto" | "full-access" = "full-access") 
             routine("within"),
             routine("broader", { runtimeMode: "full-access" }),
             routine("bound", { threadId: bound }),
+            routine("owners"),
+            routine("others"),
           ],
         } as never),
+      // The owner's routine carries no grant; "others" came from a third machine.
+      readGrant: (id) =>
+        Effect.succeed(
+          id === "owners"
+            ? undefined
+            : {
+                coordinatorEnvironmentId: id === "others" ? EnvironmentId.make("env-other") : M4,
+                runtimeCap: "full-access",
+                accounts: { kind: "all" },
+              },
+        ) as never,
       runNow: (input) =>
         Effect.sync(() => {
           started.push(input.id);
@@ -162,6 +176,22 @@ describe("run_scheduled_task_now under a grant", () => {
         expect(result).toMatchObject({ code: "capability_denied" });
         expect(started).toEqual([]);
       }
+    }),
+  );
+});
+
+describe("run_scheduled_task_now on a routine the grant did not make", () => {
+  it.effect("refuses the owner's routine and another machine's, and starts neither", () =>
+    Effect.gen(function* () {
+      const owners = yield* runNow("owners");
+      expect(owners.result).toMatchObject({
+        code: "outside_grant_scope",
+        message: `Routine "owners" was set up on this machine, so M4MAX's work can't run it. Ask the user here to run it, or schedule a new routine.`,
+      });
+      expect(owners.started).toEqual([]);
+      const others = yield* runNow("others");
+      expect(others.result).toMatchObject({ code: "outside_grant_scope" });
+      expect(others.started).toEqual([]);
     }),
   );
 });
