@@ -216,7 +216,7 @@ struct SidebarSelectionTests {
     #expect(!EdgeInsets(top: 59, leading: 0, bottom: 34, trailing: 0).hasStatusRail)
   }
 
-  @Test func anAideThreadShowsTheWholeTree() throws {
+  @Test func anAideThreadListsAidesThreads() throws {
     let model = model()
     let router = besideRouter()
     let aide = try #require(model.aide)
@@ -226,10 +226,17 @@ struct SidebarSelectionTests {
     model.threadsByProject = [aide.ref: [thread]]
     model.recentThreads = [thread]
     router.open(.thread(thread.ref))
-    #expect(router.sidebarScope(in: model) == nil)
+    #expect(router.sidebarScope(in: model) == aide.ref)
+    #expect(router.sidebarThreads(in: model).map(\.ref) == [thread.ref])
 
     router.main.path = [.chat(.thread(thread.ref))]
-    #expect(router.sidebarScope(in: model) == nil)
+    #expect(router.sidebarScope(in: model) == aide.ref)
+
+    // Aide's own chat is home and keeps the whole tree.
+    let home = AppRouter()
+    home.showsCoordinatorBeside = false
+    home.open(.aide(aide.ref))
+    #expect(home.sidebarScope(in: model) == nil)
   }
 
   @Test func besideAidesCoordinatorTheListIsAidesThreads() throws {

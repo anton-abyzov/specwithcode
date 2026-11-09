@@ -38,8 +38,11 @@ public struct MarkdownText: View {
     let all = parsed
     let opening = collapsible && !expanded ? MarkdownCollapse.opening(all, budget: MarkdownCollapse.budget) : (blocks: all, cut: false)
     let blocks = opening.blocks
-    let isClipped = collapsible && !expanded && (opening.cut || fullHeight > collapsedHeight + 80)
-    VStack(alignment: .leading, spacing: isClipped ? 0 : WeaveSpacing.s2) {
+    let isLong = opening.cut || fullHeight > collapsedHeight + 80
+    // Clipped until measured, so a long reply never lays out at full height
+    // first and then shrinks under a bottom-anchored transcript.
+    let isClipped = collapsible && !expanded && (isLong || fullHeight == 0)
+    VStack(alignment: .leading, spacing: collapsible && !expanded && isLong ? 0 : WeaveSpacing.s2) {
       content(blocks)
         .fixedSize(horizontal: false, vertical: true)
         // Only a collapsible reply needs its height. Whole points only: a
@@ -50,13 +53,13 @@ public struct MarkdownText: View {
         .frame(maxHeight: isClipped ? collapsedHeight : nil, alignment: .top)
         .clipped()
         .mask {
-          if isClipped {
+          if isClipped && isLong {
             CollapseFade(height: Self.fadeHeight)
           } else {
             Rectangle()
           }
         }
-      if collapsible, opening.cut || fullHeight > collapsedHeight + 80 {
+      if collapsible, isLong {
         Button(expanded ? "Show less" : "Show more") {
           // No animation: animating thousands of points of selectable text
           // stalls a phone for many seconds.
