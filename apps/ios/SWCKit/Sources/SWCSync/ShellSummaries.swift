@@ -165,7 +165,7 @@ public enum ShellSummaries {
       if order != .orderedSame { return order == .orderedAscending }
       return (a.ref.environmentId, a.ref.projectId) < (b.ref.environmentId, b.ref.projectId)
     }
-    let recent = Array(all.sorted {
+    let recent = Array(all.filter { !$0.isCoordinatorWorker }.sorted {
       if $0.activityAt != $1.activityAt { return $0.activityAt > $1.activityAt }
       return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }.prefix(recentLimit))
@@ -286,6 +286,7 @@ public enum ShellSummaries {
       if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
       var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: machine.displayName, machineOnline: machine.online, machineSettling: machine.settling, providers: machine.providers)
       summary.placement = placement(thread, on: machine, directory: directory)
+      summary.isCoordinatorWorker = isCoordinatorWorker(thread, coordinatorIds: coordinatorIds)
       byProject[thread.projectId, default: []].append(summary)
     }
     return byProject
@@ -530,12 +531,19 @@ public enum ShellSummaries {
     return ProjectPinning.normalizePath(project.workspaceRoot) == root
   }
 
-  /// Threads the user started: not a coordinator and not a subagent's child.
+  /// Threads a project lists: not a coordinator and not a thread's own
+  /// subagent. A coordinator's workers are listed, as on the desktop.
   public static func isTopLevel(_ thread: ThreadShell, coordinatorIds: Set<String>) -> Bool {
     if thread.isCoordinatorThread || coordinatorIds.contains(thread.id) { return false }
-    if thread.isSubagent { return false }
+    if thread.isSubagent, !isCoordinatorWorker(thread, coordinatorIds: coordinatorIds) { return false }
     if thread.isArchived || thread.deletedAt != nil { return false }
     return true
+  }
+
+  /// Started by a project's coordinator, such as a delegated task.
+  public static func isCoordinatorWorker(_ thread: ThreadShell, coordinatorIds: Set<String>) -> Bool {
+    guard thread.isSubagent, let parent = thread.lineage.parentThreadId else { return false }
+    return parent.hasPrefix("project-coordinator:") || coordinatorIds.contains(parent)
   }
 
   /// Pinned first, then most recently updated.
