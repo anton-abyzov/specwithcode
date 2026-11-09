@@ -28,9 +28,13 @@ public struct ModelTraits: Hashable, Sendable {
   /// The selection with the thread's chosen options.
   public var selection: ModelSelection
   public var controls: [Control]
+  /// The model's options as its machine lists them, machine values included,
+  /// so a rebuilt selection still falls back to them.
+  public let descriptors: [ProviderOptionDescriptor]
 
   public init(selection: ModelSelection, descriptors: [ProviderOptionDescriptor]) {
     self.selection = selection
+    self.descriptors = descriptors
     controls = descriptors.map { descriptor in
       let chosen = selection.option(descriptor.id) ?? descriptor.currentValue
       switch descriptor.kind {
@@ -112,23 +116,6 @@ public struct ModelTraits: Hashable, Sendable {
     }
     next.options = options.isEmpty ? nil : options
     return next
-  }
-
-  /// The options as descriptors again, to rebuild with another selection.
-  public var descriptors: [ProviderOptionDescriptor] {
-    controls.map { control in
-      switch control.kind {
-      case let .select(choices, _):
-        ProviderOptionDescriptor(
-          id: control.id,
-          label: control.label,
-          description: control.detail,
-          kind: .select(choices.map { .init(id: $0.id, label: $0.label, description: $0.detail, isDefault: $0.isDefault) })
-        )
-      case .toggle:
-        ProviderOptionDescriptor(id: control.id, label: control.label, description: control.detail, kind: .boolean)
-      }
-    }
   }
 
   static let effortIds: Set<String> = ["reasoningEffort", "reasoning", "effort", "variant", "thinking"]

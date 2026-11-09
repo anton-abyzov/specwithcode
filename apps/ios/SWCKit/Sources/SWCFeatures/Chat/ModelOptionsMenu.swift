@@ -5,7 +5,7 @@ import SWCWire
 
 /// The composer's options chip: the thread's model and its options in a line
 /// ("Opus 5.5 · High · Ultracode"), opening the same choices as the desktop's
-/// options menu. Model options apply from the next message; access at once.
+/// options menu. Model options and access apply from the next message.
 struct ModelOptionsMenu: View {
   let model: String
   let traits: ModelTraits?
@@ -22,9 +22,9 @@ struct ModelOptionsMenu: View {
           ForEach(traits.controls) { control in
             switch control.kind {
             case let .select(choices, current):
-              Picker(selection: Binding(get: { current ?? "" }, set: { onSet(control.id, .string($0)) })) {
+              Picker(selection: Binding<String?>(get: { current }, set: { if let value = $0 { onSet(control.id, .string(value)) } })) {
                 ForEach(choices) { choice in
-                  Text(choice.label).tag(choice.id)
+                  Text(choice.label).tag(Optional(choice.id))
                 }
               } label: {
                 Text(control.label)

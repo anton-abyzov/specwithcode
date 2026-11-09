@@ -53,4 +53,20 @@ import SWCWire
     #expect(merged.options == [ModelOption(id: "effort", value: .string("high")), ModelOption(id: "fastMode", value: .bool(true))])
     #expect(merged.instanceId == "claudeAgent" && merged.model == "claude-opus-5-5")
   }
+
+  /// A pick keeps the values that come from the machine, such as Thinking on.
+  @Test func choosingOneOptionKeepsTheMachinesValuesForTheRest() throws {
+    let base = ModelSelection(instanceId: "claudeAgent", model: "claude-opus-5-5")
+    let traits = ModelTraits(selection: base, descriptors: try Self.descriptors()).setting("ultracode", to: .bool(true))
+    #expect(traits.summary == "1M · High · Ultracode · Thinking On")
+    #expect(traits.controls.first { $0.id == "thinking" }?.kind == .toggle(current: true))
+  }
+
+  @Test func aSelectTakesTheMachinesCurrentValue() throws {
+    let json = #"{"id":"effort","label":"Reasoning","type":"select","options":[{"id":"low","label":"Low"},{"id":"max","label":"Max"}],"currentValue":"max"}"#
+    let descriptor = try JSONDecoder().decode(ProviderOptionDescriptor.self, from: Data(json.utf8))
+    #expect(descriptor.currentValue == .string("max"))
+    let traits = ModelTraits(selection: ModelSelection(instanceId: "c", model: "m"), descriptors: [descriptor]).setting("effort", to: .string("low")).setting("effort", to: .string("max"))
+    #expect(traits.summary == "Max")
+  }
 }

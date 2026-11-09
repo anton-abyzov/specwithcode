@@ -28,6 +28,7 @@ final class ModelOptionsUITests: SWCUITestCase {
     tap(ultracode)
     settle()
     XCTAssertTrue(waitUntil { chip.label.contains("Ultracode") }, "The chip should show Ultracode on: \(chip.label)")
+    XCTAssertTrue(chip.label.contains("Thinking On"), "Other options keep their values: \(chip.label)")
     attachScreenshot("Ultracode chosen")
   }
 
