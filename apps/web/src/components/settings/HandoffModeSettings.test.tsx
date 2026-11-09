@@ -57,7 +57,10 @@ describe("Moving work between machines", () => {
     expect(html).toContain('id="handoff-sleep-target"');
     const order = [
       "Keep threads ready to move",
-      "When this machine sleeps, move running threads to",
+      "Away target",
+      "Leave automatically when the lid closes",
+      "Grace time",
+      "When this machine wakes",
       "More options",
       "Turn summary",
       "Also back up syncs to the repository&#x27;s remote",
@@ -65,7 +68,7 @@ describe("Moving work between machines", () => {
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(html).toContain("existing ones too");
-    expect(html).toContain("Moves the threads that are ready to move.");
+    expect(html).toContain("Where Away leaves your threads, routines and coordinators.");
     expect(html).toContain("including uncommitted and untracked files");
     expect(html).toContain("Move running threads…");
     expect(html).not.toContain("Keep new threads");
@@ -82,7 +85,7 @@ describe("Moving work between machines", () => {
 
   it("titles the sleep row without a placeholder when no machine is chosen", () => {
     const html = render({});
-    expect(html).toContain("When this machine sleeps, move running threads to</");
+    expect(html).toContain("Away target</");
     expect(html).not.toContain("to …");
   });
 
@@ -108,5 +111,55 @@ describe("Moving work between machines", () => {
       ],
     });
     expect(html).toContain("M3 (offline)");
+  });
+});
+
+describe("Away on lid close (D-01, D-02)", () => {
+  // Class names hold "disabled:" variants; only attributes count here.
+  const withConfig = (config: Partial<typeof DEFAULT_HANDOFF_CONFIG>) =>
+    render({
+      snapshot: {
+        environmentId: EnvironmentId.make("env-m1"),
+        machineLabel: "M1",
+        config: { ...DEFAULT_HANDOFF_CONFIG, ...config },
+        projectModes: {},
+        threads: [],
+        incoming: [],
+        pausedSince: null,
+        machineRun: null,
+      },
+    }).replace(/ class="[^"]*"/g, "");
+
+  it("shows the defaults: On battery, 2 min, Ask; off until a target is set", () => {
+    const html = withConfig({});
+    expect(html).toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Leave automatically when the lid closes"/,
+    );
+    expect(html).toMatch(
+      /aria-label="Leave automatically when the lid closes"[^>]*>[\s\S]*?On battery/,
+    );
+    expect(html).toMatch(/aria-label="Grace time"[^>]*>[\s\S]*?2 min/);
+    expect(html).toMatch(/aria-label="When this machine wakes"[^>]*>[\s\S]*?Ask/);
+    expect(html).toContain('id="away-sleep-trigger"');
+    expect(html).not.toContain("\u2014");
+  });
+
+  it("shows stored choices once a target is set", () => {
+    const html = withConfig({
+      sleepTarget: EnvironmentId.make("env-ms"),
+      sleepTrigger: "always",
+      graceMinutes: 10,
+      bringBack: "auto-on-power",
+    });
+    expect(html).not.toMatch(
+      /<button[^>]*disabled=""[^>]*aria-label="Leave automatically when the lid closes"/,
+    );
+    expect(html).toMatch(
+      /aria-label="Leave automatically when the lid closes"[^>]*>[\s\S]*?Always/,
+    );
+    expect(html).toMatch(/aria-label="Grace time"[^>]*>[\s\S]*?10 min/);
+    expect(html).toMatch(
+      /aria-label="When this machine wakes"[^>]*>[\s\S]*?Bring back automatically on power/,
+    );
   });
 });

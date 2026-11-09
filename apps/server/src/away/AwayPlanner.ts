@@ -51,6 +51,11 @@ export interface AwayProjectFact {
   readonly targetProjectId: ProjectId | null;
   /** The target's grant is live but leaves this project out. */
   readonly notInGrant: boolean;
+  /**
+   * Whether this machine runs the project's coordinator (default true). A
+   * project listed only for its enabled routines gets no coordinator row.
+   */
+  readonly coordinated?: boolean;
 }
 
 /** The handoff preflight's answer for one thread, or why it could not run. */
@@ -88,14 +93,22 @@ export interface AwayPlanFacts {
     readonly status: OrchestratorMcpMachineStatus;
   };
   readonly coordinatorScope: AwayCoordinatorScope;
-  /** Projects coordinated here (personal assistant included, so it can be listed as staying). */
+  /**
+   * Projects coordinated here (personal assistant included, so it can be listed
+   * as staying), plus any other project with an enabled routine here.
+   */
   readonly projects: ReadonlyArray<AwayProjectFact>;
   /** Running or queued threads that run here, coordinators left out. */
   readonly threads: ReadonlyArray<AwayThreadFact>;
-  /** Enabled routines of the projects above. */
+  /** Enabled routines here, of any project. */
   readonly routines: ReadonlyArray<AwayRoutineFact>;
   /** What the target's grant for this machine allows, or null when it could not say. */
   readonly targetGrant: AwayTargetGrant | null;
+  /**
+   * Why the grant could not be read: `older` (no away route on the target) or
+   * `failed`. Then nothing is known about routines, so the plan is not ready.
+   */
+  readonly targetGrantProblem?: "older" | "failed" | null;
   readonly checkedAt: string;
 }
 
@@ -345,6 +358,62 @@ export function coordinatorItem(facts: AwayPlanFacts, project: AwayProjectFact):
   };
 }
 
+/** The link or grant step one project still needs on the target, if any. */
+function projectGap(facts: AwayPlanFacts, project: AwayProjectFact): AwayMissingGrant | null {
+  const { target, self } = facts;
+  if (project.personal) return null;
+  if (project.targetProjectId === null) {
+    return {
+      kind: "project-link",
+      machineEnvironmentId: target.environmentId,
+      machineLabel: clip(target.label, 120),
+      projectId: project.id,
+      projectTitle: clip(project.title),
+      detail: clip(`${project.title} has no linked copy on ${target.label}.`),
+      fix: clip(
+        `Link ${project.title} with a copy on ${target.label} in the project's Machines settings.`,
+      ),
+    };
+  }
+  if (project.notInGrant) {
+    return {
+      kind: "work-grant",
+      machineEnvironmentId: target.environmentId,
+      machineLabel: clip(target.label, 120),
+      projectId: project.id,
+      projectTitle: clip(project.title),
+      detail: clip(`${target.label}'s grant for ${self.label} leaves ${project.title} out.`),
+      fix: clip(
+        `On ${target.label}, add ${project.title} to ${self.label}'s projects in Settings > Machines > Who can run work here.`,
+      ),
+    };
+  }
+  return null;
+}
+
+/** The step when the target could not say what its grant allows. */
+function grantUnreadableGap(facts: AwayPlanFacts): AwayMissingGrant | null {
+  const { target, self } = facts;
+  if (facts.targetGrantProblem == null || targetBlocker(target) !== null) return null;
+  return facts.targetGrantProblem === "older"
+    ? {
+        kind: "work-grant",
+        machineEnvironmentId: target.environmentId,
+        machineLabel: clip(target.label, 120),
+        detail: clip(
+          `${target.label} runs an older SpecWithCode, so ${self.label} cannot check its access there.`,
+        ),
+        fix: clip(`Update ${target.label} to check access.`),
+      }
+    : {
+        kind: "work-grant",
+        machineEnvironmentId: target.environmentId,
+        machineLabel: clip(target.label, 120),
+        detail: clip(`${self.label} could not check its access on ${target.label}.`),
+        fix: clip(`Check that ${target.label} is on and up to date, then check again.`),
+      };
+}
+
 const gapKey = (gap: AwayMissingGrant) =>
   JSON.stringify([gap.kind, gap.machineEnvironmentId, gap.projectId ?? null, gap.detail]);
 
@@ -357,6 +426,7 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
     if (gap !== null && !gaps.has(gapKey(gap))) gaps.set(gapKey(gap), gap);
   };
   addGap(machineGrantGap(facts));
+  addGap(grantUnreadableGap(facts));
 
   const threads = facts.threads.map((thread) => {
     const item = threadItem(facts, thread);
@@ -371,10 +441,22 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
   const routines = facts.routines.map((routine) =>
     routineItem(facts, routine, projects.get(routine.projectId)),
   );
-  // A routine that moves needs the target's routines permission, asked once per project.
+  // Every routine that can leave (not paused, not the assistant's) needs its
+  // project linked and in the grant, and the target's routines permission,
+  // asked once per project. One that stays only for a missing link counts too.
+  const leaving = routines.filter(
+    (item) =>
+      item.projectId !== undefined &&
+      (item.action === "move" ||
+        (item.action === "stay" && projects.get(item.projectId)?.personal !== true)),
+  );
+  for (const item of leaving) {
+    const project = projects.get(item.projectId!);
+    if (project !== undefined) addGap(projectGap(facts, project));
+  }
   if (facts.targetGrant !== null && !facts.targetGrant.routines) {
-    for (const item of routines) {
-      if (item.action !== "move" || item.projectId === undefined) continue;
+    for (const item of leaving) {
+      if (item.projectId === undefined) continue;
       const project = projects.get(item.projectId);
       addGap({
         kind: "routines",
@@ -392,35 +474,10 @@ export function buildAwayPlan(facts: AwayPlanFacts): AwayPlan {
 
   const coordinators: Array<AwayPlanItem> = [];
   for (const project of facts.projects) {
+    if (project.coordinated === false) continue;
     if (facts.coordinatorScope === "live" && !isLive(facts, project.id)) continue;
-    const item = coordinatorItem(facts, project);
-    coordinators.push(item);
-    if (project.personal) continue;
-    if (project.targetProjectId === null) {
-      addGap({
-        kind: "project-link",
-        machineEnvironmentId: target.environmentId,
-        machineLabel: clip(target.label, 120),
-        projectId: project.id,
-        projectTitle: clip(project.title),
-        detail: clip(`${project.title} has no linked copy on ${target.label}.`),
-        fix: clip(
-          `Link ${project.title} with a copy on ${target.label} in the project's Machines settings.`,
-        ),
-      });
-    } else if (project.notInGrant) {
-      addGap({
-        kind: "work-grant",
-        machineEnvironmentId: target.environmentId,
-        machineLabel: clip(target.label, 120),
-        projectId: project.id,
-        projectTitle: clip(project.title),
-        detail: clip(`${target.label}'s grant for ${self.label} leaves ${project.title} out.`),
-        fix: clip(
-          `On ${target.label}, add ${project.title} to ${self.label}'s projects in Settings > Machines > Who can run work here.`,
-        ),
-      });
-    }
+    coordinators.push(coordinatorItem(facts, project));
+    addGap(projectGap(facts, project));
   }
 
   const missingGrants = [...gaps.values()].slice(0, 100);
@@ -529,7 +586,10 @@ export const make = Effect.gen(function* () {
       // The target's grant per linked project: its fleet row for that project says
       // whether the grant leaves it out. The probe behind it is cached briefly.
       const projectFacts: Array<AwayProjectFact> = [];
-      for (const project of coordinated) {
+      const factFor = Effect.fn("AwayPlanner.projectFact")(function* (
+        project: (typeof coordinated)[number],
+        isCoordinated: boolean,
+      ) {
         const personal = isPersonalAssistantProject(project.workspaceSettings);
         const member = project.workspaceSettings?.logicalProject?.members.find(
           (entry) => entry.environmentId === target.environmentId,
@@ -544,14 +604,16 @@ export const make = Effect.gen(function* () {
           );
           notInGrant = row?.status === "project_not_in_grant";
         }
-        projectFacts.push({
+        return {
           id: project.id,
           title: project.workspaceSettings?.logicalProject?.title ?? project.title,
           personal,
           targetProjectId: member?.projectId ?? null,
           notInGrant,
-        });
-      }
+          ...(isCoordinated ? {} : { coordinated: false }),
+        } satisfies AwayProjectFact;
+      });
+      for (const project of coordinated) projectFacts.push(yield* factFor(project, true));
 
       const shells = yield* projections
         .getShellSnapshot({ unsettledOnly: false })
@@ -613,16 +675,24 @@ export const make = Effect.gen(function* () {
             () => new AwayError({ code: "failed", message: "Could not read routines." }),
           ),
         );
-      const routines: Array<AwayRoutineFact> = tasks.tasks
-        .filter((task) => task.enabled && byId.has(task.projectId))
-        .map((task) => ({
-          id: task.id,
-          title: task.title,
-          projectId: task.projectId,
-          webhook: isWebhookRoutine(task),
-        }));
+      // Every enabled routine here, of any live project: one whose coordinator runs
+      // elsewhere still runs on this machine and still needs its project on the target.
+      const enabled = tasks.tasks.filter((task) => {
+        const project = everyProject.get(task.projectId);
+        return task.enabled && project !== undefined && project.deletedAt === null;
+      });
+      for (const projectId of new Set(enabled.map((task) => task.projectId))) {
+        if (byId.has(projectId)) continue;
+        projectFacts.push(yield* factFor(everyProject.get(projectId)!, false));
+      }
+      const routines: Array<AwayRoutineFact> = enabled.map((task) => ({
+        id: task.id,
+        title: task.title,
+        projectId: task.projectId,
+        webhook: isWebhookRoutine(task),
+      }));
 
-      const targetGrant = usable ? yield* access.targetGrant(target.environmentId) : null;
+      const grantRead = usable ? yield* access.targetGrant(target.environmentId) : null;
 
       const now = yield* Clock.currentTimeMillis;
       return buildAwayPlan({
@@ -632,7 +702,9 @@ export const make = Effect.gen(function* () {
         projects: projectFacts,
         threads,
         routines,
-        targetGrant,
+        targetGrant: grantRead?.kind === "grant" ? grantRead.grant : null,
+        targetGrantProblem:
+          grantRead === null || grantRead.kind === "grant" ? null : grantRead.kind,
         checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
       });
     });

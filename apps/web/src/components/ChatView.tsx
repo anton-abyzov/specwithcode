@@ -768,7 +768,12 @@ import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { projectEnvironment } from "../state/projects";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { isAwayAppCommand, parseComposerAppCommand } from "../studio/composerAppCommands";
+import {
+  isAwayAppCommand,
+  parseAwayAppCommand,
+  parseComposerAppCommand,
+} from "../studio/composerAppCommands";
+import { requestAway } from "../studio/awayRequest";
 import { useComposerAppCommands } from "../studio/useComposerAppCommands";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { Button } from "./ui/button";
@@ -12399,6 +12404,19 @@ export default function ChatView(props: ChatViewProps) {
     manualCodexCreditIntent?: ManualCodexCreditIntent,
   ) => {
     e?.preventDefault();
+    // `/away`, `/back`, `$away` and `$back` act on the machine, not a thread: they open the
+    // Away dialog from any draft, before a project check or thread creation.
+    const awayCommand =
+      !appCommandsOffered && !directAnnotation && !composerHasNonPromptContent
+        ? parseAwayAppCommand(promptRef.current)
+        : null;
+    if (awayCommand !== null) {
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      requestAway(awayCommand);
+      return;
+    }
     if (projectDraftSendGuard.preventSend()) return;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.

@@ -5,6 +5,7 @@ import {
   leadingSlashQuery,
   matchAwaySkillCommands,
   matchComposerAppCommands,
+  parseAwayAppCommand,
   parseComposerAppCommand,
 } from "./composerAppCommands";
 
@@ -77,5 +78,15 @@ describe("leadingSlashQuery", () => {
     expect(leadingSlashQuery("hi /sto", 7)).toBeNull();
     expect(leadingSlashQuery("/stop now", 9)).toBeNull();
     expect(leadingSlashQuery("/stop now", 5)).toBeNull();
+  });
+});
+
+describe("parseAwayAppCommand", () => {
+  it("reads only the Away commands, slash or dollar form", () => {
+    expect(parseAwayAppCommand("/away")).toBe("away");
+    expect(parseAwayAppCommand(" $Back ")).toBe("back");
+    expect(parseAwayAppCommand("/stop")).toBeNull();
+    expect(parseAwayAppCommand("/away now")).toBeNull();
+    expect(parseAwayAppCommand("hello")).toBeNull();
   });
 });

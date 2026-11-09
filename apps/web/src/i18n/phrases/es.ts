@@ -319,10 +319,6 @@ export const es: PhraseCatalog = {
   "WSL only": "Solo WSL",
   "Warn when the app folder is large": "Avisar cuando la carpeta de la app sea grande",
   "When a thread finishes": "Cuando termina un hilo",
-  "When this machine sleeps, move running threads":
-    "Cuando este equipo se suspenda, mover los hilos activos",
-  "When this machine sleeps, move running threads to":
-    "Cuando este equipo se suspenda, mover los hilos activos a",
   "Who can run work here": "Quién puede ejecutar trabajo aquí",
   "Word wrap": "Ajuste de línea",
   "Working section (beta)": "Sección En curso (beta)",
@@ -468,8 +464,6 @@ export const es: PhraseCatalog = {
   "Monospace font": "Fuente monoespaciada",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "Máximo de simuladores y emuladores que pueden ejecutarse a la vez en cada host de dispositivos. Iniciar otro falla hasta que se apague uno. Los dispositivos físicos no cuentan.",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "Mueve los hilos que están listos para moverse. En la medida de lo posible y solo al suspender. Bloquear la pantalla no cuenta.",
   "No coding agent is installed and enabled there.":
     "Allí no hay ningún agente de código instalado y activado.",
   "No routines match this machine and project selection.":
@@ -1737,8 +1731,6 @@ export const es: PhraseCatalog = {
   "Projects set differently": "Proyectos configurados de otra forma",
   "A removed project": "Un proyecto eliminado",
   "Use default": "Usar predeterminado",
-  "Machine to move running threads to when this machine sleeps":
-    "Equipo al que mover los hilos en ejecución cuando este equipo entre en reposo",
   "A removed machine": "Un equipo eliminado",
   "More options": "Más opciones",
   "Automatic takeover": "Relevo automático",

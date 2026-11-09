@@ -122,6 +122,80 @@ export interface ProjectLinkStandbyMethods {
   readonly rearmStatus: (
     projectId: ProjectId,
   ) => Effect.Effect<ProjectStandbyRearmStatus | undefined>;
+  /**
+   * Internal, Away mode on the coordinator: this active copy gives way to the
+   * member on `successorEnvironmentId` before that member takes over, so the
+   * two are never active together. Replays for the same operation.
+   */
+  readonly plannedGiveWay: (
+    input: PlannedGiveWayInput,
+  ) => Effect.Effect<PlannedGiveWayResult, ProjectLinkError>;
+  /**
+   * Internal: the member refused the planned takeover, so this copy, which
+   * gave way for `operationId` and is still not replaced, coordinates again.
+   */
+  readonly plannedRevert: (input: {
+    readonly projectId: ProjectId;
+    readonly operationId: string;
+  }) => Effect.Effect<{ readonly coordinatorBinding: ProjectCoordinatorBinding }, ProjectLinkError>;
+  /**
+   * Internal, Away mode on the target: takes over from the coordinator that
+   * asked (its work grant names it) at the epoch it gave way at. Replays for
+   * the same operation.
+   */
+  readonly plannedTakeover: (
+    input: PlannedTakeoverInput,
+  ) => Effect.Effect<ProjectTakeoverResult, ProjectLinkError>;
+  /**
+   * Internal, Away mode on the target: the source recorded an away intent and
+   * its grace ran out, so this copy takes over from it without its answer,
+   * like an armed standby. Spent when another copy coordinates past it.
+   */
+  readonly awayTakeover: (input: {
+    readonly projectId: ProjectId;
+    readonly sourceEnvironmentId: string;
+  }) => Effect.Effect<ProjectTakeoverResult, ProjectLinkError>;
+}
+
+export interface PlannedGiveWayInput {
+  readonly projectId: ProjectId;
+  readonly operationId: string;
+  readonly successorEnvironmentId: string;
+}
+
+export interface PlannedGiveWayResult {
+  /** This copy's binding after it gave way: `transferred` at the new epoch. */
+  readonly coordinatorBinding: ProjectCoordinatorBinding;
+  readonly logicalProjectId: string;
+  readonly self: LogicalProjectMember;
+  readonly successor: LogicalProjectMember;
+  readonly replayed: boolean;
+}
+
+export interface PlannedTakeoverInput {
+  readonly projectId: ProjectId;
+  readonly logicalProjectId: string;
+  /** The environment the caller's work grant names. */
+  readonly callerEnvironmentId: string;
+  /** The coordinator that gave way, as it lists itself. */
+  readonly predecessor: LogicalProjectMember;
+  readonly epoch: number;
+  readonly operationId: string;
+}
+
+/** `handover:` + 32 hex of the logical project + `:` + the new epoch. */
+export function plannedHandoverOperationId(logicalProjectId: string, epoch: number): string {
+  return `handover:${sha256([logicalProjectId]).toString("hex").slice(0, 32)}:${epoch}`;
+}
+
+/** `away:` + 32 hex of the logical project + `:` + the new epoch. */
+export function awayTakeoverOperationId(logicalProjectId: string, epoch: number): string {
+  return `away:${sha256([logicalProjectId]).toString("hex").slice(0, 32)}:${epoch}`;
+}
+
+/** The start-coordinator operation that undoes a refused planned give-way. */
+export function plannedRevertOperationId(operationId: string): string {
+  return `revert:${sha256([operationId]).toString("hex").slice(0, 40)}`;
 }
 
 export interface RearmStandbyInput {
@@ -278,7 +352,7 @@ export interface ProjectLinkStandbyDeps {
     readonly knownEpoch: number;
     readonly predecessor: LogicalProjectMember;
     readonly epoch: number;
-    readonly takenOverBy: "auto";
+    readonly takenOverBy: "auto" | "person";
   }) => Effect.Effect<ProjectTakeoverResult, ProjectLinkError>;
   /**
    * Asks the copy this one gave way to for its member list and adopts it,
@@ -897,6 +971,233 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
       } satisfies ProjectStandbyRearmStatus;
     }).pipe(Effect.orElseSucceed(() => undefined));
 
+  // --- Away mode: a planned handover between two linked copies --------------
+
+  /** Refuses an epoch another machine already claimed here after its own takeover. */
+  const refuseClaimed = (logicalProjectId: string, epoch: number) =>
+    Effect.gen(function* () {
+      if (deps.claimedEpoch === undefined) return;
+      const claim = yield* deps.claimedEpoch(logicalProjectId);
+      const selfEnvironmentId = yield* environment.getEnvironmentId;
+      if (claim !== undefined && claim.claimedBy !== selfEnvironmentId && claim.epoch >= epoch)
+        return yield* fail(
+          "superseded_conflict",
+          "Another machine coordinates this project at a newer epoch.",
+        );
+    });
+
+  const plannedGiveWay: ProjectLinkStandbyMethods["plannedGiveWay"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        yield* deps.refusePersonal(project);
+        const settings = project.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+        const identity = settings.logicalProject;
+        if (!identity) return yield* fail("not_linked");
+        const self = yield* deps.selfMember(project);
+        const binding: ProjectCoordinatorBinding = settings.coordinatorBinding ?? {
+          epoch: 0,
+          state: "active",
+        };
+        if (
+          binding.state === "transferred" &&
+          binding.operationId === input.operationId &&
+          binding.successor !== undefined &&
+          binding.successor.environmentId === input.successorEnvironmentId
+        )
+          return {
+            coordinatorBinding: binding,
+            logicalProjectId: identity.id,
+            self,
+            successor: binding.successor,
+            replayed: true,
+          };
+        if (binding.state === "transferring") return yield* fail("handoff_in_progress");
+        if (binding.state !== "active") return yield* fail("not_coordinator");
+        if (settings.archived) return yield* fail("archived");
+        const candidates = identity.members.filter(
+          (member) =>
+            member.environmentId === input.successorEnvironmentId &&
+            logicalProjectMemberKey(member) !== logicalProjectMemberKey(self),
+        );
+        const successor = candidates.length === 1 ? candidates[0] : undefined;
+        if (successor === undefined)
+          return yield* fail(
+            "not_linked",
+            candidates.length === 0
+              ? "This project has no linked copy on that machine."
+              : "That machine holds more than one copy of this project.",
+          );
+        const next: ProjectCoordinatorBinding = {
+          epoch: binding.epoch + 1,
+          state: "transferred",
+          operationId: input.operationId,
+          successor,
+          takenOverAt: yield* nowIso,
+        };
+        yield* deps.writeOwnership(project, "project-away-give-way", input.operationId, {
+          mode: "superseded",
+          logicalProject: identity,
+          coordinatorBinding: next,
+        });
+        yield* deps.publishRole({
+          kind: "gave-way",
+          projectId: project.id,
+          logicalProjectId: identity.id,
+          epoch: next.epoch,
+          successor,
+        });
+        return {
+          coordinatorBinding: next,
+          logicalProjectId: identity.id,
+          self,
+          successor,
+          replayed: false,
+        };
+      }),
+    );
+
+  const plannedRevert: ProjectLinkStandbyMethods["plannedRevert"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding = project.workspaceSettings?.coordinatorBinding;
+        const revertId = plannedRevertOperationId(input.operationId);
+        if (!identity) return yield* fail("not_linked");
+        if (binding?.state === "active" && binding.operationId === revertId)
+          return { coordinatorBinding: binding };
+        if (binding?.state !== "transferred" || binding.operationId !== input.operationId)
+          return yield* fail(
+            "superseded_conflict",
+            "Another copy coordinates this project since; this one stays a member.",
+          );
+        const next: ProjectCoordinatorBinding = {
+          epoch: binding.epoch + 1,
+          state: "active",
+          operationId: revertId,
+        };
+        yield* deps.writeOwnership(project, "project-away-revert", revertId, {
+          mode: "start-coordinator",
+          logicalProject: identity,
+          coordinatorBinding: next,
+        });
+        yield* deps.publishRole({
+          kind: "took-over",
+          projectId: project.id,
+          logicalProjectId: identity.id,
+          epoch: next.epoch,
+          predecessor: null,
+          takenOverBy: "person",
+        });
+        return { coordinatorBinding: next };
+      }),
+    );
+
+  const plannedTakeover: ProjectLinkStandbyMethods["plannedTakeover"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        yield* deps.refusePersonal(project);
+        const identity = project.workspaceSettings?.logicalProject;
+        if (!identity || identity.id !== input.logicalProjectId) return yield* fail("not_linked");
+        const binding: ProjectCoordinatorBinding = project.workspaceSettings
+          ?.coordinatorBinding ?? { epoch: 0, state: "active" };
+        const replay = (predecessor: LogicalProjectMember) =>
+          deps.takeoverLocked({
+            projectId: project.id,
+            operationId: input.operationId,
+            knownEpoch: binding.epoch,
+            predecessor,
+            epoch: input.epoch,
+            takenOverBy: "person",
+          });
+        if (
+          binding.state === "active" &&
+          binding.operationId === input.operationId &&
+          binding.predecessor !== undefined
+        )
+          return yield* replay(binding.predecessor);
+        if (input.predecessor.environmentId !== input.callerEnvironmentId)
+          return yield* fail("invalid", "Only the coordinator itself may hand it over.");
+        if (binding.state === "transferring") return yield* fail("handoff_in_progress");
+        if (binding.state !== "transferred")
+          return yield* fail(
+            "superseded_conflict",
+            "This copy runs its own coordinator, so it cannot take over another.",
+          );
+        if (
+          binding.successor === undefined ||
+          logicalProjectMemberKey(binding.successor) !== logicalProjectMemberKey(input.predecessor)
+        )
+          return yield* fail(
+            "superseded_conflict",
+            "This copy follows another coordinator, not the one handing over.",
+          );
+        if (input.epoch <= binding.epoch)
+          return yield* fail("superseded_conflict", "That epoch is not newer than this copy's.");
+        yield* refuseClaimed(identity.id, input.epoch);
+        // The listed member, so the takeover names it exactly as this copy lists it.
+        return yield* replay(binding.successor);
+      }),
+    );
+
+  const awayTakeover: ProjectLinkStandbyMethods["awayTakeover"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        yield* deps.refusePersonal(project);
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding = project.workspaceSettings?.coordinatorBinding;
+        if (!identity) return yield* fail("not_linked");
+        if (
+          binding?.state === "active" &&
+          binding.operationId === awayTakeoverOperationId(identity.id, binding.epoch) &&
+          binding.predecessor?.environmentId === input.sourceEnvironmentId
+        )
+          return {
+            operationId: binding.operationId,
+            logicalProject: identity,
+            coordinatorBinding: binding,
+            notesWritten: 0,
+            replicaFrom: null,
+            replayed: true,
+          };
+        if (binding?.state === "transferring") return yield* fail("handoff_in_progress");
+        if (binding?.state !== "transferred")
+          return yield* fail(
+            "superseded_conflict",
+            "This copy runs its own coordinator, so it cannot take over another.",
+          );
+        if (binding.successor?.environmentId !== input.sourceEnvironmentId)
+          return yield* fail(
+            "superseded_conflict",
+            "Another copy coordinates this project now, not the machine that went away.",
+          );
+        const record = yield* store.get(identity.id).pipe(Effect.catch(storeFailed));
+        const recordEpoch =
+          record !== undefined &&
+          record.projectId === project.id &&
+          record.coordinator.environmentId === input.sourceEnvironmentId
+            ? record.epoch
+            : 0;
+        const epoch = Math.max(binding.epoch, recordEpoch) + 1;
+        yield* refuseClaimed(identity.id, epoch);
+        return yield* deps.takeoverLocked({
+          projectId: project.id,
+          operationId: awayTakeoverOperationId(identity.id, epoch),
+          knownEpoch: binding.epoch,
+          predecessor: binding.successor,
+          epoch,
+          takenOverBy: "auto",
+        });
+      }),
+    );
+
   return {
     setStandby,
     acceptStandby,
@@ -905,6 +1206,10 @@ export const makeProjectLinkStandby = (deps: ProjectLinkStandbyDeps): ProjectLin
     autoTakeover,
     rearmStandby,
     rearmStatus,
+    plannedGiveWay,
+    plannedRevert,
+    plannedTakeover,
+    awayTakeover,
   };
 };
 

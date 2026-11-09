@@ -14,18 +14,47 @@ import type {
 
 import type { HandoffDestination } from "../handoff/HandoffResults";
 
+/** What the window knows about a machine's hardware, for picking an always-on target. */
+export interface AwayMachineFacts {
+  /** Detected or chosen shape: `laptop` runs on a battery; the others do not. */
+  readonly machine?: string | null;
+  readonly os?: string | null;
+  /** Live power telemetry, when the window has it. */
+  readonly onBattery?: boolean | "unknown" | null;
+}
+
 /**
- * The remembered target when it can be chosen, else the first online machine
- * (D-04). This machine and offline machines are never preselected.
+ * How suited a machine is to keep work while this one is away: 0 when it
+ * reports no battery (a desktop, server or Linux box), 1 when unknown,
+ * 2 for a laptop or one running on battery now.
+ */
+export function awayTargetRank(facts: AwayMachineFacts | null): number {
+  if (facts === null) return 1;
+  if (facts.onBattery === true || facts.machine === "laptop") return 2;
+  if (facts.machine != null) return 0;
+  if (facts.os === "linux") return 0;
+  return 1;
+}
+
+/**
+ * The remembered target when it can be chosen, else the first ready machine
+ * that reports no battery, preferring Linux and desktops, else the first ready
+ * one (D-04). This machine and offline machines are never preselected.
  */
 export function defaultAwayTarget(
   destinations: readonly HandoffDestination[],
   remembered: EnvironmentId | null,
+  describe: (environmentId: EnvironmentId) => AwayMachineFacts | null = () => null,
 ): EnvironmentId | null {
   const choosable = destinations.filter((destination) => destination.state === "reachable");
   if (remembered !== null && choosable.some((item) => item.environmentId === remembered))
     return remembered;
-  return choosable[0]?.environmentId ?? null;
+  let best: { id: EnvironmentId; rank: number } | null = null;
+  for (const item of choosable) {
+    const rank = awayTargetRank(describe(item.environmentId));
+    if (best === null || rank < best.rank) best = { id: item.environmentId, rank };
+  }
+  return best?.id ?? null;
 }
 
 export interface AwayPlanGroup {

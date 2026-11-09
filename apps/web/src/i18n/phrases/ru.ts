@@ -318,9 +318,6 @@ export const ru: PhraseCatalog = {
   "WSL only": "Только WSL",
   "Warn when the app folder is large": "Предупреждать, когда папка приложения большая",
   "When a thread finishes": "Когда тред завершается",
-  "When this machine sleeps, move running threads": "Когда эта машина засыпает, переносить треды",
-  "When this machine sleeps, move running threads to":
-    "Когда эта машина засыпает, переносить треды на",
   "Who can run work here": "Кто может запускать здесь работу",
   "Word wrap": "Перенос строк",
   "Working section (beta)": "Раздел «В работе» (бета)",
@@ -465,8 +462,6 @@ export const ru: PhraseCatalog = {
   "Monospace font": "Моноширинный шрифт",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "Сколько симуляторов и эмуляторов может работать одновременно на каждом хосте устройств. Запуск следующего не удастся, пока один не будет выключен. Физические устройства не считаются.",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "Переносит треды, готовые к переносу. По возможности и только при уходе в сон. Блокировка экрана не считается.",
   "No coding agent is installed and enabled there.":
     "Там не установлен и не включён ни один агент для кода.",
   "No routines match this machine and project selection.":
@@ -1725,8 +1720,6 @@ export const ru: PhraseCatalog = {
   "Projects set differently": "Проекты с другими настройками",
   "A removed project": "Удалённый проект",
   "Use default": "По умолчанию",
-  "Machine to move running threads to when this machine sleeps":
-    "Машина, на которую переносить запущенные треды, когда эта машина засыпает",
   "A removed machine": "Удалённая машина",
   "More options": "Другие параметры",
   "Automatic takeover": "Автоматический перехват",

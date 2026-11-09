@@ -13,6 +13,16 @@ import {
   RunId,
   ThreadId,
 } from "./baseSchemas.ts";
+import {
+  type AwayConfig,
+  AwayBringBack,
+  AwayCoordinatorScope,
+  AwayGraceMinutes,
+  AwaySleepTrigger,
+  DEFAULT_AWAY_BRING_BACK,
+  DEFAULT_AWAY_GRACE_MINUTES,
+  DEFAULT_AWAY_SLEEP_TRIGGER,
+} from "./away.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type {
   OrchestrationV2ProviderFailureClass,
@@ -53,8 +63,27 @@ export const HandoffConfig = Schema.Struct({
   sleepTarget: Schema.NullOr(EnvironmentId),
   /** Continue automatically after the holder has been unreachable this long; 0 is off. */
   autoTakeoverMinutes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(1440)),
+  /** Away mode (1267): when a lid close leaves for `sleepTarget`. Absent reads as the default. */
+  sleepTrigger: Schema.optionalKey(AwaySleepTrigger),
+  /** Away mode: minutes the target waits before it takes over after a lid close. */
+  graceMinutes: Schema.optionalKey(AwayGraceMinutes),
+  /** Away mode: what waking does after work left. */
+  bringBack: Schema.optionalKey(AwayBringBack),
+  /** Away mode: which coordinators leave (D-03). */
+  coordinatorScope: Schema.optionalKey(AwayCoordinatorScope),
 });
 export type HandoffConfig = typeof HandoffConfig.Type;
+
+/** Away mode's settings from the handoff config, with the defaults for absent keys. */
+export function awayConfigOf(config: HandoffConfig): AwayConfig {
+  return {
+    target: config.sleepTarget,
+    sleepTrigger: config.sleepTrigger ?? DEFAULT_AWAY_SLEEP_TRIGGER,
+    graceMinutes: config.graceMinutes ?? DEFAULT_AWAY_GRACE_MINUTES,
+    bringBack: config.bringBack ?? DEFAULT_AWAY_BRING_BACK,
+    coordinatorScope: config.coordinatorScope ?? "live",
+  };
+}
 
 export const DEFAULT_HANDOFF_CONFIG: HandoffConfig = {
   defaultMode: "off",
@@ -409,6 +438,10 @@ export const HandoffConfigPatch = Schema.Struct({
   pushToOrigin: Schema.optional(Schema.Boolean),
   sleepTarget: Schema.optional(Schema.NullOr(EnvironmentId)),
   autoTakeoverMinutes: Schema.optional(HandoffConfig.fields.autoTakeoverMinutes),
+  sleepTrigger: Schema.optional(AwaySleepTrigger),
+  graceMinutes: Schema.optional(AwayGraceMinutes),
+  bringBack: Schema.optional(AwayBringBack),
+  coordinatorScope: Schema.optional(AwayCoordinatorScope),
 });
 export type HandoffConfigPatch = typeof HandoffConfigPatch.Type;
 export const HandoffSetThreadModeInput = Schema.Struct({
@@ -439,9 +472,16 @@ export const HandOffResult = Schema.Struct({
 });
 export type HandOffResult = typeof HandOffResult.Type;
 
+/**
+ * Why a machine's threads move. `away` and `back` are Away mode (1267): named
+ * threads move whatever their handoff mode, and their queued messages go too.
+ */
+export const HandOffMachineReason = Schema.Literals(["manual", "sleep", "away", "back"]);
+export type HandOffMachineReason = typeof HandOffMachineReason.Type;
+
 export const HandOffMachineInput = Schema.Struct({
   destinationEnvironmentId: EnvironmentId,
-  reason: Schema.Literals(["manual", "sleep"]),
+  reason: HandOffMachineReason,
   /** The threads to move; omitted moves every running handoff-mode thread. */
   threadIds: Schema.optional(Schema.Array(ThreadId).check(Schema.isMaxLength(100))),
 });

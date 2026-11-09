@@ -179,3 +179,327 @@ export class AwayError extends Schema.TaggedError<AwayError>()("AwayError", {
   code: AwayErrorCode,
   message: Schema.String,
 }) {}
+
+// --- Planned coordinator handover and the away intent (1267 T-04, AC-05, AC-09) ---
+
+/** Where the target takes over a coordinator this machine hands it while awake. */
+export const AWAY_HANDOVER_PATH = "/api/away/v1/handover";
+/** Where the source records, before it sleeps, that the target should take over after a grace. */
+export const AWAY_INTENT_PATH = "/api/away/v1/intent";
+/** Where the source, back before the grace ran out, cancels its away intent. */
+export const AWAY_INTENT_CANCEL_PATH = "/api/away/v1/intent/cancel";
+
+/** The longest grace an away intent may ask for. */
+export const AWAY_INTENT_MAX_GRACE_MINUTES = 240;
+
+/** `away` hands a coordinator to the target; `back` hands it home again. */
+export const AwayHandoverReason = Schema.Literals(["away", "back"]);
+export type AwayHandoverReason = typeof AwayHandoverReason.Type;
+
+export const AwayHandoverInput = Schema.Struct({
+  /** This machine's copy of the project. */
+  projectId: ProjectId,
+  targetEnvironmentId: EnvironmentId,
+  reason: AwayHandoverReason,
+  /** Names the handover so a retry replays it; derived from the epoch when absent. */
+  operationId: Schema.optionalKey(bounded(128)),
+});
+export type AwayHandoverInput = typeof AwayHandoverInput.Type;
+
+/**
+ * - `handed-over`: the target coordinates now and this copy gave way.
+ * - `skipped`: nothing to hand over (this copy does not coordinate the project).
+ * - `failed`: the coordinator did not move; `detail` says why and whether it is in doubt.
+ */
+export const AwayHandoverOutcome = Schema.Literals(["handed-over", "skipped", "failed"]);
+export type AwayHandoverOutcome = typeof AwayHandoverOutcome.Type;
+
+export const AwayHandoverResult = Schema.Struct({
+  projectId: ProjectId,
+  outcome: AwayHandoverOutcome,
+  detail: bounded(500),
+  /** The coordinator epoch the target took over at. */
+  epoch: Schema.optionalKey(Schema.Int),
+});
+export type AwayHandoverResult = typeof AwayHandoverResult.Type;
+
+export const AwayIntentRequest = Schema.Struct({
+  /** The machine going away; must be the machine whose key made the request. */
+  sourceEnvironmentId: EnvironmentId,
+  graceMinutes: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(0),
+    Schema.isLessThanOrEqualTo(AWAY_INTENT_MAX_GRACE_MINUTES),
+  ),
+  /** The source's copies whose coordinator the target takes over. */
+  projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(AWAY_PLAN_MAX_ITEMS)),
+  /** Source threads already replicated here, for the target to continue. */
+  threadIds: Schema.Array(bounded(512)).check(Schema.isMaxLength(AWAY_PLAN_MAX_ITEMS)),
+});
+export type AwayIntentRequest = typeof AwayIntentRequest.Type;
+
+export const AwayIntentCancelRequest = Schema.Struct({
+  sourceEnvironmentId: EnvironmentId,
+});
+export type AwayIntentCancelRequest = typeof AwayIntentCancelRequest.Type;
+
+/**
+ * - `waiting`: the grace runs.
+ * - `cancelled`: the source came back first; nothing was done.
+ * - `done`: the grace ran out and the target acted (see `results`).
+ */
+export const AwayIntentState = Schema.Literals(["waiting", "cancelled", "done"]);
+export type AwayIntentState = typeof AwayIntentState.Type;
+
+export const AwayIntentRecord = Schema.Struct({
+  intentId: bounded(128),
+  sourceEnvironmentId: EnvironmentId,
+  graceMinutes: Schema.Int,
+  projectIds: Schema.Array(ProjectId),
+  threadIds: Schema.Array(bounded(512)),
+  /** On the target's clock. */
+  receivedAt: IsoDateTime,
+  dueAt: IsoDateTime,
+  state: AwayIntentState,
+  cancelledAt: Schema.optionalKey(IsoDateTime),
+  /** Why it was cancelled: the source asked, or it was heard awake. */
+  cancelReason: Schema.optionalKey(bounded(200)),
+  actedAt: Schema.optionalKey(IsoDateTime),
+  /** One per source project, with the target's outcome. */
+  results: Schema.optionalKey(Schema.Array(AwayHandoverResult)),
+});
+export type AwayIntentRecord = typeof AwayIntentRecord.Type;
+
+// --- The sleep trigger and the wake prompt (1267 T-06, AC-09, D-01, D-02) ---
+
+/** The desktop main process tells its own server the Mac is about to sleep. */
+export const AWAY_SLEEP_PATH = "/api/away/v1/sleep";
+/** The desktop main process tells its own server the Mac woke or was unlocked. */
+export const AWAY_WAKE_PATH = "/api/away/v1/wake";
+
+/** When a lid close leaves for the Away target: never, only on battery, or always (D-01). */
+export const AwaySleepTrigger = Schema.Literals(["off", "on-battery", "always"]);
+export type AwaySleepTrigger = typeof AwaySleepTrigger.Type;
+
+/** What waking does after work left: ask, bring it back on power, or nothing (D-02). */
+export const AwayBringBack = Schema.Literals(["prompt", "auto-on-power", "manual"]);
+export type AwayBringBack = typeof AwayBringBack.Type;
+
+export const AWAY_GRACE_MIN_MINUTES = 1;
+export const AWAY_GRACE_MAX_MINUTES = 15;
+export const AwayGraceMinutes = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(AWAY_GRACE_MIN_MINUTES),
+  Schema.isLessThanOrEqualTo(AWAY_GRACE_MAX_MINUTES),
+);
+
+/**
+ * Away mode's settings. The target is `HandoffConfig.sleepTarget` (D-04); the
+ * other keys are stored next to it in `handoff-mode.json`.
+ */
+export interface AwayConfig {
+  readonly target: EnvironmentId | null;
+  readonly sleepTrigger: AwaySleepTrigger;
+  readonly graceMinutes: number;
+  readonly bringBack: AwayBringBack;
+  readonly coordinatorScope: AwayCoordinatorScope;
+}
+
+export const DEFAULT_AWAY_SLEEP_TRIGGER: AwaySleepTrigger = "on-battery";
+export const DEFAULT_AWAY_GRACE_MINUTES = 2;
+export const DEFAULT_AWAY_BRING_BACK: AwayBringBack = "prompt";
+
+export const AwaySleepRequest = Schema.Struct({
+  onBattery: Schema.Boolean,
+});
+export type AwaySleepRequest = typeof AwaySleepRequest.Type;
+
+/**
+ * - `left`: Away handles this sleep; the old "move running threads" path must not run too.
+ * - `skipped`: no target, the trigger is off, or on power with "On battery".
+ */
+export const AwaySleepAnswer = Schema.Struct({
+  outcome: Schema.Literals(["left", "skipped"]),
+});
+export type AwaySleepAnswer = typeof AwaySleepAnswer.Type;
+
+export const AwayWakeRequest = Schema.Struct({
+  onBattery: Schema.Boolean,
+});
+export type AwayWakeRequest = typeof AwayWakeRequest.Type;
+
+/**
+ * - `none`: nothing had left, or it came back before the grace ran out.
+ * - `prompt`: work moved while asleep; show the wake card.
+ * - `auto`: work moved and bringing it back started on its own.
+ */
+export const AwayWakeAnswer = Schema.Struct({
+  outcome: Schema.Literals(["none", "prompt", "auto"]),
+});
+export type AwayWakeAnswer = typeof AwayWakeAnswer.Type;
+
+/**
+ * This machine's own record of a lid-close Away:
+ * - `pending-intent`: the intent was sent; the target acts after `dueAt`.
+ * - `send-failed`: the target never got it; nothing moves.
+ * - `wake-prompt`: back after the grace; work moved and waits for Bring back.
+ */
+export const AwaySleepSessionState = Schema.Literals([
+  "pending-intent",
+  "send-failed",
+  "wake-prompt",
+]);
+export type AwaySleepSessionState = typeof AwaySleepSessionState.Type;
+
+export const AwaySleepSession = Schema.Struct({
+  state: AwaySleepSessionState,
+  targetEnvironmentId: EnvironmentId,
+  graceMinutes: Schema.Int,
+  projectIds: Schema.Array(ProjectId),
+  threadIds: Schema.Array(bounded(512)),
+  /** On this machine's clock. */
+  sentAt: IsoDateTime,
+  dueAt: IsoDateTime,
+  wokeAt: Schema.optionalKey(IsoDateTime),
+  detail: Schema.optionalKey(bounded(500)),
+});
+export type AwaySleepSession = typeof AwaySleepSession.Type;
+
+// --- The Away session: leaving and Bring back (1267 T-05, AC-04, AC-06, AC-07, AC-08) ---
+
+/** Where this machine stages, enables and takes back a routine on the target (ScheduledTaskTransfer). */
+export const AWAY_ROUTINES_PATH = "/api/away/v1/routines";
+/** Where the source asks the target to hand the threads it continued back (Bring back). */
+export const AWAY_RETURN_PATH = "/api/away/v1/return";
+
+/** The most items one session records. */
+export const AWAY_SESSION_MAX_ITEMS = 3 * AWAY_PLAN_MAX_ITEMS;
+
+/** What started the session: the Leave button or a lid close (AC-09). */
+export const AwayTrigger = Schema.Literals(["manual", "sleep"]);
+export type AwayTrigger = typeof AwayTrigger.Type;
+
+/**
+ * - `pending`: not reached yet; a resumed session picks it up.
+ * - `moved`: on the target now.
+ * - `handoff-ready`: a check failed; it stays here, ready to continue elsewhere.
+ * - `stayed`: never leaves (a worktree set, the personal assistant, no link).
+ * - `paused`: paused here while away (a webhook routine).
+ * - `failed`: the move did not finish; `detail` says what is left.
+ */
+export const AwayItemOutcome = Schema.Literals([
+  "pending",
+  "moved",
+  "handoff-ready",
+  "stayed",
+  "paused",
+  "failed",
+]);
+export type AwayItemOutcome = typeof AwayItemOutcome.Type;
+
+/** What Bring back did with one item. */
+export const AwayBackOutcome = Schema.Literals(["returned", "stayed", "failed"]);
+export type AwayBackOutcome = typeof AwayBackOutcome.Type;
+
+export const AwayItemBack = Schema.Struct({
+  outcome: AwayBackOutcome,
+  detail: bounded(500),
+  at: IsoDateTime,
+  /** The thread here that continues it, when a thread came back. */
+  localId: Schema.optionalKey(bounded(512)),
+});
+export type AwayItemBack = typeof AwayItemBack.Type;
+
+export const AwayItemResult = Schema.Struct({
+  kind: AwayPlanItemKind,
+  /** This machine's thread, routine or project id. */
+  id: bounded(512),
+  title: bounded(500),
+  projectId: Schema.optionalKey(ProjectId),
+  outcome: AwayItemOutcome,
+  detail: bounded(500),
+  /** On the target: the continuing thread, the routine's copy, or the project's copy. */
+  targetId: Schema.optionalKey(bounded(512)),
+  /** Routines: how it moved (`coordinator` rides the handover; `transfer`; `paused` here). */
+  via: Schema.optionalKey(Schema.Literals(["coordinator", "transfer", "paused"])),
+  /** Routines: whether it was on before Away turned it off here. */
+  wasEnabled: Schema.optionalKey(Schema.Boolean),
+  /** Coordinators: the standby this copy had before it left, re-armed on Bring back. */
+  standbyAfterMinutes: Schema.optionalKey(Schema.Int),
+  back: Schema.optionalKey(AwayItemBack),
+});
+export type AwayItemResult = typeof AwayItemResult.Type;
+
+/** The stage a session reached; each stage resumes from the items it saved. */
+export const AwayStage = Schema.Literals(["coordinators", "routines", "threads", "done"]);
+export type AwayStage = typeof AwayStage.Type;
+
+/**
+ * One Away, kept in `handoff-mode.json` on the machine that left. It survives
+ * a restart: an unfinished one resumes at its stage. Bring back records each
+ * item's `back` and then `broughtBackAt`.
+ */
+export const AwaySession = Schema.Struct({
+  sessionId: bounded(128),
+  targetEnvironmentId: EnvironmentId,
+  targetLabel: bounded(120),
+  trigger: AwayTrigger,
+  coordinatorScope: AwayCoordinatorScope,
+  startedAt: IsoDateTime,
+  finishedAt: Schema.NullOr(IsoDateTime),
+  stage: AwayStage,
+  items: Schema.Array(AwayItemResult).check(Schema.isMaxLength(AWAY_SESSION_MAX_ITEMS)),
+  bringBackStartedAt: Schema.NullOr(IsoDateTime),
+  broughtBackAt: Schema.NullOr(IsoDateTime),
+});
+export type AwaySession = typeof AwaySession.Type;
+
+export const AwayStartInput = Schema.Struct({
+  targetEnvironmentId: EnvironmentId,
+  coordinatorScope: Schema.optionalKey(AwayCoordinatorScope),
+  trigger: Schema.optionalKey(AwayTrigger),
+});
+export type AwayStartInput = typeof AwayStartInput.Type;
+
+export const AwayBringBackInput = Schema.Struct({
+  /** The session to bring back; the latest when absent. */
+  sessionId: Schema.optionalKey(bounded(128)),
+});
+export type AwayBringBackInput = typeof AwayBringBackInput.Type;
+
+/** Away's settings as clients read and change them (D-01 to D-04). */
+export const AwaySettings = Schema.Struct({
+  target: Schema.NullOr(EnvironmentId),
+  sleepTrigger: AwaySleepTrigger,
+  graceMinutes: AwayGraceMinutes,
+  bringBack: AwayBringBack,
+  coordinatorScope: AwayCoordinatorScope,
+});
+export type AwaySettings = typeof AwaySettings.Type;
+
+export const AwaySettingsPatch = Schema.Struct({
+  target: Schema.optionalKey(Schema.NullOr(EnvironmentId)),
+  sleepTrigger: Schema.optionalKey(AwaySleepTrigger),
+  graceMinutes: Schema.optionalKey(AwayGraceMinutes),
+  bringBack: Schema.optionalKey(AwayBringBack),
+  coordinatorScope: Schema.optionalKey(AwayCoordinatorScope),
+});
+export type AwaySettingsPatch = typeof AwaySettingsPatch.Type;
+
+export const AwaySnapshot = Schema.Struct({
+  environmentId: EnvironmentId,
+  machineLabel: bounded(120),
+  settings: AwaySettings,
+  /** The latest session this machine left with, or null. */
+  session: Schema.NullOr(AwaySession),
+  /** A start or Bring back runs now. */
+  running: Schema.Boolean,
+});
+export type AwaySnapshot = typeof AwaySnapshot.Type;
+
+/** The wake card shows for a session that left from this machine and is not back. */
+export function awaitsBringBack(session: AwaySession | null): boolean {
+  return (
+    session !== null &&
+    session.broughtBackAt === null &&
+    session.items.some((item) => item.outcome === "moved" || item.outcome === "paused")
+  );
+}

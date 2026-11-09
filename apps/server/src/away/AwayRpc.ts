@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { AwayAccess } from "./AwayAccessRequest.ts";
 import { AwayPlanner } from "./AwayPlanner.ts";
+import { AwayRunner } from "./AwayRunner.ts";
 import { HandoffMode } from "../handoff/HandoffMode.ts";
 
 /**
@@ -18,6 +19,7 @@ export const layerRpcHandlers = WsAwayRpcGroup.middleware(RpcInstrumentation).to
     const planner = yield* AwayPlanner;
     const access = yield* AwayAccess;
     const handoff = yield* HandoffMode;
+    const runner = yield* AwayRunner;
     return {
       [WS_METHODS.awayPreflight]: (input) => planner.preflight(input),
       [WS_METHODS.awayRequestAccess]: (input) =>
@@ -30,6 +32,10 @@ export const layerRpcHandlers = WsAwayRpcGroup.middleware(RpcInstrumentation).to
       [WS_METHODS.awayAccessRequests]: () =>
         access.list.pipe(Effect.map((requests) => ({ requests }))),
       [WS_METHODS.awayDecideAccess]: (input) => access.decide(input),
+      [WS_METHODS.awayStart]: (input) => runner.start(input),
+      [WS_METHODS.awayBringBack]: (input) => runner.bringBack(input),
+      [WS_METHODS.awaySnapshot]: () => runner.snapshot,
+      [WS_METHODS.awayUpdateConfig]: (input) => runner.updateConfig(input),
     };
   }),
 );

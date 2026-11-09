@@ -4,6 +4,7 @@ import {
   type ProjectId,
   type ScheduledTask,
   type ScheduledTaskError,
+  type ScheduledTaskGrantedBy,
   ScheduledTaskId,
   ScheduledTaskUpsertInput,
 } from "@specweave-studio/contracts";
@@ -13,7 +14,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { sha256 } from "../nodeCrypto.ts";
-import { taskError } from "./ScheduledTaskStorage.ts";
+import { decodeRoutineGrantJson, taskError } from "./ScheduledTaskStorage.ts";
 
 /**
  * Routine failover for automatic coordinator takeover. The coordinator's lease
@@ -67,9 +68,14 @@ export const isCoordinatorOwnedRoutine = (task: Pick<ScheduledTask, "ownThread">
 /**
  * The routine as its standby keeps it, or null when it does not travel: a
  * worker's routine, or a webhook one, whose URL and signing secret belong to
- * this machine. A one-time routine that already ran goes turned off.
+ * this machine. A one-time routine that already ran goes turned off. A
+ * routine made under another machine's work grant keeps that grant, so the
+ * copy runs only within the grant that machine gives the standby.
  */
-export function routineCopyOf(task: ScheduledTask): CoordinatorRoutineCopy | null {
+export function routineCopyOf(
+  task: ScheduledTask,
+  grantedBy?: ScheduledTaskGrantedBy | undefined,
+): CoordinatorRoutineCopy | null {
   if (!isCoordinatorOwnedRoutine(task) || task.schedule.type === "webhook") return null;
   const spent = task.schedule.type === "once" && task.nextRunAt === null;
   return {
@@ -86,6 +92,7 @@ export function routineCopyOf(task: ScheduledTask): CoordinatorRoutineCopy | nul
     ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
     ...(task.check ? { check: task.check } : {}),
     ...(task.brief ? { brief: task.brief } : {}),
+    ...(grantedBy === undefined ? {} : { grantedBy }),
   };
 }
 
@@ -93,11 +100,12 @@ export function routineCopyOf(task: ScheduledTask): CoordinatorRoutineCopy | nul
 export function routineCopiesOf(
   tasks: ReadonlyArray<ScheduledTask>,
   projectId: ProjectId,
+  grants: ReadonlyMap<string, ScheduledTaskGrantedBy> = new Map(),
 ): ReadonlyArray<CoordinatorRoutineCopy> {
   return tasks
     .filter((task) => task.projectId === projectId)
     .flatMap((task) => {
-      const copy = routineCopyOf(task);
+      const copy = routineCopyOf(task, grants.get(task.id));
       return copy === null ? [] : [copy];
     })
     .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
@@ -135,7 +143,10 @@ export interface RoutineCopiesDeps {
   readonly findTask: (
     id: ScheduledTaskId,
   ) => Effect.Effect<ScheduledTask | null, ScheduledTaskError>;
-  readonly upsert: (input: ScheduledTaskUpsertInput) => Effect.Effect<unknown, ScheduledTaskError>;
+  readonly upsert: (
+    input: ScheduledTaskUpsertInput,
+    options: { readonly grantedBy: ScheduledTaskGrantedBy | null },
+  ) => Effect.Effect<unknown, ScheduledTaskError>;
   readonly remove: (id: ScheduledTaskId) => Effect.Effect<unknown, ScheduledTaskError>;
 }
 
@@ -163,6 +174,31 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         { concurrency: 1, discard: true },
       ).pipe(Effect.mapError(failed("Could not mark a routine copy.")));
 
+    // The grants routines were made under, by id; read with the routines they belong to.
+    const grantsOf = (projectId: ProjectId) =>
+      sql<{ readonly task_id: string; readonly run_policy_json: string | null }>`
+        SELECT task_id, run_policy_json FROM scheduled_tasks
+        WHERE project_id = ${projectId}
+          AND json_extract(run_policy_json, '$.grantedBy') IS NOT NULL
+      `.pipe(
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            decodeRoutineGrantJson(row.run_policy_json).pipe(
+              Effect.map((grantedBy) => [row.task_id, grantedBy] as const),
+            ),
+          ),
+        ),
+        Effect.map(
+          (pairs) =>
+            new Map(
+              pairs.flatMap(([id, grantedBy]) =>
+                grantedBy === undefined ? [] : [[id, grantedBy] as const],
+              ),
+            ),
+        ),
+        Effect.mapError(failed("Could not read the grants of routine copies.")),
+      );
+
     // Read on every lease, so kept until a routine changes.
     const cached = new Map<
       string,
@@ -174,7 +210,11 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         const key = `${projectId}\u0000${logicalProjectId}`;
         const held = cached.get(key);
         if (held !== undefined && held.generation === generation) return held.snapshot;
-        const routines = routineCopiesOf(yield* deps.listTasks, projectId);
+        const routines = routineCopiesOf(
+          yield* deps.listTasks,
+          projectId,
+          yield* grantsOf(projectId),
+        );
         const json = encodeRoutinesJson(routines);
         let result: RoutineCopiesSnapshot | null = null;
         if (Buffer.byteLength(json) > COORDINATOR_ROUTINE_COPIES_MAX_BYTES) {
@@ -194,7 +234,12 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
         return result;
       });
 
-    const keep = (projectId: ProjectId, logicalProjectId: string, copy: CoordinatorRoutineCopy) =>
+    const keep = (
+      projectId: ProjectId,
+      logicalProjectId: string,
+      copy: CoordinatorRoutineCopy,
+      grants: ReadonlyMap<string, ScheduledTaskGrantedBy>,
+    ) =>
       Effect.gen(function* () {
         const held = yield* deps.findTask(copy.id);
         // An id this machine uses for another project's routine is never taken over.
@@ -205,7 +250,7 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
           return;
         }
         // Unchanged: only marked, so a resend of 200 routines saves only those that changed.
-        const kept = held === null ? null : routineCopyOf(held);
+        const kept = held === null ? null : routineCopyOf(held, grants.get(held.id));
         const same = kept !== null && encodeRoutinesJson([kept]) === encodeRoutinesJson([copy]);
         if (same) return yield* markShared(projectId, logicalProjectId, [copy.id]);
         const input = yield* decodeUpsert({
@@ -228,7 +273,8 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
           brief: copy.brief ?? null,
           ownThread: true,
         }).pipe(Effect.mapError(failed("Could not read a routine copy.")));
-        yield* deps.upsert(input);
+        // The copy's grant, or none: an owner's routine sent from there is the owner's here.
+        yield* deps.upsert(input, { grantedBy: copy.grantedBy ?? null });
         yield* markShared(projectId, logicalProjectId, [copy.id]);
       }).pipe(
         // One routine this copy refuses (team rules, say) never holds back the others.
@@ -243,7 +289,8 @@ export const makeRoutineCopies = (deps: RoutineCopiesDeps) =>
       routines,
     }) =>
       Effect.gen(function* () {
-        yield* Effect.forEach(routines, (copy) => keep(projectId, logicalProjectId, copy), {
+        const grants = yield* grantsOf(projectId);
+        yield* Effect.forEach(routines, (copy) => keep(projectId, logicalProjectId, copy, grants), {
           concurrency: 1,
           discard: true,
         });

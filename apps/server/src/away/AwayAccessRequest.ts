@@ -68,6 +68,16 @@ export const AwayTargetGrant = Schema.Struct({
 });
 export type AwayTargetGrant = typeof AwayTargetGrant.Type;
 
+/**
+ * The target's answer about its grant: the grant (null when it holds none for
+ * this machine), `older` when it has no away route or answers in a form this
+ * version cannot read, or `failed` with why.
+ */
+export type AwayTargetGrantRead =
+  | { readonly kind: "grant"; readonly grant: AwayTargetGrant | null }
+  | { readonly kind: "older" }
+  | { readonly kind: "failed"; readonly message: string };
+
 /** One call to the target's away route. */
 export const AwayPeerRequest = Schema.Union([
   Schema.Struct({ action: Schema.Literal("grant") }),
@@ -207,6 +217,51 @@ export function grantUpdateFor(
     : { coordinatorEnvironmentId, ...routines, ...projects };
 }
 
+/**
+ * What approving a request does with the sender's grant here: refuse when a
+ * grant change is asked but there is no live grant to change (the owner
+ * allows the machine first, then approves again), else the update to apply
+ * (null when nothing is left to change) and the line to record.
+ */
+export function approvalOutcome(
+  record: Pick<AwayAccessRequestRecord, "fromEnvironmentId" | "fromLabel" | "changes" | "missing">,
+  grant: AwayTargetGrant | null,
+):
+  | { readonly kind: "refuse"; readonly message: string }
+  | {
+      readonly kind: "apply";
+      readonly update: StudioWorkGrantUpdateInput | null;
+      readonly detail: string | null;
+    } {
+  const asksGrant =
+    record.changes.routines === true || (record.changes.addProjectIds?.length ?? 0) > 0;
+  if (asksGrant && grant === null) {
+    return {
+      kind: "refuse",
+      message: `${record.fromLabel} may not run work here yet, so nothing changed. Allow it in Who can run work here, then approve again.`,
+    };
+  }
+  if (asksGrant && grant !== null && grant.revoked) {
+    return {
+      kind: "refuse",
+      message: `${record.fromLabel}'s work here is stopped, so nothing changed. Restore it in Who can run work here, then approve again.`,
+    };
+  }
+  const update =
+    grant === null ? null : grantUpdateFor(record.fromEnvironmentId, grant, record.changes);
+  const manual = record.missing.filter(
+    (item) => item.kind !== "routines" && item.kind !== "work-grant",
+  ).length;
+  return {
+    kind: "apply",
+    update,
+    detail:
+      manual === 0
+        ? null
+        : `Approved. ${manual === 1 ? "1 step still needs" : `${manual} steps still need`} doing by hand.`,
+  };
+}
+
 /** How a stored request answers its sender. */
 export function resultOf(record: AwayAccessRequestRecord): AwayAccessRequestResult {
   switch (record.status) {
@@ -292,10 +347,8 @@ export interface AwayAccessShape {
     readonly targetEnvironmentId: EnvironmentId;
     readonly requestId: string;
   }) => Effect.Effect<AwayAccessRequestResult, AwayError>;
-  /** What the target's grant for this machine allows; null when it cannot say. Never fails. */
-  readonly targetGrant: (
-    targetEnvironmentId: EnvironmentId,
-  ) => Effect.Effect<AwayTargetGrant | null>;
+  /** What the target's grant for this machine allows, or why it could not say. Never fails. */
+  readonly targetGrant: (targetEnvironmentId: EnvironmentId) => Effect.Effect<AwayTargetGrantRead>;
   /** On the target: what its grant for `from` allows. */
   readonly grantFor: (from: EnvironmentId) => Effect.Effect<AwayTargetGrant | null, AwayError>;
   /** On the target: stores a request from `from`. Applies nothing. */
@@ -373,11 +426,19 @@ export const make = Effect.gen(function* () {
 
   // --- sending side -------------------------------------------------------
 
-  const call = <A>(
+  /** One POST to the target's away route: its label and raw answer. */
+  const exchange = (
     targetEnvironmentId: EnvironmentId,
     body: AwayPeerRequest,
-    decode: (raw: unknown) => Option.Option<A>,
-  ): Effect.Effect<A, AwayError> =>
+  ): Effect.Effect<
+    {
+      readonly label: string;
+      readonly status: number;
+      readonly ok: boolean;
+      readonly json: unknown;
+    },
+    AwayError
+  > =>
     Effect.gen(function* () {
       const machines = yield* fleet.load.pipe(
         Effect.map((loaded) => loaded?.machines ?? []),
@@ -417,6 +478,17 @@ export const make = Effect.gen(function* () {
         catch: () =>
           new AwayError({ code: "unreachable", message: `${target.label} did not answer.` }),
       });
+      return { label: target.label, ...answer };
+    });
+
+  const call = <A>(
+    targetEnvironmentId: EnvironmentId,
+    body: AwayPeerRequest,
+    decode: (raw: unknown) => Option.Option<A>,
+  ): Effect.Effect<A, AwayError> =>
+    Effect.gen(function* () {
+      const answer = yield* exchange(targetEnvironmentId, body);
+      const target = { label: answer.label };
       if (answer.status === 404) {
         return yield* new AwayError({
           code: "failed",
@@ -459,9 +531,18 @@ export const make = Effect.gen(function* () {
     call(input.targetEnvironmentId, { action: "status", requestId: input.requestId }, decodeResult);
 
   const targetGrant: AwayAccessShape["targetGrant"] = (targetEnvironmentId) =>
-    call(targetEnvironmentId, { action: "grant" }, decodeGrantResponse).pipe(
-      Effect.map((answer) => answer.grant),
-      Effect.orElseSucceed(() => null),
+    exchange(targetEnvironmentId, { action: "grant" }).pipe(
+      Effect.map((answer): AwayTargetGrantRead => {
+        if (answer.status === 404) return { kind: "older" };
+        if (!answer.ok) return { kind: "failed", message: `${answer.label} refused the check.` };
+        const decoded = decodeGrantResponse(answer.json);
+        return Option.isSome(decoded)
+          ? { kind: "grant", grant: decoded.value.grant }
+          : { kind: "older" };
+      }),
+      Effect.catch((error: AwayError) =>
+        Effect.succeed<AwayTargetGrantRead>({ kind: "failed", message: error.message }),
+      ),
     );
 
   // --- receiving side -----------------------------------------------------
@@ -552,20 +633,15 @@ export const make = Effect.gen(function* () {
         if (record.status !== "pending") return record;
         let detail: string | null = null;
         if (input.decision === "approve") {
-          const grant = yield* grantFor(record.fromEnvironmentId);
-          const update =
-            grant === null ? null : grantUpdateFor(record.fromEnvironmentId, grant, record.changes);
-          if (grant === null && (record.changes.routines || record.changes.addProjectIds)) {
-            detail = `${record.fromLabel} may not run work here yet, so nothing changed. Allow it first.`;
-          } else if (update !== null) {
-            yield* grants.update(update).pipe(Effect.mapError((error) => failed(error.message)));
+          const outcome = approvalOutcome(record, yield* grantFor(record.fromEnvironmentId));
+          // Nothing can apply: the request stays pending, so approving after Allow works.
+          if (outcome.kind === "refuse") return yield* failed(outcome.message);
+          if (outcome.update !== null) {
+            yield* grants
+              .update(outcome.update)
+              .pipe(Effect.mapError((error) => failed(error.message)));
           }
-          const manual = record.missing.filter(
-            (item) => item.kind !== "routines" && item.kind !== "work-grant",
-          ).length;
-          if (detail === null && manual > 0) {
-            detail = `Approved. ${manual === 1 ? "1 step still needs" : `${manual} steps still need`} doing by hand.`;
-          }
+          detail = outcome.detail;
         }
         const decided: AwayAccessRequestRecord = {
           ...record,

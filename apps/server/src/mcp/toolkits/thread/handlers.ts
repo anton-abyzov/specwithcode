@@ -17,6 +17,7 @@ import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
+  assertTargetWithinLimits,
   dispatchFailure,
   newCommandId,
   readCaller,
@@ -122,8 +123,23 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
-      yield* refuseGrantRoutineChange(yield* readCaller(), task.projectId);
-      const { caller } = yield* readCaller();
+      const context = yield* readCaller();
+      const work = yield* refuseGrantRoutineChange(context, task.projectId);
+      // Under a grant a run starts no broader than the caller may work: the
+      // routine's modes, and a bound thread's modes as they are now, as for an
+      // update. writesEnvironment already asks for a full-access caller; this
+      // keeps the bar if that ever loosens.
+      if (work !== undefined) {
+        yield* assertTargetWithinLimits(context.limits, task);
+        if (task.threadId !== null) {
+          const bound = yield* context.threads
+            .getThreadShell(ThreadId.make(task.threadId))
+            .pipe(Effect.mapError(unavailable));
+          if (bound !== null && bound.deletedAt === null)
+            yield* assertTargetWithinLimits(context.limits, bound);
+        }
+      }
+      const { caller } = context;
       yield* assertPersonalChatBoundary(caller?.projectId, task.projectId);
       const { task: started } = yield* scheduler
         .runNow({ id: input.taskId })

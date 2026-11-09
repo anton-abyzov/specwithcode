@@ -5,14 +5,21 @@
  * Every entry point (`/away`, the palette, the hotkey, the menu and the
  * tray) opens it through `requestAway`.
  */
-import type {
-  AwayAccessRequestResult,
-  AwayPlan,
-  AwayPlanItem,
-  EnvironmentId,
+import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import {
+  type AwayAccessRequestResult,
+  type AwayPlan,
+  type AwayPlanItem,
+  type AwaySession,
+  type AwaySnapshot,
+  awaitsBringBack,
+  type EnvironmentId,
+  type ThreadId,
 } from "@specweave-studio/contracts";
+import { useRouter } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
+import { useServerConfigs } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAwayRequest, type AwayIntent } from "../../studio/awayRequest";
 import { useHandoffModeSnapshot } from "../../studio/handoffMode";
@@ -42,14 +49,27 @@ import {
   isAccessPending,
   missingIsOnTarget,
 } from "./awayDialog.logic";
+import { AwayAccessRequestsWatcher } from "./AwayAccessRequests";
 import { awayRpc, runAway } from "./awayRpc";
+import { AWAY_SESSION_POLL_MS } from "./awaySession.logic";
+import { AwaySessionSummary } from "./AwaySessionSummary";
+import { AwayWakeCard } from "./AwayWakeCard";
+import { buildThreadRouteParams } from "../../threadRoutes";
 
 export function AwayDialogHost() {
   const request = useAwayRequest();
   const environmentId = usePrimaryEnvironmentId();
-  return request.open && environmentId ? (
-    <AwayDialog environmentId={environmentId} intent={request.intent} onClose={request.close} />
-  ) : null;
+  return (
+    <>
+      {/* Access requests other machines send here, on every connected machine. */}
+      <AwayAccessRequestsWatcher />
+      {/* Work left this machine and is not back: one click brings it back (D-02). */}
+      {environmentId ? <AwayWakeCard environmentId={environmentId} hidden={request.open} /> : null}
+      {request.open && environmentId ? (
+        <AwayDialog environmentId={environmentId} intent={request.intent} onClose={request.close} />
+      ) : null}
+    </>
+  );
 }
 
 function AwayDialog(props: {
@@ -61,7 +81,19 @@ function AwayDialog(props: {
   const destinations = useHandoffDestinations(environmentId, false);
   const remembered = useHandoffModeSnapshot(environmentId).snapshot?.config.sleepTarget ?? null;
   const [chosen, setChosen] = useState<EnvironmentId | null>(null);
-  const target = chosen ?? defaultAwayTarget(destinations, remembered);
+  const configs = useServerConfigs();
+  const target =
+    chosen ??
+    defaultAwayTarget(destinations, remembered, (id) => {
+      const config = configs.get(id);
+      return config === undefined
+        ? null
+        : {
+            machine:
+              config.settings?.environmentIcon ?? config.environment.platform.machine ?? null,
+            os: config.environment.platform.os,
+          };
+    });
   const [plan, setPlan] = useState<AwayPlan | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +101,75 @@ function AwayDialog(props: {
   const [requesting, setRequesting] = useState(false);
   const [request, setRequest] = useState<AwayAccessRequestResult | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const router = useRouter();
+  const [away, setAway] = useState<AwaySnapshot | null>(null);
+  const [started, setStarted] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [actError, setActError] = useState<string | null>(null);
+
+  // The saved session: read on open, then followed while leaving or Bring back runs.
+  const following = acting || away?.running === true;
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      void runAway(awayRpc.snapshot, { environmentId, input: {} }).then((next) => {
+        if (live && next.ok) setAway(next.value);
+      });
+    read();
+    if (!following) return () => void (live = false);
+    const timer = setInterval(read, AWAY_SESSION_POLL_MS);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [environmentId, following]);
+
+  const leave = () => {
+    if (target === null) return;
+    setActing(true);
+    setActError(null);
+    void runAway(awayRpc.start, {
+      environmentId,
+      input: { targetEnvironmentId: target, coordinatorScope: "live", trigger: "manual" },
+    }).then((next) => {
+      setActing(false);
+      setConfirming(false);
+      if (!next.ok) {
+        setActError(next.error);
+        return;
+      }
+      setStarted(true);
+      setAway((current) =>
+        current === null ? current : { ...current, session: next.value, running: true },
+      );
+    });
+  };
+  const bringBack = () => {
+    const session = away?.session;
+    if (!session) return;
+    setActing(true);
+    setActError(null);
+    void runAway(awayRpc.bringBack, {
+      environmentId,
+      input: { sessionId: session.sessionId },
+    }).then((next) => {
+      setActing(false);
+      if (!next.ok) {
+        setActError(next.error);
+        return;
+      }
+      setAway((current) =>
+        current === null ? current : { ...current, session: next.value, running: true },
+      );
+    });
+  };
+  const session = away?.session ?? null;
+  const showSession =
+    props.intent === "back" ||
+    started ||
+    (session !== null &&
+      (away?.running === true || session.finishedAt === null || awaitsBringBack(session)));
 
   // The plan for the chosen machine; runs again on "Check again" and after approval.
   useEffect(() => {
@@ -150,6 +251,23 @@ function AwayDialog(props: {
       onRequestAccess={requestAccess}
       onRecheck={() => setRecheck((count) => count + 1)}
       onClose={props.onClose}
+      session={showSession ? session : null}
+      running={away?.running === true || acting}
+      selfEnvironmentId={environmentId}
+      selfLabel={away?.machineLabel ?? "this machine"}
+      confirming={confirming}
+      actError={actError}
+      onLeave={() => setConfirming(true)}
+      onCancelLeave={() => setConfirming(false)}
+      onConfirmLeave={leave}
+      onBringBack={bringBack}
+      onOpenThread={(threadId, environment) => {
+        props.onClose();
+        void router.navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(scopeThreadRef(environment, threadId as ThreadId)),
+        });
+      }}
     />
   );
 }
@@ -168,6 +286,19 @@ export interface AwayDialogViewProps {
   onRequestAccess: () => void;
   onRecheck: () => void;
   onClose: () => void;
+  /** The session to show instead of the plan: after Leave, while it runs, or to bring back. */
+  session?: AwaySession | null;
+  running?: boolean;
+  selfEnvironmentId?: EnvironmentId;
+  selfLabel?: string;
+  /** Leave was pressed once; the second press moves the work. */
+  confirming?: boolean;
+  actError?: string | null;
+  onLeave?: () => void;
+  onCancelLeave?: () => void;
+  onConfirmLeave?: () => void;
+  onBringBack?: () => void;
+  onOpenThread?: (threadId: string, environmentId: EnvironmentId) => void;
 }
 
 const TONE = {
@@ -203,21 +334,58 @@ export function AwayDialogView(props: AwayDialogViewProps) {
   const pending = isAccessPending(props.request);
   const requestLine = accessRequestText(props.request, targetLabel);
 
-  if (props.intent === "back") {
+  if (props.intent === "back" || props.session) {
+    const session = props.session ?? null;
+    const canBringBack =
+      session !== null && !props.running && session.finishedAt !== null && awaitsBringBack(session);
     return (
       <Dialog open onOpenChange={(open) => (open ? undefined : props.onClose())}>
-        <DialogPopup className="sm:max-w-lg">
+        <DialogPopup className="sm:max-w-xl" data-testid="away-session-dialog">
           <DialogHeader>
-            <DialogTitle>Bring work back</DialogTitle>
+            <DialogTitle>
+              {session === null
+                ? "Bring work back"
+                : session.bringBackStartedAt !== null || props.intent === "back"
+                  ? `Bring work back from ${session.targetLabel}`
+                  : `Away on ${session.targetLabel}`}
+            </DialogTitle>
             <DialogDescription>
-              Bringing work back to this machine is coming next. For now, open a moved thread and
-              choose Continue here.
+              {session === null
+                ? "Nothing left this machine."
+                : "Threads continue there, routines keep their schedule, and nothing runs on both machines."}
             </DialogDescription>
           </DialogHeader>
+          {session ? (
+            <DialogPanel>
+              <AwaySessionSummary
+                session={session}
+                running={props.running === true}
+                selfEnvironmentId={props.selfEnvironmentId ?? session.targetEnvironmentId}
+                selfLabel={props.selfLabel ?? "this machine"}
+                {...(props.onOpenThread ? { onOpenThread: props.onOpenThread } : {})}
+              />
+            </DialogPanel>
+          ) : null}
+          {props.actError ? (
+            <p role="alert" className="px-6 text-sm text-destructive-foreground">
+              {props.actError}
+            </p>
+          ) : null}
           <DialogFooter>
-            <Button type="button" onClick={props.onClose}>
-              Done
+            <Button type="button" variant="outline" onClick={props.onClose}>
+              {props.running ? "Hide" : "Done"}
             </Button>
+            {session !== null && session.broughtBackAt === null ? (
+              <Button
+                type="button"
+                disabled={!canBringBack || !props.onBringBack}
+                onClick={props.onBringBack}
+              >
+                {props.running && session.bringBackStartedAt !== null
+                  ? "Bringing back…"
+                  : "Bring back"}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogPopup>
       </Dialog>
@@ -329,6 +497,16 @@ export function AwayDialogView(props: AwayDialogViewProps) {
                 ) : null}
               </>
             ) : null}
+            {props.confirming && plan ? (
+              <p role="status" className="text-sm" data-testid="away-confirm">
+                {`Running and queued threads, routines and coordinators listed as Moves go to ${targetLabel} now. The rest stay here and are listed in the summary.`}
+              </p>
+            ) : null}
+            {props.actError ? (
+              <p role="alert" className="text-sm text-destructive-foreground">
+                {props.actError}
+              </p>
+            ) : null}
           </div>
         </DialogPanel>
         <DialogFooter>
@@ -343,9 +521,28 @@ export function AwayDialogView(props: AwayDialogViewProps) {
           >
             {props.checking ? "Checking…" : "Check again"}
           </Button>
-          <Button type="button" disabled title="Coming next">
-            Leave (coming next)
-          </Button>
+          {props.confirming ? (
+            <>
+              <Button type="button" variant="outline" onClick={props.onCancelLeave}>
+                Not now
+              </Button>
+              <Button
+                type="button"
+                disabled={props.running === true || props.onConfirmLeave === undefined}
+                onClick={props.onConfirmLeave}
+              >
+                {props.running ? "Leaving…" : `Leave for ${targetLabel}`}
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              disabled={plan === null || props.checking || props.onLeave === undefined}
+              onClick={props.onLeave}
+            >
+              Leave
+            </Button>
+          )}
         </DialogFooter>
       </DialogPopup>
     </Dialog>

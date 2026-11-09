@@ -166,7 +166,63 @@ export const make = Effect.gen(function* () {
       );
     });
 
+  /**
+   * No standby record here, but this copy took over from the caller (Away
+   * mode, or a record spent since): the old coordinator learns of it here
+   * too, and verifies it before it gives way.
+   */
+  const takenOverWithoutRecord = (caller: ReceiverCaller, logicalProjectId: string) =>
+    Effect.gen(function* () {
+      const snapshot = yield* projects.snapshot.pipe(Effect.orElseSucceed(() => null));
+      if (snapshot === null) return undefined;
+      const ownEnvironment = yield* environment.getEnvironmentId;
+      for (const project of snapshot.projects) {
+        if (project.deletedAt !== null) continue;
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding = project.workspaceSettings?.coordinatorBinding;
+        if (
+          identity?.id !== logicalProjectId ||
+          binding?.state !== "active" ||
+          binding.predecessor?.environmentId !== caller.sourceEnvironmentId
+        )
+          continue;
+        if (
+          caller.grant !== null &&
+          !projectInGrant(caller.grant.projects, caller.sourceEnvironmentId, project)
+        )
+          continue;
+        const successor = identity.members.find(
+          (member) => member.environmentId === ownEnvironment && member.projectId === project.id,
+        );
+        if (successor === undefined) continue;
+        const nowMs = yield* Clock.currentTimeMillis;
+        return {
+          takenOver: { coordinatorBinding: binding, successor },
+          wantsContent: false,
+          standbySleeping: false,
+          receivedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+        } satisfies CoordinatorLeaseResponse;
+      }
+      return undefined;
+    }).pipe(
+      // Only a better answer than "not armed": any trouble here leaves that answer.
+      Effect.catchCause(() => Effect.succeed(undefined)),
+    );
+
   const lease: CoordinatorLeaseReceiver["Service"]["lease"] = (caller, request) =>
+    leaseWithRecord(caller, request).pipe(
+      Effect.catchIf(
+        (error) => error.status === 404 && error.code === "not_found",
+        (error) =>
+          takenOverWithoutRecord(caller, request.logicalProjectId).pipe(
+            Effect.flatMap((found) =>
+              found === undefined ? Effect.fail(error) : Effect.succeed(found),
+            ),
+          ),
+      ),
+    );
+
+  const leaseWithRecord: CoordinatorLeaseReceiver["Service"]["lease"] = (caller, request) =>
     Effect.gen(function* () {
       yield* checkVersion(request.protocolVersion);
       if (

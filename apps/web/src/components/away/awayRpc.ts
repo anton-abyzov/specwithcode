@@ -31,6 +31,22 @@ export const awayRpc = {
     label: "away:decide-access",
     tag: WS_METHODS.awayDecideAccess,
   }),
+  start: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "away:start",
+    tag: WS_METHODS.awayStart,
+  }),
+  bringBack: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "away:bring-back",
+    tag: WS_METHODS.awayBringBack,
+  }),
+  snapshot: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "away:snapshot",
+    tag: WS_METHODS.awaySnapshot,
+  }),
+  updateConfig: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "away:update-config",
+    tag: WS_METHODS.awayUpdateConfig,
+  }),
 };
 
 /** Runs one Away RPC outside React and words a failure for the user. */

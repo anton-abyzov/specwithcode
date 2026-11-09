@@ -9,10 +9,15 @@ import {
   AwayAccessRequestRecord,
   AwayAccessRequestResult,
   AwayAccessStatusInput,
+  AwayBringBackInput,
   AwayEmptyInput,
   AwayError,
   AwayPlan,
   AwayPreflightInput,
+  AwaySession,
+  AwaySettingsPatch,
+  AwaySnapshot,
+  AwayStartInput,
 } from "./away.ts";
 
 export const AWAY_RPC_METHODS = {
@@ -21,6 +26,10 @@ export const AWAY_RPC_METHODS = {
   awayAccessStatus: "away.accessStatus",
   awayAccessRequests: "away.accessRequests",
   awayDecideAccess: "away.decideAccess",
+  awayStart: "away.start",
+  awayBringBack: "away.bringBack",
+  awaySnapshot: "away.snapshot",
+  awayUpdateConfig: "away.updateConfig",
 } as const;
 
 const M = AWAY_RPC_METHODS;
@@ -49,4 +58,9 @@ export const awayRpcs = [
     success: AwayAccessRequestRecord,
     error,
   }),
+  // Both answer once the session is saved and keep running; clients follow `away.snapshot`.
+  Rpc.make(M.awayStart, { payload: AwayStartInput, success: AwaySession, error }),
+  Rpc.make(M.awayBringBack, { payload: AwayBringBackInput, success: AwaySession, error }),
+  Rpc.make(M.awaySnapshot, { payload: AwayEmptyInput, success: AwaySnapshot, error }),
+  Rpc.make(M.awayUpdateConfig, { payload: AwaySettingsPatch, success: AwaySnapshot, error }),
 ] as const;

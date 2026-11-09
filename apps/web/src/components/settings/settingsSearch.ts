@@ -1196,9 +1196,23 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "handoff-sleep-target",
-    title: "When this machine sleeps, move running threads",
+    title: "Away target",
     to: "/settings/machines",
-    searchTerms: ["sleep suspend lid close laptop move hand off running threads machine handoff"],
+    searchTerms: [
+      "away sleep suspend lid close laptop move hand off running threads machine handoff",
+    ],
+  },
+  {
+    id: "away-sleep-trigger",
+    title: "Leave automatically when the lid closes",
+    to: "/settings/machines",
+    searchTerms: ["away lid close sleep battery grace leave automatically"],
+  },
+  {
+    id: "away-bring-back",
+    title: "When this machine wakes",
+    to: "/settings/machines",
+    searchTerms: ["away wake bring back return"],
   },
   {
     id: "private-machines-auto-connect",

@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import type { AwayAccessRequestRecord, AwayPlan, EnvironmentId } from "@specweave-studio/contracts";
+import type {
+  AwayAccessRequestRecord,
+  AwayPlan,
+  AwaySession,
+  EnvironmentId,
+} from "@specweave-studio/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -86,6 +91,7 @@ const props = (patch: Partial<AwayDialogViewProps> = {}): AwayDialogViewProps =>
   onRequestAccess: vi.fn(),
   onRecheck: vi.fn(),
   onClose: vi.fn(),
+  onLeave: vi.fn(),
   ...patch,
 });
 
@@ -104,8 +110,83 @@ it("shows the plan grouped by kind with an action and reason per row", async () 
   );
   expect(document.querySelector('[data-away-action="pause"]')?.textContent).toContain("Pauses");
   expect(text).toContain("Needed first (1)");
-  // Leaving is a later phase: the button is there but off.
-  expect(button("Leave (coming next)")?.disabled).toBe(true);
+  // Leave asks once more before anything moves.
+  expect(button("Leave")?.disabled).toBe(false);
+});
+
+it("confirms before leaving, then leaves on the second press", async () => {
+  const onLeave = vi.fn();
+  const onConfirmLeave = vi.fn();
+  await act(async () => root.render(<AwayDialogView {...props({ onLeave, onConfirmLeave })} />));
+  await act(async () => button("Leave")?.click());
+  expect(onLeave).toHaveBeenCalledOnce();
+  expect(onConfirmLeave).not.toHaveBeenCalled();
+  await act(async () =>
+    root.render(<AwayDialogView {...props({ onLeave, onConfirmLeave, confirming: true })} />),
+  );
+  expect(document.querySelector('[data-testid="away-confirm"]')?.textContent).toContain(
+    "go to Ministorm now",
+  );
+  await act(async () => button("Leave for Ministorm")?.click());
+  expect(onConfirmLeave).toHaveBeenCalledOnce();
+});
+
+it("shows the summary after leaving, with Open on links, and offers Bring back", async () => {
+  const onOpenThread = vi.fn();
+  const onBringBack = vi.fn();
+  const session: AwaySession = {
+    sessionId: "s1",
+    targetEnvironmentId: MINI,
+    targetLabel: "Ministorm",
+    trigger: "manual",
+    coordinatorScope: "live",
+    startedAt: "2026-11-09T10:00:00.000Z",
+    finishedAt: "2026-11-09T10:01:00.000Z",
+    stage: "done",
+    bringBackStartedAt: null,
+    broughtBackAt: null,
+    items: [
+      {
+        kind: "thread",
+        id: "t1",
+        title: "Fix the build",
+        outcome: "moved",
+        detail: "Its queued message went too.",
+        targetId: "t1-mini",
+      },
+      {
+        kind: "thread",
+        id: "t2",
+        title: "Write docs",
+        outcome: "handoff-ready",
+        detail: "Ministorm: no .env.local",
+      },
+      {
+        kind: "routine",
+        id: "r1",
+        title: "Deploy hook",
+        outcome: "paused",
+        detail: "Its URL belongs to this machine, so it is paused here until you are back.",
+      },
+    ],
+  };
+  await act(async () =>
+    root.render(
+      <AwayDialogView
+        {...props({ session, selfEnvironmentId: M4, selfLabel: "M4", onOpenThread, onBringBack })}
+      />,
+    ),
+  );
+  const text = document.body.textContent ?? "";
+  expect(text).toContain("Away on Ministorm");
+  expect(text).toContain("Moved to Ministorm (1)");
+  expect(text).toContain("Paused here (1)");
+  expect(text).toContain("Stayed here (1)");
+  expect(text).toContain("Ministorm: no .env.local");
+  await act(async () => button("Open on Ministorm")?.click());
+  expect(onOpenThread).toHaveBeenCalledWith("t1-mini", MINI);
+  await act(async () => button("Bring back")?.click());
+  expect(onBringBack).toHaveBeenCalledOnce();
 });
 
 it("sends every missing item with one Request access button, then waits", async () => {
@@ -125,9 +206,9 @@ it("sends every missing item with one Request access button, then waits", async 
   expect(document.body.textContent).toContain("Waiting for approval on Ministorm.");
 });
 
-it("says what Bring back does for now", async () => {
+it("says when nothing left this machine", async () => {
   await act(async () => root.render(<AwayDialogView {...props({ intent: "back" })} />));
-  expect(document.body.textContent).toContain("Bring work back");
+  expect(document.body.textContent).toContain("Nothing left this machine.");
 });
 
 it("preselects the remembered machine when online, else the first online one", () => {
@@ -180,7 +261,5 @@ it("lists pending access requests and what approving changes", () => {
   expect(
     pendingAccessRequests([request, { ...request, requestId: "r0", status: "approved" }]),
   ).toEqual([request]);
-  expect(requestChangeSummary(request)).toBe(
-    "Approve lets its coordinator manage routines. 1 step still needs doing by hand.",
-  );
+  expect(requestChangeSummary(request)).toBe("Approve applies these here.");
 });

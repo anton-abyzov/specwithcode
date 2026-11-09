@@ -17,6 +17,7 @@ import {
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
+import { StudioFleetWorkerAccess, StudioWorkGrantAccounts } from "./studioFleet.ts";
 
 /** 24-hour "HH:MM" wall-clock time. Mirrors `parseTimeOfDay` on the server. */
 const TimeOfDay = TrimmedNonEmptyString.check(
@@ -361,6 +362,18 @@ export type ScheduledTask = typeof ScheduledTask.Type;
  * credentials. The standby keeps it under the same id as a routine of its
  * own copy of the project, resting until that copy coordinates.
  */
+/**
+ * The work grant another machine's coordinator made or last changed a routine
+ * under, with the limits it had then: the routine runs only while that grant
+ * still allows routines, its project, its sign-in and its mode.
+ */
+export const ScheduledTaskGrantedBy = Schema.Struct({
+  coordinatorEnvironmentId: Schema.String,
+  runtimeCap: Schema.optional(Schema.NullOr(StudioFleetWorkerAccess)),
+  accounts: Schema.optional(StudioWorkGrantAccounts),
+});
+export type ScheduledTaskGrantedBy = typeof ScheduledTaskGrantedBy.Type;
+
 export const CoordinatorRoutineCopy = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -375,6 +388,8 @@ export const CoordinatorRoutineCopy = Schema.Struct({
   modelPinned: Schema.optional(ScheduledTaskModelPinned),
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
   brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
+  /** Set when the routine was made under another machine's grant; the copy keeps that grant's limits. */
+  grantedBy: Schema.optional(ScheduledTaskGrantedBy),
 });
 export type CoordinatorRoutineCopy = typeof CoordinatorRoutineCopy.Type;
 /** At most this many routines travel with one replica. */

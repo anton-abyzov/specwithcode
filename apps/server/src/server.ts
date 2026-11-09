@@ -247,6 +247,15 @@ import * as AwayAccessRoute from "./away/awayAccessRoute.ts";
 import * as AwayAccess from "./away/AwayAccessRequest.ts";
 import * as AwayPlanner from "./away/AwayPlanner.ts";
 import * as AwayRpc from "./away/AwayRpc.ts";
+import * as AwayRunner from "./away/AwayRunner.ts";
+import * as AwayRoutinesRoute from "./away/awayRoutinesRoute.ts";
+import * as AwayReturnRoute from "./away/awayReturnRoute.ts";
+import * as ScheduledTaskTransfer from "./scheduledTasks/ScheduledTaskTransfer.ts";
+import * as AwayHandoverRoute from "./away/awayHandoverRoute.ts";
+import * as AwayIntents from "./away/AwayIntents.ts";
+import * as AwayIntentRoute from "./away/awayIntentRoute.ts";
+import * as AwaySleepRoute from "./away/awaySleepRoute.ts";
+import * as CoordinatorPlannedHandover from "./project/CoordinatorPlannedHandover.ts";
 import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
 import * as TemporaryProjects from "./project/TemporaryProjects.ts";
@@ -733,8 +742,28 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Away mode: the read-only preflight, and access requests between machines.
   // Its RPC handlers live here for the reason the computer-use ones do (see below).
   AwayRpc.layerRpcHandlers.pipe(
+    // Leaving and Bring back (AwayRunner); routine transfer also serves the target's route.
+    Layer.provideMerge(AwayRunner.layer),
+    Layer.provideMerge(ScheduledTaskTransfer.layer),
     Layer.provideMerge(AwayPlanner.layer),
     Layer.provideMerge(AwayAccess.layer.pipe(Layer.provide(FleetTargets.layer))),
+    // The same layers as the intents loop below, so one of each.
+    Layer.provide(
+      Layer.merge(AwayIntents.layer, CoordinatorPlannedHandover.layer).pipe(
+        Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
+        Layer.provide(RemoteWorkers.layerFleetWorkers),
+      ),
+    ),
+    Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+  ),
+  // Away mode: the planned coordinator handover, and the away intents a
+  // sleeping machine leaves here; their routes serve the target's side.
+  AwayIntents.layerLoop.pipe(
+    Layer.provideMerge(AwayIntents.layer),
+    // The lid-close trigger: the desktop main process reports sleep and wake here.
+    Layer.provideMerge(AwaySleepRoute.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
+    Layer.provideMerge(CoordinatorPlannedHandover.layer),
+    Layer.provide([CoordinatorStandbyStore.layer, HandoffPeers.layer, layerCoordinatorLease]),
     Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
   ),
   // Linked copies kept in step between machines without an open app window:
@@ -1016,6 +1045,11 @@ const layerMakeRoutes = Layer.mergeAll(
     FolderTransferRoute.layer,
     HandoffRoute.layer,
     AwayAccessRoute.layer,
+    AwayIntentRoute.layer,
+    AwayHandoverRoute.layer,
+    AwayRoutinesRoute.layer,
+    AwayReturnRoute.layer.pipe(Layer.provide(ProjectionStoreV2.layer)),
+    AwaySleepRoute.routesLayer,
     CoordinatorSuspendRoute.layer,
     MachineNicknameSync.routeLayer,
     GitHubCredentialRoute.routeLayer,

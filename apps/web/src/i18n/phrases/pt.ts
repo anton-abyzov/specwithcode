@@ -319,10 +319,6 @@ export const pt: PhraseCatalog = {
   "WSL only": "Somente WSL",
   "Warn when the app folder is large": "Avisar quando a pasta do app estiver grande",
   "When a thread finishes": "Quando uma thread terminar",
-  "When this machine sleeps, move running threads":
-    "Quando esta máquina dormir, mover threads em andamento",
-  "When this machine sleeps, move running threads to":
-    "Quando esta máquina dormir, mover threads em andamento para",
   "Who can run work here": "Quem pode executar trabalho aqui",
   "Word wrap": "Quebra de linha",
   "Working section (beta)": "Seção Em andamento (beta)",
@@ -467,8 +463,6 @@ export const pt: PhraseCatalog = {
   "Monospace font": "Fonte monoespaçada",
   "Most simulators and emulators that may run at once on each device host. Starting another fails until one is shut down. Physical devices do not count.":
     "Máximo de simuladores e emuladores que podem rodar ao mesmo tempo em cada host de dispositivos. Iniciar outro falha até que um seja desligado. Dispositivos físicos não contam.",
-  "Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count.":
-    "Move as threads que estão prontas para mover. Na medida do possível e só ao suspender. Bloquear a tela não conta.",
   "No coding agent is installed and enabled there.":
     "Nenhum agente de código está instalado e ativado lá.",
   "No routines match this machine and project selection.":
@@ -1732,8 +1726,6 @@ export const pt: PhraseCatalog = {
   "Projects set differently": "Projetos configurados de outro jeito",
   "A removed project": "Um projeto removido",
   "Use default": "Usar padrão",
-  "Machine to move running threads to when this machine sleeps":
-    "Máquina para onde mover threads em execução quando esta máquina dormir",
   "A removed machine": "Uma máquina removida",
   "More options": "Mais opções",
   "Automatic takeover": "Assumir automaticamente",

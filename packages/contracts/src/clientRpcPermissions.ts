@@ -94,6 +94,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.awayAccessStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.awayAccessRequests]: AuthAccessReadScope,
   [WS_METHODS.awayDecideAccess]: AuthAccessWriteScope,
+  // Leaving and Bring back move threads, routines and coordinators; settings are server settings.
+  [WS_METHODS.awayStart]: AuthOrchestrationOperateScope,
+  [WS_METHODS.awayBringBack]: AuthOrchestrationOperateScope,
+  [WS_METHODS.awaySnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.awayUpdateConfig]: AuthSettingsWriteScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkSyncStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,

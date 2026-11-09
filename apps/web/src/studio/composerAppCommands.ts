@@ -68,6 +68,16 @@ export function parseComposerAppCommand(text: string): ComposerAppCommand | null
 }
 
 /**
+ * `/away`, `/back`, `$away` or `$back` as the whole message, else null. These
+ * act on the machine, not a thread, so every composer runs them, a new draft
+ * included, before a thread exists.
+ */
+export function parseAwayAppCommand(text: string): "away" | "back" | null {
+  const command = parseComposerAppCommand(text);
+  return command !== null && isAwayAppCommand(command) ? command : null;
+}
+
+/**
  * The Away commands a `$query` at the start of a message still matches, so
  * the skill menu offers `$away` and `$back` beside the provider's skills.
  */

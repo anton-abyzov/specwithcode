@@ -9,6 +9,7 @@ import {
 
 import {
   addRequest,
+  approvalOutcome,
   grantChangesFor,
   grantUpdateFor,
   localProjectFor,
@@ -198,5 +199,40 @@ describe("who may ask and who may decide", () => {
     expect(
       refusesOwnerOnlyRpc(WS_METHODS.awayPreflight, { kind: "coordinator", environmentId: M4 }),
     ).toBe(false);
+  });
+});
+
+describe("approvalOutcome", () => {
+  const live = { routines: false, projects: { kind: "linked" as const }, revoked: false };
+
+  it("refuses a grant change when the sender has no grant here, so the request stays pending", () => {
+    const outcome = approvalOutcome(record(), null);
+    expect(outcome.kind).toBe("refuse");
+    expect(outcome.kind === "refuse" && outcome.message).toContain("Allow it");
+  });
+
+  it("refuses a grant change on a stopped grant", () => {
+    const outcome = approvalOutcome(record(), { ...live, revoked: true });
+    expect(outcome.kind === "refuse" && outcome.message).toContain("Restore it");
+  });
+
+  it("applies routines to a live grant and counts the steps left by hand", () => {
+    const outcome = approvalOutcome(
+      record({ missing: [gap(), gap({ kind: "secret-file", detail: "no .env.local" })] }),
+      live,
+    );
+    expect(outcome).toEqual({
+      kind: "apply",
+      update: { coordinatorEnvironmentId: M4, routines: true },
+      detail: "Approved. 1 step still needs doing by hand.",
+    });
+  });
+
+  it("approves a request with only manual steps even without a grant", () => {
+    const outcome = approvalOutcome(
+      record({ changes: {}, missing: [gap({ kind: "provider", detail: "no Claude sign-in" })] }),
+      null,
+    );
+    expect(outcome).toMatchObject({ kind: "apply", update: null });
   });
 });

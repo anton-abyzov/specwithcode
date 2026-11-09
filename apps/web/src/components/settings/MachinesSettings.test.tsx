@@ -73,6 +73,8 @@ vi.mock("../ui/tooltip", () => ({
 }));
 vi.mock("../../confirmDialog", () => ({ requestConfirmDialog: vi.fn(async () => true) }));
 vi.mock("./HandoffModeSettings", () => ({ HandoffModeSettings: () => null }));
+// Access requests poll every connected machine; they have their own tests.
+vi.mock("../away/AwayAccessRequests", () => ({ AwayAccessRequestsAll: () => null }));
 vi.mock("./usePrimaryFleet", () => ({ usePrimaryFleet: () => runtime.fleet }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),

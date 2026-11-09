@@ -331,6 +331,15 @@ const requiredScopesForRpcCall = (
  * Methods only this machine's own people may call: they change who may run
  * work here, so another machine's coordinator key is refused even when it
  * holds the scope (as Settings > Machines > Who can run work here is).
+ *
+ * This meets the bar HTTP grant changes set (requireGrantManager in
+ * studioFleetHttp.ts: access:write, a trusted request, never a coordinator
+ * principal). The scope is checked per call below. The trusted request is
+ * checked once, when the socket opens: a cookie session may open one only
+ * from this server's own origin (EnvironmentAuth.authenticateSameOriginRequest),
+ * and any other socket comes from a bearer or DPoP credential or a ticket one
+ * minted, which the HTTP check also lets through without an Origin. So a
+ * socket from the owner's own app is the same-origin request HTTP asks for.
  */
 const OWNER_ONLY_RPC_METHODS: ReadonlySet<string> = new Set([WS_METHODS.awayDecideAccess]);
 

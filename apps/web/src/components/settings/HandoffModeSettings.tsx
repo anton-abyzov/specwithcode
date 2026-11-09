@@ -1,10 +1,15 @@
 import { useTx } from "../../i18n";
-import type {
-  EnvironmentId,
-  HandoffConfig,
-  HandoffConfigPatch,
-  HandoffModeSnapshot,
-  ProjectId,
+import {
+  AWAY_GRACE_MAX_MINUTES,
+  AWAY_GRACE_MIN_MINUTES,
+  type AwayBringBack,
+  type AwaySleepTrigger,
+  type EnvironmentId,
+  type HandoffConfig,
+  type HandoffConfigPatch,
+  type HandoffModeSnapshot,
+  type ProjectId,
+  awayConfigOf,
 } from "@specweave-studio/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
@@ -31,6 +36,23 @@ const TAKEOVER_MINUTES = [0, 5, 15, 30, 60] as const;
 // The server waits at least 5 minutes whatever is stored, so a shorter value reads as 5.
 const takeoverLabel = (minutes: number) =>
   minutes === 0 ? "Off" : `After ${Math.max(5, minutes)} min`;
+
+const SLEEP_TRIGGER_LABELS: Record<AwaySleepTrigger, string> = {
+  off: "Off",
+  "on-battery": "On battery",
+  always: "Always",
+};
+const BRING_BACK_LABELS: Record<AwayBringBack, string> = {
+  prompt: "Ask",
+  "auto-on-power": "Bring back automatically on power",
+  manual: "Do nothing",
+};
+const GRACE_MINUTES = [1, 2, 3, 5, 10, 15] as const;
+const graceLabel = (minutes: number) => `${minutes} min`;
+const isSleepTrigger = (value: unknown): value is AwaySleepTrigger =>
+  value === "off" || value === "on-battery" || value === "always";
+const isBringBack = (value: unknown): value is AwayBringBack =>
+  value === "prompt" || value === "auto-on-power" || value === "manual";
 
 /** A project on this machine whose own setting differs from the machine default. */
 export interface HandoffModeOverride {
@@ -63,6 +85,8 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
   const tx = useTx();
   const { config } = props.snapshot;
   const sleepTarget = props.destinations.find((item) => item.environmentId === config.sleepTarget);
+  const away = awayConfigOf(config);
+  const awayOff = props.pending || config.sleepTarget === null;
   const overrides = props.overrides ?? [];
   return (
     <SettingsSection
@@ -113,8 +137,8 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
       </SettingsRow>
       <SettingsRow
         {...searchableSetting("handoff-sleep-target")}
-        title="When this machine sleeps, move running threads to"
-        description="Moves the threads that are ready to move. Best effort, on sleep only. Locking the screen doesn't count."
+        title="Away target"
+        description="Where Away leaves your threads, routines and coordinators. When this machine sleeps and Away doesn't leave, running threads that are ready to move still go here. Locking the screen doesn't count."
         control={
           <Select
             value={config.sleepTarget ?? "off"}
@@ -125,10 +149,7 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
               })
             }
           >
-            <SelectTrigger
-              size="sm"
-              aria-label={tx("Machine to move running threads to when this machine sleeps")}
-            >
+            <SelectTrigger size="sm" aria-label={tx("Away target")}>
               <SelectValue>
                 {sleepTarget
                   ? destinationText(sleepTarget)
@@ -144,6 +165,84 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
                   {destinationText(destination)}
                 </SelectItem>
               ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("away-sleep-trigger")}
+        title="Leave automatically when the lid closes"
+        description="Hands work to the Away target when this Mac sleeps. The target waits the grace time first, and nothing moves if you're back sooner. Mac only."
+        control={
+          <Select
+            value={away.sleepTrigger}
+            disabled={awayOff}
+            onValueChange={(value) => {
+              if (isSleepTrigger(value)) props.onConfig({ sleepTrigger: value });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label={tx("Leave automatically when the lid closes")}>
+              <SelectValue>{SLEEP_TRIGGER_LABELS[away.sleepTrigger]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="off">{SLEEP_TRIGGER_LABELS.off}</SelectItem>
+              <SelectItem value="on-battery">{SLEEP_TRIGGER_LABELS["on-battery"]}</SelectItem>
+              <SelectItem value="always">{SLEEP_TRIGGER_LABELS.always}</SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        title="Grace time"
+        description="How long the target waits after the lid closes before it takes over."
+        control={
+          <Select
+            value={String(away.graceMinutes)}
+            disabled={awayOff || away.sleepTrigger === "off"}
+            onValueChange={(value) => {
+              const minutes = Number(value);
+              if (
+                Number.isInteger(minutes) &&
+                minutes >= AWAY_GRACE_MIN_MINUTES &&
+                minutes <= AWAY_GRACE_MAX_MINUTES
+              )
+                props.onConfig({ graceMinutes: minutes });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label={tx("Grace time")}>
+              <SelectValue>{graceLabel(away.graceMinutes)}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              {[...new Set<number>([...GRACE_MINUTES, away.graceMinutes])]
+                .sort((a, b) => a - b)
+                .map((minutes) => (
+                  <SelectItem key={minutes} value={String(minutes)}>
+                    {graceLabel(minutes)}
+                  </SelectItem>
+                ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("away-bring-back")}
+        title="When this machine wakes"
+        description="After work left while it slept. Ask shows one button to bring it back."
+        control={
+          <Select
+            value={away.bringBack}
+            disabled={awayOff}
+            onValueChange={(value) => {
+              if (isBringBack(value)) props.onConfig({ bringBack: value });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label={tx("When this machine wakes")}>
+              <SelectValue>{BRING_BACK_LABELS[away.bringBack]}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem value="prompt">{BRING_BACK_LABELS.prompt}</SelectItem>
+              <SelectItem value="auto-on-power">{BRING_BACK_LABELS["auto-on-power"]}</SelectItem>
+              <SelectItem value="manual">{BRING_BACK_LABELS.manual}</SelectItem>
             </SelectPopup>
           </Select>
         }

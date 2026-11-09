@@ -231,6 +231,85 @@ describe("buildAwayPlan routines", () => {
   });
 });
 
+describe("buildAwayPlan when the target cannot say what its grant allows", () => {
+  it("is not ready and asks to update an older target", () => {
+    const plan = buildAwayPlan(
+      facts({
+        routines: [{ id: "r1", title: "R", projectId: P1, webhook: false }],
+        targetGrant: null,
+        targetGrantProblem: "older",
+      }),
+    );
+    expect(plan.ready).toBe(false);
+    expect(plan.missingGrants).toEqual([
+      expect.objectContaining({
+        kind: "work-grant",
+        machineEnvironmentId: MINI,
+        fix: "Update Ministorm to check access.",
+      }),
+    ]);
+  });
+
+  it("is not ready when the check failed", () => {
+    const plan = buildAwayPlan(facts({ targetGrant: null, targetGrantProblem: "failed" }));
+    expect(plan.ready).toBe(false);
+    expect(plan.missingGrants[0]?.detail).toContain("could not check its access");
+  });
+
+  it("adds nothing when the target is already blocked for another reason", () => {
+    const plan = buildAwayPlan(
+      facts({
+        target: { environmentId: MINI, label: "Ministorm", status: "unreachable" },
+        targetGrant: null,
+        targetGrantProblem: "failed",
+      }),
+    );
+    expect(plan.missingGrants).toEqual([]);
+  });
+});
+
+describe("buildAwayPlan routine projects", () => {
+  it("names link, grant and routines steps for every enabled routine's project", () => {
+    const plan = buildAwayPlan(
+      facts({
+        projects: [
+          project({ id: P1, coordinated: false, notInGrant: true }),
+          project({ id: P2, coordinated: false, targetProjectId: null }),
+        ],
+        routines: [
+          { id: "r-insta", title: "Instagram", projectId: P1, webhook: false },
+          { id: "r-site", title: "Site", projectId: P2, webhook: false },
+        ],
+        targetGrant: {
+          routines: false,
+          projects: { kind: "listed", projectIds: [] },
+          revoked: false,
+        },
+      }),
+    );
+    expect(plan.items.filter((entry) => entry.kind === "coordinator")).toEqual([]);
+    expect(plan.missingGrants.map((gap) => [gap.kind, gap.projectId]).toSorted()).toEqual(
+      [
+        ["project-link", P2],
+        ["routines", P1],
+        ["routines", P2],
+        ["work-grant", P1],
+      ].toSorted(),
+    );
+    expect(plan.ready).toBe(false);
+  });
+
+  it("asks nothing for a webhook routine's project", () => {
+    const plan = buildAwayPlan(
+      facts({
+        projects: [project({ id: P2, coordinated: false, targetProjectId: null })],
+        routines: [{ id: "r-hook", title: "Hook", projectId: P2, webhook: true }],
+      }),
+    );
+    expect(plan.missingGrants).toEqual([]);
+  });
+});
+
 describe("buildAwayPlan coordinators", () => {
   it("lists only live coordinators under the default scope, all of them under 'all'", () => {
     const projects = [project({ id: P1 }), project({ id: P2 })];

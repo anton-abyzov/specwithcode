@@ -154,6 +154,15 @@ export const HandoffDocument = Schema.Struct({
   autoContinuePeers: Schema.optionalKey(Schema.Record(Schema.String, AutoContinuePeerState)).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed({})),
   ),
+  /**
+   * Away mode's latest session (AwaySession, 1267), or null. Kept as raw JSON
+   * and decoded by AwayRunner (`awaySessionOf`), so a session another version
+   * wrote reads as none instead of emptying the whole file; an older server
+   * drops the key and keeps the rest.
+   */
+  awaySession: Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type HandoffDocument = typeof HandoffDocument.Type;
 
@@ -167,6 +176,7 @@ export const EMPTY_HANDOFF_DOCUMENT: HandoffDocument = {
   pausedSince: null,
   machineRun: null,
   autoContinuePeers: {},
+  awaySession: null,
 };
 
 export function emptyThreadRecord(projectId: ProjectId): HandoffThreadRecord {
@@ -196,8 +206,16 @@ export function applyConfigPatch(config: HandoffConfig, patch: HandoffConfigPatc
     pushToOrigin: patch.pushToOrigin ?? config.pushToOrigin,
     sleepTarget: patch.sleepTarget === undefined ? config.sleepTarget : patch.sleepTarget,
     autoTakeoverMinutes: patch.autoTakeoverMinutes ?? config.autoTakeoverMinutes,
+    ...pick("sleepTrigger", patch.sleepTrigger ?? config.sleepTrigger),
+    ...pick("graceMinutes", patch.graceMinutes ?? config.graceMinutes),
+    ...pick("bringBack", patch.bringBack ?? config.bringBack),
+    ...pick("coordinatorScope", patch.coordinatorScope ?? config.coordinatorScope),
   };
 }
+
+/** An optional config key, left out when unset so older files stay as they were. */
+const pick = <K extends string, V>(key: K, value: V | undefined) =>
+  (value === undefined ? {} : { [key]: value }) as { [P in K]?: V };
 
 /** Thread setting, else the project's, else the global default. */
 export function effectiveHandoffMode(

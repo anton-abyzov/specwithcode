@@ -148,7 +148,7 @@ const setup = (
           return failOr({
             destinationEnvironmentId: MINI.environmentId,
             destinationLabel: MINI.label,
-            reason: input.reason,
+            reason: input.reason === "sleep" ? "sleep" : "manual",
             startedAt: "2026-10-20T00:00:00.000Z",
             finishedAt: "2026-10-20T00:00:05.000Z",
             results: (input.threadIds ?? []).map((threadId, index) =>
