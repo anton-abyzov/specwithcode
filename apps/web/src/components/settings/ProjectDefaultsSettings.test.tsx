@@ -235,7 +235,7 @@ describe("web workspace default presentation", () => {
       .map((section) => section.props["aria-label"]);
     expect(titles).toEqual(
       expect.arrayContaining([
-        "Model",
+        "Thread and worker model",
         "Permissions",
         "Use worktrees",
         "Submodules",
