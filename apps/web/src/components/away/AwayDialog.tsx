@@ -568,7 +568,7 @@ export function AwayDialogView(props: AwayDialogViewProps) {
             ) : null}
             {props.confirming && plan ? (
               <p role="status" className="text-sm" data-testid="away-confirm">
-                {`Running and queued threads, routines and coordinators listed as Moves go to ${targetLabel} now. The rest stay here and are listed in the summary.`}
+                {`Running and queued threads, routines and coordinators listed as Moves go to ${targetLabel} now. The rest stay here and are listed in the summary. ${targetLabel} becomes your Away target: the next Leave and closing the lid use it. Change it in Settings, Machines.`}
               </p>
             ) : null}
             {props.actError ? (

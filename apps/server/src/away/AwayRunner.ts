@@ -214,6 +214,11 @@ export interface AwayRunnerDeps {
   readonly selfEnvironmentId: EnvironmentId;
   readonly loadSession: Effect.Effect<AwaySession | null>;
   readonly saveSession: (session: AwaySession) => Effect.Effect<void>;
+  /**
+   * Keeps the machine a person left for as this machine's Away target, the one
+   * the next Leave preselects and lid close uses. Never fails a Leave.
+   */
+  readonly rememberTarget?: (target: EnvironmentId) => Effect.Effect<void>;
   readonly plan: (
     input: AwayPreflightInput,
     options?: { readonly inDoubtProjectIds?: ReadonlyArray<ProjectId> },
@@ -651,6 +656,8 @@ export const makeAwayRunner = (deps: AwayRunnerDeps) => {
                 ],
               };
         yield* deps.saveSession(session);
+        if ((input.trigger ?? "manual") === "manual" && deps.rememberTarget !== undefined)
+          yield* deps.rememberTarget(input.targetEnvironmentId);
         yield* deps.fork(guarded(runLeaving(session).pipe(Effect.asVoid)));
         return { session, forked: true };
       }),
@@ -1066,6 +1073,13 @@ export const make = Effect.gen(function* () {
     selfEnvironmentId: handoff.environmentId,
     loadSession,
     saveSession,
+    rememberTarget: (target) =>
+      handoff.updateConfig({ sleepTarget: target }).pipe(
+        Effect.asVoid,
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Away could not remember its target", { cause }),
+        ),
+      ),
     plan: (input, options) => planner.preflight(input, options),
     now: nowIso,
     newId: crypto.randomUUIDv4.pipe(Effect.orDie),

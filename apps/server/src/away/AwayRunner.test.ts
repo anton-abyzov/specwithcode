@@ -250,6 +250,27 @@ describe("AwayRunner leaving", () => {
     }),
   );
 
+  it.effect("remembers the machine a person left for, but not one a lid close chose", () =>
+    Effect.gen(function* () {
+      const remembered: Array<string> = [];
+      const h = harness({});
+      const deps = {
+        ...h.deps,
+        rememberTarget: (target: EnvironmentId) => Effect.sync(() => void remembered.push(target)),
+      };
+      yield* makeAwayRunner(deps).start({ targetEnvironmentId: TARGET });
+      expect(remembered).toEqual([TARGET]);
+
+      const asleep = harness({});
+      const slept: Array<string> = [];
+      yield* makeAwayRunner({
+        ...asleep.deps,
+        rememberTarget: (target: EnvironmentId) => Effect.sync(() => void slept.push(target)),
+      }).start({ targetEnvironmentId: TARGET, trigger: "sleep" });
+      expect(slept).toEqual([]);
+    }),
+  );
+
   it.effect("refuses to leave again while work is still on the target", () =>
     Effect.gen(function* () {
       const h = harness({});
