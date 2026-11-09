@@ -45,7 +45,7 @@ function provider(usedPercent: number, checkedAt: string): ServerProvider {
           label: "Session",
           usedPercent,
           windowDurationMins: 300,
-          resetsAt: "2026-10-26T14:00:00.000Z",
+          resetsAt: at(240),
         },
       ],
     },
@@ -97,6 +97,10 @@ const lifetime = (stateDir: string) =>
     return { service, scope, providerChanges, sourceChanges };
   });
 
+// History keeps fourteen days by the real clock, so readings sit an hour ago.
+const base = Math.floor(Date.now() / 60_000) * 60_000 - 60 * 60_000;
+const at = (minutes: number) => new Date(base + minutes * 60_000).toISOString();
+
 describe("UsageLimitHistory", () => {
   it.live("records native and hub reads, serves them, and keeps them across a restart", () =>
     Effect.gen(function* () {
@@ -105,9 +109,9 @@ describe("UsageLimitHistory", () => {
       const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "usage-limit-history-" });
 
       const first = yield* lifetime(stateDir);
-      yield* PubSub.publish(first.providerChanges, [provider(10, "2026-10-26T10:00:00.000Z")]);
-      yield* PubSub.publish(first.providerChanges, [provider(25, "2026-10-26T10:20:00.000Z")]);
-      yield* PubSub.publish(first.sourceChanges, [hub(40, "2026-10-26T10:05:00.000Z")]);
+      yield* PubSub.publish(first.providerChanges, [provider(10, at(0))]);
+      yield* PubSub.publish(first.providerChanges, [provider(25, at(20))]);
+      yield* PubSub.publish(first.sourceChanges, [hub(40, at(5))]);
       yield* Effect.sleep("20 millis");
 
       const read = yield* first.service.read({ sinceHours: 336 });
@@ -119,12 +123,12 @@ describe("UsageLimitHistory", () => {
         windowKind: "session",
         windowDurationMins: 300,
         samples: [
-          { at: "2026-10-26T10:00:00.000Z", usedPercent: 10 },
-          { at: "2026-10-26T10:20:00.000Z", usedPercent: 25 },
+          { at: at(0), usedPercent: 10 },
+          { at: at(20), usedPercent: 25 },
         ],
       });
       expect(byAccount["codex:pro@example.com"]?.samples).toEqual([
-        { at: "2026-10-26T10:05:00.000Z", usedPercent: 40 },
+        { at: at(5), usedPercent: 40 },
       ]);
 
       // Shutdown writes what was recorded since the last periodic save.
