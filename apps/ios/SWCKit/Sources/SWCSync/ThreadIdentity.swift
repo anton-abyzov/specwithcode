@@ -80,7 +80,7 @@ public struct ThreadIdentity: Hashable, Sendable {
 
   public static func modelBrand(_ slug: String) -> String? {
     let value = slug.lowercased().split(separator: "/").last.map(String.init) ?? slug.lowercased()
-    if value.hasPrefix("claude") || value.hasPrefix("opus") || value.hasPrefix("sonnet") || value.hasPrefix("haiku") { return "claude" }
+    if value.hasPrefix("claude") || value.hasPrefix("opus") || value.hasPrefix("sonnet") || value.hasPrefix("haiku") || value.hasPrefix("fable") { return "claude" }
     if value.hasPrefix("gpt-") || value.hasPrefix("o3") || value.hasPrefix("o4") { return "openai" }
     if value.hasPrefix("gemini") { return "gemini" }
     if value.hasPrefix("grok") { return "grok" }
@@ -90,7 +90,7 @@ public struct ThreadIdentity: Hashable, Sendable {
   static func modelName(_ slug: String) -> String {
     // Known family/version ids only; a custom model keeps its exact identifier.
     let lower = slug.lowercased()
-    for family in ["opus", "sonnet", "haiku"] {
+    for family in ["opus", "sonnet", "haiku", "fable"] {
       let prefix = "claude-\(family)-"
       if lower.hasPrefix(prefix) {
         let version = String(slug.dropFirst(prefix.count))

@@ -160,10 +160,16 @@ export function tierModelFor(
   const order: ReadonlyArray<ProviderModelTier> =
     tier === "frontier" ? ["frontier", "regular"] : ["regular"];
   for (const wanted of order) {
-    const own =
-      tiers?.[provider.instanceId]?.[wanted] ??
-      tiers?.[provider.driver]?.[wanted] ??
-      DEFAULT_PROVIDER_MODEL_TIERS[provider.driver]?.[wanted];
+    const chosen = tiers?.[provider.instanceId]?.[wanted] ?? tiers?.[provider.driver]?.[wanted];
+    const builtIn = DEFAULT_PROVIDER_MODEL_TIERS[provider.driver]?.[wanted];
+    // A built-in default follows its family to the newest release the provider
+    // lists (newer or older than the literal), so a new model takes the tier
+    // without a code change; a person's choice stays exact.
+    if (chosen === undefined && builtIn !== undefined) {
+      const newer = newestOfFamily(provider, builtIn);
+      if (newer !== undefined) return newer;
+    }
+    const own = chosen ?? builtIn;
     if (own !== undefined) {
       const slug = sameModelOn(provider, { slug: own });
       if (slug !== undefined) return slug;
@@ -176,6 +182,39 @@ export function tierModelFor(
     }
   }
   return undefined;
+}
+
+const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
+
+/**
+ * The newest model `provider` lists of the same family as `slug` (same name
+ * stem, numeric version after it). Slugs without a trailing version
+ * (`gpt-6-astra`) and dated snapshots never match.
+ */
+export function newestOfFamily(
+  provider: Pick<ServerProvider, "models">,
+  slug: string,
+): string | undefined {
+  const base = VERSIONED_SLUG.exec(slug);
+  if (!base) return undefined;
+  const version = (value: string) => value.split(/[.-]/).map(Number);
+  const compare = (a: number[], b: number[]) => {
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      const diff = (a[i] ?? 0) - (b[i] ?? 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  };
+  let best: { slug: string; version: number[] } | undefined;
+  for (const model of provider.models) {
+    if (model.isCustom) continue;
+    const match = VERSIONED_SLUG.exec(model.slug);
+    if (!match || match[1] !== base[1]) continue;
+    const candidate = version(match[2]!);
+    if (!best || compare(candidate, best.version) > 0)
+      best = { slug: model.slug, version: candidate };
+  }
+  return best?.slug;
 }
 
 /** Drivers whose tier models a provider without its own entry borrows, in order. */

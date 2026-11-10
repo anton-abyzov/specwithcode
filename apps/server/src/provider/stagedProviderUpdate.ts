@@ -132,7 +132,7 @@ interface PsRow {
 
 /** Rows of `ps -o pid=,ppid=,command=`; `pid=,command=` rows and bare commands also parse. */
 function parsePsRows(output: string): PsRow[] {
-  return output.split("\n").flatMap((line): PsRow[] => {
+  return output.split(/\r?\n/).flatMap((line): PsRow[] => {
     if (!line.trim()) return [];
     const full = /^\s*(\d+)\s+(\d+)\s+(\S.*)$/.exec(line);
     if (full) return [{ pid: Number(full[1]), ppid: Number(full[2]), command: full[3]! }];
@@ -159,8 +159,8 @@ const INTERACTIVE_SHELLS = new Set([
 /** argv0 basename, leading "-" (login shell) stripped, is an interactive shell. */
 function isInteractiveShell(command: string | undefined) {
   if (command === undefined) return false;
-  const [argv0 = ""] = command.trim().split(/\s+/);
-  const name = (argv0.split("/").pop() ?? argv0).replace(/^-/, "").toLowerCase();
+  const [argv0 = ""] = commandTokens(command);
+  const name = basename(argv0).replace(/^-/, "").toLowerCase();
   return INTERACTIVE_SHELLS.has(name.replace(/\.exe$/, ""));
 }
 
@@ -186,7 +186,14 @@ function ownedByServer(
   return false;
 }
 
-const basename = (value: string) => value.split("/").pop() ?? value;
+/** Either separator, so Windows paths (`C:\\...\\claude.exe`) name their file too. */
+const basename = (value: string) => value.split(/[\\/]/).pop() ?? value;
+const forwardSlashes = (value: string) => value.replaceAll("\\", "/");
+
+/** Whitespace-separated words; a double-quoted word (`"C:\\Program Files\\..."`) stays whole. */
+function commandTokens(command: string): string[] {
+  return [...command.trim().matchAll(/"([^"]*)"|(\S+)/g)].map((match) => match[1] ?? match[2]!);
+}
 
 /**
  * Processes that would hold this installer's files. `commands` is `ps -o pid=,ppid=,command=`
@@ -203,13 +210,13 @@ export function findProviderProcessesInUse(
   const name = provider === "claudeAgent" ? "claude" : provider;
   // argv0's basename only, case-sensitive: "Claude" (the desktop app) and a "/codex/" folder
   // in an argument are not the CLI.
-  const argv0 = (command: string) => basename(command.trim().split(/\s+/)[0] ?? "");
+  const argv0 = (command: string) => basename(commandTokens(command)[0] ?? "");
   const named = (command: string) => argv0(command).replace(/\.(?:exe|cmd)$/i, "") === name;
   const targets = paths.filter((target) => target.length > 0);
   const scoped = targets.length > 0 || !!packageName;
   // `node <dir>/bin/codex`: the CLI's JS entrypoint, often through a version-manager shim.
   const nodeEntrypoint = (command: string) => {
-    const [executable = "", script] = command.trim().split(/\s+/);
+    const [executable = "", script] = commandTokens(command);
     const scriptName = script ? basename(script).toLowerCase() : "";
     return (
       /^node(?:js)?(?:\.exe)?$/i.test(basename(executable)) &&
@@ -217,8 +224,11 @@ export function findProviderProcessesInUse(
     );
   };
   const runsInstall = (command: string) =>
-    targets.some((target) => command.includes(target)) ||
-    (!!packageName && command.includes(`/node_modules/${packageName}/`));
+    targets.some(
+      (target) =>
+        command.includes(target) || forwardSlashes(command).includes(forwardSlashes(target)),
+    ) ||
+    (!!packageName && forwardSlashes(command).includes(`/node_modules/${packageName}/`));
   const rows = parsePsRows(commands);
   const parents = new Map<number, number>();
   const commandsByPid = new Map<number, string>();
@@ -230,7 +240,7 @@ export function findProviderProcessesInUse(
   const managedStore = (command: string) =>
     name === "codex" &&
     !targets.some((target) => command.includes(target)) &&
-    (command.trim().split(/\s+/)[0] ?? "").includes("/.codex/packages/");
+    forwardSlashes(commandTokens(command)[0] ?? "").includes("/.codex/packages/");
   return rows.flatMap((row) => {
     if (
       options.selfPid !== undefined &&
@@ -245,7 +255,7 @@ export function findProviderProcessesInUse(
 
 /** Executable basename plus a path tail or subcommand; later arguments may hold prompts or secrets. */
 export function shortProcessLabel(command: string): string {
-  const [executable = "", second] = command.trim().split(/\s+/);
+  const [executable = "", second] = commandTokens(command).map(forwardSlashes);
   const tail = (value: string) => {
     const parts = value.split("/").filter(Boolean);
     return parts.length > 2 ? `.../${parts.slice(-2).join("/")}` : value;
@@ -271,14 +281,22 @@ export async function assertProviderInstallerIdle(
   packageName?: string,
 ) {
   const name = provider === "claudeAgent" ? "claude" : provider;
-  if (!/^[a-zA-Z0-9_-]+$/.test(name) || process.platform === "win32")
-    throw new Error(
+  const unverifiable = () =>
+    new Error(
       "Cannot verify that this installer is idle. Update with its owning installer after closing provider sessions.",
     );
-  const { stdout } = await exec("/bin/ps", ["-axww", "-o", "pid=,ppid=,command="], {
-    timeout: 5000,
-    maxBuffer: 4 * 1024 * 1024,
-  });
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw unverifiable();
+  const stdout =
+    process.platform === "win32"
+      ? await listWindowsProcesses().catch(() => {
+          throw unverifiable();
+        })
+      : (
+          await exec("/bin/ps", ["-axww", "-o", "pid=,ppid=,command="], {
+            timeout: 5000,
+            maxBuffer: 4 * 1024 * 1024,
+          })
+        ).stdout;
   const matches = findProviderProcessesInUse(stdout, provider, paths, packageName, {
     selfPid: process.pid,
   });
@@ -290,4 +308,21 @@ export async function assertProviderInstallerIdle(
         "Update anyway to install now; running sessions keep the current version until they restart. No processes were stopped.",
     );
   }
+}
+
+/**
+ * Windows has no `ps`: the same `pid ppid command` rows from Win32_Process.
+ * A process whose command line is hidden (another user's) reports its name.
+ */
+export const WINDOWS_PROCESS_LIST_SCRIPT =
+  'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { $c = if ($_.CommandLine) { $_.CommandLine } else { $_.Name }; Write-Output ("{0} {1} {2}" -f $_.ProcessId, $_.ParentProcessId, ($c -replace "[\\r\\n]+", " ")) }';
+
+export async function listWindowsProcesses(): Promise<string> {
+  const { stdout } = await exec(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_LIST_SCRIPT],
+    { timeout: 15_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+  );
+  if (!/^\s*\d+\s+\d+\s+\S/m.test(stdout)) throw new Error("Empty Windows process list");
+  return stdout;
 }

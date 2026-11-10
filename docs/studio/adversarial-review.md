@@ -45,7 +45,7 @@ Built-in defaults:
 
 | Provider | Regular     | Frontier        |
 | -------- | ----------- | --------------- |
-| Claude   | Opus 5.5    | Fable 5.1       |
+| Claude   | Opus 5.5    | Fable 5.2       |
 | Codex    | GPT-6.1 Sol | GPT-6 Astra     |
 | Muse     | Wonder 1.0  | Wonder Full 1.0 |
 

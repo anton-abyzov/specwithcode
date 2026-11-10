@@ -160,6 +160,10 @@ export const independentProviderMaintenance = Effect.fn("independentProviderMain
           base,
           "node_modules/@anthropic-ai/claude-code-darwin-arm64/package.json",
         );
+        // A release provisioned with only the platform package (no
+        // `@anthropic-ai/claude-code` wrapper package) is the same binary; its
+        // owner then pins the platform package directly.
+        const nativeOnly = !(yield* fs.exists(packageJson));
         if (
           !node ||
           !npmPath ||
@@ -167,23 +171,25 @@ export const independentProviderMaintenance = Effect.fn("independentProviderMain
             wrapper,
             entrypoint,
             path.join(base, "package.json"),
-            packageJson,
+            ...(nativeOnly ? [] : [packageJson]),
             nativeJson,
           ])) ||
           (yield* fs.stat(entrypoint)).type !== "File"
         )
           return null;
-        const pkg = yield* boundedJson(packageJson);
+        const pkg = nativeOnly ? null : yield* boundedJson(packageJson);
         const native = yield* boundedJson(nativeJson);
         const owner = yield* boundedJson(path.join(base, "package.json"));
-        const version = field(pkg, "version");
+        const nativeName = "@anthropic-ai/claude-code-darwin-arm64";
+        const version = field(nativeOnly ? native : pkg, "version");
         if (
-          field(pkg, "name") !== input.packageName ||
+          (!nativeOnly && field(pkg, "name") !== input.packageName) ||
           typeof version !== "string" ||
           !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version) ||
-          field(native, "name") !== "@anthropic-ai/claude-code-darwin-arm64" ||
+          field(native, "name") !== nativeName ||
           field(native, "version") !== version ||
-          field(field(owner, "dependencies"), input.packageName) !== version
+          field(field(owner, "dependencies"), nativeOnly ? nativeName : input.packageName) !==
+            version
         )
           return null;
         return {

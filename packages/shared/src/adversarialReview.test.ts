@@ -13,7 +13,7 @@ import {
   resolveReviewer,
   reviewerChain,
 } from "./adversarialReview.ts";
-import { tierModelFor } from "./modelTiers.ts";
+import { newestOfFamily, tierModelFor } from "./modelTiers.ts";
 
 const now = Date.parse("2026-11-04T08:00:00.000Z");
 const fresh = DateTime.formatIso(DateTime.makeUnsafe(now));
@@ -78,10 +78,33 @@ const author = sel("claudeAgent", "claude-opus-5-5");
 describe("tierModelFor", () => {
   it("uses the built-in regular and frontier models", () => {
     expect(tierModelFor(claude, "regular")).toBe("claude-opus-5-5");
+    // The literal names Fable 5.2; a provider still on 5.1 keeps its newest Fable.
     expect(tierModelFor(claude, "frontier")).toBe("claude-fable-5-1");
     expect(tierModelFor(codex, "regular")).toBe("gpt-6.1-sol");
     expect(tierModelFor(codex, "frontier")).toBe("gpt-6-astra");
     expect(tierModelFor(muse, "frontier")).toBe("muse-wonder-full-1.0");
+  });
+
+  it("follows a built-in default to the newest listed release of its family", () => {
+    const newer = provider(
+      "claudeAgent",
+      "claudeAgent",
+      [
+        "claude-opus-5-5",
+        "claude-fable-5-1",
+        "claude-fable-5-2",
+        "claude-fable-6",
+        "claude-haiku-4-5-20251001",
+      ],
+      20,
+    );
+    expect(tierModelFor(newer, "frontier")).toBe("claude-fable-6");
+    expect(tierModelFor(newer, "regular")).toBe("claude-opus-5-5");
+    expect(tierModelFor(newer, "frontier", { claudeAgent: { frontier: "claude-fable-5-1" } })).toBe(
+      "claude-fable-5-1",
+    );
+    expect(newestOfFamily(newer, "gpt-6-astra")).toBeUndefined();
+    expect(newestOfFamily(muse, "muse-wonder-1.0")).toBe("muse-wonder-1.0");
   });
 
   it("prefers the person's choice for the instance, then for the driver", () => {
