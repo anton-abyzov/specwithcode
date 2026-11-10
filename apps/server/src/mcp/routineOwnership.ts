@@ -1,7 +1,9 @@
 /**
- * A grantee runs, changes or deletes only routines its own grant made: the
- * owner's routines here stay the owner's, and another machine's stay that
- * machine's. The same rule update_scheduled_task applies.
+ * A `team` grantee runs, changes or deletes only routines its own grant made:
+ * the owner's routines here stay the owner's, and another machine's stay that
+ * machine's. Work under an `own` grant acts for the owner, so it may also
+ * manage the owner's routines: those set up here and those made under any
+ * `own` grant. update_scheduled_task and delete_scheduled_task apply it too.
  */
 import {
   OrchestratorMcpFailure,
@@ -16,13 +18,15 @@ import type { WorkGrantContext } from "./workGrantAccess.ts";
 /** Why `work` may not act on the routine, or null when its own grant made it. */
 export function othersRoutineRefusal(
   work: Pick<WorkGrantContext, "coordinatorLabel"> & {
-    readonly grant: Pick<WorkGrantContext["grant"], "coordinatorEnvironmentId">;
+    readonly grant: Pick<WorkGrantContext["grant"], "coordinatorEnvironmentId" | "kind">;
   },
   task: { readonly title: string },
-  grantedBy: Pick<ScheduledTaskGrantedBy, "coordinatorEnvironmentId"> | undefined,
+  grantedBy: Pick<ScheduledTaskGrantedBy, "coordinatorEnvironmentId" | "kind"> | undefined,
   action: "change" | "run" | "delete" = "change",
 ): string | null {
   if (grantedBy?.coordinatorEnvironmentId === work.grant.coordinatorEnvironmentId) return null;
+  if (work.grant.kind === "own" && (grantedBy === undefined || grantedBy.kind === "own"))
+    return null;
   const where =
     grantedBy === undefined ? "was set up on this machine" : "was set up by another machine's work";
   return `Routine "${task.title}" ${where}, so ${work.coordinatorLabel}'s work can't ${action} it. Ask the user here to ${action} it, or schedule a new routine.`;

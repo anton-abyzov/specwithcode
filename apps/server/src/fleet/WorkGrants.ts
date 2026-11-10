@@ -26,6 +26,8 @@ import {
   coordinatorOfPrincipal,
   coordinatorOfWorkerLabel,
   type EffectiveWorkGrant,
+  grantKindOf,
+  managingCoordinators,
   newGrantDefaults,
   unscopedGrant,
   type WorkOrigin,
@@ -56,6 +58,12 @@ export const WorkGrantPolicyRecord = Schema.Struct({
    * projects. Absent in files written before it existed: off, unless legacy.
    */
   routines: Schema.optionalKey(Schema.Boolean),
+  /**
+   * When routines were settled for good: turned on once because the grant
+   * became `own` (its coordinator manages this machine), or chosen by the
+   * owner. After it is set nothing turns routines on by itself again.
+   */
+  routinesSettledAt: Schema.optionalKey(Schema.String),
   runtimeCap: Schema.NullOr(StudioFleetWorkerAccess),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -169,12 +177,17 @@ export class WorkGrants extends Context.Reference<WorkGrantsShape>("studio/fleet
 const isWorkGrantsError = Schema.is(WorkGrantsError);
 const decodeWorkerAccess = Schema.decodeUnknownOption(StudioFleetWorkerAccess);
 
-export const effectiveGrant = (record: WorkGrantPolicyRecord): EffectiveWorkGrant =>
+/** The grant `record` allows; `managers` are the coordinators that manage this machine. */
+export const effectiveGrant = (
+  record: WorkGrantPolicyRecord,
+  managers: ReadonlySet<string> = new Set(),
+): EffectiveWorkGrant =>
   record.legacy
     ? {
         ...unscopedGrant(EnvironmentId.make(record.coordinatorEnvironmentId)),
         legacy: true,
         revoked: record.revokedAt !== null,
+        kind: grantKindOf({ ...record, owner: "self" }, managers),
       }
     : {
         coordinatorEnvironmentId: EnvironmentId.make(record.coordinatorEnvironmentId),
@@ -184,7 +197,24 @@ export const effectiveGrant = (record: WorkGrantPolicyRecord): EffectiveWorkGran
         hopLimit: workGrantHopLimit(record.owner),
         revoked: record.revokedAt !== null,
         routines: record.routines === true,
+        kind: grantKindOf(record, managers),
       };
+
+/**
+ * Turns routines on once for a scoped grant that has become `own`, and
+ * stamps when, so the owner's later "off" is kept. A legacy grant already
+ * allows routines and is left as it is.
+ */
+export const withOwnRoutines = (
+  record: WorkGrantPolicyRecord,
+  managers: ReadonlySet<string>,
+  now: string,
+): WorkGrantPolicyRecord =>
+  !record.legacy &&
+  record.routinesSettledAt === undefined &&
+  grantKindOf(record, managers) === "own"
+    ? { ...record, routines: true, routinesSettledAt: now, updatedAt: now }
+    : record;
 
 const isoOf = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
@@ -211,6 +241,14 @@ export const make = Effect.gen(function* () {
             }),
         ),
     ),
+  );
+
+  /** Coordinators holding a management pairing here: the owner's own machines. */
+  const managers = auth.listSessions().pipe(
+    Effect.map((sessions) =>
+      managingCoordinators(sessions, EnvironmentAuth.FLEET_INVITATION_SUBJECT),
+    ),
+    Effect.orElseSucceed((): ReadonlySet<string> => new Set()),
   );
 
   const write = (file: StoreFile) =>
@@ -311,10 +349,35 @@ export const make = Effect.gen(function* () {
     ] as const;
   };
 
+  /**
+   * Settles one coordinator's policy: `change`, then the one-time routines
+   * upgrade when it has become `own`, logged as the audit line.
+   */
+  const settle = (
+    coordinatorEnvironmentId: string,
+    change: (record: WorkGrantPolicyRecord) => WorkGrantPolicyRecord,
+  ) =>
+    Effect.gen(function* () {
+      const managing = yield* managers;
+      let upgraded = false;
+      const record = yield* modify((file, now) =>
+        upsertPolicy(file, coordinatorEnvironmentId, now, (current) => {
+          const changed = change(current);
+          const next = withOwnRoutines(changed, managing, isoOf(now));
+          upgraded = next !== changed;
+          return next;
+        }),
+      );
+      if (upgraded)
+        yield* Effect.logInfo(
+          "Work grant: allowed routines for the owner's own machine, once. Turn it off in Settings > Machines.",
+          { coordinatorEnvironmentId },
+        );
+      return effectiveGrant(record, managing);
+    });
+
   const forCoordinator: WorkGrantsShape["forCoordinator"] = (coordinatorEnvironmentId) =>
-    modify((file, now) =>
-      upsertPolicy(file, coordinatorEnvironmentId, now, (record) => record),
-    ).pipe(Effect.map(effectiveGrant));
+    settle(coordinatorEnvironmentId, (record) => record);
 
   const forClient: WorkGrantsShape["forClient"] = (client) => {
     if (
@@ -328,13 +391,11 @@ export const make = Effect.gen(function* () {
     const coordinator = coordinatorOfPrincipal(client?.principal);
     if (client === undefined || coordinator === undefined) return Effect.succeed(undefined);
     const cap = decodeWorkerAccess(client.access);
-    return modify((file, now) =>
-      upsertPolicy(file, coordinator, now, (record) =>
-        cap._tag === "Some" && record.runtimeCap !== cap.value
-          ? { ...record, runtimeCap: cap.value }
-          : record,
-      ),
-    ).pipe(Effect.map(effectiveGrant));
+    return settle(coordinator, (record) =>
+      cap._tag === "Some" && record.runtimeCap !== cap.value
+        ? { ...record, runtimeCap: cap.value }
+        : record,
+    );
   };
 
   const originOf: WorkGrantsShape["originOf"] = (thread) =>
@@ -405,6 +466,9 @@ export const make = Effect.gen(function* () {
         const routines = input.routines ?? (record.legacy || record.routines === true);
         return {
           ...record,
+          ...(input.routines === undefined || record.routinesSettledAt !== undefined
+            ? {}
+            : { routinesSettledAt: isoOf(now) }),
           projects: input.projects ?? record.projects,
           accounts,
           owner,

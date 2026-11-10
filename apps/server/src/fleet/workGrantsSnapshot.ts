@@ -22,7 +22,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { coordinatorOfPrincipal } from "./workGrantPolicy.ts";
+import { coordinatorOfPrincipal, grantKindOf, managingCoordinators } from "./workGrantPolicy.ts";
 import * as WorkGrants from "./WorkGrants.ts";
 
 type WorkGrantProjectChoice = StudioWorkGrantsSnapshot["projects"][number];
@@ -125,7 +125,9 @@ export const workGrantsSnapshot = (input: {
     const grants = yield* WorkGrants.WorkGrants;
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const now = yield* Clock.currentTimeMillis;
-    const sessions = (yield* auth.listSessions()).flatMap((session) => {
+    const allSessions = yield* auth.listSessions();
+    const managers = managingCoordinators(allSessions, EnvironmentAuth.FLEET_INVITATION_SUBJECT);
+    const sessions = allSessions.flatMap((session) => {
       if (session.subject !== EnvironmentAuth.MCP_CLIENT_SUBJECT) return [];
       const coordinator = coordinatorOfPrincipal(session.principal);
       return coordinator === undefined ? [] : [{ coordinator, session }];
@@ -171,6 +173,7 @@ export const workGrantsSnapshot = (input: {
         ).length,
         legacy: policy.legacy,
         routines: policy.legacy || policy.routines === true,
+        kind: grantKindOf(policy.legacy ? { ...policy, owner: "self" } : policy, managers),
       };
     });
     const projects = yield* ProjectService.ProjectService;

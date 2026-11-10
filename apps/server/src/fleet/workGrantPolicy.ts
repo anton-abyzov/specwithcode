@@ -9,6 +9,7 @@ import {
 } from "@specweave-studio/contracts";
 import {
   type StudioWorkGrantAccounts,
+  type StudioWorkGrantKind,
   type StudioWorkGrantOwner,
   type StudioWorkGrantProjects,
   workGrantHopLimit,
@@ -50,6 +51,12 @@ export interface EffectiveWorkGrant {
   /** Whether its coordinator may manage scheduled routines in the grant's projects. */
   readonly routines: boolean;
   /**
+   * `own` while the coordinator also holds a management pairing here and the
+   * grant is the owner's: its work then acts on routines as the owner would.
+   * Absent reads as `team`.
+   */
+  readonly kind?: StudioWorkGrantKind;
+  /**
    * A grant this machine kept for a coordinator already allowed before grants
    * existed (the owner's own machines): its work keeps steering this
    * machine's threads as it did then.
@@ -67,6 +74,26 @@ export const unscopedGrant = (coordinatorEnvironmentId: EnvironmentId): Effectiv
   revoked: false,
   routines: true,
 });
+
+/** Every coordinator that holds a management pairing (a fleet invitation) among `sessions`. */
+export const managingCoordinators = (
+  sessions: ReadonlyArray<{ readonly subject: string; readonly principal?: AuthPrincipal }>,
+  managementSubject: string,
+): ReadonlySet<string> =>
+  new Set(
+    sessions.flatMap((session) => {
+      if (session.subject !== managementSubject) return [];
+      const id = coordinatorOfPrincipal(session.principal);
+      return id === undefined ? [] : [id as string];
+    }),
+  );
+
+/** A grant is `own` only when it is the owner's and its coordinator manages this machine. */
+export const grantKindOf = (
+  policy: { readonly owner: StudioWorkGrantOwner; readonly coordinatorEnvironmentId: string },
+  managers: ReadonlySet<string>,
+): StudioWorkGrantKind =>
+  policy.owner === "self" && managers.has(policy.coordinatorEnvironmentId) ? "own" : "team";
 
 /** A coordinator's first grant: its linked projects; another person's gets no sign-ins. */
 export const newGrantDefaults = (owner: StudioWorkGrantOwner) => ({

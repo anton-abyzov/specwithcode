@@ -199,7 +199,12 @@ export function MachineWorkGrantRow({
     >
       <div className="flex min-w-0 items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm">{grant.machineLabel}</h3>
+          <h3 className="flex min-w-0 items-center gap-2 text-sm">
+            <span className="truncate">{grant.machineLabel}</span>
+            <span className="shrink-0 rounded-full border border-border px-1.5 text-2xs text-muted-foreground">
+              {tx(grant.kind === "own" ? "Your machine" : "Shared")}
+            </span>
+          </h3>
           <p className={`text-xs ${revoked ? "text-warning-foreground" : "text-muted-foreground"}`}>
             {workGrantStatus(grant)}
           </p>
@@ -354,9 +359,11 @@ export function MachineWorkGrantRow({
           />
           <span className="min-w-0 text-muted-foreground">
             {tx(
-              grant.routines
-                ? "Manage scheduled routines: it may create, change, run and delete routines in its projects here"
-                : "Manage scheduled routines: off",
+              !grant.routines
+                ? "Manage scheduled routines: off"
+                : grant.kind === "own"
+                  ? "Manage scheduled routines: it may create, change, run and delete your routines in its projects here"
+                  : "Manage scheduled routines: it may create, change, run and delete routines in its projects here",
             )}
           </span>
         </dd>

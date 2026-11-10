@@ -371,6 +371,12 @@ export const ScheduledTaskGrantedBy = Schema.Struct({
   coordinatorEnvironmentId: Schema.String,
   runtimeCap: Schema.optional(Schema.NullOr(StudioFleetWorkerAccess)),
   accounts: Schema.optional(StudioWorkGrantAccounts),
+  /**
+   * `own` when the grant was between the owner's own machines: the routine
+   * is the owner's, so any of the owner's machines may manage it. Absent on
+   * routines saved before it and under a `team` grant.
+   */
+  kind: Schema.optional(Schema.Literals(["own", "team"])),
 });
 export type ScheduledTaskGrantedBy = typeof ScheduledTaskGrantedBy.Type;
 
