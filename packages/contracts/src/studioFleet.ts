@@ -384,6 +384,16 @@ export type StudioWorkGrantAccounts = typeof StudioWorkGrantAccounts.Type;
 export const StudioWorkGrantOwner = Schema.Literals(["self", "other"]);
 export type StudioWorkGrantOwner = typeof StudioWorkGrantOwner.Type;
 
+/**
+ * Whether a grant is between the same person's machines (`own`) or not
+ * (`team`). It is `own` only while the coordinator also holds a management
+ * pairing here (it joined this machine as its main machine) and the grant is
+ * not marked another person's: this machine checks that itself, so a peer
+ * cannot claim it.
+ */
+export const StudioWorkGrantKind = Schema.Literals(["own", "team"]);
+export type StudioWorkGrantKind = typeof StudioWorkGrantKind.Type;
+
 /** How many machine hops a launch may have made when it reaches this machine. */
 export const workGrantHopLimit = (owner: StudioWorkGrantOwner) => (owner === "self" ? 2 : 1);
 
@@ -422,6 +432,10 @@ export const StudioWorkGrant = Schema.Struct({
    */
   routines: Schema.optionalKey(Schema.Boolean).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(false)),
+  ),
+  /** `own` or `team`; a server from before it sends none, which reads as `team`. */
+  kind: Schema.optionalKey(StudioWorkGrantKind).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("team" as const)),
   ),
 });
 export type StudioWorkGrant = typeof StudioWorkGrant.Type;

@@ -1539,36 +1539,15 @@ const make = Effect.gen(function* () {
               coordinatorEnvironmentId: work.grant.coordinatorEnvironmentId,
               runtimeCap: limits.runtimeMode,
               accounts: work.grant.accounts,
+              ...(work.grant.kind === "own" ? { kind: "own" as const } : {}),
             } satisfies ScheduledTaskGrantedBy,
           }),
         );
-  /**
-   * A grantee changes only routines its own grant made: the owner's routines
-   * here stay the owner's, and another machine's stay that machine's.
-   */
+  /** See routineOwnership: a `team` grantee changes only routines its own grant made. */
   const refuseOthersRoutine = (
     work: WorkGrantContext | undefined,
     task: Pick<ScheduledTask, "id" | "title">,
-  ) =>
-    Effect.gen(function* () {
-      if (work === undefined) return;
-      const readGrant = scheduledTasks.readGrant;
-      const grantedBy =
-        readGrant === undefined
-          ? undefined
-          : yield* readGrant(task.id).pipe(
-              Effect.mapError((error) =>
-                failure("orchestration_error", `Could not load scheduled task: ${error.message}`),
-              ),
-            );
-      if (grantedBy?.coordinatorEnvironmentId === work.grant.coordinatorEnvironmentId) return;
-      return yield* failure(
-        "outside_grant_scope",
-        grantedBy === undefined
-          ? `Routine "${task.title}" was set up on this machine, so ${work.coordinatorLabel}'s work can't change it. Ask the user here to change it, or schedule a new routine.`
-          : `Routine "${task.title}" was set up by another machine's work, so ${work.coordinatorLabel}'s work can't change it. Ask the user here to change it, or schedule a new routine.`,
-      );
-    });
+  ) => refuseOthersRoutineFor(scheduledTasks.readGrant, work, task, "change");
   const grantForProject = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
@@ -2508,8 +2487,10 @@ const make = Effect.gen(function* () {
           ...(input.brief === undefined ? {} : { brief: input.brief }),
           ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
         };
+        const grant = yield* routineGrantOf(work, limits, upsertInput.modelSelection);
+        // Own-machine work edits the owner's routine as the owner: it keeps whose it is.
         const { task } = yield* scheduledTasks
-          .upsert(upsertInput, yield* routineGrantOf(work, limits, upsertInput.modelSelection))
+          .upsert(upsertInput, work?.grant.kind === "own" ? {} : grant)
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
