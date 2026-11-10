@@ -1,5 +1,5 @@
 import { useId, useMemo, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowUpRightIcon,
   PauseIcon,
@@ -19,6 +19,7 @@ import {
 import { routineCadenceLabel } from "@specweave-studio/shared/routineBrief";
 import { ROUTINE_TEMPLATES, type RoutineTemplate } from "@specweave-studio/shared/routineTemplates";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -30,13 +31,16 @@ import {
   routineState,
 } from "../../studio/routinePresentation";
 import { randomUUID } from "../../lib/utils";
+import { routineRunnerOf } from "../../studio/routineRunner";
+import { PROJECT_MACHINES_SECTION_ID } from "./projectMachinesSection";
 import { RoutineQuickForm } from "./RoutineQuickForm";
+import { useLinkMachines } from "./useLinkMachines";
 
 export function ProjectRoutines({
-  environmentId,
-  projectId,
+  environmentId: viewedEnvironmentId,
+  projectId: viewedProjectId,
   projectKey,
-  canOperate,
+  canOperate: viewedCanOperate,
   admissionBlocked,
   personal = false,
   modelSelection = null,
@@ -56,6 +60,25 @@ export function ProjectRoutines({
   machineLabel?: string | null;
   onOpenThread?: (threadId: ThreadId) => void;
 }) {
+  // A linked project's routines run on its coordinator's copy (D-12): this page
+  // reads and changes that copy's, so an edit here is never overwritten by the
+  // runner's next replica. With the runner offline it shows this machine's
+  // resting copies, read-only, and offers Run here.
+  const projects = useProjects();
+  const machines = useLinkMachines();
+  const navigate = useNavigate();
+  const runner = routineRunnerOf(
+    projects.find(
+      (project) => project.environmentId === viewedEnvironmentId && project.id === viewedProjectId,
+    ),
+    projects,
+    (member) => machines.state(member.environmentId) !== "offline",
+  );
+  const runnerLabel = runner ? machines.label(runner.member.environmentId) : null;
+  const runnerOffline = runner !== null && !runner.online;
+  const environmentId = runner?.online ? runner.member.environmentId : viewedEnvironmentId;
+  const projectId = runner?.online ? runner.member.id : viewedProjectId;
+  const canOperate = viewedCanOperate && !runnerOffline;
   const query = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
@@ -119,7 +142,13 @@ export function ProjectRoutines({
     }
   }
   const summary = [
-    machineLabel ? `On ${machineLabel}` : null,
+    runner?.online
+      ? `Runs on ${runnerLabel}`
+      : runner
+        ? null
+        : machineLabel
+          ? `On ${machineLabel}`
+          : null,
     tasks.length > 0 ? routineCountsLabel(tasks) : null,
   ]
     .filter(Boolean)
@@ -159,7 +188,31 @@ export function ProjectRoutines({
           Routines here prepare and draft; you file, pay and send.
         </p>
       ) : null}
-      {(admissionBlocked || !canOperate) && (
+      {runnerOffline ? (
+        <div className="project-notice" role="status" data-routine-runner="offline">
+          <p>
+            Runner offline: {runnerLabel}. These are this machine's copies; they run here only if
+            this machine takes over the coordinator.
+          </p>
+          {viewedCanOperate ? (
+            <button
+              type="button"
+              className="sws-routines-button"
+              onClick={() =>
+                void navigate({
+                  to: "/settings/projects",
+                  search: { project: projectKey, machine: undefined, checkout: undefined },
+                  hash: PROJECT_MACHINES_SECTION_ID,
+                })
+              }
+            >
+              <PlayIcon aria-hidden />
+              Run here
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {!runnerOffline && (admissionBlocked || !canOperate) && (
         <p className="project-notice">
           This project cannot start routine runs while it is paused, archived, disconnected or
           read-only.

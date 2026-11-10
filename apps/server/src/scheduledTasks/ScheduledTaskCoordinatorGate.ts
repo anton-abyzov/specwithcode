@@ -37,6 +37,9 @@ export type RoutineCoordinatorHold =
 export const RESTING_ROUTINE_NOTE =
   "Not run on this machine: another machine runs this project's coordinator. It runs here if this one takes over.";
 export const HANDOFF_ROUTINE_WAIT = "Waiting: this project is being handed to another machine.";
+/** Why a resting copy is not changed here (1267 D-12): its runner's copy is the only one written. */
+export const RESTING_ROUTINE_CHANGE_REFUSAL =
+  "This routine runs on the machine that coordinates this project, so change, run or delete it there: open it from that machine in SpecWithCode. To run it here instead, take over the coordinator on this machine first.";
 
 export interface RoutineCoordinatorGateDeps {
   /** This machine's coordinator roles; without it the project's own binding is read. */
