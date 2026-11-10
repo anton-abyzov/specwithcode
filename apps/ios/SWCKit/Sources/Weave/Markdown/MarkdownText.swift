@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Renders an assistant reply: block structure from `MarkdownParser`, inline
 /// styling from `AttributedString(markdown:)`. Links use the tint (iris) and
-/// open for web, mail and phone addresses; thread links use the host callback. Long replies can collapse
+/// open for web, mail and phone addresses; thread links and files on the
+/// conversation's machine (`HostFileLink`) use the host callback. Long replies can collapse
 /// behind "Show more".
 public struct MarkdownText: View {
   let markdown: String
@@ -88,7 +89,7 @@ public struct MarkdownText: View {
     // Second guard behind the parser: nothing in a reply can open the app's
     // pairing links or launch arbitrary apps. Thread links stay inside this view.
     .environment(\.openURL, OpenURLAction { url in
-      if MarkdownThreadLink.threadId(url) != nil {
+      if MarkdownThreadLink.threadId(url) != nil || HostFileLink.path(url) != nil {
         guard let onOpenLink else { return .discarded }
         onOpenLink(url)
         return .handled
@@ -347,11 +348,24 @@ enum MarkdownInline {
       attributed[run.range].swiftUI.font = codeFont
       attributed[run.range].swiftUI.backgroundColor = .weave.sunken
     }
-    let blocked = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
-      guard let url = run.link else { return nil }
-      return isOpenable(url) || MarkdownThreadLink.threadId(url) != nil ? nil : run.range
+    // A host file link opens in the app's viewer; other unsafe links become plain text.
+    var hostFiles: [(Range<AttributedString.Index>, URL)] = []
+    var blocked: [Range<AttributedString.Index>] = []
+    for run in attributed.runs {
+      guard let url = run.link else {
+        // A backticked absolute path to a viewable file is tappable too.
+        if run.inlinePresentationIntent?.contains(.code) == true,
+           let path = HostFileLink.hostPath(String(attributed[run.range].characters), decode: false),
+           let link = HostFileLink.url(for: path) {
+          hostFiles.append((run.range, link))
+        }
+        continue
+      }
+      if isOpenable(url) || MarkdownThreadLink.threadId(url) != nil { continue }
+      if let link = HostFileLink.link(forTarget: url) { hostFiles.append((run.range, link)) } else { blocked.append(run.range) }
     }
     for range in blocked { attributed[range].link = nil }
+    for (range, link) in hostFiles { attributed[range].link = link }
     // Preserve tappable bare web addresses in user messages too.
     let plain = String(attributed.characters)
     if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {

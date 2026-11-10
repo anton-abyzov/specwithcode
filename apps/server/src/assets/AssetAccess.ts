@@ -21,6 +21,7 @@ import {
 import {
   audioMimeTypeFromExtension,
   hostPreviewMimeTypeFromExtension,
+  hostTextPreviewMimeTypeFromExtension,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
   WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
@@ -185,6 +186,8 @@ export type ResolvedAsset =
       readonly file?: OpenMediaFile;
       /** Content-addressed bytes a client may cache for good. */
       readonly immutable?: boolean;
+      /** Host HTML whose local picture paths are swapped for signed URLs before serving. */
+      readonly rewritesLocalReferences?: boolean;
     }
   | {
       readonly kind: "bytes";
@@ -247,6 +250,10 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
     ? null
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
 });
+
+/** What an absolute `media-file` may serve: media, audio, browser documents and text results. */
+const hostFileMimeType = (extension: string): string | null =>
+  hostPreviewMimeTypeFromExtension(extension) ?? hostTextPreviewMimeTypeFromExtension(extension);
 
 const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(function* (
   filePath: string,
@@ -381,7 +388,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
     if (!canonicalFile || (yield* isProtectedAssetFile(input.requestedPath, canonicalFile))) {
       return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
     }
-    if (hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
+    if (hostFileMimeType(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
     const wantsDimensions = HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase());
@@ -862,6 +869,70 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   };
 });
 
+/**
+ * Signed URLs for the pictures a served HTML document names by host path.
+ * Only media inside the document's own folder tree is signed, judged by where
+ * each path really leads, so a page cannot reach the rest of the host through
+ * its references (its scripts can read what it embeds). Each file follows the
+ * absolute `media-file` rules (canonical, regular, not protected) and must be
+ * image, video or audio by its real name; anything else stays as written.
+ */
+export const issueLocalReferenceUrls = Effect.fn("AssetAccess.issueLocalReferenceUrls")(function* (
+  paths: ReadonlyArray<string>,
+  htmlFilePath: string,
+) {
+  const path = yield* Path.Path;
+  const isMedia = (file: string) =>
+    /^(?:image|video|audio)\//.test(hostPreviewMimeTypeFromExtension(path.extname(file)) ?? "");
+  const folder = path.dirname(htmlFilePath);
+  const insideFolder = (file: string) => {
+    const relative = path.relative(folder, file);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  };
+  const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const signingSecret = yield* secretStore
+    .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
+    .pipe(Effect.orElseSucceed(() => null));
+  const urls = new Map<string, string>();
+  if (!signingSecret) return urls;
+  const expiresAt = (yield* Clock.currentTimeMillis) + ASSET_TOKEN_TTL_MS;
+  yield* Effect.forEach(
+    paths,
+    (requestedPath) =>
+      Effect.gen(function* () {
+        if (!isMedia(requestedPath) || !insideFolder(requestedPath)) return;
+        const canonicalFile = yield* readableHostFile(requestedPath);
+        if (canonicalFile === null || !isMedia(canonicalFile) || !insideFolder(canonicalFile))
+          return;
+        const identity = yield* openMediaFile(canonicalFile).pipe(
+          Effect.map((file) =>
+            file === null
+              ? null
+              : { device: file.info.dev.toString(), inode: file.info.ino.toString() },
+          ),
+          Effect.scoped,
+        );
+        if (identity === null) return;
+        const encodedPayload = base64UrlEncode(
+          encodeAssetClaims({
+            version: 1,
+            kind: "media-file-exact",
+            filePath: canonicalFile,
+            ...identity,
+            expiresAt,
+          }),
+        );
+        const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
+        urls.set(
+          requestedPath,
+          `${ASSET_ROUTE_PREFIX}/${token}/${encodeURIComponent(path.basename(canonicalFile))}`,
+        );
+      }).pipe(Effect.orElseSucceed(() => undefined)),
+    { concurrency: 8, discard: true },
+  );
+  return urls;
+});
+
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
@@ -993,7 +1064,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     );
     if (canonicalFile !== claims.filePath) return null;
     if (yield* isProtectedAssetFile(claims.filePath, canonicalFile)) return null;
-    const mimeType = hostPreviewMimeTypeFromExtension(path.extname(canonicalFile));
+    const mimeType = hostFileMimeType(path.extname(canonicalFile));
     if (!mimeType) return null;
     const file = yield* openMediaFile(canonicalFile, claims).pipe(
       Effect.tapError((cause) =>
@@ -1002,7 +1073,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     return file
-      ? ({ kind: "file", path: canonicalFile, mimeType, file } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: canonicalFile,
+          mimeType,
+          file,
+          ...(mimeType === "text/html" ? { rewritesLocalReferences: true } : {}),
+        } satisfies ResolvedAsset)
       : null;
   }
   if (claims.kind === "workspace-file-exact") {

@@ -632,6 +632,25 @@ extension LiveEngine {
     }
   }
 
+  /// An absolute `media-file` URL for a file a reply links to. The machine checks
+  /// the path (protected files, allowed types) and signs the URL; the path is
+  /// absolute, so the thread only labels the request.
+  public func hostFileURL(path: String, for target: ChatTarget) async throws -> URL? {
+    let environmentId = target.environmentId
+    guard let entry = machines[environmentId], entry.status.route != nil else { return nil }
+    let threadId = threadId(for: target, entry: entry) ?? "artifact"
+    let payload: JSONValue = .object(["resource": .object([
+      "_tag": .string("media-file"),
+      "threadId": .string(threadId),
+      "path": .string(path),
+    ])])
+    return try await withRetry(environmentId) { socket in
+      let result = try await Self.decode(AssetURLResult.self, from: socket.call(tag: RpcMethod.assetsCreateUrl.rawValue, payload: payload))
+      guard let route = await entry.connection.route(of: socket) else { throw TransportError.closed }
+      return URL(string: result.relativeUrl, relativeTo: route.httpBase)?.absoluteURL
+    }
+  }
+
   public func threadLinkMachines() -> [ThreadLinkResolver.Machine]? {
     machineOrder.compactMap { machines[$0] }.map { entry in
       let threads = (entry.snapshot ?? entry.cachedSnapshot)?.threads.map {
