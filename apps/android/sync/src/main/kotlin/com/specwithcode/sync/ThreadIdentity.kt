@@ -133,7 +133,7 @@ data class ThreadIdentity(
         fun modelBrand(slug: String): String? {
             val value = slug.lowercase().split('/').last()
             return when {
-                value.startsWith("claude") || value.startsWith("opus") || value.startsWith("sonnet") || value.startsWith("haiku") -> "claude"
+                value.startsWith("claude") || value.startsWith("opus") || value.startsWith("sonnet") || value.startsWith("haiku") || value.startsWith("fable") -> "claude"
                 value.startsWith("gpt-") || value.startsWith("o3") || value.startsWith("o4") -> "openai"
                 value.startsWith("gemini") -> "gemini"
                 value.startsWith("grok") -> "grok"
@@ -144,7 +144,7 @@ data class ThreadIdentity(
         /** Known family and version ids only; a custom model keeps its exact identifier. */
         internal fun modelName(slug: String): String {
             val lower = slug.lowercase()
-            for (family in listOf("opus", "sonnet", "haiku")) {
+            for (family in listOf("opus", "sonnet", "haiku", "fable")) {
                 val prefix = "claude-$family-"
                 if (lower.startsWith(prefix)) {
                     val version = slug.drop(prefix.length)

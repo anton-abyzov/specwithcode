@@ -41,7 +41,7 @@ export type ProviderModelTiers = typeof ProviderModelTiers.Type;
  */
 export const DEFAULT_PROVIDER_MODEL_TIERS: Readonly<Record<string, Required<ProviderTierModels>>> =
   {
-    claudeAgent: { regular: "claude-opus-5-5", frontier: "claude-fable-5-1" },
+    claudeAgent: { regular: "claude-opus-5-5", frontier: "claude-fable-5-2" },
     codex: { regular: "gpt-6.1-sol", frontier: "gpt-6-astra" },
     muse: { regular: "muse-wonder-1.0", frontier: "muse-wonder-full-1.0" },
   };

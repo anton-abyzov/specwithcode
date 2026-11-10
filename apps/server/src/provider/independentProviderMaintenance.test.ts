@@ -298,6 +298,23 @@ describe.skipIf(posixWrapperOnly)("staged fleet Claude ownership", () => {
     );
     expect(await inspect(mismatched)).toBe("unverified");
   });
+  it("stages a release provisioned with only the platform package", async () => {
+    const value = claudeFixture("release");
+    const release = NodePath.join(value.releases, "reviewed-release");
+    NodeFS.rmSync(NodePath.join(release, "node_modules/@anthropic-ai/claude-code"), {
+      recursive: true,
+    });
+    write(
+      NodePath.join(release, "package.json"),
+      JSON.stringify({ dependencies: { "@anthropic-ai/claude-code-darwin-arm64": "2.1.295" } }),
+    );
+    expect(await inspect(value)).toMatchObject({ provider: "claude", wrapperPath: value.wrapper });
+    write(
+      NodePath.join(release, "package.json"),
+      JSON.stringify({ dependencies: { "@anthropic-ai/claude-code-darwin-arm64": "2.1.294" } }),
+    );
+    expect(await inspect(value)).toBe("unverified");
+  });
   it("is not offered off Apple silicon", async () => {
     const value = claudeFixture("release");
     expect(

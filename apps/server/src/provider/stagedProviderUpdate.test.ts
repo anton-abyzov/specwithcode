@@ -8,6 +8,7 @@ import {
   providerProcessesInUse,
   findProviderProcessesInUse,
   shortProcessLabel,
+  listWindowsProcesses,
   type StagedProviderUpdate,
 } from "./stagedProviderUpdate.ts";
 const homes: string[] = [];
@@ -357,5 +358,60 @@ describe("installer in-use scope", () => {
         (match) => match.pid,
       ),
     ).toEqual([10, 11]);
+  });
+});
+
+// Win32_Process rows as `listWindowsProcesses` prints them.
+describe("Windows installer in-use detection", () => {
+  const rows = [
+    "4 0 System",
+    "9000 1 C:\\Windows\\System32\\WindowsTerminal.exe",
+    '9001 9000 "C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo',
+    '9002 9001 "C:\\Users\\me\\.local\\bin\\claude.exe" -p hi',
+    '9003 9001 "C:\\Program Files\\nodejs\\node.exe" C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js exec',
+    '9004 1 "C:\\Users\\me\\AppData\\Local\\AnthropicClaude\\Claude.exe"',
+    '500 1 "C:\\Program Files\\SpecWithCode\\server.exe"',
+    "9005 500 C:\\Users\\me\\.local\\bin\\claude.exe --output-format stream-json",
+    '9006 500 C:\\Windows\\system32\\cmd.exe /d /s /c "claude.cmd -p x"',
+    '9007 9006 "C:\\Program Files\\nodejs\\node.exe" C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
+    "8000 9000 C:\\Windows\\System32\\cmd.exe",
+    "8001 8000 claude.exe -p hi",
+  ].join("\r\n");
+
+  it("finds a terminal's Claude and Codex but not the desktop app or the server's own session", () => {
+    expect(
+      findProviderProcessesInUse(
+        rows,
+        "claudeAgent",
+        ["C:\\Users\\me\\.local\\bin\\claude.exe"],
+        undefined,
+        {
+          selfPid: 500,
+        },
+      ).map((m) => m.pid),
+    ).toEqual([9002, 8001]);
+    expect(
+      findProviderProcessesInUse(
+        rows,
+        "claudeAgent",
+        ["c:\\users\\me\\appdata\\roaming\\npm\\node_modules\\@anthropic-ai\\claude-code"],
+        undefined,
+        {
+          selfPid: 500,
+        },
+      ).map((m) => m.pid),
+    ).toEqual([9002, 8001]);
+    expect(shortProcessLabel('claude "secret prompt"')).toBe("claude");
+    expect(
+      findProviderProcessesInUse(rows, "codex", [], "@openai/codex", { selfPid: 500 }).map(
+        (m) => m.pid,
+      ),
+    ).toEqual([9003]);
+    expect(shortProcessLabel('"C:\\Users\\me\\.local\\bin\\claude.exe" -p hi')).toBe("claude.exe");
+  });
+
+  it.skipIf(process.platform !== "win32")("lists real processes, including this one", async () => {
+    const output = await listWindowsProcesses();
+    expect(output).toMatch(new RegExp(`^${process.pid} \\d+ \\S`, "m"));
   });
 });
