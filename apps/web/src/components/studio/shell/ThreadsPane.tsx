@@ -153,8 +153,11 @@ export function ThreadsPane({
   canChangeThread?: (thread: EnvironmentThreadShell) => boolean;
   machineLabels?: ReadonlyMap<string, string>;
   onToggleResolved: (thread: EnvironmentThreadShell) => void;
-  /** Anything the project has to say above the list, such as a failed archive load. */
-  notice?: ReactNode;
+  /**
+   * Anything the project has to say above the list, such as a failed archive load. It
+   * receives the machine filter, so per-machine notices such as remote workers follow it.
+   */
+  renderNotice?: (scope: { readonly machineFilter: string | null }) => ReactNode;
   /** The project's artifacts shelf, above the threads. */
   shelf?: ReactNode;
   /** Workers this project runs on other machines; they are not threads here. */
@@ -840,7 +843,7 @@ export function ThreadsPane({
           ) : null}
         </header>
         {props.shelf}
-        {props.notice}
+        {props.renderNotice?.({ machineFilter })}
         <div id="sws-threads-find">
           {findShown ? (
             <label className="sws-find">

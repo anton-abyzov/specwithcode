@@ -5,6 +5,7 @@ import type { StudioFleetRemoteWorker } from "@specweave-studio/contracts/studio
 import {
   placeRemoteWorkers,
   remoteWorkerCardStatus,
+  remoteWorkerReachableHere,
   visibleRemoteWorkers,
 } from "./remoteWorkerCards";
 
@@ -71,6 +72,28 @@ it("deduplicates only equivalent loaded aliases, retaining caller-side auth acti
   expect(
     visibleRemoteWorkers([worker], [{ environmentId: "another-host", id: worker.remoteThreadId! }]),
   ).toHaveLength(1);
+});
+
+it("follows the Threads pane machine filter", () => {
+  const onM4 = { ...worker, id: "rwt:m4", environmentId: EnvironmentId.make("env-m4") };
+  expect(visibleRemoteWorkers([worker, onM4], [], null).map((row) => row.id)).toEqual([
+    "rwt:1",
+    "rwt:m4",
+  ]);
+  expect(visibleRemoteWorkers([worker, onM4], [], "env-m4").map((row) => row.id)).toEqual([
+    "rwt:m4",
+  ]);
+  // Filtered to this machine, no worker elsewhere shows.
+  expect(visibleRemoteWorkers([worker, onM4], [], "env-linux-mini")).toEqual([]);
+});
+
+it("opens a finished worker's archived thread while its machine is connected", () => {
+  // The live list leaves out archived threads; another thread from that machine proves the link.
+  const m1Threads = [{ environmentId: "env-m1" }];
+  expect(remoteWorkerReachableHere(worker, m1Threads)).toBe(true);
+  expect(remoteWorkerReachableHere(worker, [{ environmentId: "env-other" }])).toBe(false);
+  expect(remoteWorkerReachableHere(worker, [])).toBe(false);
+  expect(remoteWorkerReachableHere({ ...worker, remoteThreadId: null }, m1Threads)).toBe(false);
 });
 
 describe("remote worker card placement", () => {

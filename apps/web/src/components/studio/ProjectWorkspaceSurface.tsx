@@ -2162,7 +2162,7 @@ export function ProjectWorkspaceSurface({
                       }}
                     />
                   }
-                  notice={
+                  renderNotice={({ machineFilter }) => (
                     <>
                       <ProjectThreadAvailability
                         scopes={executionScopes}
@@ -2173,6 +2173,7 @@ export function ProjectWorkspaceSurface({
                           representedThreads={projectAttention.roots.map((root) => root.thread)}
                           environmentId={project.environmentId}
                           projectId={project.id}
+                          machineFilter={machineFilter}
                         />
                       ) : null}
                       {archived.error ? (
@@ -2188,7 +2189,7 @@ export function ProjectWorkspaceSurface({
                         </p>
                       ) : null}
                     </>
-                  }
+                  )}
                   bar={paneBar}
                 />
               )}

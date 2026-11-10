@@ -7,9 +7,13 @@ vi.mock("./shell/Tip", () => ({
   Tip: ({ children }: { children: React.ReactNode }) => children,
 }));
 vi.mock("../../studio/fleet", () => ({ REMOTE_WORKERS_REFRESH_MS: 10_000 }));
-const state = vi.hoisted(() => ({ bootstrapped: true, checking: false }));
+const state = vi.hoisted(() => ({
+  bootstrapped: true,
+  checking: false,
+  shells: [] as { environmentId: string; id: string }[],
+}));
 vi.mock("../../state/entities", () => ({
-  useThreadShells: () => [],
+  useThreadShells: () => state.shells,
   useAllEnvironmentShellsBootstrapped: () => state.bootstrapped,
 }));
 vi.mock("../../hooks/useOpenThread", () => ({ useOpenThread: () => ({}) }));
@@ -71,6 +75,18 @@ describe("remote worker card", () => {
       expect(list()).not.toContain("Settings &gt; Machines");
     } finally {
       state.bootstrapped = true;
+    }
+  });
+
+  it("offers Open, not Connect, for a finished worker whose archived thread is not listed", () => {
+    // m4 is connected (its other threads loaded) but the worker's thread was archived there.
+    state.shells = [{ environmentId: "env-m1", id: "another-thread" }];
+    try {
+      const html = renderToStaticMarkup(<RemoteWorkerCardList workers={[worker]} />);
+      expect(html).toContain("Open on M1");
+      expect(html).not.toContain("Settings &gt; Machines");
+    } finally {
+      state.shells = [];
     }
   });
 });
