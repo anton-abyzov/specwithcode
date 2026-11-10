@@ -379,6 +379,14 @@ export const ServerObservability = Schema.Struct({
   // Older hosts omit these; absence means unknown, never assumed opt-out.
   productUsageEnabled: Schema.optionalKey(Schema.Boolean),
   productUsageDestinationConfigured: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Effective automatic crash/error reporting state at startup: the
+   * `crashReportsEnabled` setting combined with `STUDIO_CRASH_REPORTS` and team
+   * rules. Absent on servers older than crash reporting.
+   */
+  crashReportsActive: Schema.optionalKey(Schema.Boolean),
+  /** True when `STUDIO_CRASH_REPORTS=false` (or team rules) force reports off. */
+  crashReportsForcedOff: Schema.optionalKey(Schema.Boolean),
   logsDirectoryPath: TrimmedNonEmptyString,
   localTracingEnabled: Schema.Boolean,
   otlpTracesUrl: Schema.optional(TrimmedNonEmptyString),
