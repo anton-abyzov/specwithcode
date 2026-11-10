@@ -62,6 +62,8 @@ export interface ComposerSkillsPopoverProps {
   /** The server thread `cwd` belongs to, so the server checks only that thread. */
   readonly threadId?: ThreadId | null | undefined;
   readonly provider: ProviderInstanceEntry | undefined;
+  /** The thread's selected model, the default for generating a new skill. */
+  readonly model?: string | undefined;
   readonly machineLabel: string;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly uses?: ReadonlyArray<SessionSkillUse> | undefined;
@@ -136,6 +138,7 @@ export const ComposerSkillsPopover = memo(function ComposerSkillsPopover(
           threadId={props.threadId ?? undefined}
           machineLabel={props.machineLabel}
           initialInstanceId={props.provider?.instanceId}
+          initialModel={props.model}
           open={authoringOpen}
           onOpenChange={setAuthoringOpen}
         />
