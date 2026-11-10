@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { FolderPlace } from "../components/studio/FolderBrowser";
 import type { KnownProject } from "../components/studio/folderBrowser.logic";
@@ -59,12 +59,14 @@ export function useProjectFolderChoice(
   const [choices, setChoices] = useState<Record<string, string>>({});
   // Where each machine's picker opens: the folder last shown there, or the
   // one remembered from an earlier project.
-  const lastShown = useRef<Record<string, string>>(remember ? readRemembered() : {});
+  const [lastShown, setLastShown] = useState<Record<string, string>>(() =>
+    remember ? readRemembered() : {},
+  );
   const [generation, setGeneration] = useState(0);
   const reset = useCallback(() => {
     setChoices({});
     setGeneration((value) => value + 1);
-    lastShown.current = remember ? readRemembered() : {};
+    setLastShown(remember ? readRemembered() : {});
   }, [remember]);
   const path = environmentId === null ? null : (choices[environmentId] ?? null);
   // Null means the folder shown cannot be chosen right now (loading, or
@@ -74,7 +76,7 @@ export function useProjectFolderChoice(
       setChoices(({ [target]: _dropped, ...rest }) => rest);
       return;
     }
-    lastShown.current = { ...lastShown.current, [target]: chosen };
+    setLastShown((previous) => ({ ...previous, [target]: chosen }));
     if (remember) writeRemembered({ ...readRemembered(), [target]: chosen });
     setChoices((previous) => ({ ...previous, [target]: chosen }));
   };
@@ -86,7 +88,7 @@ export function useProjectFolderChoice(
         <NewProjectFolderPicker
           key={`${environmentId}:${generation}`}
           environmentId={environmentId}
-          selectedPath={path ?? lastShown.current[environmentId] ?? null}
+          selectedPath={path ?? lastShown[environmentId] ?? null}
           defaultPath={options.defaultPath ?? null}
           machineLabel={options.machineLabel ?? null}
           nativePickerLabel={options.nativePicker?.label ?? null}

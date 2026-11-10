@@ -18,6 +18,7 @@ import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/file
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { cn } from "../../lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   collapseCrumbs,
   parentFolderOf,
@@ -54,6 +55,8 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
+const NO_PLACES: readonly FolderPlace[] = [];
+const NO_PROJECTS: readonly KnownProject[] = [];
 const PLACE_ICONS = { projects: FolderIcon, home: HouseIcon, recent: ClockIcon } as const;
 const ROW =
   "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm outline-none motion-safe:transition-colors";
@@ -71,8 +74,8 @@ export function FolderBrowser({
   startPath,
   machineLabel = null,
   disabled = false,
-  places = [],
-  projects = [],
+  places = NO_PLACES,
+  projects = NO_PROJECTS,
   canCreateFolder = false,
   missingOkPath = null,
   tools = null,
@@ -244,12 +247,11 @@ export function FolderBrowser({
     <li key={crumb.path} className="flex min-w-0 items-center">
       <button
         type="button"
-        title={crumb.path}
         disabled={disabled}
         aria-current={last ? "location" : undefined}
         onClick={() => open(crumb.path, "back")}
         className={cn(
-          "min-w-0 truncate rounded px-1.5 py-0.5 text-[13px] outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-colors",
+          "min-w-0 truncate rounded px-1.5 py-0.5 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-colors",
           last ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
         )}
       >
@@ -304,7 +306,6 @@ export function FolderBrowser({
                   <button
                     type="button"
                     aria-label={`Show ${hidden.length} more folders in the path`}
-                    title={hidden.map((crumb) => crumb.label).join(" / ")}
                     disabled={disabled}
                     onClick={() => setExpandedCrumbs(true)}
                     className="rounded px-1 py-0.5 text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -316,38 +317,54 @@ export function FolderBrowser({
               ) : null}
               {tail.map((crumb, index) => crumbButton(crumb, index === tail.length - 1))}
               {currentPath === null ? (
-                <li className="truncate px-1.5 text-[13px] text-muted-foreground">{browsePath}</li>
+                <li className="truncate px-1.5 text-sm text-muted-foreground">{browsePath}</li>
               ) : null}
             </ol>
           </nav>
         )}
-        <button
-          type="button"
-          className={TOOL}
-          aria-label="Type a path"
-          title="Type a path (/)"
-          disabled={disabled || !access.canReadFiles}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => setPathDraft(pathDraft === null ? (currentPath ?? browsePath) : null)}
-        >
-          <TextCursorInputIcon className="size-3.5" aria-hidden />
-        </button>
-        {hiddenCount > 0 || showHidden ? (
-          <button
-            type="button"
-            className={TOOL}
-            aria-pressed={showHidden}
-            aria-label="Show hidden folders"
-            title={showHidden ? "Hide hidden folders" : `Show ${hiddenCount} hidden folders`}
-            disabled={disabled}
-            onClick={() => setShowHidden(!showHidden)}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className={TOOL}
+                aria-label="Type a path"
+                disabled={disabled || !access.canReadFiles}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() =>
+                  setPathDraft(pathDraft === null ? (currentPath ?? browsePath) : null)
+                }
+              />
+            }
           >
-            {showHidden ? (
-              <EyeIcon className="size-3.5" aria-hidden />
-            ) : (
-              <EyeOffIcon className="size-3.5" aria-hidden />
-            )}
-          </button>
+            <TextCursorInputIcon className="size-3.5" aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup>Type a path (/)</TooltipPopup>
+        </Tooltip>
+        {hiddenCount > 0 || showHidden ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className={TOOL}
+                  aria-pressed={showHidden}
+                  aria-label="Show hidden folders"
+                  disabled={disabled}
+                  onClick={() => setShowHidden(!showHidden)}
+                />
+              }
+            >
+              {showHidden ? (
+                <EyeIcon className="size-3.5" aria-hidden />
+              ) : (
+                <EyeOffIcon className="size-3.5" aria-hidden />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup>
+              {showHidden ? "Hide hidden folders" : `Show ${hiddenCount} hidden folders`}
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         {tools}
         {canCreateFolder ? (
@@ -392,7 +409,6 @@ export function FolderBrowser({
                   ) : null}
                   <button
                     type="button"
-                    title={`${place.path}${onMachine}`}
                     disabled={disabled}
                     aria-current={
                       currentPath !== null && sameFolder(currentPath, place.path)

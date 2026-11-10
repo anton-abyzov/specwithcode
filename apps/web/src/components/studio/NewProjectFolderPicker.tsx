@@ -3,6 +3,9 @@ import type { EnvironmentId } from "@specweave-studio/contracts";
 import { FolderBrowser, type FolderListing, type FolderPlace } from "./FolderBrowser";
 import { displayPath, folderOutcome, type KnownProject } from "./folderBrowser.logic";
 
+const NO_PLACES: readonly FolderPlace[] = [];
+const NO_PROJECTS: readonly KnownProject[] = [];
+
 export { parentFolderOf } from "./folderBrowser.logic";
 
 /**
@@ -18,8 +21,8 @@ export function NewProjectFolderPicker({
   machineLabel = null,
   nativePickerLabel = null,
   projectName,
-  places = [],
-  projects = [],
+  places = NO_PLACES,
+  projects = NO_PROJECTS,
   canCreateFolder = false,
   disabled,
   onSelect,
@@ -45,7 +48,12 @@ export function NewProjectFolderPicker({
 }) {
   // With no remembered or default folder the list starts at home, which is
   // only taken as the choice once the person opens a folder themselves.
-  const chosenByPerson = useRef(selectedPath !== null || defaultPath !== null);
+  const [chosen, setChosen] = useState(selectedPath !== null || defaultPath !== null);
+  const chosenByPerson = useRef(chosen);
+  const markChosen = () => {
+    chosenByPerson.current = true;
+    setChosen(true);
+  };
   const [start, setStart] = useState({ path: selectedPath ?? defaultPath ?? "~/", key: 0 });
   const [listing, setListing] = useState<FolderListing | null>(null);
   const [picking, setPicking] = useState(false);
@@ -65,7 +73,7 @@ export function NewProjectFolderPicker({
     try {
       const picked = await onPickNatively(listing?.path ?? selectedPath ?? defaultPath);
       if (picked) {
-        chosenByPerson.current = true;
+        markChosen();
         setStart((previous) => ({ path: picked, key: previous.key + 1 }));
       }
     } finally {
@@ -95,9 +103,7 @@ export function NewProjectFolderPicker({
         canCreateFolder={canCreateFolder}
         missingOkPath={defaultPath}
         onListing={report}
-        onNavigate={() => {
-          chosenByPerson.current = true;
-        }}
+        onNavigate={markChosen}
         tools={
           nativePickerLabel && onPickNatively ? (
             <button
@@ -118,7 +124,7 @@ export function NewProjectFolderPicker({
           >
             {listing === null ? (
               "Open a folder to choose where the project goes."
-            ) : !chosenByPerson.current ? (
+            ) : !chosen ? (
               "Open a folder, or pick a place, to choose where the project goes."
             ) : projectName === undefined ? (
               <>
