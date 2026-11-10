@@ -8,6 +8,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import {
   HANDOFF_ROUTINE_WAIT,
+  RESTING_ROUTINE_CHANGE_REFUSAL,
   RESTING_ROUTINE_NOTE,
   makeRoutineCoordinatorGate,
 } from "./ScheduledTaskCoordinatorGate.ts";
@@ -253,4 +254,28 @@ it.effect("fires a routine on exactly one machine across a takeover and give-way
     assert.deepEqual(yield* firing, [false, true]);
     assert.equal((yield* fireOn4(task))?.kind, "rest");
   }),
+);
+
+it.effect("refuses changes to a resting copy: its runner's copy is the only one written", () =>
+  Effect.gen(function* () {
+    const { state, run } = yield* harness;
+    yield* run((service) =>
+      Effect.gen(function* () {
+        yield* service.upsert(taskInput());
+        yield* service.setEnabled({ id: "routine" as never, enabled: false });
+        state.role = TRANSFERRED;
+        const refused = [
+          yield* service.upsert(taskInput({ id: "routine" })).pipe(Effect.flip),
+          yield* service.setEnabled({ id: "routine" as never, enabled: true }).pipe(Effect.flip),
+          yield* service.delete({ id: "routine" as never }).pipe(Effect.flip),
+          // A new coordinator routine on the resting copy is refused too.
+          yield* service.upsert(taskInput({ id: undefined })).pipe(Effect.flip),
+        ];
+        for (const error of refused) assert.equal(error.message, RESTING_ROUTINE_CHANGE_REFUSAL);
+        // This copy takes over: changes are made here again.
+        state.role = ACTIVE;
+        yield* service.setEnabled({ id: "routine" as never, enabled: true });
+      }),
+    );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

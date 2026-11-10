@@ -42,6 +42,7 @@ import { ProjectLocation } from "./ProjectLocation";
 import { ProjectCopyRepositories, useRepositoryInventory } from "./ProjectCopyRepositories";
 import { ProjectLinkDialog, type ProjectLinkTarget } from "./ProjectLinkDialog";
 import { useHoldProjectKeyFollow } from "../settings/projectKeyFollow";
+import { PROJECT_MACHINES_SECTION_ID } from "./projectMachinesSection";
 import { useLinkMachines } from "./useLinkMachines";
 
 const ROLE_TEXT: Record<LinkedCopy["role"], string> = {
@@ -368,7 +369,7 @@ export function ProjectMachinesSettings({
   if (!anchor) return null;
   const coordinatorProblem = coordinator ? machines.problem(coordinator.environmentId) : null;
   return (
-    <SettingsSection title="Machines">
+    <SettingsSection title="Machines" id={PROJECT_MACHINES_SECTION_ID}>
       {copies.map((copy) => {
         const label = machines.label(copy.project.environmentId);
         const problem = machines.problem(copy.project.environmentId);

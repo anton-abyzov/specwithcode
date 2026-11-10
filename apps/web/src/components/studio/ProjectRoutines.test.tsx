@@ -10,6 +10,16 @@ const state = vi.hoisted(() => ({
   refresh: vi.fn(),
   upsert: vi.fn(),
   tasks: [] as Array<Record<string, unknown> & { id: string; enabled: boolean }>,
+  projects: [] as unknown[],
+  runnerState: "ready" as "ready" | "offline",
+  navigate: vi.fn(),
+}));
+vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
+vi.mock("./useLinkMachines", () => ({
+  useLinkMachines: () => ({
+    label: (id: string) => (id === "ministorm" ? "Ministorm" : "M4"),
+    state: (id: string) => (id === "ministorm" ? state.runnerState : "ready"),
+  }),
 }));
 vi.mock("../../teamRules/useTeamRules", async () => {
   const { teamRulesFromSummary } = await import("../../teamRules/teamRulesView");
@@ -37,12 +47,16 @@ vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: React.PropsWithChildren) => <a>{children}</a>,
+  useNavigate: () => state.navigate,
 }));
 import { ProjectRoutines } from "./ProjectRoutines";
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
   sessionStorage.clear();
+  state.projects = [];
+  state.runnerState = "ready";
+  state.navigate.mockReset();
   state.run.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toggle.mockReset().mockResolvedValue({ _tag: "Success" });
   state.refresh.mockReset();
@@ -276,5 +290,46 @@ describe("Personal routines", () => {
   it("offers no templates outside a personal project", async () => {
     await render();
     expect(container.textContent).not.toContain("Start from a template");
+  });
+});
+
+describe("a linked copy whose routines run on another machine", () => {
+  const linked = (environmentId: string, projectId: string, active: boolean) => ({
+    environmentId,
+    id: projectId,
+    workspaceSettings: {
+      logicalProject: { id: "ig", title: "IG", coordinatorId: "c", members: [] },
+      coordinatorBinding: { epoch: 3, state: active ? "active" : "transferred" },
+    },
+  });
+  beforeEach(() => {
+    state.projects = [linked("host", "project", false), linked("ministorm", "remote", true)];
+    state.tasks = [
+      {
+        id: "ig",
+        projectId: "remote",
+        title: "IG post",
+        enabled: true,
+        schedule: { type: "fixed_time", timeOfDay: "09:00" },
+      },
+    ];
+  });
+  it("shows and changes the runner's routines", async () => {
+    await render();
+    expect(container.textContent).toContain("Runs on Ministorm");
+    await click("Run now");
+    expect(state.run.mock.calls[0]![0].environmentId).toBe("ministorm");
+    expect(container.querySelector('[data-routine-runner="offline"]')).toBeNull();
+  });
+  it("says the runner is offline, keeps this copy read-only and offers Run here", async () => {
+    state.runnerState = "offline";
+    state.tasks = [{ ...state.tasks[0]!, projectId: "project" }];
+    await render();
+    expect(container.textContent).toContain("Runner offline: Ministorm");
+    expect(button("Run now").disabled).toBe(true);
+    await click("Run here");
+    expect(state.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/settings/projects", hash: "project-machines" }),
+    );
   });
 });

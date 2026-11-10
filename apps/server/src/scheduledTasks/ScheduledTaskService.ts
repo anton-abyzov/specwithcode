@@ -62,7 +62,10 @@ import { CoordinatorWakeGate } from "../project/CoordinatorWakeGate.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import { makeRoutineCopies, RoutineCopies } from "./ScheduledTaskCopies.ts";
 import { makeRunSkips } from "./ScheduledTaskSkips.ts";
-import { makeRoutineCoordinatorGate } from "./ScheduledTaskCoordinatorGate.ts";
+import {
+  makeRoutineCoordinatorGate,
+  RESTING_ROUTINE_CHANGE_REFUSAL,
+} from "./ScheduledTaskCoordinatorGate.ts";
 import {
   makeRoutineGrantGate,
   readRoutineGrant,
@@ -1893,12 +1896,48 @@ export const layer = Layer.effect(
       runTask: (task, webhook) => runTask(task, "webhook", webhook),
     });
 
+    /**
+     * A resting copy of a coordinator-owned routine is changed on its runner,
+     * never here (1267 D-12): the runner's next replica would replace the
+     * change, and its copy is the only one written. Only the public methods
+     * check; replicas and Away write through the internal ones.
+     */
+    const onRunner = <A>(
+      target:
+        | { readonly id: ScheduledTaskId }
+        | Pick<ScheduledTask, "projectId" | "ownThread" | "schedule">,
+      change: Effect.Effect<A, ScheduledTaskError>,
+    ) =>
+      Effect.gen(function* () {
+        const task = "id" in target ? yield* findTask(target.id) : target;
+        const hold = task === null ? null : yield* coordinatorHold(task);
+        if (hold?.kind === "rest")
+          return yield* taskError(RESTING_ROUTINE_CHANGE_REFUSAL, {
+            ...("id" in target ? { taskId: target.id } : {}),
+          });
+        return yield* change;
+      });
+
     return ScheduledTaskService.of({
       list,
       subscribeList,
-      upsert,
-      setEnabled,
-      delete: deleteTask,
+      upsert: (input, options) =>
+        onRunner(
+          input.id === undefined
+            ? {
+                projectId: input.projectId,
+                // An unbound routine runs in a thread of its own (asOwnThreadRoutine). A
+                // webhook routine never travels, so it is never held: only the kind matters.
+                ownThread:
+                  (input.ownThread === true || input.threadId == null) &&
+                  input.schedule.type !== "webhook",
+                schedule: { type: "manual" },
+              }
+            : { id: input.id },
+          upsert(input, options),
+        ),
+      setEnabled: (input) => onRunner({ id: input.id }, setEnabled(input)),
+      delete: (input) => onRunner({ id: input.id }, deleteTask(input)),
       runNow,
       rotateWebhookToken,
       listWebhookDeliveries: webhooks.listWebhookDeliveries,
