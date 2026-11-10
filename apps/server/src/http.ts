@@ -186,12 +186,16 @@ const hostHtmlWithLocalReferences = (filePath: string, file: OpenMediaFile) =>
     const bytes = yield* Effect.tryPromise(() =>
       file.handle.read(Buffer.alloc(Number(info.size)), 0, Number(info.size), 0),
     );
-    const html = new TextDecoder("utf-8", { fatal: true }).decode(
-      bytes.buffer.subarray(0, bytes.bytesRead),
+    const html = yield* Effect.try(() =>
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes.buffer.subarray(0, bytes.bytesRead)),
     );
     const paths = htmlLocalReferencePaths(html, filePath);
     if (paths.length === 0) return html;
-    return rewriteHtmlLocalReferences(html, filePath, yield* issueLocalReferenceUrls(paths));
+    return rewriteHtmlLocalReferences(
+      html,
+      filePath,
+      yield* issueLocalReferenceUrls(paths, filePath),
+    );
   }).pipe(
     Effect.tapError((cause) =>
       Effect.logWarning("Serving host HTML without rewriting its local references.", {
@@ -493,7 +497,19 @@ export const layerAssetRoute = HttpRouter.add(
       );
     }
     const fileAsset: Extract<ResolvedAsset, { readonly kind: "file" }> = asset;
-    if (fileAsset.rewritesLocalReferences && fileAsset.file && request.method === "GET") {
+    // Only a page load gets the rewrite. A fetch or download (`Sec-Fetch-Dest: empty`)
+    // keeps the file's own bytes, so a saved copy carries no expiring tokens.
+    const fetchDestination = request.headers["sec-fetch-dest"];
+    const isPageLoad =
+      fetchDestination === undefined ||
+      fetchDestination === "document" ||
+      fetchDestination === "iframe";
+    if (
+      fileAsset.rewritesLocalReferences &&
+      fileAsset.file &&
+      request.method === "GET" &&
+      isPageLoad
+    ) {
       const html = yield* hostHtmlWithLocalReferences(fileAsset.path, fileAsset.file);
       if (html !== null) {
         return HttpServerResponse.text(html, {

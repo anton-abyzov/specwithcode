@@ -871,14 +871,24 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
 /**
  * Signed URLs for the pictures a served HTML document names by host path.
- * Each path follows the absolute `media-file` rules (canonical, regular, not
- * protected) and must be media the server serves on its own; anything else is
- * left out, so the document keeps it as written.
+ * Only media inside the document's own folder tree is signed, judged by where
+ * each path really leads, so a page cannot reach the rest of the host through
+ * its references (its scripts can read what it embeds). Each file follows the
+ * absolute `media-file` rules (canonical, regular, not protected) and must be
+ * image, video or audio by its real name; anything else stays as written.
  */
 export const issueLocalReferenceUrls = Effect.fn("AssetAccess.issueLocalReferenceUrls")(function* (
   paths: ReadonlyArray<string>,
+  htmlFilePath: string,
 ) {
   const path = yield* Path.Path;
+  const isMedia = (file: string) =>
+    /^(?:image|video|audio)\//.test(hostPreviewMimeTypeFromExtension(path.extname(file)) ?? "");
+  const folder = path.dirname(htmlFilePath);
+  const insideFolder = (file: string) => {
+    const relative = path.relative(folder, file);
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  };
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const signingSecret = yield* secretStore
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
@@ -890,10 +900,10 @@ export const issueLocalReferenceUrls = Effect.fn("AssetAccess.issueLocalReferenc
     paths,
     (requestedPath) =>
       Effect.gen(function* () {
-        const mimeType = hostPreviewMimeTypeFromExtension(path.extname(requestedPath));
-        if (mimeType === null || !/^(?:image|video|audio)\//.test(mimeType)) return;
+        if (!isMedia(requestedPath) || !insideFolder(requestedPath)) return;
         const canonicalFile = yield* readableHostFile(requestedPath);
-        if (canonicalFile === null) return;
+        if (canonicalFile === null || !isMedia(canonicalFile) || !insideFolder(canonicalFile))
+          return;
         const identity = yield* openMediaFile(canonicalFile).pipe(
           Effect.map((file) =>
             file === null

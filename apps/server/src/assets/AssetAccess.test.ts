@@ -278,12 +278,31 @@ describe("AssetAccess", () => {
         rewritesLocalReferences: true,
       });
 
-      const urls = yield* issueLocalReferenceUrls([
-        shot,
-        path.join(outside, "sibling.png"),
-        path.join(outside, "missing.png"),
-        path.join(outside, "notes.txt"),
-      ]);
+      // Outside the page's folder, and a picture name that leads to text: neither is signed.
+      const elsewhere = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "studio-media-elsewhere-" }),
+      );
+      const private_ = path.join(elsewhere, "private.png");
+      yield* fs.writeFile(private_, screenshotPng);
+      yield* fs.writeFileString(path.join(outside, "secrets.yaml"), "token: x");
+      const disguised = path.join(outside, "disguised.png");
+      if (symlinksSupported) yield* fs.symlink(path.join(outside, "secrets.yaml"), disguised);
+      const escaping = path.join(outside, "escaping.png");
+      if (symlinksSupported) yield* fs.symlink(private_, escaping);
+      const urls = yield* issueLocalReferenceUrls(
+        [
+          shot,
+          path.join(outside, "sibling.png"),
+          path.join(outside, "missing.png"),
+          path.join(outside, "notes.txt"),
+          private_,
+          path.join(outside, "..", path.basename(elsewhere), "private.png"),
+          disguised,
+          escaping,
+          html,
+        ],
+        html,
+      );
       expect([...urls.keys()].toSorted()).toEqual(
         [shot, path.join(outside, "sibling.png")].toSorted(),
       );
