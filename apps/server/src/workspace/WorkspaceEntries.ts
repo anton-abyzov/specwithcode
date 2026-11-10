@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -8,9 +9,12 @@ import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
 
+import { FilesystemCreateDirectoryError, folderNameProblem } from "@specweave-studio/contracts";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
   ProjectEntry,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
@@ -109,6 +113,10 @@ export class WorkspaceEntries extends Context.Service<
     readonly browse: (
       input: FilesystemBrowseInput,
     ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
+    /** Makes one new folder inside an existing one. Never overwrites or makes parents. */
+    readonly createDirectory: (
+      input: FilesystemCreateDirectoryInput,
+    ) => Effect.Effect<FilesystemCreateDirectoryResult, FilesystemCreateDirectoryError>;
     readonly list: (
       input: ProjectListEntriesInput,
     ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
@@ -121,6 +129,55 @@ export class WorkspaceEntries extends Context.Service<
     readonly refresh: (cwd: string) => Effect.Effect<void>;
   }
 >()("specweave-studio/workspace/WorkspaceEntries") {}
+
+/** Folders past this count in one listing are not checked for a repository. */
+const GIT_MARK_LIMIT = 200;
+const GIT_MARK_BUDGET = "300 millis";
+
+/**
+ * Which of these folders hold a Git repository (a `.git` folder or worktree
+ * file). Bounded in count and time so a slow mount never holds up the listing;
+ * whatever was not answered in time stays unmarked.
+ */
+function markGitFolders(folders: ReadonlyArray<string>, found: Set<string>): Promise<unknown> {
+  return Promise.all(
+    folders.map((folder) =>
+      NodeFSP.stat(`${folder}/.git`).then(
+        () => void found.add(folder),
+        () => undefined,
+      ),
+    ),
+  );
+}
+
+function createDirectoryFailure(folder: string, cause: unknown): FilesystemCreateDirectoryError {
+  const code = (cause as NodeJS.ErrnoException | undefined)?.code;
+  switch (code) {
+    case "EEXIST":
+      return new FilesystemCreateDirectoryError({
+        failure: "exists",
+        message: `'${folder}' already exists on this machine.`,
+      });
+    case "ENOENT":
+    case "ENOTDIR":
+      return new FilesystemCreateDirectoryError({
+        failure: "parent_missing",
+        message: `The folder that would hold '${folder}' does not exist on this machine.`,
+      });
+    case "EACCES":
+    case "EPERM":
+    case "EROFS":
+      return new FilesystemCreateDirectoryError({
+        failure: "permission_denied",
+        message: `This machine does not allow making '${folder}'.`,
+      });
+    default:
+      return new FilesystemCreateDirectoryError({
+        failure: "failed",
+        message: `Could not make '${folder}' on this machine${code ? ` (${code})` : ""}.`,
+      });
+  }
+}
 
 const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(function* (
   input: FilesystemBrowseInput,
@@ -244,7 +301,7 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const entries: Array<{ name: string; fullPath: string; kind?: "folder" | "git" }> = [];
       for (const dirent of dirents) {
         if (
           dirent.isDirectory() &&
@@ -258,12 +315,57 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      return {
-        parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
-      };
+      const sorted = entries.toSorted((left, right) => left.name.localeCompare(right.name));
+      const marked = sorted.slice(0, GIT_MARK_LIMIT);
+      const repositories = new Set<string>();
+      yield* Effect.promise(() =>
+        markGitFolders(
+          marked.map((entry) => entry.fullPath),
+          repositories,
+        ),
+      ).pipe(Effect.timeoutOption(GIT_MARK_BUDGET));
+      for (const entry of marked) entry.kind = repositories.has(entry.fullPath) ? "git" : "folder";
+
+      return { parentPath, entries: sorted, homePath: NodeOS.homedir() };
     },
   );
+
+  const createDirectory: WorkspaceEntries["Service"]["createDirectory"] = Effect.fn(
+    "WorkspaceEntries.createDirectory",
+  )(function* (input) {
+    const platform = yield* HostProcessPlatform;
+    const problem = folderNameProblem(input.name, platform === "win32");
+    if (problem !== null) {
+      return yield* new FilesystemCreateDirectoryError({
+        failure: "invalid_name",
+        message: problem,
+      });
+    }
+    const parent = path.resolve(expandHomePathWith(input.parentPath, path));
+    const folder = path.join(parent, input.name.trim());
+    if (
+      !path.isAbsolute(expandHomePathWith(input.parentPath, path)) ||
+      sensitivePaths.isInsideDeniedFolder(folder)
+    ) {
+      return yield* new FilesystemCreateDirectoryError({
+        failure: "refused",
+        message: `SpecWithCode does not make folders in '${parent}'.`,
+      });
+    }
+    // A link into a refused folder must not be a way around the refusal.
+    const realParent = yield* Effect.promise(() => NodeFSP.realpath(parent).catch(() => parent));
+    if (sensitivePaths.isInsideDeniedFolder(path.join(realParent, input.name.trim()))) {
+      return yield* new FilesystemCreateDirectoryError({
+        failure: "refused",
+        message: `SpecWithCode does not make folders in '${parent}'.`,
+      });
+    }
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.mkdir(folder),
+      catch: (cause) => createDirectoryFailure(folder, cause),
+    });
+    return { path: folder };
+  });
 
   const search: WorkspaceEntries["Service"]["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
@@ -422,7 +524,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return WorkspaceEntries.of({ browse, list, refresh, search, searchContents });
+  return WorkspaceEntries.of({ browse, createDirectory, list, refresh, search, searchContents });
 });
 
 export const layer = Layer.effect(WorkspaceEntries, make).pipe(

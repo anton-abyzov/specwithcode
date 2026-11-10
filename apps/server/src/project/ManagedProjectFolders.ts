@@ -146,6 +146,12 @@ export class ManagedProjectFolders extends Context.Service<
     /** The folder that holds projects started from just a name. */
     readonly namedProjectsRoot: string;
     /**
+     * Where this machine's owner keeps projects: the first of the usual
+     * folders under home that exists, otherwise `~/Projects`, which is made
+     * when a project is first created there.
+     */
+    readonly suggestedProjectsRoot?: string;
+    /**
      * Starts a project. A code project whose chosen `parentPath` is already a
      * project (holding `.git` or `.specweave`, or named like the project), or whose `<parentPath>/<slug>` already is one,
      * binds to that folder as-is and returns `existing: true`: no subfolder,
@@ -213,6 +219,8 @@ const ICON_BACKGROUNDS = [
 ] as const;
 
 const MAX_NAMED_FOLDER_ATTEMPTS = 100;
+/** Where people usually keep projects, most common first. */
+const USUAL_PROJECT_FOLDERS = ["Projects", "projects", "Developer", "dev", "code", "src", "repos"];
 
 function escapeXml(value: string): string {
   return value
@@ -457,11 +465,26 @@ const make = Effect.gen(function* () {
   // serverConfig advertises this folder to every client, so it must exist before anyone browses it.
   yield* fileSystem.makeDirectory(namedProjectsRoot, { recursive: true }).pipe(Effect.ignore);
 
+  let suggestedProjectsRoot = path.join(homedir(), "Projects");
+  for (const name of USUAL_PROJECT_FOLDERS) {
+    const candidate = path.join(homedir(), name);
+    const info = yield* fileSystem.stat(candidate).pipe(Effect.option);
+    if (Option.isSome(info) && info.value.type === "Directory") {
+      suggestedProjectsRoot = candidate;
+      break;
+    }
+  }
+
   const claimNamedFolder = Effect.fn("ManagedProjectFolders.claimNamedFolder")(function* (
     name: string,
     parentPath?: string,
   ) {
-    // The advertised default folder may not exist yet; it is made like the implicit one.
+    // Both advertised default folders may not exist yet; they are made on first use.
+    if (parentPath !== undefined && path.resolve(parentPath) === suggestedProjectsRoot) {
+      yield* fileSystem
+        .makeDirectory(suggestedProjectsRoot, { recursive: true })
+        .pipe(Effect.ignore);
+    }
     const explicitParent =
       parentPath !== undefined && path.resolve(parentPath) !== namedProjectsRoot
         ? parentPath
@@ -757,6 +780,7 @@ const make = Effect.gen(function* () {
     ensureScratchProject,
     folderForThread,
     namedProjectsRoot,
+    suggestedProjectsRoot,
     createNamedProject: (input) =>
       input.kind === "personal"
         ? assistantLock.withPermits(1)(createNamedProject(input))

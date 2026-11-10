@@ -12,12 +12,16 @@ export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
 export const FilesystemBrowseEntry = Schema.Struct({
   name: TrimmedNonEmptyString,
   fullPath: TrimmedNonEmptyString,
+  /** "git" when the folder holds a repository. Absent from older servers and past the marking limit. */
+  kind: Schema.optionalKey(Schema.Literals(["folder", "git"])),
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 
 export const FilesystemBrowseResult = Schema.Struct({
   parentPath: TrimmedNonEmptyString,
   entries: Schema.Array(FilesystemBrowseEntry),
+  /** The home folder of the account the server runs as, for showing paths under it. */
+  homePath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 
@@ -67,3 +71,59 @@ export class FilesystemBrowseError extends Schema.TaggedError<FilesystemBrowseEr
     } as any);
   }
 }
+
+export const FILESYSTEM_FOLDER_NAME_MAX_BYTES = 255;
+
+export const FilesystemCreateDirectoryInput = Schema.Struct({
+  /** An existing absolute folder, or one under `~`. */
+  parentPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_FOLDER_NAME_MAX_BYTES)),
+});
+export type FilesystemCreateDirectoryInput = typeof FilesystemCreateDirectoryInput.Type;
+
+export const FilesystemCreateDirectoryResult = Schema.Struct({
+  path: TrimmedNonEmptyString,
+});
+export type FilesystemCreateDirectoryResult = typeof FilesystemCreateDirectoryResult.Type;
+
+export const FilesystemCreateDirectoryFailure = Schema.Literals([
+  "invalid_name",
+  "exists",
+  "parent_missing",
+  "permission_denied",
+  "refused",
+  "failed",
+]);
+export type FilesystemCreateDirectoryFailure = typeof FilesystemCreateDirectoryFailure.Type;
+
+/**
+ * Why a folder name cannot be used, or null when it can. The same check runs
+ * in the picker before the request and on the machine that makes the folder.
+ * `windows` adds the characters and device names Windows refuses.
+ */
+export function folderNameProblem(name: string, windows = false): string | null {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return "Enter a folder name.";
+  if (trimmed === "." || trimmed === "..") return `"${trimmed}" is not a folder name.`;
+  if (/[\\/]/.test(trimmed)) return "A folder name cannot contain a slash.";
+  if (/[\u0000-\u001f]/.test(trimmed)) return "A folder name cannot contain control characters.";
+  if (new TextEncoder().encode(trimmed).length > FILESYSTEM_FOLDER_NAME_MAX_BYTES) {
+    return "That name is too long.";
+  }
+  if (windows) {
+    if (/[<>:"|?*]/.test(trimmed)) return 'Windows does not allow < > : " | ? * in a folder name.';
+    if (/[. ]$/.test(name.trimStart())) return "On Windows a folder name cannot end with a dot.";
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(trimmed)) {
+      return `"${trimmed}" is reserved by Windows.`;
+    }
+  }
+  return null;
+}
+
+export class FilesystemCreateDirectoryError extends Schema.TaggedError<FilesystemCreateDirectoryError>()(
+  "FilesystemCreateDirectoryError",
+  {
+    failure: FilesystemCreateDirectoryFailure,
+    message: TrimmedNonEmptyString,
+  },
+) {}

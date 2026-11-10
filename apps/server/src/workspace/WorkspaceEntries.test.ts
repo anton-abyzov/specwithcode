@@ -805,7 +805,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           partialPath: path.join(cwd, "alp"),
         });
 
-        expect(result).toEqual({
+        expect(result).toMatchObject({
           parentPath: cwd,
           entries: [
             { name: "alpha", fullPath: path.join(cwd, "alpha") },
@@ -832,7 +832,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         });
 
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
-        expect(hiddenPrefixResult).toEqual({
+        expect(hiddenPrefixResult).toMatchObject({
           parentPath: cwd,
           entries: [{ name: ".config", fullPath: path.join(cwd, ".config") }],
         });
@@ -851,7 +851,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           partialPath: "./pack",
         });
 
-        expect(result).toEqual({
+        expect(result).toMatchObject({
           parentPath: cwd,
           entries: [{ name: "packages", fullPath: path.join(cwd, "packages") }],
         });
@@ -886,7 +886,67 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const result = yield* workspaceEntries.browse({
           partialPath: yield* appendSeparator(cwd),
         });
-        expect(result).toEqual({ parentPath: cwd, entries: [] });
+        expect(result).toMatchObject({ parentPath: cwd, entries: [] });
+      }),
+    );
+
+    it.effect("marks folders that hold a Git repository", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "studio-workspace-browse-git-" });
+        yield* writeTextFile(cwd, "plain/notes.txt", "x");
+        yield* writeTextFile(cwd, "repo/.git/HEAD", "ref: refs/heads/main\n");
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+        expect(result.entries.map((entry) => [entry.name, entry.kind])).toEqual([
+          ["plain", "folder"],
+          ["repo", "git"],
+        ]);
+        expect(result.homePath).toBeTruthy();
+      }),
+    );
+  });
+
+  describe("createDirectory", () => {
+    it.effect("makes one folder and refuses to overwrite it", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "studio-workspace-mkdir-" });
+
+        const made = yield* workspaceEntries.createDirectory({ parentPath: cwd, name: "clients" });
+        expect(made.path).toBe(path.join(cwd, "clients"));
+        expect((yield* Effect.promise(() => NodeFSP.stat(made.path))).isDirectory()).toBe(true);
+
+        const again = yield* workspaceEntries
+          .createDirectory({ parentPath: cwd, name: "clients" })
+          .pipe(Effect.flip);
+        expect(again.failure).toBe("exists");
+      }),
+    );
+
+    it.effect("refuses names that are not one folder, and missing parents", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "studio-workspace-mkdir-bad-" });
+
+        for (const name of ["..", "a/b", "a\\b"]) {
+          const error = yield* workspaceEntries
+            .createDirectory({ parentPath: cwd, name })
+            .pipe(Effect.flip);
+          expect(error.failure).toBe("invalid_name");
+        }
+        const missing = yield* workspaceEntries
+          .createDirectory({ parentPath: path.join(cwd, "nope"), name: "x" })
+          .pipe(Effect.flip);
+        expect(missing.failure).toBe("parent_missing");
+        const relative = yield* workspaceEntries
+          .createDirectory({ parentPath: "./here", name: "x" })
+          .pipe(Effect.flip);
+        expect(relative.failure).toBe("refused");
       }),
     );
   });
