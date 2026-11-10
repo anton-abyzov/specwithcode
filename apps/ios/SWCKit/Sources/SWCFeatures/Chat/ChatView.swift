@@ -54,6 +54,8 @@ private struct ChatScreen: View {
   @State private var showingHandoff = false
   @State private var showingIncrement = false
   @State private var deviceViewer: DeviceViewerRoute?
+  /// A file a reply linked to, open in the viewer.
+  @State private var hostFile: HostFileRoute?
   @State private var railWidth: CGFloat = 0
   /// The chat's height between its safe areas; shrinks while the keyboard is up.
   @State private var availableHeight: CGFloat = 0
@@ -115,6 +117,10 @@ private struct ChatScreen: View {
         }
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
+      .sheet(item: $hostFile) { file in
+        HostFileViewer(file: file, target: target)
+          .presentationDragIndicator(.visible)
+      }
       .deviceViewer($deviceViewer)
       .task(id: router.pendingDeviceViewer) {
         // A launch route opens the viewer once this thread is on screen.
@@ -991,6 +997,10 @@ private struct ChatScreen: View {
   private var pendingImages: [OutgoingImage] { router.attachmentDrafts[target] ?? [] }
 
   private func openThreadLink(_ url: URL, in row: TranscriptRow) {
+    if let path = HostFileLink.path(url) {
+      hostFile = HostFileRoute(path: path)
+      return
+    }
     guard let route = MarkdownThreadLink.route(url) else {
       router.showError(SyncError.sendBlocked("This thread link is invalid."))
       return
