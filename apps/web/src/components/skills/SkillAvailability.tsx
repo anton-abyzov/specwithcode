@@ -12,6 +12,7 @@ import { useStudioFleet } from "../../studio/fleet";
 import { projectWorkspace } from "../../studio/projectWorkspace";
 import { useSkillControls, type SkillControls } from "../settings/ProjectSkillControls";
 import { Button } from "../ui/button";
+import { SkillMachineInstall, scopeLabel } from "./SkillMachineInstall";
 
 export interface SkillAvailabilityState {
   readonly state: "installed" | "missing" | "offline" | "denied" | "unknown" | "stale";
@@ -81,12 +82,15 @@ function AvailabilityMachine({
   projectId,
   label,
   reachable,
+  machineId,
 }: {
   controls: SkillControls;
   environmentId: EnvironmentId;
   projectId: ProjectId | null;
   label: string;
   reachable: boolean;
+  /** The fleet id of another machine; absent for this machine. */
+  machineId?: string | undefined;
 }) {
   const environment = useEnvironment(environmentId);
   const connected = reachable && environment?.connection.phase === "connected";
@@ -148,6 +152,12 @@ function AvailabilityMachine({
       >
         <span className="font-medium">{label}</span>
         <span className="break-words text-muted-foreground">{text}</span>
+        {state.row?.lock?.lockScope ? (
+          <span className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            {scopeLabel(state.row.lock.lockScope)}
+            {state.row.lock.pinnedVersion ? ` · pinned ${state.row.lock.pinnedVersion}` : ""}
+          </span>
+        ) : null}
       </button>
       {expanded ? (
         <div className="mt-2 space-y-2 rounded-lg border p-3 text-xs">
@@ -187,6 +197,20 @@ function AvailabilityMachine({
             <RefreshCwIcon aria-hidden />
             Refresh
           </Button>
+          {machineId ? (
+            <SkillMachineInstall
+              controls={controls}
+              machineId={machineId}
+              label={label}
+              row={state.row}
+              projectId={projectId}
+              reachable={reachable}
+            />
+          ) : (
+            <p className="text-muted-foreground">
+              To install or change the version on this machine, use Version below.
+            </p>
+          )}
         </div>
       ) : null}
     </li>
@@ -215,7 +239,7 @@ function ConnectedAvailability({ controls }: { controls: SkillControls }) {
           disabled={!controls.canPush || !registry}
           onClick={() => controls.setPushOpen(true)}
         >
-          Install on all
+          Install on several…
         </Button>
       </div>
       {!registry ? (
@@ -225,7 +249,7 @@ function ConnectedAvailability({ controls }: { controls: SkillControls }) {
       ) : null}
       {!controls.canPush ? (
         <p className="text-xs text-muted-foreground">
-          Install on all needs permission to maintain machines.
+          Installing on other machines needs permission to maintain machines.
         </p>
       ) : null}
       <ul className="grid gap-2 sm:grid-cols-2">
@@ -248,6 +272,7 @@ function ConnectedAvailability({ controls }: { controls: SkillControls }) {
             }
             label={machine.machineName ?? machine.label}
             reachable={machine.status === "reachable"}
+            machineId={machine.id}
           />
         ))}
       </ul>
