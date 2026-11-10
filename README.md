@@ -4,7 +4,30 @@
 
 <h1 align="center">SpecWithCode</h1>
 
-<p align="center"><b>Run Claude Code, Codex and your other coding agents side by side, on all your machines.<br/>When one hits its limit, another picks up the thread.</b></p>
+<p align="center"><b>One desktop app for Claude Code, Codex, Copilot and your other coding agents.</b><br/>Run tasks side by side on your own machines. Set a fallback so another provider can continue when one hits its limit.</p>
+
+<p align="center">Free and open source under MIT. Bring your own provider accounts or API keys.</p>
+
+<p align="center">
+  <img src="assets/readme/app-window.webp" width="800" alt="The real SpecWithCode desktop app with project navigation and coding-agent conversations." />
+  <br/><sub>Real app, demonstration project. <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26">Watch the demo</a>.</sub>
+</p>
+
+## Try it
+
+**Desktop:** download the [macOS, Windows or Linux app](https://github.com/anton-abyzov/specwithcode/releases/latest), open it, then connect a coding agent you already use.
+
+**One-command server install** on an Apple silicon Mac or Linux (x64 or arm64, glibc and systemd required on Linux):
+
+```sh
+curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash
+```
+
+This installs the local server and starts its background service, not the desktop app. [Read what the installer does](docs/user/install.md#command-line) before running it. Windows users should use the desktop installer. You need an installed, signed-in coding agent to start work.
+
+**First task:** open a project folder, choose your provider and model, and ask for one small change you can review.
+
+If this is useful for your workflow, [star SpecWithCode on GitHub](https://github.com/anton-abyzov/specwithcode) so you can find it again.
 
 <p align="center">
   <a href="https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=for-the-badge" /></a>
@@ -19,10 +42,15 @@
   <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26"><img alt="Website" src="https://img.shields.io/badge/specwithcode.com-7C3AED" /></a>
 </p>
 
+<details>
+<summary>See an illustrated multi-machine workflow</summary>
+
 <p align="center">
   <img src="assets/readme/hero-loop.gif" width="800" alt="A coordinator splits a goal into three tasks. Claude Code, DeepSeek and GitHub Copilot work on a Mac, a Windows PC and a Linux server. At 98% of its limit, Claude Code hands its thread to Codex on a free ChatGPT account with its history kept." />
   <br/><sub>Illustration of the flow, 25 s loop (<a href="assets/readme/hero-loop.mp4">MP4</a>). <a href="assets/readme/app-window.webp">Screenshot of the real app</a> · <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26">longer demo on the site</a></sub>
 </p>
+
+</details>
 
 ## Why
 
