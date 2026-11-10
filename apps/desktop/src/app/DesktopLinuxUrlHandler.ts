@@ -88,6 +88,8 @@ export function renderUrlHandlerDesktopEntry(input: {
   readonly execTarget: string;
   readonly scheme: string;
   readonly iconPath?: string;
+  /** False when a system package's own entry handles the scheme (see below). */
+  readonly handlesScheme?: boolean;
 }): string {
   return [
     "[Desktop Entry]",
@@ -98,9 +100,42 @@ export function renderUrlHandlerDesktopEntry(input: {
     "Terminal=false",
     "NoDisplay=true",
     "StartupNotify=false",
-    `MimeType=x-scheme-handler/${input.scheme};`,
+    ...(input.handlesScheme === false ? [] : [`MimeType=x-scheme-handler/${input.scheme};`]),
     "",
   ].join("\n");
+}
+
+/** The desktop id the .deb and .rpm packages install; it already handles the scheme. */
+export const LINUX_SYSTEM_PACKAGE_DESKTOP_ENTRY = "specweave-studio-desktop.desktop";
+
+/** Where a system package puts its desktop entry, from XDG_DATA_DIRS or the defaults. */
+export function linuxSystemApplicationsDirs(
+  xdgDataDirs: string | undefined,
+): ReadonlyArray<string> {
+  const dirs = xdgDataDirs?.trim() ? xdgDataDirs.split(":") : ["/usr/local/share", "/usr/share"];
+  return dirs
+    .filter((dir) => dir.trim() !== "")
+    .map((dir) => `${dir.replace(/\/+$/, "")}/applications`);
+}
+
+/**
+ * The system package's own desktop entry when this app was installed from a
+ * .deb or .rpm: that entry already handles the scheme, so a second handler
+ * here makes the browser ask which app should open every sign-in link.
+ * Undefined for an AppImage or a development run, which need our own entry.
+ */
+export function resolveLinuxSystemPackageDesktopEntry(input: {
+  readonly isPackaged: boolean;
+  readonly appImagePath: string | undefined;
+  readonly xdgDataDirs: string | undefined;
+  readonly exists: (path: string) => boolean;
+}): string | undefined {
+  if (!input.isPackaged || (input.appImagePath ?? "").trim() !== "") return undefined;
+  return linuxSystemApplicationsDirs(input.xdgDataDirs).some((dir) =>
+    input.exists(`${dir}/${LINUX_SYSTEM_PACKAGE_DESKTOP_ENTRY}`),
+  )
+    ? LINUX_SYSTEM_PACKAGE_DESKTOP_ENTRY
+    : undefined;
 }
 
 export class DesktopLinuxUrlHandler extends Context.Service<
@@ -125,6 +160,22 @@ export const make = Effect.gen(function* () {
   const iconsDir = environment.path.join(environment.linuxApplicationsDir, "..", "icons");
   const iconPath = environment.path.join(iconsDir, `${environment.linuxDesktopEntryName}.png`);
 
+  // A .deb or .rpm install already registers its own entry for the scheme.
+  const systemPackageEntry =
+    environment.platform === "linux"
+      ? yield* Effect.gen(function* () {
+          if (!environment.isPackaged || Option.isSome(environment.appImagePath)) return undefined;
+          for (const dir of linuxSystemApplicationsDirs(process.env.XDG_DATA_DIRS)) {
+            const found = yield* fileSystem
+              .exists(environment.path.join(dir, LINUX_SYSTEM_PACKAGE_DESKTOP_ENTRY))
+              .pipe(Effect.orElseSucceed(() => false));
+            if (found) return LINUX_SYSTEM_PACKAGE_DESKTOP_ENTRY;
+          }
+          return undefined;
+        })
+      : undefined;
+  const defaultHandlerEntry = systemPackageEntry ?? environment.linuxDesktopEntryName;
+
   const writeDesktopEntry = Effect.gen(function* () {
     // Inside the mounted AppImage, process.execPath points at a transient
     // /tmp/.mount_* path — the handler must launch the AppImage itself.
@@ -134,6 +185,8 @@ export const make = Effect.gen(function* () {
       execTarget,
       scheme,
       ...(environment.isPackaged ? { iconPath } : {}),
+      // Kept for the portal's app identity, but not as a second handler.
+      handlesScheme: systemPackageEntry === undefined,
     });
     // Pre-ready setup normally wrote this already. Avoid truncating a valid
     // entry while the portal may be reading it during startup.
@@ -190,7 +243,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const command = ChildProcess.make(
         "xdg-mime",
-        ["default", environment.linuxDesktopEntryName, `x-scheme-handler/${scheme}`],
+        ["default", defaultHandlerEntry, `x-scheme-handler/${scheme}`],
         {
           stdin: "ignore",
           stdout: "ignore",
@@ -253,7 +306,7 @@ export const make = Effect.gen(function* () {
     );
 
     yield* setDefaultHandler;
-    yield* logInfo("registered URL scheme handler", { scheme });
+    yield* logInfo("registered URL scheme handler", { scheme, desktopEntry: defaultHandlerEntry });
   }).pipe(
     // Registration is best-effort: a missing xdg-mime or read-only home must
     // never block startup — the OS chooser remains as fallback.

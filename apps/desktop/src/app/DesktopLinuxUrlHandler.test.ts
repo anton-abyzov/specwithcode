@@ -64,6 +64,8 @@ const layerHandler = (
     readonly existingEntry?: string;
     readonly iconSource?: string;
     readonly iconCopyError?: PlatformError.PlatformError;
+    /** A .deb or .rpm desktop entry is installed. */
+    readonly systemPackageEntry?: boolean;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -92,6 +94,11 @@ const layerHandler = (
                   recorded.copies.push({ source, destination });
                 }),
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
+          exists: (path) =>
+            Effect.succeed(
+              input.systemPackageEntry === true &&
+                path.endsWith(`/${DesktopLinuxUrlHandler.LINUX_SYSTEM_PACKAGE_DESKTOP_ENTRY}`),
+            ),
           makeDirectory: (path) =>
             Effect.sync(() => {
               recorded.directories.push(path);
@@ -185,7 +192,8 @@ describe("DesktopLinuxUrlHandler", () => {
     const writeError = new DesktopLinuxUrlHandler.DesktopLinuxUrlHandlerRegistrationError({
       step: "write-desktop-entry",
       scheme: "studio",
-      desktopEntryPath: "/home/alice/.local/share/applications/com.specweave.SpecWeaveStudio.desktop",
+      desktopEntryPath:
+        "/home/alice/.local/share/applications/com.specweave.SpecWeaveStudio.desktop",
       cause: new Error("boom"),
     });
     assert.equal(
@@ -359,7 +367,8 @@ describe("DesktopLinuxUrlHandler", () => {
           module: "FileSystem",
           method: "writeFileString",
           description: "read-only filesystem",
-          pathOrDescriptor: "/home/alice/.local/share/applications/com.specweave.SpecWeaveStudio.desktop",
+          pathOrDescriptor:
+            "/home/alice/.local/share/applications/com.specweave.SpecWeaveStudio.desktop",
         }),
       });
 
@@ -391,4 +400,57 @@ describe("DesktopLinuxUrlHandler", () => {
       );
     }),
   );
+
+  it.effect("leaves the scheme to the .deb entry instead of adding a second handler", () =>
+    Effect.gen(function* () {
+      const recorded = emptyRecording();
+      yield* runRegister(recorded, {
+        environment: { appImagePath: Option.none() },
+        systemPackageEntry: true,
+      });
+      assert.lengthOf(recorded.files, 1);
+      assert.notInclude(recorded.files[0]!.content, "MimeType=");
+      const xdgMime = recorded.commands.find((entry) => entry.command === "xdg-mime");
+      assert.deepEqual(xdgMime?.args, [
+        "default",
+        "specweave-studio-desktop.desktop",
+        "x-scheme-handler/studio",
+      ]);
+    }),
+  );
+
+  it.effect("keeps its own handler for a packaged run with no system entry", () =>
+    Effect.gen(function* () {
+      const recorded = emptyRecording();
+      yield* runRegister(recorded, { environment: { appImagePath: Option.none() } });
+      assert.include(recorded.files[0]!.content, "MimeType=x-scheme-handler/studio;");
+      const xdgMime = recorded.commands.find((entry) => entry.command === "xdg-mime");
+      assert.equal(xdgMime?.args[1], "com.specweave.SpecWeaveStudio.desktop");
+    }),
+  );
+
+  it("finds the system package entry only for a packaged non-AppImage run", () => {
+    const exists = (path: string) =>
+      path === "/usr/share/applications/specweave-studio-desktop.desktop";
+    const base = { isPackaged: true, appImagePath: undefined, xdgDataDirs: undefined, exists };
+    assert.equal(
+      DesktopLinuxUrlHandler.resolveLinuxSystemPackageDesktopEntry(base),
+      "specweave-studio-desktop.desktop",
+    );
+    assert.isUndefined(
+      DesktopLinuxUrlHandler.resolveLinuxSystemPackageDesktopEntry({
+        ...base,
+        appImagePath: "/home/a/App.AppImage",
+      }),
+    );
+    assert.isUndefined(
+      DesktopLinuxUrlHandler.resolveLinuxSystemPackageDesktopEntry({ ...base, isPackaged: false }),
+    );
+    assert.isUndefined(
+      DesktopLinuxUrlHandler.resolveLinuxSystemPackageDesktopEntry({
+        ...base,
+        xdgDataDirs: "/opt/share",
+      }),
+    );
+  });
 });
