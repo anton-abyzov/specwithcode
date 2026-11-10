@@ -104,6 +104,14 @@ describe("tierModelFor", () => {
       "claude-fable-5-1",
     );
     expect(newestOfFamily(newer, "gpt-6-astra")).toBeUndefined();
+    // A provider without its own entry (Copilot) still follows the Fable family.
+    const borrowed = provider(
+      "copilot",
+      "acpRegistry",
+      ["claude-opus-5.5", "claude-fable-5.1"],
+      null,
+    );
+    expect(tierModelFor(borrowed, "frontier")).toBe("claude-fable-5.1");
     expect(newestOfFamily(muse, "muse-wonder-1.0")).toBe("muse-wonder-1.0");
   });
 

@@ -176,8 +176,13 @@ export function tierModelFor(
       continue;
     }
     for (const driver of TIER_DRIVER_ORDER) {
-      const named = tiers?.[driver]?.[wanted] ?? DEFAULT_PROVIDER_MODEL_TIERS[driver]?.[wanted];
-      const slug = named === undefined ? undefined : sameModelOn(provider, { slug: named });
+      const person = tiers?.[driver]?.[wanted];
+      const named = person ?? DEFAULT_PROVIDER_MODEL_TIERS[driver]?.[wanted];
+      const slug =
+        named === undefined
+          ? undefined
+          : ((person === undefined ? newestOfFamily(provider, named) : undefined) ??
+            sameModelOn(provider, { slug: named }));
       if (slug !== undefined) return slug;
     }
   }

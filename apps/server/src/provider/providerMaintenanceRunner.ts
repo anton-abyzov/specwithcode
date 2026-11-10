@@ -76,7 +76,7 @@ export interface ProviderMaintenanceRunnerShape {
           readonly targetVersion?: string | undefined;
           /**
            * Proceed past an in-use refusal; running sessions keep the old files. An
-           * installer that cannot be verified idle (Windows) is still refused.
+           * installer that cannot be verified idle (no process list) is still refused.
            */
           readonly force?: boolean | undefined;
         },

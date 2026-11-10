@@ -754,7 +754,7 @@
           "status": "current",
           "badge": "new",
           "profile": "fable-5-2",
-          "adapter": { "claudeCode": {} }
+          "adapter": { "claudeCode": { "minVersion": "2.1.302" } }
         },
         {
           "slug": "claude-fable-5-1",

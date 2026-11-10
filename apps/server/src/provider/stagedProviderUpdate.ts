@@ -154,13 +154,16 @@ const INTERACTIVE_SHELLS = new Set([
   "nu",
   "pwsh",
   "powershell",
+  "cmd",
 ]);
 
 /** argv0 basename, leading "-" (login shell) stripped, is an interactive shell. */
 function isInteractiveShell(command: string | undefined) {
   if (command === undefined) return false;
-  const [argv0 = ""] = commandTokens(command);
+  const [argv0 = "", ...args] = commandTokens(command);
   const name = basename(argv0).replace(/^-/, "").toLowerCase();
+  // `cmd /c` runs one command (how Node starts a `.cmd` shim); only a prompt is a terminal.
+  if (name.replace(/\.exe$/, "") === "cmd" && args.some((arg) => /^\/c$/i.test(arg))) return false;
   return INTERACTIVE_SHELLS.has(name.replace(/\.exe$/, ""));
 }
 
@@ -223,10 +226,14 @@ export function findProviderProcessesInUse(
       (scriptName === name.toLowerCase() || scriptName === `${name.toLowerCase()}.js`)
     );
   };
+  // Windows paths compare without case: `C:\\Users` and `c:\\users` are one file.
+  const windowsPath = (value: string) => forwardSlashes(value).toLowerCase();
   const runsInstall = (command: string) =>
     targets.some(
       (target) =>
-        command.includes(target) || forwardSlashes(command).includes(forwardSlashes(target)),
+        command.includes(target) ||
+        (/^[a-z]:[\\/]/i.test(target) && windowsPath(command).includes(windowsPath(target))) ||
+        forwardSlashes(command).includes(forwardSlashes(target)),
     ) ||
     (!!packageName && forwardSlashes(command).includes(`/node_modules/${packageName}/`));
   const rows = parsePsRows(commands);
@@ -255,7 +262,14 @@ export function findProviderProcessesInUse(
 
 /** Executable basename plus a path tail or subcommand; later arguments may hold prompts or secrets. */
 export function shortProcessLabel(command: string): string {
-  const [executable = "", second] = commandTokens(command).map(forwardSlashes);
+  // Only argv0 is unquoted; a quoted later word (a prompt) stays quoted and is dropped.
+  const [argv0 = ""] = commandTokens(command);
+  const rest = command.trim().startsWith('"')
+    ? command.trim().slice(argv0.length + 2)
+    : command.trim().slice(argv0.length);
+  const executable = forwardSlashes(argv0);
+  const word = rest.trim().split(/\s+/)[0];
+  const second = word ? forwardSlashes(word) : undefined;
   const tail = (value: string) => {
     const parts = value.split("/").filter(Boolean);
     return parts.length > 2 ? `.../${parts.slice(-2).join("/")}` : value;
@@ -318,8 +332,9 @@ export const WINDOWS_PROCESS_LIST_SCRIPT =
   'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { $c = if ($_.CommandLine) { $_.CommandLine } else { $_.Name }; Write-Output ("{0} {1} {2}" -f $_.ProcessId, $_.ParentProcessId, ($c -replace "[\\r\\n]+", " ")) }';
 
 export async function listWindowsProcesses(): Promise<string> {
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   const { stdout } = await exec(
-    "powershell.exe",
+    `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
     ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_PROCESS_LIST_SCRIPT],
     { timeout: 15_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
   );

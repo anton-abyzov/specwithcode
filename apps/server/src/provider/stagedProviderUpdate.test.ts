@@ -372,6 +372,10 @@ describe("Windows installer in-use detection", () => {
     '9004 1 "C:\\Users\\me\\AppData\\Local\\AnthropicClaude\\Claude.exe"',
     '500 1 "C:\\Program Files\\SpecWithCode\\server.exe"',
     "9005 500 C:\\Users\\me\\.local\\bin\\claude.exe --output-format stream-json",
+    '9006 500 C:\\Windows\\system32\\cmd.exe /d /s /c "claude.cmd -p x"',
+    '9007 9006 "C:\\Program Files\\nodejs\\node.exe" C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
+    "8000 9000 C:\\Windows\\System32\\cmd.exe",
+    "8001 8000 claude.exe -p hi",
   ].join("\r\n");
 
   it("finds a terminal's Claude and Codex but not the desktop app or the server's own session", () => {
@@ -385,7 +389,19 @@ describe("Windows installer in-use detection", () => {
           selfPid: 500,
         },
       ).map((m) => m.pid),
-    ).toEqual([9002]);
+    ).toEqual([9002, 8001]);
+    expect(
+      findProviderProcessesInUse(
+        rows,
+        "claudeAgent",
+        ["c:\\users\\me\\appdata\\roaming\\npm\\node_modules\\@anthropic-ai\\claude-code"],
+        undefined,
+        {
+          selfPid: 500,
+        },
+      ).map((m) => m.pid),
+    ).toEqual([9002, 8001]);
+    expect(shortProcessLabel('claude "secret prompt"')).toBe("claude");
     expect(
       findProviderProcessesInUse(rows, "codex", [], "@openai/codex", { selfPid: 500 }).map(
         (m) => m.pid,
