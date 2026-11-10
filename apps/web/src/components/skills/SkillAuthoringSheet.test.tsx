@@ -9,7 +9,12 @@ import {
   type SkillAuthoringResult,
 } from "@specweave-studio/contracts";
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { SkillAuthoringForm, skillMarkdown, type AuthoringRequest } from "./SkillAuthoringSheet";
+import {
+  PUBLICATION_POLL_MS,
+  SkillAuthoringForm,
+  skillMarkdown,
+  type AuthoringRequest,
+} from "./SkillAuthoringSheet";
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../studio/projectWorkspace", () => ({ projectWorkspace: { skillAuthoring: {} } }));
@@ -217,6 +222,72 @@ describe("skill authoring", () => {
     await click("Check status");
     expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read", "status"]);
     expect(host.textContent).not.toContain("Publish for review");
+  });
+  it("generates with the thread's provider and model without a manual choice", async () => {
+    const request = vi.fn(async (input: AuthoringRequest) => ({
+      draft: input.operation === "generate" ? { ...fixtureDraft, ...input.draft } : fixtureDraft,
+    }));
+    await mount(request);
+    await click("1. Describe");
+    await fill("What should this skill do?", "Greet me when I start typing");
+    expect(button("Generate draft").disabled).toBe(false);
+    await click("Generate draft");
+    const generated = request.mock.calls.find(([input]) => input.operation === "generate")?.[0];
+    expect(generated?.draft?.modelSelection).toEqual({
+      instanceId: "codex",
+      model: "chosen-model",
+    });
+  });
+  it("says why Generate draft cannot run", async () => {
+    const request = vi.fn(async (_input: AuthoringRequest) => ({ draft: null }));
+    await mount(request);
+    await fill("What should this skill do?", "");
+    expect(button("Generate draft").disabled).toBe(true);
+    expect(host.textContent).toContain("Describe what the skill should do.");
+    await act(async () =>
+      root.render(
+        <SkillAuthoringForm
+          open
+          onOpenChange={vi.fn()}
+          machineLabel="Fixture machine"
+          agents={[]}
+          request={request}
+          canWrite
+          canGenerate
+          canPublish
+        />,
+      ),
+    );
+    expect(host.textContent).toContain("No provider is ready on Fixture machine.");
+  });
+  it("follows the review queue and shows the current step", async () => {
+    vi.useFakeTimers();
+    try {
+      const draft = {
+        ...fixtureDraft,
+        publication: {
+          state: "reviewing" as const,
+          contentHash: "hash",
+          version: "1.0.0",
+          skillId: "fixture/skills/review-code",
+          skillPath: "skills/review-code/SKILL.md",
+          repository: "fixture/skills",
+          visibility: "public" as const,
+          submissionId: "receipt",
+        },
+      };
+      const request = vi.fn(async (_input: AuthoringRequest) => ({ draft }));
+      await mount(request);
+      expect(
+        host.querySelector('[aria-label="Publication progress"] [aria-current="step"]')
+          ?.textContent,
+      ).toContain("Automated security and quality scans");
+      expect(host.textContent).toContain("Checked automatically every 20 seconds");
+      await act(async () => vi.advanceTimersByTimeAsync(PUBLICATION_POLL_MS));
+      expect(request.mock.calls.map(([input]) => input.operation)).toEqual(["read", "status"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("invalidates a preview when scope changes and sends the selected instance", async () => {
     const draft = {

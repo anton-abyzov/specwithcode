@@ -8170,6 +8170,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       cwd={gitCwd}
                       threadId={isServerThread ? activeThreadId : null}
                       provider={selectedProviderEntry}
+                      model={selectedModel}
                       machineLabel={usageMachineLabel}
                       skills={selectedProviderSkills}
                       uses={sessionSkillUses}
