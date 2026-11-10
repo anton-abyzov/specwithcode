@@ -656,6 +656,11 @@ export const ko: PhraseCatalog = {
   "Enter a model slug.": "모델 슬러그를 입력하세요.",
   Favorites: "즐겨찾기",
   "Filter models": "모델 필터",
+  "Model ID": "모델 ID",
+  "Stars and arrows arrange the model picker only. The model that takes over at a usage limit is set in Fallback order and Model tiers.":
+    "별표와 화살표는 모델 선택기의 순서만 바꿉니다. 사용 한도에 도달했을 때 이어받을 모델은 대체 순서와 모델 등급에서 설정합니다.",
+  "For a model this list does not show yet. Type the exact ID the provider accepts; it is sent as typed.":
+    "이 목록에 아직 없는 모델용입니다. 제공자가 받는 정확한 ID를 입력하세요. 입력한 그대로 전송됩니다.",
   "Hidden from picker": "선택기에서 숨김",
   "Model slugs must be {max} characters or less.": "모델 슬러그는 {max}자 이하여야 합니다.",
   "Move down": "아래로 이동",

@@ -4,7 +4,7 @@ import { useT, useTx } from "../../i18n";
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ProviderDriverKind,
+  type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProviderModel,
 } from "@specweave-studio/contracts";
@@ -21,19 +21,6 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { CustomModelEditor } from "./CustomModelEditor";
-
-/**
- * Placeholder text for the "add a custom model" input, keyed by driver
- * kind. Mirrors the prior hardcoded switch in `SettingsPanels.tsx` so the
- * UX is unchanged — only the owning component has moved.
- */
-const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, string>> = {
-  [ProviderDriverKind.make("codex")]: "gpt-6.7-codex-ultra-preview",
-  [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
-  [ProviderDriverKind.make("cursor")]: "composer-2.5",
-  [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
-  [ProviderDriverKind.make("pi")]: "anthropic/claude-sonnet-5",
-};
 
 /** Above this many models the list gets a filter input. */
 const FILTER_THRESHOLD = 8;
@@ -568,6 +555,11 @@ export function ProviderModelsSection({
           </Button>
         ) : null}
       </div>
+      <p className="mt-1.5 text-2xs text-muted-foreground">
+        {tx(
+          "Stars and arrows arrange the model picker only. The model that takes over at a usage limit is set in Fallback order and Model tiers.",
+        )}
+      </p>
       <div
         ref={listRef}
         className="mt-2 -mx-2 max-h-64 overflow-y-auto lg:max-h-none lg:min-h-0 lg:flex-1"
@@ -634,7 +626,8 @@ export function ProviderModelsSection({
               event.preventDefault();
               handleAdd();
             }}
-            placeholder={driverKind ? CUSTOM_MODEL_PLACEHOLDER_BY_KIND[driverKind] : "model-slug"}
+            placeholder={tx("Model ID")}
+            aria-label={tx("Model ID")}
             spellCheck={false}
           />
           <div className="flex shrink-0 gap-2">
@@ -646,6 +639,14 @@ export function ProviderModelsSection({
             </Button>
           </div>
         </div>
+      ) : null}
+
+      {driverKind !== "antigravity" && canManageCustomModels && isAdding ? (
+        <p className="mt-1.5 text-2xs text-muted-foreground">
+          {tx(
+            "For a model this list does not show yet. Type the exact ID the provider accepts; it is sent as typed.",
+          )}
+        </p>
       ) : null}
 
       {driverKind !== "antigravity" && error ? (

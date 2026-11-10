@@ -657,6 +657,11 @@ export const ja: PhraseCatalog = {
   "Enter a model slug.": "モデルのスラッグを入力してください。",
   Favorites: "お気に入り",
   "Filter models": "モデルを絞り込む",
+  "Model ID": "モデル ID",
+  "Stars and arrows arrange the model picker only. The model that takes over at a usage limit is set in Fallback order and Model tiers.":
+    "星と矢印はモデル選択の並び順だけを変えます。使用上限に達したときに引き継ぐモデルは、「フォールバックの順序」と「モデルのティア」で設定します。",
+  "For a model this list does not show yet. Type the exact ID the provider accepts; it is sent as typed.":
+    "この一覧にまだないモデル用です。プロバイダーが受け付ける正確な ID を入力してください。入力どおりに送信されます。",
   "Hidden from picker": "選択肢に表示しない",
   "Model slugs must be {max} characters or less.":
     "モデルのスラッグは {max} 文字以内にしてください。",

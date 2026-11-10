@@ -638,6 +638,11 @@ export const zh: PhraseCatalog = {
   "Enter a model slug.": "请输入模型标识。",
   Favorites: "收藏",
   "Filter models": "筛选模型",
+  "Model ID": "模型 ID",
+  "Stars and arrows arrange the model picker only. The model that takes over at a usage limit is set in Fallback order and Model tiers.":
+    "星标和箭头只调整模型选择器中的顺序。达到用量上限时由哪个模型接手，在“备用顺序”和“模型档位”中设置。",
+  "For a model this list does not show yet. Type the exact ID the provider accepts; it is sent as typed.":
+    "用于此列表尚未显示的模型。请输入提供商接受的准确 ID，将按原样发送。",
   "Hidden from picker": "已从选择器隐藏",
   "Model slugs must be {max} characters or less.": "模型标识不能超过 {max} 个字符。",
   "Move down": "下移",
