@@ -352,9 +352,9 @@ const main = Command.make(
             [
               "xcodebuild",
               "-workspace",
-              path.join(mobile, "ios/SpecWeaveStudioDev.xcworkspace"),
+              path.join(mobile, "ios/SpecWithCodeDev.xcworkspace"),
               "-scheme",
-              "SpecWeaveStudioDev",
+              "SpecWithCodeDev",
               "-configuration",
               "Debug",
               "-destination",
@@ -371,7 +371,7 @@ const main = Command.make(
               "simctl",
               "install",
               device,
-              path.join(output, "Build/Products/Debug-iphonesimulator/SpecWeaveStudioDev.app"),
+              path.join(output, "Build/Products/Debug-iphonesimulator/SpecWithCodeDev.app"),
             ],
             true,
           );
