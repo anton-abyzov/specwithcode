@@ -159,10 +159,14 @@ function createDirectoryFailure(folder: string, cause: unknown): FilesystemCreat
         message: `'${folder}' already exists on this machine.`,
       });
     case "ENOENT":
-    case "ENOTDIR":
       return new FilesystemCreateDirectoryError({
         failure: "parent_missing",
         message: `The folder that would hold '${folder}' does not exist on this machine.`,
+      });
+    case "ENOTDIR":
+      return new FilesystemCreateDirectoryError({
+        failure: "parent_missing",
+        message: `'${folder}' would sit inside a file, not a folder, on this machine.`,
       });
     case "EACCES":
     case "EPERM":
@@ -295,9 +299,13 @@ export const make = Effect.gen(function* () {
             const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
             return code === "EACCES" || code === "EPERM";
           },
-          () => Effect.succeed([]),
+          () => Effect.succeed(null),
         ),
       );
+      // Its folders cannot be listed, so say so instead of showing it empty.
+      if (dirents === null) {
+        return { parentPath, entries: [], homePath: NodeOS.homedir(), unreadable: true };
+      }
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
@@ -343,10 +351,10 @@ export const make = Effect.gen(function* () {
     }
     const parent = path.resolve(expandHomePathWith(input.parentPath, path));
     const folder = path.join(parent, input.name.trim());
-    if (
-      !path.isAbsolute(expandHomePathWith(input.parentPath, path)) ||
-      sensitivePaths.isInsideDeniedFolder(folder)
-    ) {
+    // The same refusals as writing a file there, plus folders that are denied whole.
+    const refused = (candidate: string) =>
+      sensitivePaths.isInsideDeniedFolder(candidate) || sensitivePaths.isDenied(candidate, "write");
+    if (!path.isAbsolute(expandHomePathWith(input.parentPath, path)) || refused(folder)) {
       return yield* new FilesystemCreateDirectoryError({
         failure: "refused",
         message: `SpecWithCode does not make folders in '${parent}'.`,
@@ -354,7 +362,7 @@ export const make = Effect.gen(function* () {
     }
     // A link into a refused folder must not be a way around the refusal.
     const realParent = yield* Effect.promise(() => NodeFSP.realpath(parent).catch(() => parent));
-    if (sensitivePaths.isInsideDeniedFolder(path.join(realParent, input.name.trim()))) {
+    if (refused(path.join(realParent, input.name.trim()))) {
       return yield* new FilesystemCreateDirectoryError({
         failure: "refused",
         message: `SpecWithCode does not make folders in '${parent}'.`,

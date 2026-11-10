@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Expected paths are resolved the way the host resolves them.
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";

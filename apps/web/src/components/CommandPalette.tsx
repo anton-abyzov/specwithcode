@@ -4273,6 +4273,15 @@ function OpenCommandPaletteDialog(props: {
                 })
               : null
           }
+          onOpenLoadBalancing={
+            clientSettings.loadBalancingEnabled &&
+            newProjectFlow.environmentId === newProjectFlow.suggestedEnvironmentId
+              ? () => {
+                  setOpen(false);
+                  void navigate({ to: "/settings/connections" });
+                }
+              : undefined
+          }
           busy={isCreatingNewProject}
           onSelect={(environmentId) => switchNewProjectEnvironment(environmentId as EnvironmentId)}
         />

@@ -104,7 +104,9 @@ describe("projectMachineReason", () => {
   });
   it("names load balancing or an unavailable device when another machine is preselected", () => {
     expect(reason("m1", "m1", "m4", true)).toContain("load balancing");
-    expect(reason("m1", "m1", "m4")).toContain("cannot create projects right now");
-    expect(reason("m1", "m1", null)).toContain("cannot hold projects");
+    expect(reason("m1", "m1", "m4")).toBe(
+      "This device is not available: it is offline or cannot create projects right now. m1 is selected instead.",
+    );
+    expect(reason("m1", "m1", null)).toContain("This device is not available: it cannot hold");
   });
 });

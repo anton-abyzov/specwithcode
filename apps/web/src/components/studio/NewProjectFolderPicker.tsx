@@ -87,11 +87,7 @@ export function NewProjectFolderPicker({
       : folderOutcome({ folder: listing.path, name: projectName, entries: listing.entries });
   return (
     <section aria-label="Project location" className="mx-4 my-2">
-      <p className="text-sm font-medium">Project location{onMachine}</p>
-      <p className="mb-1.5 text-xs text-muted-foreground">
-        Open the folder that will hold the project. The project gets its own folder inside it, so
-        make a new folder only for a new parent.
-      </p>
+      <p className="mb-1.5 text-sm font-medium">Project location{onMachine}</p>
       <FolderBrowser
         key={start.key}
         environmentId={environmentId}

@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   requests: [] as any[],
   created: [] as any[],
   createFailure: null as string | null,
+  unreadable: null as string | null,
 }));
 vi.mock("../../state/filesystem", () => ({
   useFilesystemReadAccess: () => ({
@@ -71,6 +72,7 @@ vi.mock("../../state/query", () => ({
           ? {
               parentPath,
               homePath: HOME,
+              ...(state.unreadable === parentPath ? { unreadable: true } : {}),
               entries: TREE[parentPath]!.map((entry) => ({
                 ...entry,
                 fullPath: `${parentPath}/${entry.name}`,
@@ -304,6 +306,34 @@ it("offers a default folder that does not exist yet instead of a browse error", 
   expect(container.querySelector('[role="alert"]')).toBeNull();
   expect(container.textContent).toContain("does not exist yet");
   expect(onSelect).toHaveBeenLastCalledWith(`${HOME}/Code`);
+});
+
+it("names a folder the machine may not read and never offers it as the choice", async () => {
+  state.unreadable = `${HOME}/Projects`;
+  const onSelect = vi.fn();
+  try {
+    await render({
+      onSelect,
+      selectedPath: `${HOME}/Projects`,
+      machineLabel: "m1",
+      projectName: "x",
+    });
+    expect(container.querySelector('[role="alert"]')!.textContent).toContain(
+      `m1 does not allow reading ${HOME}/Projects.`,
+    );
+    expect(container.textContent).not.toContain("No folders inside");
+    expect(onSelect.mock.calls.every(([path]) => path === null)).toBe(true);
+    expect(button(`Open ${HOME}`)).toBeDefined();
+  } finally {
+    state.unreadable = null;
+  }
+});
+
+it("keeps the name field and messages outside the list of folders", async () => {
+  await render({ selectedPath: `${HOME}/Projects`, canCreateFolder: true });
+  await act(async () => button("New folder").click());
+  const field = container.querySelector('[aria-label="New folder name"]')!;
+  expect(field.closest('[role="listbox"]')).toBeNull();
 });
 
 it("shows a browse error in its own words with the machine it came from", async () => {

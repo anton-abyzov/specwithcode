@@ -109,11 +109,11 @@ export function projectMachineReason(input: {
       : `You picked ${selectedLabel}. The next new project starts on this device again.`;
   }
   if (loadBalancingEnabled) {
-    return "Chosen by load balancing (Settings, Load balancing). Pick another machine to override it for this project.";
+    return "Chosen by load balancing. Pick another machine to override it for this project.";
   }
   if (selected === thisDevice)
     return "New projects start on this device. Pick another machine to put this one there.";
   return thisDevice === null
-    ? `${selectedLabel} is selected because this device cannot hold projects.`
-    : `${selectedLabel} is selected because this device cannot create projects right now.`;
+    ? `This device is not available: it cannot hold projects. ${selectedLabel} is selected instead.`
+    : `This device is not available: it is offline or cannot create projects right now. ${selectedLabel} is selected instead.`;
 }

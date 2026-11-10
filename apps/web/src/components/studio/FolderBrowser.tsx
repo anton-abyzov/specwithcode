@@ -127,7 +127,11 @@ export function FolderBrowser({
   });
   const onMachine = machineLabel ? ` on ${machineLabel}` : "";
   const failed = query.error !== null && query.error !== undefined;
-  const loaded = query.data !== null && !query.isPending && !failed && access.canReadFiles;
+  // The machine found the folder but its account may not list it. Such a
+  // folder is named as the problem and is never a choice.
+  const unreadable = !failed && !query.isPending && query.data?.unreadable === true;
+  const loaded =
+    query.data !== null && !query.isPending && !failed && !unreadable && access.canReadFiles;
   // Only a folder the machine says is absent counts as "not made yet"; an
   // offline machine or a refusal is an error, never a choice.
   const missingOk =
@@ -292,6 +296,7 @@ export function FolderBrowser({
                 event.preventDefault();
                 event.stopPropagation();
                 setPathDraft(null);
+                listRef.current?.focus();
               }
             }}
           />
@@ -429,16 +434,7 @@ export function FolderBrowser({
             })}
           </div>
         ) : null}
-        <div
-          ref={listRef}
-          id={listId}
-          role="listbox"
-          aria-label={`Folders${onMachine}`}
-          aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
-          tabIndex={disabled ? -1 : 0}
-          onKeyDown={onListKeyDown}
-          className="h-52 overflow-y-auto overscroll-contain p-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-        >
+        <div className="h-52 overflow-y-auto overscroll-contain p-1.5">
           {!access.canReadFiles && !access.isPending && !access.error ? (
             <p role="alert" className="px-2 py-1.5 text-xs text-destructive-foreground">
               Folder access is unavailable{onMachine}.
@@ -461,6 +457,23 @@ export function FolderBrowser({
             <p role="status" className="px-2 py-1.5 text-sm text-muted-foreground">
               This folder{onMachine} does not exist yet. It is made when you create the project.
             </p>
+          ) : unreadable ? (
+            <div className="space-y-2 px-2 py-1.5">
+              <p role="alert" className="text-sm text-destructive-foreground">
+                {machineLabel ?? "This machine"} does not allow reading {query.data!.parentPath}.
+                Open another folder for the project.
+              </p>
+              {parent ? (
+                <button
+                  type="button"
+                  className={cn(TOOL, "border text-sm")}
+                  disabled={disabled}
+                  onClick={() => open(parent, "back")}
+                >
+                  Open {parent}
+                </button>
+              ) : null}
+            </div>
           ) : failed || access.error ? (
             <div className="space-y-2 px-2 py-1.5">
               <p role="alert" className="text-sm text-destructive-foreground">
@@ -480,62 +493,68 @@ export function FolderBrowser({
               ) : null}
             </div>
           ) : null}
-          {loaded ? (
+          {newName !== null ? (
+            <form
+              data-folder-new
+              className="mb-px rounded-md bg-muted px-2 py-1.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitNewFolder();
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                <FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <input
+                  autoFocus
+                  aria-label="New folder name"
+                  aria-invalid={newError !== null}
+                  placeholder="Folder name"
+                  className="min-w-0 flex-1 rounded border bg-background px-2 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  value={newName}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  disabled={disabled || creating}
+                  onChange={(event) => {
+                    setNewName(event.target.value);
+                    setNewError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Escape") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setNewName(null);
+                    setNewError(null);
+                  }}
+                />
+                <button type="submit" className={cn(TOOL, "text-foreground")} disabled={creating}>
+                  {creating ? "Creating…" : "Create"}
+                </button>
+              </div>
+              {newError ? (
+                <p role="alert" className="pt-1 pl-6.5 text-xs text-destructive-foreground">
+                  {newError}
+                </p>
+              ) : null}
+            </form>
+          ) : null}
+          <div
+            ref={listRef}
+            id={listId}
+            role="listbox"
+            aria-label={`Folders${onMachine}`}
+            aria-activedescendant={visible[active] ? `${listId}-${active}` : undefined}
+            tabIndex={disabled ? -1 : 0}
+            onKeyDown={onListKeyDown}
+            className="min-h-6 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          >
             <div
               key={currentPath}
+              role="presentation"
               data-folder-enter={direction ?? undefined}
               className="flex flex-col gap-px"
             >
-              {newName !== null ? (
-                <form
-                  data-folder-new
-                  className="rounded-md bg-muted px-2 py-1.5"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void submitNewFolder();
-                  }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <input
-                      autoFocus
-                      aria-label="New folder name"
-                      aria-invalid={newError !== null}
-                      placeholder="Folder name"
-                      className="min-w-0 flex-1 rounded border bg-background px-2 py-0.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      value={newName}
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      disabled={disabled || creating}
-                      onChange={(event) => {
-                        setNewName(event.target.value);
-                        setNewError(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Escape") return;
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setNewName(null);
-                        setNewError(null);
-                      }}
-                    />
-                    <button
-                      type="submit"
-                      className={cn(TOOL, "text-foreground")}
-                      disabled={creating}
-                    >
-                      {creating ? "Creating…" : "Create"}
-                    </button>
-                  </div>
-                  {newError ? (
-                    <p role="alert" className="pt-1 pl-6.5 text-xs text-destructive-foreground">
-                      {newError}
-                    </p>
-                  ) : null}
-                </form>
-              ) : null}
-              {visible.map((entry, index) => {
+              {(loaded ? visible : []).map((entry, index) => {
                 const project = projectAt(entry.fullPath, projects);
                 const Icon = project
                   ? FolderCheckIcon
@@ -580,12 +599,12 @@ export function FolderBrowser({
                   </button>
                 );
               })}
-              {visible.length === 0 && newName === null ? (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                  {hiddenCount > 0 ? "Only hidden folders here." : "No folders inside."}
-                </p>
-              ) : null}
             </div>
+          </div>
+          {loaded && visible.length === 0 && newName === null ? (
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">
+              {hiddenCount > 0 ? "Only hidden folders here." : "No folders inside."}
+            </p>
           ) : null}
         </div>
       </div>

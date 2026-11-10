@@ -66,6 +66,7 @@ export function ProjectMachineChoice({
   machines,
   selectedId,
   reason = null,
+  onOpenLoadBalancing,
   busy,
   onSelect,
 }: {
@@ -73,6 +74,8 @@ export function ProjectMachineChoice({
   selectedId: string;
   /** Why this machine is the one selected. */
   reason?: string | null;
+  /** Given when load balancing made the choice: opens that setting. */
+  onOpenLoadBalancing?: (() => void) | undefined;
   busy: boolean;
   onSelect: (environmentId: string) => void;
 }) {
@@ -117,6 +120,18 @@ export function ProjectMachineChoice({
           className="mt-1 text-xs text-muted-foreground"
         >
           {reason}
+          {onOpenLoadBalancing ? (
+            <>
+              {" "}
+              <button
+                type="button"
+                className="rounded underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={onOpenLoadBalancing}
+              >
+                Load balancing settings
+              </button>
+            </>
+          ) : null}
         </p>
       ) : null}
     </section>

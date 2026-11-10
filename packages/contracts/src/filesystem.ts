@@ -22,6 +22,8 @@ export const FilesystemBrowseResult = Schema.Struct({
   entries: Schema.Array(FilesystemBrowseEntry),
   /** The home folder of the account the server runs as, for showing paths under it. */
   homePath: Schema.optionalKey(TrimmedNonEmptyString),
+  /** The folder exists but the server's account may not list it. Absent from older servers. */
+  unreadable: Schema.optionalKey(Schema.Boolean),
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 

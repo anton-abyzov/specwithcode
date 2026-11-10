@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import type { FolderPlace } from "../components/studio/FolderBrowser";
-import type { KnownProject } from "../components/studio/folderBrowser.logic";
+import { sameFolder, type KnownProject } from "../components/studio/folderBrowser.logic";
 import { NewProjectFolderPicker } from "../components/studio/NewProjectFolderPicker";
 
 const REMEMBERED_KEY = "studio:new-project-parent:v1";
@@ -26,6 +26,31 @@ function writeRemembered(choices: Record<string, string>): void {
   } catch {
     // Storage can be full or disabled; the choice still holds for this session.
   }
+}
+
+const NO_PLACES: readonly FolderPlace[] = [];
+
+/** Adds the folder used last time to the Recent places, unless it is listed already. */
+export function withRememberedPlace(
+  places: readonly FolderPlace[],
+  remembered: string | undefined,
+): readonly FolderPlace[] {
+  if (
+    remembered === undefined ||
+    // App storage and other hidden folders are not places to suggest.
+    /[\\/]\.[^\\/]+([\\/]|$)/.test(remembered) ||
+    places.some((place) => sameFolder(place.path, remembered))
+  ) {
+    return places;
+  }
+  const label =
+    remembered
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .pop() || remembered;
+  const firstRecent = places.findIndex((place) => place.kind === "recent");
+  const at = firstRecent < 0 ? places.length : firstRecent;
+  return [...places.slice(0, at), { kind: "recent", label, path: remembered }, ...places.slice(at)];
 }
 
 /**
@@ -62,11 +87,17 @@ export function useProjectFolderChoice(
   const [lastShown, setLastShown] = useState<Record<string, string>>(() =>
     remember ? readRemembered() : {},
   );
+  // The folder chosen for an earlier project on each machine, kept as a place
+  // to return to after browsing away from it.
+  const [remembered, setRemembered] = useState<Record<string, string>>(() =>
+    remember ? readRemembered() : {},
+  );
   const [generation, setGeneration] = useState(0);
   const reset = useCallback(() => {
     setChoices({});
     setGeneration((value) => value + 1);
     setLastShown(remember ? readRemembered() : {});
+    setRemembered(remember ? readRemembered() : {});
   }, [remember]);
   const path = environmentId === null ? null : (choices[environmentId] ?? null);
   // Null means the folder shown cannot be chosen right now (loading, or
@@ -92,7 +123,7 @@ export function useProjectFolderChoice(
           defaultPath={options.defaultPath ?? null}
           machineLabel={options.machineLabel ?? null}
           nativePickerLabel={options.nativePicker?.label ?? null}
-          places={options.places ?? []}
+          places={withRememberedPlace(options.places ?? NO_PLACES, remembered[environmentId])}
           projects={options.projects ?? []}
           canCreateFolder={options.canCreateFolder === true}
           {...(options.projectName === undefined ? {} : { projectName: options.projectName })}
