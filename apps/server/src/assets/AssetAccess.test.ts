@@ -31,8 +31,13 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as StudioProjectFileLoader from "../project/StudioProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as WorkspaceSensitivePaths from "../workspace/WorkspaceSensitivePaths.ts";
-import { assetFileResponse } from "../http.ts";
-import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
+import { assetFileResponse, assetResponseHeaders } from "../http.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueAssetUrl,
+  issueLocalReferenceUrls,
+  resolveAsset,
+} from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@specweave-studio/shared/testing/symlinks";
@@ -216,6 +221,10 @@ describe("AssetAccess", () => {
         ["recording.webm", "video/webm"],
         ["report.html", "text/html"],
         ["report.pdf", "application/pdf"],
+        ["notes.md", "text/plain"],
+        ["run.txt", "text/plain"],
+        ["data.json", "text/plain"],
+        ["config.yaml", "text/plain"],
       ] as const) {
         const filePath = path.join(outside, name);
         yield* fs.writeFileString(filePath, "media");
@@ -238,6 +247,64 @@ describe("AssetAccess", () => {
         expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
       }
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves host HTML with its local pictures swapped for signed URLs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outside = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "studio-media-html-" }),
+      );
+      const shot = path.join(outside, "shot.png");
+      yield* fs.writeFile(shot, screenshotPng);
+      yield* fs.writeFile(path.join(outside, "sibling.png"), screenshotPng);
+      yield* fs.writeFileString(path.join(outside, "notes.txt"), "not a picture");
+      const html = path.join(outside, "cue-sheet.html");
+      yield* fs.writeFileString(
+        html,
+        `<p><img src="${shot}"> <img src='sibling.png'> <img src="missing.png">` +
+          ` <img src="notes.txt"> <img src="https://example.com/a.png"></p>`,
+      );
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: html },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const asset = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+      expect(asset).toMatchObject({
+        kind: "file",
+        mimeType: "text/html",
+        rewritesLocalReferences: true,
+      });
+
+      const urls = yield* issueLocalReferenceUrls([
+        shot,
+        path.join(outside, "sibling.png"),
+        path.join(outside, "missing.png"),
+        path.join(outside, "notes.txt"),
+      ]);
+      expect([...urls.keys()].toSorted()).toEqual(
+        [shot, path.join(outside, "sibling.png")].toSorted(),
+      );
+      for (const url of urls.values()) {
+        const rest = url.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const cut = rest.indexOf("/");
+        expect(yield* resolveAsset(rest.slice(0, cut), rest.slice(cut + 1))).toMatchObject({
+          kind: "file",
+          mimeType: "image/png",
+        });
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("serves text results as sandboxed plain text", () =>
+    Effect.sync(() => {
+      const headers = assetResponseHeaders("/tmp/notes.md", { mimeType: "text/plain" });
+      expect(headers["Content-Type"]).toBe("text/plain; charset=utf-8");
+      expect(headers["Content-Security-Policy"]).toBe("default-src 'none'; sandbox");
+      expect(headers["X-Content-Type-Options"]).toBe("nosniff");
+    }),
   );
 
   it.effect("reports pixel dimensions from an image header and nothing for other files", () =>
@@ -346,7 +413,12 @@ describe("AssetAccess", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-media-validation-" });
-        for (const name of ["report.md", "secret.txt", "secret.%70ng", "secret.png#private.txt"]) {
+        for (const name of [
+          "archive.zip",
+          "secret.key",
+          "secret.%70ng",
+          "secret.png#private.bin",
+        ]) {
           const filePath = path.join(root, name);
           yield* fs.writeFileString(filePath, "not media");
           const error = yield* issueAssetUrl({
@@ -355,7 +427,7 @@ describe("AssetAccess", () => {
           expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
         }
         const disguisedPath = path.join(root, "disguised.png");
-        yield* fs.symlink(path.join(root, "secret.txt"), disguisedPath);
+        yield* fs.symlink(path.join(root, "archive.zip"), disguisedPath);
         const disguisedError = yield* issueAssetUrl({
           resource: {
             _tag: "media-file",

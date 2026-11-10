@@ -29,7 +29,17 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { GOOGLE_CALLBACK_PATH } from "./integrations/google/googleAccountLogic.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import {
+  ASSET_ROUTE_PREFIX,
+  issueLocalReferenceUrls,
+  resolveAsset,
+  type ResolvedAsset,
+} from "./assets/AssetAccess.ts";
+import {
+  HTML_LOCAL_REFERENCE_MAX_BYTES,
+  htmlLocalReferencePaths,
+  rewriteHtmlLocalReferences,
+} from "./assets/HtmlLocalReferences.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -124,12 +134,18 @@ export function assetResponseHeaders(
                 ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
                 : {}),
             }
-          : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+          : inlineMimeType?.toLowerCase() === "text/plain"
             ? {
-                "Content-Type": "text/html; charset=utf-8",
-                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+                // Text results (Markdown, logs, JSON) are read, never rendered.
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Security-Policy": "default-src 'none'; sandbox",
               }
-            : {}),
+            : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+              ? {
+                  "Content-Type": "text/html; charset=utf-8",
+                  "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+                }
+              : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
@@ -158,6 +174,33 @@ function assetByteRange(header: string, size: bigint) {
     contentRange: `bytes ${start}-${end}/${size}`,
   };
 }
+
+/**
+ * A host HTML file with the pictures it names by path swapped for signed URLs,
+ * or null to serve the bytes unchanged (too large, not UTF-8, unreadable).
+ */
+const hostHtmlWithLocalReferences = (filePath: string, file: OpenMediaFile) =>
+  Effect.gen(function* () {
+    const info = yield* statMediaFile(filePath, file);
+    if (info.size > BigInt(HTML_LOCAL_REFERENCE_MAX_BYTES)) return null;
+    const bytes = yield* Effect.tryPromise(() =>
+      file.handle.read(Buffer.alloc(Number(info.size)), 0, Number(info.size), 0),
+    );
+    const html = new TextDecoder("utf-8", { fatal: true }).decode(
+      bytes.buffer.subarray(0, bytes.bytesRead),
+    );
+    const paths = htmlLocalReferencePaths(html, filePath);
+    if (paths.length === 0) return html;
+    return rewriteHtmlLocalReferences(html, filePath, yield* issueLocalReferenceUrls(paths));
+  }).pipe(
+    Effect.tapError((cause) =>
+      Effect.logWarning("Serving host HTML without rewriting its local references.", {
+        filePath,
+        cause,
+      }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
 
 export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
   asset: {
@@ -448,6 +491,19 @@ export const layerAssetRoute = HttpRouter.add(
           }),
         ),
       );
+    }
+    const fileAsset: Extract<ResolvedAsset, { readonly kind: "file" }> = asset;
+    if (fileAsset.rewritesLocalReferences && fileAsset.file && request.method === "GET") {
+      const html = yield* hostHtmlWithLocalReferences(fileAsset.path, fileAsset.file);
+      if (html !== null) {
+        return HttpServerResponse.text(html, {
+          headers: {
+            ...assetResponseHeaders(fileAsset.path, fileAsset),
+            // The page carries signed URLs that expire; never reuse a stale copy.
+            "Cache-Control": "private, no-store",
+          },
+        });
+      }
     }
     return yield* assetFileResponse(
       asset,

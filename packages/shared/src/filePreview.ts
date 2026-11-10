@@ -139,6 +139,31 @@ export function hostPreviewMimeTypeFromExtension(extension: string): string | nu
   );
 }
 
+const HOST_TEXT_PREVIEW_EXTENSIONS = new Set([
+  ".csv",
+  ".json",
+  ".jsonl",
+  ".log",
+  ".markdown",
+  ".md",
+  ".toml",
+  ".tsv",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
+
+/**
+ * Text documents an agent hands over as a result, served from anywhere on the
+ * host so a client without the workspace (a phone) can read them. Always plain
+ * text: no browser renders these as active content.
+ */
+export function hostTextPreviewMimeTypeFromExtension(extension: string): string | null {
+  if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
+  return HOST_TEXT_PREVIEW_EXTENSIONS.has(extension.toLowerCase()) ? "text/plain" : null;
+}
+
 /** Classifies an authored media path or URL. Filesystem validation uses the literal extension. */
 export function mediaMimeType(path: string): string | null {
   const trimmed = path.trim();
