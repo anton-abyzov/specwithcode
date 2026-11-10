@@ -408,7 +408,16 @@ describe("the coordinator stays in the main column", () => {
     await openFirstThread();
     await prompt("Keep my coordinator draft");
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(false);
-    await click("Move project execution");
+    // The machine menu opens the handoff dialog: Add to another machine…
+    await act(async () =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label$="this project\'s machines"]')!
+        .click(),
+    );
+    await act(async () =>
+      document.querySelector<HTMLElement>('[data-machine-action="add"]')!.click(),
+    );
+    await act(async () => {});
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(nativeThread("worker")?.hasAttribute("data-native-suspend")).toBe(true);
     expect(container.querySelector<HTMLTextAreaElement>("#project-prompt")!.value).toBe(

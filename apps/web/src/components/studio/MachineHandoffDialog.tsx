@@ -67,10 +67,10 @@ export function MachineHandoffButton({ className, ...props }: ComponentProps<typ
       size="sm"
       className={cn("h-6 gap-1.5 px-2 text-xs sm:h-6 sm:text-xs", className)}
       data-slot="handoff-trigger"
-      aria-label="Continue this project on another machine"
+      aria-label="Add this project to another machine, or move it there"
     >
       <LaptopIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Move project execution</span>
+      <span>Add or move to another machine</span>
     </Button>
   );
 }

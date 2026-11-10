@@ -5,11 +5,15 @@ import {
   ArrowRightLeftIcon,
   ChevronDownIcon,
   KeyRoundIcon,
+  LaptopIcon,
+  LogOutIcon,
   PlayIcon,
+  PlusIcon,
   SendIcon,
 } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useTx } from "../../i18n";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
 import { randomUUID } from "../../lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -19,6 +23,7 @@ import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { remoteOrchestratorOfflineLabel } from "../../studio/projectWorkspaceModel";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { nowFromMinute } from "../../studio/shellModel";
+import { requestAway } from "../../studio/awayRequest";
 import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
@@ -75,6 +80,9 @@ export function OrchestratorSwitcher({
   onStart,
   onAllowWorkers,
   onMigrate = null,
+  onAdd = null,
+  onMoveElsewhere = null,
+  onLeave = null,
 }: {
   /** The viewed machine's name: its nickname, else its short host label. */
   label: string;
@@ -95,11 +103,18 @@ export function OrchestratorSwitcher({
   onAllowWorkers: (() => void) | null;
   /** Opens "Move running threads" for the viewed machine's threads; null while it is offline. */
   onMigrate?: (() => void) | null;
+  /** "Add to another machine…": link and clone it there; this copy keeps running. */
+  onAdd?: (() => void) | null;
+  /** "Move to another machine…": hand the project over to a machine you pick. */
+  onMoveElsewhere?: (() => void) | null;
+  /** "Leave this machine…": Away mode for everything live here. */
+  onLeave?: (() => void) | null;
 }) {
   // Switch views only after the menu popup has left the DOM: the page being
   // left is hidden under an Activity, and a menu hidden mid-close stays mounted
   // as an invisible layer that catches clicks.
   const pendingView = useRef<(() => void) | null>(null);
+  const tx = useTx();
   const status = (
     <>
       <span className="sws-dot" data-tone={connected ? "resolved" : "failed"} aria-hidden />
@@ -115,7 +130,9 @@ export function OrchestratorSwitcher({
     </>
   );
   const listed = copies.filter((copy) => isProjectFolder(copy.folder));
-  if ((listed.length < 2 && unknown.length === 0) || !onView)
+  const viewable = (listed.length >= 2 || unknown.length > 0) && onView !== null;
+  const machineActions = onAdd !== null || onMoveElsewhere !== null || onLeave !== null;
+  if (!viewable && !machineActions)
     return (
       <Tooltip>
         <TooltipTrigger render={<span className="project-muted sws-host" />}>
@@ -145,7 +162,11 @@ export function OrchestratorSwitcher({
                     variant="ghost-muted"
                     size="xs"
                     className="min-w-0 max-w-full"
-                    aria-label={`Viewing ${label}'s orchestrator. Choose a machine to view`}
+                    aria-label={
+                      viewable
+                        ? `Viewing ${label}'s orchestrator. Choose a machine to view`
+                        : `${label}: this project's machines`
+                    }
                   />
                 }
               />
@@ -155,57 +176,101 @@ export function OrchestratorSwitcher({
             <ChevronDownIcon aria-hidden />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            Viewing {label}'s orchestrator. Work stays on {label}. Moving the coordinator is a
-            separate, confirmed action.
+            {viewable
+              ? `Viewing ${label}'s orchestrator. Work stays on ${label}. Adding or moving the project is a separate, confirmed action.`
+              : `Runs on ${label}. Add it to another machine, or move it there.`}
           </TooltipPopup>
         </Tooltip>
       </span>
       <MenuPopup align="start" side="top" className="min-w-64">
         <AfterUnmount pending={pendingView} />
-        <MenuGroup>
-          <MenuGroupLabel>View this project on</MenuGroupLabel>
-          <MenuRadioGroup
-            value={current}
-            onValueChange={(value) => {
-              pendingView.current = () => onView(value as string);
-            }}
-          >
-            {listed.map((copy) => (
-              <MenuRadioItem
-                key={copy.key}
-                value={copy.key}
-                data-orchestrator-view={copy.key}
-                closeOnClick
-              >
-                <span className="flex w-full items-center justify-between gap-6">
-                  <span>
-                    View {nameOf(copy)}'s orchestrator
-                    {ROLE_NOTE[copy.role] ? (
-                      <span className="text-muted-foreground"> · {ROLE_NOTE[copy.role]}</span>
-                    ) : null}
+        {viewable && onView ? (
+          <MenuGroup>
+            <MenuGroupLabel>View this project on</MenuGroupLabel>
+            <MenuRadioGroup
+              value={current}
+              onValueChange={(value) => {
+                pendingView.current = () => onView(value as string);
+              }}
+            >
+              {listed.map((copy) => (
+                <MenuRadioItem
+                  key={copy.key}
+                  value={copy.key}
+                  data-orchestrator-view={copy.key}
+                  closeOnClick
+                >
+                  <span className="flex w-full items-center justify-between gap-6">
+                    <span>
+                      View {nameOf(copy)}'s orchestrator
+                      {ROLE_NOTE[copy.role] ? (
+                        <span className="text-muted-foreground"> · {ROLE_NOTE[copy.role]}</span>
+                      ) : null}
+                    </span>
+                    <MenuRadioItemIndicator />
                   </span>
-                  <MenuRadioItemIndicator />
-                </span>
-              </MenuRadioItem>
-            ))}
-            {unknown.map((ref) => (
-              <MenuRadioItem
-                key={ref.key}
-                value={ref.key}
-                data-orchestrator-view={ref.key}
-                closeOnClick
-              >
-                <span className="flex w-full items-center justify-between gap-6">
-                  <span>
-                    View {ref.machine}'s orchestrator
-                    <span className="text-muted-foreground"> · Unknown</span>
+                </MenuRadioItem>
+              ))}
+              {unknown.map((ref) => (
+                <MenuRadioItem
+                  key={ref.key}
+                  value={ref.key}
+                  data-orchestrator-view={ref.key}
+                  closeOnClick
+                >
+                  <span className="flex w-full items-center justify-between gap-6">
+                    <span>
+                      View {ref.machine}'s orchestrator
+                      <span className="text-muted-foreground"> · Unknown</span>
+                    </span>
+                    <MenuRadioItemIndicator />
                   </span>
-                  <MenuRadioItemIndicator />
-                </span>
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+          </MenuGroup>
+        ) : null}
+        {machineActions ? (
+          <>
+            {viewable ? <MenuSeparator /> : null}
+            <MenuGroup>
+              <MenuGroupLabel>This project's machines</MenuGroupLabel>
+              {onAdd ? (
+                <MenuItem
+                  data-machine-action="add"
+                  onClick={() => {
+                    pendingView.current = onAdd;
+                  }}
+                >
+                  <PlusIcon aria-hidden />
+                  {tx("Add to another machine…")}
+                </MenuItem>
+              ) : null}
+              {onMoveElsewhere ? (
+                <MenuItem
+                  data-machine-action="move"
+                  onClick={() => {
+                    pendingView.current = onMoveElsewhere;
+                  }}
+                >
+                  <LaptopIcon aria-hidden />
+                  {tx("Move to another machine…")}
+                </MenuItem>
+              ) : null}
+              {onLeave ? (
+                <MenuItem
+                  data-machine-action="leave"
+                  onClick={() => {
+                    pendingView.current = onLeave;
+                  }}
+                >
+                  <LogOutIcon aria-hidden />
+                  {tx("Leave this machine…")}
+                </MenuItem>
+              ) : null}
+            </MenuGroup>
+          </>
+        ) : null}
         {startable.length > 0 && onStart ? (
           <>
             <MenuSeparator />
@@ -266,6 +331,8 @@ export function ProjectOrchestratorSwitcher({
   savedMachineMissing,
   onView,
   onMove,
+  onAdd = null,
+  onMoveElsewhere = null,
 }: {
   project: EnvironmentProject;
   members: readonly EnvironmentProject[];
@@ -279,6 +346,8 @@ export function ProjectOrchestratorSwitcher({
   savedMachineMissing: boolean;
   onView: ((key: string) => void) | null;
   onMove: ((key: string) => void) | null;
+  onAdd?: (() => void) | null;
+  onMoveElsewhere?: (() => void) | null;
 }) {
   const navigate = useNavigate();
   // A nickname shows as typed; only a host label drops its owner.
@@ -301,6 +370,10 @@ export function ProjectOrchestratorSwitcher({
       savedMachineMissing={savedMachineMissing}
       onView={onView}
       onMove={onMove}
+      onAdd={onAdd}
+      onMoveElsewhere={onMoveElsewhere}
+      // Away mode runs on this device's machine, so it is offered only there.
+      onLeave={isThisDevice ? () => requestAway("away") : null}
       onStart={(key) => void start(key)}
       onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
       onMigrate={

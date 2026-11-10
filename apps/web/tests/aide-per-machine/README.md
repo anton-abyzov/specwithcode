@@ -11,8 +11,8 @@ Query flags: `view=sidebar|menu|notice`, `machines=1|2`, `duplicate=1` (a pre-ru
 - one machine: the single row has no hint.
 - this machine has none: "Set up here" leads, and Anna's row stays named by its machine.
 - another machine's assistant: the notice names its machine and says each machine has its own private assistant.
-- Run on for the assistant lists only Studio Mac, offers no "Prepare project on machine…", and says each machine has its own private assistant.
-- Run on for a code project is unchanged: Anna's MacBook is addable through "Prepare project on machine…" with "Clone it there".
+- Run on for the assistant lists only Studio Mac, offers no "Add to another machine…", and says each machine has its own private assistant.
+- Run on for a code project is unchanged: Anna's MacBook is addable through "Add to another machine…" with "Clone it there".
 
 From the repository root, using Node 22:
 

@@ -431,9 +431,11 @@ describe("shared handoff controls", () => {
         </Tip>
       </TooltipProvider>,
     );
-    const control = button("Move project execution");
+    const control = button("Add or move to another machine");
     expect(trigger).toBe(control);
-    expect(control.getAttribute("aria-label")).toBe("Continue this project on another machine");
+    expect(control.getAttribute("aria-label")).toBe(
+      "Add this project to another machine, or move it there",
+    );
     expect(control.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     await act(async () => {
       control.focus();

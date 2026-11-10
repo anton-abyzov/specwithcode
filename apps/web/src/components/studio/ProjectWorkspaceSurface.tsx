@@ -24,7 +24,7 @@ import { useCoordinatorQuestion } from "./useCoordinatorQuestion";
 import { useDurableCoordinatorDraft, whenHostReady } from "../../lib/durableComposerDraftBindings";
 import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
-import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
+import { type MachineHandoffOpenRequest, ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { FolderCopyBanner } from "./FolderCopyBanner";
 import { OtherMachineAssistantNotice } from "./OtherMachineAssistantNotice";
 import { ProjectPlan } from "./ProjectPlan";
@@ -371,6 +371,13 @@ export function ProjectWorkspaceSurface({
   const [coordinatorDetailsOpen, setCoordinatorDetailsOpen] = useState(false);
   const [machineHandoffOpen, setMachineHandoffOpen] = useState(false);
   const [handoffTarget, setHandoffTarget] = useState<string | null>(null);
+  // The machine menu's "Add to…" and "Move to…": the handoff dialog opens on that step.
+  const [handoffRequest, setHandoffRequest] = useState<MachineHandoffOpenRequest | null>(null);
+  const requestHandoff = useCallback(
+    (mode: MachineHandoffOpenRequest["mode"]) =>
+      setHandoffRequest((previous) => ({ mode, seq: (previous?.seq ?? 0) + 1 })),
+    [],
+  );
   const handoffOpenChange = useCallback((open: boolean) => {
     setMachineHandoffOpen(open);
     if (!open) setHandoffTarget(null);
@@ -1949,6 +1956,12 @@ export function ProjectWorkspaceSurface({
                       onMove={
                         mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
                       }
+                      onAdd={canOperate && !machinePrivate ? () => requestHandoff("add") : null}
+                      onMoveElsewhere={
+                        mainCoordinatorId && canOperate && !machinePrivate
+                          ? () => requestHandoff("move")
+                          : null
+                      }
                     />
                     {machinePrivate ? null : (
                       <ProjectMachineHandoff
@@ -1956,6 +1969,9 @@ export function ProjectWorkspaceSurface({
                         project={project}
                         coordinatorId={mainCoordinatorId}
                         requestedTarget={handoffTarget}
+                        openRequest={handoffRequest}
+                        // The machine menu above opens it: one control for Add, Move and Leave.
+                        showTrigger={false}
                         onOpenChange={handoffOpenChange}
                       />
                     )}
