@@ -29,9 +29,6 @@ This installs the local server and starts its background service, not the deskto
 
 If this is useful for your workflow, [star SpecWithCode on GitHub](https://github.com/anton-abyzov/specwithcode) so you can find it again.
 
-<details>
-<summary>See an illustrated multi-machine workflow</summary>
-
 <p align="center">
   <a href="https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-000000?logo=apple&logoColor=white&style=for-the-badge" /></a>
   <a href="https://github.com/anton-abyzov/specwithcode/releases/latest"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?logo=windows&logoColor=white&style=for-the-badge" /></a>
@@ -44,6 +41,9 @@ If this is useful for your workflow, [star SpecWithCode on GitHub](https://githu
   <a href="https://github.com/anton-abyzov/specwithcode/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/anton-abyzov/specwithcode" /></a>
   <a href="https://specwithcode.com/?utm_source=github&utm_medium=readme&utm_campaign=stars-nov26"><img alt="Website" src="https://img.shields.io/badge/specwithcode.com-7C3AED" /></a>
 </p>
+
+<details>
+<summary>See an illustrated multi-machine workflow</summary>
 
 <p align="center">
   <img src="assets/readme/hero-loop.gif" width="800" alt="A coordinator splits a goal into three tasks. Claude Code, DeepSeek and GitHub Copilot work on a Mac, a Windows PC and a Linux server. At 98% of its limit, Claude Code hands its thread to Codex on a free ChatGPT account with its history kept." />
