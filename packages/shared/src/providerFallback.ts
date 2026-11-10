@@ -21,7 +21,12 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { describeModel, sameModelOn } from "./modelIdentity.ts";
-import { effectiveFallbackOrder, fallbackModelOrder, fallbackSelectionKey } from "./modelTiers.ts";
+import {
+  effectiveFallbackOrder,
+  fallbackModelOrder,
+  fallbackSelectionKey,
+  namedFallbackOrder,
+} from "./modelTiers.ts";
 import { providerSetupProblem } from "./providerSetup.ts";
 export { fallbackModelOrder, fallbackSelectionKey };
 import { effectiveUsedPercent, isLiveWindow, windowAppliesToModel } from "./usageWindows.ts";
@@ -634,7 +639,9 @@ export function describeFallbackOrder(input: {
   // named this exact model on that provider in the effective tier chain.
   const namedTiers = chain.fromTiers
     ? new Set(
-        effectiveFallbackOrder(input.rule, input.currentModel).order.map(fallbackSelectionKey),
+        namedFallbackOrder(input.rule, input.currentModel, input.providers).order.map(
+          fallbackSelectionKey,
+        ),
       )
     : null;
   return chain.order.map((selection) => {
@@ -822,7 +829,7 @@ function resolveProviderFallbackPass(input: {
   // model elsewhere and ahead of the project default.
   // "Only these models" makes even the legacy single model the whole chain.
   // With no order set, ranked model tiers are the chain (see `modelTiers`).
-  const chain = effectiveFallbackOrder(input.rule, input.currentModel);
+  const chain = namedFallbackOrder(input.rule, input.currentModel, input.providers);
   const listOnly = input.rule.providerLimitFallbackListOnly === true && chain.order.length > 0;
   const explicitOrder =
     (input.rule.providerLimitFallbackModels?.length ?? 0) > 0 ||
@@ -1403,7 +1410,7 @@ export function resolveCoordinatorTurnSelection(input: {
     // selected before this guard, nor does a model a paid router or API bills.
     // API-credit consent applies to other providers. An unknown-billing agent
     // (Devin) stays only when the person named it, as it may only be picked.
-    const chain = effectiveFallbackOrder(input.rule, input.saved.model);
+    const chain = namedFallbackOrder(input.rule, input.saved.model, input.providers);
     const tierNamesModel =
       chain.fromTiers &&
       chain.order.some(

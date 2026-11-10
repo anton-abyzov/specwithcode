@@ -16,6 +16,7 @@ import {
   type ProviderInstanceId,
   type ProviderModelTier,
   type ProviderModelTiers,
+  providerModelBilling,
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { isSameModel, sameModelOn } from "./modelIdentity.ts";
@@ -49,11 +50,28 @@ export function tierOfModel(
   model: string | undefined,
 ): ModelLane | null {
   if (lanes == null || model === undefined) return null;
-  for (const lane of ["complex", "routine"] as const) {
-    if ((lanes[lane] ?? []).some((entry) => isSameModel({ slug: entry.model }, { slug: model })))
-      return lane;
+  // An exact entry wins over a newer release an older entry follows.
+  for (const covers of [
+    (entry: string) => isSameModel({ slug: entry }, { slug: model }),
+    (entry: string) => laneEntryCovers(entry, model),
+  ]) {
+    for (const lane of ["complex", "routine"] as const) {
+      if ((lanes[lane] ?? []).some((entry) => covers(entry.model))) return lane;
+    }
   }
   return null;
+}
+
+/**
+ * Whether a tier entry stands for `model`: the same model, or a newer release
+ * of its family, which the tier follows (see `followNewestReleases`).
+ */
+function laneEntryCovers(entry: string, model: string): boolean {
+  if (isSameModel({ slug: entry }, { slug: model })) return true;
+  const [a, b] = [modelFamily(model), modelFamily(entry)];
+  return (
+    a !== null && b !== null && a.stem === b.stem && compareModelVersions(a.version, b.version) > 0
+  );
 }
 
 /** Whether a tier itself ranks a model on `instanceId` (not just its expansion elsewhere). */
@@ -93,10 +111,10 @@ export function tierFallbackOrder(
     tierOfModel(lanes, currentModel) ??
     tierOfModel(lanes, input.defaultModelSelection?.model) ??
     "routine";
-  const ranked = [
-    ...(lanes[first] ?? []),
-    ...(lanes[first === "complex" ? "routine" : "complex"] ?? []),
-  ];
+  const ranked = followNewestReleases(
+    [...(lanes[first] ?? []), ...(lanes[first === "complex" ? "routine" : "complex"] ?? [])],
+    providers,
+  );
   const providerRank = (instanceId: ProviderInstanceId) => {
     const index = input.defaultModelProviders?.indexOf(instanceId) ?? -1;
     return index === -1 ? Number.MAX_SAFE_INTEGER : index;
@@ -192,6 +210,27 @@ export function tierModelFor(
 const VERSIONED_SLUG = /^(.*[a-z])-(\d{1,3}(?:[.-]\d{1,3})*)$/;
 
 /**
+ * A slug's family (name stem) and release version: `claude-fable-5-2` is
+ * `claude-fable` 5.2. Slugs without a trailing version (`gpt-6-astra`) and
+ * dated snapshots (`claude-haiku-4-5-20251001`) have none.
+ */
+export function modelFamily(
+  slug: string,
+): { readonly stem: string; readonly version: ReadonlyArray<number> } | null {
+  const match = VERSIONED_SLUG.exec(slug);
+  return match ? { stem: match[1]!, version: match[2]!.split(/[.-]/).map(Number) } : null;
+}
+
+/** Positive when release `a` is newer than `b`. */
+export function compareModelVersions(a: ReadonlyArray<number>, b: ReadonlyArray<number>): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
  * The newest model `provider` lists of the same family as `slug` (same name
  * stem, numeric version after it). Slugs without a trailing version
  * (`gpt-6-astra`) and dated snapshots never match.
@@ -200,26 +239,79 @@ export function newestOfFamily(
   provider: Pick<ServerProvider, "models">,
   slug: string,
 ): string | undefined {
-  const base = VERSIONED_SLUG.exec(slug);
+  const base = modelFamily(slug);
   if (!base) return undefined;
-  const version = (value: string) => value.split(/[.-]/).map(Number);
-  const compare = (a: number[], b: number[]) => {
-    for (let i = 0; i < Math.max(a.length, b.length); i++) {
-      const diff = (a[i] ?? 0) - (b[i] ?? 0);
-      if (diff !== 0) return diff;
-    }
-    return 0;
-  };
-  let best: { slug: string; version: number[] } | undefined;
+  let best: { slug: string; version: ReadonlyArray<number> } | undefined;
   for (const model of provider.models) {
     if (model.isCustom) continue;
-    const match = VERSIONED_SLUG.exec(model.slug);
-    if (!match || match[1] !== base[1]) continue;
-    const candidate = version(match[2]!);
-    if (!best || compare(candidate, best.version) > 0)
-      best = { slug: model.slug, version: candidate };
+    const family = modelFamily(model.slug);
+    if (!family || family.stem !== base.stem) continue;
+    if (!best || compareModelVersions(family.version, best.version) > 0)
+      best = { slug: model.slug, version: family.version };
   }
   return best?.slug;
+}
+
+/**
+ * The newest listed release of `slug`'s family when it is newer than `slug`
+ * and billed the same way, else undefined: choosing a model never consents to
+ * a release that costs money or reports unknown billing.
+ */
+export function newerOfFamily(
+  provider: Pick<ServerProvider, "models">,
+  slug: string,
+): string | undefined {
+  const newest = newestOfFamily(provider, slug);
+  const [a, b] = [newest && modelFamily(newest), modelFamily(slug)];
+  if (!a || !b || compareModelVersions(a.version, b.version) <= 0) return undefined;
+  return providerModelBilling(provider, newest) === providerModelBilling(provider, slug)
+    ? newest
+    : undefined;
+}
+
+/**
+ * Tier entries led by the newest release of their family that the same
+ * provider lists (Fable 5.2, then the chosen Fable 5.1, once 5.2 is
+ * offered), without duplicates. An entry the provider does not list, or that
+ * is already the newest, stays as written.
+ */
+export function followNewestReleases(
+  entries: ReadonlyArray<ModelSelection>,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
+): ReadonlyArray<ModelSelection> {
+  const seen = new Set<string>();
+  const out: ModelSelection[] = [];
+  for (const entry of entries) {
+    const provider = providers.find((candidate) => candidate.instanceId === entry.instanceId);
+    const newer =
+      provider && provider.models.some((model) => model.slug === entry.model)
+        ? newerOfFamily(provider, entry.model)
+        : undefined;
+    // The newer release leads; the person's own choice stays right behind it.
+    for (const next of newer === undefined ? [entry] : [{ ...entry, model: newer }, entry]) {
+      const key = fallbackSelectionKey(next);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(next);
+    }
+  }
+  return out;
+}
+
+/**
+ * The fallback chain as the person wrote it, without other providers'
+ * copies: the explicit order, or the tiers with each entry following its
+ * family's newest listed release.
+ */
+export function namedFallbackOrder(
+  rule: FallbackOrderRule & TierFallbackInput,
+  currentModel: string | undefined,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "models">>,
+): { readonly order: ReadonlyArray<ModelSelection>; readonly fromTiers: boolean } {
+  const chain = effectiveFallbackOrder(rule, currentModel);
+  return chain.fromTiers
+    ? { ...chain, order: followNewestReleases(chain.order, providers) }
+    : chain;
 }
 
 /** Drivers whose tier models a provider without its own entry borrows, in order. */

@@ -8,7 +8,12 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { effectiveFallbackOrder, tierFallbackOrder, tierOfModel } from "./modelTiers.ts";
+import {
+  effectiveFallbackOrder,
+  followNewestReleases,
+  tierFallbackOrder,
+  tierOfModel,
+} from "./modelTiers.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
 
 const now = Date.parse("2026-11-03T06:30:00.000Z");
@@ -236,5 +241,85 @@ describe("limit fallback through the tiers", () => {
         limitedInstanceIds: new Set([codex.instanceId]),
       }),
     ).toEqual(sel("copilot", "claude-opus-5.5"));
+  });
+});
+
+describe("followNewestReleases", () => {
+  it("swaps a listed older release for the newest of its family and dedupes", () => {
+    const fable = provider(
+      "claudeAgent",
+      "claudeAgent",
+      ["claude-fable-5-1", "claude-fable-5-2", "claude-opus-5-5"],
+      null,
+    );
+    expect(
+      followNewestReleases(
+        [
+          sel("claudeAgent", "claude-fable-5-1"),
+          sel("claudeAgent", "claude-fable-5-2"),
+          sel("claudeAgent", "claude-opus-5-5"),
+          sel("claudeAgent", "claude-gone-1"),
+        ],
+        [fable],
+      ),
+    ).toEqual([
+      sel("claudeAgent", "claude-fable-5-2"),
+      sel("claudeAgent", "claude-fable-5-1"),
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("claudeAgent", "claude-gone-1"),
+    ]);
+  });
+
+  it("keeps a thread on the followed release in its own tier when it hits a limit", () => {
+    const fable = provider(
+      "claudeAgent",
+      "claudeAgent",
+      ["claude-fable-5-1", "claude-fable-5-2", "claude-sonnet-5-5"],
+      null,
+    );
+    const input = {
+      modelLanes: {
+        complex: [sel("claudeAgent", "claude-fable-5-1")],
+        routine: [sel("claudeAgent", "claude-sonnet-5-5")],
+      },
+      defaultModelSelection: sel("claudeAgent", "claude-sonnet-5-5"),
+    };
+    expect(tierOfModel(input.modelLanes, "claude-fable-5-2")).toBe("complex");
+    expect(tierOfModel(input.modelLanes, "claude-fable-5-0")).toBeNull();
+    expect(tierFallbackOrder(input, "claude-fable-5-2", [fable])).toEqual([
+      sel("claudeAgent", "claude-fable-5-2"),
+      sel("claudeAgent", "claude-fable-5-1"),
+      sel("claudeAgent", "claude-sonnet-5-5"),
+    ]);
+  });
+
+  it("never follows a newer release billed differently from the chosen one", () => {
+    const opencode = provider("opencode", "opencode", [], null, {
+      models: [
+        { slug: "claude-sonnet-4-5", name: "Sonnet 4.5", isCustom: false, capabilities: null },
+        {
+          slug: "claude-sonnet-4-6",
+          name: "Sonnet 4.6",
+          isCustom: false,
+          capabilities: null,
+          billing: "unknown",
+        },
+      ],
+    });
+    expect(followNewestReleases([sel("opencode", "claude-sonnet-4-5")], [opencode])).toEqual([
+      sel("opencode", "claude-sonnet-4-5"),
+    ]);
+  });
+
+  it("puts a model in the tier that names it exactly before one that follows an older release", () => {
+    expect(
+      tierOfModel(
+        {
+          complex: [sel("claudeAgent", "claude-opus-4-1")],
+          routine: [sel("claudeAgent", "claude-opus-5-5")],
+        },
+        "claude-opus-5-5",
+      ),
+    ).toBe("routine");
   });
 });

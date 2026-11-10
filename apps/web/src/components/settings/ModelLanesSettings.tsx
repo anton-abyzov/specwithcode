@@ -17,6 +17,7 @@ import {
 } from "@specweave-studio/shared/modelLanes";
 import { ArrowDownIcon, ArrowUpIcon, SparklesIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useMemo } from "react";
+import { newerOfFamily } from "@specweave-studio/shared/modelTiers";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
@@ -88,8 +89,17 @@ function LaneList(props: {
           provider === undefined
             ? "not on this machine"
             : !provider.models.some((m) => m.slug === entry.model)
-              ? "model not offered"
+              ? "not offered by this account"
               : null;
+        // Workers start on the newest release of the family the provider lists.
+        const newer =
+          provider === undefined || unavailable !== null
+            ? undefined
+            : newerOfFamily(provider, entry.model);
+        const newerName =
+          newer === undefined
+            ? undefined
+            : (provider?.models.find((m) => m.slug === newer)?.name ?? newer);
         return (
           <li
             key={`${entry.instanceId}:${entry.model}`}
@@ -102,6 +112,9 @@ function LaneList(props: {
               {label}
               {unavailable ? (
                 <span className="ml-2 text-xs text-muted-foreground">({unavailable})</span>
+              ) : null}
+              {newerName ? (
+                <span className="ml-2 text-xs text-muted-foreground">(uses {newerName})</span>
               ) : null}
             </span>
             <Button
