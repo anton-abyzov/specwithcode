@@ -11,7 +11,10 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
-import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
+import {
+  renderUrlHandlerDesktopEntry,
+  resolveLinuxSystemPackageDesktopEntry,
+} from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
 export interface DesktopPreReadyCommandLineReader {
@@ -100,6 +103,14 @@ export const make = Effect.gen(function* () {
             execTarget: process.env.APPIMAGE?.trim() || process.execPath,
             scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
             ...(iconPath === undefined ? {} : { iconPath }),
+            // A .deb or .rpm entry already handles the scheme: one handler, not two.
+            handlesScheme:
+              resolveLinuxSystemPackageDesktopEntry({
+                isPackaged: Electron.app.isPackaged,
+                appImagePath: process.env.APPIMAGE,
+                xdgDataDirs: process.env.XDG_DATA_DIRS,
+                exists: (path) => NodeFS.existsSync(path),
+              }) === undefined,
           }),
           "utf8",
         );

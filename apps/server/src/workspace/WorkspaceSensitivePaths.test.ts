@@ -1266,6 +1266,18 @@ describe("makeSensitivePathGuard", () => {
     expect(mac.isDenied("/System/Volumes/Data/srv/app/userdata/settings.json")).toBe(true);
   });
 
+  it("reads files received from another machine, but not secrets or unfinished ones", () => {
+    const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
+    const inbox = "/srv/app/userdata/transfers";
+    expect(guard.isDenied(`${inbox}/30f3/ministorm-prompt.txt`)).toBe(false);
+    expect(guard.isDenied(`${inbox}/30f3/clip.mp4`)).toBe(false);
+    expect(guard.isDenied(`${inbox}/30f3/ministorm-prompt.txt`, "write")).toBe(true);
+    expect(guard.isDenied(`${inbox}/30f3/.env`)).toBe(true);
+    expect(guard.isDenied(`${inbox}/30f3/id_ed25519`)).toBe(true);
+    expect(guard.isDenied(`${inbox}/.staging/abc`)).toBe(true);
+    expect(guard.isDenied(inbox)).toBe(true);
+  });
+
   it("refuses every write to git metadata, however the name is spelled", () => {
     for (const platform of ["linux", "darwin", "win32"] as const) {
       const guard = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, platform);

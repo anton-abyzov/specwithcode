@@ -15,7 +15,8 @@
  * under the server's base folder (unless that folder holds the user's home), its
  * `userdata`/`dev` state folders, fleet file, backups and database copies are
  * refused. Reads keep the state subfolders
- * clients legitimately open (attachments, screenshots, themes, mods, built-in
+ * clients legitimately open (attachments, received transfers that are not
+ * secrets, screenshots, themes, mods, built-in
  * browser downloads, logs other than terminal and provider logs, Antigravity's
  * plans and screenshots, and Codex shadow-home transcripts). Writes also
  * refuse the service runtime, the release store, `launch.sh` and
@@ -92,6 +93,20 @@ const READABLE_STATE_SUBDIRECTORIES = new Set([
   "themes",
   "mods",
 ]);
+
+/** Where files received from another machine land: `<state>/transfers/<offer>/<file>`. */
+const TRANSFER_INBOX_DIRECTORY = "transfers";
+
+/**
+ * A received file people and agents open, reads only: never the staging folder
+ * of unfinished transfers, and never a file whose name marks it as a secret
+ * (secrets arrive only under the owner's own full-access grant).
+ */
+function isReadableTransferPath(inboxRelative: ReadonlyArray<string>): boolean {
+  if (inboxRelative.length < 2 || inboxRelative[0]!.startsWith(".")) return false;
+  const relative = inboxRelative.join("/");
+  return !isSecretLikeProjectPath(relative) && !isUntrackedSecretConfigPath(relative);
+}
 
 /** Provider homes the app keeps in its state folder (Antigravity profiles, Codex shadow homes). */
 const PROVIDERS_STATE_DIRECTORY = "providers";
@@ -1012,6 +1027,7 @@ export function makeSensitivePathGuard(
     if (folder === SERVER_BROWSER_DIRECTORY) {
       return !(child === SERVER_BROWSER_DOWNLOADS && stateRelative.length >= 3);
     }
+    if (folder === TRANSFER_INBOX_DIRECTORY) return !isReadableTransferPath(stateRelative.slice(1));
     if (stateRelative.length < 2 || !READABLE_STATE_SUBDIRECTORIES.has(folder!)) return true;
     return folder === "logs" && PROTECTED_LOG_SUBDIRECTORIES.has(child!);
   };
