@@ -131,13 +131,57 @@ export function buildProjectTree(
   };
   const tree = groups.map((group) => summarize(group.projectKey, group, group.displayName));
   if (options.orderByActivity) {
-    // Stable: projects without sessions keep the caller's order at the end.
-    tree.sort((a, b) => b.lastActivity - a.lastActivity);
+    // A project counts as active from the moment it is made, so a new one with
+    // no session yet leads the list instead of trailing every older project.
+    const activity = (group: ProjectTreeGroup) =>
+      Math.max(group.lastActivity, timestamp(group.project?.createdAt));
+    tree.sort((a, b) => activity(b) - activity(a));
   }
   if (sessionsByGroup.has(PROJECT_TREE_OTHER_KEY)) {
     tree.push(summarize(PROJECT_TREE_OTHER_KEY, null, "Other sessions"));
   }
   return tree;
+}
+
+/** The project holding the open session or draft, if any. */
+export function routeProjectTreeKey(
+  tree: readonly ProjectTreeGroup[],
+  routeThreadKey: string | null,
+  routeProject: { readonly environmentId: string; readonly projectId: string } | null,
+): string | null {
+  if (routeThreadKey !== null) {
+    const holder = tree.find((group) => group.sessions.some((s) => s.key === routeThreadKey));
+    if (holder !== undefined) return holder.key;
+  }
+  if (routeProject === null) return null;
+  return (
+    tree.find((group) =>
+      group.project?.memberProjectRefs.some(
+        (ref) =>
+          ref.environmentId === routeProject.environmentId &&
+          ref.projectId === routeProject.projectId,
+      ),
+    )?.key ?? null
+  );
+}
+
+/**
+ * The projects listed before "Show more": the first page, plus any that needs
+ * a decision, is running, or is the one in use, wherever it sorts.
+ */
+export function visibleProjectTree(
+  tree: readonly ProjectTreeGroup[],
+  activeKeys: ReadonlySet<string>,
+  showAll: boolean,
+): readonly ProjectTreeGroup[] {
+  if (showAll || tree.length <= PROJECT_TREE_PROJECT_PAGE + 2) return tree;
+  return tree.filter(
+    (group, index) =>
+      index < PROJECT_TREE_PROJECT_PAGE ||
+      group.attentionCount > 0 ||
+      group.workingCount > 0 ||
+      activeKeys.has(group.key),
+  );
 }
 
 /**

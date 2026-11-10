@@ -5397,6 +5397,7 @@ export default function Sidebar() {
                 projectGroups={scopedProjectGroup === null ? projectGroups : [scopedProjectGroup]}
                 threads={threads}
                 routeThreadKey={routeThreadKey}
+                routeProject={routeDraftThread}
                 orderByActivity={sidebarProjectSortOrder === "updated_at"}
                 onOpenThread={(threadRef) => void navigateToThread(threadRef)}
                 onOpenProject={openProjectSettings}

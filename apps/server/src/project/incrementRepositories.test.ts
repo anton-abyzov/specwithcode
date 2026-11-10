@@ -1,3 +1,5 @@
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
 
 import { incrementRepositoryCandidates, taskFilesFrom } from "./incrementRepositories.ts";
@@ -24,6 +26,8 @@ describe("taskFilesFrom", () => {
 });
 
 describe("incrementRepositoryCandidates", () => {
+  // Results are resolved for the host, so `/work` gains a drive on Windows.
+  const at = (path: string) => NodePath.resolve(path);
   const checkouts = [
     { id: "app", path: "/work/root/repositories/acme/app" },
     { id: "site", path: "/work/site" },
@@ -38,9 +42,9 @@ describe("incrementRepositoryCandidates", () => {
         rootEntries: new Set(),
       }),
     ).toEqual([
-      { path: "/work/site", id: "site" },
-      { path: "/work/root/repositories/acme/app", id: "app" },
-      { path: "/work/root" },
+      { path: at("/work/site"), id: "site" },
+      { path: at("/work/root/repositories/acme/app"), id: "app" },
+      { path: at("/work/root") },
     ]);
   });
 
@@ -62,10 +66,10 @@ describe("incrementRepositoryCandidates", () => {
         rootEntries: new Set(["repositories", "src"]),
       }),
     ).toEqual([
-      { id: "app", path: "/work/root/repositories/acme/app" },
-      { path: "/work/root/repositories/acme/api" },
-      { path: "/work/root" },
-      { id: "site", path: "/work/site" },
+      { id: "app", path: at("/work/root/repositories/acme/app") },
+      { path: at("/work/root/repositories/acme/api") },
+      { path: at("/work/root") },
+      { id: "site", path: at("/work/site") },
     ]);
   });
 });

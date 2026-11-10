@@ -64,6 +64,14 @@ describe("folderOutcome", () => {
     expect(at([{ name: "other" }])).toEqual({ kind: "create", path: "/p/fable-test", note: null });
     expect(at([], "/p", " ")).toBeNull();
   });
+  it("says an empty folder named like the project is set up as a new one", () => {
+    expect(at([], "/p/fable-test")).toMatchObject({
+      kind: "use",
+      path: "/p/fable-test",
+      note: expect.stringContaining("If it is empty"),
+    });
+    expect(at([{ name: "src" }], "/p/fable-test")?.note).toBe("Its name matches the project.");
+  });
   it("uses a folder that already is a project", () => {
     expect(at([{ name: ".git" }])).toMatchObject({ kind: "use", path: "/p" });
     expect(at([{ name: ".specweave" }])).toMatchObject({ kind: "use", path: "/p" });

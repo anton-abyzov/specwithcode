@@ -115,8 +115,9 @@ export interface FolderOutcome {
 /**
  * What creating a project named `name` does in `folder`, mirroring the
  * server: a folder that already is a project (it holds a repository or
- * SpecWeave, or is named like the project) is used as it is, as is a child of
- * that name that is one; otherwise a new subfolder is made, numbered when the
+ * SpecWeave, or is named like the project and holds files) is used as it is,
+ * as is a child of that name that is one; an empty folder named like the
+ * project is filled as a new one; otherwise a new subfolder is made, numbered when the
  * plain name is taken.
  */
 export function folderOutcome(input: {
@@ -139,7 +140,15 @@ export function folderOutcome(input: {
     };
   }
   if (newProjectFolderName(baseName(folder)) === slug) {
-    return { kind: "use", path: folder, note: "Its name matches the project." };
+    // The listing holds folders only, so whether it is empty is the server's call.
+    return {
+      kind: "use",
+      path: folder,
+      note:
+        input.entries.length === 0
+          ? "Its name matches the project. If it is empty, the new project is set up in it."
+          : "Its name matches the project.",
+    };
   }
   const child = input.entries.find((entry) => entry.name === slug);
   if (child?.kind === "git") {

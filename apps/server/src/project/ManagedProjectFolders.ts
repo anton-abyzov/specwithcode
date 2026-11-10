@@ -181,6 +181,8 @@ export class ManagedProjectFolders extends Context.Service<
         readonly commitError?: string;
         readonly existing?: boolean;
         readonly specweaveError?: string;
+        /** SpecWeave was set up in a folder that already existed and had none. */
+        readonly specweaveAdded?: boolean;
       },
       NamedProjectError
     >;
@@ -642,15 +644,35 @@ const make = Effect.gen(function* () {
   });
 
   // Registers an existing folder without touching its files or its Git state.
+  // SpecWeave for a folder that was already there: `specweave init` only. Its
+  // files are left for the person to commit, since the repository is theirs.
+  const addSpecweaveToExisting = Effect.fn("ManagedProjectFolders.addSpecweaveToExisting")(
+    function* (workspaceRoot: string, wanted: boolean) {
+      if (!wanted) return {};
+      const present = yield* fileSystem
+        .exists(path.join(workspaceRoot, ".specweave"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (present) return {};
+      const error = yield* setUpSpecweave(workspaceRoot);
+      return error === undefined ? { specweaveAdded: true } : { specweaveError: error };
+    },
+  );
+
   const bindExistingFolder = Effect.fn("ManagedProjectFolders.bindExistingFolder")(function* (
     name: string,
     workspaceRoot: string,
+    specweave: boolean,
   ) {
     const owner = yield* projects
       .getByWorkspaceRoot(workspaceRoot)
       .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
     if (Option.isSome(owner)) {
-      return { projectId: owner.value.id, workspaceRoot, existing: true };
+      return {
+        projectId: owner.value.id,
+        workspaceRoot,
+        existing: true,
+        ...(yield* addSpecweaveToExisting(workspaceRoot, specweave)),
+      };
     }
     const id = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
@@ -664,8 +686,27 @@ const make = Effect.gen(function* () {
         workspaceRoot,
       })
       .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })));
-    return { projectId: project.id, workspaceRoot, existing: true };
+    return {
+      projectId: project.id,
+      workspaceRoot,
+      existing: true,
+      ...(yield* addSpecweaveToExisting(workspaceRoot, specweave)),
+    };
   });
+
+  // An empty folder nobody registered is a place for a new project, not a
+  // project: it gets the repository, starter files and SpecWeave like any other.
+  const isUnclaimedEmptyFolder = (folder: string) =>
+    Effect.all([
+      fileSystem.readDirectory(folder).pipe(
+        Effect.map((entries) => entries.length === 0),
+        Effect.orElseSucceed(() => false),
+      ),
+      projects.getByWorkspaceRoot(folder).pipe(
+        Effect.map(Option.isNone),
+        Effect.orElseSucceed(() => false),
+      ),
+    ]).pipe(Effect.map(([empty, unclaimed]) => empty && unclaimed));
 
   /** This machine's assistant, if it has one: the earliest personal project. */
   const existingAssistant = projects.snapshot.pipe(
@@ -685,15 +726,31 @@ const make = Effect.gen(function* () {
       if (!(yield* ProjectService.personalAssistantEnabled))
         return yield* new PersonalAssistantDisabledError();
     }
+    let emptyFolder: string | undefined;
     if (input.kind !== "personal" && input.parentPath !== undefined) {
       const existing = yield* existingProjectFolder(input.name, input.parentPath);
-      if (Option.isSome(existing)) return yield* bindExistingFolder(input.name, existing.value);
+      if (Option.isSome(existing)) {
+        if (yield* isUnclaimedEmptyFolder(existing.value)) emptyFolder = existing.value;
+        else {
+          return yield* bindExistingFolder(input.name, existing.value, input.specweave === true);
+        }
+      }
     }
-    const workspaceRoot = yield* claimNamedFolder(
-      input.name,
-      input.kind === "personal" ? undefined : input.parentPath,
-    );
-    const removeFolder = fileSystem.remove(workspaceRoot, { recursive: true }).pipe(Effect.ignore);
+    const workspaceRoot =
+      emptyFolder ??
+      (yield* claimNamedFolder(
+        input.name,
+        input.kind === "personal" ? undefined : input.parentPath,
+      ));
+    // A folder the person made themselves is emptied again, never removed.
+    const removeFolder = fileSystem
+      .remove(workspaceRoot, { recursive: true })
+      .pipe(
+        Effect.andThen(
+          emptyFolder === undefined ? Effect.void : fileSystem.makeDirectory(workspaceRoot),
+        ),
+        Effect.ignore,
+      );
     // Until the create is dispatched nothing else can use the folder, so any
     // exit but success removes it, an interrupt included.
     const prepared = yield* Effect.all([
