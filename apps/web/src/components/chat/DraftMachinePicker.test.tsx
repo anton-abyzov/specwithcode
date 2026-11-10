@@ -602,7 +602,7 @@ it("says Connection failed, never Can't reach, when this machine's connection st
   expect(control.textContent).not.toContain("Can't reach");
 });
 
-it("lists only machines with the project and offers the rest under Prepare project on machine…", async () => {
+it("lists only machines with the project and offers the rest under Add to another machine…", async () => {
   runtime.projects.push({
     id: ProjectId.make("same-m1"),
     environmentId: m1,
@@ -614,7 +614,7 @@ it("lists only machines with the project and offers the rest under Prepare proje
   expect(document.body.textContent).toContain("Machines with m4");
   expect(button("M1Connected")).toBeTruthy();
   expect(document.body.textContent).not.toContain("M3Connected");
-  await click("Prepare project on machine…");
+  await click("Add to another machine…");
   expect(document.body.textContent).toContain("Add m4 to");
   expect(document.body.textContent).not.toContain("M1");
   await click("M3Clone it there");
@@ -660,7 +660,7 @@ it("offers Link, never Clone, when the machine has an unlinked checkout of the s
   );
   await render();
   await open();
-  await click("Prepare project on machine…");
+  await click("Add to another machine…");
   // The M3 project shares only a title; a name is never proof of the same repository.
   expect(button("M3").textContent).toContain("Clone it there");
   await click("M1Has a copy at /m1/code/dataLink");
@@ -700,7 +700,7 @@ it("shows every machine in a flat list for a draft without a project", async () 
   await render();
   await open();
   expect(document.body.textContent).toContain("Run this draft on");
-  expect(document.body.textContent).not.toContain("Prepare project on machine…");
+  expect(document.body.textContent).not.toContain("Add to another machine…");
   expect(button("M1Connected")).toBeTruthy();
   expect(button("M3Connected")).toBeTruthy();
 });

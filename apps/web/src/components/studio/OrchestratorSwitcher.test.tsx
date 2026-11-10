@@ -209,3 +209,62 @@ it("runs one coordinator start at a time across the switcher and the composer no
   await starts[1]!("minis:p");
   expect(startCoordinator).toHaveBeenCalledTimes(2);
 });
+
+it("offers Add, Move and Leave in one machine menu, even with one copy", async () => {
+  const onAdd = vi.fn<() => void>();
+  const onMoveElsewhere = vi.fn<() => void>();
+  const onLeave = vi.fn<() => void>();
+  await act(async () =>
+    root.render(
+      <OrchestratorSwitcher
+        label="M4"
+        connected
+        statusDetail=""
+        current="m4:p"
+        copies={[copy("m4:p", "M4")]}
+        unknown={[]}
+        savedMachineMissing={false}
+        onView={vi.fn()}
+        onMove={null}
+        onStart={null}
+        onAllowWorkers={null}
+        onAdd={onAdd}
+        onMoveElsewhere={onMoveElsewhere}
+        onLeave={onLeave}
+      />,
+    ),
+  );
+  await act(async () =>
+    container
+      .querySelector<HTMLButtonElement>(`[aria-label="M4: this project's machines"]`)!
+      .click(),
+  );
+  expect(item("menuitemradio", "orchestrator")).toBeUndefined();
+  expect(item("menuitem", "Add to another machine…")).toBeDefined();
+  expect(item("menuitem", "Leave this machine…")).toBeDefined();
+  await act(async () => item("menuitem", "Move to another machine…")!.click());
+  await vi.waitFor(() => expect(onMoveElsewhere).toHaveBeenCalledTimes(1));
+  expect(onAdd).not.toHaveBeenCalled();
+  expect(onLeave).not.toHaveBeenCalled();
+});
+
+it("stays a plain label with one copy and no machine actions", async () => {
+  await act(async () =>
+    root.render(
+      <OrchestratorSwitcher
+        label="M4"
+        connected
+        statusDetail=""
+        current="m4:p"
+        copies={[copy("m4:p", "M4")]}
+        unknown={[]}
+        savedMachineMissing={false}
+        onView={vi.fn()}
+        onMove={null}
+        onStart={null}
+        onAllowWorkers={null}
+      />,
+    ),
+  );
+  expect(container.querySelector("button")).toBeNull();
+});

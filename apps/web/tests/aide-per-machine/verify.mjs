@@ -210,7 +210,7 @@ try {
       const machines = await menuMachines(menu);
       assert.deepEqual(machines, ["Studio Mac"]);
       const addItems = await menu
-        .getByRole("menuitem", { name: "Prepare project on machine…" })
+        .getByRole("menuitem", { name: "Add to another machine…" })
         .count();
       assert.equal(addItems, 0);
       const annaMentions = await menu.getByText("Anna's MacBook").count();
@@ -236,7 +236,7 @@ try {
       const machines = await menuMachines(menu);
       assert.deepEqual(machines, ["Studio Mac"]);
       const menuPath = await shot(page, `${size}-run-on-code-project`);
-      await menu.getByRole("menuitem", { name: "Prepare project on machine…" }).click();
+      await menu.getByRole("menuitem", { name: "Add to another machine…" }).click();
       await menu.getByText("Add Example Household to").waitFor();
       const addable = await menuMachines(menu);
       assert.deepEqual(addable, ["Anna's MacBook"]);

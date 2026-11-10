@@ -50,6 +50,7 @@ import type { MachineOption } from "../handoff/MachineOptionRows";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { AddToMachineDialog } from "../chat/AddToMachineDialog";
+import { toastManager } from "../ui/toast";
 import { HandoffShare } from "./HandoffShare";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import {
@@ -104,16 +105,28 @@ function previewInput(projectId: ProjectId, bundle: MachineHandoffBundle) {
 /** An interrupted request has nothing to tell a person beyond trying again. */
 const isInterruptedMessage = (message: string) => message.includes("fibers interrupted");
 
+/** Which way the machine menu opens the dialog; `seq` makes each pick a new request. */
+export interface MachineHandoffOpenRequest {
+  readonly mode: "add" | "move";
+  readonly seq: number;
+}
+
 export function ProjectMachineHandoff({
   project,
   coordinatorId,
   onOpenChange,
   requestedTarget = null,
+  openRequest = null,
+  showTrigger = true,
 }: {
   readonly project: EnvironmentProject;
   readonly coordinatorId: ThreadId | null;
   readonly onOpenChange?: (open: boolean) => void;
   readonly requestedTarget?: string | null;
+  /** Set by the project's machine menu: "Add to another machine…" or "Move to another machine…". */
+  readonly openRequest?: MachineHandoffOpenRequest | null;
+  /** Off where the machine menu opens the dialog instead of its own button. */
+  readonly showTrigger?: boolean;
 }) {
   const { environments, isReady: catalogReady } = useNamedEnvironments();
   const projects = useProjects();
@@ -738,86 +751,103 @@ export function ProjectMachineHandoff({
     project.workspaceSettings?.coordinatorBinding?.state !== "transferring";
   const shareConfig = gitMachine ? configs.get(gitMachine)?.environment.capabilities : undefined;
 
+  /**
+   * Opens the dialog. "add" starts on sharing the project with another
+   * machine (this copy keeps running); "move" starts on handing it over.
+   */
+  const openDialog = (mode: MachineHandoffOpenRequest["mode"]) => {
+    if (!sourceReady) return;
+    changeOpen(true);
+    if (!snapshot) {
+      setIntent("move");
+      try {
+        const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
+        // An unfinished Git handoff resumes in the method that started it, an
+        // unfinished copy in the current one; otherwise every opening starts fresh.
+        const copyPending =
+          localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) !== null;
+        setShareView(!pending && !copyPending);
+        if (pending) setMethod("folder");
+        else if (!copyPending) setMethod("copy");
+        const saved = readHandoffMachinePreference(preferenceKey);
+        setPreference(saved);
+        const preferred = pickHandoffMachine(machines, saved);
+        const preferredFolder = destinations.find(
+          (item) => item.environmentId === preferred && !item.unavailable,
+        );
+        // A project inside a larger repository has no checkout of its own to continue in.
+        const ownCheckout = (item: {
+          readonly workspaceRoot: string;
+          readonly repositoryIdentity?:
+            | { readonly rootPath?: string | undefined }
+            | null
+            | undefined;
+        }) =>
+          (item.repositoryIdentity?.rootPath ?? item.workspaceRoot).replaceAll("\\", "/") ===
+          item.workspaceRoot.replaceAll("\\", "/");
+        const preferredProject = candidates.find(
+          (item) => `${item.environmentId}:${item.id}` === preferredFolder?.key,
+        );
+        if (
+          preferredProject &&
+          ownCheckout(project) &&
+          ownCheckout(preferredProject) &&
+          !pending &&
+          !copyPending
+        )
+          setMethod("folder");
+        // The preferred machine wins; without a saved folder there, the picker opens on it.
+        const choice =
+          pending?.targetKey ??
+          preferredFolder?.key ??
+          (preferred === null ? destinations.find((item) => !item.unavailable)?.key : undefined) ??
+          "";
+        setSelected(choice);
+        setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
+        setError(null);
+      } catch (cause) {
+        setShareView(false);
+        setSelected("");
+        showError(cause);
+      }
+    }
+    if (mode === "move" && !snapshot) {
+      setShareView(false);
+      setIntent("move");
+    }
+  };
+  const latestOpenDialog = useRef(openDialog);
+  latestOpenDialog.current = openDialog;
+  const latestBlockedReason = useRef(blockedReason);
+  latestBlockedReason.current = blockedReason;
+  useEffect(() => {
+    if (!openRequest) return;
+    // The menu has no tooltip to explain a refusal, so it says why here.
+    const reason = latestBlockedReason.current;
+    if (reason) toastManager.add({ type: "warning", title: reason });
+    else latestOpenDialog.current(openRequest.mode);
+  }, [openRequest]);
+
   return (
     <>
-      <Tip label={blockedReason ?? "Hand off this project to another machine"}>
-        {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
+      {showTrigger ? (
+        <Tip label={blockedReason ?? "Add this project to another machine, or move it there"}>
+          {/* Off, the button stays focusable (aria-disabled, not disabled), so it keeps its
             tooltip and screen readers read the reason it describes. */}
-        <span className="inline-flex" data-slot="handoff-trigger-wrap">
-          {blockedReason ? (
-            <span id={blockedReasonId} className="sr-only">
-              {blockedReason}
-            </span>
-          ) : null}
-          <MachineHandoffButton
-            aria-disabled={sourceReady ? undefined : true}
-            aria-describedby={blockedReason ? blockedReasonId : undefined}
-            onClick={() => {
-              if (!sourceReady) return;
-              changeOpen(true);
-              if (!snapshot) {
-                setIntent("move");
-                try {
-                  const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
-                  // An unfinished Git handoff resumes in the method that started it, an
-                  // unfinished copy in the current one; otherwise every opening starts fresh.
-                  const copyPending =
-                    localStorage.getItem(
-                      folderCopyStorageKey(project.environmentId, project.id),
-                    ) !== null;
-                  setShareView(!pending && !copyPending);
-                  if (pending) setMethod("folder");
-                  else if (!copyPending) setMethod("copy");
-                  const saved = readHandoffMachinePreference(preferenceKey);
-                  setPreference(saved);
-                  const preferred = pickHandoffMachine(machines, saved);
-                  const preferredFolder = destinations.find(
-                    (item) => item.environmentId === preferred && !item.unavailable,
-                  );
-                  // A project inside a larger repository has no checkout of its own to continue in.
-                  const ownCheckout = (item: {
-                    readonly workspaceRoot: string;
-                    readonly repositoryIdentity?:
-                      | { readonly rootPath?: string | undefined }
-                      | null
-                      | undefined;
-                  }) =>
-                    (item.repositoryIdentity?.rootPath ?? item.workspaceRoot).replaceAll(
-                      "\\",
-                      "/",
-                    ) === item.workspaceRoot.replaceAll("\\", "/");
-                  const preferredProject = candidates.find(
-                    (item) => `${item.environmentId}:${item.id}` === preferredFolder?.key,
-                  );
-                  if (
-                    preferredProject &&
-                    ownCheckout(project) &&
-                    ownCheckout(preferredProject) &&
-                    !pending &&
-                    !copyPending
-                  )
-                    setMethod("folder");
-                  // The preferred machine wins; without a saved folder there, the picker opens on it.
-                  const choice =
-                    pending?.targetKey ??
-                    preferredFolder?.key ??
-                    (preferred === null
-                      ? destinations.find((item) => !item.unavailable)?.key
-                      : undefined) ??
-                    "";
-                  setSelected(choice);
-                  setPickerMachine(choice ? null : (preferred as EnvironmentId | null));
-                  setError(null);
-                } catch (cause) {
-                  setShareView(false);
-                  setSelected("");
-                  showError(cause);
-                }
-              }
-            }}
-          />
-        </span>
-      </Tip>
+          <span className="inline-flex" data-slot="handoff-trigger-wrap">
+            {blockedReason ? (
+              <span id={blockedReasonId} className="sr-only">
+                {blockedReason}
+              </span>
+            ) : null}
+            <MachineHandoffButton
+              aria-disabled={sourceReady ? undefined : true}
+              aria-describedby={blockedReason ? blockedReasonId : undefined}
+              onClick={() => openDialog("add")}
+            />
+          </span>
+        </Tip>
+      ) : null}
       <MachineHandoffDialog
         open={open}
         onOpenChange={changeOpen}
