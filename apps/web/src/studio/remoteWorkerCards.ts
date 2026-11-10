@@ -51,15 +51,18 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
 
 /**
  * Cards worth showing, most recently active first as the server sends them: a
- * worker whose coordinator thread is gone is not this page's.
+ * worker whose coordinator thread is gone is not this page's. Under the Threads
+ * pane's machine filter (a machine's environment id) only that machine's workers show.
  */
 export function visibleRemoteWorkers(
   workers: ReadonlyArray<StudioFleetRemoteWorker>,
   representedThreads: readonly { environmentId: string; id: string }[] = [],
+  machineFilter: string | null = null,
 ): ReadonlyArray<StudioFleetRemoteWorker> {
   return workers.filter(
     (worker) =>
       worker.state !== "disposed" &&
+      (machineFilter === null || worker.environmentId === machineFilter) &&
       (worker.state === "paused_auth" ||
         !representedThreads.some(
           (thread) =>
@@ -69,6 +72,21 @@ export function visibleRemoteWorkers(
 }
 
 /** A conversation message as far as placing a worker card goes. */
+/**
+ * Whether this browser can open the worker's thread: it reaches the worker's machine,
+ * which shows as that machine's threads having loaded here. The live list leaves out
+ * archived threads, so a finished worker's thread need not be in it; its page still opens.
+ */
+export function remoteWorkerReachableHere(
+  worker: Pick<StudioFleetRemoteWorker, "environmentId" | "remoteThreadId">,
+  threads: readonly { environmentId: string }[],
+): boolean {
+  return (
+    worker.remoteThreadId !== null &&
+    threads.some((thread) => thread.environmentId === worker.environmentId)
+  );
+}
+
 export interface RemoteWorkerAnchorMessage {
   readonly id: string;
   readonly role: string;

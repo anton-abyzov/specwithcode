@@ -13,17 +13,24 @@ import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../../stat
 import { REMOTE_WORKERS_REFRESH_MS, useProjectRemoteWorkers } from "../../studio/fleet";
 import { useMachineStillChecking } from "../../studio/machineChecking";
 import { useMachineNicknames } from "../../studio/machineNickname";
-import { remoteWorkerCardStatus, visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
+import {
+  remoteWorkerCardStatus,
+  remoteWorkerReachableHere,
+  visibleRemoteWorkers,
+} from "../../studio/remoteWorkerCards";
 import { Tip } from "./shell/Tip";
 
 export function RemoteWorkerCards({
   environmentId,
   projectId,
   representedThreads = [],
+  machineFilter = null,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   representedThreads?: readonly { environmentId: string; id: string }[];
+  /** The Threads pane's machine filter; only that machine's workers show under it. */
+  machineFilter?: string | null;
 }) {
   const { workers, available, refresh } = useProjectRemoteWorkers(environmentId, projectId);
   useLiveRefresh(refresh, {
@@ -31,7 +38,7 @@ export function RemoteWorkerCards({
     key: `remote-workers:${environmentId}:${projectId}`,
     intervalMs: REMOTE_WORKERS_REFRESH_MS,
   });
-  const visible = visibleRemoteWorkers(workers, representedThreads);
+  const visible = visibleRemoteWorkers(workers, representedThreads, machineFilter);
   return <RemoteWorkerCardList workers={visible} />;
 }
 
@@ -57,12 +64,7 @@ export function RemoteWorkerCardList({
   return (
     <ul className="sws-thread-cards" aria-label="Workers on other machines">
       {named.map((worker) => {
-        const reachableHere =
-          worker.remoteThreadId !== null &&
-          threads.some(
-            (thread) =>
-              thread.environmentId === worker.environmentId && thread.id === worker.remoteThreadId,
-          );
+        const reachableHere = remoteWorkerReachableHere(worker, threads);
         return (
           <li key={worker.id}>
             <RemoteWorkerCard
