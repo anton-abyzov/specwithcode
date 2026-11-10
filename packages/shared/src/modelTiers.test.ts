@@ -8,7 +8,12 @@ import {
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { effectiveFallbackOrder, tierFallbackOrder, tierOfModel } from "./modelTiers.ts";
+import {
+  effectiveFallbackOrder,
+  followNewestReleases,
+  tierFallbackOrder,
+  tierOfModel,
+} from "./modelTiers.ts";
 import { describeFallbackOrder, resolveProviderFallback } from "./providerFallback.ts";
 
 const now = Date.parse("2026-11-03T06:30:00.000Z");
@@ -236,5 +241,31 @@ describe("limit fallback through the tiers", () => {
         limitedInstanceIds: new Set([codex.instanceId]),
       }),
     ).toEqual(sel("copilot", "claude-opus-5.5"));
+  });
+});
+
+describe("followNewestReleases", () => {
+  it("swaps a listed older release for the newest of its family and dedupes", () => {
+    const fable = provider(
+      "claudeAgent",
+      "claudeAgent",
+      ["claude-fable-5-1", "claude-fable-5-2", "claude-opus-5-5"],
+      null,
+    );
+    expect(
+      followNewestReleases(
+        [
+          sel("claudeAgent", "claude-fable-5-1"),
+          sel("claudeAgent", "claude-fable-5-2"),
+          sel("claudeAgent", "claude-opus-5-5"),
+          sel("claudeAgent", "claude-gone-1"),
+        ],
+        [fable],
+      ),
+    ).toEqual([
+      sel("claudeAgent", "claude-fable-5-2"),
+      sel("claudeAgent", "claude-opus-5-5"),
+      sel("claudeAgent", "claude-gone-1"),
+    ]);
   });
 });

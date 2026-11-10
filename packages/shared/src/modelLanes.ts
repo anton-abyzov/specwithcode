@@ -43,7 +43,7 @@ import {
   TIER_LABELS,
   type TaskClassification,
 } from "./taskRouting.ts";
-import { MODEL_TIER_LABELS } from "./modelTiers.ts";
+import { followNewestReleases, MODEL_TIER_LABELS } from "./modelTiers.ts";
 
 /** The lanes as the person ranks them: model tiers (see `modelTiers`). */
 export const LANE_LABELS: Record<ModelLane, string> = MODEL_TIER_LABELS;
@@ -462,7 +462,7 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
   const seen = new Set<string>();
   for (const selection of [
     ...(preferredModel !== undefined ? [preferredModel] : []),
-    ...input.lanes[lane.lane],
+    ...followNewestReleases(input.lanes[lane.lane], input.providers),
   ]) {
     const key = selectionKey(selection);
     if (seen.has(key)) continue;
