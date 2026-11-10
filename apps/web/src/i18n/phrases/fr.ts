@@ -2090,6 +2090,14 @@ export const fr: PhraseCatalog = {
     "Les brouillons, les préférences et les données d’interface en cache peuvent aussi rester sur l’appareil où vous utilisez l’app, y compris avec un environnement distant. Les brouillons peuvent contenir des prompts, des détails de pièces jointes et du texte de terminal sélectionné.",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "Quand vous lancez un tour d’agent ou utilisez un service connecté, le fournisseur choisi reçoit le contexte nécessaire à cette demande, selon sa propre politique de confidentialité.",
+  "Send crash and error reports automatically":
+    "Envoyer automatiquement les rapports de plantage et d'erreur",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "Activé par défaut. Envoie la version de l'app, le système, l'architecture, la catégorie d'échec, le fournisseur et le modèle si utile, une erreur et une pile nettoyées sans chemins personnels, et un identifiant d'installation aléatoire. N'envoie jamais de prompts, réponses, fichiers, jetons ni identifiants de compte ou de conversation. STUDIO_CRASH_REPORTS=false sur le serveur le désactive aussi.",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "Désactivé par STUDIO_CRASH_REPORTS ou les règles d'équipe sur ce serveur.",
+  "Update this server to change crash report settings.":
+    "Mets à jour ce serveur pour modifier les réglages des rapports de plantage.",
   "Product usage collection": "Collecte d’utilisation du produit",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "La collecte est désactivée par défaut. Si l’opérateur du serveur l’active, les événements d’utilisation incluent les choix de fournisseur et de modèle, les résultats des tours, les durées et les totaux de tokens. Ils excluent les prompts, les réponses et le contenu des fichiers.",

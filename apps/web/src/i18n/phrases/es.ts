@@ -2090,6 +2090,14 @@ export const es: PhraseCatalog = {
     "Los borradores, las preferencias y los datos de interfaz en caché también pueden quedarse en el dispositivo donde usas la app, incluso con un entorno remoto. Los borradores pueden contener prompts, detalles de adjuntos y texto de terminal seleccionado.",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "Cuando inicias un turno de agente o usas un servicio conectado, el proveedor seleccionado recibe el contexto necesario para esa solicitud bajo su propia política de privacidad.",
+  "Send crash and error reports automatically":
+    "Enviar informes de fallos y errores automáticamente",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "Activado de forma predeterminada. Envía la versión de la app, el sistema operativo, la arquitectura, la categoría del fallo, el proveedor y el modelo cuando corresponde, un error y una traza depurados sin rutas personales y un id de instalación aleatorio. Nunca envía prompts, respuestas, archivos, tokens ni ids de cuenta o conversación. STUDIO_CRASH_REPORTS=false en el servidor también lo desactiva.",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "Desactivado por STUDIO_CRASH_REPORTS o reglas del equipo en este servidor.",
+  "Update this server to change crash report settings.":
+    "Actualiza este servidor para cambiar la configuración de informes de fallos.",
   "Product usage collection": "Recopilación de uso del producto",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "La recopilación está desactivada por defecto. Si el operador del servidor la activa, los eventos de uso incluyen la elección de proveedor y modelo, los resultados de los turnos, las duraciones y los totales de tokens. Excluyen prompts, respuestas y contenido de archivos.",

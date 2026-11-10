@@ -2084,6 +2084,14 @@ export const pt: PhraseCatalog = {
     "Rascunhos, preferências e dados de interface em cache também podem ficar no aparelho em que você usa o app, inclusive com um ambiente remoto. Rascunhos podem conter prompts, detalhes de anexos e texto selecionado do terminal.",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "Quando você inicia um turno de agente ou usa um serviço conectado, o provedor escolhido recebe o contexto necessário para esse pedido, sob a própria política de privacidade.",
+  "Send crash and error reports automatically":
+    "Enviar relatórios de falhas e erros automaticamente",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "Ativado por padrão. Envia a versão do app, o sistema, a arquitetura, a categoria da falha, o provedor e o modelo quando relevante, um erro e uma pilha limpos sem caminhos pessoais e um id de instalação aleatório. Nunca envia prompts, respostas, arquivos, tokens nem ids de conta ou conversa. STUDIO_CRASH_REPORTS=false no servidor também desativa.",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "Desativado por STUDIO_CRASH_REPORTS ou regras da equipe neste servidor.",
+  "Update this server to change crash report settings.":
+    "Atualize este servidor para alterar as configurações de relatórios de falhas.",
   "Product usage collection": "Coleta de uso do produto",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "A coleta vem desligada por padrão. Se o operador do servidor ativar, os eventos de uso incluem escolhas de provedor e modelo, resultados de turnos, durações e totais de tokens. Eles excluem prompts, respostas e conteúdo de arquivos.",

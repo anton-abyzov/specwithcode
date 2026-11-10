@@ -223,6 +223,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["telemetry analytics consent opt out data collection PostHog"],
   },
   {
+    id: "privacy-crash-reports",
+    title: "Send crash and error reports automatically",
+    to: "/settings/privacy",
+    searchTerms: [
+      "crash reports error reports bug automatic telemetry opt out STUDIO_CRASH_REPORTS",
+    ],
+  },
+  {
     id: "privacy-report",
     title: "Diagnostics report",
     to: "/settings/privacy",

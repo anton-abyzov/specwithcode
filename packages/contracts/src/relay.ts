@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { RelayReportsGroup } from "./relayReports.ts";
 
 export const RelayAgentAwarenessPlatform = Schema.Literals(["ios", "android"]);
 export type RelayAgentAwarenessPlatform = typeof RelayAgentAwarenessPlatform.Type;
@@ -1421,16 +1422,12 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
-    HttpApiEndpoint.post(
-      "removeClientKey",
-      "/v1/environments/:environmentId/client-keys/remove",
-      {
-        params: Schema.Struct({ environmentId: EnvironmentId }),
-        payload: RelayRemoveClientKeyRequest,
-        success: RelayRemoveClientKeyResponse,
-        error: RelayAuthAndInternalErrors,
-      },
-    ).annotate(OpenApi.Summary, "Remove the owner's phone that holds this DPoP key"),
+    HttpApiEndpoint.post("removeClientKey", "/v1/environments/:environmentId/client-keys/remove", {
+      params: Schema.Struct({ environmentId: EnvironmentId }),
+      payload: RelayRemoveClientKeyRequest,
+      success: RelayRemoveClientKeyResponse,
+      error: RelayAuthAndInternalErrors,
+    }).annotate(OpenApi.Summary, "Remove the owner's phone that holds this DPoP key"),
     HttpApiEndpoint.get(
       "listRemovedClientKeys",
       "/v1/environments/:environmentId/client-keys/removed",
@@ -1487,6 +1484,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayDpopClientGroup,
     RelayServerGroup,
     RelayHooksGroup,
+    RelayReportsGroup,
   )
   .annotate(OpenApi.Title, "SpecWithCode Relay API")
   .annotate(OpenApi.Version, "1.0.0")

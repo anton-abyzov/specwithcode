@@ -258,6 +258,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as CrashReporter from "./telemetry/CrashReporter.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -294,6 +295,22 @@ import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
+/** Crash report state for the config; omitted where the reporter is not wired. */
+const crashReportObservability: Effect.Effect<{
+  readonly crashReportsActive?: boolean;
+  readonly crashReportsForcedOff?: boolean;
+}> = Effect.serviceOption(CrashReporter.CrashReporter).pipe(
+  Effect.flatMap(
+    Option.match({
+      onNone: () => Effect.succeed({}),
+      onSome: (reporter) =>
+        Effect.map(reporter.status, (status) => ({
+          crashReportsActive: status.active,
+          crashReportsForcedOff: status.forcedOff,
+        })),
+    }),
+  ),
+);
 const isProviderUploadFeedbackError = Schema.is(ProviderUploadFeedbackError);
 
 const resolveDiscoveryForConfig = <A, E, R>(
@@ -1840,6 +1857,7 @@ const layerWsRpc = (
             directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
             observability: {
               ...analytics.configuration,
+              ...(yield* crashReportObservability),
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,
               ...(config.otlpTracesUrl !== undefined

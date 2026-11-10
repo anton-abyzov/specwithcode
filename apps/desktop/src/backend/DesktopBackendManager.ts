@@ -51,6 +51,7 @@ import {
 import { waitForHttpReady as waitForHttpReadyShared } from "@specweave-studio/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopCrashReporter from "../telemetry/DesktopCrashReporter.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 import * as DesktopBrowserHost from "../preview/DesktopBrowserHost.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
@@ -692,6 +693,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const crashReporter = yield* DesktopCrashReporter.DesktopCrashReporter;
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
 
@@ -927,6 +929,11 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                     yield* backendOutputLog.persistFailure({
                       details: `pid=${pid.value} ${reason}`,
                     });
+                    // Best effort and detached: a slow relay never delays the restart.
+                    yield* Effect.forkIn(
+                      crashReporter.reportServerExit({ reason, instanceId: String(spec.id) }),
+                      parentScope,
+                    );
                   } else {
                     yield* backendOutputLog.discardSession;
                   }

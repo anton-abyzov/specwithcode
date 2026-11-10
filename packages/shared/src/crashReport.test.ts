@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   CRASH_REPORT_MAX_BYTES,
@@ -117,7 +117,10 @@ describe("site events", () => {
       asset: "arm64.dmg",
       page: "/download",
     });
-    expect(parseSiteEvent({ v: 1, event: "download_click", platform: "beos" })).toBeNull();
+    expect(parseSiteEvent({ v: 1, event: "download_click", platform: "beos" })?.platform).toBe(
+      "other",
+    );
+    expect(parseSiteEvent({ v: 1, event: "page_view", platform: "mac" })).toBeNull();
     expect(siteEventPlatformForAsset("SpecWithCode-1.0.1-x64.exe")).toBe("windows");
     expect(siteEventPlatformForAsset("x86_64.AppImage")).toBe("linux-appimage");
   });

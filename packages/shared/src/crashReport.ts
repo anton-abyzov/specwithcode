@@ -195,7 +195,7 @@ const SECRET_RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:\d{1,3}\.){3}\d{1,3}\b/gu, "<ip>"],
 ];
 
-// eslint-disable-next-line no-control-regex
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu;
 
 /** Removes secrets, emails, ids and home paths from free text. */
@@ -436,13 +436,25 @@ export const SITE_EVENT_PLATFORMS = [
 ] as const;
 export type SiteEventPlatform = (typeof SITE_EVENT_PLATFORMS)[number];
 
+export const SITE_EVENT_NAMES = [
+  "download_click",
+  "install_copy",
+  "mobile_store_click",
+  "chrome_extension_click",
+  "github_star_click",
+  "feedback_click",
+] as const;
+export type SiteEventName = (typeof SITE_EVENT_NAMES)[number];
+
 export interface SiteEvent {
   readonly v: 1;
-  readonly event: "download_click" | "install_copy";
+  readonly event: SiteEventName;
   readonly platform: SiteEventPlatform;
-  /** Asset suffix such as `arm64.dmg` or `x64.exe`. */
+  /** Asset suffix or file name such as `arm64.dmg` or `SpecWithCode-1.0.1-x64.exe`. */
   readonly asset?: string;
-  /** Page path, e.g. `/download`. */
+  /** Where on the page the control sits, e.g. `hero` or `download-page-windows`. */
+  readonly placement?: string;
+  /** Page path, e.g. `/code/download/`. */
   readonly page?: string;
 }
 
@@ -452,18 +464,20 @@ export function parseSiteEvent(value: unknown): SiteEvent | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.v !== 1) return null;
-  if (record.event !== "download_click" && record.event !== "install_copy") return null;
-  if (!isOneOf(SITE_EVENT_PLATFORMS, record.platform)) return null;
-  const asset = shortToken(record.asset, 60);
+  if (!isOneOf(SITE_EVENT_NAMES, record.event)) return null;
+  const platform = isOneOf(SITE_EVENT_PLATFORMS, record.platform) ? record.platform : "other";
+  const asset = shortToken(record.asset, 80);
+  const placement = shortToken(record.placement, 60);
   const page =
-    typeof record.page === "string" && /^\/[A-Za-z0-9/_-]{0,60}$/u.test(record.page)
+    typeof record.page === "string" && /^\/[A-Za-z0-9/_.-]{0,80}$/u.test(record.page)
       ? record.page
       : undefined;
   return {
     v: 1,
     event: record.event,
-    platform: record.platform,
+    platform,
     ...(asset ? { asset } : {}),
+    ...(placement ? { placement } : {}),
     ...(page ? { page } : {}),
   };
 }

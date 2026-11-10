@@ -54,3 +54,39 @@ Keep analytics payloads to product metadata and normalized measurements. Do not
 send prompts, authentication material, raw provider payloads, user-assigned device
 names, or conversation identifiers. Client metadata is best effort; invalid values
 must not reject a connection. PostHog person profiles remain disabled.
+
+## Crash reports
+
+Crash reports are separate from PostHog analytics and on by default. The payload,
+sanitizing, the 16 KiB cap and relay validation live in
+[crashReport.ts](../../packages/shared/src/crashReport.ts): every sender calls
+`buildCrashReport` and `encodeCrashReport`, and the relay calls `parseCrashReport`
+again before writing one Workers Logs line. Never add a field there that can hold
+prompts, responses, file contents, tokens, account, conversation, thread or project
+ids, or raw paths. Free text goes through the sanitizer, which turns home paths into
+`~`, other paths in messages into `<path>`, and redacts secrets, emails, uuids and IPs.
+
+Senders:
+
+- Server: `CrashReporter` reports uncaught errors, fatal exits and failed turns, with
+  provider and model. It is active when the `crashReportsEnabled` server setting is on
+  and `STUDIO_CRASH_REPORTS` is not false. `ServerObservability.crashReportsActive` and
+  `crashReportsForcedOff` tell the settings page the startup state.
+- Desktop: `DesktopCrashReporter` in the main process reports uncaught exceptions,
+  rejections, renderer and child process exits, and server exits.
+- Mobile: [crashReporting.ts](../../apps/mobile/src/features/diagnostics/crashReporting.ts)
+  writes fatal reports to disk first and sends them on the next launch.
+
+All of them post to `POST /v1/crash-reports` on `relay.spec-weave.com`. The install id is
+a random UUID kept in a file, never an account id, and `crashReportMachineLabel` sends
+only OS, arch and a short hostname hash.
+
+Clients fold repeats with `crashReportFingerprint` and send one report with a `count`,
+cap reports per session, use timeouts of 5 seconds or less, never retry in a loop and
+never block startup or shutdown. The relay answers 400, 413, 415 or 429 for bad, large,
+wrong-type or rate-limited bodies.
+
+`STUDIO_CRASH_REPORT_URL` overrides the relay origin (https only), for example a staging
+relay. `STUDIO_CRASH_REPORT_SELF_TEST` sends one `test` report at startup so you can check
+delivery end to end in Workers Logs. Tests must stub sending; no test may reach the network.
+When reports are off, senders make no requests and write no files.

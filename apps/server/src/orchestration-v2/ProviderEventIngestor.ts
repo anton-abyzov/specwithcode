@@ -7,6 +7,7 @@ import {
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2Subagent,
   type ModelSelection,
   type RuntimeMode,
@@ -28,6 +29,7 @@ import * as Schema from "effect/Schema";
 
 import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as CrashReporter from "../telemetry/CrashReporter.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { TURN_ITEM_TIME_ONLY_REFRESH_MS } from "./toolItemPersistence.ts";
@@ -94,6 +96,60 @@ export const layerAnalytics = Layer.effect(
     return {
       record: (properties: Readonly<Record<string, unknown>>) =>
         analytics.record("provider.turn.completed", properties),
+    };
+  }),
+);
+
+export interface ProviderTurnFailureReport {
+  readonly driver: ProviderAdapterV2Event["driver"];
+  readonly failure: OrchestrationV2ProviderFailure;
+  readonly model?: string;
+  /** Provider retry attempt this failure ended, when the provider reports one. */
+  readonly retryAttempt?: number;
+}
+
+/**
+ * Failed turns sent as crash/error reports, grouped by failure class. The
+ * default does nothing, so services and tests that do not wire reports need
+ * no reporter.
+ */
+export class ProviderTurnFailureReports extends Context.Reference<{
+  readonly report: (input: ProviderTurnFailureReport) => Effect.Effect<void>;
+}>("studio/orchestration-v2/ProviderTurnFailureReports", {
+  defaultValue: () => ({ report: () => Effect.void }),
+}) {}
+
+/**
+ * Only the failure class, provider, model, code and the already redacted
+ * message are reported; the report builder sanitizes the message again.
+ * Repeats fold by class, provider and code.
+ */
+export function providerTurnFailureCrashReport(
+  input: ProviderTurnFailureReport,
+): CrashReporter.CrashReportEvent {
+  const code = input.failure.code ?? null;
+  return {
+    kind: "turn_failed",
+    category: input.failure.class,
+    provider: input.driver,
+    ...(input.model === undefined ? {} : { model: input.model }),
+    error: { name: code ?? input.failure.class, message: input.failure.message },
+    detail: {
+      ...(input.failure.retryable === null ? {} : { retryable: input.failure.retryable }),
+      ...(code === null ? {} : { code }),
+      ...(input.retryAttempt === undefined ? {} : { retryAttempt: input.retryAttempt }),
+    },
+    foldKey: `${input.failure.class}|${input.driver}|${code ?? ""}`,
+  };
+}
+
+export const layerFailureReports = Layer.effect(
+  ProviderTurnFailureReports,
+  Effect.gen(function* () {
+    const reporter = yield* CrashReporter.CrashReporter;
+    return {
+      report: (input: ProviderTurnFailureReport) =>
+        reporter.report(providerTurnFailureCrashReport(input)),
     };
   }),
 );
@@ -286,6 +342,8 @@ export const layer: Layer.Layer<
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const analytics = yield* ProviderTurnAnalytics;
     const completedTurnAnalytics = new Set<string>();
+    const failureReports = yield* ProviderTurnFailureReports;
+    const reportedTurnFailures = new Set<string>();
 
     const makeDomainEvent = (
       input: ProviderEventIngestInput,
@@ -718,6 +776,32 @@ export const layer: Layer.Layer<
                       }),
                   ),
                 ),
+          ),
+          Effect.tap((storedEvents) =>
+            Effect.gen(function* () {
+              const event = input.event;
+              if (
+                storedEvents.length === 0 ||
+                event.type !== "turn.terminal" ||
+                event.status !== "failed"
+              ) {
+                return;
+              }
+              const key = `${input.providerInstanceId}:${event.providerTurnId}`;
+              if (reportedTurnFailures.has(key)) return;
+              reportedTurnFailures.add(key);
+              if (reportedTurnFailures.size > 4096) {
+                const oldest = reportedTurnFailures.values().next().value;
+                if (oldest !== undefined) reportedTurnFailures.delete(oldest);
+              }
+              const model = input.analyticsContext?.modelSelection.model;
+              yield* failureReports.report({
+                driver: event.driver,
+                failure: event.failure,
+                ...(model === undefined ? {} : { model }),
+                ...(event.retry === undefined ? {} : { retryAttempt: event.retry.attempt }),
+              });
+            }),
           ),
           Effect.tap((storedEvents) =>
             Effect.gen(function* () {

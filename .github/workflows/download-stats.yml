@@ -1,0 +1,95 @@
+name: Download stats
+
+# Daily snapshot of release download counts for the public repository
+# anton-abyzov/specwithcode. The snapshot, daily.csv and latest.json are committed to
+# the orphan data branch `download-stats` of this repository (created on the first run).
+# A second run on the same UTC day overwrites that day's snapshot.
+# Read it locally with: node scripts/download-stats/today.mjs [--live] [--json]
+
+on:
+  schedule:
+    # Daily, away from minute zero.
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: download-stats
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Snapshot release downloads
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the download-stats data branch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/download-stats
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.20.0
+
+      - name: Test snapshot helpers
+        run: node --test scripts/download-stats/lib.test.mjs
+
+      - name: Check out the data branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$basic"
+          auth="AUTHORIZATION: basic $basic"
+          data="$RUNNER_TEMP/download-stats"
+          # A separate repository folder, so the sparse main checkout above stays untouched.
+          git init -q "$data"
+          cd "$data"
+          git remote add origin "https://github.com/$GITHUB_REPOSITORY.git"
+          rc=0
+          git -c http.https://github.com/.extraheader="$auth" ls-remote --exit-code --heads origin download-stats > /dev/null || rc=$?
+          # ls-remote exits 2 when the branch does not exist; anything else is a real failure.
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then echo "::error::git ls-remote failed (exit $rc)"; exit "$rc"; fi
+          if [ "$rc" -eq 0 ]; then
+            git -c http.https://github.com/.extraheader="$auth" fetch -q --no-tags --depth=1 origin \
+              +refs/heads/download-stats:refs/remotes/origin/download-stats
+            git checkout -q -B download-stats origin/download-stats
+          else
+            echo "No download-stats branch yet: starting an orphan branch."
+            git checkout -q --orphan download-stats
+          fi
+
+      - name: Take the snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/download-stats/snapshot.mjs --out "$RUNNER_TEMP/download-stats" --repo anton-abyzov/specwithcode
+
+      - name: Commit and push the data branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          basic="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$basic"
+          auth="AUTHORIZATION: basic $basic"
+          cd "$RUNNER_TEMP/download-stats"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A snapshots daily.csv latest.json
+          if git diff --cached --quiet; then
+            echo "No change since the last snapshot."
+          else
+            git commit -q -m "Download snapshot $(date -u +%Y-%m-%d)"
+            git -c http.https://github.com/.extraheader="$auth" push origin HEAD:refs/heads/download-stats
+          fi
+          node -e 'const s=require("./latest.json");const d=s.delta||s.totals;const rows=Object.keys(s.totals).map(k=>`| ${k} | ${d[k]} | ${s.totals[k]} |`);console.log([`### Downloads ${s.previousDate||"start"} -> ${s.date}`,"","| Platform | Change | Total |","| --- | ---: | ---: |",...rows].join("\n"))' >> "$GITHUB_STEP_SUMMARY"

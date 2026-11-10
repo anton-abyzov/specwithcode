@@ -2003,6 +2003,12 @@ export const zh: PhraseCatalog = {
     "草稿、偏好和缓存的界面数据也可能保留在你使用应用的设备上，包括连接远程环境时。草稿可能包含提示词、附件详情和选中的终端文本。",
   "When you start an agent turn or use a connected service, the selected provider receives the context needed for that request under its own privacy policy.":
     "当你开始智能体轮次或使用已连接的服务时，所选提供方会根据其自身的隐私政策接收该请求所需的上下文。",
+  "Send crash and error reports automatically": "自动发送崩溃和错误报告",
+  "On by default. Sends the app version, OS, architecture, failure category, provider and model when relevant, a sanitized error and stack with home paths removed, and a random install id. Never sends prompts, responses, files, tokens, or account or conversation ids. Setting STUDIO_CRASH_REPORTS=false on the server also turns it off.":
+    "默认开启。发送应用版本、操作系统、架构、失败类别、相关时的提供方和模型、去除主目录路径后的错误与堆栈，以及随机安装 ID。从不发送提示词、回复、文件、令牌或账户和会话 ID。在服务器上设置 STUDIO_CRASH_REPORTS=false 也会关闭。",
+  "Turned off by STUDIO_CRASH_REPORTS or team rules on this server.":
+    "此服务器已通过 STUDIO_CRASH_REPORTS 或团队规则关闭。",
+  "Update this server to change crash report settings.": "请更新此服务器以更改崩溃报告设置。",
   "Product usage collection": "产品使用数据收集",
   "Collection is off by default. If enabled by the server operator, usage events include provider and model choices, turn results, durations, and token totals. They exclude prompts, responses, and file contents.":
     "默认关闭收集。如果服务器运营者启用，使用事件会包含提供方和模型选择、轮次结果、时长和令牌总数，但不包含提示词、回复和文件内容。",
